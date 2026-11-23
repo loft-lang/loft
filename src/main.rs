@@ -5678,8 +5678,15 @@ fn run_file_debugger() -> ! {
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
     let code =
-        match loft::repl::run_file_debug(&stdlib, &lib_dirs, file, line, stdin.lock(), &mut stderr)
-        {
+        match loft::repl::run_file_debug_as(
+            &stdlib,
+            &lib_dirs,
+            file,
+            line,
+            args.iter().any(|a| a == "--native"),
+            stdin.lock(),
+            &mut stderr,
+        ) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("loft debug: {e}");

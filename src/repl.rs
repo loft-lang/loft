@@ -230,11 +230,29 @@ pub fn run_file_debug<R: BufRead, W: Write>(
     input: R,
     chrome: &mut W,
 ) -> std::io::Result<()> {
+    run_file_debug_as(stdlib_dir, lib_dirs, file, line, false, input, chrome)
+}
+
+/// [`run_file_debug`], with the program's own functions compiled when `native`
+/// (`loft debug --native`, `@PLN206 P7`).
+///
+/// # Errors
+/// As [`run_file_debug`].
+pub fn run_file_debug_as<R: BufRead, W: Write>(
+    stdlib_dir: &str,
+    lib_dirs: &[String],
+    file: &str,
+    line: u32,
+    native: bool,
+    input: R,
+    chrome: &mut W,
+) -> std::io::Result<()> {
     let ctx = ResolutionContext {
         stdlib_dir: stdlib_dir.to_string(),
         lib_dirs: lib_dirs.to_vec(),
     };
     let mut session = ReplSession::open(&ctx)?;
+    session.set_native_program(native);
     match session.load_program(file) {
         Ok(Ok(())) => {}
         Ok(Err(diags)) => {
@@ -1795,6 +1813,9 @@ pub struct ReplSession {
     /// with its optional condition / tracepoint actions.  Re-applied to the fresh
     /// `State` of every observing run by [`apply_breakpoints`](Self::apply_breakpoints).
     breakpoints: Vec<BreakSpec>,
+    /// `@PLN206 P7` — `loft debug --native`: the program's own functions run compiled too
+    /// (`native_artifact::adopt_program_for_session`), not only its libraries.
+    native_program: bool,
     /// @PLN16 rich-bp — resolved bytecode-offset → metadata for the current run, built
     /// by `apply_breakpoints` and read by `resolve_pause` when a hit lands.
     bp_meta: std::collections::HashMap<u32, BpMeta>,
@@ -1964,6 +1985,7 @@ impl ReplSession {
             record: None,
             replaying: false,
             breakpoints: Vec::new(),
+            native_program: false,
             bp_meta: std::collections::HashMap::new(),
             cond_unevaluable: std::collections::HashSet::new(),
             trace_output: Vec::new(),
@@ -2049,6 +2071,7 @@ impl ReplSession {
             record: None,
             replaying: false,
             breakpoints: Vec::new(),
+            native_program: false,
             bp_meta: std::collections::HashMap::new(),
             cond_unevaluable: std::collections::HashSet::new(),
             trace_output: Vec::new(),
@@ -2276,8 +2299,23 @@ impl ReplSession {
                 &entry.to_string_lossy(),
                 &self.stdlib_dir,
             );
+            if self.native_program
+                && let Err(e) = crate::native_artifact::adopt_program_for_session(
+                    &mut self.parser,
+                    path,
+                    &self.stdlib_dir,
+                )
+            {
+                eprintln!("loft debug: the program runs interpreted: {e}");
+            }
         }
         Ok(loaded)
+    }
+
+    /// `@PLN206 P7` — run the program's own functions compiled under the debugger
+    /// (`loft debug --native`), from the next [`load_program`](Self::load_program) on.
+    pub fn set_native_program(&mut self, on: bool) {
+        self.native_program = on;
     }
 
     /// @PLN16 M5e slice 2 — **check** `path` and return ALL its diagnostics (errors AND

@@ -36,10 +36,11 @@ impl State {
     /// the routine running compiled, to its next loop head or its return.
     pub(crate) fn accept_handover(&mut self, key: &str, scope: u16, entries: &[HandoverEntry]) -> bool {
         let taken = self.handover_verdict(key, scope, entries);
-        if let Err(why) = &taken
-            && std::env::var_os("LOFT_TRACE_HANDOVER").is_some()
-        {
-            eprintln!("[handover] {key} at loop {scope}: refused — {why}");
+        if std::env::var_os("LOFT_TRACE_HANDOVER").is_some() {
+            match &taken {
+                Ok(()) => eprintln!("[handover] {key} at loop {scope}: taken"),
+                Err(why) => eprintln!("[handover] {key} at loop {scope}: refused — {why}"),
+            }
         }
         taken.is_ok()
     }

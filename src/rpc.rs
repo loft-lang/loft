@@ -135,7 +135,11 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
     let req = text(&parsed, "req").unwrap_or("");
     let mut out = Vec::new();
     match req {
-        "launch" => match session.load_program(text(&parsed, "file").unwrap_or("")) {
+        "launch" => match {
+            // `@PLN206 P7` — `"native": true` runs the program's own functions compiled too.
+            session.set_native_program(bp_bool(&parsed, "native").unwrap_or(false));
+            session.load_program(text(&parsed, "file").unwrap_or(""))
+        } {
             Ok(Ok(())) => out.push(resp_ok(id, "")),
             Ok(Err(diags)) => out.push(resp_err(id, &diags_msg(&diags))),
             Err(e) => out.push(resp_err(id, &format!("cannot read file: {e}"))),

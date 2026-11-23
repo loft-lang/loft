@@ -180,6 +180,156 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
     crate::keys::set_lib_rust_crate(false);
 }
 
+/// `@PLN206 P7` — `loft debug --native`: the program's own functions, `main` aside, built as one
+/// hosted C unit and adopted, so the debugged program runs compiled — `main` the interpreter's
+/// driver, every function it calls C.  A routine the debugger wants (a breakpoint in it or
+/// reachable from it, a step into it) runs interpreted as a library's does, and a pause while a
+/// compiled routine runs hands it to the interpreter at its next loop head.  The unit is built
+/// from the program parsed again as the session parsed it (`Parser::open_program`, then `path`
+/// as spelled — the generation needs its own `Data`, and the bridge names and keys must be the
+/// session's), under a key of this loft and every source the program loaded, in the user cache
+/// (`debug-units/`).  Answers how many functions now run compiled.
+///
+/// # Errors
+/// When the program does not parse alone, the unit does not build, or the libraries run on the
+/// rustc route (`LOFT_LIB_BACKEND=rust`), which has no hand-over.
+pub fn adopt_program_for_session(
+    parser: &mut crate::parser::Parser,
+    path: &str,
+    default_dir: &str,
+) -> Result<usize, String> {
+    use crate::file_access as fa;
+    let default_dir_given = default_dir;
+    crate::keys::set_lib_rust_crate(false);
+    if !crate::c::hosted::selected() {
+        return Err("the libraries are built by rustc here (LOFT_LIB_BACKEND)".into());
+    }
+    let entry = fa::plain_canonical(std::path::Path::new(path));
+    let program_dir = entry
+        .parent()
+        .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    let default_dir = if default_dir.is_empty() {
+        String::new()
+    } else {
+        fa::plain_canonical(std::path::Path::new(default_dir))
+            .to_string_lossy()
+            .into_owned()
+    };
+    let export_of = |data: &Data, stores: &Stores| -> HashSet<u32> {
+        let own = program_functions(data, &program_dir, &default_dir);
+        let gate = crate::native_gate::shared_store_dispatchable(data);
+        let open: HashSet<u32> = gate.intersection(&own).copied().collect();
+        crate::c::hosted::hosted_split(data, stores, &open).0
+    };
+    let export = export_of(&parser.data, &parser.database);
+    if export.is_empty() {
+        return Ok(0);
+    }
+    // The key: this loft, its switches that change a unit, and every source the program loaded.
+    let mut files: Vec<String> = (0..parser.data.definitions())
+        .map(|d| parser.data.def(d).position().file.as_str().to_string())
+        .filter(|f| !f.is_empty())
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    let mut parts: Vec<Vec<u8>> = vec![
+        crate::cache::loft_build_fingerprint().to_le_bytes().to_vec(),
+        crate::cache::loft_exe_identity().to_le_bytes().to_vec(),
+        vec![
+            u8::from(crate::keys::no_handover()),
+            u8::from(crate::keys::poison_claim()),
+            u8::from(crate::keys::hosted_planted()),
+        ],
+    ];
+    for f in &files {
+        parts.push(f.as_bytes().to_vec());
+        parts.push(crate::cache::file_hash(f).map_or_else(Vec::new, |h| h.to_vec()));
+    }
+    let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    let fp = crate::cache::stable_hash(&refs);
+    let out_dir = crate::cache::cache_base_dir().join("debug-units");
+    let stem = format!("loft_debug_{fp:016x}");
+    let so = out_dir.join(crate::opt::native_key::platform_cdylib_name(&stem));
+    if !fa::exists(&so) {
+        fa::create_dir_all(&out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        let lock_path = out_dir.join(format!("{stem}.lock"));
+        let lock = fa::create(&lock_path).map_err(|e| format!("create {e}"))?;
+        lock.lock()
+            .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+        if !fa::exists(&so) {
+            let src = fa::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+            let mut p = crate::parser::Parser::open_program(default_dir_given, &parser.lib_dirs)
+                .map_err(|e| format!("the standard library: {e}"))?;
+            p.parse_str(&src, path, false);
+            if p.diagnostics.level() >= crate::diagnostics::Level::Error {
+                return Err("the program does not parse alone".into());
+            }
+            crate::scopes::check(&mut p.data, &mut p.database);
+            let hand_written = p.pending_native_libs.clone();
+            crate::interp::extensions::preload_native_libs(&mut p.data, &hand_written);
+            let alone = export_of(&p.data, &p.database);
+            crate::c::hosted::build_artifact(
+                &mut p.data,
+                &mut p.database,
+                &alone,
+                &program_dir,
+                &out_dir,
+                &stem,
+                fp,
+            )?;
+        }
+    }
+    let probe = crate::interp::native_adopt::probe_and_mark_exports(
+        &mut parser.data,
+        &parser.database,
+        &export,
+        &so,
+    );
+    if let Some(missing) = probe.refused {
+        return Err(format!("the unit names `{missing}`, which this program has not"));
+    }
+    if std::env::var_os("LOFT_TRACE_HANDOVER").is_some() {
+        eprintln!(
+            "[handover] the program's unit: {} of {} function(s) compiled; not resolved: {:?}",
+            probe.marked,
+            export.len(),
+            probe.unresolved
+        );
+    }
+    if probe.marked > 0 {
+        parser.pending_native_libs.push(so.to_string_lossy().into_owned());
+    }
+    Ok(probe.marked)
+}
+
+/// The program's own functions a unit can carry: those written in the program's directory —
+/// not the standard library's, nor a library's (an adopted one is already native) — and not
+/// `main`, which the interpreter runs as the driver.  Directories are compared canonical, so a
+/// program loaded by a relative path is found.
+fn program_functions(data: &Data, program_dir: &str, default_dir: &str) -> HashSet<u32> {
+    let mut own_file: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut is_own = |file: &str| -> bool {
+        *own_file.entry(file.to_string()).or_insert_with(|| {
+            let c = crate::file_access::plain_canonical(std::path::Path::new(file));
+            let c = c.to_string_lossy();
+            crate::file_access::is_under(&c, program_dir)
+                && (default_dir.is_empty() || !crate::file_access::is_under(&c, default_dir))
+        })
+    };
+    (0..data.definitions())
+        .filter(|&d| {
+            let def = data.def(d);
+            matches!(def.def_type(), crate::data::DefType::Function)
+                && def.name() != "n_main"
+                && !crate::opt::native_key::is_synthetic_name(def.name())
+                && def.native().is_empty()
+                && def.c_sig.is_empty()
+                && !def.position().file.as_str().is_empty()
+                && is_own(def.position().file.as_str())
+        })
+        .collect()
+}
+
 /// The spelling of `pkg` (canonical) the parse loaded the package's sources by, when it is
 /// another than `pkg` itself.
 fn loaded_spelling(data: &crate::data::Data, pkg: &std::path::Path) -> Option<String> {
