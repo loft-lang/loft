@@ -821,17 +821,41 @@ static LOFT_TLS size_t loft_lazy_held_floor = 0;
 
 static void loft_fault_where(loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
- * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
- * collection's failure, as the interpreter's `panic_any(label: message)` does. */
+ * not the program — `loft_lazy_miss` set the jump and records `<kind>: <prefix><message>` as the
+ * collection's failure, the message as the fault reads (`assertion failed: …`, `panic: …`). */
 static LOFT_TLS LOFT_JMP_BUF *loft_lazy_jmp = 0;
 static LOFT_TLS loft_text loft_lazy_fault = { 0, 0, 0 };
-static void loft_lazy_contain(const char *label, loft_str message) {
+static void loft_lazy_contain(const char *label, const char *prefix, loft_str message) {
     loft_lazy_fault.len = 0;
     loft_push(&loft_lazy_fault, label, strlen(label));
     loft_push(&loft_lazy_fault, ": ", 2);
+    loft_push(&loft_lazy_fault, prefix, strlen(prefix));
     loft_push(&loft_lazy_fault, message.p, message.len);
     LOFT_RELEASE_HELD(loft_lazy_held_floor);
     LOFT_LONGJMP(*loft_lazy_jmp);
+}
+
+/* loft#1056 — a halting fault is the PROGRAM's halt, reported once however many `par` workers
+ * reach it together, as the interpreter's `REPORTING` lock makes it: the first to claim the halt
+ * prints and ends the process; a later one waits for that end.  Not under the test runner, whose
+ * faults jump back to the test rather than end anything. */
+#if defined(LOFT_MSVC)
+#include <intrin.h>
+#endif
+static volatile long loft_halt_claimed = 0;
+static void loft_halt_claim(void) {
+    long was;
+    if (loft_in_test) return;
+#if defined(LOFT_GNU)
+    was = __atomic_exchange_n(&loft_halt_claimed, 1L, __ATOMIC_SEQ_CST);
+#elif defined(LOFT_MSVC)
+    was = _InterlockedExchange(&loft_halt_claimed, 1L);
+#else
+    was = loft_halt_claimed;
+    loft_halt_claimed = 1;
+#endif
+    if (was)
+        for (;;) (void) loft_halt_claimed;
 }
 
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
@@ -841,10 +865,11 @@ static int (*loft_fault_logger)(int sev, const char *label, const char *prefix, 
 
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
-    if (loft_lazy_jmp) loft_lazy_contain("assertion_failed", message);
+    if (loft_lazy_jmp) loft_lazy_contain("assertion_failed", "assertion failed: ", message);
     if (!loft_in_test && loft_fault_logger &&
         loft_fault_logger(2, "assertion_failed", "assertion failed: ", message, file, line))
         return;
+    loft_halt_claim();
     fflush(stdout);
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
@@ -874,6 +899,7 @@ static int loft_locked_write(void) {
 #ifndef LOFT_NO_LOCKS
     if (!loft_in_test && loft_locked_logger && loft_locked_logger()) return 1;
 #endif
+    loft_halt_claim();
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
@@ -893,7 +919,8 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
     int n = snprintf(msg, sizeof msg, "call stack overflow \xe2\x80\x94 exceeded %d stack frames",
                      (int) LOFT_MAX_CALL_DEPTH);
     /* Inside a lazy driver it ends the driver, not the program, as an assertion does. */
-    if (loft_lazy_jmp) loft_lazy_contain("stack_overflow", loft_lit(msg, (size_t) n));
+    if (loft_lazy_jmp) loft_lazy_contain("stack_overflow", "", loft_lit(msg, (size_t) n));
+    loft_halt_claim();
     fflush(stdout);
     fputs("error: ", stderr);
     fwrite(msg, 1, (size_t) n, stderr);
@@ -921,6 +948,9 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 typedef struct { const char *fn, *file; uint32_t site, decl; } loft_frame;
 static LOFT_TLS loft_frame *loft_frames = 0;
 static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
+/* The frames below this one are the caller's while the thread runs a `par` slice itself: a fault
+ * there names the worker's own frames, as one on a thread of its own does (loft#1056). */
+static LOFT_TLS size_t loft_frames_floor = 0;
 #ifdef LOFT_MAX_CALL_DEPTH
 static void loft_stack_overflow(const char *file, uint32_t line);
 #endif
@@ -994,10 +1024,10 @@ static LOFT_TLS uint32_t loft_hdepth = 0;
  * says where. */
 static void loft_fault_chain(void) {
 #ifdef LOFT_CALL_CHAIN
-    size_t n = loft_nframes, shown = n < 5 ? n : 5;
+    size_t top = loft_nframes, n = top - loft_frames_floor, shown = n < 5 ? n : 5;
     if (n <= 1) return;
-    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", loft_frames[n - 1].fn);
-    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", loft_frames[n - 1 - i].fn);
+    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", loft_frames[top - 1].fn);
+    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", loft_frames[top - 1 - i].fn);
     if (n > 5) fprintf(stderr, "        \xe2\x80\xa6 (%lu more frames)\n", (unsigned long) (n - 5));
 #endif
 }
@@ -1043,9 +1073,10 @@ static void loft_fault_where(loft_str file, int64_t line) {
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
-    if (loft_lazy_jmp) loft_lazy_contain("user_panic", message);
+    if (loft_lazy_jmp) loft_lazy_contain("user_panic", "panic: ", message);
     if (!loft_in_test && loft_fault_logger && loft_fault_logger(3, "user_panic", "panic: ", message, file, line))
         return;
+    loft_halt_claim();
     fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);

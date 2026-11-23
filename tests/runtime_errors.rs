@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: a contained fault (lazy driver, par worker, overflow) does not read as the interpreter's — its `--native` runs as `--native-rust` until then.
 
 //! Plan-07 phase 4 — typed runtime error binary tests.
 //!
