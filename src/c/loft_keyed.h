@@ -1814,6 +1814,20 @@ static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) 
 #define LOFT_PAR_STACK ((size_t) 8 << 20)
 #endif
 
+/* A `par` slice the calling thread runs itself: its faults name the slice's frames, not the
+ * caller's (`loft_frames_floor`). */
+#ifdef LOFT_CALL_CHAIN
+#define LOFT_PAR_SLICE(call)                        \
+    do {                                            \
+        size_t loft_floor0 = loft_frames_floor;     \
+        loft_frames_floor = loft_nframes;           \
+        call;                                       \
+        loft_frames_floor = loft_floor0;            \
+    } while (0)
+#else
+#define LOFT_PAR_SLICE(call) call
+#endif
+
 /* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
  * keeps them, its table as it now stands handed back for the caller to adopt from. */
 static void loft_par_job_run(loft_par_job *j) {
@@ -1913,7 +1927,7 @@ static void loft_par_job_start(loft_par_job *j, loft_thread_id *id) {
 #endif
         free(j->table);
         j->table = 0;
-        j->body(j->ctx, j->lo, j->hi);
+        LOFT_PAR_SLICE(j->body(j->ctx, j->lo, j->hi));
     }
 }
 
@@ -1948,7 +1962,7 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             loft_par_job_init(&jobs[k], body, ctx, k * n / t, (k + 1) * n / t, adopt != 0);
         for (k = 1; k < t; k++)
             loft_par_job_start(&jobs[k], &ids[k]);
-        body(ctx, 0, n / t);
+        LOFT_PAR_SLICE(body(ctx, 0, n / t));
         for (k = 1; k < t; k++)
             loft_par_job_join(&jobs[k], ids[k]);
         loft_par_sharing--;
