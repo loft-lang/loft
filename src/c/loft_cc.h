@@ -402,7 +402,7 @@ static inline void loft_pub_unlock(void) { pthread_mutex_unlock(&loft_pub_mutex)
  * LOFT_PUB_SWAP(slot, v, out): publish `v`, `out` the value it replaced; LOFT_PUB_ADD(slot, d,
  * out): add `d`, `out` the sum; LOFT_PUB_CAS(slot, expect, v): `v` when `slot` holds `expect`,
  * true when it did (else `expect` reads what it held).  Without the compiler's atomics each is
- * the lock around one word: doc/claude/LOCKS.md. */
+ * the lock around one word (doc/claude/LOCKS.md). */
 #if defined(LOFT_THREADS) && defined(LOFT_GNU)
 #define LOFT_PUB_CAS(slot, expect, v) \
     __atomic_compare_exchange_n(&(slot), &(expect), (v), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)

@@ -153,8 +153,10 @@ one of the points named here.
                 library native's callback finds the caller's context in the store handle it was
                 given.  The context is never found by asking which thread is running.
   (C-Publish)   data more than one thread reads and any may write — a lazily resolved symbol, a
-                lazily opened log, a program-wide flag — is set before the first worker starts,
-                or written with an atomic operation, or under a lock.
+                lazily opened log, a program-wide flag — is, in this order of preference: owned
+                by a context; set before the first worker starts; built per thread and merged
+                after the join; one atomic word.  A lock is the last resort, and every lock is
+                listed with its reason and its lock-free alternative (LOCKS.md).
 ```
 
 **In words.** A thread owns exactly what it was handed when it started, and nobody else touches
@@ -164,7 +166,8 @@ those three rules are about a starter and its workers, they repeat unchanged at 
 nesting, so `par` loops running at the same time in different workers or arms cannot reach each
 other's state at all.  The few things that are deliberately not per thread — the main thread's
 parked buffers, a library's per-caller state, a lazily set program-wide value — each say how a
-second thread is kept out.
+second thread is kept out, and a lock is the last way: [LOCKS.md](../LOCKS.md) lists each one
+that remains, why it is needed, and what would replace it.
 
 **What each costs.**  Measured against the same program with the state in thread-locals
 (f048ff16e), arm64 macOS, the median of nine alternated runs; the numbers are in @PLN226 § Cost.
