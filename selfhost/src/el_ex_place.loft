@@ -2345,7 +2345,11 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el::refuse(e, "a compound assignment to a place that is not a known local");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_vars::mark_user_named(vars, v, "parse_var_inner");
+  // (Only where the variable IS the name written: a user's `s` can resolve to the compiler's
+  // own `_mv_s_1` or `__tp_s`, which stays the compiler's.)
+  if match e.p.nodes[target] { SName { name: tn } => el_vars::name_of(vars, v) == tn, _ => false } {
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
+  }
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
   bin = op[..-1];
