@@ -73,6 +73,12 @@ pub fn rename(self: Bag, n: text) {
   self.name = n;
 }
 
+// An exponential decay: `exp` is one routine on every route — as a power of E, the unit's C
+// `pow`, a compiled `powf` and the interpreter answered up to two units in the last place apart.
+pub fn decay(fall: float) -> float {
+  exp(0.0 - fall)
+}
+
 // A text built from another carried function's text answers: its interpreted twin calls
 // `label_of` interpreted too, each nested answer landing in this call's own text, not the outer
 // one's destination.

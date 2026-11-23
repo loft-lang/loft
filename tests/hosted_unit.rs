@@ -122,6 +122,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   A SABOTAGE (2026-11-23): with a constant's store left holding an earlier store's words
 ///   past the constant's (`loft_const_store`), the unit's first call walks them as blocks.
 ///   WITNESS: "SIGBUS caught" (`hostedlib_main.loft`'s `churn`).
+///   A SABOTAGE (2026-11-23): with `exp` a power of E again (`default/01_code.loft`), the unit's
+///   C `pow` and the interpreter answer `decay` apart.  WITNESS: "the answer's bits are
+///   0x3f98a9fb43afe516 interpreted, 0x3f98a9fb43afe518 compiled".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
