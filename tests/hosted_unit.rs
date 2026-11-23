@@ -432,6 +432,59 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
     );
 }
 
+/// A call back from a hosted unit into the interpreter leaves the interpreter's call stack as it
+/// found it: `tests/lib/hostedcallback`'s `apply` calls a lambda of the program twice, and
+/// `stack_trace()` in the caller still sees every frame.  The callee's `Return` pops the frame the
+/// re-entry pushed, and the run's end popped one more — the caller's — once per call-back, and
+/// with it the depth the hand-up lists are keyed by (`State::reentry_floor`).  The same answer
+/// interpreted and hosted.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-24): with `pop_entry_frame` popping regardless of
+///   the floor (`src/state/mod.rs`), the hosted run prints `11 16 3 1`.  CHANNEL: stdout.
+///   WITNESS: the last depth, 1 against 3.  HOLDS: the interpreted run and both answers.
+#[test]
+fn a_call_back_into_the_interpreter_keeps_its_callers_frames() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-cb-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&lib);
+    let pkg = lib.join("hostedcallback");
+    for f in ["loft.toml", "src/hostedcallback.loft"] {
+        let to = pkg.join(f);
+        fa::create_dir_all(to.parent().expect("parent")).expect("package dir");
+        let text = fa::read_to_string(root.join("tests/lib/hostedcallback").join(f)).expect("read");
+        fa::write(to, text).expect("write");
+    }
+    for hosted in [false, true] {
+        let mut cmd = harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(root.join("tests/lib/hostedcallback_main.loft"))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NO_RUSTC", "1");
+        if hosted {
+            cmd.env("LOFT_REQUIRE_NATIVE", "1");
+        } else {
+            cmd.env("LOFT_NO_NATIVE_LIBS", "1");
+        }
+        let out = cmd.output().expect("run loft");
+        assert_eq!(
+            (
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).as_ref()
+            ),
+            (true, "11 16 3 3\n"),
+            "hosted={hosted}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&lib);
+}
+
 /// `@PLN206 P5` — a library adopted with no C compiler: what one run built (the hosted unit, the
 /// `[c] shim`) serves a run that cannot run `cc`, as a prebuilt library does.  A shim's name
 /// carries the compiler's identity, which a run without one cannot compute: the shim is found by

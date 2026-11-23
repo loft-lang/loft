@@ -659,6 +659,13 @@ pub struct State {
     /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
     /// worker enters the same function for every element.
     worker_fn_memo: (u32, u32),
+    /// The call-stack depth a re-entered call found (`reenter`, `reenter_ret`, `reenter_dbg`,
+    /// a generator advanced for native code): the run that ends it pops no frame below it.
+    /// The callee's `Return` pops the frame the re-entry pushed (`fn_return`), so the
+    /// end-of-run pop of [`Self::resume`] and `debug_step` would otherwise take the
+    /// caller's — one frame per call-back, and with it the depth every hand-up list is
+    /// keyed by.  0 outside a re-entry.
+    reentry_floor: usize,
     /// `@FR-R-FrameHeadroom` — per definition, the bytes above its frame base its operators
     /// can reach (the highest stack position codegen recorded in it, plus a margin).
     /// `push_frame` ensures that much room once per frame, so the direct-path push
@@ -1052,6 +1059,7 @@ impl State {
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
+            reentry_floor: 0,
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,
@@ -8615,6 +8623,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         self.put_stack(gen_ref);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8623,15 +8632,16 @@ impl State {
         });
         self.code_pos = u32::MAX;
         self.coroutine_next(packed as u32);
-        if self.code_pos == u32::MAX {
-            self.call_stack.pop();
-        } else {
+        if self.code_pos != u32::MAX {
             let yielded = self.resume();
             assert!(
                 !yielded,
                 "advance_for_native: the generator suspended the frame"
             );
         }
+        // The frame pushed for this advance goes, and only it: an exhausted generator never
+        // took it, a yield set the generator's own frames aside.
+        self.leave_reentry(floor);
         let exhausted = self.coroutine_exhausted(&gen_ref);
         let mut out = Yielded::EXHAUSTED;
         if !exhausted {
@@ -8875,6 +8885,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8885,6 +8896,7 @@ impl State {
         self.code_pos = code_position;
         let yielded = self.resume();
         assert!(!yielded, "reenter_ret: the callee yielded mid-call");
+        self.leave_reentry(floor);
         let result = self
             .database
             .store(&self.stack_cur)
@@ -8919,6 +8931,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8952,6 +8965,7 @@ impl State {
             };
             on_pause(self, data, &hit);
         }
+        self.leave_reentry(floor);
         let result = self
             .database
             .store(&self.stack_cur)
@@ -9001,7 +9015,9 @@ impl State {
         // Balance: the callee's return pops a CallFrame unconditionally
         // (`fn_return`) — without this push the FIRST re-entry pops the
         // paused program's own frame (probe-caught: heap corruption at
-        // teardown after 200k imbalanced pops).
+        // teardown after 200k imbalanced pops).  The end of the run pops
+        // nothing below the depth found here (`reentry_floor`).
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -9012,6 +9028,7 @@ impl State {
         self.code_pos = code_position;
         let yielded = self.resume();
         assert!(!yielded, "reenter: the callee yielded mid-call");
+        self.leave_reentry(floor);
         self.code_pos = saved_pos;
         self.stack_pos = saved_sp;
     }
@@ -9025,7 +9042,7 @@ impl State {
             if self.dispatch(data) == Dispatch::Suspended {
                 return true; // yielded again, or paused — still running
             }
-            self.call_stack.pop();
+            self.pop_entry_frame();
             return false;
         }
         let bytecode_len = self.bytecode.len() as u32;
@@ -9048,16 +9065,33 @@ impl State {
                 break;
             }
         }
-        // Loop finished — pop the synthetic frame (the entry frame for the
-        // frame-yield drivers, `reenter`'s push for a re-entered call).
+        // Loop finished — pop the entry frame of the frame-yield drivers
+        // (`pop_entry_frame`; a re-entered call's frame its own return popped).
         // `parallel_ctx` is NOT cleared here: its lifetime is the PROGRAM's
         // (who wired it unwires it — `execute_argv` / the frame-yield
         // drivers).  Clearing on every loop completion tore down the
         // standing ctx the live-dispatch host wired, so the SECOND call of
         // a flipped fn using `par_*` panicked in `n_parallel_*`'s expect
         // (probe: a flipped `par_fold` killed the kernel on ping 2).
-        self.call_stack.pop();
+        self.pop_entry_frame();
         false
+    }
+
+    /// The end of a run: pop the entry frame a frame-yield driver pushed, but never a frame
+    /// below [`Self::reentry_floor`] — a re-entered call's own frame is gone already (its
+    /// `Return` popped it), and the one below is its caller's.
+    fn pop_entry_frame(&mut self) {
+        if self.call_stack.len() > self.reentry_floor {
+            self.call_stack.pop();
+        }
+    }
+
+    /// The end of a re-entered call: the call stack back at the depth the call found (a
+    /// callee that halted leaves its frames above it), and the floor of the re-entry around
+    /// this one back in place.
+    fn leave_reentry(&mut self, floor: usize) {
+        self.call_stack.truncate(self.reentry_floor);
+        self.reentry_floor = floor;
     }
 
     /// Resume from a suspension and stop per `mode` — the @PLN16 F step verbs
@@ -9178,9 +9212,9 @@ impl State {
                 watch_fired = true;
             }
         }
-        // Same contract as `resume`: pop the synthetic frame only —
+        // Same contract as `resume`: pop the entry frame only —
         // `parallel_ctx` is program-scoped and unwired by its wirer.
-        self.call_stack.pop();
+        self.pop_entry_frame();
         false
     }
 
@@ -9326,6 +9360,7 @@ impl State {
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
+            reentry_floor: 0,
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,

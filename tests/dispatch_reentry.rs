@@ -193,6 +193,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
         });
         assert_eq!(read_val(&mut state), 42, "call1");
     } else {
+        // A re-entered call leaves the call stack at the depth it found: the paused `main`'s
+        // frame stays on it.  The callee's `Return` pops the frame the re-entry pushed, so an
+        // end-of-run pop took `main`'s (`State::reentry_floor`).
+        let depth = state.call_stack.len();
+        assert!(depth > 0, "the paused main has its frame on the call stack");
         // 1. Scalars + a record arg.
         state.reenter(add_into.0, add_into.1, |st| {
             st.put_stack(7i64);
@@ -200,6 +205,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
             st.put_stack(res);
         });
         assert_eq!(read_val(&mut state), 42, "scalar re-entry wrote the store");
+        assert_eq!(
+            state.call_stack.len(),
+            depth,
+            "the call stack after a scalar re-entry"
+        );
 
         // 2. A vector arg.
         state.reenter(vec_sum_into.0, vec_sum_into.1, |st| {
@@ -207,6 +217,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
             st.put_stack(res);
         });
         assert_eq!(read_val(&mut state), 42, "vector re-entry summed 3+7+11+21");
+        assert_eq!(
+            state.call_stack.len(),
+            depth,
+            "the call stack after a vector re-entry"
+        );
 
         // 3. Integer null (the i64::MIN sentinel).
         state.reenter(null_or.0, null_or.1, |st| {
@@ -214,6 +229,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
             st.put_stack(res);
         });
         assert_eq!(read_val(&mut state), -1, "null marshaled as null");
+        assert_eq!(
+            state.call_stack.len(),
+            depth,
+            "the call stack after a null re-entry"
+        );
 
         // 4. The same fn with a value.
         state.reenter(null_or.0, null_or.1, |st| {
@@ -221,6 +241,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
             st.put_stack(res);
         });
         assert_eq!(read_val(&mut state), 42, "non-null after null");
+        assert_eq!(
+            state.call_stack.len(),
+            depth,
+            "the call stack after a repeated re-entry"
+        );
 
         // 5. The crossing cost (informational; printed, not asserted).
         let n = 200_000u32;
@@ -237,6 +262,11 @@ fn reentry_is_a_dispatch_not_a_rewrite() {
             "reentry probe: {per} ns per host->interp call (incl. body: 2 store writes + a text format)"
         );
         assert_eq!(read_val(&mut state), 42);
+        assert_eq!(
+            state.call_stack.len(),
+            depth,
+            "after {n} re-entries the call stack kept its depth"
+        );
     } // PROBE_MODE gate
 
     // ── The differential half: resume main; IT verifies the world. ──
