@@ -602,6 +602,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       mat_tail = true;
     }
   }
+  // (A struct-enum result answered by a function value's call or a vector match at the tail:
+  // the exit's work ref is minted and substituted out, `ref_return` on both passes.)
+  if rb >= 0 && !mat_tail && match body_tail(code) { NdCallRef { var: _ } => true, NdBlock { block: tvb } => tvb[0].name == "vector_match", _ => false } {
+    el_ex_null::enum_exit_work_ref(e, vars, result);
+  }
   if rb >= 0 && e.first_pass && !mat_tail && el_ex_null::merge_view_call(e, vars, code) == null {
     rename_ret_buffer(e, vars, code, rb);
   }
