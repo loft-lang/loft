@@ -1299,10 +1299,10 @@ pub(crate) fn loft_written_unit(
             ),
         )
         .map_err(|e| format!("the program image could not be written: {e}"))?;
-        // `@FR-R-CSplit` runs in a semantics build alone: a unit that keeps its functions whole
-        // (`c::functions_whole`, a shipped artefact) tells the generator so.
+        // `@FR-R-CSplit` runs in a semantics build, and in a shipped one only on request
+        // (`LOFT_C_SPLIT_SHIP`): a unit that keeps its functions whole tells the generator so.
         let mut spawn = Spawn::new(Program::os(&generator)).args([&image, &unit, &runtime]);
-        if loft::c::functions_whole() {
+        if loft::c::functions_whole() && !loft::c::split_shipped() {
             spawn = spawn.env("LOFT_NO_C_SPLIT", "1");
         }
         let out = spawn

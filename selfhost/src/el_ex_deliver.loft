@@ -804,7 +804,24 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   // (On both passes: an arm the first pass's syntax did not see as deliverable — a literal of
   // a record local — still delivers into the buffer on the second.)
   ret = el::def(e, d).returned[0];
-  if !el_types::deps(ret).contains(ba) {
+  // (`classify_ret_promotion`: a tail whose leaves are visible parameters alone (and `null`) is
+  // `MergeAttr` on the first pass — the result borrows them, what a function parsed before this
+  // one's second pass reads — and the second, the tail copied, borrows the buffer alone.)
+  pleaves = if arms { syntax_param_leaves(e, vars, tail_syntax(e, vars.body)) } else { null };
+  if pleaves != null && len(pleaves!) > 0 {
+    if e.first_pass {
+      pds = el_types::deps(ret);
+      for pl in pleaves! {
+        pa = attr_nr(el::def(e, d), el_vars::name_of(vars, pl));
+        if pa >= 0 && !pds.contains(pa) {
+          pds += [pa];
+        }
+      }
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, pds)];
+    } else {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, [ba])];
+    }
+  } else if !el_types::deps(ret).contains(ba) {
     e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
   }
   if e.first_pass {
@@ -1045,6 +1062,38 @@ fn syntax_deliverable_arm(e: el::El, vars: el_vars::Vars, n: integer) -> boolean
         _ => false
       };
       named || e.p.nodes[t] is SNull || e.p.nodes[t] is SVecLit || e.p.nodes[t] is SIf && syntax_deliverable_arms(e, vars, t)
+    },
+    _ => false
+  }
+}
+
+// The visible vector parameters a tail's arms answer, when every other leaf is a `null`; null
+// where an arm answers anything else (a literal: the buffer's own build).
+fn syntax_param_leaves(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integer>? {
+  out: vector<integer> = [];
+  if !param_leaves_into(e, vars, n, out) {
+    return null;
+  }
+  out
+}
+
+fn param_leaves_into(e: el::El, vars: el_vars::Vars, n: integer, out: vector<integer>) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SIf { then, other } => other != null && param_leaves_into(e, vars, then, out) && param_leaves_into(e, vars, other!, out),
+    SNull { at: _ } => true,
+    SBlock { at: _ } => param_leaves_into(e, vars, tail_syntax(e, n), out),
+    SName { name, member } => {
+      v = el_vars::var(vars, name);
+      if member == "" && v >= 0 && vars.vars[v]!.argument && !hidden_param(e, vars, v) {
+        if !out.contains(v) {
+          out += [v];
+        }
+        return true;
+      }
+      false
     },
     _ => false
   }

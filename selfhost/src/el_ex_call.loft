@@ -1769,7 +1769,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     }
     // (A callee's one-buffer marker, `["??"]`, is no borrow of the caller's buffer.)
     buf = el_vars::work_ref(vars, el_types::with_deps(rp, []));
-    vars.vars[buf].caller_hidden_buf = true;
+    el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     // (A callee the port refused whose result borrows its hidden buffer RENAMED onto a local
@@ -1905,7 +1905,7 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
     return null;
   }
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
-  vars.vars[buf].caller_hidden_buf = true;
+  el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
   rt = if e.first_pass { el_types::with_deps(ret, []) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
@@ -3549,9 +3549,22 @@ fn inline_slot_word(e: el::El, n: ir::Node) -> boolean {
 // onto it (`Bind`, `Rename`) — and a library's is complete, its declared result read as it stands.
 pub fn callee_result_borrows(e: el::El, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
-    NdCall { def_nr: cd } => buffered_loft_call(e, code) && if el::def(e, cd).source == el::MAIN_SOURCE { e.p1_bind.contains(cd) } else { len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0 },
+    // (A callee of the program: its first pass bound its tail (`Bind`, `Rename`), or merged a
+    // visible parameter into its result (`MergeAttr`: the parameter's attribute among its
+    // returned deps, `evens(self) -> … { if … { self } else { null } }`).)
+    NdCall { def_nr: cd } => buffered_loft_call(e, code) && if el::def(e, cd).source == el::MAIN_SOURCE { e.p1_bind.contains(cd) || merges_visible_attr(el::def(e, cd)) } else { len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0 },
     _ => false
   }
+}
+
+// Does the function's result name one of its VISIBLE attributes (a parameter it hands back)?
+fn merges_visible_attr(def: ir::Definition) -> boolean {
+  for a in el_types::deps(el_types::base(def.returned[0] ?? ir::TyVoid)) {
+    if a >= 0 && a < len(def.attributes) && !def.attributes[a].hidden {
+      return true;
+    }
+  }
+  false
 }
 
 pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT, borrows: boolean = false) {

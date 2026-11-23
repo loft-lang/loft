@@ -1,10 +1,10 @@
 diff --git a/src/compile.rs b/src/compile.rs
-index 46c0b437e..636423900 100644
+index 4a3c40049..99a6a3268 100644
 --- a/src/compile.rs
 +++ b/src/compile.rs
-@@ -156,12 +156,7 @@ pub fn byte_code_from(
-         None
-     };
+@@ -223,12 +223,7 @@ pub fn byte_code_from(
+     let param_writes = crate::parser::param_writes_summary(data);
+     let own_memo = crate::use_analysis::ownership_memo_scope(data);
      for d_nr in start_d_nr..data.definitions() {
 -        // A placeholder instance stands for its template and is never code — on this backend
 -        // as on `--native` (@FR-G-Mono).
@@ -17,10 +17,10 @@ index 46c0b437e..636423900 100644
          }
          // loft#665 piece 3 — publish which definition is being generated, so an
 diff --git a/src/data.rs b/src/data.rs
-index 668a7df3c..f947d3dcb 100644
+index 3bde6962d..7bcf10c58 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -10828,32 +10828,6 @@ impl Data {
+@@ -11988,32 +11988,6 @@ impl Data {
          }
      }
  
@@ -54,7 +54,7 @@ index 668a7df3c..f947d3dcb 100644
      /// variant of a generic enum, whose payload is typed by the template's variables — each
      /// instance has variants of its own.
 diff --git a/src/fnref.rs b/src/fnref.rs
-index 68222cba6..95bb4aa4d 100644
+index 35b6c9e41..39b60ef1b 100644
 --- a/src/fnref.rs
 +++ b/src/fnref.rs
 @@ -65,11 +65,7 @@ pub fn dispatch_arms(
@@ -71,10 +71,10 @@ index 68222cba6..95bb4aa4d 100644
          }
          // A closure-capturing lambda has a hidden `__closure` param as its last
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index 9717193f7..9f94191a7 100644
+index f5e4b2e6c..4c92e5317 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -10317,10 +10317,7 @@ extern crate loft;"
+@@ -10336,10 +10336,7 @@ extern crate loft;"
              }
          }
          for dnr in from..till {
@@ -86,11 +86,43 @@ index 9717193f7..9f94191a7 100644
                  continue;
              }
              if let Some(r) = reachable
+diff --git a/src/lower/apart_value.rs b/src/lower/apart_value.rs
+index 314cf24d1..27e6ba70e 100644
+--- a/src/lower/apart_value.rs
++++ b/src/lower/apart_value.rs
+@@ -1005,7 +1005,6 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
+             .filter(|d| {
+                 let def = data.def(*d);
+                 matches!(def.def_type, DefType::Function)
+-                    && !data.is_placeholder_instance(*d)
+                     && *def.code() != Value::Null
+                     && !matches!(def.returned().base(), Type::Iterator(_, _))
+                     && !value_fns.contains(d)
+diff --git a/src/opt/apart_records.rs b/src/opt/apart_records.rs
+index 7f2485710..48a50f338 100644
+--- a/src/opt/apart_records.rs
++++ b/src/opt/apart_records.rs
+@@ -458,7 +458,6 @@ fn candidate_twins(data: &Data, types: &HashMap<u32, RecLayout>) -> HashMap<u32,
+     let mut out = HashMap::default();
+     for (d, def) in data.definitions.iter().enumerate() {
+         if !matches!(def.def_type, DefType::Function)
+-            || data.is_placeholder_instance(d as u32)
+             || *def.code() == Value::Null
+         {
+             continue;
+@@ -586,7 +585,6 @@ fn owners_of(
+ ) -> Option<HashMap<u16, u32>> {
+     let def = data.def(f);
+     if !matches!(def.def_type, DefType::Function)
+-        || data.is_placeholder_instance(f)
+         || *def.code() == Value::Null
+     {
+         return None;
 diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
-index 840f615ac..87d28c68e 100644
+index a0195235a..9333aad9a 100644
 --- a/src/parser/monomorph.rs
 +++ b/src/parser/monomorph.rs
-@@ -587,17 +587,21 @@ impl Parser {
+@@ -602,17 +602,21 @@ impl Parser {
      /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
      /// at a real type is its own answer; one at a variable stands for its template.
      pub(super) fn placeholder_instance_template(&self, d: u32) -> u32 {

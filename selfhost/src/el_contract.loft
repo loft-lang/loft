@@ -15,6 +15,8 @@ use el_expressions;
 use own;
 use binds;
 use opt_split_table;
+use el_ir;
+use types;
 
 // One `[contract]` line per function from definition `from` on.
 pub fn report(e: el::El, from: integer) -> text {
@@ -35,7 +37,7 @@ pub fn report(e: el::El, from: integer) -> text {
         rebinds += if rebinds == "" { a.name } else { ",{a.name}" };
       }
     }
-    r += "[contract] fn={d.name} buffer={buffer} bufferless_text={bit(bufferless_text(d))} borrowed_view={bit(own::returns_borrowed_view(d))} fnref_return={bit(fnref_return(d))} adopts_fresh={bit(binds::return_adopts_fresh_store(d))} store_text_instance={bit(starts_with(d.name, "n_") && d.name.contains("@"))} one_of_several={bit(own::returns_one_of_several_args(e.b, d#index))} forwards_foreign={bit(callee_forwards_foreign_store(e, d))} buffer_exits=? wrapper={wrapper} rebinds={if rebinds == "" { "-" } else { rebinds }}\n";
+    r += "[contract] fn={d.name} buffer={buffer} bufferless_text={bit(bufferless_text(d))} borrowed_view={bit(own::returns_borrowed_view(d))} fnref_return={bit(fnref_return(d))} adopts_fresh={bit(binds::return_adopts_fresh_store(d))} store_text_instance={bit(starts_with(d.name, "n_") && d.name.contains("@"))} one_of_several={bit(own::returns_one_of_several_args(e.b, d#index))} forwards_foreign={bit(callee_forwards_foreign_store(e, d))} buffer_exits={exits_word(callee_buffer_exits(e, d#index, []))} wrapper={wrapper} rebinds={if rebinds == "" { "-" } else { rebinds }}\n";
   }
   r
 }
@@ -147,5 +149,247 @@ fn unspan(n: ir::Node) -> ir::Node {
   match n {
     NdSpan { inner } => unspan(inner),
     _ => n
+  }
+}
+
+// The `buffer_exits` word of a `[contract]` line: `fills`, `exits`, or `-` where the callee may
+// not be placed.
+fn exits_word(x: boolean?) -> text {
+  if x == null { "-" } else if x! { "exits" } else { "fills" }
+}
+
+// One assignment `Set(var, val)` of a callee's body, as `Parser::callee_buffer_exits` collects
+// them (`assigns`).
+struct BxAssign {
+  var: integer,
+  val: ir::Node,
+}
+
+// `Parser::callee_buffer_exits` (src/parser/expressions.rs): the callee half of "the buffer IS
+// the place".  `null` where the callee may not be placed, `false` where every exit answers its
+// hidden buffer, `true` where some exit answers a store the caller never owns instead (a global
+// constant, a parameter, a field of either), which the call site copies in after the call.
+// `active` holds the callees being asked, so a cycle declines.
+fn callee_buffer_exits(e: el::El, d_nr: integer, active: vector<integer>) -> boolean? {
+  if active.contains(d_nr) {
+    return null;
+  }
+  d = el::def(e, d_nr);
+  code = d.code[0] ?? ir::NdNull;
+  if mints_into_argument(e, d, code) {
+    return null;
+  }
+  bi = binds::hidden_return_buffer_attr(d);
+  if bi == null || bi! < 0 || bi! >= len(d.attributes) {
+    return null;
+  }
+  buf = var_named(d, d.attributes[bi!]!.name);
+  if buf < 0 {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  match el_ir::unspan(code) {
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return null; }
+  }
+  assigns: vector<BxAssign> = [];
+  exits: vector<ir::Node> = [];
+  collect_exits(code, assigns, exits);
+  if len(ops) > 0 && !(el_ir::unspan(ops[-1]!) is NdReturn) {
+    exits += [ops[-1]!];
+  }
+  active += [d_nr];
+  seen: vector<integer> = [];
+  foreign = false;
+  placed = len(exits) > 0;
+  for x in exits {
+    k = exit_kind(e, d, buf, assigns, seen, active, x);
+    if k == null {
+      placed = false;
+      break;
+    }
+    if k! {
+      foreign = true;
+    }
+  }
+  active.remove(len(active) - 1);
+  // `LOFT_NO_PLACE_FOREIGN_EXIT` declines the foreign-exit clause (`keys::place_foreign_exit_enabled`).
+  if placed && (!foreign || env_variable("LOFT_NO_PLACE_FOREIGN_EXIT") == null) { foreign } else { null }
+}
+
+// A callee that mints into one of its ARGUMENTS (`OpDatabase(<argument>, tp)` where `tp` is no
+// vector wrapper) is never placed: the store it fills is the caller's argument, not its buffer.
+fn mints_into_argument(e: el::El, d: ir::Definition, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpDatabase" && len(args) > 0 {
+        match el_ir::unspan(args[0]!) {
+          NdVar { n: w } => {
+            if w >= 0 && w < len(d.variables.variables) && d.variables.variables[w].argument {
+              wrapper = len(args) > 1 && match el_ir::unspan(args[1]!) {
+                NdInt { n: tp } => tp >= 0 && tp < 65536 && types::is_vector_wrapper(e.b.types, tp),
+                _ => false
+              };
+              if !wrapper {
+                return true;
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if mints_into_argument(e, d, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// Every `Set(var, val)` (into `assigns`) and every `return`'s value (into `exits`) of a body, in
+// the order `Value::any_node` meets them.
+fn collect_exits(n: ir::Node, assigns: vector<BxAssign>, exits: vector<ir::Node>) {
+  match n {
+    NdSet { var, inner } => { assigns += [BxAssign { var: var, val: inner }]; },
+    NdReturn { inner } => { exits += [inner]; },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    collect_exits(c, assigns, exits);
+  }
+}
+
+// The variable a name spells in `d`'s table (`Function::var`), -1 for none.
+fn var_named(d: ir::Definition, name: text) -> integer {
+  for v in d.variables.variables {
+    if v.name == name {
+      return v#index;
+    }
+  }
+  -1
+}
+
+// `BufferExits::exit_kind`: `false` the exit answers the buffer; `true` it may answer a store
+// the caller never owns instead; `null` anything else.
+fn exit_kind(e: el::El, d: ir::Definition, buf: integer, assigns: vector<BxAssign>, seen: vector<integer>, active: vector<integer>, v: ir::Node) -> boolean? {
+  if answers(e, d, buf, assigns, seen, active, v) {
+    return false;
+  }
+  match el_ir::unspan(v) {
+    NdReturn { inner } => exit_kind(e, d, buf, assigns, seen, active, inner),
+    NdBlock { block } => if len(block[0].operators) > 0 { exit_kind(e, d, buf, assigns, seen, active, block[0].operators[-1]!) } else { null },
+    NdInsert { items } => if len(items) > 0 { exit_kind(e, d, buf, assigns, seen, active, items[-1]!) } else { null },
+    NdIf { t, f } => {
+      a = exit_kind(e, d, buf, assigns, seen, active, t);
+      if a == null {
+        return null;
+      }
+      b2 = exit_kind(e, d, buf, assigns, seen, active, f);
+      if b2 == null {
+        return null;
+      }
+      a! || b2!
+    },
+    _ => if foreign(e, d, buf, assigns, seen, v) { true } else { null }
+  }
+}
+
+// `BufferExits::foreign`: a store the caller never owns — a global constant, a parameter other
+// than the buffer, a field of either, or a local every assignment of which is one.
+fn foreign(e: el::El, d: ir::Definition, buf: integer, assigns: vector<BxAssign>, seen: vector<integer>, v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdVar { n: x } => {
+      if x == buf {
+        return false;
+      }
+      if x >= 0 && x < len(d.variables.variables) && d.variables.variables[x].argument {
+        return true;
+      }
+      if seen.contains(x) {
+        return false;
+      }
+      found = false;
+      all = true;
+      seen += [x];
+      for a in assigns {
+        if a.var == x {
+          found = true;
+          if !foreign(e, d, buf, assigns, seen, a.val) {
+            all = false;
+            break;
+          }
+        }
+      }
+      seen.remove(len(seen) - 1);
+      found && all
+    },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpConstRef" {
+        true
+      } else if nm == "OpGetField" {
+        len(args) > 0 && foreign(e, d, buf, assigns, seen, args[0]!)
+      } else {
+        false
+      }
+    },
+    _ => false
+  }
+}
+
+// `BufferExits::answers`: the buffer itself, a local every assignment of which answers it, a
+// block's or both arms' tail that does, the field view `OpGetField(buf, 0, …)`, or a CHAIN call
+// handed the buffer to a callee that fills its own (`callee_fills_its_buffer`, on the same
+// `active` stack).
+fn answers(e: el::El, d: ir::Definition, buf: integer, assigns: vector<BxAssign>, seen: vector<integer>, active: vector<integer>, v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdVar { n: x } => {
+      if x == buf {
+        return true;
+      }
+      if seen.contains(x) {
+        return false;
+      }
+      found = false;
+      all = true;
+      seen += [x];
+      for a in assigns {
+        if a.var == x {
+          found = true;
+          if !answers(e, d, buf, assigns, seen, active, a.val) {
+            all = false;
+            break;
+          }
+        }
+      }
+      seen.remove(len(seen) - 1);
+      found && all
+    },
+    NdReturn { inner } => answers(e, d, buf, assigns, seen, active, inner),
+    NdBlock { block } => len(block[0].operators) > 0 && answers(e, d, buf, assigns, seen, active, block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && answers(e, d, buf, assigns, seen, active, items[-1]!),
+    NdIf { t, f } => answers(e, d, buf, assigns, seen, active, t) && answers(e, d, buf, assigns, seen, active, f),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetField" {
+        len(args) > 1 && is_zero(args[1]!) && answers(e, d, buf, assigns, seen, active, args[0]!)
+      } else if nm.starts_with("n_") {
+        len(args) > 0 && answers(e, d, buf, assigns, seen, active, args[-1]!) && callee_buffer_exits(e, def_nr, active) == false
+      } else {
+        false
+      }
+    },
+    _ => false
+  }
+}
+
+// The constant `0` under its spans: `OpGetField`'s field number of a vector wrapper's one field.
+fn is_zero(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdInt { n: x } => x == 0,
+    _ => false
   }
 }

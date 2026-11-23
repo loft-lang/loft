@@ -559,8 +559,6 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        // (A `const` field is an attribute as any other in the image: the constness is a check
-        // on the writes, which a program that has an image passed.)
         if lexeme || tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
@@ -617,6 +615,11 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         }
         a.nullable = nullable;
         a.pub_field = public;
+        // `Parser::mark_const_field` (src/parser/definitions.rs ~7615): a `const` field that is not
+        // computed is write-once, and the image says so (`Attribute::const_field`) for the
+        // passes and backends that read it.  A computed (virtual) field is refused above.
+        a.const_field = fixed;
+        a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
           match e.p.nodes[tn!] {
@@ -1528,6 +1531,25 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
     // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
     e.b.data.definitions[e.context].returned_const = ret_const;
+    // @PLN187 — where the declared result and each parameter's declared type name a user
+    // `type` alias (`parse_function`'s `returned_fact`, `pending_param_facts`).  A lambda's
+    // result keeps none, as `parse_lambda` records none: a lambda is called through its `fn`
+    // type, whose own fact the call reads, never by its definition.
+    e.b.data.definitions[e.context].returned_fact = if ret != null && !starts_with(name, "__lambda_") { alias_fact(e, ret!) } else { "" };
+    for pn in params {
+      match e.p.nodes[pn] {
+        SParam { name: an, tp } => {
+          if tp != null {
+            for a in el::def(e, e.context).attributes {
+              if a.name == an {
+                e.b.data.definitions[e.context].attributes[a#index].fact = alias_fact(e, tp!);
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    }
   } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
     // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
     // hint's, so its body is parsed against the bare result the first pass met.
@@ -2216,3 +2238,45 @@ pub fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos
   d
 }
 
+
+// @PLN187 `AliasFact::encode` of a declared type (src/data.rs): `""` plain, `a<n>` a user `type`
+// alias, `v<f>` a vector whose elements carry a fact, `t(<f>,…)` a tuple whose members do (`_`
+// a plain member).  The type is read off its syntax as `parse_type`, `sub_type` and
+// `parse_type_full` record it: the alias arm names a `type` definition outside the standard
+// library, a `vector<T>` carries its element's fact, any other collection holds records whose
+// fields carry their own.
+pub fn alias_fact(e: el::El, tn: integer) -> text {
+  f = fact_put(e, tn);
+  if f == "_" { "" } else { f }
+}
+
+fn fact_put(e: el::El, tn: integer) -> text {
+  match e.p.nodes[tn] {
+    STy { name, args } => {
+      if name == "vector" && len(args) == 1 {
+        inner = fact_put(e, args[0]!);
+        return if inner == "_" { "_" } else { "v{inner}" };
+      }
+      d = el::def_nr(e, name);
+      if d >= 0 && d < len(e.b.data.definitions) && el::def(e, d).def_type == el::DT_TYPE && el::def(e, d).source != el::STD_SOURCE {
+        "a{d}"
+      } else {
+        "_"
+      }
+    },
+    STyTuple { elems } => {
+      ms = "";
+      plain = true;
+      for m in elems {
+        f = fact_put(e, m);
+        if f != "_" {
+          plain = false;
+        }
+        ms += if ms == "" { f } else { ",{f}" };
+      }
+      if plain { "_" } else { "t({ms})" }
+    },
+    STyArg { tp } => if tp != null { fact_put(e, tp!) } else { "_" },
+    _ => "_"
+  }
+}

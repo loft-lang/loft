@@ -836,11 +836,13 @@ fn pooled(ctx: integer, vars: el_vars::Vars, def: ir::Definition, a_nr: integer,
   }
   for p in pool {
     if p.ctx == ctx && p.elem == key && p.k == k && p.var < len(vars.vars) {
+      // (`add_defaults` marks whatever `pooled_work_buffer` answers, a reused buffer too.)
+      el_vars::mark_caller_hidden_buf(vars, p.var, "add_defaults");
       return p.var;
     }
   }
   vr = el_vars::work_ref(vars, t);
-  vars.vars[vr].caller_hidden_buf = true;
+  el_vars::mark_caller_hidden_buf(vars, vr, "add_defaults");
   pool += [Pool { ctx: ctx, elem: key, k: k, var: vr }];
   vr
 }

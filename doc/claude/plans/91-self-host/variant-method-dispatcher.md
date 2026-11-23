@@ -1,5 +1,7 @@
 # @PLN91 — the enum-level dispatcher synthesised from per-variant methods (@F20) (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: its refusal no longer occurs.  Kept as the record of the subject.
+
 **The family:** "a variant method its enum answers nowhere (the @F20 dispatcher)": 6 programs,
 2 held by it alone (docs/09-enum, D-Scalar/1254-an-empty-stub-returns-its-types-default).  The
 others are 05-enums, F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability,

@@ -1,5 +1,7 @@
 # @PLN91 — a vector local rebound from a call that takes it, inside a loop: the buffer rotation (H7) (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: its refusal no longer occurs.  Kept as the record of the subject.
+
 **The family:** "a vector local rebound from a call that takes it" (9 sites; 2 programs held by
 it alone):
 ```
