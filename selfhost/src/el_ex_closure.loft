@@ -213,11 +213,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // expression, a fresh `___clos_N` record of it filled from the captured locals
 // (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
 // that record.
-// `collect_mutated_captures`: it runs before the closure record exists, so its candidate names
-// are the lambda's variables — every one but an argument, `__closure` and a `__work` buffer (the
-// over-inclusion Rust's comment calls "spurious work", 1a-parser.md § Rust suspects) — and the
-// marked ones are those the body writes (`walk_for_mutations`).  Before the body is
-// elaborated, the captures it writes by name (`writes_a_name`).
+// `collect_mutated_captures`: its candidates are the lambda's CAPTURES — the parser's capture
+// list, which the closure record is built from (Rust 11522b59e, @PLN91 R2: never the lambda's
+// whole variable table) — and the marked ones are those the body writes
+// (`walk_for_mutations`).  Before the body is elaborated, the captures it writes by name
+// (`writes_a_name`).
 fn rust_mutated_captures(e: el::El, d: integer, caps: vector<el::Capture>, body: integer) -> vector<text> {
   def = el::def(e, d);
   code = def.code[0] ?? ir::NdNull;
@@ -228,13 +228,11 @@ fn rust_mutated_captures(e: el::El, d: integer, caps: vector<el::Capture>, body:
     return out;
   }
   f = def.variables;
-  cand: vector<text> = [];
+  cand: vector<text> = [for cc in caps { cc.name }];
   cp = -1;
   for x in f.variables {
     if x.name == "__closure" {
       cp = x#index;
-    } else if !starts_with(x.name, "__work") && !x.argument {
-      cand += [x.name];
     }
   }
   walk_mutations(e, code, cand, cp, f, out);
