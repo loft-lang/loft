@@ -918,9 +918,9 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
             "{backend}: a lookup finds what the query populated: {stdout}"
         );
         assert!(
-            stdout.contains("ambiguous=0 why_empty=false"),
-            "{backend}: a wrapper with two keyed fields refuses rather than \
-             guessing which one a reference names: {stdout}"
+            stdout.contains("ambiguous=4 why_empty=true"),
+            "{backend}: a field of a wrapper with two keyed fields is queried as the \
+             collection its reference names: {stdout}"
         );
         assert!(
             stdout.contains("sound=true,true"),
