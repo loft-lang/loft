@@ -267,6 +267,9 @@ pub struct Vars {
   // The slot variable of a `&` link to a child record (`_slot_<name>_N`), per link, in step.
   pub slot_vars: vector<integer> = [],
   pub slot_of: vector<integer> = [],
+  // The cell a re-pointed `&` PARAMETER points at (`repoint_slot_param`), per parameter, in step.
+  pub repoint_cells: vector<integer> = [],
+  pub repoint_of: vector<integer> = [],
   // The tuple literal at the tail of a function answering a boxed tuple: its members are
   // written into the record, so a text member may be any value.
   pub boxed_tail: integer = -1,

@@ -907,6 +907,30 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
   }
 }
 
+// `child_rec_place`: the field a `&` read of an out-of-line child names — the `OpGetField` inside
+// `OpRefFromChildRec(OpGetField(_, _, kt))`, with a known type `kt` that is not 0 — or null.
+fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpRefFromChildRec" || len(args) == 0 {
+        return null;
+      }
+      f = el_ir::unspan(args[0]!);
+      match f {
+        NdCall { def_nr: g, args: ga } => {
+          if el::def(e, g).name != "OpGetField" {
+            return null;
+          }
+          kt = match el_ir::unspan(ga[2] ?? ir::NdNull) { NdInt { n } => n, _ => 0 };
+          if kt == 0 { null } else { args[0]! }
+        },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   el_ex_name::capture_target_placeholder(e, vars, target);
   // (`parse_var_inner`: Rust parses the target as an expression, so the target's variable —
@@ -1420,12 +1444,40 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if amp_rhs && match e.p.nodes[rhs!] { SUnary { e: o } => o != null && !(e.p.nodes[o!] is SName), _ => false } && !vars.amp_places.contains(v) {
     vars.amp_places += [v];
   }
+  // `repoint_slot_param` (`@FR-B-Ref-Repoint`, `@FR-F-ParamRef`): `slot = &slot.f` on a `&S`
+  // PARAMETER whose `S` is held out of line re-points the parameter to the FIELD — the field's
+  // address in a cell of this frame (`OpSlotTag`), the parameter pointing at the cell
+  // (`OpCreateStack`) — so a later read sees the child and a whole write is the field write.
+  // A parameter is no local slot link: its whole write (`slot = slot.right`) is a plain bind,
+  // as `slot_link_whole_write` declines an argument.
+  if amp_rhs && !e.first_pass && op == "=" && vars.vars[v].argument && binds::slot_link_def(e.b, el_vars::tp(vars, v)) != null {
+    rx = expression(e, vars, rhs!);
+    rfield = repoint_place(e, rx.code);
+    if rfield != null {
+      rd = binds::slot_link_def(e.b, el_vars::tp(vars, v))!;
+      cell = -1;
+      for ro in vars.repoint_of {
+        if ro == v {
+          cell = vars.repoint_cells[ro#index] ?? -1;
+        }
+      }
+      if cell < 0 {
+        cell = el_vars::create_unique(vars, "slot_{el_vars::name_of(vars, v)}", ir::TyReference { n: rd, dep: [] });
+        el_vars::set_skip_free(vars, cell, "repoint_slot_param");
+        vars.repoint_cells += [cell];
+        vars.repoint_of += [v];
+      }
+      el_vars::set_defined(vars, cell);
+      return ex(ir::NdInsert { items: [el_ir::v_set(cell, el_ir::cl(e, "OpSlotTag", [rfield!])), el_ir::v_set(v, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: cell }]))] }, ir::TyVoid);
+    }
+    // (Any other place is bound as it always is; the read above minted nothing.)
+  }
   // A link to a CHILD record that is written whole later (`cur = &n.next; … cur = cur.next`):
   // the bind holds the child's slot in `_slot_<name>_N` and reads the child through it; the
   // write moves the next child into that slot (`OpMoveChildRec`) and reads it again.  The
   // first pass records the write; the second pass's bind acts on it.
   lkey = e.context * 65536 + v;
-  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) {
+  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) && !vars.vars[v].argument {
     e.slot_links += [lkey];
   }
   if amp_rhs && !e.first_pass && op == "=" && e.slot_links.contains(lkey) {
