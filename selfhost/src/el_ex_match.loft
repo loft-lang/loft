@@ -4144,6 +4144,8 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       cond = el_ir::v_if(cond, tbe.code, ir::NdBoolean { b: false });
     } else if t != "_" {
       bv = pattern_bind(vars, t, named_t, names);
+      // (A tail element is a view into the subject as a head one is: `mark_slice_element_view`.)
+      slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     }
   }
