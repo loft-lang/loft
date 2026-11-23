@@ -1822,9 +1822,12 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   elm = -1;
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
-    // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
-    // owning record frees — the element's own free is suppressed.)
-    el_vars::set_skip_free(vars, elm, "parse_vector_inner");
+    // (`parse_vector`'s `is_field` — the place is a field read (`OpGetField`): the element is a
+    // reference INTO the field's store, which the owning record frees, its own free suppressed.
+    // Another place — an element, a local viewing a vector — keeps the element's free.)
+    if match el_ir::unspan(p.code) { NdCall { def_nr: pfd } => el::def(e, pfd).name == "OpGetField", _ => false } {
+      el_vars::set_skip_free(vars, elm, "parse_vector_inner");
+    }
   }
   r = holder;
   at = ir::NdVar { n: elm };
