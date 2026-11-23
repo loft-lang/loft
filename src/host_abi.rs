@@ -98,7 +98,7 @@ pub struct HostTable {
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 6;
+pub const HOST_ABI: u32 = 7;
 
 /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
 /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set
@@ -153,6 +153,9 @@ pub struct HostedTable {
     pub store_free: unsafe extern "C" fn(stores: *mut Stores, nr: u32),
     /// The unit's `LOFT_HOST_STORE_TAIL`, which `store::HOST_STORE_TAIL` must equal.
     pub store_tail: u32,
+    /// The program's directory (`Stores::source_dir`): its bytes, their count in `*len` —
+    /// what `source_dir()` answers and a relative path resolves against.
+    pub source_dir: unsafe extern "C" fn(stores: *mut Stores, len: *mut usize) -> *const u8,
 }
 
 /// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its

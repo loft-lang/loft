@@ -1600,6 +1600,7 @@ typedef struct {
     uint32_t (*store_new)(void *stores);
     void (*store_free)(void *stores, uint32_t nr);
     uint32_t store_tail;
+    const unsigned char *(*source_dir)(void *stores, size_t *len);
 } loft_hosted_table;
 static const loft_hosted_table *loft_hosted = 0;
 static LOFT_TLS void *loft_host_stores = 0;

@@ -217,7 +217,16 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     store_new: hosted_store_new,
     store_free: hosted_store_free,
     store_tail: crate::store::HOST_STORE_TAIL as u32,
+    source_dir: hosted_source_dir,
 };
+
+/// The program's directory, for a hosted unit's `source_dir()` and its relative paths.
+unsafe extern "C" fn hosted_source_dir(stores: *mut Stores, len: *mut usize) -> *const u8 {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &*stores };
+    unsafe { *len = stores.source_dir.len() };
+    stores.source_dir.as_ptr()
+}
 
 /// The table's address and length, and the store counter, for a hosted unit's `loft_stores`.
 unsafe extern "C" fn hosted_table(stores: *mut Stores, n: *mut u32, serial: *mut u64) -> *mut u8 {
