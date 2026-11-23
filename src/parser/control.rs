@@ -13592,7 +13592,26 @@ impl Parser {
         let nullable_vector_local = !is_work_ref
             && matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
             && (self.vars.tp(v).peel_optional().1 || n.starts_with("__ncc_"));
+        // A local renamed onto the buffer on PASS 2 for the first time, whose value lives in a
+        // `__vdb` backing of its own (loft#2623: `w = v; w` in a function declared above the
+        // struct its result names, so pass 1 could not resolve the return and never got here).
+        // On pass 1 such a local has no backing yet — `vector_db` mints on pass 2 — and the
+        // rename that pass 1 makes leaves the body nothing to mint.  Renamed on pass 2, the
+        // body has already re-pointed the local at its backing's fresh store: that store is
+        // what the caller gets while its own buffer is dropped, and nothing frees it.  The
+        // BACKING itself may still be renamed on pass 2 — its `OpDatabase` then mints into the
+        // caller's buffer (`a-vector-delivered-into-its-own-buffer-is-not-copied`) — so only a
+        // local that VIEWS one takes the `Bind` rung below, which copies it into the buffer.
+        let renamed_too_late = !self.first_pass
+            && !self.vars.is_argument(v)
+            && self
+                .vars
+                .tp(v)
+                .depend()
+                .iter()
+                .any(|&d| d < self.vars.count() && self.vars.name(d).starts_with("__vdb_"));
         let allow_rename = !(bound_already
+            || renamed_too_late
             || nullable_vector_local
             || wrong_shape_for_buffer
             || reassigned
