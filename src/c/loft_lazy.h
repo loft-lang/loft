@@ -228,7 +228,10 @@ static struct {
 } loft_sq;
 
 static int loft_sq_resolve(char *why, size_t cap) {
-    static const char *const names[] = { "winsqlite3.dll", "libsqlite3.so.0", 0 };
+    /* Windows' own first, by the name Windows uses (loft#770); then the soname and its macOS
+     * spellings (`platform::lib_variants`), as `sql_source::SqliteApi::ensure_loaded` loads it. */
+    static const char *const names[] = { "winsqlite3.dll", "libsqlite3.so.0", "libsqlite3.0.dylib",
+                                         "libsqlite3.dylib", 0 };
     static const char *const syms[] = { "sqlite3_open_v2", "sqlite3_prepare_v2", "sqlite3_step", "sqlite3_column_count",
                                         "sqlite3_column_type", "sqlite3_column_int64", "sqlite3_column_double",
                                         "sqlite3_column_text", "sqlite3_bind_int64", "sqlite3_bind_text",
@@ -252,7 +255,7 @@ static int loft_sq_resolve(char *why, size_t cap) {
             void *p = h ? loft_dl_sym(h, syms[i]) : 0;
             if (!p) p = loft_dl_self_sym(syms[i]);
             if (!p) {
-                snprintf(why, cap, "sqlite is not installed — `%s` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0)",
+                snprintf(why, cap, "sqlite is not installed — `%s` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0, libsqlite3.dylib)",
                          syms[i]);
                 loft_sq.ok = 0;
                 break;
@@ -261,7 +264,7 @@ static int loft_sq_resolve(char *why, size_t cap) {
         }
     }
     if (!loft_sq.ok && !why[0])
-        snprintf(why, cap, "sqlite is not installed — `sqlite3_open_v2` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0)");
+        snprintf(why, cap, "sqlite is not installed — `sqlite3_open_v2` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0, libsqlite3.dylib)");
     return loft_sq.ok;
 }
 
