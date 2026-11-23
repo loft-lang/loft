@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	d5b0b3076eed6780b24a3fd2434f67e3f311a52e
 
-layer	elab	agree	1398	of	2138
+layer	elab	agree	1401	of	2138
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -14191,7 +14191,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13323	of	18549
+layer	elab-pass1	agree	13324	of	18549
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -20155,6 +20155,7 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_plain1327
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_branch_over_the_same_opaque_target
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_closure_through_a_parameter_does_not_free_the_callers_vector
+elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_named_function_parameter_is_unmoved
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_dense_parameter_spelling
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_mint_arm_costs_no_store_per_call
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_same_call_in_the_frame_that_owns_the_closure
