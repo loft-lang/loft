@@ -896,7 +896,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // the place is rooted at (`lhs_root_var`) for the `lost-write` lint (`mark_user_appended`).
   if op == "+=" {
     pl = append_place(e, vars, target);
-    if pl.root >= 0 && (el_types::is_collection(el_types::base(pl.tp)) || el_types::base(pl.tp) is TyText) {
+    // (`data::is_collection`: a `&` link is looked through to a vector only — `is_keyed` reads
+    // the type itself, so a link to a keyed collection is none.)
+    coll = match el_types::base(pl.tp) { TyRefVar { inner: li } => el_types::base(li) is TyVector, _ => el_types::is_collection(el_types::base(pl.tp)) };
+    if pl.root >= 0 && (coll || el_types::base(pl.tp) is TyText) {
       el_vars::mark_user_appended(vars, pl.root, "parse_assign_inner");
     }
   }

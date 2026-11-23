@@ -1754,7 +1754,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
     // Built after the `else`, the arm takes the `else`'s type (`true_type = false_type`).
-    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp);
+    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false);
   } else if el_ex_pattern::syntax_tail_empty(e, other!) && el_types::base(t.tp) is TyVector {
     f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid);
   }

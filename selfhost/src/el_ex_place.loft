@@ -1726,6 +1726,12 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   match ev_place {
     NdCall { def_nr: evd, args: eva } => {
       if el::def(e, evd).name == "OpGetVector" && len(eva) == 3 && el_ex_pattern::push_op(ev_inner) != "" && el_convert::plain_scalar(ev_inner) && len(ev_items) > 0 && len([for evx in ev_items if (e.p.nodes[evx] is SRepeat) { 1 }]) == 0 {
+        // (`parse_vector` mints the literal's element temp on both passes before its items —
+        // `unique_elm_var`, borrowing what the place borrows, the outer vector's root — and
+        // `is_field` suppresses its free: it is a reference into the element's store.)
+        evr = place_root(e, el_ir::unspan(eva[0]!));
+        evelm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if evr >= 0 { [evr] } else { [] } });
+        el_vars::set_skip_free(vars, evelm, "parse_vector_inner");
         evals: vector<Ex> = [for evx2 in ev_items { el_ex_assign::expression(e, vars, evx2) }];
         if e.first_pass {
           return ex(ir::NdNull, ir::TyVoid);
@@ -2417,6 +2423,10 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // (`materialize_iterator` mints the element temps for a `+=` as for a bind: the element
+    // borrowing the destination, `unique_elm_var`, and the per-element read, `slice_elm`.)
+    el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    el_vars::create_unique(vars, "slice_elm", selem);
     sinit = ir::NdNull;
     ssubj = ir::NdNull;
     match sx.code { NdIter { create, init: ii } => { ssubj = create; sinit = ii; }, _ => {} }
@@ -3259,8 +3269,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             cvw = match el_ir::unspan(args[0]) { NdVar { n: cvn } => cvn, _ => -1 };
             if cvw >= 0 && cvw != v && viewers.contains(cvw) {
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
+              // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
+              // value is a projection call; a whole local staged is a copy that owns its store.)
               cvtmp = el_vars::work_ref(vars, cvt);
-              el_vars::set_skip_free(vars, cvtmp, "parse_object_field");
               staged += [el_ir::v_set(cvtmp, args[0]!)];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
             }

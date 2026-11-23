@@ -3180,6 +3180,19 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     // `__ncc_N`: the literal's buffer is minted here on the first pass too, its code unused.)
     lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []);
     d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
+    // (`build_null_coalesce_default_inner` decides the literal's flags on the first pass too, on
+    // that pass's subject type — the flags are cumulative: a subject that borrows nothing yet
+    // leaves the buffer never freed, and the second pass then keeps the backing's free.)
+    // (A loft call's first-pass answer borrows what its callee's own first pass declared — its
+    // hidden buffer, where the callee answers a local — which this port's first pass leaves
+    // off the call; such a subject takes neither arm there.)
+    callee_borrows = match el_ir::unspan(x.code) {
+      NdCall { def_nr: cd } => buffered_loft_call(e, x.code) && len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0,
+      _ => false
+    };
+    if e.first_pass && !fresh_native_call(e, x.code) && !callee_borrows {
+      register_default_literal(e, vars, lit, if x.code is NdVar { x.tp } else { el_types::base(x.tp) });
+    }
   }
   // A keyed subject's `[]` is that collection, empty, in a `__kvb_N` of its own (`parse_vector`'s
   // keyed arm against the subject's type): nulled at the head, given its store.
