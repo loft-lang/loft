@@ -33,8 +33,6 @@ static struct {
     uint32_t ymd;
 } loft_lg;
 
-static int loft_had_fatal = 0;
-
 static char *loft_log_dup(const char *s, size_t n) {
     char *d = (char *) malloc(n + 1);
     if (!d) { fputs("loft: out of memory\n", stderr); abort(); }
