@@ -18,8 +18,8 @@ divergence between the two runtimes with its decision, is
 - [`p5-design.md`](p5-design.md) — P5 (a library's own C artifact, adopted by any program): the
   type crossings by key, the open unit, the shared shim, and the sub-phases.
 - [`p6-design.md`](p6-design.md) — P6 (the release ships C units; no library is built through
-  rustc): the four routes to a Rust-built binary, which were removed, the guards, and the open
-  route.
+  rustc): the four routes to a Rust-built binary, which were removed, the guards, and route 3's
+  move to @PLN225.
 - [`p7-design.md`](p7-design.md) — P7 (one debugger over both runtimes): the invariant, the
   hand-over at a loop head, and `loft debug --native`.
 - [`handoff-2026-11-22.md`](handoff-2026-11-22.md) — where P5 stands and how to resume.
