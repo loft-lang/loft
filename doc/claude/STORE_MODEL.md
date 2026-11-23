@@ -106,15 +106,15 @@ The full operation-by-operation pairing (179 operations: 128 SAME, 44 DIVERGES, 
 is on the plan, [loft-lang/plans#206](https://github.com/loft-lang/plans/issues/206) (the two
 pairing comments).  The families, and where each lives:
 
-| Family | Interpreter | C runtime |
-|---|---|---|
-| claim, free, grow, coalesce, park | `store.rs`, `database/allocation.rs` | `loft_store.h` |
-| records, copies, claims of a copy | `database/structures.rs`, `copy_claims` | `loft_rt.h` |
-| vectors, slices, reverse | `vector.rs`, `database/structures.rs` | `loft_rt.h` |
-| text fields | `database/structures.rs` | `loft_rt.h` |
-| keyed: hash, index, sorted, radix | `hash.rs`, `tree.rs`, `state/io.rs` | `loft_keyed.h`, `loft_hash.h`, `loft_btree.h` |
-| locks, foreign stores, images | `store.rs`, `database/` | `loft_store.h`, `loft_image.h` |
-| FFI bridging (`bridge_args`) | `extensions.rs`, `database/structures.rs` | `c/mod.rs` (emitted) |
+| Family | Interpreter | C runtime | The rules ([formal/heap.md](formal/heap.md), [formal/allocator.md](formal/allocator.md)) |
+|---|---|---|---|
+| claim, free, grow, coalesce, park | `store.rs`, `database/allocation.rs` | `loft_store.h` | `@FR-H-Alloc`, `@FR-H-Claim`, `@FR-H-Free`, `@FR-H-FreeTwice`, `@FR-H-KeepRoom`, `@FR-H-Park` |
+| records, copies, claims of a copy | `database/structures.rs`, `copy_claims` | `loft_rt.h` | `@FR-H-NewRec`, `@FR-H-Copy`, `@FR-H-Read`, `@FR-H-Write` |
+| vectors, slices, reverse | `vector.rs`, `database/structures.rs` | `loft_rt.h` | `@FR-H-Index`, `@FR-H-Stride`, `@FR-H-WriteOOB`, `@FR-H-RootExtent` |
+| text fields | `database/structures.rs` | `loft_rt.h` | `@FR-H-TextReplace` |
+| keyed: hash, index, sorted, radix | `hash.rs`, `tree.rs`, `state/io.rs` | `loft_keyed.h`, `loft_hash.h`, `loft_btree.h` | `@FR-H-SwapKeyed` |
+| locks, foreign stores, images | `store.rs`, `database/` | `loft_store.h`, `loft_image.h` | `@FR-H-WriteLocked`, `@FR-H-SwapIn`, `@FR-H-Handle` |
+| FFI bridging (`bridge_args`) | `extensions.rs`, `database/structures.rs` | `c/mod.rs` (emitted) | — |
 
 ## Divergences
 

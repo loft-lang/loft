@@ -176,8 +176,7 @@ dominates), so the direct speedup is modest (~1s).  The bigger
 win is a **unified cache**: every `cargo` invocation from this
 checkout uses the same `RUSTFLAGS`, so alternating between
 `cargo build`, `cargo test`, and `make iter` shares one cache
-key.  Without this pin, ad-hoc `RUSTFLAGS=...` overrides force
-rebuilds.
+key.  Without this pin, ad-hoc `RUSTFLAGS=...` overrides force rebuilds.
 
 First-time setup on Linux x64: `sudo apt-get install mold`.
 The CI workflow installs mold on its ubuntu runner.  macOS and
@@ -855,8 +854,9 @@ the raise is dead on every 64-bit target and live only on wasm32. loft#950 was f
 `--html` page traps; the interpreter, `--native` and `--native-wasm` are all green"*, which
 reads as a browser-specific defect. The same corrupted `rec` on a 64-bit build computes a
 representable offset and reads whatever lies there — the silent-wrong half of the same bug.
-Before believing "only the browser", ask whether the other targets have a guard that could
-have spoken; `LOFT_STRICT_STORES=1` is the one that speaks on all of them.
+Before believing "only the browser", ask whether the other targets have a guard that could have
+spoken; `LOFT_STRICT_STORES=1` speaks on all of them, a C build included, as `LOFT_COPY_CHECK`
+and `LOFT_LEAK_SITES` do (C_BACKEND.md § What switching to C loses).
 
 ## Using the Test Framework for Quick Iteration
 

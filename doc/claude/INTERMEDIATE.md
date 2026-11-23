@@ -698,11 +698,10 @@ both of them:
   which functions compile (`native_gate`), and the names a library gives its ids (`lib_ids`).
 - **The layout both link** lives in the runtime (`host_abi`).
 - **A decision that needs both halves** is composed by the driver.  The interpreter adopts
-  an artifact (`native_adopt::adopt_shared_cdylib`), the Rust writer builds one
-  (`native_lib::build_shared_artifact`), and `native_artifact::cached_or_build_shared_cdylib`
-  puts the two together.  A hosted C unit (the default; C_BACKEND.md § A library as a hosted unit) is the
-  other build the driver composes: it parses the library alone
-  (`native_artifact::parse_library_alone`) and hands the tables to `c::hosted::build_artifact`.
+  an artifact (`native_adopt::adopt_shared_cdylib`), the C backend builds one — a hosted C unit
+  (C_BACKEND.md § A library as a hosted unit) from the library parsed alone
+  (`native_artifact::parse_library_alone`, `c::hosted::build_artifact`) — and
+  `native_artifact::cached_or_build_shared_cdylib` puts the two together.
   In the same way, `introspect`'s Rust section is a function that
   the driver hands in (`introspect::Options::rust`).
 

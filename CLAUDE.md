@@ -141,7 +141,7 @@ src/main.rs            CLI; loads default/ then user file
   an installed copy**, which can lag `origin/main` ([LIBRARY_AUTHORING.md](doc/claude/LIBRARY_AUTHORING.md) § The library contract).
 - **Three optimisation tiers, kept apart** (NATIVE.md § Optimisation tiers): a perf number taken on
   the semantics build (`--native`, the test runner) is not a measurement of what ships (`--ship`,
-  every library cdylib: `-C opt-level=3 -C codegen-units=1`).
+  every library's C unit: `-O3`).
 - **User-facing output** (anything a command PRINTS): silence when nothing needs acting
   on; no plan tags / phase names / "not yet implemented" in it; the full explanation only
   on failure. loft is meant to be BORING — noticed only in its absence

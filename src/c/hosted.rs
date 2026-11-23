@@ -629,7 +629,9 @@ pub fn build_artifact(
     let ran = crate::platform::process::Spawn::new(crate::platform::process::Program::search(&cc))
         .args(poison)
         .args(plant)
-        .args(["-std=c11", "-O2", "-shared", "-fPIC", "-w", "-o"])
+        // The C ship tier's optimisation: a unit is what a library ships (LIBRARY_AUTHORING.md
+        // rule 20), so its numbers are the shipped ones.
+        .args(["-std=c11", "-O3", "-shared", "-fPIC", "-w", "-o"])
         .arg(&tmp)
         .arg(&c)
         .arg("-lm")
