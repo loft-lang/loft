@@ -381,7 +381,7 @@ fn rotate_list(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, in_loop: b
     }
     if partner < 0 {
       partner = el_vars::work_ref(vars, el_types::without_deps(el_vars::tp(vars, buf)));
-      vars.vars[partner].caller_hidden_buf = true;
+      el_vars::mark_caller_hidden_buf(vars, partner, "rotate_retbufs_list");
       vars.rot_partners += [buf * 65536 + partner];
     }
     out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: buf }, ir::NdVar { n: partner }]), el_ir::cl(e, "OpPutRef", [ir::NdVar { n: partner }, ir::NdVar { n: target }])];

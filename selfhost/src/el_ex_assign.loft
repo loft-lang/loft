@@ -856,7 +856,10 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
         // `lhs_root_var` of the lowered target is `__closure`.)
         for c in e.captures {
           if c.name == name {
-            return AppendPlace { root: e.closure_var, tp: c.tp };
+            // (A cell the closure writes through is its `value` field's place: the field's own
+            // type, as the lowered target's is.)
+            ccd = el_cell::cell_of(e, c.tp);
+            return AppendPlace { root: e.closure_var, tp: if ccd >= 0 { el::def(e, ccd).attributes[0]!.typedef[0] ?? ir::TyVoid } else { c.tp } };
           }
         }
       }
@@ -893,6 +896,19 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
 }
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  el_ex_name::capture_target_placeholder(e, vars, target);
+  // (`parse_var_inner`: Rust parses the target as an expression, so the root of a projected
+  // place — `t.0`, `g.by_k`, `v[i].f` — is a user's mention of its variable, parameters
+  // included: marked on every route, whichever lowering the place then takes.)
+  if !(e.p.nodes[target] is SName) {
+    trn = target_root_name(e, target);
+    if trn != "" {
+      trv = el_vars::var(vars, trn);
+      if trv >= 0 && el_vars::name_of(vars, trv) == trn {
+        el_vars::mark_user_named(vars, trv, "parse_var_inner");
+      }
+    }
+  }
   // loft#1840 — the program's own append into a collection or a text, recorded on the local
   // the place is rooted at (`lhs_root_var`) for the `lost-write` lint (`mark_user_appended`).
   if op == "+=" {
@@ -2562,4 +2578,15 @@ pub fn ended_binding(vars: el_vars::Vars, name: text) -> integer {
   now = el_vars::current_loop(vars);
   was = el_vars::binding_loop(vars, known);
   if el_vars::was_loop_var(vars, known) || !(now >= 0 && was >= 0 && now != was) { known } else { -1 }
+}
+
+// The bare name a projected place (`t.0`, `p.a`, `p.v[i]`) is rooted at, or "".
+fn target_root_name(e: el::El, n: integer) -> text {
+  match e.p.nodes[n] {
+    SName { name, member } => if member == "" { name } else { "" },
+    SMember { e: re, call } => if re == null || call { "" } else { target_root_name(e, re!) },
+    SIndex { e: ie } => if ie == null { "" } else { target_root_name(e, ie!) },
+    STupleGet { e: te } => if te == null { "" } else { target_root_name(e, te!) },
+    _ => ""
+  }
 }

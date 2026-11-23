@@ -543,6 +543,13 @@ pub fn set_captured(v: Vars, nr: integer, why: text) {
   v.vars[nr].captured = true;
 }
 
+// `Function::mark_caller_hidden_buf`: the work ref is a hidden buffer the caller hands a
+// callee (nulled in the preamble whatever its deps say).
+pub fn mark_caller_hidden_buf(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "caller_hidden_buf", nr, why);
+  v.vars[nr].caller_hidden_buf = true;
+}
+
 // `Function::mark_user_appended`: the program's own `+=` wrote into the variable's content.
 pub fn mark_user_appended(v: Vars, nr: integer, why: text) {
   trace_flag(v, "user_appended", nr, why);
