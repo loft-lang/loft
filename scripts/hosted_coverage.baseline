@@ -2,21 +2,3 @@
 # (scripts/hosted_coverage.py; only shrinks).  <package>\t<function>\t<why>
 regex	split_on	an iterator
 script	walk	an iterator
-zttext	anchor_at	parameter `resolve` of a shape the bridge does not carry
-zttext	apply_bidi	parameter `resolve` of a shape the bridge does not carry
-zttext	caret_at	parameter `resolve` of a shape the bridge does not carry
-zttext	flow_layout	parameter `resolve` of a shape the bridge does not carry
-zttext	flow_layout_full	parameter `resolve` of a shape the bridge does not carry
-zttext	layout_columns	parameter `resolve` of a shape the bridge does not carry
-zttext	layout_flow_images	parameter `resolve` of a shape the bridge does not carry
-zttext	layout_page	parameter `resolve` of a shape the bridge does not carry
-zttext	layout_page_columns	parameter `resolve` of a shape the bridge does not carry
-zttext	layout_tokens_from	parameter `resolve` of a shape the bridge does not carry
-zttext	line_assignment	parameter `resolve` of a shape the bridge does not carry
-zttext	lines_greedy	parameter `resolve` of a shape the bridge does not carry
-zttext	materialise_viewport	parameter `resolve` of a shape the bridge does not carry
-zttext	next_line	parameter `resolve` of a shape the bridge does not carry
-zttext	patch	parameter `resolve` of a shape the bridge does not carry
-zttext	place_line	parameter `resolve` of a shape the bridge does not carry
-zttext	sel_rects	parameter `resolve` of a shape the bridge does not carry
-zttext	token_width	parameter `resolve` of a shape the bridge does not carry

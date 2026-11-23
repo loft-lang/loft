@@ -99,6 +99,14 @@ pub fn made_by(mk: fn(text, integer) -> Bag, n: text) -> integer {
   b.total
 }
 
+// A record a function value answers, lifted out of the loop: a unit frees the lifted store
+// rather than parking it for the next call — no program end drains a unit's parks.
+pub fn styled(resolve: fn(integer) -> Bag, w: fn(Bag) -> integer, k: integer) -> integer {
+  t = 0;
+  for i in 0..k { t += w(resolve(i)); }
+  t
+}
+
 // A tuple argument: its leaves cross one slot each, and the unit builds its own tuple.
 pub fn spread(p: (integer, float, boolean), k: integer) -> float {
   if p.2 { (p.0 * k) as float * p.1 } else { 0.0 - p.1 }

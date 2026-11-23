@@ -12,6 +12,10 @@ fn plus3(x: integer) -> integer { x + 3 }
 
 fn shout(t: text) -> text { "{t}{t}" }
 
+fn mk(k: integer) -> Bag { bag_new("m", k) }
+
+fn tot(b: Bag) -> integer { b.total }
+
 // A store freed below one still alive, its words negative: the unit makes its constants
 // (`WIDTHS`) at its first call, in the store the interpreter hands it next — this hole.
 fn churn(k: integer) -> vector<integer> {
@@ -66,6 +70,8 @@ fn main() {
   assert(twice_by(fn(x: integer) -> integer { x * kf }, 2) == 98, "lambda");
   assert(wrapped(shout, "ab") == "[abab|ab!ab!]", "wrapped {wrapped(shout, "ab")}");
   assert(made_by(bag_new, "mk") == 7, "made_by {made_by(bag_new, "mk")}");
+  // records a function value answers, each weighed by another: 0 + 1 + 2 + 3
+  assert(styled(mk, tot, 4) == 6, "styled {styled(mk, tot, 4)}");
   // a tuple handed in: 3 * 4 * 0.5 = 6, and -0.25 when its flag is off
   assert(spread((3, 0.5, true), 4) == 6.0 && spread((3, 0.25, false), 4) == 0.0 - 0.25, "spread");
   // e^-3.726127510713071 = 0.024085927969257424 (2^32 times: 103448272.92177233…); E to that

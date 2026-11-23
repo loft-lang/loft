@@ -133,6 +133,9 @@ static void loft_la_set_ref(unsigned char *a, loft_ref r) {
 static int loft_hosted_ready = 0;
 static void *loft_host_enter(void *stores) {
     void *prev = loft_host_stores;
+    /* A store parked for a function's next call would outlive the bridge call in a slot the
+     * interpreter never sees, and no program end drains it: a unit frees what it would park. */
+    loft_no_park = 1;
     loft_host_stores = stores;
     loft_host_sync();
     if (!loft_hosted_ready) {
