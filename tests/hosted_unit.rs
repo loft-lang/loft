@@ -125,6 +125,8 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   A SABOTAGE (2026-11-23): with `exp` a power of E again (`default/01_code.loft`), the unit's
 ///   C `pow` and the interpreter answer `decay` apart.  WITNESS: "the answer's bits are
 ///   0x3f98a9fb43afe516 interpreted, 0x3f98a9fb43afe518 compiled".
+///   A SABOTAGE (2026-11-23): with every leaf of a tuple argument read from its first slot
+///   (`hosted::bridge`), `spread` answers wrong.  WITNESS: "assertion failed: spread".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
