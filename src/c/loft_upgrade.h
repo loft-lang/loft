@@ -1278,13 +1278,46 @@ static int loft_um_variants(loft_upmap *m, uint32_t at, const loft_ln *on, const
 
 static int loft_um_sorted_kind(uint8_t k) { return k == LOFT_LI_SORTED || k == LOFT_LI_ORDERED; }
 
+static int loft_um_ident(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+
+/* The next character of `s` from `*i` with its library qualifiers skipped (`unqualified` in
+ * src/database/upgrade_map.rs): an `ident::` whose identifier starts lower-case or with `_` and
+ * follows no identifier character.  0 at the end. */
+static char loft_um_unq_next(const char *s, size_t *i) {
+    for (;;) {
+        size_t at = *i;
+        if (!s[at]) return 0;
+        if ((at == 0 || !loft_um_ident(s[at - 1])) && ((s[at] >= 'a' && s[at] <= 'z') || s[at] == '_')) {
+            size_t j = at;
+            while (s[j] && loft_um_ident(s[j])) j++;
+            if (s[j] == ':' && s[j + 1] == ':') { *i = j + 2; continue; }
+        }
+        *i = at + 1;
+        return s[at];
+    }
+}
+
+/* `same_type_name`: two layout names of one type — equal, or equal once every library qualifier
+ * is removed.  The qualifier only separates two libraries' same-named types in one program's
+ * table (the first definer keeps the bare name), so the name a store recorded depends on what
+ * its writer loaded; the fields are compared after this. */
+static int loft_um_one_type(const char *a, const char *b) {
+    if (strcmp(a, b) == 0) return 1;
+    size_t i = 0, j = 0;
+    for (;;) {
+        char x = loft_um_unq_next(a, &i), y = loft_um_unq_next(b, &j);
+        if (x != y) return 0;
+        if (!x) return 1;
+    }
+}
+
 /* `Deriver::how`: how a value of old node `on` becomes one of new node `nn`, written into pair
  * `at`; 0 when refused. */
 static int loft_um_how(loft_upmap *m, uint32_t at, uint16_t old, uint16_t nw, const char *path) {
     const loft_ln *on = &m->od->n[old], *nn = &m->nd->n[nw];
     const char *old_name = on->name, *new_name = nn->name;
     if ((on->kind == LOFT_LN_RECORD && nn->kind == LOFT_LN_RECORD) || (on->kind == LOFT_LN_EVALUE && nn->kind == LOFT_LN_EVALUE)) {
-        if (strcmp(old_name, new_name) != 0) {
+        if (!loft_um_one_type(old_name, new_name)) {
             loft_ub why = { 0, 0, 0 };
             loft_ub_printf(&why, "now holds a `%s` where the store holds a `%s`", new_name, old_name);
             loft_um_refuse(m, path, loft_ub_str(&why));
@@ -1313,7 +1346,7 @@ static int loft_um_how(loft_upmap *m, uint32_t at, uint16_t old, uint16_t nw, co
         return 1;
     }
     if (on->kind == LOFT_LN_CHOICES && nn->kind == LOFT_LN_CHOICES) {
-        if (strcmp(old_name, new_name) != 0) {
+        if (!loft_um_one_type(old_name, new_name)) {
             loft_ub why = { 0, 0, 0 };
             loft_ub_printf(&why, "now holds a `%s` where the store holds a `%s`", new_name, old_name);
             loft_um_refuse(m, path, loft_ub_str(&why));

@@ -129,6 +129,7 @@ unchanged is copied raw.
 | field removed | not copied, nor the heap it owned |
 | number widened (narrow to wide integer, single to double float) | converted; a null stays null (`@FR-L-Null`) |
 | number narrowed, a field's kind changed | **refused**, naming the field and both types |
+| a field now holds a type of another name | **refused**, naming both types; a library qualifier one side lacks (`assets::Scene` / `Scene`) is the same name — the qualifier only tells two libraries' same-named types apart in one program, so a store written beside a second `Scene` names it differently from a program that loads one, and the fields decide |
 | enum variant added / removed | nothing to do / a value of the removed variant becomes null |
 | a field removed and one added in the same type | **refused** as a rename: do it in two steps (below) |
 | key of a keyed collection changed | rebuilt by insertion under the new key |
