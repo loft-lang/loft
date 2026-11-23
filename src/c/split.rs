@@ -39,9 +39,10 @@ use std::fmt::Write as _;
 /// Runtime-call sites per function above which `cl /O1`'s time stops being linear (@PLN212 P0).
 const DEFAULT_BUDGET: usize = 300;
 
-/// The budget the split runs under, or `None` when it is off: a shipped unit, or a switch.
-pub(crate) fn budget() -> Option<usize> {
-    if super::functions_whole()
+/// The budget the split runs under, or `None` when it is off: a unit that keeps its functions
+/// whole (`Cx::whole`, a shipped artefact), or a switch.
+pub(crate) fn budget(whole: bool) -> Option<usize> {
+    if whole
         || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0"))
     {
         return None;
@@ -482,13 +483,14 @@ fn label_of(bare_line: &str) -> Option<&str> {
 /// The written text of `<storage> <ret> <name>(<params>) { <body> }` split into parts, or
 /// `None` when it stays as it is: under the budget, or a body this pass does not split.
 pub(crate) fn split(
+    whole: bool,
     storage: &str,
     ret: &str,
     name: &str,
     params: &str,
     body: &str,
 ) -> Option<String> {
-    split_at(budget()?, storage, ret, name, params, body)
+    split_at(budget(whole)?, storage, ret, name, params, body)
 }
 
 fn split_at(

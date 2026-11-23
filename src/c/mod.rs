@@ -327,6 +327,8 @@ pub(crate) struct Cx<'a> {
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
     pub(crate) wasm: bool,
+    /// The unit keeps every function whole: a shipped artefact ([`UnitShape::whole`]).
+    pub(crate) whole: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -444,11 +446,12 @@ impl<'a> Cx<'a> {
             c_twins: Vec::new(),
             stores,
             browser,
-            wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
-            source_lines: SOURCE_LINES.with(std::cell::Cell::get),
+            wasm: browser,
+            whole: crate::ship_tier::shipped_units(),
+            source_lines: false,
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_root: SOURCE_ROOT.with(|r| r.borrow().clone()),
+            source_root: None,
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2050,6 +2053,29 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     emit_unit_for(data, stores, roots, false)
 }
 
+/// What one unit is written for — the options of ONE emission, handed down to its [`Cx`] rather
+/// than kept beside it (@PLN226): a browser page's module, a wasm32 module, a debug build's
+/// `#line`s, a shipped artefact that keeps its functions whole (an ESP app), a hosted unit's
+/// source root.
+#[derive(Default, Clone)]
+pub(crate) struct UnitShape {
+    pub(crate) browser: bool,
+    pub(crate) wasm: bool,
+    pub(crate) source_lines: bool,
+    pub(crate) whole: bool,
+    pub(crate) source_root: Option<String>,
+}
+
+/// [`emit_unit`] written for `shape`.
+pub(crate) fn emit_unit_shaped(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
+    emit_unit_with(data, stores, roots, shape, None)
+}
+
 /// [`emit_unit`] for a browser page's module when `browser` (`Cx::browser`).
 ///
 /// # Errors
@@ -2060,7 +2086,11 @@ pub fn emit_unit_for(
     roots: &[u32],
     browser: bool,
 ) -> Result<String, Refusal> {
-    emit_unit_with(data, stores, roots, browser, None)
+    let shape = UnitShape {
+        browser,
+        ..UnitShape::default()
+    };
+    emit_unit_with(data, stores, roots, &shape, None)
 }
 
 /// `@PLN206 P4` — a hosted unit (`hosted.rs`) for the library functions `roots`, whose bridge
@@ -2077,16 +2107,11 @@ pub fn emit_hosted_unit(
     layout_fp: u64,
     source_root: &str,
 ) -> Result<String, Refusal> {
-    SOURCE_ROOT.with(|r| *r.borrow_mut() = Some(source_root.to_string()));
-    let unit = emit_unit_with(data, stores, roots, false, Some((export, layout_fp)));
-    SOURCE_ROOT.with(|r| *r.borrow_mut() = None);
-    unit
-}
-
-thread_local! {
-    /// Set for the length of one [`emit_hosted_unit`]: the directory a hosted unit names its
-    /// library's sources from (`Cx::source_name`).
-    static SOURCE_ROOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    let shape = UnitShape {
+        source_root: Some(source_root.to_string()),
+        ..UnitShape::default()
+    };
+    emit_unit_with(data, stores, roots, &shape, Some((export, layout_fp)))
 }
 
 #[expect(
@@ -2097,7 +2122,7 @@ fn emit_unit_with(
     data: &Data,
     stores: &Stores,
     roots: &[u32],
-    browser: bool,
+    shape: &UnitShape,
     hosted: Option<(&std::collections::HashSet<u32>, u64)>,
 ) -> Result<String, Refusal> {
     // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
@@ -2139,7 +2164,12 @@ fn emit_unit_with(
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
     trace_reach(data, roots, &all, &fns);
+    let browser = shape.browser;
     let mut cx = Cx::new(data, stores, browser);
+    cx.wasm |= shape.wasm;
+    cx.source_lines = shape.source_lines;
+    cx.whole |= shape.whole;
+    cx.source_root.clone_from(&shape.source_root);
     cx.c_twins = twins;
     cx.open = hosted.is_some();
     cx.frames
@@ -3098,8 +3128,18 @@ pub fn emit_program(
     // writer writes its own after emitting: the census can then set the two writers side by side.
     // What the writer admits outside any function body (a signature, the unit's analyses) is
     // the C phase's too, under no function.
+    emit_program_shaped(data, stores, expected, &UnitShape::default())
+}
+
+/// [`emit_program`] written for `shape`.
+fn emit_program_shaped(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
     let census_unit = crate::rewrite_census::InBody::enter("c", "");
-    let out = emit_program_counted(data, stores, expected);
+    let out = emit_program_counted(data, stores, expected, shape);
     drop(census_unit);
     crate::rewrite_census::write();
     out
@@ -3109,13 +3149,14 @@ fn emit_program_counted(
     data: &Data,
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
 ) -> Result<String, Refusal> {
     let main = data.def_nr("n_main");
     if main >= data.definitions() {
-        return emit_tests(data, stores, expected);
+        return emit_tests(data, stores, expected, shape);
     }
     let (main, call) = program_main(data, stores, main)?;
-    let mut out = emit_unit(data, stores, &[main])?;
+    let mut out = emit_unit_shaped(data, stores, &[main], shape)?;
     let _ = write!(
         out,
         "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
@@ -3233,16 +3274,13 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
             why: "an app without a main".into(),
         });
     }
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            ESP_UNIT.with(|s| s.set(false));
-        }
-    }
-    ESP_UNIT.with(|s| s.set(true));
-    let _reset = Reset;
     let (main, call) = program_main(data, stores, main)?;
-    let mut out = emit_unit(data, stores, &[main])?;
+    // An app is a shipped artefact: its functions are kept whole.
+    let shape = UnitShape {
+        whole: true,
+        ..UnitShape::default()
+    };
+    let mut out = emit_unit_shaped(data, stores, &[main], &shape)?;
     let _ = write!(
         out,
         "{ESP_ENTRY}\n    loft_cx *cx = &loft_main_cx;\n    loft_esp_note(cx, \"app\", -1);\n    loft_esp_nvs(cx);\n    \
@@ -5077,13 +5115,13 @@ fn framed(
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let mut parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    let mut parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, body);
     // `@PLN206 P7` — a body written in parts keeps no hand-over: a part's `return` leaves the
     // part, not the routine.
     let unsplit;
     let body = if parts.is_some() && body.contains("/*LOFT_SP*/") {
         unsplit = strip_safepoints(body);
-        parts = split::split(storage, &held(ret).clone(), &fr, params, &unsplit);
+        parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, &unsplit);
         unsplit.as_str()
     } else {
         body
@@ -5185,18 +5223,9 @@ pub fn ship_units() {
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
 /// so the C compiler's optimiser time stays bounded.
 pub fn functions_whole() -> bool {
-    crate::ship_tier::shipped_units() || ESP_UNIT.with(std::cell::Cell::get)
+    crate::ship_tier::shipped_units()
 }
 
-thread_local! {
-    /// Set for the length of one [`emit_esp_program`]: an app is a shipped artefact.
-    static ESP_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
-    /// with their loft lines (`Cx::source_lines`).
-    static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Set for the length of one [`emit_wasm_program`]: the unit is compiled to wasm32.
-    static WASM_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
 
 /// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
 /// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name rather
@@ -5209,15 +5238,11 @@ pub fn emit_wasm_program(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WASM_UNIT.with(|s| s.set(false));
-        }
-    }
-    WASM_UNIT.with(|s| s.set(true));
-    let _reset = Reset;
-    emit_program(data, stores, expected)
+    let shape = UnitShape {
+        wasm: true,
+        ..UnitShape::default()
+    };
+    emit_program_shaped(data, stores, expected, &shape)
 }
 
 /// The comment that ends a function's run of `#line` markers in a unit written with source
@@ -5238,15 +5263,11 @@ pub fn emit_program_with_source_lines(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            SOURCE_LINES.with(|s| s.set(false));
-        }
-    }
-    SOURCE_LINES.with(|s| s.set(true));
-    let _reset = Reset;
-    emit_program(data, stores, expected)
+    let shape = UnitShape {
+        source_lines: true,
+        ..UnitShape::default()
+    };
+    emit_program_shaped(data, stores, expected, &shape)
 }
 
 /// The unit `c` with each [`LINE_RESET`] turned into `#line <the next line> "<c_path>"`, so the
@@ -5303,6 +5324,7 @@ fn emit_tests(
     data: &Data,
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
 ) -> Result<String, Refusal> {
     let tests = test_functions(data);
     if tests.is_empty() {
@@ -5311,7 +5333,7 @@ fn emit_tests(
             why: "neither a main nor a test".into(),
         });
     }
-    emit_tests_of(data, stores, &tests, expected)
+    emit_tests_shaped(data, stores, &tests, expected, shape)
 }
 
 /// The tests `tests` as one C unit whose `main` runs each in turn, or only the one its first
@@ -5327,11 +5349,22 @@ pub fn emit_tests_of(
     tests: &[u32],
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
+    emit_tests_shaped(data, stores, tests, expected, &UnitShape::default())
+}
+
+/// [`emit_tests_of`] written for `shape`.
+fn emit_tests_shaped(
+    data: &Data,
+    stores: &Stores,
+    tests: &[u32],
+    expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
     // A failed test `longjmp`s past its frames' frees: the unit keeps the texts they hold
     // (`LOFT_HOLD`) so the halt releases them (loft#2198).
     let mut out = format!(
         "#define LOFT_HALT_RELEASE 1\n{}",
-        emit_unit(data, stores, tests)?
+        emit_unit_shaped(data, stores, tests, shape)?
     );
     let _ = write!(
         out,

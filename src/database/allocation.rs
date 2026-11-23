@@ -83,10 +83,9 @@ thread_local! {
     static TIMELINE: std::cell::RefCell<TimelineState> = std::cell::RefCell::new(TimelineState::default());
 }
 
-/// True when `LOFT_STORES=timeline` (cached per thread — the env is stable for a run).
+/// True when `LOFT_STORES=timeline` (read once — the environment is stable for a run).
 fn timeline_on() -> bool {
-    thread_local! { static ON: bool = std::env::var("LOFT_STORES").as_deref() == Ok("timeline"); }
-    ON.with(|b| *b)
+    crate::env_once!(std::env::var("LOFT_STORES").as_deref() == Ok("timeline"))
 }
 
 /// @PLN103 P3.3 — the working-set-vs-leak summary (the disambiguation `LOFT_STORES=warn`
