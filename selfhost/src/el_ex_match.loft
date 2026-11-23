@@ -3252,7 +3252,7 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
 
 // `Parser::mark_slice_element_view`: a slice binding of a record, a vector or a struct enum (a
 // `?` one alike, `(L-Null)`) reads a DbRef INTO the subject's store — never freed itself.
-fn slice_element_view(vars: el_vars::Vars, bv: integer, t: ir::TypeT) {
+pub fn slice_element_view(vars: el_vars::Vars, bv: integer, t: ir::TypeT) {
   if bv < 0 || bv >= len(vars.vars) {
     return;
   }

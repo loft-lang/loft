@@ -901,11 +901,15 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
   }
   el_d = el_types::keyed_elem(ct);
   elm = -1;
-  if len(items) > 0 {
+  // A bare record onto a keyed FIELD (`d.h += K { … }`) is no vector literal: the field route
+  // mints its element on the second pass only, with no `is_field` mark (`unique_elm_var` with no
+  // container variable).
+  bare_field = fd >= 0 && e.p.nodes[n] is SStructLit;
+  if len(items) > 0 && !(bare_field && e.first_pass) {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
-    if fd >= 0 {
+    if fd >= 0 && !bare_field {
       el_vars::set_skip_free(vars, elm, "parse_vector_inner");
     }
   }
