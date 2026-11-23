@@ -36,6 +36,7 @@ use el_ex_assign;
 use el_ex_closure;
 use el_ex_tuple;
 use el_ex_name;
+use el_ex_into;
 
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
 // field read off a record local that owns its store.
@@ -604,12 +605,12 @@ pub fn param_rebuild_attempt(e: el::El, vars: el_vars::Vars, v: integer, n: inte
   el_vars::mark_built(vars, v);
   vars.rebuild_attempt = true;
   vars.own_buffer_hit = false;
-  list = el_ex_place::object_fields(e, vars, v, struct_literal_def(e, n), fields);
+  list = el_ex_into::object_fields(e, vars, v, struct_literal_def(e, n), fields);
   vars.rebuild_attempt = false;
   vars.own_buffer_hit = false;
   vars.vars[v].argument = true;
   el_vars::unmark_built(vars, v);
-  el_ex_place::abandon_work_refs(vars, ref_mark, p2_mark);
+  el_ex_into::abandon_work_refs(vars, ref_mark, p2_mark);
   list != null
 }
 
@@ -702,6 +703,20 @@ pub fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target:
     return ex(ir::NdNull, ir::TyVoid);
   }
   pl = el_vars::create_unique(vars, "_place", el_types::base(s.tp));
+  vars.compiler_named += [pl];
+  // (Rust holds a `?` discharge in the place and writes the field through it; an effectful index
+  // takes the F2 hoist, which writes a COLLECTION field through `OpGetField(place, off, tp)`.)
+  discharge = match e.p.nodes[subject] { SPostfix { op: dop } => dop == "?", _ => false };
+  fsd = struct_ref(e, el_types::base(s.tp));
+  ftp: ir::TypeT = ir::TyVoid;
+  for fa in el::def(e, fsd).attributes {
+    if fa.name == field {
+      ftp = fa.typedef[0] ?? ir::TyVoid;
+    }
+  }
+  if !discharge && (el_types::base(ftp) is TyVector || el_types::is_collection(el_types::base(ftp))) {
+    vars.field_places += [pl];
+  }
   e.p.nodes += [SName { at: at, name: el_vars::name_of(vars, pl), member: "" }];
   through = len(e.p.nodes) - 1;
   e.p.nodes += [SMember { at: at, e: through, name: field, args: [], call: false }];

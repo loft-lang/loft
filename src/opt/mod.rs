@@ -31,6 +31,7 @@ pub mod keyed_place;
 pub mod laps;
 pub mod lazy_split;
 pub mod ledger_sites;
+pub mod lift_reuse;
 pub mod loop_buffer;
 pub mod loop_record;
 pub mod loop_records;

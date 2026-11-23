@@ -1,0 +1,2064 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: a struct literal built INTO a place — a local, a field, a
+// vector element — a record field's defaults at a construction, and a nullable record slot
+// written; split out of `el_ex_place` (assignments to places), which it reads through.
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_expressions;
+use el_ex_assign;
+use el_ex_object;
+use el_ex_call;
+use el_ex_null;
+use el_ex_match;
+use el_ex_pattern;
+use el_ex_vector;
+use el_ex_copy;
+use el_ex_deliver;
+use el_ex_bind;
+use el_ex_closure;
+use el_ex_place;
+
+// `Parser::parse_object`'s in-place arm, a struct literal bound to a local that owns its store:
+// the local nulled and given a record of the struct's store type, each written field set in
+// literal order, and — on the second pass — each omitted field its type's default, in
+// declaration order (`object_init`).  The value is the build, typed as a record of the struct
+// rewritten in place.  A qualified name, an update (`..base`), a quoted field name, a field
+// value its type converts and a literal rebinding a local of another type are refused by name.
+// `parse_object_inner` (@PLN87 P2.2): a record literal built fresh for a local that LINKS to
+// its record (`o = Obj { … }`, `o: &Obj`) is handed to the link's referent, whose owner frees it,
+// so the literal's own buffer is never freed here.
+fn link_handover(e: el::El, vars: el_vars::Vars, vt: ir::TypeT, o: Ex) {
+  if !e.first_pass && vt is TyRefVar {
+    for ow in el_types::deps(o.tp) {
+      el_vars::set_skip_free(vars, ow, "parse_object_inner");
+    }
+  }
+}
+
+pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_object");
+  }
+  name = "";
+  qual = "";
+  fields: vector<integer> = [];
+  el_ex_place::unqualify_literal(e, n);
+  // An update rebinding a local (`d = S { f: v, ..d }`) is built apart and bound
+  // (`parse_object`'s value road).
+  match e.p.nodes[n] {
+    SStructLit { name: un, member: um, fields: ufs, base: ub } => {
+      if um == "" && ub != null {
+        // A FRESH local binds its base as a view and copies it (`__ref_p2_N = base; d =
+        // __ref_p2_N`), then writes the fields — carried where the base is a local (`assignment`),
+        // not for any other base: refused by name.
+        if !e.first_pass && vars.bind_declares {
+          el::refuse(e, "an update binding a fresh local from a base that is not a local");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        o = el_ex_object::update_value(e, vars, el::def_nr(e, un), ufs, ub!);
+        if !e.first_pass && el_ir::is_null(o.code) {
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: el_types::without_deps(o.tp) });
+      }
+    },
+    _ => {}
+  }
+  match e.p.nodes[n] {
+    SStructLit { name: sn, member, fields: fs, base } => {
+      if (member != "" && !el::use_exists(e, sn)) || base != null {
+        el::refuse(e, "a qualified struct literal or an update");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      name = sn;
+      qual = member;
+      fields = fs;
+    },
+    _ => {}
+  }
+  d = el::qualified_def(e, name, qual);
+  if !el_ex_object::literal_def(e, d) {
+    el::refuse(e, "a literal of something other than a declared struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  vt = el_vars::tp(vars, v);
+  // (A LINK to a record local — `pd = &d`, `d: S?` — is written through: the literal is built
+  // in a fresh buffer of its own and the link set to it, `pd = {#Object __ref_p2_N …}`, loft#1372.)
+  link_rec = match vt { TyRefVar { inner: lri } => match el_types::base(lri) { TyReference { n: lrd } => lrd == d, _ => false }, _ => false };
+  if link_rec {
+    o = el_ex_object::object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    link_handover(e, vars, vt, o);
+    if !e.first_pass && el_ir::is_null(o.code) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: vt });
+  }
+  // `@FR-R-InPlaceLiteral`'s variant clause (`variant_rebinds_local`): a variant literal
+  // rebuilds a local of its struct enum in place, as a struct literal does a local of its struct.
+  matches = match el_types::base(vt) {
+    TyUnknown { n: _ } => true,
+    TyReference { n: vd } => vd == d,
+    TyEnum { n: vd, is_ref } => is_ref && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent == vd,
+    _ => false
+  };
+  // A local holding one variant given a literal of a sibling is a local of their enum from
+  // there on (`change_var_type` joins two variants in their parent).
+  if !matches {
+    match el_types::base(vt) {
+      TyReference { n: vd } => {
+        if el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent == el::def(e, vd).parent {
+          el_vars::set_var_type(vars, v, ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: el_types::deps(vt) });
+          vt = el_vars::tp(vars, v);
+          matches = true;
+        }
+      },
+      _ => {}
+    }
+  }
+  // A local built before is built again in place, as its first bind built it (`p = null`,
+  // its store, its fields); the scope pass frees the store it held.
+  if !matches {
+    el::refuse(e, "a struct literal rebinding a local");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A local the first pass found borrowing another (`s = me(t)` later) is not built into:
+  // `parse_object` builds its literal apart, in a `__ref_p2_N`, and binds it.
+  // `viewed_by_an_earlier_bind`: so is a local an earlier bind of this pass left viewing
+  // another's store on some path (`r = b.tp` in one arm, a fresh record in the other) — the
+  // type keeps only the last bind's borrows.
+  viewed_before = false;
+  for vd in vars.viewed[v] ?? [] {
+    if vd != v && vd != 65535 {
+      viewed_before = true;
+    }
+  }
+  if !e.first_pass && !vars.vars[v].argument && (len(el_types::deps(vt)) > 0 || viewed_before) {
+    el_vars::mark_built(vars, v);
+    // A variant's buffer is typed as its enum (`object_expr`'s `wt`), the record as the variant.
+    wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+    o = el_ex_object::object_fresh(e, vars, d, fields, wt);
+    link_handover(e, vars, vt, o);
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
+  // `rebuild_watch` (`arm_rebuild_watch`): a collection field whose value names the local, or a
+  // local viewing its store, would read what the in-place re-init clears — the literal is then
+  // parsed again built apart, and this attempt's work refs are abandoned (below).  Watched on
+  // the second pass, for a literal of the local's own record or a variant of its enum.
+  watch_hit = false;
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && !(el_types::base(vt) is TyUnknown) {
+    watch = el_ex_copy::store_viewers(vars, v) + [v];
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: fname, e: fe } => {
+          a = attr_nr(el::def(e, d), fname);
+          if a >= 0 && fe != null {
+            at = el_types::base(el::def(e, d).attributes[a]!.typedef[0]);
+            if (at is TyVector || keyed_kind(at)) && el_ex_place::names_one_of(e, vars, fe!, watch) {
+              watch_hit = true;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  el_vars::mark_built(vars, v);
+  ref_mark = vars.work_ref;
+  p2_mark = vars.work_ref_p2;
+  vars.rebuild_attempt = watch_hit;
+  vars.own_buffer_hit = false;
+  demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
+  vars.demote_var = if demote < 0 { -1 } else { v };
+  allocs_mark = len(vars.allocs);
+  list = object_fields(e, vars, v, d, fields);
+  vars.demote_var = -1;
+  vars.rebuild_attempt = false;
+  if list == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = list!;
+  // `(H-Drop)`'s order (`rebuild_releases`): rebuilding a whole local whose struct owns a
+  // droppable releases what it held after the re-init, so a field value the program can see
+  // run (`ir_has_user_call`) would run after that release.  Such a literal is parsed again
+  // built apart — in a `__ref_p2_N` of its own, then bound — and the first attempt's work
+  // refs are abandoned (`abandon_work_refs`: kept, never freed).
+  // The local's type: a struct, or the struct enum a variant literal rebuilds it as.
+  root_d = match el_types::base(vt) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+  // Asked of the literal's own record only (`Type::Reference(d) | Enum(d, true) if d == td_nr`): a
+  // variant literal rebuilding a local of its enum is built in place.
+  literal_of_root = root_d >= 0 && root_d == d;
+  // (Such a literal is built apart on the second pass — nothing made through the local — so
+  // the first pass does not count its items as records the local made: `child_allocs`.)
+  fields_call = false;
+  for fc in fields {
+    if el_ex_bind::runs_a_call(e, fc) {
+      fields_call = true;
+    }
+  }
+  if e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && fields_call && len(vars.allocs) > allocs_mark {
+    vars.allocs = vars.allocs[..allocs_mark];
+  }
+  // (A return buffer renamed onto the local — a hidden parameter — is built apart as the
+  // local it was is; a parameter the caller passed is refused by name.)
+  apart_param = vars.vars[v].argument && !hidden_param(e, vars, v);
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && any_user_call(e, ops[2..]) {
+    if apart_param {
+      el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    // A user call whose arguments read the local makes the abandoned attempt stage it first,
+    // one more `__ref_N` left declared (1a-parser.md § Rust accidents), typed as the attempt's
+    // own work refs and abandoned with them.
+    staged = false;
+    for op in ops[2..] {
+      if !staged && user_call_reads(e, op, v) {
+        if ref_mark >= vars.work_ref {
+          el::refuse(e, "a literal of a droppable rebinding a local a call in it reads (the abandoned attempt's staging)");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        el_vars::work_ref(vars, el_vars::tp(vars, el_vars::var(vars, "__ref_{ref_mark + 1}")));
+        staged = true;
+      }
+    }
+    abandon_work_refs(vars, ref_mark, p2_mark);
+    // Its own store is typed as the definition answers (`returned`): a variant's is its enum.
+    o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
+    link_handover(e, vars, vt, o);
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
+  // `self_read_root` of an in-place build into a local the program names: a field value that
+  // reads the local, or anything that may view its store (for a parameter, every other heap
+  // parameter — the caller may hand one store twice), is computed into a `__ref_N` before the
+  // record is made; a collection or nested-literal field is built in place and never staged.
+  staged: vector<ir::Node> = [];
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
+    viewers = el_ex_copy::store_viewers(vars, v) + [v];
+    // A literal that hands the old record to its own out-of-line field while ANOTHER field
+    // reads the record does not demote: the first attempt's scalar staging is abandoned (its
+    // `__ref_N` stay declared, 1a-parser.md § Rust accidents) and the build starts again with
+    // the old record held as a view.  Where no other field reads it, the literal is the demote.
+    own_child = -1;
+    other_reads: vector<integer> = [];
+    for op in ops {
+      if op#index < 2 {
+        continue;
+      }
+      match op {
+        NdCall { def_nr: pd, args: pa } => {
+          if el::def(e, pd).name == "OpSetChildRec" && len(pa) == 3 && el_ir::unspan(pa[1]) == ir::NdVar { n: v } && place_root(e, el_ir::unspan(pa[0])) == v {
+            own_child = op#index;
+          } else if starts_with(el::def(e, pd).name, "OpSet") && len(pa) >= 3 && el_ir::unspan(pa[0]) == ir::NdVar { n: v } && el_ir::reads_var(pa[-1], v) {
+            other_reads += [op#index];
+          }
+        },
+        _ => {}
+      }
+    }
+    if own_child >= 0 && len(other_reads) == 0 {
+      el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if own_child >= 0 {
+      am = vars.work_ref;
+      ap = vars.work_ref_p2;
+      for oi in other_reads {
+        match ops[oi]! {
+          NdCall { def_nr: ad, args: aa } => {
+            el_vars::work_ref(vars, match el_ir::unspan(aa[-1]) { NdBlock { block: ab } => ab[0].result[0] ?? el::def(e, ad).attributes[len(aa) - 1]!.typedef[0], _ => el::def(e, ad).attributes[len(aa) - 1]!.typedef[0] });
+          },
+          _ => {}
+        }
+      }
+      abandon_work_refs(vars, am, ap);
+    }
+    for op in ops {
+      if op#index < 2 {
+        continue;
+      }
+      match op {
+        NdCall { def_nr, args } => {
+          // The old record handed to its own out-of-line field: held as a view of the local
+          // (`__ref_N: ref(T)["v"] = v`, bound where it is made), the child set from the view.
+          if el::def(e, def_nr).name == "OpSetChildRec" && len(args) == 3 && el_ir::unspan(args[1]) == ir::NdVar { n: v } && place_root(e, el_ir::unspan(args[0])) == v {
+            // (A plain struct's old record is snapshot by a COPY into a work ref of its own —
+            // `staged_heap_copy` — and the child set from the copy.)
+            if el_types::struct_enum_def(el_vars::tp(vars, v)) < 0 {
+              sd0 = struct_ref(e, el_types::base(el_vars::tp(vars, v)));
+              skt = if sd0 >= 0 { el::def(e, sd0).known_type } else { el_schema::NO_TYPE };
+              if sd0 < 0 || skt == el_schema::NO_TYPE {
+                el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              cw = el_vars::work_ref_p2(vars, ir::TyReference { n: sd0, dep: [] });
+              staged += [el_ir::v_set(cw, ir::NdNull), el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: cw }, ir::NdInt { n: skt }]), el_ir::cl(e, "OpCopyRecord", [args[1]!, ir::NdVar { n: cw }, ir::NdInt { n: skt }])], ir::TyVoid, "tuple_member_copy_fill")];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: cw }, args[2]!] };
+              continue;
+            }
+            vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
+            vtmp = el_vars::work_ref(vars, vt);
+            el_vars::set_skip_free(vars, vtmp, "parse_object_field");
+            staged += [el_ir::v_set(vtmp, args[1]!)];
+            ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
+          }
+          // `@FR-B-View` × `@FR-B-Disturb`: a field copied from a local that VIEWS the record
+          // being rebuilt (`w = Outer { inner: a }` after `a = w.inner`) has that local held
+          // in a view of its own first, the copy made from it.
+          if el::def(e, def_nr).name == "OpCopyRecord" && len(args) == 3 && place_root(e, el_ir::unspan(args[1])) == v {
+            cvw = match el_ir::unspan(args[0]) { NdVar { n: cvn } => cvn, _ => -1 };
+            if cvw >= 0 && cvw != v && viewers.contains(cvw) {
+              cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
+              // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
+              // value is a projection call; a whole local staged is a copy that owns its store.)
+              cvtmp = el_vars::work_ref(vars, cvt);
+              staged += [el_ir::v_set(cvtmp, args[0]!)];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
+            }
+            // A NESTED literal that reads such a viewer is built whole into a work ref first
+            // (an owner, declared with the others) and copied from it.
+            nb_reads = false;
+            match el_ir::unspan(args[0]) {
+              NdBlock { block: nbb } => {
+                if nbb[0].name == "Object" {
+                  for w in viewers {
+                    if w != v && el_ir::reads_var(args[0]!, w) {
+                      nb_reads = true;
+                    }
+                  }
+                  if nb_reads {
+                    nbt = el_vars::work_ref(vars, el_types::without_deps(nbb[0].result[0] ?? ir::TyVoid));
+                    staged += [el_ir::v_set(nbt, args[0]!)];
+                    ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: nbt }, args[1]!, args[2]!] };
+                  }
+                }
+              },
+              _ => {}
+            }
+          }
+          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+            reads = false;
+            for w in viewers {
+              if el_ir::reads_var(args[-1], w) {
+                reads = true;
+              }
+            }
+            if reads {
+              // Typed as the value it holds (`exp_tp`): a block declares it, borrows included.
+              tp = match el_ir::unspan(args[-1]) {
+                NdBlock { block } => block[0].result[0] ?? el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0],
+                _ => el::def(e, def_nr).attributes[len(args) - 1]!.typedef[0]
+              };
+              // (A text read off the record is a view of it.)
+              text_view = el_types::base(tp) is TyText && match el_ir::unspan(args[-1]) { NdCall { def_nr: tvd, args: _ } => el::def(e, tvd).name == "OpGetText", _ => false };
+              if text_view {
+                tp = ir::TyText { dep: [v] };
+              }
+              tmp = el_vars::work_ref(vars, tp);
+              if text_view {
+                el_vars::set_skip_free(vars, tmp, "parse_object_field");
+              }
+              staged += [el_ir::v_set(tmp, args[-1])];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  // The watch fired: this attempt — its staging included — is abandoned and the literal built
+  // apart in a `__ref_p2_N` of its own, then bound.
+  if watch_hit {
+    vars.own_buffer_hit = false;
+    // (The function's RETURNED local, renamed onto the hidden buffer, takes the plain local's
+    // bind: the literal built apart, each collection field copied in, the local bound to it.)
+    // (Not yet where a field is itself a record literal — `tiles: Tiles { … }`: the abandoned
+    // attempt numbers its staged `__ref_N` and the nested literal's `__ref_p2_N` in another
+    // order than Rust's, refused by name.)
+    nested_lit = false;
+    for nf in fields {
+      match e.p.nodes[nf] {
+        SFieldInit { e: nfe } => { if nfe != null && struct_literal_def(e, nfe!) >= 0 { nested_lit = true; } },
+        _ => {}
+      }
+    }
+    if vars.vars[v].argument && (!hidden_param(e, vars, v) || nested_lit) {
+      el::refuse(e, "a parameter rebuilt in place by a literal whose collection field reads it");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    abandon_work_refs(vars, ref_mark, p2_mark);
+    // A vector-field literal that reads an ELEMENT of the local's own vector made the abandoned
+    // attempt stage it in a store of its own: that `__vdb_N` stays declared (1a-parser.md §
+    // Rust accidents).
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: wfn, e: wfe } => {
+          wa = attr_nr(el::def(e, d), wfn);
+          // (A vector of RECORD literals reading the local is built item by item apart, each
+          // copied in and released: not carried.)
+          rec_items = wfe != null && match e.p.nodes[wfe!] { SVecLit { items: wit } => len([for wi in wit if struct_literal_def(e, wi) >= 0 && el_ex_closure::mentions_name(e, wi, el_vars::name_of(vars, v)) { wi }]) > 0, _ => false };
+          if rec_items {
+            el::refuse(e, "a literal rebuilding a record whose vector field holds record literals that read that record");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          // (So is a vector of texts whose items read the local.)
+          text_items = wa >= 0 && wfe != null && e.p.nodes[wfe!] is SVecLit && el_ex_closure::mentions_name(e, wfe!, el_vars::name_of(vars, v)) && match el_types::base(el::def(e, d).attributes[wa]!.typedef[0]) { TyVector { inner: wti } => el_types::base(wti) is TyText, _ => false };
+          if text_items {
+            el::refuse(e, "a literal rebuilding a record whose text vector field reads that record");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          if wa >= 0 && wfe != null && e.p.nodes[wfe!] is SVecLit && indexes_name(e, wfe!, el_vars::name_of(vars, v)) {
+            match el_types::base(el::def(e, d).attributes[wa]!.typedef[0]) {
+              TyVector { inner: wvi } => {
+                wmd = el::def_nr(e, "main_vector<{el_types::elem_name(e, wvi)}>");
+                if wmd >= 0 {
+                  el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
+    link_handover(e, vars, vt, o);
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
+  // `demote_prelude` (`@FR-R-Demote`): where the local holds a record, its payload moves into
+  // a fresh child of its own store that becomes the field, the record — its number kept —
+  // left zeroed for the other fields (`OpDemoteRec`); where it is absent the literal's own
+  // prelude runs and the field is left absent.
+  demoted_buffer = false;
+  if demote >= 0 && len(ops) >= 2 {
+    content = el_schema::out_of_line_content(e, el::def(e, d).attributes[demote]!.typedef[0]);
+    off = ir::NdInt { n: field_position(e, d, el::def(e, d).attributes[demote]!.name) };
+    hv = ir::NdVar { n: v };
+    present = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [hv]));
+    moved = el_ir::v_block([el_ir::cl(e, "OpDemoteRec", [hv, off, ir::NdInt { n: el::def(e, content).known_type }])], ir::TyVoid, "demote");
+    // (A return buffer's own prelude is its guarded `OpDatabase` alone, no reset.)
+    pre_ops: vector<ir::Node> = if vars.vars[v].argument { [el_ir::v_if(present, ir::NdNull, ops[1]!)] } else { [ops[0]!, ops[1]!] };
+    fresh = el_ir::v_block(pre_ops + [el_ir::cl(e, "OpSetInt4", [hv, off, ir::NdInt { n: 0 }])], ir::TyVoid, "demote_fresh");
+    rest = ops[2..];
+    ops = [el_ir::v_if(present, moved, fresh)] + rest;
+    demoted_buffer = vars.vars[v].argument;
+  }
+  // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
+  // the caller handed in live, and no reset.
+  if vars.vars[v].argument && len(ops) >= 2 && !demoted_buffer {
+    r = ir::NdVar { n: v };
+    live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [r]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [r]));
+    guarded: vector<ir::Node> = [el_ir::v_if(live, ir::NdNull, ops[1] ?? ir::NdNull)];
+    for op in ops {
+      if op#index >= 2 {
+        guarded += [op];
+      }
+    }
+    ops = guarded;
+  }
+  staged += ops;
+  ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// Is there, anywhere in `n`, a call of a loft function whose arguments read `v`?
+pub fn user_call_reads(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if !starts_with(el::def(e, def_nr).name, "Op") {
+        for a in args {
+          if el_ir::reads_var(a, v) {
+            return true;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if user_call_reads(e, c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `ir_has_user_call` over a list: a call of anything but an operator, a call through a
+// function value, or a bind, anywhere inside.
+pub fn any_user_call(e: el::El, ops: vector<ir::Node>) -> boolean {
+  for op in ops {
+    match op {
+      NdSet { var: _ } => { return true; },
+      NdCallRef { var: _ } => { return true; },
+      NdCall { def_nr } => {
+        if !starts_with(el::def(e, def_nr).name, "Op") {
+          return true;
+        }
+      },
+      _ => {}
+    }
+    if any_user_call(e, el_ir::children(op)) {
+      return true;
+    }
+  }
+  false
+}
+
+// `is_borrowing_branch`'s walk: whether `v` is an `if`, collecting into `out` the parameters its
+// arms (a block's last operator, nested `if`s) answer as bare variables.
+pub fn branch_params(vars: el_vars::Vars, v: ir::Node, out: vector<integer>) -> boolean {
+  x = el_ir::unspan(v);
+  while x is NdBlock {
+    match x {
+      NdBlock { block } => {
+        if len(block[0].operators) == 0 {
+          return false;
+        }
+        x = el_ir::unspan(el_ir::last(block[0].operators));
+      },
+      _ => {}
+    }
+  }
+  match x {
+    NdIf { cond: _, t, f } => {
+      branch_params(vars, t, out);
+      branch_params(vars, f, out);
+      true
+    },
+    NdVar { n } => {
+      if vars.vars[n]!.argument && !out.contains(n) {
+        out += [n];
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// Does the syntax under `n` read the plain name `name`?
+pub fn syntax_names(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => {
+      if member == "" && nm == name {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if syntax_names(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// `abandon_work_refs`: the work refs minted since the marks belong to a construction given up
+// (`clean_work_refs`), so none is freed; the counters keep their place.  A name that is an
+// argument (the return buffer the counter stepped over) is the caller's.
+pub fn abandon_work_refs(vars: el_vars::Vars, ref_mark: integer, p2_mark: integer) {
+  for w in ref_mark..vars.work_ref {
+    skip_free_named(vars, "__ref_{w + 1}");
+  }
+  for w in p2_mark..vars.work_ref_p2 {
+    skip_free_named(vars, "__ref_p2_{w + 1}");
+  }
+}
+
+// Is the syntax at `n` the bare name `name`?
+fn is_bare_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => member == "" && nm == name,
+    _ => false
+  }
+}
+
+// `@FR-R-Demote`'s test: the literal of `d` built in place into local `v` gives `v` itself as
+// the whole value of one out-of-line field whose content is the literal's own type — the
+// struct, or for a variant its enum where `v` is of that enum — and reads `v` nowhere else.
+// The field's attribute number, or -1.
+pub fn demote_field(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> integer {
+  // (The local a return buffer was renamed onto is demoted as any local is.)
+  if (vars.vars[v].argument && !el_ex_base::hidden_param(e, vars, v)) || el_vars::is_compiler_generated(vars, v) {
+    return -1;
+  }
+  a = -1;
+  for fi in fields {
+    fe = -1;
+    fa = -1;
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fv } => {
+        fe = fv ?? -1;
+        fa = attr_nr(el::def(e, d), fname);
+      },
+      _ => {}
+    }
+    if fe < 0 || fa < 0 {
+      return -1;
+    }
+    whole = is_bare_name(e, fe, el_vars::name_of(vars, v));
+    if whole && a < 0 {
+      a = fa;
+    } else if el_ex_closure::mentions_name(e, fe, el_vars::name_of(vars, v)) {
+      return -1;
+    }
+  }
+  if a < 0 || !el_schema::out_of_line(e, d, a) {
+    return -1;
+  }
+  content = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
+  if el::def(e, d).def_type == el::DT_ENUM_VALUE {
+    return if content == el::def(e, d).parent && el_types::struct_enum_def(el_vars::tp(vars, v)) == content { a } else { -1 };
+  }
+  if content == d { a } else { -1 }
+}
+
+pub fn skip_free_named(vars: el_vars::Vars, n: text) {
+  nr = el_vars::var(vars, n);
+  if nr >= 0 && !vars.vars[nr].argument {
+    el_vars::set_skip_free(vars, nr, "mark_skip_free_by_name");
+  }
+}
+
+// The literal's build into record local `v`: nulled, given a record of the struct's store type,
+// then its fields (`fields_at`).  Null when a field is refused.
+pub fn object_fields(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
+  r = ir::NdVar { n: v };
+  body = fields_at(e, vars, v, r, d, fields);
+  if body == null {
+    return null;
+  }
+  [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpDatabase", [r, ir::NdInt { n: el::def(e, d).known_type }])] + body!
+}
+
+// `Parser::nested_literal_place` (`@FR-R-InPlaceLiteral`): the struct a field's value is a literal
+// of, when that literal is built straight into the field — an embedded struct field (not a
+// `reference<T>` pointer, not `τ?`) whose value is a plain literal of the field's own struct,
+// inside a record the program cannot read yet (its local is one the parser made).  -1 keeps
+// the ordinary road: the literal built apart and copied in.
+pub fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT, fe: integer) -> integer {
+  if e.first_pass || !el_vars::is_compiler_generated(vars, v) {
+    return -1;
+  }
+  match at {
+    TyReference { n: fd, dep } => {
+      if dep.contains(el_types::MARKER) || el::def(e, fd).def_type != el::DT_STRUCT || struct_literal_def(e, fe) != fd {
+        return -1;
+      }
+      fd
+    },
+    _ => -1
+  }
+}
+
+// Does a vector literal's item hold an index expression whose subject mentions `name`?
+pub fn indexes_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        if indexes_name(e, it, name) {
+          return true;
+        }
+      }
+      false
+    },
+    SIndex { e: ie } => ie != null && el_ex_closure::mentions_name(e, ie!, name),
+    SBin { l, r } => indexes_name(e, l, name) || indexes_name(e, r, name),
+    SParen { e: pe } => pe != null && indexes_name(e, pe!, name),
+    _ => false
+  }
+}
+
+// R-KeyedEntry's subscript clause for a value that reads the collection it is written into: a
+// record READ from the collection (`h[5] = h[3]`) is written as it is; a literal whose integer
+// fields read it has each such value staged in a work variable ahead of the record's build.
+// Any other value is not carried (null).
+pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: integer, staged: vector<ir::Node>) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args: _ } => if el::def(e, def_nr).name == "OpGetRecord" { code } else { null },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "Object" {
+        return null;
+      }
+      // What still reads the collection after the staging is a value not carried.
+      for o in bl.operators {
+        if el_ir::reads_var(o, coll) {
+          return null;
+        }
+      }
+      bl.operators = staged + bl.operators;
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
+}
+
+// A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
+// written vector field's handle zeroed, each written field set in literal order, and — on the
+// second pass — each omitted field its type's default, in declaration order (`object_init`).
+// A keyed value written into a keyed place of type `to`: 0 for a place (a local, a parameter,
+// a field read — deep-copied), 32768 for a fresh call that gives away its store
+// (`call_gives_away_its_store`; a record or collection argument is bracketed against its
+// store's free while the call runs, which is not carried), -1 for anything else.
+pub fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
+  xb = el_types::base(x.tp);
+  if !keyed_kind(xb) || type_kind(xb) != type_kind(to) || el_types::keyed_elem(xb) != el_types::keyed_elem(to) {
+    return -1;
+  }
+  xc = el_ir::unspan(x.code);
+  // (A nullable place — a `τ?` local or field — is replaced in as a dense one is: an absent
+  // source copies nothing.  A nullable call's answer is not carried.)
+  if x.tp is TyOptional && !(xc is NdVar || calls(e, xc, "OpGetField")) {
+    return -1;
+  }
+  if xc is NdVar || calls(e, xc, "OpGetField") {
+    return 0;
+  }
+  match xc {
+    // (`set_field_check`'s keyed arm: any call's value is replaced in, its store freed after
+    // only where the call gives it away, `call_gives_away_its_store`.)
+    NdCall { def_nr: cd } => {
+      if starts_with(el::def(e, cd).name, "Op") {
+        return -1;
+      }
+      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
+    },
+    _ => -1
+  }
+}
+
+// Is `t` a plain vector of the records `elem` names?
+fn vector_of(e: el::El, t: ir::TypeT, elem: integer) -> boolean {
+  match el_types::base(t) {
+    TyVector { inner } => !(t is TyOptional) && struct_ref(e, el_types::base(inner)) == elem,
+    _ => false
+  }
+}
+
+pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
+  def = el::def(e, d);
+  list: vector<ir::Node> = [];
+  // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
+  // before any member is filled: an insert through one member indexes the record into all.  A
+  // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
+  group: vector<integer> = if e.first_pass { [] } else { linked_offsets(e, d) };
+  // `group_fills`: the vector members filled in bulk; `filled_collections`: every collection
+  // field the literal hands records (anything but `[]`).
+  bulk: vector<integer> = [];
+  handed: vector<integer> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: hname, e: he } => {
+        ha = attr_nr(def, hname);
+        hempty = match e.p.nodes[he ?? 0] { SVecLit { items: hi } => len(hi) == 0, _ => false };
+        if !e.first_pass && he != null && ha >= 0 && !hempty && el_types::is_collection(el_types::base(def.attributes[ha]!.typedef[0] ?? ir::TyVoid)) {
+          handed += [field_position(e, d, hname)];
+        }
+      },
+      _ => {}
+    }
+  }
+  for off in group {
+    list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: off }, ir::NdInt { n: 0 }])];
+  }
+  if len(group) > 0 {
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: fname, e: fe } => {
+          // (A `null` fills nothing either: the member is marked absent.)
+          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, SNull { at: _ } => fe != null, _ => false };
+          // (A VECTOR member is filled as any vector field is — its header is zeroed with the
+          // group's; a keyed member's bulk fill is not carried.)
+          fa_nr = attr_nr(def, fname);
+          vec_member = fa_nr >= 0 && el_types::base(def.attributes[fa_nr]!.typedef[0] ?? ir::TyVoid) is TyVector;
+          // A keyed member given a LITERAL is built through the record, element by element,
+          // as a keyed field outside a group is; any other value stays refused.
+          keyed_literal = fe != null && e.p.nodes[fe ?? 0] is SVecLit;
+          if group.contains(field_position(e, d, fname)) && !empty && !vec_member && !keyed_literal {
+            el::refuse(e, "a literal that fills a member of a linked collection group");
+            return null;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  // `parse_object_field`'s header prime: each WRITTEN vector field's handle zeroed right after
+  // the record is made, in literal order (#437).  A keyed field's is zeroed where its records
+  // are added, below: those inserts are ordered against a sibling's prime.
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname } => {
+        a = attr_nr(def, fname);
+        if a >= 0 && el_types::base(def.attributes[a]!.typedef[0]) is TyVector && !group.contains(field_position(e, d, fname)) {
+          list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
+        }
+      },
+      _ => {}
+    }
+  }
+  found: vector<text> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, quoted, e: fe } => {
+        a = attr_nr(def, fname);
+        if quoted || fe == null || a < 0 {
+          // A field missing after an earlier refusal is that refusal's consequence (a field
+          // whose type was refused is never declared): it is not a gap of its own.
+          if a >= 0 || len(e.refused) == 0 {
+            el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
+          }
+          return null;
+        }
+        // `@FR-B-OutOfLine`: an out-of-line field is written through its child record.
+        if el_schema::out_of_line(e, d, a) {
+          ol = out_of_line_init(e, vars, r, d, a, fe!);
+          if ol == null {
+            return null;
+          }
+          // A demoted field is left alone: the prelude filled it.
+          if e.first_pass || !el_ir::empty_insert(ol!) {
+            list += [ol!];
+          }
+          found += [fname];
+          continue;
+        }
+        at = def.attributes[a]!.typedef[0];
+        // A `vector<T>?` field is written as its dense twin is; a `null` marks the primed
+        // handle absent (`-1`).
+        if at is TyOptional && el_types::base(at) is TyVector {
+          if e.p.nodes[fe!] is SNull {
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: -1 }])];
+            found += [fname];
+            continue;
+          }
+          at = el_types::base(at);
+        }
+        // A nullable KEYED field likewise: written as its dense twin, a `null` priming the header
+        // where the field stands (a group member's was primed with its group's) and marking it
+        // absent.
+        if at is TyOptional && keyed_kind(el_types::base(at)) && !(el_types::base(at) is TyVector) {
+          if e.p.nodes[fe!] is SNull {
+            kp0 = field_position(e, d, fname);
+            if !group.contains(kp0) {
+              list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: 0 }])];
+            }
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: -1 }])];
+            found += [fname];
+            continue;
+          }
+          at = el_types::base(at);
+        }
+        match at {
+          TyVector { inner } => {
+            if !(e.p.nodes[fe!] is SVecLit) {
+              c = field_vector_copy(e, vars, r, d, fname, inner, fe!);
+              if c == null {
+                return null;
+              }
+              list += c!;
+              // A group's vector member filled in bulk owes the other members an index.
+              if group.contains(field_position(e, d, fname)) {
+                bulk += [field_position(e, d, fname)];
+              }
+              found += [fname];
+              continue;
+            }
+            built = el_ex_object::field_vector(e, vars, v, r, d, fname, fe!);
+            if built == null {
+              return null;
+            }
+            // `handle_field` pushes the literal's build as one value (an insert) — an empty one
+            // too, which a build in place in a local splices away.
+            list += [ir::NdInsert { items: built! }];
+            found += [fname];
+            continue;
+          },
+          _ => {}
+        }
+        // A keyed field given a literal is built in place as a vector field is: its header zeroed
+        // here, each record made through the outer record and added.
+        kd = el_types::keyed_elem(at);
+        if kd >= 0 && e.p.nodes[fe!] is SVecLit {
+          built = el_ex_object::field_vector(e, vars, v, r, d, fname, fe!);
+          if built == null {
+            return null;
+          }
+          // A group member's header was zeroed with its siblings' (loft#924).
+          if !group.contains(field_position(e, d, fname)) {
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
+          }
+          list += [ir::NdInsert { items: built! }];
+          found += [fname];
+          continue;
+        }
+        // A keyed field given a keyed VALUE or a plain vector (`set_field_check`'s keyed arm):
+        // the header zeroed in the field's written position, then the value replaced in — a
+        // place deep-copied, a fresh call's store given away (the type's 32768 bit) — or the
+        // vector's elements filled in.
+        if kd >= 0 && !(at is TyOptional) && !group.contains(field_position(e, d, fname)) {
+          kx = el_ex_assign::expression(e, vars, fe!);
+          if e.first_pass {
+            found += [fname];
+            continue;
+          }
+          kpos = ir::NdInt { n: field_position(e, d, fname) };
+          knr = el_schema::keyed_type(e, el_types::base(at));
+          kbit = keyed_source(e, kx, el_types::base(at));
+          if kbit >= 0 {
+            list += [el_ir::cl(e, "OpSetInt4", [r, kpos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpReplaceKeyed", [kx.code, el_ir::cl(e, "OpGetField", [r, kpos, ir::NdInt { n: knr }]), ir::NdInt { n: knr + kbit }])];
+            found += [fname];
+            continue;
+          }
+          // (A branch of literals is built in keyed stores of its own, `__kvb_N`: not carried.)
+          if vector_of(e, kx.tp, kd) && (el_ir::unspan(kx.code) is NdVar || el_ir::unspan(kx.code) is NdCall) {
+            list += [el_ir::cl(e, "OpSetInt4", [r, kpos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpFillKeyed", [r, kx.code, ir::NdInt { n: knr }, ir::NdInt { n: def.known_type }, ir::NdInt { n: a }])];
+            found += [fname];
+            continue;
+          }
+          refuse_known(e, kx.tp, "a keyed field written from something other than a place, a fresh call or a vector: {type_kind(kx.tp)}");
+          return null;
+        }
+        // A struct-enum field (`enum-big`): its four-byte header zeroed where the literal names
+        // it, and a variant literal built straight into the field's place.  Any other value
+        // (a local, a call, a unit variant) is refused by name.
+        sed = el_types::struct_enum_def(at);
+        // An `S?` field given an `S { … }` literal: the `Some` record built in a work-ref of its
+        // own and copied into the field (`parse_some_payload_object`).
+        // Given `null`, the slot is set absent; given any other `S`, it is written from it
+        // (`emit_nullable_slot_write`).
+        if sed >= 0 && is_nullable_wrapper(e, at) {
+          pos = ir::NdInt { n: field_position(e, d, fname) };
+          kt = ir::NdInt { n: el::def(e, sed).known_type };
+          slot_ref = el_ir::cl(e, "OpGetField", [r, pos, kt]);
+          list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+          if literal_of(e, fe!, nullable_payload(e, sed)) {
+            nb = nullable_some_literal(e, vars, sed, fe!);
+            if nb == null {
+              return null;
+            }
+            list += [el_ir::cl(e, "OpCopyRecord", [nb!, slot_ref, kt])];
+          } else {
+            x = el_ex_assign::expression(e, vars, fe!);
+            if x.tp is TyNull {
+              if !e.first_pass {
+                list += [nullable_set_null(e, sed, slot_ref)];
+              }
+            } else if struct_ref(e, el_types::base(x.tp)) == nullable_payload(e, sed) {
+              if !e.first_pass {
+                list += nullable_slot_write(e, vars, sed, slot_ref, x.code);
+              }
+            } else {
+              refuse_known(e, x.tp, "a nullable record field given {type_kind(x.tp)}");
+              return null;
+            }
+          }
+          found += [fname];
+          continue;
+        }
+        if sed >= 0 {
+          vd = -1;
+          sub: vector<integer> = [];
+          match e.p.nodes[fe!] {
+            SStructLit { name: vn, member: vm, fields: vf, base: vb } => {
+              if vm == "" && vb == null {
+                vd = el::def_nr(e, vn);
+                sub = vf;
+              }
+            },
+            _ => {}
+          }
+          // (A variant holding a vector of its own enum — a recursive one — is built apart, in a
+          // work ref, and copied into the field: not carried, refused by name.)
+          recursive = false;
+          if vd >= 0 && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, vd).parent == sed {
+            for va in el::def(e, vd).attributes {
+              if match el_types::base(va.typedef[0] ?? ir::TyVoid) { TyVector { inner: vi } => el_types::struct_enum_def(vi) == sed, _ => false } {
+                // …given a literal with items (a local or an empty literal is written in place).
+                for sf in sub {
+                  match e.p.nodes[sf] {
+                    SFieldInit { name: sfn, e: sfe } => {
+                      if sfn == va.name && sfe != null && match e.p.nodes[sfe!] { SVecLit { items: svi } => len(svi) > 0, _ => false } {
+                        recursive = true;
+                      }
+                    },
+                    _ => {}
+                  }
+                }
+              }
+            }
+          }
+          if recursive {
+            el::refuse(e, "a struct-enum field given a variant literal whose vector of its own enum is a literal with items");
+            return null;
+          }
+          if vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sed {
+            // Any other value: the field's tag zeroed, then a value of the enum copied into the
+            // inline record (`OpCopyRecord` under the enum's store type) — or, for `null`, the tag
+            // zeroed again, the enum's null.
+            x = el_ex_assign::expression(e, vars, fe!);
+            if el_types::is_unknown(x.tp) {
+              return null;
+            }
+            pos = ir::NdInt { n: field_position(e, d, fname) };
+            kt = ir::NdInt { n: el::def(e, sed).known_type };
+            if x.tp is TyNull {
+              list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+            } else if el_ex_match::struct_enum_of(e, el_types::base(x.tp)) == sed {
+              list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpCopyRecord", [x.code, el_ir::cl(e, "OpGetField", [r, pos, kt]), kt])];
+            } else {
+              refuse_known(e, x.tp, "a struct-enum field given a value of this type: {type_kind(x.tp)}");
+              return null;
+            }
+            found += [fname];
+            continue;
+          }
+          pos = ir::NdInt { n: field_position(e, d, fname) };
+          list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+          place = el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, sed).known_type }]);
+          built = fields_at(e, vars, v, place, vd, sub);
+          if built == null {
+            return null;
+          }
+          list += built!;
+          found += [fname];
+          continue;
+        }
+        fd = nested_literal(e, vars, v, at, fe!);
+        if fd >= 0 {
+          place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: el::def(e, fd).known_type }]);
+          sub: vector<integer> = [];
+          match e.p.nodes[fe!] {
+            SStructLit { fields: fs } => { sub = fs; },
+            _ => {}
+          }
+          built = fields_at(e, vars, v, place, fd, sub);
+          if built == null {
+            return null;
+          }
+          list += built!;
+          found += [fname];
+          continue;
+        }
+        // A `reference<T>` field's `&` annotates the field store itself (`to: &far` stores
+        // `far`'s record), as `parse_object` consumes `amp_pending` at the field: the value is the
+        // operand.
+        amp_operand = match e.p.nodes[fe!] { SUnary { op, e: ue } => if op == "&" { ue } else { null }, _ => null };
+        // A short lambda given to a function-valued field takes the field's `fn(…)` as its hint.
+        if el_types::base(at) is TyFunction && e.p.nodes[fe!] is SLambda {
+          vars.lambda_node = fe!;
+          vars.lambda_hint = el_types::base(at);
+        }
+        x = el_ex_assign::expression(e, vars, if el_types::is_pointer(at) && amp_operand != null { amp_operand! } else { fe! });
+        fc: ir::Node? = null;
+        if el_types::is_pointer(at) {
+          // A pointer field names the record given, or nothing.
+          if x.tp is TyNull {
+            fc = el_ir::cl(e, "OpNullRefSentinel", []);
+          } else if struct_ref(e, el_types::base(x.tp)) == struct_ref(e, el_types::base(at)) && (!(x.tp is TyOptional) || at is TyOptional) {
+            // A nullable pointer field takes a nullable record: its null is the reference
+            // sentinel either way (`@FR-L-Null`).
+            fc = x.code;
+            // `@FR-H-RefHome`: a fresh record (a call's result, a literal) whose home is assigned
+            // in a loop body lasts one pass, so Rust builds it in the holder's store
+            // (`stored_reference_homes`' `Place`, `OpPlaceRecord`) — not carried: refused by name.
+            fresh_rec = match el_ir::unspan(x.code) {
+              NdCall { def_nr } => starts_with(el::def(e, def_nr).name, "n_") || starts_with(el::def(e, def_nr).name, "t_"),
+              NdBlock { block: xb } => xb[0].name == "Object",
+              _ => false
+            };
+            if !e.first_pass && fresh_rec && (len(vars.active_loops) > 0 || vars.whiles > 0) {
+              el::refuse(e, "a fresh record stored into a `reference<T>` field inside a loop");
+              return null;
+            }
+          }
+        } else if el_types::base(at) is TyFunction && el_ex_object::closure_lambda_at(e, vars, fe!) >= 0 {
+          // A capturing lambda: its closure record is built in the field's child slot.
+          cw = el_ex_object::closure_field_write(e, vars, d, fname, r, el_ex_object::closure_lambda_at(e, vars, fe!), x.code, at);
+          if cw == null {
+            el::refuse(e, "a function-valued field given something other than a named function");
+            return null;
+          }
+          if !e.first_pass {
+            list += [cw!];
+          }
+          found += [fname];
+          continue;
+        } else if el_types::base(at) is TyFunction {
+          // A function-valued field given a named function (`fn_number_write`).
+          if e.first_pass {
+            // (A function-value local mints no temporary: only a named function or a lambda does.)
+            el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: 0 }, if el_ir::unspan(x.code) is NdVar { x.code } else { ir::NdInt { n: 0 } }, at);
+            found += [fname];
+            continue;
+          }
+          fw = el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: field_position(e, d, fname) }, x.code, at);
+          if fw == null {
+            el::refuse(e, "a function-valued field given something other than a named function");
+            return null;
+          }
+          list += [fw!];
+          found += [fname];
+          continue;
+        } else if el_types::base(at) is TyTuple {
+          // A tuple field is set member by member (`tuple_field_set`).
+          ts = el_ex_object::tuple_field_set(e, vars, match el_types::base(at) { TyTuple { elems: te } => te, _ => [] }, r, field_position(e, d, fname), x.code, x.tp, "tuple_field_set");
+          if ts == null {
+            el::refuse(e, "a tuple field given something other than a tuple of plain scalars and texts");
+            return null;
+          }
+          if e.first_pass {
+            found += [fname];
+            continue;
+          }
+          list += [ts!];
+          found += [fname];
+          continue;
+        } else {
+          fc = stored(e, vars, x, at);
+        }
+        if fc == null {
+          refuse_known(e, x.tp, "a field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
+          return null;
+        }
+        // R-KeyedEntry: an integer field value that reads the collection its record is written
+        // into is staged in a work variable, where the field is read.
+        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read) {
+          sw = el_vars::work_ref(vars, ir::TyInteger { spec: i32_spec() });
+          vars.self_stage += [el_ir::v_set(sw, fc!)];
+          fc = ir::NdVar { n: sw };
+        }
+        // `@FR-R-InPlaceLiteral`'s staging (`parse_object`'s field loop, `reads_place`): a scalar
+        // or text initialiser of a literal written into a field or an element that reads the
+        // place's root — or a local viewing its store — is evaluated into a `__ref_N` of the
+        // value's type ahead of the first field write.  A read of the root through an
+        // `OpGetField` at another field's offset than the destination's is spared.
+        if !e.first_pass && len(vars.lit_place) == 1 && (el_ex_call::scalar(el_types::base(at)) || el_types::base(at) is TyText) && literal_place_read(e, vars, fc!, v, vars.lit_place[0]!) {
+          lw = el_vars::work_ref(vars, x.tp);
+          vars.lit_stage += [el_ir::v_set(lw, fc!)];
+          fc = ir::NdVar { n: lw };
+        }
+        list += [el_ex_object::set_field(e, d, a, r, fc!)];
+        found += [fname];
+      },
+      _ => {}
+    }
+  }
+  if !e.first_pass {
+    for a in def.attributes {
+      if a.constant || found.contains(a.name) {
+        continue;
+      }
+      // A group member's zeroed header is its whole initialisation (`object_init` skips it);
+      // a declared default beside it is not carried.
+      if group.contains(field_position(e, d, a.name)) {
+        dv = el_ir::unspan(a.value[0] ?? ir::NdNull);
+        if dv is NdNull || dv == ir::NdInsert { items: [ir::NdNull] } {
+          continue;
+        }
+        el::refuse(e, "an omitted member of a linked collection group with a declared default");
+        return null;
+      }
+      defaults = field_default(e, vars, d, a#index, r, 0);
+      if defaults == null {
+        return null;
+      }
+      for op in defaults! {
+        list += [op];
+      }
+    }
+    // `keyed_sibling_view_fills` (loft#1266): after the whole body, one `OpIndexGroup` per
+    // OTHER member of a bulk-filled vector member's group that the literal did not fill itself.
+    gfs = el_schema::struct_fields(e, def.known_type);
+    for boff in bulk {
+      me = -1;
+      for gf in gfs {
+        if gf.position == boff {
+          me = gf#index;
+        }
+      }
+      if me < 0 {
+        continue;
+      }
+      nrs: vector<integer> = [me];
+      for o in gfs[me]!.other_indexes {
+        if o != el_schema::NO_TYPE && !nrs.contains(o) {
+          nrs += [o];
+        }
+      }
+      nrs.sort();
+      to_tp = ir::NdInt { n: gfs[me]!.content };
+      to = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: boff }, to_tp]);
+      for nr in nrs {
+        mf = gfs[nr]!;
+        if mf.position == boff || handed.contains(mf.position) {
+          continue;
+        }
+        list += [el_ir::cl(e, "OpIndexGroup", [to, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: mf.position }, to_tp]), ir::NdInt { n: mf.content }, ir::NdInt { n: def.known_type }, ir::NdInt { n: me }])];
+      }
+    }
+  }
+  list
+}
+
+// `reads_place(value, root, off)`: does `value` read the destination's root variable — every
+// occurrence not spared as `OpGetField(root, <another offset>, …)` where the destination is a
+// field of the root — or a local that views the root's store?
+fn literal_place_read(e: el::El, vars: el_vars::Vars, value: ir::Node, root: integer, place: ir::Node) -> boolean {
+  for w in el_ex_copy::store_viewers(vars, root) {
+    if w != root && el_ir::reads_var(value, w) {
+      return true;
+    }
+  }
+  off = match el_ir::unspan(place) {
+    NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: root } { match el_ir::unspan(args[1]!) { NdInt { n: po } => po, _ => -1 } } else { -1 },
+    _ => -1
+  };
+  unspared_reads(e, value, root, off) > 0
+}
+
+fn unspared_reads(e: el::El, n: ir::Node, root: integer, off: integer) -> integer {
+  match n {
+    NdSpan { inner } => unspared_reads(e, inner, root, off),
+    NdVar { n: x } => if x == root { 1 } else { 0 },
+    NdCall { def_nr, args } => {
+      if off >= 0 && el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: root } {
+        spared = match el_ir::unspan(args[1]!) { NdInt { n: fo } => fo != off, _ => false };
+        if spared {
+          return 0;
+        }
+      }
+      c = 0;
+      for a in args {
+        c += unspared_reads(e, a, root, off);
+      }
+      c
+    },
+    _ => {
+      c = 0;
+      for ch in el_ir::children(n) {
+        c += unspared_reads(e, ch, root, off);
+      }
+      c
+    }
+  }
+}
+
+// A `vector<i32>` / `vector<u32>` FIELD's own rows where the record is laid out —
+// `[vector<int<…>>, int<…>]` — as `field_get` reads it (`field_content`); a local of that type is
+// `vector<integer>`.  Empty for any other element, or before the layout.
+fn four_byte_field_rows(e: el::El, d: integer, fname: text, inner: ir::TypeT) -> vector<integer> {
+  four = match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false };
+  k = el::def(e, d).known_type;
+  if !four || e.first_pass || k == el_schema::NO_TYPE {
+    return [];
+  }
+  for sf in el_schema::struct_fields(e, k) {
+    if sf.position == field_position(e, d, fname) && sf.content >= 0 && sf.content < len(e.b.types) {
+      match e.b.types[sf.content]!.parts[0] ?? ir::PtBase {
+        PtVector { content: fc } => { return [sf.content, fc]; },
+        _ => {}
+      }
+    }
+  }
+  []
+}
+
+// `Parser::keyed_group_clear` (loft#898): the clear before a whole-collection literal is built into
+// the keyed field `place` (`OpGetField(r, off, kt)`).  Ungrouped, the field alone; in a linked
+// group, every VIEW member's spine (`OpClearKeyed(…, kt | CLEAR_KEYED_VIEW)`), then the PRIMARY —
+// the member owning the records (a keyed one `OpClearKeyed`, a plain vector `OpClearVector`).
+// Null for a linked-vector (`array`) primary, whose release is not carried.
+pub fn keyed_group_clear(e: el::El, vars: el_vars::Vars, place: ir::Node) -> vector<ir::Node>? {
+  args = match place { NdCall { args: pa } => pa, _ => [] };
+  if len(args) != 3 {
+    return [el_ir::cl(e, "OpClearKeyed", [place, ir::NdNull])];
+  }
+  kt = args[2]!;
+  single = [el_ir::cl(e, "OpClearKeyed", [place, kt])];
+  off = match el_ir::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+  rd = heap_def(el_types::base(el_ex_place::place_type(e, vars, args[0]!)));
+  if off < 0 || rd < 0 || el::def(e, rd).known_type == el_schema::NO_TYPE {
+    return single;
+  }
+  fields = el_schema::struct_fields(e, el::def(e, rd).known_type);
+  me = -1;
+  for f in fields {
+    if f.position == off {
+      me = f#index;
+    }
+  }
+  if me < 0 || len(fields[me]!.other_indexes) == 0 {
+    return single;
+  }
+  nrs: vector<integer> = [me];
+  for o in fields[me]!.other_indexes {
+    if o != 65535 && !nrs.contains(o) {
+      nrs += [o];
+    }
+  }
+  nrs.sort();
+  ops: vector<ir::Node> = [];
+  primary = -1;
+  for n in nrs {
+    f = fields[n]!;
+    is_view = (f.other_indexes[0] ?? -1) == 65535;
+    if is_view {
+      ops += [el_ir::cl(e, "OpClearKeyed", [field_at_offset(place, f.position), ir::NdInt { n: f.content + 32768 }])];
+    } else if primary < 0 {
+      primary = n;
+    }
+  }
+  if primary >= 0 {
+    pf = fields[primary]!;
+    pparts = e.b.types[pf.content]!.parts[0] ?? ir::PtBase;
+    if pparts is PtArray {
+      return null;
+    }
+    if pparts is PtVector {
+      ops += [el_ir::cl(e, "OpClearVector", [field_at_offset(place, pf.position)])];
+    } else {
+      ops += [el_ir::cl(e, "OpClearKeyed", [field_at_offset(place, pf.position), ir::NdInt { n: pf.content }])];
+    }
+  }
+  ops
+}
+
+// `Parser::field_at`: the field read `to` at another offset of the same record.
+fn field_at_offset(to: ir::Node, off: integer) -> ir::Node {
+  match el_ir::unspan(to) {
+    NdCall { def_nr, args } => {
+      na = args;
+      if len(na) > 1 {
+        na[1] = ir::NdInt { n: off };
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    _ => to
+  }
+}
+
+// `linked_group_offsets`: the offsets of a struct's collection fields that belong to a linked
+// group (`keyed_field_is_linked`: a non-empty `other_indexes`), ascending.
+pub fn linked_offsets(e: el::El, d: integer) -> vector<integer> {
+  k = el::def(e, d).known_type;
+  out: vector<integer> = [];
+  if k == el_schema::NO_TYPE {
+    return out;
+  }
+  for a in el::def(e, d).attributes {
+    if !el_types::is_collection(el_types::base(a.typedef[0] ?? ir::TyVoid)) {
+      continue;
+    }
+    off = el_schema::field_position(e, k, a.name);
+    for f in el_schema::struct_fields(e, k) {
+      if f.position == off && len(f.other_indexes) > 0 && !out.contains(off) {
+        out += [off];
+      }
+    }
+  }
+  out.sort();
+  out
+}
+
+// `nullable_payload_struct`: the struct a `__nullable<S>` holds in its `Some`, or -1.
+pub fn nullable_payload(e: el::El, syn: integer) -> integer {
+  some_d = el::variant_of(e, syn, "Some");
+  if some_d < 0 {
+    return -1;
+  }
+  for a in el::def(e, some_d).attributes {
+    if a.name == "payload" {
+      return match a.typedef[0] ?? ir::TyVoid { TyReference { n } => n, _ => -1 };
+    }
+  }
+  -1
+}
+
+// Is syntax node `node` a plain literal `S { … }` of struct `sd` (no update base)?
+pub fn literal_of(e: el::El, node: integer, sd: integer) -> boolean {
+  match e.p.nodes[node] {
+    SStructLit { name: ln, member: lm, base: lb } => lm == "" && lb == null && sd >= 0 && el::def_nr(e, ln) == sd,
+    _ => false
+  }
+}
+
+// `build_nullable_set_null` (loft#896): the slot `to` set absent — a present payload's heap
+// claims released first (`OpClearKeyed`), then discriminant 0.
+pub fn nullable_set_null(e: el::El, syn: integer, to: ir::Node) -> ir::Node {
+  set_null = el_ir::cl(e, "OpSetEnum", [to, ir::NdInt { n: 0 }, ir::NdEnum { ord: 0, tp: el_schema::NO_TYPE }]);
+  kt = el::def(e, syn).known_type;
+  if e.first_pass || kt == el_schema::NO_TYPE {
+    return set_null;
+  }
+  el_ir::v_block([el_ir::cl(e, "OpClearKeyed", [to, ir::NdInt { n: kt }]), set_null], ir::TyVoid, "nullable_elem_set_null")
+}
+
+// `emit_nullable_slot_write` / `nullable_slot_write_from` (@PLN25): slot `slot_ref` written
+// from `value`, an `S` that may be the null sentinel — held in a work-ref, then, where it is
+// present, the slot's old payload released, the discriminant set present and the payload
+// copied in; where it is absent, the slot set absent.
+pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node, fresh: boolean = false) -> vector<ir::Node> {
+  sd = nullable_payload(e, syn);
+  src = el_vars::work_ref(vars, ir::TyReference { n: sd, dep: [] });
+  kt = el::def(e, syn).known_type;
+  some_kt = el::def(e, el::variant_of(e, syn, "Some")).known_type;
+  present: vector<ir::Node> = [];
+  // `@FR-H-Claim`: a FRESH slot (an element the construction just minted) holds no value to
+  // release; its payload copy is flagged a fresh destination and its absent arm only sets the tag.
+  if kt != el_schema::NO_TYPE && !fresh {
+    present += [el_ir::cl(e, "OpClearKeyed", [slot_ref, ir::NdInt { n: kt }])];
+  }
+  s_kt = ir::NdInt { n: el::def(e, sd).known_type + (if fresh { 16384 } else { 0 }) };
+  pay_kt = ir::NdInt { n: el::def(e, sd).known_type };
+  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, pay_kt]), s_kt])];
+  test = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: src }])]);
+  absent = if fresh { el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 0, tp: el_schema::NO_TYPE }]) } else { nullable_set_null(e, syn, slot_ref) };
+  // `@FR-B-View`: a stash of a projection (`s.h`, `v[i]`) views the projection's root.
+  if !e.first_pass {
+    match el_ir::unspan(value) {
+      NdCall { def_nr: vd, args: va } => {
+        root = if starts_with(el::def(e, vd).name, "OpGet") && len(va) > 0 { place_root(e, va[0]) } else { -1 };
+        if root >= 0 {
+          el_vars::depend(vars, src, root);
+        }
+      },
+      NdTupleGet { var: tv } => { el_vars::depend(vars, src, tv); },
+      _ => {}
+    }
+  }
+  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, absent)]
+}
+
+// `read_through_tag` (`emit_nullable_slot_read`, `@FR-L-Null-Tag`): a tagged `__nullable<S>`
+// slot read back as the `S?` its declaration promises — the payload where the discriminant
+// says present, else the reference null sentinel; the view keeps the slot's deps.  Any other
+// value is answered as it is.  The slot is read twice, so it must be a place; a value that is
+// not (a block that builds one) is refused by name.  Pass 1 answers the type only.
+pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
+  syn = match x.tp { TyEnum { n, is_ref } => if is_ref && is_nullable_wrapper(e, x.tp) { n } else { -1 }, _ => -1 };
+  if syn < 0 {
+    return x;
+  }
+  some_d = el::variant_of(e, syn, "Some");
+  sd = nullable_payload(e, syn);
+  rt = ir::TyOptional { inner: ir::TyReference { n: sd, dep: el_types::deps(x.tp) } };
+  some_kt = el::def(e, some_d).known_type;
+  s_kt = el::def(e, sd).known_type;
+  if e.first_pass || some_kt == el_schema::NO_TYPE || s_kt == el_schema::NO_TYPE {
+    return ex(x.code, rt);
+  }
+  pp = el_schema::field_position(e, some_kt, "payload");
+  if place_root(e, x.code) >= 0 {
+    return ex(nullable_pick(e, x.code, pp, s_kt), rt);
+  }
+  // Anything else is named first, in a work-ref that borrows the slot's store.
+  named = el_vars::work_ref(vars, x.tp);
+  el_vars::set_skip_free(vars, named, "emit_nullable_slot_read");
+  el_vars::mark_inline(vars, named, "emit_nullable_slot_read");
+  ex(el_ir::v_block([el_ir::v_set(named, x.code), nullable_pick(e, ir::NdVar { n: named }, pp, s_kt)], rt, "nullable_slot_read"), rt)
+}
+
+// `nullable_pick`: the payload of slot `slot` where its discriminant says present, else the
+// reference null sentinel.
+pub fn nullable_pick(e: el::El, slot: ir::Node, payload_pos: integer, s_kt: integer) -> ir::Node {
+  present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [slot, ir::NdInt { n: 0 }])]), ir::NdInt { n: 0 }])]);
+  payload = el_ir::cl(e, "OpGetField", [slot, ir::NdInt { n: payload_pos }, ir::NdInt { n: s_kt }]);
+  el_ir::v_if(present, payload, el_ir::cl(e, "OpNullRefSentinel", []))
+}
+
+// `parse_some_payload_object` (@PLN25 single-payload): a `__nullable<S>::Some` value from an
+// `S { … }` literal — the `Some` record allocated in a work-ref, its discriminant set present,
+// and the body written as a dense `S` straight into the inline `payload`.  Pass 1 builds
+// nothing and mints nothing.  Anything but a plain literal of `S` is refused by name.
+pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node: integer) -> ir::Node? {
+  some_d = el::variant_of(e, syn, "Some");
+  sd = nullable_payload(e, syn);
+  fields = match e.p.nodes[node] { SStructLit { fields: lf } => lf, _ => [] };
+  if e.first_pass {
+    // (The literal's fields are read on the first pass as any literal's are: a format's work
+    // text is minted there, ahead of the second pass's own temporaries.)
+    el_ex_pattern::first_pass_fields(e, vars, sd, fields);
+    return ir::NdInsert { items: [] };
+  }
+  some_kt = el::def(e, some_d).known_type;
+  w = el_vars::work_ref(vars, ir::TyEnum { n: syn, is_ref: true, dep: [] });
+  list = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: some_kt }]), el_ir::cl(e, "OpSetEnum", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "enum") }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }])];
+  payload = el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, ir::NdInt { n: el::def(e, sd).known_type }]);
+  built = fields_at(e, vars, w, payload, sd, fields);
+  if built == null {
+    return null;
+  }
+  list += [ir::NdInsert { items: built! }, ir::NdVar { n: w }];
+  el_ir::v_block(list, ir::TyEnum { n: syn, is_ref: true, dep: [w] }, "NullableSome")
+}
+
+// The field place of out-of-line attribute `a` of record `d` at `r` and its content's row
+// (`out_of_line_kt`: `u16::MAX` on the first pass, before any layout).
+fn child_field(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node> {
+  at = el::def(e, d).attributes[a]!;
+  sd = el_schema::out_of_line_content(e, at.typedef[0]);
+  kt = if e.first_pass || sd < 0 { 65535 } else { el::def(e, sd).known_type };
+  [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: base + field_position(e, d, at.name) }, ir::NdInt { n: kt }]), ir::NdInt { n: kt }]
+}
+
+// `literal_in_child`'s test: every variable the literal's build names but its own record `w`
+// is a scalar or a text, and it builds no record inside it — the child is reset before the
+// field values are read.
+fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdVar { n: x } => {
+      if x != w {
+        b = el_types::base(el_vars::tp(vars, x));
+        if !(is_scalar(el_vars::tp(vars, x)) || b is TyText) {
+          return false;
+        }
+      }
+    },
+    NdBlock { block } => {
+      if block[0].name == "Object" {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if !plain_child_literal(vars, c, w) {
+      return false;
+    }
+  }
+  true
+}
+
+// `out_of_line_set` (`@FR-B-OutOfLine`): the value at `fe` written into the out-of-line field
+// at `field` (content row `kt`, record `sd`).  `null` releases the child (`OpSetChildRec` of the
+// null sentinel); a literal of the record whose values read no record is built IN the child
+// (`literal_in_child`: `OpChildRecInPlace` where its own store was made, the build spliced), any
+// other such literal apart and copied in (`OpSetChildRec`); a local is copied in; a call that
+// gives its store away is copied in and that store freed (the type's 32768 bit).  A read of
+// another child (the move), a call answering a view of its argument (the write-back) and any
+// other value are refused by name.
+pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: integer, sd: integer, fe: integer, init: boolean = false) -> ir::Node? {
+  k = ir::NdInt { n: kt };
+  if e.p.nodes[fe] is SNull {
+    return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
+  }
+  // A struct enum's child is a literal of any of its variants.
+  vl = el_ex_pattern::variant_literal_def(e, fe);
+  literal = struct_literal_def(e, fe) == sd || (vl >= 0 && el::def(e, vl).parent == sd);
+  x = el_ex_assign::expression(e, vars, fe);
+  if e.first_pass {
+    return ir::NdInsert { items: [] };
+  }
+  if !literal {
+    xc = el_ir::unspan(x.code);
+    xd = match el_types::base(x.tp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+    same = xd >= 0 && (xd == sd || (el::def(e, xd).def_type == el::DT_ENUM_VALUE && el::def(e, xd).parent == sd));
+    // A literal written into a PLACE whose out-of-line field is given that place's own old
+    // record (`o.g = N { v: 5, next: o.g }`): the old record is snapshot by a copy into a work
+    // ref ahead of the field writes (`staged_heap_copy`), and the child set from the copy.
+    if init && same && len(vars.lit_place) == 1 && xc == el_ir::unspan(vars.lit_place[0]!) && kt != el_schema::NO_TYPE && sd >= 0 && el::def(e, sd).def_type == el::DT_STRUCT {
+      pw = el_vars::work_ref_p2(vars, ir::TyReference { n: sd, dep: [] });
+      vars.lit_stage += [el_ir::v_set(pw, ir::NdNull), el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: pw }, k]), el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: pw }, k])], ir::TyVoid, "tuple_member_copy_fill")];
+      return el_ir::cl(e, "OpSetChildRec", [field, ir::NdVar { n: pw }, k]);
+    }
+    // The record the field lies in, handed to its own child, is demoted into it
+    // (`place_demote`, `OpDemoteRec`): not carried.
+    if same && xc is NdVar && xc == ir::NdVar { n: place_root(e, field) } {
+      // `object_into` moved the old record into this field already (`demote_prelude`).
+      if vars.demote_var == place_root(e, field) {
+        return ir::NdInsert { items: [] };
+      }
+      // (A literal's field is the demote; a plain write `n.next = n` sets the child as any
+      // local's record is set.)
+      // (A literal that does not demote — another field reads the record — keeps the old
+      // record as a view the staging binds, and sets the child from it.)
+    }
+    if same && xc is NdVar {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    // A unit variant (`TVec { inner: TInt }`): its record, built in a work ref, set as the child.
+    if same && match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    // `write_back_call`: a call answering its argument or a record built in the caller's buffer
+    // (`t.left = insert(t.left, k)`) is bound as a borrow of the host, copied in where it must
+    // be, and a store the callee minted for this call — neither the host's nor the buffer's —
+    // released.
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      wb = write_back_call(e, vars, field, k, xc);
+      if wb != null {
+        return wb;
+      }
+    }
+    // `move_child`: a read of a child rooted at this field's own child (`t.left = t.left.right`)
+    // installs that child's record by its number (`OpMoveChildRec`).
+    src = child_chain_of(e, field, xc);
+    if src != null {
+      return el_ir::cl(e, "OpMoveChildRec", [field, src!, k]);
+    }
+    if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
+    }
+    // A child read from another slot (`t.right = t.left`) is set as it is read: the copy is
+    // the set's own.
+    if same && calls(e, xc, "OpRefFromChildRec") {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
+    el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record");
+    return null;
+  }
+  bl = match el_ir::unspan(x.code) { NdBlock { block } => block[0], _ => { el::refuse(e, "an out-of-line field given a value that is no literal, local or fresh call of its record"); return null; } };
+  w = match el_ir::unspan(el_ir::last(bl.operators)) { NdVar { n } => n, _ => -1 };
+  made = -1;
+  for op in bl.operators {
+    match el_ir::unspan(op) {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name == "OpDatabase" && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: w } {
+          made = op#index;
+        }
+      },
+      _ => {}
+    }
+  }
+  plain = bl.name == "Object" && w >= 0 && made >= 0;
+  for op in bl.operators {
+    if !plain_child_literal(vars, op, w) {
+      plain = false;
+    }
+  }
+  if !plain {
+    return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+  }
+  ops: vector<ir::Node> = [];
+  for op in bl.operators {
+    if op#index == made {
+      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRecInPlace", [field, k]))];
+    } else if op#index + 1 < len(bl.operators) {
+      ops += [op];
+    }
+  }
+  el_vars::set_skip_free(vars, w, "literal_in_child");
+  ir::NdInsert { items: ops }
+}
+
+// `Parser::write_back_call`, or null where `call` is no call of a function that answers a
+// borrowed view through a record buffer of its own.
+fn write_back_call(e: el::El, vars: el_vars::Vars, field: ir::Node, k: ir::Node, call: ir::Node) -> ir::Node? {
+  buf = -1;
+  match call {
+    NdCall { def_nr, args } => {
+      if returns_argument_view(el::def(e, def_nr)) {
+        buf = hidden_ref_arg(vars, args);
+      }
+    },
+    _ => {}
+  }
+  host = place_root(e, field);
+  if buf < 0 || host < 0 {
+    return null;
+  }
+  d = match el_types::base(el_vars::tp(vars, buf)) { TyReference { n } => n, _ => -1 };
+  if d < 0 {
+    return null;
+  }
+  r = el_vars::create_unique(vars, "written_back", ir::TyReference { n: d, dep: [host] });
+  // (`mark_view_elided`: read by the write and the guarded release alone — the call's result
+  // is delivered to it as it is, never the bind's copy.)
+  vars.vars[r].view_elided = true;
+  el_vars::set_defined(vars, r);
+  el_vars::set_skip_free(vars, r, "write_back_call");
+  rv = ir::NdVar { n: r };
+  release = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [rv, ir::NdVar { n: host }]), el_ir::cl(e, "OpFreeRefIfDistinct", [rv, ir::NdVar { n: buf }]), ir::NdNull);
+  el_ir::v_block([el_ir::v_set(r, call), el_ir::cl(e, "OpSetChildRec", [field, rv, k]), release], ir::TyVoid, "write_back_call")
+}
+
+// `Parser::child_chain_of`: the field address the value's own child sits in, where the value
+// is a chain of child reads (`OpRefFromChildRec(OpGetField(…))`) walked down to the child
+// `field` itself holds; null for any other value.
+fn child_chain_of(e: el::El, field: ir::Node, val: ir::Node) -> ir::Node? {
+  if !calls(e, val, "OpRefFromChildRec") {
+    return null;
+  }
+  src = match val { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+  cur = src;
+  for _step in 0..64 {
+    if !calls(e, cur, "OpGetField") {
+      return null;
+    }
+    base = match cur { NdCall { args } => if len(args) == 3 && el_ir::unspan(args[1]!) is NdInt { el_ir::unspan(args[0]!) } else { ir::NdNull }, _ => ir::NdNull };
+    if !calls(e, base, "OpRefFromChildRec") {
+      return null;
+    }
+    inner = match base { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    if inner == field {
+      return src;
+    }
+    cur = inner;
+  }
+  null
+}
+
+// A literal's out-of-line field `a` of record `d` at `r`, given the value at `fe`.
+fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: integer, fe: integer) -> ir::Node? {
+  fk = child_field(e, d, a, r, 0);
+  sd = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
+  kt = match fk[1]! { NdInt { n } => n, _ => 65535 };
+  out_of_line_set(e, vars, fk[0]!, kt, sd, fe, init: true)
+}
+
+// `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
+// type's default; a vector field its handle zeroed (twice: the prime, then the default's own
+// write); a struct field each of ITS fields' defaults, inline at its offset.
+pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node>? {
+  def = el::def(e, d);
+  at = def.attributes[a]!;
+  pos = base + field_position(e, d, at.name);
+  ft = at.typedef[0];
+  // A hoisted vector default (`n___dflt_<Struct>_<field>`): the field's handle primed, then the
+  // function's answer appended — the function handed a `__ref_N` of the vector's type as its
+  // buffer, minted here, on the second pass.
+  match el_ir::unspan(at.value[0] ?? ir::NdNull) {
+    NdCall { def_nr: hd, args: _ } => {
+      // A text: the call itself, handed its work text as any text-answering call is.
+      if starts_with(el::def(e, hd).name, "n___dflt_") && ft is TyText && base == 0 {
+        tc = el_ex_call::call_args(e, vars, hd, [], []);
+        if tc == null {
+          el::refuse(e, "a hoisted field default of this type: {type_kind(ft)}");
+          return null;
+        }
+        return [el_ex_object::set_field(e, d, a, r, tc!.code)];
+      }
+      // A plain struct: the function's answer copied into the field, the function handed a
+      // `__ref_N` of the struct's type.
+      // (A struct enum's hoisted variant with fields, `hint: Ty = TyInt { n: 4 }`, the same way,
+      // at the enum's known type — `@FR-F-Default-Field`, loft#2607.)
+      if starts_with(el::def(e, hd).name, "n___dflt_") && (ft is TyReference || match ft { TyEnum { is_ref } => is_ref, _ => false }) {
+        rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, TyEnum { n: red } => red, _ => 0 }).known_type;
+        rw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
+        vars.vars[rw].caller_hidden_buf = true;
+        return [el_ir::cl(e, "OpCopyRecord", [ir::NdCall { def_nr: hd, args: [ir::NdVar { n: rw }] }, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: rkt }]), ir::NdInt { n: rkt }])];
+      }
+      if starts_with(el::def(e, hd).name, "n___dflt_") {
+        hin = match ft { TyVector { inner } => inner, _ => ir::TyVoid };
+        hnm = el_types::elem_name(e, hin);
+        hvt = if hnm == "" { -1 } else { el_schema::schema_type(e, "vector<{hnm}>") };
+        hrow = el_ex_vector::append_row(e, hin);
+        if hvt < 0 || hrow < 0 {
+          el::refuse(e, "a hoisted field default of this type: {type_kind(ft)}");
+          return null;
+        }
+        hw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
+        vars.vars[hw].caller_hidden_buf = true;
+        return [
+          el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]),
+          el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: hvt }]), ir::NdCall { def_nr: hd, args: [ir::NdVar { n: hw }] }, ir::NdInt { n: hrow }])
+        ];
+      }
+    },
+    _ => {}
+  }
+  // An omitted out-of-line field holds no child: `OpSetChildRec` of the null sentinel.
+  if el_schema::out_of_line(e, d, a) {
+    fk = child_field(e, d, a, r, base);
+    return [el_ir::cl(e, "OpSetChildRec", [fk[0]!, el_ir::cl(e, "OpNullRefSentinel", []), fk[1]!])];
+  }
+  // An omitted `S?` field (`__nullable<S>`, @PLN25 E2a.4) is absent: the record's zero-init is
+  // discriminant 0.
+  if is_nullable_wrapper(e, ft) {
+    return [];
+  }
+  if el_types::is_collection(ft) {
+    z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
+    return [z, z];
+  }
+  // An omitted `vector<T>?` field defaults to null: its handle primed, then marked absent.
+  if ft is TyOptional && el_types::base(ft) is TyVector {
+    return [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: -1 }])];
+  }
+  match ft {
+    // An omitted pointer field (`reference<T>`) names nothing; a `reference<T>?` defaults to the
+    // `null` literal (`object_init`'s nullable arm).
+    TyReference { n: _, dep } => {
+      if len(dep) > 0 {
+        return [el_ir::cl(e, "OpSetDbRef", [r, ir::NdInt { n: pos }, el_ir::cl(e, "OpNullRefSentinel", [])])];
+      }
+    },
+    TyOptional { inner } => {
+      if el_types::is_pointer(inner) {
+        return [el_ir::cl(e, "OpSetDbRef", [r, ir::NdInt { n: pos }, ir::NdNull])];
+      }
+    },
+    _ => {}
+  }
+  match ft {
+    TyReference { n: fd } => {
+      if el::def(e, fd).def_type != el::DT_STRUCT {
+        el::refuse(e, "an omitted field of this type");
+        return null;
+      }
+      // A nullable struct field, or one that would contain its host, is an out-of-line child
+      // (`@FR-L-OutOfLine`), whose default is not carried yet.
+      if at.nullable || contains_struct(e, fd, d, 0) {
+        el::refuse(e, "an omitted nullable or out-of-line struct field");
+        return null;
+      }
+      out: vector<ir::Node> = [];
+      for fa in el::def(e, fd).attributes {
+        if fa.constant {
+          continue;
+        }
+        sub = field_default(e, vars, fd, fa#index, r, pos);
+        if sub == null {
+          return null;
+        }
+        for op in sub! {
+          out += [op];
+        }
+      }
+      return out;
+    },
+    _ => {}
+  }
+  // A field declaring its default takes it — a variant's `enum` field its ordinal, a `= value`
+  // its value (`parse_stored_default`).
+  // `object_init`'s `variant_default_ref` / `rehome_variant_default`: a struct enum's
+  // unit-variant default is the `EnumUnitLit` block built in the struct's table; each
+  // construction re-homes its work ref to a FRESH one of this frame and copies the record into
+  // the field.  (Only the block's reads are re-homed: its type keeps the dep it was built with,
+  // as Rust's map over the nodes leaves it.)
+  if !e.first_pass {
+    match el_ir::unspan(at.value[0] ?? ir::NdNull) {
+      NdBlock { block: ub } => {
+        own = match el_ir::unspan(el_ir::last(ub[0].operators)) { NdVar { n: ov } => ov, _ => -1 };
+        if ub[0].name == "EnumUnitLit" && own >= 0 {
+          ued = el_types::struct_enum_def(el_types::base(ft));
+          if ued >= 0 {
+            fresh = el_vars::work_ref(vars, el_types::without_deps(ft));
+            moved = rehome_variant_default(at.value[0]!, own, fresh);
+            ukt = el::def(e, ued).known_type;
+            return [el_ir::cl(e, "OpCopyRecord", [moved, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: ukt }]), ir::NdInt { n: ukt }])];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { at.value[0]! } else { el_ex_object::to_default(e, ft) };
+  if base == 0 {
+    return [el_ex_object::set_field(e, d, a, r, val)];
+  }
+  w = el_ex_object::write_at(e, at, r, ir::NdInt { n: pos }, val);
+  if w is NdNull {
+    return null;
+  }
+  [w]
+}
+
+// Does struct `d` hold a record of struct `host`, directly or through its struct fields?
+pub fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> boolean {
+  if d == host {
+    return true;
+  }
+  if depth > 32 {
+    return true;
+  }
+  for a in el::def(e, d).attributes {
+    match a.typedef[0] {
+      TyReference { n } => {
+        if el::def(e, n).def_type == el::DT_STRUCT && contains_struct(e, n, host, depth + 1) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// A vector field written from a literal, built into the field of the record at `r` (the local
+// `v`, or a place inside it) — `parse_vector_inner` with `is_field`: no room made first; a scalar item pushed onto the field's place, a text item a
+// record made through the owning struct's field (`OpNewRecord(r, struct, field)`).
+// A vector field written from a vector place — a local, a parameter, a field read off an owned
+// record (`copies_whole_vector`): the source's elements appended into the field the header prime
+// emptied (`OpAppendVector`), a copy as a whole-value bind is (`(B-Copy)`).  A call (delivered
+// into the field through its buffer), a slice, a nullable source and any other value are refused
+// by name.
+// Does every arm of the branch `code` ends in answer a vector built in a `__vdb_N` store?
+fn fresh_vector_arms(vars: el_vars::Vars, code: ir::Node) -> boolean {
+  match el_ir::unspan(code) {
+    NdBlock { block } => {
+      if block[0].name == "Vector" {
+        ds = el_types::deps(block[0].result[0] ?? ir::TyVoid);
+        return len(ds) == 1 && starts_with(el_vars::name_of(vars, ds[0]!), "__vdb_");
+      }
+      len(block[0].operators) == 1 && fresh_vector_arms(vars, block[0].operators[0]!)
+    },
+    NdIf { cond: _, t, f } => fresh_vector_arms(vars, t) && fresh_vector_arms(vars, f),
+    _ => false
+  }
+}
+
+pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+  // A comprehension fills the field in place (`parse_vector_for` with `is_field`): its pushes
+  // go to the field's place, with no store and no local of its own.
+  if e.p.nodes[n] is SComprehension {
+    fa = attr_nr(el::def(e, d), fname);
+    // (The field's place is read on the second pass only: the first has no layout to read it
+    // from, and asking would lay the field's row out ahead of its record.)
+    fp: ir::Node? = if e.first_pass { ir::NdNull } else if fa >= 0 { el_ex_base::field_get(e, d, fa, r) } else { null };
+    if fp == null {
+      el::refuse(e, "a comprehension into a field that is not read as a place");
+      return null;
+    }
+    vars.comp_place = [fp!];
+    c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
+    vars.comp_place = [];
+    // (The build is one inserted group, as the comprehension answers it.)
+    return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };
+  }
+  // (`@FR-T-Chk-Vec`: the field's type reaches a branch's arms, so an untyped `[]` arm is
+  // built where it stands.)
+  kept_node = vars.expect_node;
+  kept_tp = ex(ir::NdNull, vars.expect);
+  branch = match e.p.nodes[n] {
+    SIf { cond: _ } => n,
+    SBlock { stmts } => if len(stmts) == 1 { match e.p.nodes[stmts[0]] { SStmt { e: se, semi, orelse } => if se != null && !semi && orelse == null && e.p.nodes[se!] is SIf { se! } else { -1 }, _ => -1 } } else { -1 },
+    _ => -1
+  };
+  if branch >= 0 {
+    vars.expect_node = branch;
+    vars.expect = ir::TyVector { inner: inner, dep: [] };
+  }
+  x = el_ex_assign::expression(e, vars, n);
+  vars.expect_node = kept_node;
+  vars.expect = kept_tp.tp;
+  if e.first_pass {
+    return [];
+  }
+  // A call whose vector answer goes through a hidden buffer is handed the FIELD as that buffer
+  // (`parse_vector_inner`'s field arm): the buffer is pointed at the field where it is used, and
+  // the call writes the elements in place.
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr, args } => {
+      w = hidden_ref_arg(vars, args);
+      cd = el::def(e, def_nr);
+      la = cd.attributes[len(cd.attributes) - 1];
+      if w >= 0 && la != null && la!.hidden && el_types::base(la!.typedef[0] ?? ir::TyVoid) is TyVector && el_types::is_equal(e, el_types::without_deps(el_types::base(x.tp)), ir::TyVector { inner: inner, dep: [] }) {
+        vk0 = vector_store(e, inner, el_types::elem_name(e, inner));
+        fr0 = four_byte_field_rows(e, d, fname, inner);
+        if len(fr0) == 2 {
+          vk0 = fr0[0]!;
+        }
+        if vk0 >= 0 {
+          // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top;
+          // it names the field, which the record owns, so it is never freed itself.
+          el_vars::mark_inline(vars, w, "handle_field");
+          el_vars::set_skip_free(vars, w, "handle_field");
+          fp = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk0 }]);
+          return [el_ir::v_set(w, fp), x.code];
+        }
+      }
+    },
+    _ => {}
+  }
+  // (A field path through inline records — `d0.tiles.proto` — is a place as a field of a local
+  // is: Rust appends from the path read as written.)
+  whole = copies_whole_vector(e, vars, x.code) || (calls(e, x.code, "OpGetField") && el_ex_base::field_path(e, el_ir::unspan(x.code)));
+  // A slice (`part: c[1..3]`) is the fresh vector its range copies (`___iter_vec_N`), appended
+  // as any built vector is.
+  if !whole && match el_ir::unspan(x.code) { NdBlock { block } => block[0].name == "iter_vec", _ => false } {
+    whole = true;
+  }
+  // A branch whose arms each build a vector in a store of their own (`{ if c { [] } else
+  // { [2] } }`): appended from whichever it answers.
+  if !whole && (el_ir::unspan(x.code) is NdIf || el_ex_copy::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
+    whole = true;
+  }
+  if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !whole || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
+    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_ex_copy::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
+    refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place: {what}");
+    return null;
+  }
+  nm = el_types::elem_name(e, inner);
+  rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+  // A narrow integer element is appended at its narrow store type (`byte`, `short_raw`, …), the
+  // row a push into the field takes (`@FR-B-Copy`).
+  match inner {
+    TyInteger { spec } => { if el_types::narrow_width(spec) > 0 { rec = el_schema::content_type(e, inner); } },
+    _ => {}
+  }
+  vk = vector_store(e, inner, nm);
+  fr = four_byte_field_rows(e, d, fname, inner);
+  if len(fr) == 2 {
+    vk = fr[0]!;
+    rec = fr[1]!;
+  }
+  if rec < 0 || vk < 0 {
+    el::refuse(e, "a vector field of this element type written from a vector place: {type_kind(inner)}");
+    return null;
+  }
+  place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk }]);
+  // (A NULLABLE field takes the whole-value replace, `OpReplaceVector`: an absent source leaves
+  // it absent, as `lower_vec_copy_bind` writes a nullable destination.)
+  fna = attr_nr(el::def(e, d), fname);
+  fnull = fna >= 0 && (el::def(e, d).attributes[fna]!.typedef[0] ?? ir::TyVoid) is TyOptional;
+  [el_ir::cl(e, if fnull { "OpReplaceVector" } else { "OpAppendVector" }, [place, x.code, ir::NdInt { n: rec }])]
+}
+
+// The literal `n` written into field `fname` of the record `v` under construction (place `r`,
+// definition `d`): a vector field, or a keyed one (`hash`, `sorted`, `index`) whose records are
+// added through the record itself.
+// A literal item of a type that declares a drop hook, in a struct FIELD's vector literal, is built
+// apart in a store of its own and copied into its element (the copy's free-source bit releasing
+// the temporary) — not carried: refused by name rather than built in place.  A local's vector
+// literal builds such items in place, as the port does.
+pub fn refuses_hooked_items(e: el::El, items: vector<integer>) -> boolean {
+  if e.first_pass {
+    return false;
+  }
+  for it in items {
+    sd = struct_literal_def(e, it);
+    if sd >= 0 && el_types::hook_of(e, sd, "OpDrop") >= 0 {
+      el::refuse(e, "a vector literal item of a type with a drop hook");
+      return true;
+    }
+  }
+  false
+}
+
+// `Parser::rehome_variant_default`: a variant default's work ref `own` (an index of the
+// struct context's table) re-homed to `fresh`, a work ref of the construction — every `Var` read
+// and `Set` target of it (`map_nodes`), and nothing else: a block's result type keeps the dep it
+// was built with.
+fn rehome_variant_default(n: ir::Node, own: integer, fresh: integer) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for op in b.operators { rehome_variant_default(op, own, fresh) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: if var == own { fresh } else { var }, inner: rehome_variant_default(inner, own, fresh) },
+    _ => el_ex_base::rename_reads(n, own, fresh)
+  }
+}

@@ -134,6 +134,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // across the passes, on both backends (after the loop buffers: a different variable kind).
     crate::opt::loop_record::rewrite_program(data, database);
     laps.lap("loop_record");
+    // `@FR-R-LiftReuse` — the scalar lifts of different top-level statements share their
+    // variables, on both backends.  Last: it renumbers variables the passes above name.
+    crate::opt::lift_reuse::rewrite_program(data);
+    laps.lap("lift_reuse");
     laps.report("close_program", data.definitions());
     // The store records (STORE_RECORDS.md), on the closed program: an observer.
     crate::store_records::observe(data);
@@ -216,6 +220,12 @@ pub fn byte_code_from(
     } else {
         None
     };
+    // The callee facts the generator asks per assignment (`bind_lowering`'s ownership and
+    // parameter-write questions), once for the program (loft#2620).  Generating a body changes
+    // no body: `def_code` writes only a function's code position and its own locals'
+    // `text_view` marks, which neither fact reads.
+    let param_writes = crate::parser::param_writes_summary(data);
+    let own_memo = crate::use_analysis::ownership_memo_scope(data);
     for d_nr in start_d_nr..data.definitions() {
         // A placeholder instance stands for its template and is never code — on this backend
         // as on `--native` (@FR-G-Mono).
@@ -232,6 +242,8 @@ pub fn byte_code_from(
         crate::crash_report::note_compile_pos(data.def(d_nr).position());
         state.def_code(d_nr, data, program_store);
     }
+    drop(own_memo);
+    drop(param_writes);
     if start_d_nr == 0 {
         build_const_vectors(state, data, program_store);
         state.database.allocations[crate::database::CONST_STORE as usize]

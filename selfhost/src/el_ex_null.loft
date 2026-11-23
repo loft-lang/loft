@@ -32,6 +32,7 @@ use el_compare;
 use el_ex_copy;
 use el_ex_deliver;
 use el_ex_name;
+use el_ex_into;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // `@FR-B-Ref-Uniform`: a link to a scalar place is read as the value it names (`p ?? 0`
@@ -787,7 +788,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     }
     // An `S?` slot's default is its record's (`read_through_tag`).
     if is_nullable_wrapper(e, x.tp) {
-      rx = el_ex_place::read_through_tag(e, vars, x);
+      rx = el_ex_into::read_through_tag(e, vars, x);
       if rx == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
@@ -883,7 +884,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   }
   // An `S?` slot is read as the `S?` it holds first (`handle_present`'s `read_through_tag`).
   // On pass 1 the field still has its declared `S?` type: `fill_all` tags it at the pass's end.
-  rx = el_ex_place::read_through_tag(e, vars, x);
+  rx = el_ex_into::read_through_tag(e, vars, x);
   if rx == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1225,12 +1226,12 @@ fn value_struct_eq(e: el::El, vars: el_vars::Vars, op: text, ad: integer, a: Ex,
   pre: vector<ir::Node> = [];
   ac = a.code;
   bc = b.code;
-  if el_ex_place::any_user_call(e, [a.code]) {
+  if el_ex_into::any_user_call(e, [a.code]) {
     ha = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
     pre += [el_ir::v_set(ha, a.code)];
     ac = ir::NdVar { n: ha };
   }
-  if el_ex_place::any_user_call(e, [b.code]) {
+  if el_ex_into::any_user_call(e, [b.code]) {
     hb = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
     pre += [el_ir::v_set(hb, b.code)];
     bc = ir::NdVar { n: hb };
@@ -1684,7 +1685,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   if null_then && is_nullable_wrapper(e, f.tp) {
     tslot = f.tp;
-    tpt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(tslot)), dep: el_types::deps(tslot) } };
+    tpt = ir::TyOptional { inner: ir::TyReference { n: el_ex_into::nullable_payload(e, el_types::struct_enum_def(tslot)), dep: el_types::deps(tslot) } };
     if e.first_pass {
       return ex(el_ir::v_if(c.code, t.code, f.code), tpt);
     }
@@ -1768,7 +1769,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // after the join read an absent slot as a record.  The `null` arm answers the sentinel.
   if (f.tp is TyNull && is_nullable_wrapper(e, t.tp)) || (t.tp is TyNull && is_nullable_wrapper(e, f.tp)) {
     slot_t = if f.tp is TyNull { t.tp } else { f.tp };
-    pt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_t)), dep: el_types::deps(slot_t) } };
+    pt = ir::TyOptional { inner: ir::TyReference { n: el_ex_into::nullable_payload(e, el_types::struct_enum_def(slot_t)), dep: el_types::deps(slot_t) } };
     if e.first_pass {
       return ex(el_ir::v_if(c.code, t.code, f.code), pt);
     }
@@ -1789,7 +1790,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   if is_nullable_wrapper(e, t.tp) != is_nullable_wrapper(e, f.tp) {
     slot_c = if is_nullable_wrapper(e, t.tp) { t } else { f };
     ptr_c = if is_nullable_wrapper(e, t.tp) { f } else { t };
-    payload = el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_c.tp));
+    payload = el_ex_into::nullable_payload(e, el_types::struct_enum_def(slot_c.tp));
     same_payload = match ptr_c.tp { TyOptional { inner: pi } => match pi { TyReference { n: pn } => pn == payload, _ => false }, _ => false };
     if same_payload {
       cpt = ir::TyOptional { inner: ir::TyReference { n: payload, dep: el_types::deps(slot_c.tp) } };
@@ -2530,8 +2531,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // `convert`'s tagged arm (`@FR-L-Null-Tag`) at a `return`, as at a body's tail: a
     // `__nullable<S>` value of a `-> S?` function is read through its tag, absence the
     // reference null sentinel (`return h.a;` with `a: R?`).
-    if !e.first_pass && is_nullable_wrapper(e, v.tp) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(v.tp)) {
-      tagged = el_ex_place::read_through_tag(e, vars, v);
+    if !e.first_pass && is_nullable_wrapper(e, v.tp) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(v.tp)) {
+      tagged = el_ex_into::read_through_tag(e, vars, v);
       if tagged == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
@@ -3532,7 +3533,7 @@ pub fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, 
     },
     _ => {}
   }
-  r = el_ex_place::read_through_tag(e, vars, ex(n, slot));
+  r = el_ex_into::read_through_tag(e, vars, ex(n, slot));
   if r == null { null } else { r!.code }
 }
 

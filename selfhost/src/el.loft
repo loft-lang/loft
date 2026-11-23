@@ -100,6 +100,10 @@ pub struct El {
   // `Data::source`: 0 the standard library, 1 the program
   pub source: integer,
   pub first_pass: boolean,
+  // The struct context's variable table (`Parser::vars` while a struct is read): every field
+  // default of the file is lowered in it, so a default's work ref takes the NEXT index of the
+  // whole pass — the dep a unit-variant default keeps names that index (`@FR-F-Default-Field`).
+  pub dflt_vars: integer = 0,
   // `Parser::default`: parsing the standard library
   pub default: boolean,
   // the definition whose body is being elaborated; -1 = none (`u32::MAX`)

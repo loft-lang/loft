@@ -182,6 +182,17 @@ triaged, never just copied:
 
 ### The behaviour contract
 
+The gate compares with STRICT equality (owner): a flag no Rust reader sees is compared all the
+same — "that leads to far easier comparison of code.  If you dislike the rust implementation
+that one has to move first."  An inert difference is removed by changing RUST first (with its
+IR unchanged and its suite cells green on both backends), never by filtering the comparison.
+And it is ROUTINE against routine (owner): "There should always be a corresponding routine
+between the two implementations for a decision that can be compared."  Every compared decision
+(a flag, a contract fact, a route) is made in one Rust function and in the port function that
+mirrors it and names it (the reasons layer); a port routine that reaches Rust's answer another
+way is a defect even where the output agrees.  A try names the Rust routine each new port
+routine mirrors.
+
 The port follows Rust's REASONING, not its in-memory data structures: unless Rust is clearly
 wrong, a conclusion is reached by the rule Rust reaches it by, because a port that gets the same
 answer another way diverges where the corpus does not look.  Rust's rules carry months of
@@ -221,6 +232,17 @@ concrete mismatch shows that a hidden fact is needed; then it goes where it fits
 remain; a port rule that decides by a different reasoning than Rust's is a defect.  Decision traces (`LOFT_TRACE_RETPROMO`,
 `LOFT_STATE_TRACE`) explain why an output differs; they are no part of the contract.
 
+Rules of decision ORDER — what a later decision sees is what Rust had at that moment:
+
+- `@FR-F-ParamTuple`'s shadow is decided against its copy seed: on pass 2 `parse_function`
+  builds the seed (`tuple_whole_bind_copy`, minting its `__ref_p2_N`) and gives the shadow the
+  COPY's type before the body is read (definitions.rs ~3699–3705); only the finish
+  (`tuple_param_seed`) retypes it to the view where `MemberWalk::only_read` holds.  So the body
+  is parsed with `__tp_p` borrowing `__ref_p2_1`: `fn pick(p: (R, integer)) -> R { if p.1 > 0 {
+  p.0 } else { R { … } } }` reads its tail as viewing a local (`return_views_local`), takes
+  `MaterializeView`, and mints and unregisters `__ref_1` (traced by the tester with
+  `LOFT_LOG=type_timeline:__tp_p`; listed as a Rust accident before that).
+
 ### Rust suspects
 
 Rust rules whose reasoning does not hold together, seen while porting them or where the
@@ -258,13 +280,6 @@ program was found for stays listed with what was tried.
   makes no placeholder: the `user_named` difference on capture names (`e`, `s`, `v` … in
   lambdas, about 60 items).  Probed: `stack_trace()` inside a capturing lambda lists its
   parameters and locals only — the placeholder is not live in the frame; no wrong program.
-- `fn pick(p: (R, integer)) -> R { if p.1 > 0 { p.0 } else { R { … } } }`: on pass 2 the tuple
-  shadow `__tp_p` depends on `__ref_p2_1`, apparently pass 1's literal work ref, kept by name
-  across passes, where pass 2 numbers the literal `__ref_p2_2` and leaves `__ref_p2_1` an
-  unused leftover (where the dep is written is not traced yet).  So the pass-2 selector reads
-  the tail as viewing a local (`return_views_local`) and takes `MaterializeView`, minting and
-  unregistering `__ref_1`; the code is the same copy either way.  The port copies without the
-  work ref: the one difference left is `__ref_1`'s `skip_free` (2471-…, a handful of programs).
 - A call answering a record `τ?` that borrows a parameter (`fn whole(s: S) -> S? { s }`) is
   typed borrowing a VARIABLE argument but not a literal one: `whole(S { a: 7 })` is `ref(S)?`
   with no dep on the literal's store, where the dense `-> S` names it.  Reproduced; probed

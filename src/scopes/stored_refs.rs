@@ -600,6 +600,8 @@ fn run(
         loops: Vec::new(),
         first_set: HashMap::default(),
         last_set: HashMap::default(),
+        last_order: HashMap::default(),
+        assignments: 0,
         holds: HashMap::default(),
         found: Vec::new(),
         writes: 0,
@@ -624,6 +626,10 @@ struct Hold {
     at: Option<(u16, u16)>,
     /// The record type the reference names, `u16::MAX` when not known.
     target: u16,
+    /// For a hold kept by an evacuation: the home's own block path.  Until the walk leaves
+    /// that block the holder still names the home's record — the copy-out runs at the home's
+    /// free — so a copy of the holder taken there carries a reference with the home's life.
+    evacuated_from: Option<Vec<u32>>,
 }
 
 /// How long a place lasts: past this frame (a parameter's), or for a block path.
@@ -650,6 +656,11 @@ struct Walk<'a> {
     first_set: HashMap<u16, Vec<u32>>,
     /// The block path of each variable's latest assignment: where its current value began.
     last_set: HashMap<u16, Vec<u32>>,
+    /// The order of each variable's latest assignment among all assignments walked so far:
+    /// which of two variables took its current value last.
+    last_order: HashMap<u16, usize>,
+    /// The assignments walked so far.
+    assignments: usize,
     /// The references each local holder carries, for the copies made of it.
     holds: HashMap<u16, Vec<Hold>>,
     /// This function's own summary: references it stores between its parameters.
@@ -747,6 +758,8 @@ impl Walk<'_> {
     fn assigned(&mut self, v: u16) {
         self.first_set.entry(v).or_insert_with(|| self.path.clone());
         self.last_set.insert(v, self.path.clone());
+        self.assignments += 1;
+        self.last_order.insert(v, self.assignments);
         // A new value: the references the old one carried are gone with it.
         self.holds.remove(&v);
     }
@@ -995,6 +1008,7 @@ impl Walk<'_> {
                 root: false,
                 at: None,
                 target: u16::MAX,
+                evacuated_from: None,
             });
         }
         Some(Hold {
@@ -1005,6 +1019,7 @@ impl Walk<'_> {
             root: false,
             at: None,
             target: u16::MAX,
+            evacuated_from: None,
         })
     }
 
@@ -1030,6 +1045,7 @@ impl Walk<'_> {
                 root: false,
                 at: None,
                 target: u16::MAX,
+                evacuated_from: None,
             }],
             Ok(_) => self.holds.get(&v).cloned().unwrap_or_default(),
         }
@@ -1090,6 +1106,7 @@ impl Walk<'_> {
                 (Some(_), Life::Block(_)) => kept.push(hold),
                 (None, _) => {
                     if Self::outlives(lasts, &hold.home_path) {
+                        let mut evacuated = false;
                         match self.resolve(h, lasts, &hold, site) {
                             Resolution::Refuse => {
                                 let msg = self.message(h, &hold, lasts, via, direct);
@@ -1114,6 +1131,7 @@ impl Walk<'_> {
                                     message,
                                 });
                                 self.out.evacuations.push(ev);
+                                evacuated = true;
                             }
                         }
                         // The record now lasts as long as the holder.
@@ -1121,7 +1139,12 @@ impl Walk<'_> {
                             Life::Block(p) => p.clone(),
                             Life::Caller(_) => Vec::new(),
                         };
-                        kept.push(Hold { home_path, ..hold });
+                        let evacuated_from = evacuated.then(|| hold.home_path.clone());
+                        kept.push(Hold {
+                            home_path,
+                            evacuated_from,
+                            ..hold
+                        });
                         continue;
                     }
                     kept.push(hold);
@@ -1141,6 +1164,13 @@ impl Walk<'_> {
         let whole = matches!(src.unspan(), Value::Var(_));
         let dst_at = self.fixed_place(dst);
         for hold in &mut holds {
+            // Inside the home's block the evacuation has not run: the copy names the home's
+            // record, and lasts only as long as it unless a keep of its own applies.
+            if let Some(from) = hold.evacuated_from.take()
+                && self.path.starts_with(&from)
+            {
+                hold.home_path = from;
+            }
             hold.at = match (whole, hold.at, dst_at) {
                 (true, Some((v, a)), Some((dv, doff))) if v == s => {
                     u16::try_from(u32::from(a) + u32::from(doff))
@@ -1233,10 +1263,21 @@ impl Walk<'_> {
             }
             return Resolution::Place(place);
         }
-        if let Some(ev) = self.evacuate(hold) {
+        if let Some(ev) = self.evacuate(h, hold) {
             return Resolution::Evacuate(ev);
         }
         Resolution::Refuse
+    }
+
+    /// Did holder `h` take a new value after `home` took its current one?  A record placed in
+    /// the holder's store when the home was minted (`place_own`) is then gone: the holder's
+    /// mint cleared that store, or its rebind left it (loft#2621, `for … { p = P {…};
+    /// h = H { r: p } }`).  Answers no when either has no assignment walked yet.
+    fn reassigned_after(&self, h: u16, home: u16) -> bool {
+        match (self.last_order.get(&h), self.last_order.get(&home)) {
+            (Some(holder), Some(home)) => holder > home,
+            _ => false,
+        }
     }
 
     /// A named local's record held by a parameter's fixed place (`h.r = items[1]`, `fn
@@ -1244,11 +1285,19 @@ impl Walk<'_> {
     /// local's store is freed, and the reference re-pointed at the copy.  Until then the
     /// holder names the local's record itself, so every write through either shows through the
     /// other.  Refused when the record holds a stored reference (it could name the same
-    /// store) or anything the copy cannot follow.
-    fn evacuate(&self, hold: &Hold) -> Option<Evacuation> {
+    /// store) or anything the copy cannot follow.  A named LOCAL holder that owns its record
+    /// is evacuated into the same way where it took a new value after the home was minted
+    /// (`reassigned_after`): no store of the holder's could have held the record from its mint,
+    /// and the copy is taken at the home's free, after the holder's last mint of the pass.  A
+    /// view (an element's temporary) is no fixed place: its vector may move it.
+    fn evacuate(&self, h: u16, hold: &Hold) -> Option<Evacuation> {
         let (holder, fld) = hold.at?;
         if self.hidden(hold.home)
-            || !self.function.is_argument(holder)
+            || !(self.function.is_argument(holder)
+                || (holder == h
+                    && !self.hidden(holder)
+                    && self.owned_record(holder)
+                    && self.reassigned_after(h, hold.home)))
             || hold.target == u16::MAX
             || !self
                 .database
@@ -1293,6 +1342,7 @@ impl Walk<'_> {
             .any(|b| self.loops.contains(b) && !p.contains(b));
         if !hold.root
             || !refilled
+            || self.reassigned_after(h, hold.home)
             || self.hidden(hold.home)
             || self.function.is_argument(hold.home)
             || !self.owned_record(hold.home)

@@ -3029,6 +3029,12 @@ impl Parser {
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
             self.data.user_operator_conversions = true;
         }
+        crate::timeout::checkpoint_parse_fn(
+            self.lexer.pos().file.as_str(),
+            name_at.line,
+            &fn_name,
+            self.first_pass,
+        );
         self.vars = Function::new(&fn_name, self.lexer.pos().file.as_str());
         // @PLN110 3a — var numbers are per-function, so a stale `len(X)` binding from
         // the previous body would attach to an unrelated local here.

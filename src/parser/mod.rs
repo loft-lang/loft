@@ -2005,6 +2005,7 @@ pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
 mod result_buffer;
+pub(crate) use closures::param_writes_summary;
 use closures::{
     callee_param_writes, collect_param_reassigns, collect_param_rebinds_owned, collect_vars_in,
     emit_fn_ref_field_write, lambda_mutated_captures, merge_dependencies,

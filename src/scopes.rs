@@ -188,6 +188,11 @@ struct Scopes<'s> {
     database: &'s mut crate::database::Stores,
     /// The definition number of the current analyzed function.
     d_nr: u32,
+    /// `captured_record_stand_down`'s candidates — every `OpSetDbRef(___clos_R, off,
+    /// OpFnRefClosure(h, …))` of the body being scanned, as `(R, off, h)` — found on the first
+    /// scope exit that asks: the body is constant for the whole scan, and the walk per scope
+    /// exit made the sweep quadratic in the function's size (loft#2620).
+    captured_fnref_sets: Option<Vec<(u16, i32, u16)>>,
     /// The next scope number that will be created.
     max_scope: u16,
     /// The current scope during traversal of the code. 0 is the scope of the function arguments.
@@ -671,6 +676,10 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     crate::pure_reuse::rewrite_program(data, database);
     // `@FR-R-BoundAppend` — a bound call result appended whole, appended where it is made.
     crate::bound_append::rewrite_program(data);
+    // The parameter-write facts every rewrite below asks of a callee, once for the whole
+    // program from these bodies (loft#2620): one answer per function for the whole pass.
+    let _param_writes = crate::parser::param_writes_summary(data);
+    let _written_params = crate::use_analysis::written_params_summary(data);
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
     crate::spent::record_all(data);

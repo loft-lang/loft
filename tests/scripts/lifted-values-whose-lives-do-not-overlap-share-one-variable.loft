@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-LiftReuse` — lifted call results that are tuples of scalars share one variable when
+// their live ranges over the body's top-level operators do not overlap; two lifts live at
+// once never share.  Each cell crosses a range boundary a wrong allocation would fold: two
+// lifts of one type in one statement (c1), lifts under an `if` (declined) beside one after it
+// (c2), a lift in a loop between straight-line lifts (c3), a lift's value held in a named local
+// read lines later (c4), two types interleaved (c5).  Every value is hand-computed; the switch
+// `LOFT_NO_LIFT_REUSE=1` must answer the same.  The emission side (512 lifts in 4 variables)
+// is `a-function-of-many-record-temporaries-compiles-in-seconds.loft`'s shape (loft#2613).
+//
+// @falsified-at: hand-measured (sabotage) — with the allocator taking a variable whose range
+//   had NOT ended (`end < first` read as `true`), c1 answers 2 · dot of the second operand with
+//   itself per line and fails on both backends.  Restored, c1–c5 hold on both backends in both
+//   switch states.
+
+struct V3 { x: float, y: float, z: float }
+struct V2 { x: float, y: float }
+fn v3(a: float, b: float, c: float) -> V3 { V3 { x: a, y: b, z: c } }
+fn v2(a: float, b: float) -> V2 { V2 { x: a, y: b } }
+fn dot(a: V3, b: V3) -> float { a.x * b.x + a.y * b.y + a.z * b.z }
+fn sx(a: V3) -> float { a.x }
+
+fn c1() -> float {
+  s = 0.0;
+  s += dot(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0));
+  s += dot(v3(7.0, 8.0, 9.0), v3(10.0, 11.0, 12.0));
+  s += dot(v3(0.5, 0.25, 0.125), v3(8.0, 16.0, 32.0));
+  s
+}
+
+fn c2(c: boolean) -> float {
+  s = 0.0;
+  if c { s += sx(v3(100.0, 0.0, 0.0)) + sx(v3(20.0, 0.0, 0.0)); }
+  s += sx(v3(3.0, 0.0, 0.0));
+  s
+}
+
+fn c3() -> float {
+  s = sx(v3(1000.0, 0.0, 0.0));
+  for i in 0..4 { s += dot(v3(i as float, 1.0, 0.0), v3(10.0, 1.0, 0.0)); }
+  s += sx(v3(5.0, 0.0, 0.0));
+  s
+}
+
+fn c4() -> float {
+  p = v3(1.0, 2.0, 3.0);
+  q = v3(4.0, 5.0, 6.0);
+  a = dot(p, v3(1.0, 0.0, 0.0));
+  b = dot(q, v3(0.0, 1.0, 0.0));
+  c = sx(v3(9.0, 9.0, 9.0));
+  a * 100.0 + b * 10.0 + c + p.z + q.z
+}
+
+fn c5() -> float {
+  s = 0.0;
+  s += sx(v3(1.0, 0.0, 0.0)) + v2(2.0, 0.0).x;
+  s += v2(30.0, 0.0).x + sx(v3(40.0, 0.0, 0.0)) + v2(500.0, 0.0).x;
+  s += sx(v3(6000.0, 0.0, 0.0));
+  s
+}
+
+fn main() {
+  // 1·4 + 2·5 + 3·6 = 32; 7·10 + 8·11 + 9·12 = 266; 0.5·8 + 0.25·16 + 0.125·32 = 12.
+  assert(c1() == 310.0, "c1: {c1()}");
+  assert(c2(true) == 123.0, "c2 true: {c2(true)}");
+  assert(c2(false) == 3.0, "c2 false: {c2(false)}");
+  // dot(i,1,0 · 10,1,0) = 10i + 1 over i = 0..3: 60 + 4.
+  assert(c3() == 1069.0, "c3: {c3()}");
+  // a = 1, b = 5, c = 9, p.z = 3, q.z = 6.
+  assert(c4() == 168.0, "c4: {c4()}");
+  assert(c5() == 6573.0, "c5: {c5()}");
+}

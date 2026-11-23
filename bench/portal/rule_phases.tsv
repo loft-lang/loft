@@ -25,7 +25,7 @@ R-BoundedNest/kernel	ir	61	0	61	0	0	0
 R-BufferReturn	c	18	0	0	0	263	0
 R-BufferReturn/bind	c	17	0	0	0	112	0
 R-ByteCopy	ir	2	0	4	0	0	0
-R-CSplit	c	11	0	0	0	22	0
+R-CSplit	c	11	0	0	0	21	0
 R-CTail	c	16	0	0	0	71	0
 R-Callee	c,native	20	0	0	0	66	176
 R-CharWalk	c,native	61	0	0	0	34	719
@@ -101,6 +101,7 @@ R-KeyedEntry/subscript	ir	1	0	3	0	0	0
 R-LazySplit	c,native	3	0	0	0	8	6
 R-Leaf	native	61	0	0	0	0	10762
 R-LeafChain	native	61	0	0	0	0	6356
+R-LiftReuse	ir	8	0	625	0	0	0
 R-LitDiv	native	55	0	0	0	0	2752
 R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
@@ -148,7 +149,7 @@ R-RecPtr/index	native	5	0	0	0	0	40
 R-RecPtr/nested	native	25	0	0	0	0	200
 R-RecPtr/param	c	42	0	0	0	285	0
 R-RecPtr/text	c	4	0	0	0	40	0
-R-RefParam	c	54	0	0	0	6071	0
+R-RefParam	c	54	0	0	0	6070	0
 R-RefillBuffer	native	38	0	0	0	0	354
 R-RefillText	native	4	0	0	0	0	9
 R-Refresh	native	4	0	0	0	0	16
