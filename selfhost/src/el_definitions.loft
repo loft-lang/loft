@@ -1631,6 +1631,13 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       cv = el_vars::add_variable(vars, "__closure", ct);
       el_vars::become_argument(vars, cv);
       e.closure_var = cv;
+      // (Pass 2 reads a capture through the closure record: the first pass's placeholder of its
+      // name no longer resolves.)
+      for pc in e.captures {
+        if vars.names[pc.name] != null && el_vars::capture_placeholder(vars, pc.name) == vars.names[pc.name].nr {
+          vars.names[pc.name].nr = -1;
+        }
+      }
     }
     // `flip_scalars_to_box_types`: a local a closure writes takes its cell's type before the body.
     seeds: vector<ir::Node> = [];
@@ -1680,6 +1687,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       }
     }
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
+    if !e.first_pass && starts_with(name, "__lambda_") && len(e.captures) > 0 {
+      el_vars::retire_capture_placeholders(vars, code, [for rc in e.captures { rc.name }]);
+    }
     if e.first_pass {
       for lm in vars.loop_made {
         e.loop_made += [e.context * 65536 + lm];

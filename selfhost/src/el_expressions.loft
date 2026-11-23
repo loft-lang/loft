@@ -1586,6 +1586,12 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
         el_vars::set_var_type(vars, v, stack);
       }
     } else if el_types::base(el_vars::tp(vars, v)) is TyText {
+      // (`classify_text_dep`'s `SkipCaptured`: a captured text is read from the closure record —
+      // its pass-1 placeholder never becomes a hidden `&text` argument, which would shift
+      // `__closure`'s position.)
+      if len([for ec in e.captures if ec.name == nm { 1 }]) > 0 {
+        continue;
+      }
       // `@FR-R-TextBorrow` (`classify_text_dep`'s loop arm): a `for` loop's own variable stays a
       // local, delivered by copy — promoted to the caller's buffer it would be copied into on
       // every turn, where left a local it borrows each element of the walked vector.

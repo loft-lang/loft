@@ -476,6 +476,15 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     for c in e.captures {
       if c.name == name {
         if e.closure_var < 0 || e.closure_rec < 0 {
+          // (`parse_var_inner`'s capture arm on the first pass: a placeholder variable of the
+          // capture's name, user-named — later reads on this pass find it as a local; pass 2
+          // reads the closure record and retires it.)
+          if e.first_pass {
+            pv = el_vars::add_variable(vars, name, c.tp);
+            el_vars::mark_user_named(vars, pv, "parse_var_inner");
+            el_vars::in_use(vars, pv, true);
+            return ex(ir::NdVar { n: pv }, c.tp);
+          }
           return ex(ir::NdNull, c.tp);
         }
         el_vars::in_use(vars, e.closure_var, true);
