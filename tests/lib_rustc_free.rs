@@ -11,6 +11,8 @@
 //!   a `[native] crate` each called the stub `rustc` (the generated rustc artifact).
 //!   CHANNEL: the stub's log.  WITNESS: "rustc was asked to build a library".
 //!   The refusal's name, the tree before this change: WITNESS "its library, its library".
+
+// approved exemption: the stub `cargo` and `rustc` are shell scripts, which Windows does not run by bare name; Windows substitute: the route they watch is removed from the source, which every platform builds, and `registry_e2e`'s consumer runs a library compiled with no rustc on Windows CI
 #![cfg(unix)]
 
 use loft::file_access as fa;
