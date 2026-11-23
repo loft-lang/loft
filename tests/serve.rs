@@ -694,10 +694,6 @@ fn start_server_libs(port: u16, file: String, libs: Vec<String>) {
 
 #[test]
 fn serve_game_debug_control_end_to_end() {
-    // @PLN203 rust-writer: the live tier the game's flip and apply drive runs the interpreter
-    // inside a Rust-writer build.  SAFETY: a process-global env write, as `LOFT_BIN`'s below;
-    // the test process is its own under nextest, and the value only picks the native writer.
-    unsafe { std::env::set_var("LOFT_NATIVE_BACKEND", "rust") };
     // @PLN18 08-S7 editor support — the EXACT flow the editor shell drives:
     // launch a kernel game through the serve RPC (launch_game now defaults
     // LOFT_DEBUG_CONTROL=1 + LOFT_LIVE_FLIP=1), scrape the game port from the
@@ -1061,10 +1057,6 @@ fn rebuild(ctl: &mut BufReader<TcpStream>) -> String {
 /// field, and the old build keeps serving.
 #[test]
 fn serve_apply_holds_saved_edits_and_carries_the_world() {
-    // @PLN203 rust-writer: the live tier the game's flip and apply drive runs the interpreter
-    // inside a Rust-writer build.  SAFETY: a process-global env write, as `LOFT_BIN`'s below;
-    // the test process is its own under nextest, and the value only picks the native writer.
-    unsafe { std::env::set_var("LOFT_NATIVE_BACKEND", "rust") };
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
