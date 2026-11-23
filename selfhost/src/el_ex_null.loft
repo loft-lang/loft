@@ -2905,7 +2905,7 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   }
   // (A struct enum keeps `__retbuf`: the exit's work ref is minted and substituted out, on
   // both passes — `wrong_shape_for_buffer`.)
-  if vmatch && rb >= 0 {
+  if vmatch && rb >= 0 && match_subject_is_local(vars, el_ir::unspan(x)) {
     enum_exit_work_ref(e, vars, result);
   }
   if vmatch && !e.first_pass && rb >= 0 {
@@ -3702,4 +3702,37 @@ pub fn enum_exit_work_ref(e: el::El, vars: el_vars::Vars, result: ir::TypeT) {
   }
   ew = el_vars::work_ref(vars, ir::TyReference { n: heap_def(el_types::base(result)), dep: [] });
   el_vars::unregister_work_ref(vars, ew);
+}
+
+// Is the vector a `vector_match` walks a LOCAL of this function (its length read, `OpLengthVector
+// (v)`)?  A parameter's elements are the caller's: its view is renamed onto, no exit work ref.
+pub fn match_subject_is_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  sv = match_subject_var(n);
+  sv >= 0 && sv < len(vars.vars) && !vars.vars[sv].argument
+}
+
+fn match_subject_var(n: ir::Node) -> integer {
+  match n {
+    NdCall { args } => {
+      for a in args {
+        match el_ir::unspan(a) { NdVar { n: av } => { return av; }, _ => {} }
+      }
+      for a in args {
+        r = match_subject_var(a);
+        if r >= 0 {
+          return r;
+        }
+      }
+      -1
+    },
+    _ => {
+      for c in el_ir::children(n) {
+        r = match_subject_var(c);
+        if r >= 0 {
+          return r;
+        }
+      }
+      -1
+    }
+  }
 }
