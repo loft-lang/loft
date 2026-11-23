@@ -112,11 +112,9 @@ fn loops_at_once_answer_the_sequential_values_on_the_c() {
     run_on("--native-c");
 }
 
-/// Whether `cc` builds and runs a ThreadSanitizer program here (a POSIX host with the runtime).
+/// Whether `cc` builds and runs a ThreadSanitizer program here: a host whose compiler has no
+/// ThreadSanitizer (MSVC, a cc without its runtime) answers no, and the check is skipped.
 fn tsan_available(dir: &Path) -> bool {
-    if cfg!(windows) {
-        return false;
-    }
     let src = dir.join("probe.c");
     let exe = dir.join("probe");
     fa::write(&src, "int main(void) { return 0; }\n").expect("write the probe");
