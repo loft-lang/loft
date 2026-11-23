@@ -1715,6 +1715,14 @@ impl Stores {
     /// host's store.
     #[must_use]
     pub fn ref_from_child_rec(&self, host_field: &DbRef) -> DbRef {
+        // `@FR-L-Null-Which` — a read that names no record answers `nullref` AT THE READ: the
+        // field of an ABSENT holder (`t.left` with `t: Node?` null, `h.root.left` with the
+        // tagged root absent) is no field at all, as `set_child_rec`, `new_child_rec` and the C
+        // twin `loft_ref_from_child_rec` already say.  Read on, it reached the store accessor
+        // with the null reference and the interpreter stopped with an internal error.
+        if host_field.store_nr == u16::MAX || host_field.rec == 0 {
+            return DbRef::NULL;
+        }
         let store = keys::store(host_field, &self.allocations);
         let rec = store.get_u32_raw(host_field.rec, host_field.pos);
         // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
