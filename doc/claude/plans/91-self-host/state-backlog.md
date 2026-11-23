@@ -27,13 +27,29 @@ With these set aside, state agrees on **1366 of 1401** programs and **78 items**
 all of the 490 come from one Rust accident, the capture placeholder.  Porting it would copy an
 accident whose flags nothing reads; leaving it means it dominates every state count.
 
-**Recommendation:** compare a flag only where a reader can see it: `user_named` on `_`-names,
-and `mutated_capture` on the lambda's real captures.  Compare a capture placeholder's deps and
-`user_appended` not at all.  That is the contract's own rule ("does not grow unless a
-mismatch shows a need"), applied in the other direction.  It is the porter's and owner's call,
-because elab_gate.py is the porter's tool.  If accepted: a reader-scope filter in
-`state_compare`, citing the readers above, and a positive control (a `_`-named capture written
-in a lambda must still be compared).
+**Owner ruling (2026-11-23): the comparison stays STRICT equality** ("that leads to far easier
+comparison of code.  If you dislike the rust implementation that one has to move first").  So
+nothing is filtered out of the gate.  A flag that is inert because Rust's implementation is
+accidental is a RUST change: fix it in Rust first, prove the change moves no IR (gate E on the
+Rust side unchanged) and no suite cell (both backends), and the port follows.  The classes
+above become Rust work:
+
+| # | Rust change | removes | site |
+|---|---|---|---|
+| R1 | the pass-1 capture placeholder does not survive into pass 2's variable table (or is not made) | 446 items: `user_named` 417, `deps`/`user_appended` 29 | objects.rs `parse_var_inner`'s capture arm (~1261: `create_var` + `mark_user_named`) |
+| R2 | `collect_mutated_captures` lists only the lambda's captures, not every written name in its variable table | 42 items, 17 programs | its candidate list (1a-parser.md § Rust suspects); its readers already intersect with the captures |
+| R3 | `__closure`'s `user_appended` | 2 items | the append-through-a-capture mark (expressions.rs ~11065) |
+| R4 | a work ref the one-buffer binding substitutes out is retired but stays declared | the lambda `__ref_1 skip_free` items (S3) | `unregister_work_ref` (variables/mod.rs ~4822); its callers control.rs ~12673, ~14115 |
+
+Order: R2 (smallest, readers unaffected), then R1 (the largest gain), then R3 and R4.  For each,
+first probe the claim that nothing observable moves:
+- emit the image before and after and diff it with gate E on the Rust side;
+- run the suite cells of the area on both backends.
+
+The port then drops nothing: it already has no placeholder, lists only captures, and mints no
+retired ref.  R4 is the one exception that may go the other way.  Rust's mint-then-retire is
+its reasoning for `pick` (the decision-order rule), so for R4 judge per caller whether the
+port carries the mint instead.
 
 ## The subjects, by the Rust decision behind them (the 78 items left)
 
@@ -80,7 +96,4 @@ The 11 items are three cases:
 - a flag on a VARIABLE NO PASS-2 CODE NAMES (a capture placeholder; a retired work ref);
 - the def-level `mutated_capture` temps.
 
-One filter replaces the per-flag reader list: compare a variable's flags only where an op of
-the function names the variable, or the variable is an argument.  Compare `mutated_capture`
-only over the lambda's real captures.  Positive control: a work ref that IS named by code must
-stay compared, and so must a `_`-named capture written in a lambda.
+Under the strict-equality ruling this is no gate filter: it is the list of Rust changes R1–R4 above.
