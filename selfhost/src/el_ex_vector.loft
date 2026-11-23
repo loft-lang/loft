@@ -264,7 +264,10 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     cw = el_vars::work_ref_p2(vars, x.tp);
     el_vars::mark_inline(vars, cw, "bind_inline_container");
     held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
+    // (`parse_in_range_body`: a loft call's answer arrives in its inline container, which keeps
+    // the release — the name borrows it: skip-free and inline.)
     el_vars::mark_inline(vars, held, "parse_in_range_body");
+    el_vars::set_skip_free(vars, held, "parse_in_range_body");
     // (Its `= null` is declared where the statement's other inline work refs are.)
     held_at = [el_ir::v_set(held, el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"))];
     sv = held;
