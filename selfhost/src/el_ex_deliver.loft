@@ -1572,6 +1572,10 @@ pub fn capture_tail_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
   b = ir::NdVar { n: rb };
   owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
   copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return");
+  // (`ref_return`'s tail work ref — `SkipInnerRef` on the first pass, `Bind { substitute }` on
+  // the second — is minted and retired: `unregister_work_ref`, `skip_free`, no null-init.)
+  tw = el_vars::work_ref(vars, el_types::without_deps(el_vars::tp(vars, rb)));
+  el_vars::unregister_work_ref(vars, tw);
   bl.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [tail]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   d = e.context;
   ba = attr_nr(el::def(e, d), "__retbuf");
