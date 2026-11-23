@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I69 — Word-addressed store
 
 //! `@PLN206 P3` — the shared prefix of `Store` against the C runtime's `loft_store_t`: the runtime
 //! headers up to `loft_store.h` are compiled with a `main` that prints each field's `offsetof`,
