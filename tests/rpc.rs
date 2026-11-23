@@ -661,3 +661,58 @@ fn rpc_repl_eval_error_line_is_input_relative() {
         "error on the input's line 1, not the wrapper line: {out}"
     );
 }
+
+/// A debug session over a program that `use`s a library with a tuple parameter
+/// (`tests/lib/hostedlib`'s `spread`) runs and stops inside the library.  A tuple type is
+/// registered globally; the binding `add_def` left under the library's own source was a
+/// cross-source alias nothing records, so the session's rollback check failed at `run`
+/// ("a rollback dropped the import alias `__tuple<integer,float,boolean>`").  And a fault
+/// a request does not catch is said as a `terminated` event, the server still answering:
+/// it ended the process with exit 101 and no word.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with `tuple_def` keeping the binding under
+///   the requesting source (`src/data.rs`).  CHANNEL: the stop event.  WITNESS: "a rollback
+///   dropped the import alias".
+#[test]
+fn rpc_debugs_a_program_using_a_library_with_a_tuple_parameter() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_root = std::env::temp_dir().join(format!("loft_rpc_tuplelib_{}", std::process::id()));
+    let pkg = lib_root.join("hostedlib");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    for f in ["loft.toml", "src/hostedlib.loft"] {
+        let text = fa::read_to_string(root.join("tests/lib/hostedlib").join(f)).expect("read");
+        fa::write(pkg.join(f), text).expect("write");
+    }
+    let prog = tmp_program(
+        "tuplelib",
+        "use hostedlib::*;\nfn main() {\n  b = bag_new(\"x\", 5);\n  w = b.weight();\n  println(\"w {w} {spread((3, 0.5, true), 4)}\");\n}\n",
+    );
+    let lib_file = pkg.join("src/hostedlib.loft");
+    let line = fa::read_to_string(&lib_file)
+        .expect("read library")
+        .lines()
+        .position(|l| l.starts_with("pub fn weight"))
+        .expect("weight")
+        + 2;
+    let requests = vec![
+        format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
+        format!(
+            r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":{line}}}]}}"#,
+            json_path(&lib_file)
+        ),
+        r#"{"id":3,"req":"run"}"#.to_string(),
+        r#"{"id":4,"req":"continue"}"#.to_string(),
+        r#"{"id":5,"req":"disconnect"}"#.to_string(),
+    ];
+    let input = Cursor::new(requests.join("\n").into_bytes());
+    let mut out: Vec<u8> = Vec::new();
+    loft::rpc::run_rpc("default", &[lib_root.to_string_lossy().to_string()], input, &mut out)
+        .expect("rpc run");
+    let out = String::from_utf8(out).expect("utf8");
+    let _ = fa::remove_dir_all(&lib_root);
+    assert!(
+        out.contains(r#""event":"stopped""#) && out.contains("Bag_weight"),
+        "stops inside the library: {out}"
+    );
+    assert!(out.contains("w 10 6"), "runs to the end: {out}");
+}

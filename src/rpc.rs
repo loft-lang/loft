@@ -57,7 +57,20 @@ impl DebugDriver {
     /// Handle one NDJSON request line: the messages to emit (response first, then any
     /// events) and whether the client asked to disconnect.  The one dispatch chokepoint.
     pub fn drive(&mut self, line: &str) -> (Vec<String>, bool) {
-        handle(&mut self.session, line)
+        // A fault the session does not catch itself ends the run, said, and leaves the server
+        // answering: with the panic hook silenced, an uncaught one ended the process with
+        // exit 101 and no word.
+        let session = &mut self.session;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(session, line))) {
+            Ok(answer) => answer,
+            Err(payload) => {
+                let msg = crate::repl::panic_message(&payload);
+                (
+                    vec![event("terminated", &format!("\"error\":{}", esc(&msg)))],
+                    false,
+                )
+            }
+        }
     }
 
     /// Set a **function-scoped** breakpoint at `func`'s entry — the engine capability the

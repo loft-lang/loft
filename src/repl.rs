@@ -980,7 +980,7 @@ fn process_line<W: Write>(
 /// formatted one; anything else has no readable text.  Discarding it — which is
 /// what the debugger's abandon path used to do — collapses every distinct runtime
 /// fault into one message (@PLN120 E3a).
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         (*s).to_string()
     } else if let Some(s) = payload.downcast_ref::<String>() {
