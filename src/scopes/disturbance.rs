@@ -33,6 +33,7 @@ use crate::variables::Function;
 /// copy is still named under `LOFT_TRACE_DISTURB=1`, which is how a guard sees one the
 /// author is not told of.
 pub(super) fn report_materialised_view(
+    data: &crate::data::Data,
     cause: ViewCause,
     vname: &str,
     cname: &str,
@@ -52,26 +53,26 @@ pub(super) fn report_materialised_view(
     }
     match cause {
         ViewCause::Reshaped => {
-            crate::copy_manifest::note_materialised_view(vname, cname, fname, via, at);
+            crate::copy_manifest::note_materialised_view(data, vname, cname, fname, via, at);
         }
         // loft#1373 — the fourth invalidator: the container GREW, so the elements may
         // have moved to a larger record. Same materialise, different sentence: a
         // reader told "removing an element renumbers the others" goes looking for a
         // `remove` that is not in the function.
         ViewCause::Grown => {
-            crate::copy_manifest::note_grown_view(vname, cname, fname, via, at);
+            crate::copy_manifest::note_grown_view(data, vname, cname, fname, via, at);
         }
         // @PLN130 F8 — the third invalidator: the container VARIABLE is reassigned,
         // so the dep still names `bx` while the store it named is gone. Different
         // cause, different way out, so a distinct advice line.
         ViewCause::Reassigned => {
-            crate::copy_manifest::note_reassigned_view(vname, cname, fname, via, at);
+            crate::copy_manifest::note_reassigned_view(data, vname, cname, fname, via, at);
         }
         ViewCause::Released => {
-            crate::copy_manifest::note_released_view(vname, cname, fname, via, at);
+            crate::copy_manifest::note_released_view(data, vname, cname, fname, via, at);
         }
         ViewCause::Overwritten => {
-            crate::copy_manifest::note_overwritten_view(vname, cname, fname, via, at);
+            crate::copy_manifest::note_overwritten_view(data, vname, cname, fname, via, at);
         }
     }
 }

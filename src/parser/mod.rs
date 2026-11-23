@@ -2125,8 +2125,8 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn new() -> Self {
         // A new parser is a new compilation: the copy manifest's records are keyed by
-        // definition and variable number, so the previous program's would name this one's.
-        crate::copy_manifest::begin_compilation();
+        // definition and variable number, so they are the new `Data`'s own, starting empty
+        // (`Data::copies`).
         let data = Data::new();
         Parser {
             todo_files: Vec::new(),

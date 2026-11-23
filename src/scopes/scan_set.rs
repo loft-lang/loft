@@ -1640,6 +1640,7 @@ impl Scopes<'_> {
             let cname = function.name(cause.container).to_string();
             let via = disturbance_via(data, &cause);
             report_materialised_view(
+                data,
                 cause.reported_cause(),
                 &vname,
                 &cname,
@@ -1726,6 +1727,7 @@ impl Scopes<'_> {
             {
                 let via = disturbance_via(data, &cause);
                 report_materialised_view(
+                    data,
                     cause.reported_cause(),
                     function.name(v),
                     function.name(cause.container),

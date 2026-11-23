@@ -6109,6 +6109,8 @@ pub struct Data {
     pub(crate) refill_traced: PassCell<HashSet<String>>,
     /// How deep `ret_adopt::buffer_complete` is nested in itself.
     pub(crate) buffer_complete_depth: PassCell<u32>,
+    /// `@PLN226` — the copy manifest of this compilation (`copy_manifest`).
+    pub(crate) copies: PassCell<crate::copy_manifest::Manifest>,
 }
 
 #[must_use]
@@ -6831,6 +6833,7 @@ impl Data {
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),
+            copies: PassCell::default(),
         }
     }
 

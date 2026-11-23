@@ -1900,10 +1900,10 @@ fn run_test_inner(
         // then `post_scope_lints`.  A hand-kept copy of that list drifted (the
         // `view-written-back` warning never reached this suite).
         if diagnostics.level() < loft::diagnostics::Level::Error {
-            loft::copy_manifest::drain_written_back_views(&mut diagnostics);
+            loft::copy_manifest::drain_written_back_views(&p.data, &mut diagnostics);
             loft::use_analysis::post_scope_lints(&p.data, &mut diagnostics, &path);
         } else {
-            loft::copy_manifest::clear_materialised_views();
+            loft::copy_manifest::clear_materialised_views(&p.data);
         }
         if diagnostics.level() >= loft::diagnostics::Level::Error {
             return None;

@@ -1276,9 +1276,9 @@ pub(crate) fn run_tests(
             // else.
             let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if has_errors {
-                loft::copy_manifest::clear_materialised_views();
+                loft::copy_manifest::clear_materialised_views(&p.data);
             } else {
-                loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
+                loft::copy_manifest::drain_written_back_views(&p.data, &mut p.diagnostics);
                 loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             }
             if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {

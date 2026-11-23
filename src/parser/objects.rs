@@ -7759,7 +7759,7 @@ impl Parser {
             ops.push(self.cl("OpDatabase", &[Value::Var(dest), Value::Int(i32::from(kt))]));
             ops.push(self.copy_ref(&Value::Var(dest), &base, &ret));
             if !self.first_pass {
-                crate::copy_manifest::record(
+                crate::copy_manifest::record(&self.data,
                     self.context,
                     dest,
                     kt,

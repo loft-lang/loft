@@ -277,6 +277,7 @@ impl Scopes<'_> {
                     let fname = data.def(self.d_nr).original_name();
                     let via = disturbance_via(data, &cause);
                     report_materialised_view(
+                        data,
                         cause.reported_cause(),
                         &vname,
                         &cname,

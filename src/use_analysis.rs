@@ -5955,7 +5955,7 @@ pub fn drop_copy_census(
         return;
     }
     if census {
-        crate::copy_manifest::clear_lease();
+        crate::copy_manifest::clear_lease(data);
     }
     let mut sites = 0;
     if data.any_release() {
@@ -5994,7 +5994,7 @@ pub fn drop_copy_census(
             // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
             // where it was without a copy — a line the rules judge like any other bind.
             let func = cx.func;
-            for (var, line) in crate::copy_manifest::self_binds(d_nr) {
+            for (var, line) in crate::copy_manifest::self_binds(data, d_nr) {
                 if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
                     continue;
                 }
@@ -6015,7 +6015,7 @@ pub fn drop_copy_census(
             }
             // A whole-value bind the borrow elision deleted is a copy the line WROTE: the
             // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
-            for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
+            for (var, src) in crate::copy_manifest::elided_copies(data, d_nr) {
                 if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
                     continue;
                 }
@@ -6298,9 +6298,9 @@ impl Census<'_> {
             other => place_root(other, self.data),
         };
         if let Some(v) = root {
-            crate::copy_manifest::note_lease_site(self.d_nr, v);
+            crate::copy_manifest::note_lease_site(self.data, self.d_nr, v);
             if self.frame.is_buffer(v) {
-                crate::copy_manifest::note_lease_return(self.d_nr);
+                crate::copy_manifest::note_lease_return(self.data, self.d_nr);
             }
         }
     }
@@ -6372,7 +6372,7 @@ impl Census<'_> {
                         };
                         let tp = self.data.display_type_name(self.func.tp(hold));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
-                        crate::copy_manifest::note_lease_return(self.d_nr);
+                        crate::copy_manifest::note_lease_return(self.data, self.d_nr);
                         whole = Some(root);
                     }
                 }
@@ -6518,7 +6518,7 @@ impl Census<'_> {
                     .base()
                     .heap_def_nr()
                     .map(|d| (node.clone(), Value::Var(*v), d));
-                crate::copy_manifest::note_lease_site(self.d_nr, *v);
+                crate::copy_manifest::note_lease_site(self.data, self.d_nr, *v);
                 self.emit(kind, &tp, &[*src], &into, (Some(&lease), &liveness), false);
             }
             // A join whose arm is a variable as it is (`a = a ?? mk(122)`) places that variable
@@ -6584,7 +6584,7 @@ impl Census<'_> {
                     if let Some((rhs, v)) = self.rhs_of
                         && std::ptr::eq(rhs, node)
                     {
-                        crate::copy_manifest::note_lease_site(self.d_nr, v);
+                        crate::copy_manifest::note_lease_site(self.data, self.d_nr, v);
                     }
                     whole = Some(root);
                 } else if let Some((rhs, v)) = self.rhs_of
@@ -6617,7 +6617,7 @@ impl Census<'_> {
             // caller's copy of the result copies.
             Value::Return(value) => {
                 if let Some(returned) = self.returned.clone() {
-                    crate::copy_manifest::note_lease_return(self.d_nr);
+                    crate::copy_manifest::note_lease_return(self.data, self.d_nr);
                     if let Some(refusal) = self.frame.return_refusal(value) {
                         let var = refusal.var();
                         let lease = Lease::Refuse(refusal);
