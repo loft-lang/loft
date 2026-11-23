@@ -108,6 +108,7 @@ ROUTES = {}
 # selfhost/src/el_contract.loft): per program that agrees on its image, the facts its functions
 # carry differently — {fact: count} — and the facts this port does not derive yet (`?`).
 CONTRACT = {}
+REFUSED_LAYERS = {}  # refused program -> (the port reported a layer, Rust did)
 CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
 
 
@@ -464,6 +465,30 @@ def one(loft, defs, elab, std, path, tmp, env, i):
             at = pass1_parted(rust_err, m.stderr, [k for k, (v, _, _) in rf.items() if v == "pass1-differ"])
             PASS1_REFUSED[path] = {k: v + at.get(k, ("", "")) for k, v in rf.items()}
     if refused:
+        # The agreeing definitions of a refused program are held to every layer too, as a
+        # program that agrees is: one whose IR agrees while its contract facts, state or flag
+        # reasons do not is `unaligned`.  Its items go to the state and reasons files like an
+        # agreeing program's, so the refused programs' definitions are checked before a lift
+        # brings them in whole.
+        ok = {k for k, (v, _) in fns.items() if v == "agree"}
+        if ok:
+            r_err = r.stderr.decode("utf-8", "replace")
+            rc, mc = contract_facts(r_err), contract_facts(m.stderr)
+            rs, ms = state_table(o.stderr), state_table(m.stderr)
+            rr, mr = flag_reasons(r_err, True), flag_reasons(m.stderr, False)
+            # A port that reports no layer for the program compares nothing: counted apart, so
+            # silence never reads as alignment.
+            REFUSED_LAYERS[path] = (bool(mc) or bool(ms), bool(rc) or bool(rs))
+            state_compare(rs, ms, ok, path)
+            reasons_compare(rr, mr, ok, path)
+            for k in ok:
+                cd, _ = contract_compare(rc, mc, {k})
+                sd = state_compare(rs, ms, {k})
+                rd = reasons_compare(rr, mr, {k})
+                if cd or sd or rd:
+                    fns[k] = ("unaligned", "; ".join(
+                        f"{layer} differ: {tagged(layer, kinds)}"
+                        for layer, kinds in (("contract", cd), ("state", sd), ("reasons", rd)) if kinds))
         return "refused", refused, fns
     if mine == want:
         own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want) if mm}
@@ -550,6 +575,7 @@ def main():
     # and the `beside` worklist (shape, program, function).
     fn_results = {}
     beside = []
+    fn_layers = {}     # program::definition -> the layers an unaligned definition differs in
     reasons = collections.Counter()
     families = collections.Counter()
     # The families that alone stand between a program and its comparison: what to port next.
@@ -584,6 +610,8 @@ def main():
                     fn_results[baseline.name_of(f, root, suite) + "::" + fname] = fv
                     if fv == "beside":
                         beside.append((shape, baseline.name_of(f, root, suite), fname))
+                    elif fv == "unaligned":
+                        fn_layers[baseline.name_of(f, root, suite) + "::" + fname] = shape
             per[part][verdict] += 1
             if verdict != "noimage":
                 results[baseline.name_of(f, root, suite)] = verdict
@@ -615,7 +643,7 @@ def main():
     # `program::definition\tverdict` per line — what a skip sweep compares function by function.
     if os.environ.get("LOFT_ELAB_FN_VERDICTS"):
         with open(os.environ["LOFT_ELAB_FN_VERDICTS"], "w", encoding="utf-8") as fh:
-            shape_of = {f"{prog}::{fname}": shape for shape, prog, fname in beside}
+            shape_of = {f"{prog}::{fname}": shape for shape, prog, fname in beside} | fn_layers
             fh.write("".join(f"{k}\t{v}\t{shape_of.get(k, '')}\n" for k, v in sorted(fn_results.items())))
     if os.environ.get("LOFT_ELAB_VERDICTS"):
         with open(os.environ["LOFT_ELAB_VERDICTS"], "w", encoding="utf-8") as fh:
@@ -671,6 +699,15 @@ def main():
                   + "  (T2 ownership: probe which side is right; T3 implementation: transcribe; "
                   "T4 lints only)")
     fv = collections.Counter(fn_results.values())
+    if REFUSED_LAYERS:
+        silent = sum(1 for port, rust in REFUSED_LAYERS.values() if rust and not port)
+        print(f"layers of refused programs: compared in {len(REFUSED_LAYERS) - silent} of "
+              f"{len(REFUSED_LAYERS)} with agreeing definitions"
+              + (f"; the port reports none for {silent}" if silent else ""))
+    if fv["unaligned"]:
+        # Which layers and tiers hold the refused programs' unaligned definitions back.
+        print(f"definitions of refused programs unaligned: {fv['unaligned']} (their IR agrees; "
+              "a layer does not: see the verdict file's definitions)")
     print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
           f"refused, {fv['beside']} beside a refusal")
     if beside:
