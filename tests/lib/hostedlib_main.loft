@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P4 — the consumer `tests/hosted_unit.rs` runs against `tests/lib/hostedlib`, interpreted
+// and adopted through a hosted C unit.  Values hand-computed.  It lives beside its library, not
+// in tests/scripts: it needs `--lib`, which the script sweeps do not pass.
+//
+// @falsified-at: none — the receipt is `tests/hosted_unit.rs`'s (the table refresh struck).
+use hostedlib::*;
+
+fn plus3(x: integer) -> integer { x + 3 }
+
+fn shout(t: text) -> text { "{t}{t}" }
+
+fn mk(k: integer) -> Bag { bag_new("m", k) }
+
+fn tot(b: Bag) -> integer { b.total }
+
+// A store freed below one still alive, its words negative: the unit makes its constants
+// (`WIDTHS`) at its first call, in the store the interpreter hands it next — this hole.
+fn churn(k: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..k { v += [0 - (i * 7919 + 123456789)]; }
+  w: vector<integer> = [len(v)];
+  w
+}
+
+fn main() {
+  kept = churn(4000);
+  assert(kept[0] == 4000, "churn {kept[0]}");
+  b = bag_new("alpha", 5);
+  // items 5, then 1, 4, 7, 10 (step 3): total 5 + 22 = 27; weight 2 * 27 = 54; length 5
+  b.fill(4, 3);
+  assert(b.total == 27, "total {b.total}");
+  assert(b.weight() == 54, "weight {b.weight()}");
+  assert(len(b.items) == 5, "length {len(b.items)}");
+  // many growths in one store: 200 more items of step 1 → 1..200, sum 20100
+  c = bag_new("beta", 0);
+  c.fill(200, 1);
+  assert(c.total == 20100, "total {c.total}");
+  assert(len(c.items) == 201, "length {len(c.items)}");
+  assert(ratio("hosted", 4) == 1.5, "ratio");
+  assert(mix(2, 3) == 65, "mix");
+  // 400 stores alive at once inside the unit: 1 + … + 400 = 80200
+  assert(deep(400) == 80200, "deep {deep(400)}");
+  // texts a loop views in a vector's store, each handed to the unit while records are made:
+  // "hosted" and "stores" are 6 bytes, ratio 6 / 4 = 1.5; a view the verify left pointing
+  // into a world it threw away reads another text
+  seen = "";
+  for t in ["hosted", "stores"] {
+    r = ratio(t, 4);
+    assert(deep(50) == 1275, "deep 50");
+    k = bag_new(t, 2);
+    k.fill(30, 1);
+    assert(ratio(t, 4) == r && r == 1.5, "ratio {t}");
+    seen = "{seen}{label_of(t)}={k.total};";
+  }
+  assert(seen == "hosted:4=467;stores:4=467;", "views {seen}");
+  // `&` arguments: 40 + 2; a bag grown through its reference, 0 + 5 and one item more
+  bx = 40;
+  bump(bx, 2);
+  assert(bx == 42, "bump {bx}");
+  rb = bag_new("ref", 0);
+  grow_ref(rb, 5);
+  assert(rb.total == 5 && len(rb.items) == 2, "grow_ref {rb.total} {len(rb.items)}");
+  // function values handed in, called back: (2 + 3) + 3; a capturing lambda, (2 * 7) * 7;
+  // a text twice, twice; a record the program's function makes, 4 + 1 + 2
+  assert(twice_by(plus3, 2) == 8, "twice_by {twice_by(plus3, 2)}");
+  kf = 7;
+  assert(twice_by(fn(x: integer) -> integer { x * kf }, 2) == 98, "lambda");
+  assert(wrapped(shout, "ab") == "[abab|ab!ab!]", "wrapped {wrapped(shout, "ab")}");
+  assert(made_by(bag_new, "mk") == 7, "made_by {made_by(bag_new, "mk")}");
+  // records a function value answers, each weighed by another: 0 + 1 + 2 + 3
+  assert(styled(mk, tot, 4) == 6, "styled {styled(mk, tot, 4)}");
+  // a tuple handed in: 3 * 4 * 0.5 = 6, and -0.25 when its flag is off
+  assert(spread((3, 0.5, true), 4) == 6.0 && spread((3, 0.25, false), 4) == 0.0 - 0.25, "spread");
+  // e^-3.726127510713071 = 0.024085927969257424 (2^32 times: 103448272.92177233…); E to that
+  // power rounds to 0.02408592796925743
+  dk = decay(52.16578514998299454 / 14.0);
+  assert(dk * 4294967296.0 == 103448272.92177233, "decay {dk * 4294967296.0:.17}");
+  // a text made of two nested text answers: "ab" is 2 bytes, WIDTHS[2] = 4
+  assert(tag("ab") == "<ab:4|ab:4>", "tag {tag("ab")}");
+  // a local held in its own text slot while the answer is built in another: "ab:4" is 4 bytes
+  assert(framed("ab") == "ab:4\n#4", "framed {framed("ab")}");
+  // the same view, held across two calls into the unit inside a nested loop: each answer
+  // reads the loop's text where the vector holds it
+  got = "";
+  for scale in 1..3 {
+    m = bag_new("m", scale);
+    for s in ["A", "ABCDE"] {
+      x = ratio(s, scale);
+      y = ratio(s, scale) * m.total as float;
+      got = "{got}{s}{x}/{y};";
+    }
+  }
+  assert(got == "A1/1;ABCDE5/5;A0.5/1;ABCDE2.5/5;", "nested views {got}");
+  // a text field renamed twice through the unit: "gamma" then "delta"
+  g = bag_new("old", 0);
+  g.rename("gamma");
+  g.rename("delta");
+  assert(g.name == "delta", "rename {g.name}");
+  // "delta" is 5 bytes, WIDTHS[1] = 3
+  assert("{g}" == "<delta:3|delta:3>" && "{g:short}" == "delta:3", "hook {g} {g:short}");
+  // a record built by the library from its own calls: 3 + 4
+  w = twice("w");
+  assert(w.total == 7 && w.name == "w", "twice {w.total} {w.name}");
+  // two words appended to a file through the unit: 8 bytes
+  wp = "{temp_dir() ?? "/tmp"}/loft_hostedlib_{ticks()}.bin";
+  append_word(wp, 7);
+  append_word(wp, 9);
+  wf = file(wp);
+  assert(wf#size == 8, "file {wf#size} bytes");
+  delete(wp);
+  // vectors the library answers: 0 2 4 6 8 (sum 20), and b's items 5 1 4 7 10 each + 100
+  ev = evens(10);
+  assert(len(ev) == 5 && ev[4] == 8, "evens {ev}");
+  gr = b.grown(100);
+  assert(len(gr) == 5 && gr[0] == 105 && gr[4] == 110, "grown {gr}");
+  // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
+  u = 0;
+  for x in upto(4) { u += x; }
+  assert(u == 10, "upto {u}");
+  // a text generator, and one stopped early: "<a><bb>" then the first word only
+  ws = "";
+  for wd in words_of("a bb") { ws += wd; }
+  assert(ws == "<a><bb>", "words_of {ws}");
+  for wd in words_of("x y z") { ws = wd; break; }
+  assert(ws == "<x>", "early stop {ws}");
+  // an interpreted generator handed to an interpreted function: 1 + 2 + 3
+  assert(total_of(upto(3)) == 6, "total_of");
+  println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)}");
+}

@@ -157,3 +157,7 @@ selfhost/bench/scope_survey.py	--help
 scripts/reason_census.py	--missing
 scripts/try_gate.sh	--help
 selfhost/front/elab_trace.py	--help
+scripts/store_diff.py	--help
+scripts/hosted_suite.py	--help
+scripts/hosted_coverage.py	--help
+selfhost/front/elab_pregate.py	--help

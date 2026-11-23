@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// A function value whose function answers a vector: the call through it makes the answer's
+// buffer through the unit's type table, which a C unit must therefore write even when nothing
+// else in it names a type (loft#2610).  grown(1, 5) = [1, 2, 3, 4, 5]: length 5, sum 15.
+// @falsified-at: none — a SABOTAGE (2026-11-22): with the dispatch's `copy_type` struck
+//   (`src/c/fnval.rs`), `--native` exits 1 (`cc` rejects the unit: `loft_types` undeclared).
+//   CHANNEL: the exit code.  HOLDS: `--interpret` passes either way.
+
+fn grown(seed: integer, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [seed + i]; }
+  out
+}
+
+fn main() {
+  f = grown;
+  g = f(1, 5);
+  s = 0;
+  for x in g { s += x; }
+  assert(len(g) == 5 && s == 15, "grown through a function value: {len(g)} {s}");
+}

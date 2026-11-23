@@ -2,7 +2,8 @@
 # Lifetime — Dependency Tracking and Scope-Based Freeing
 
 How the `dep` field on `Type::Text`, `Type::Reference`, `Type::Vector`, and other
-heap-owning types interacts with scope exit to decide what gets freed.
+heap-owning types interacts with scope exit to decide what gets freed.  What a store is at run
+time, on the interpreter and on the C runtime alike, is [STORE_MODEL.md](STORE_MODEL.md).
 
 ---
 

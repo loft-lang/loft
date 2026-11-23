@@ -414,9 +414,9 @@ sampling and **+4–7 %** for allocation paths, measured on `bench/02`, `03`, `0
 Three things separate this from the reports it grew out of, and each was a way the old one
 answered a question nobody asked:
 
-* **Live stores, not leaked ones.** `LOFT_LEAK_SITES` groups by the same key but over what
-  was never freed, so a program that frees everything gets an empty report however much
-  memory it used.
+* **Live stores, not leaked ones.** `LOFT_LEAK_SITES` (on a C build too) groups by the same
+  key but over what was never freed, so a program that frees everything gets an empty report
+  however much memory it used.
 * **At the peak, not at exit.** A program that peaks at 1.5 GiB and exits at 10 MB has
   nothing left to report by the time an exit hook runs. The banner names both the peak and
   the total the table was actually captured at, because a table describing a different

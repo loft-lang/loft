@@ -16,6 +16,34 @@ the interpreter moves to the C one, unless the interpreter's is measurably bette
 smaller, or stricter at no cost); then the C runtime takes the interpreter's.  Each decision
 names its measurement.
 
+**A rewrite's difference is not a divergence.**  A rewrite the C writer applies and the
+interpreter does not (`(R-PushFill)`, `(R-Apart)`, `(R-ValueRecord)`, …) may claim other room,
+keep a value out of the store, or write in another place.  A program cannot observe any of it, so
+it is the rewrite's, not the model's (@C122; a store trace reports the build, @C135).
+`scripts/c_alloc_diff.py --attribute` runs a program that differs again with each C-only rewrite
+switched off, and names the one under which it agrees; only what no switch accounts for is a row
+below.  The model is per store: the order in which separate stores' events interleave (the
+order a program's expressions run, a `par` region's threads) and the order a release walk
+deletes one store's records are not part of it, and the tool names such a difference
+`order only`.
+
+**A `par` region.**  Both runtimes gather a `par` loop's results alike (D46): a worker's
+answer destination is shaped by its return type, and a record result reaches the loop with the
+store the worker made it in, taken into the caller's table, its stored references renumbered.
+Inside the region the workers' events interleave by the threads' timing, so
+`LOFT_ALLOC_TRACE` marks it (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and
+names each store `<worker>.<serial>` by the worker that made it, whichever thread writes the
+event.  `scripts/c_alloc_diff.py` holds everything outside a region to the model, store by
+store; a store the region touched may be freed in another place but as often on both sides, at
+most once.  Its `--self-test` holds those verdicts (`tests/c_alloc_order.rs`).
+
+**A store's bytes.**  Two runtimes with one store layout (P3) are compared by what they leave,
+not only by their events: `scripts/store_diff.py` sets every store's final bytes side by side,
+each store paired with its twin by the line that made it, its root type and what it holds, under
+one hash seed and `LOFT_POISON_CLAIM`; a stored reference agrees when it
+names the same store, and padding one side zeroes is set apart.  A difference no C-only rewrite
+explains is a row below.
+
 ## Contents
 - [The store](#the-store) — the record a store is, field by field
 - [The store table](#the-store-table)
@@ -56,10 +84,11 @@ the shared core below.
 | records placed from a foreign source | `placed_foreign` | `placed`, `nplaced`, `placed_cap` | same |
 | a foreign store (`file_map`, adopted) | `foreign` | `foreign` | same (locking converged, D1) |
 | backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
-| held by a live generator frame (`@FR-G-Arg-Rebind`) | — (asked elsewhere) | `frame_holds`, `orphaned` | D24 |
+| held by a live generator frame (`@FR-G-Arg-Rebind`) | `frame_holds`, `orphaned` | `frame_holds`, `orphaned` | same (D24) |
 | allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | compile-time switches (`-DLOFT_NO_*`) | D25 closed; `wilderness` is D35 |
 | the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
-| instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow`, `parse_errors`, `parse_type`, `store_nr` | — | D27 |
+| a parse's errors and type | `parse_errors`, `parse_type` | `loft_store_perrs` (by store: reset at a mint, exchanged with the content) | same (D27) |
+| the interpreter's instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow` | the C's own: `loft_free_site`, `loft_leak_site` | decided (D27) |
 
 ## The store table
 
@@ -77,15 +106,15 @@ The full operation-by-operation pairing (179 operations: 128 SAME, 44 DIVERGES, 
 is on the plan, [loft-lang/plans#206](https://github.com/loft-lang/plans/issues/206) (the two
 pairing comments).  The families, and where each lives:
 
-| Family | Interpreter | C runtime |
-|---|---|---|
-| claim, free, grow, coalesce, park | `store.rs`, `database/allocation.rs` | `loft_store.h` |
-| records, copies, claims of a copy | `database/structures.rs`, `copy_claims` | `loft_rt.h` |
-| vectors, slices, reverse | `vector.rs`, `database/structures.rs` | `loft_rt.h` |
-| text fields | `database/structures.rs` | `loft_rt.h` |
-| keyed: hash, index, sorted, radix | `hash.rs`, `tree.rs`, `state/io.rs` | `loft_keyed.h`, `loft_hash.h`, `loft_btree.h` |
-| locks, foreign stores, images | `store.rs`, `database/` | `loft_store.h`, `loft_image.h` |
-| FFI bridging (`bridge_args`) | `extensions.rs`, `database/structures.rs` | `c/mod.rs` (emitted) |
+| Family | Interpreter | C runtime | The rules ([formal/heap.md](formal/heap.md), [formal/allocator.md](formal/allocator.md)) |
+|---|---|---|---|
+| claim, free, grow, coalesce, park | `store.rs`, `database/allocation.rs` | `loft_store.h` | `@FR-H-Alloc`, `@FR-H-Claim`, `@FR-H-Free`, `@FR-H-FreeTwice`, `@FR-H-KeepRoom`, `@FR-H-Park` |
+| records, copies, claims of a copy | `database/structures.rs`, `copy_claims` | `loft_rt.h` | `@FR-H-NewRec`, `@FR-H-Copy`, `@FR-H-Read`, `@FR-H-Write` |
+| vectors, slices, reverse | `vector.rs`, `database/structures.rs` | `loft_rt.h` | `@FR-H-Index`, `@FR-H-Stride`, `@FR-H-WriteOOB`, `@FR-H-RootExtent` |
+| text fields | `database/structures.rs` | `loft_rt.h` | `@FR-H-TextReplace` |
+| keyed: hash, index, sorted, radix | `hash.rs`, `tree.rs`, `state/io.rs` | `loft_keyed.h`, `loft_hash.h`, `loft_btree.h` | `@FR-H-SwapKeyed` |
+| locks, foreign stores, images | `store.rs`, `database/` | `loft_store.h`, `loft_image.h` | `@FR-H-WriteLocked`, `@FR-H-SwapIn`, `@FR-H-Handle` |
+| FFI bridging (`bridge_args`) | `extensions.rs`, `database/structures.rs` | `c/mod.rs` (emitted) | — |
 
 ## Divergences
 
@@ -100,13 +129,13 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.
+D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D45 are there.  (D8's second half, the gates
+stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D8 | the swap-in gates: both backends refuse a protected RELEASED store only, and refuse any exchange while a lazy source or error exists, while any scratch walk is live, or when either store is a constant | open — the code agrees; the RULE does not: `(H-SwapIn)` pins a constant and a lazy binding per STORE, the code gates on any live one, and the scratch-walk gate is in no rule — the rule states the gates or they go (@PLN91 1b-reference.md E-4, the owner's call) |
 
 ### Contract and diagnostics
 
@@ -117,9 +146,6 @@ D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D39 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
-| D37 | the C writer drops a vector's known-count reservation when the vector heads a push group or a mint window (`src/c/body.rs:1394`, `:1986`: "a group's reservation is capacity, observably nothing"), so the group header's mint takes the growth step's start room where `(Col-Capacity)` reserves the count exactly | open — measured by `scripts/c_alloc_diff.py` over the 13 kernels and the 60-program sample: 24 of the 35 programs that differ first differ at that claim; the C runtime's own routines agree (the loft interpreter's alloc layer, 17 of 17 EQUAL) |
-| D38 | a rebind's free and mint come in the other order in the C writer (`set_stmt` re-mints after the call, the bytecode writer frees the displaced store first) | open — the same sweep: the first difference of 7 programs (`F n` against `N m`, `F n` against `D n m`) |
 
 ### Edges
 
@@ -130,11 +156,9 @@ D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.
 
 | # | Divergence | State |
 |---|---|---|
-| D24 | a store held by a generator frame: C marks it (`frame_holds`, `orphaned`), the interpreter answers elsewhere | open |
-| D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
-| D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
-| D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
-| D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (`@FR-R-RebindBuffer` in the C writer; the performance stream's).  Measured by hand on the emitted unit: the rotation saves about 7 % on a 3 000 000-iteration `x = mul(a, x)` loop at `-O3` (0.14 s → 0.13 s, same answer) — a C store's make and free are cheap |
+| D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary.  `store_memory()` counts the program's stores only (`Store::runtime_own`), so it answers alike; a store's slot number runs higher in the interpreter by these two, which a stored reference and an image's `slot=` carry and its loader rewrites |
+| D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
+| D38 | the order of a rebind's displaced free: the bytecode frees a `DisplacedFree::Pre` store before the value is built, the C after it, and only where the value names another store | open — the C frees after: freeing first released a lifted call answer that VIEWS its argument's store (`base(tp(vars, n))` in the self-hosted front end, `el_expressions.loft`), and once the argument's store was rebuilt under the same number the call read a freed store.  It closes when such an answer is copied into the lift's own store before the free (`@FR-B-Copy`), or `re_bind` answers `Stash` for it; then `tests/c_alloc_order.rs` `a_rebind_frees_the_displaced_store_before_the_value_is_built` runs again.  Freeing after costs a statement (the old reference held in a temporary): two `hex_shape` functions pass `(R-Inline)`'s twelve and lose the hint, 33 → 31 in the rewrite census |
 
 ## How a divergence is closed
 

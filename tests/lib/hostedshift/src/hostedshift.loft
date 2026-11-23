@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P5 — a library loaded before `hostedlib` (`tests/hosted_unit.rs`): its types take the
+// numbers `hostedlib`'s have in a program that loads `hostedlib` alone, so a unit built there
+// names its types by other numbers than the program that adopts it here.
+
+pub struct Mark {
+  pub label: text,
+  pub at: integer,
+}
+
+pub struct Span {
+  pub from: Mark,
+  pub to: Mark,
+}
+
+pub enum Side { Left, Right }
+
+pub fn span_len(s: const Span) -> integer {
+  s.to.at - s.from.at
+}

@@ -230,11 +230,29 @@ pub fn run_file_debug<R: BufRead, W: Write>(
     input: R,
     chrome: &mut W,
 ) -> std::io::Result<()> {
+    run_file_debug_as(stdlib_dir, lib_dirs, file, line, false, input, chrome)
+}
+
+/// [`run_file_debug`], with the program's own functions compiled when `native`
+/// (`loft debug --native`, `@PLN206 P7`).
+///
+/// # Errors
+/// As [`run_file_debug`].
+pub fn run_file_debug_as<R: BufRead, W: Write>(
+    stdlib_dir: &str,
+    lib_dirs: &[String],
+    file: &str,
+    line: u32,
+    native: bool,
+    input: R,
+    chrome: &mut W,
+) -> std::io::Result<()> {
     let ctx = ResolutionContext {
         stdlib_dir: stdlib_dir.to_string(),
         lib_dirs: lib_dirs.to_vec(),
     };
     let mut session = ReplSession::open(&ctx)?;
+    session.set_native_program(native);
     match session.load_program(file) {
         Ok(Ok(())) => {}
         Ok(Err(diags)) => {
@@ -980,7 +998,7 @@ fn process_line<W: Write>(
 /// formatted one; anything else has no readable text.  Discarding it — which is
 /// what the debugger's abandon path used to do — collapses every distinct runtime
 /// fault into one message (@PLN120 E3a).
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         (*s).to_string()
     } else if let Some(s) = payload.downcast_ref::<String>() {
@@ -1795,6 +1813,9 @@ pub struct ReplSession {
     /// with its optional condition / tracepoint actions.  Re-applied to the fresh
     /// `State` of every observing run by [`apply_breakpoints`](Self::apply_breakpoints).
     breakpoints: Vec<BreakSpec>,
+    /// `@PLN206 P7` — `loft debug --native`: the program's own functions run compiled too
+    /// (`native_artifact::adopt_program_for_session`), not only its libraries.
+    native_program: bool,
     /// @PLN16 rich-bp — resolved bytecode-offset → metadata for the current run, built
     /// by `apply_breakpoints` and read by `resolve_pause` when a hit lands.
     bp_meta: std::collections::HashMap<u32, BpMeta>,
@@ -1964,6 +1985,7 @@ impl ReplSession {
             record: None,
             replaying: false,
             breakpoints: Vec::new(),
+            native_program: false,
             bp_meta: std::collections::HashMap::new(),
             cond_unevaluable: std::collections::HashSet::new(),
             trace_output: Vec::new(),
@@ -2022,6 +2044,8 @@ impl ReplSession {
         let pending = self.parser.pending_native_libs.clone();
         crate::interp::extensions::load_all(state, pending);
         crate::interp::extensions::wire_native_fns(state, &self.parser.data);
+        // The bridges of the compiled library units the session adopted (`@PLN206 P7a`).
+        crate::interp::extensions::wire_shared_native_fns(state, &self.parser.data);
     }
 
     /// Build a session over an existing `parser` already loaded with a program's
@@ -2047,6 +2071,7 @@ impl ReplSession {
             record: None,
             replaying: false,
             breakpoints: Vec::new(),
+            native_program: false,
             bp_meta: std::collections::HashMap::new(),
             cond_unevaluable: std::collections::HashSet::new(),
             trace_output: Vec::new(),
@@ -2264,7 +2289,33 @@ impl ReplSession {
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
         self.parser = Parser::open_program(&self.stdlib_dir, &lib_dirs)?;
-        Ok(self.load_program_str(&src, path))
+        let loaded = self.load_program_str(&src, path);
+        // `@PLN206 P7a` — the libraries run compiled, as in a plain run; a routine the
+        // debugger wants runs interpreted (`Debugger::wants`).
+        if loaded.is_ok() {
+            let entry = crate::file_access::plain_canonical(std::path::Path::new(path));
+            crate::native_artifact::adopt_for_session(
+                &mut self.parser,
+                &entry.to_string_lossy(),
+                &self.stdlib_dir,
+            );
+            if self.native_program
+                && let Err(e) = crate::native_artifact::adopt_program_for_session(
+                    &mut self.parser,
+                    path,
+                    &self.stdlib_dir,
+                )
+            {
+                eprintln!("loft debug: the program runs interpreted: {e}");
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// `@PLN206 P7` — run the program's own functions compiled under the debugger
+    /// (`loft debug --native`), from the next [`load_program`](Self::load_program) on.
+    pub fn set_native_program(&mut self, on: bool) {
+        self.native_program = on;
     }
 
     /// @PLN16 M5e slice 2 — **check** `path` and return ALL its diagnostics (errors AND
@@ -2411,6 +2462,7 @@ impl ReplSession {
             compile::byte_code(&mut state, &mut data);
             crate::interp::extensions::load_all(&mut state, pending_native.clone());
             crate::interp::extensions::wire_native_fns(&mut state, &data);
+            crate::interp::extensions::wire_shared_native_fns(&mut state, &data);
             // `execute_argv` prepends `n_` itself — pass the bare user name (`name`), not an
             // already-prefixed one, or it looks up `n_n_<name>` → "Unknown definition".
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

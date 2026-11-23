@@ -1,0 +1,7 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P5 — a library of two modules (`tests/hosted_unit.rs`), as `mesh3d` is: `shape` builds its
+// records from `geo`'s, calling across the modules.
+pub use geo::*;
+pub use shape::*;

@@ -422,7 +422,8 @@ through calls: what it cannot see, no `deps` can.
 **Where `(H-RefHome)` holds in the code.**
 - *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
   pass 2 by `Parser::check_reshape_under_reference`, compares at every `OpSetDbRef` into a
-  user's `reference<T>` field the holder's life with the record's home (`Walk::holder_life`,
+  user's `reference<T>` field — a struct enum's variant field too, whose place is typed as the
+  enum (`Stores::reference_field_name`) — the holder's life with the record's home (`Walk::holder_life`,
   `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
   `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
 - *The placement.* `scopes::apply_places` claims the record in the holder's store
@@ -560,12 +561,17 @@ the record it points at, not a place of the holder's.
                  the destination reads the source's records as it would read their copy,
                  and the released slot holds what the copy would have released.  Exact
                  only when the copied type keeps every pointer as a record number inside
-                 its own store (scalars, texts, enums, inline structs and enum values,
-                 vectors of those): a stored reference names a slot and keeps the copy, as
-                 do the keyed collections, arrays and child records.  A store pinned to its
+                 its own store (scalars, texts, enums, inline structs and enum values, and
+                 the vectors, arrays, keyed collections and child records of those, whose
+                 own pointers are record numbers too — `(H-SwapKeyed)`'s reasoning): a
+                 stored reference names a slot and keeps the copy.  A store pinned to its
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
-                 protection refuses only the side the exchange releases.
+                 protection refuses only the side the exchange releases.  And no exchange
+                 is made, in any store, while the program has a live walk scratch (a walk
+                 of a hash or a radix tree names its source by store) or a lazy binding or
+                 a lazy refusal recorded (each names a collection by store): those keep the
+                 copy, whose answer the exchange's equals.
   (H-SwapRebind) on both compiled backends (`--native`, the C), the rebind `x = f(…)` whose
                  copy would follow a reset of `x`'s store is the exchange of `(H-SwapIn)`
                  WITHOUT the reset: `x`'s previous tree moves to the released slot with

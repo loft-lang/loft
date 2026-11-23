@@ -382,7 +382,11 @@ fn the_store_census_drops() {
         // `render_lit_then_call` rebind writes the caller's buffer itself, and the
         // `render_lit_then_call_apart` twin keeps the promoted-buffer path under test; together
         // 211/309/118/244 → 176/279/107/238.
-        (176, 279, 107, 238),
+        // 2026-11-22: a call through a function value hands a record answer the null buffer,
+        // as the C does (STORE_MODEL D43): the callee makes the store where it builds one, so
+        // the make is counted at its `OpDatabase` (the caller's `null()` was not), 3 more on and
+        // off the pool, native unchanged; a callee answering an argument makes none.
+        (179, 282, 107, 238),
         "mints (interpret on, off, native on, off)"
     );
 }

@@ -743,6 +743,11 @@ runs when — today).  The C's coverage is what makes it stable, so a test:
 - **`tests/generated/` is output, not tests.**  Nothing compiles it; the `generated/`
   review workspace the Makefile's `generate` and `gtest` targets name does not exist in the
   tree.
+- **A test is short unless its length is the point** (owner).  Every program runs on every
+  backend and platform, the C sweep included, so a long one costs every leg every night.  A
+  long test is written only when the property needs scale (a cost that grows with N, a limit
+  reached at N), and its header says so and names the smallest N that still fails on the
+  build with the defect.
 
 ---
 

@@ -70,6 +70,11 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     // entry ends when the generator answers a missing library per FUNCTION, so the file's
     // other functions compile and only the stub fails as `@EXPECT_FAIL` says.
     "75-native-stub.loft",
+    // The rustc writer (`--native-rust`, retiring under @PLN225) answers a threaded `par`
+    // worker's record that holds a `reference<T>` with the reference reading null (c1: `l1:null`),
+    // measured on a build that predates STORE_MODEL D46's work too.  The interpreter and the C
+    // backend carry the file (`tests/c_alloc_order.rs`).  The entry ends with the writer.
+    "a-par-workers-record-results-reach-the-caller-with-their-stores.loft",
 ];
 
 /// The `libloft.rlib` this test binary links and its dependency dirs, for a standalone
@@ -5218,25 +5223,24 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     Ok(())
 }
 
-/// loft#2147 — a library whose loft functions call its own `[native] crate` package compiles
-/// to an artifact that LINKS the package's library, and the interpreter must be able to load
-/// it.  Windows has no RPATH: the artifact's import of `loft_native_scalar.dll` resolved only
-/// once the package was loaded first, so the artifact did not load, was rebuilt every run and
-/// the library ran interpreted.  `LOFT_REQUIRE_NATIVE=1` turns "runs interpreted" into a
-/// failing exit, and 43 = `native_answer()` (42) + 1 is the oracle that the call went through.
+/// `@PLN206 P6` — a library whose loft functions call its own Rust native part (a hand-written
+/// cdylib, `[library] native`, built from its `[native] crate`) is not compiled: no library is
+/// built through rustc, and a C unit cannot call a Rust native.  It runs interpreted with that
+/// cdylib loaded, and answers: 43 = `native_answer()` (42) + 1, the oracle that the call reached
+/// the Rust native.  Under `LOFT_REQUIRE_NATIVE` the run refuses, naming the Rust native part.
 #[test]
-fn a_library_calling_its_native_package_loads_compiled() -> std::io::Result<()> {
+fn a_library_calling_its_rust_native_part_runs_interpreted_with_it() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     if find_loft_rlib().is_none() {
         println!(
-            "a_library_calling_its_native_package_loads_compiled: skipped (no libloft.rlib / rustc)"
+            "a_library_calling_its_rust_native_part_runs_interpreted_with_it: skipped (no libloft.rlib / rustc)"
         );
         return Ok(());
     }
     let lib_dir = std::env::current_dir()?.join("tests/lib");
-    let dir = std::env::temp_dir().join(format!("loft_lib_links_pkg_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loft_lib_rust_native_{}", std::process::id()));
     let _ = fa::remove_dir_all(&dir);
     fa::create_dir_all(&dir)?;
     let program = dir.join("p.loft");
@@ -5244,19 +5248,30 @@ fn a_library_calling_its_native_package_loads_compiled() -> std::io::Result<()> 
         &program,
         "use native_scalar_pkg::*;\nfn main() { println(\"{answer_plus(1)}\"); }\n",
     )?;
-    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--interpret", "--lib"])
-        .arg(&lib_dir)
-        .arg(&program)
-        .current_dir(&dir)
-        .env("LOFT_REQUIRE_NATIVE", "1")
-        .env("LOFT_TIMEOUT", "600")
-        .output()?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let run = |require: bool| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.args(["--interpret", "--lib"])
+            .arg(&lib_dir)
+            .arg(&program)
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "600");
+        if require {
+            cmd.env("LOFT_REQUIRE_NATIVE", "1");
+        }
+        cmd.output()
+    };
+    let out = run(false)?;
     assert!(
         out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "43",
-        "the library's artifact must load and answer 43:\nstdout: {}\nstderr: {stderr}",
-        String::from_utf8_lossy(&out.stdout)
+        "the library runs interpreted with its Rust native and answers 43:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run(true)?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("Rust native part"),
+        "LOFT_REQUIRE_NATIVE refuses the interpreted library, naming why:\n{stderr}"
     );
     let _ = fa::remove_dir_all(&dir);
     Ok(())

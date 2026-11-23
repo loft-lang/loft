@@ -176,7 +176,10 @@ fn tmpdir(name: &str) -> PathBuf {
 /// in `/usr/bin` (Ubuntu's `rustup` package puts one there) answers `rustc --version` from any
 /// directory, so the `PATH` cut alone hid nothing on such a machine.
 fn without_rust_toolchain(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    // No compiler to build a library with: no rustc, and no C compiler for a hosted unit
+    // (a library is a C unit by default, `@PLN206`; `/usr/bin` holds `cc` on macOS).
     cmd.env("PATH", "/usr/bin:/bin")
+        .env("LOFT_CC", "/nonexistent/loft-test-cc")
         .env_remove("RUSTUP_TOOLCHAIN")
         .env_remove("RUSTUP_HOME")
 }
@@ -1776,12 +1779,12 @@ fn a_refused_advisory_feed_is_not_left_in_the_cache() {
 /// already installed, as after an upgrade of loft (both artifacts fetched, the run compiled).
 #[test]
 fn a_released_library_artifact_runs_compiled_without_rustc() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: no rustc to build the producer's artifacts with");
+        eprintln!("skip: no cc to build the producer's units with");
         return;
     }
     let has_tomllib = ["python3.13", "python3.12", "python3.11", "python3"]
@@ -2007,7 +2010,7 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
             // point it elsewhere: `cargo test` run through the rustup proxy hands its
             // children RUSTUP_HOME / RUSTUP_TOOLCHAIN, and a rustup that installs a
             // toolchain on first use (1.29) downloaded the whole stable one into the empty
-            // HOME — either way the control compiled and "no Rust toolchain" did not hold.
+            // HOME — either way the control compiled and "install a C compiler" did not hold.
             .env_remove("RUSTUP_HOME")
             .env_remove("RUSTUP_TOOLCHAIN")
             .env("RUSTUP_AUTO_INSTALL", "0")
@@ -2035,7 +2038,7 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
         "interpreted, tri(10) = 46:\n{out}\n{err}"
     );
     assert!(
-        err.contains("no Rust toolchain") && err.contains("no compiled artifact for this loft"),
+        err.contains("install a C compiler") && err.contains("no compiled unit for this loft"),
         "CONTROL FAILED: without the artifacts the run did not report interpreting:\n{err}"
     );
 
@@ -2049,8 +2052,8 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
         "tri(10) = 46 with no rustc:\n{out}\n{err}"
     );
     assert!(
-        !err.contains("no Rust toolchain"),
-        "the run fell back for want of rustc instead of adopting the fetched artifacts:\n{err}"
+        !err.contains("install a C compiler"),
+        "the run fell back for want of a compiler instead of adopting the fetched units:\n{err}"
     );
 
     // A fresh install under the real row: every artifact is newer than every source it was
@@ -2096,7 +2099,7 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
     assert!(
         out.status.success()
             && String::from_utf8_lossy(&out.stdout).trim() == "46"
-            && !err.contains("no Rust toolchain"),
+            && !err.contains("install a C compiler"),
         "a fresh install did not run compiled:\n{err}"
     );
     let _ = fa::remove_dir_all(&fresh_home);

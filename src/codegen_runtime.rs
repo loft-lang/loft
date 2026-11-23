@@ -835,7 +835,7 @@ pub fn OpFreeRefTag(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, tag: i64) {
             // tagged store freed it (`free_named` resets the tag to 0).  Mirrors the
             // interpreter's `State::free_ref_tag` exactly.
             assert!(
-                st.free || st.tag == 0 || st.tag == tag as u32,
+                !st.live || st.tag == 0 || st.tag == tag as u32,
                 "store-tag mismatch on free: store #{} has tag {} but OpFreeRefTag expected {}",
                 db.store_nr,
                 st.tag,
@@ -1839,7 +1839,7 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
         // Sentinel guard: the `allocations[..]` prechecks below index by store_nr.
         && src.store_nr != u16::MAX
         && !stores.is_stack_store(src.store_nr)
-        && !stores.allocations[src.store_nr as usize].free
+        && stores.allocations[src.store_nr as usize].live
         && !stores.allocations[src.store_nr as usize].read_only
         && !stores.allocations[src.store_nr as usize].is_free_protected()
     {
@@ -6916,7 +6916,7 @@ pub fn cr_fnref_minted(
     let Some(slot) = stores.allocations.get(returned.store_nr as usize) else {
         return;
     };
-    if slot.free {
+    if !slot.live {
         return;
     }
     if slot.alloc_serial <= since {
@@ -7125,7 +7125,7 @@ impl FnRefBufGuard {
             {
                 let stores: &mut Stores = unsafe { &mut *cell.get() };
                 match stores.allocations.get(buf.store_nr as usize) {
-                    Some(slot) if !slot.free && slot.alloc_serial == serial => {}
+                    Some(slot) if slot.live && slot.alloc_serial == serial => {}
                     _ => continue,
                 }
             }

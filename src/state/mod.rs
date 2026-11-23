@@ -5,7 +5,10 @@
 #![allow(dead_code)]
 
 pub(crate) mod codegen;
+pub(crate) use hosted_verify::enabled as hosted_verify_enabled;
 pub mod debug;
+mod handover;
+mod hosted_verify;
 mod io;
 mod text;
 pub use text::{text_leak_violations, text_timeline_summary};
@@ -472,7 +475,8 @@ pub struct CoroutineFrame {
     /// CO1.9/S28: snapshot of `(store_nr, generation)` for all live stores at the moment
     /// of `coroutine_yield`.  Checked at `coroutine_next`; a mismatch means a store was
     /// mutated between yields and any `DbRef` locals held by the generator may be stale.
-    /// Always compiled in (was debug-only before CO1.9) so the guard fires in release too.
+    /// Debug builds only, as the warning that reads it.
+    #[cfg(debug_assertions)]
     pub saved_store_generations: Vec<(u16, u32)>,
     /// Which occupant of this slot the frame is.
     ///
@@ -644,6 +648,14 @@ pub struct State {
     /// indistinguishable from coverage — the same shape as the backend-scope note.
     pub entered_fns: Option<Vec<bool>>,
     pub(crate) fn_positions: Vec<u32>,
+    /// `@PLN206 P7` — each loop's head by (function, block scope): where a compiled routine
+    /// handed over at that loop continues (`handover.rs`).
+    pub(crate) loop_sites: std::collections::HashMap<(u32, u16), u32>,
+    /// `@PLN206 P7` — a hand-over the running bridge call's routine made, taken up when the
+    /// static call returns (`State::resume_handover`).
+    pub(crate) pending_handover: Option<handover::Handover>,
+    /// `@PLN206 P7` — the routine the running static call called, while debugging.
+    pub(crate) bridge_call_d: u32,
     /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
     /// worker enters the same function for every element.
     worker_fn_memo: (u32, u32),
@@ -980,11 +992,20 @@ impl State {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
         db.store_mut(&stack_cur).stack_buffer = true;
+        db.store_mut(&stack_cur).runtime_own = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         // Allocate the constant store (CONST_STORE = 1). Starts empty,
         // populated during byte_code(), locked before execution.
         let _const_store = db.database(100);
+        db.store_mut(&_const_store).runtime_own = true;
+        // `LOFT_ALLOC_TRACE` — the two stores every interpreter state makes for itself, a par
+        // worker's included: a C unit has neither (STORE_MODEL D26), so the trace marks them
+        // as the interpreter's own and a comparison leaves them out.
+        #[cfg(feature = "op-census")]
+        for r in [&stack_cur, &_const_store] {
+            crate::store_census::alloc_event(format_args!("S {}", db.store(r).trace_name()));
+        }
         debug_assert_eq!(
             _const_store.store_nr,
             crate::database::CONST_STORE,
@@ -1016,6 +1037,9 @@ impl State {
             types: FxHashMap::default(),
             library: Arc::new(Vec::new()),
             library_names: FxHashMap::default(),
+            loop_sites: std::collections::HashMap::new(),
+            pending_handover: None,
+            bridge_call_d: u32::MAX,
             native_stub_symbols: std::collections::HashSet::new(),
             text_positions: BTreeSet::new(),
             line_numbers: BTreeMap::new(),
@@ -1395,11 +1419,12 @@ impl State {
         // Through `base()`, though a hidden buffer is spelled bare even for a nullable return
         // (`__retbuf: P` for `-> P?`, measured): the `?` is the value's, not the storage's.
         match typedef.base() {
-            // For struct returns, the body's `cv = Type{...}` OpDatabase reuses the slot
-            // (clear + claim).  `null()` provides a real slot with rec=0 — the claim succeeds
-            // and sets rec=1.
+            // For struct returns, the null sentinel: the body's `cv = Type{...}` mints a store
+            // for it only where it builds one (`OpDatabase` takes the sentinel as a fresh
+            // store), and a body answering an argument mints none — as the C dispatch hands a
+            // null buffer (STORE_MODEL D43).  Its release frees nothing.
             crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
-                Some(self.database.null())
+                Some(DbRef::NULL)
             }
             // Vector body's `v = []` does NOT OpDatabase var_v; it expects rec != 0 (else
             // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read
@@ -1411,8 +1436,12 @@ impl State {
                 if tp_id == u16::MAX {
                     return Some(self.database.null());
                 }
+                // `Stores::database` claims the root in WORDS: the wrapper's payload bytes and
+                // the header word, as `OpDatabase` claims it (`alloc_record_into`) and the C
+                // runtime's `loft_database_wrapper` does.  The byte count passed raw claimed a
+                // root twice that size (STORE_MODEL D44).
                 let sz = u32::from(self.database.size(tp_id));
-                let r = self.database.database(sz);
+                let r = self.database.database(1 + sz.div_ceil(8));
                 self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
                 self.database
                     .store_mut(&r)
@@ -1498,6 +1527,39 @@ impl State {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
+        // `@PLN206 P7a` — a compiled routine the debugger wants runs its bytecode: its static
+        // call pushed the arguments as an ordinary call does, one stepped slot per attribute.
+        let routed = if self.debug.is_some() {
+            let routed = self.debug_route(call);
+            self.bridge_call_d = self
+                .debug
+                .as_deref()
+                .and_then(|d| d.routing.as_ref())
+                .and_then(|r| r.by_index.get(&call).copied())
+                .unwrap_or(u32::MAX);
+            routed
+        } else {
+            None
+        };
+        if let Some(d_nr) = routed {
+            let handle = self.data_ptr.clone();
+            if let Some(data) = handle.get() {
+                let args_size: u32 = data
+                    .def(d_nr)
+                    .attributes()
+                    .iter()
+                    .map(|a| {
+                        crate::variables::aligned_stack_step(u32::from(crate::variables::size(
+                            &a.typedef,
+                            &crate::data::Context::Argument,
+                        )))
+                    })
+                    .sum();
+                let to = self.fn_positions[d_nr as usize];
+                self.fn_call(d_nr, args_size as u16, i64::from(to));
+                return;
+            }
+        }
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.
         if self.stack_trace_lib_nr == u16::MAX
             && let Some(&nr) = self.library_names.get("n_stack_trace")
@@ -1654,6 +1716,10 @@ impl State {
         // run past the buffer.  Native fns push bounded results (scalars /
         // Str / DbRef / small structs), so 1 KiB is ample.
         self.invoke_native(call);
+        // `@PLN206 P7` — the routine handed itself over: it continues here, interpreted.
+        if self.pending_handover.is_some() {
+            self.resume_handover();
+        }
     }
 
     /// Run library function `call` on the arguments at the top of the stack, as `OpStaticCall`
@@ -1956,7 +2022,7 @@ impl State {
             // twice would hand a live slot back to the pool.
             if buf.store_nr == COROUTINE_STORE
                 || (buf.store_nr as usize) >= self.database.allocations.len()
-                || self.database.allocations[buf.store_nr as usize].free
+                || !self.database.allocations[buf.store_nr as usize].live
             {
                 continue;
             }
@@ -2040,7 +2106,7 @@ impl State {
                 if db.store_nr != COROUTINE_STORE
                     && db.store_nr != crate::database::NATIVE_COROUTINE_STORE
                     && ((db.store_nr as usize) >= self.database.allocations.len()
-                        || self.database.allocations[db.store_nr as usize].free)
+                        || !self.database.allocations[db.store_nr as usize].live)
                 {
                     continue;
                 }
@@ -2327,6 +2393,7 @@ impl State {
             call_depth: 0,
             #[cfg(debug_assertions)]
             saved_text_positions: std::collections::BTreeSet::new(),
+            #[cfg(debug_assertions)]
             saved_store_generations: Vec::new(),
             generation: 0, // stamped by allocate_coroutine
             holds: 1,
@@ -2725,7 +2792,7 @@ impl State {
                 continue; // null / STRING_NULL — not store-backed
             }
             for (store_idx, store) in self.database.allocations.iter().enumerate() {
-                if store.free || store_idx as u16 == self.stack_cur.store_nr {
+                if !store.live || store_idx as u16 == self.stack_cur.store_nr {
                     continue;
                 }
                 let start = store.ptr as u64;
@@ -2829,17 +2896,18 @@ impl State {
             self.coroutine_frame_mut(idx).saved_text_positions = to_save;
         }
 
-        // CO1.9/S28: snapshot all live, unlocked store generations at the yield point.
-        // `coroutine_next` compares these on resume and panics if any store was mutated
-        // while the generator was suspended.  Locked stores are worker snapshots that
-        // can never change; skip them.  Always compiled in after CO1.9.
+        // Snapshot all live, unlocked store generations at the yield point, for the
+        // debug-only warning `coroutine_next` prints when one moved while the generator was
+        // suspended.  Locked stores are worker snapshots that can never change.
+        // A walk over every store at every yield, so it is compiled where its reader is.
+        #[cfg(debug_assertions)]
         {
             let gens: Vec<(u16, u32)> = self
                 .database
                 .allocations
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| !s.free && !s.read_only)
+                .filter(|(_, s)| s.live && !s.read_only)
                 .map(|(i, s)| (i as u16, s.generation))
                 .collect();
             self.coroutine_frame_mut(idx).saved_store_generations = gens;
@@ -5733,7 +5801,7 @@ impl State {
                 (w.store_nr, w.rec, w.off, w.len, w.content, w.narrow)
             };
             if store_nr as usize >= self.database.allocations.len()
-                || self.database.allocations[store_nr as usize].free
+                || !self.database.allocations[store_nr as usize].live
             {
                 continue;
             }
@@ -6057,6 +6125,12 @@ impl State {
     /// keys every op.  One home for the question, which the lean loop's entry and its stop
     /// path both ask.
     fn needs_full_loop(&self) -> bool {
+        // `LOFT_ALLOC_TRACE` names each event's source line, from the position the full loop
+        // publishes per op.
+        #[cfg(feature = "op-census")]
+        if crate::store_census::alloc_trace_on() {
+            return true;
+        }
         crate::op_census::armed()
             || self
                 .debug
@@ -6684,6 +6758,8 @@ impl State {
         }
         let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
+            #[cfg(feature = "op-census")]
+            crate::store_census::at_pc(self.code_pos);
             let op = self.code::<u8>();
             if op == 255 {
                 let ext = self.code::<u8>();
@@ -6886,6 +6962,17 @@ impl State {
             && !crate::keys::uaf_check_enabled()
             && !crate::keys::uaf_src_enabled()
             && !crate::keys::uaf_gen_enabled()
+            && !Self::alloc_trace_sites()
+    }
+
+    /// `LOFT_ALLOC_TRACE` writes each event's source line, from the position the checked
+    /// loop publishes per op — on a worker as on the main run (`needs_full_loop`).
+    fn alloc_trace_sites() -> bool {
+        #[cfg(feature = "op-census")]
+        let on = crate::store_census::alloc_trace_on();
+        #[cfg(not(feature = "op-census"))]
+        let on = false;
+        on
     }
 
     /// `LOFT_NO_WORKER_LEAN=1` — every worker frame runs the plain checked loop
@@ -7451,7 +7538,10 @@ impl State {
         crate::timeout::checkpoint_fn("run-interpret", "<entry>", "", 0);
         // `LOFT_ALLOC_TRACE` — the program starts: what came before was the run's own setup.
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("M"));
+        {
+            crate::store_census::set_lines(self.line_numbers.clone());
+            crate::store_census::alloc_event(format_args!("M"));
+        }
         // loft#952 — and the vocabulary its per-call breadcrumb reports in.  `"<entry>"`
         // above is a placeholder that names nothing; from here on a hard-kill names the
         // loft function the run was in.  Skipped entirely when no watchdog is armed.
@@ -7805,6 +7895,8 @@ impl State {
             // allocated while executing this op records it as its `created_at` (one u32
             // write per op, alongside the existing crash-report context publish below).
             self.database.alloc_pc = op_pos_rt;
+            #[cfg(feature = "op-census")]
+            crate::store_census::at_pc(op_pos_rt);
             // @PLN16 debugger — at a registered breakpoint, capture the frame (and
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
@@ -8064,6 +8156,10 @@ impl State {
     /// the FUNCTION and file each leaked store was made in, as the C backend's report does —
     /// a bare `pc` and a line with no file is not something a reader can act on.
     pub fn check_store_leaks_in(&self, data: Option<&crate::data::Data>) {
+        // `@PLN206 P4c` — the stores as the run leaves them, for `scripts/store_diff.py`.
+        crate::store::dump::write_if_asked(&self.database.allocations);
+        // `@PLN206 P4d` — how many calls the hosted verify compared this run.
+        hosted_verify::report();
         // @PLN101 Slice 0 — alloc-count harness: report total heap record allocations at
         // exit. A `value struct` program (Slice 1+) must drive its struct's contribution to
         // zero vs the reference-struct baseline. Gated so normal runs are unaffected.
@@ -8123,7 +8219,7 @@ impl State {
                     if (s_nr == 0 && self.database.stack_store_at_zero)
                         || s.is_locked()
                         || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16)
-                        || s.free
+                        || !s.live
                     {
                         continue;
                     }
@@ -8472,7 +8568,7 @@ impl State {
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
                 continue;
             }
-            if !s.free {
+            if s.live {
                 let tn = self
                     .database
                     .types
@@ -8589,6 +8685,24 @@ impl State {
         closure: DbRef,
         args: &[crate::host_abi::LibArg],
     ) -> crate::host_abi::LibArg {
+        self.call_back_into(d_nr, closure, args, &[])
+    }
+
+    /// [`Self::call_back`] with the caller's own hidden return buffers `dests`, one per hidden
+    /// heap result in attribute order, in place of buffers set up for the call: the callee
+    /// answers where an interpreted caller reads it, as a direct call does
+    /// (`LOFT_HOSTED_VERIFY`'s interpreted twin, `@PLN206 P5`).  Empty: as `call_back`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one frame set up, entered and answered per result shape, in order"
+    )]
+    pub(crate) fn call_back_into(
+        &mut self,
+        d_nr: u32,
+        closure: DbRef,
+        args: &[crate::host_abi::LibArg],
+        dests: &[DbRef],
+    ) -> crate::host_abi::LibArg {
         use crate::data::Type;
         let handle = self.data_ptr.clone();
         let data = handle
@@ -8605,7 +8719,17 @@ impl State {
         let depth = u32::try_from(self.call_stack.len()).unwrap_or(u32::MAX);
         let fnref_bufs_before = self.fnref_bufs.len();
         let mut heap_bufs: Vec<DbRef> = Vec::new();
+        // With the caller's buffers given, each hidden attribute but a text work buffer takes
+        // the caller's next one — an answer buffer or a vector work buffer alike.
+        let given = !dests.is_empty();
         for a in def.attributes() {
+            if given && a.hidden && !crate::native_gate::is_text_work_buffer(&a.typedef) {
+                // The caller's own buffer: its to release, not the call's.
+                if heap_bufs.len() < dests.len() {
+                    heap_bufs.push(dests[heap_bufs.len()]);
+                }
+                continue;
+            }
             if a.hidden
                 && !a.work_buffer
                 && let Some(b) = self.hidden_return_buffer(data, &a.typedef)
@@ -8632,7 +8756,7 @@ impl State {
                     buf += 1;
                     continue;
                 }
-                if a.hidden && !a.work_buffer && heap < heap_bufs.len() {
+                if a.hidden && (given || !a.work_buffer) && heap < heap_bufs.len() {
                     st.put_stack(heap_bufs[heap]);
                     heap += 1;
                     continue;
@@ -8646,7 +8770,26 @@ impl State {
                         ptr: arg.text_ptr,
                         len: arg.text_len as u32,
                     }),
-                    t if crate::data::is_dbref(t) => st.put_stack(arg.dbref),
+                    // A `&T` argument is the `DbRef` of the slot it names, as a generator is
+                    // its handle (`extensions::marshal_arg_t`).
+                    t if crate::data::is_dbref_slot(t)
+                        || matches!(a.typedef.base(), Type::RefVar(_)) =>
+                    {
+                        st.put_stack(arg.dbref);
+                    }
+                    // A function value: its number and its closure, as the stack holds one.
+                    Type::Function(..) => {
+                        let mut raw = [0u8; 8 + std::mem::size_of::<DbRef>()];
+                        raw[..8].copy_from_slice(&arg.scalar.to_ne_bytes());
+                        // SAFETY: `raw[8..]` is exactly one `DbRef` wide.
+                        unsafe {
+                            std::ptr::write_unaligned(
+                                raw[8..].as_mut_ptr().cast::<DbRef>(),
+                                arg.dbref,
+                            );
+                        }
+                        st.put_stack(raw);
+                    }
                     _ => st.put_stack(arg.scalar),
                 }
             }
@@ -8951,6 +9094,7 @@ impl State {
         let start_depth = self.call_stack.len();
         if let Some(d) = self.debug.as_mut() {
             d.paused = None;
+            d.stepping_into = mode == StepMode::Into;
             // The undo/redo history survives a step; only an edit still in flight
             // (armed, not committed) is dropped, because a half-recorded edit has no
             // meaning at the next pause.
@@ -8988,7 +9132,13 @@ impl State {
                     let depth = self.call_stack.len();
                     let line = self.line_at(pc);
                     match mode {
-                        StepMode::Into => depth != start_depth || line != start_line,
+                        // Into a call: at the callee's first line, not its prologue, whose
+                        // first instructions lie before any line of its own.
+                        StepMode::Into => {
+                            (depth > start_depth && self.line_numbers.contains_key(&pc))
+                                || depth < start_depth
+                                || (depth == start_depth && line != start_line)
+                        }
                         StepMode::Over => depth <= start_depth && line != start_line,
                         StepMode::Out => depth < start_depth,
                         StepMode::Continue => false,
@@ -9121,15 +9271,21 @@ impl State {
         library: Arc<Vec<Call>>,
     ) -> State {
         let mut db = worker.stores;
+        #[cfg(feature = "op-census")]
+        crate::store_census::enter_worker();
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
+        // `LOFT_ALLOC_TRACE` — the worker's value stack is the interpreter's own (`State::new`).
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).trace_name()));
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
         db.store_mut(&stack_cur).stack_buffer = true;
+        db.store_mut(&stack_cur).runtime_own = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         State {
@@ -9153,6 +9309,9 @@ impl State {
             bytecode,
             library,
             library_names: FxHashMap::default(),
+            loop_sites: std::collections::HashMap::new(),
+            pending_handover: None,
+            bridge_call_d: u32::MAX,
             native_stub_symbols: std::collections::HashSet::new(),
             stack: FxHashMap::default(),
             vars: FxHashMap::default(),

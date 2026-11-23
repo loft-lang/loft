@@ -32,6 +32,12 @@ struct Ctr { calls: integer = 0, log: text = "" }
 struct At { x: integer, y: integer }
 struct Sm { at: At, k: integer, ok: boolean }
 struct SmLink { r: reference<At> }
+// A record that holds its own type OUT OF LINE (`@FR-L-OutOfLine`: a child record number),
+// under a holder whose field is the TAGGED `S?` (`@FR-L-Null-Tag`), so a write to the child
+// of the tagged root reaches its holder through the tag (`@FR-L-Null-Which`, loft#2609).
+struct Nd { key: integer, left: Nd? }
+struct Hd { root: Nd? }
+fn mkhd() -> Hd { Hd { root: Nd { key: 3 } } }
 
 fn bump(c: Ctr) { c.calls += 1; c.log += "S"; }
 fn mk(c: Ctr) -> KIND { bump(c); [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }

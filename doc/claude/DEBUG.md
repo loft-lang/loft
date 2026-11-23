@@ -102,10 +102,13 @@ anywhere in the frame — so the debugger names that rather than printing the sl
 contents under `i`'s name. Reading such a local explains itself, and editing it is
 refused. Compiler temps (`__work_N`, `i#index`) are hidden; `:vars all` shows them.
 
-Remaining rough edges are tracked in
-[@PLN120](plans/120-debugger-shape/README.md).
+Remaining rough edges are tracked in [@PLN120](plans/120-debugger-shape/README.md).
 
 Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md).
+
+**Libraries run compiled under the debugger**, and with `loft debug --native` (DAP: `"native": true`) the
+program's own functions too, `main` aside; a routine holding (or reaching) a breakpoint, stepped into,
+or paused while it runs continues interpreted, its callees compiled ([P7](plans/206-one-store-model/p7-design.md)).
 
 ---
 
@@ -173,8 +176,7 @@ dominates), so the direct speedup is modest (~1s).  The bigger
 win is a **unified cache**: every `cargo` invocation from this
 checkout uses the same `RUSTFLAGS`, so alternating between
 `cargo build`, `cargo test`, and `make iter` shares one cache
-key.  Without this pin, ad-hoc `RUSTFLAGS=...` overrides force
-rebuilds.
+key.  Without this pin, ad-hoc `RUSTFLAGS=...` overrides force rebuilds.
 
 First-time setup on Linux x64: `sudo apt-get install mold`.
 The CI workflow installs mold on its ubuntu runner.  macOS and
@@ -852,8 +854,9 @@ the raise is dead on every 64-bit target and live only on wasm32. loft#950 was f
 `--html` page traps; the interpreter, `--native` and `--native-wasm` are all green"*, which
 reads as a browser-specific defect. The same corrupted `rec` on a 64-bit build computes a
 representable offset and reads whatever lies there — the silent-wrong half of the same bug.
-Before believing "only the browser", ask whether the other targets have a guard that could
-have spoken; `LOFT_STRICT_STORES=1` is the one that speaks on all of them.
+Before believing "only the browser", ask whether the other targets have a guard that could have
+spoken; `LOFT_STRICT_STORES=1` speaks on all of them, a C build included, as `LOFT_COPY_CHECK`
+and `LOFT_LEAK_SITES` do (C_BACKEND.md § What switching to C loses).
 
 ## Using the Test Framework for Quick Iteration
 

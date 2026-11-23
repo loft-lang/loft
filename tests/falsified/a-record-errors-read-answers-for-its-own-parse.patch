@@ -1,5 +1,5 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index ae4b9a150..ad3cd89f7 100644
+index 246895df9..6b5f407c9 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
 @@ -9,6 +9,12 @@ use crate::store::Store;
@@ -15,14 +15,14 @@ index ae4b9a150..ad3cd89f7 100644
  /// The nesting depth above which a text parse runs on a stack sized to the document
  /// ([`Stores::read_text`]): an ordinary stack carries this many levels with room to spare.
  const DEEP_TEXT_NESTING: usize = 2_000;
-@@ -670,12 +676,9 @@ impl Stores {
+@@ -868,12 +874,9 @@ impl Stores {
      /// null reference and for a store no parse built.
      #[must_use]
      pub fn parse_errors_vector(&mut self, of: &DbRef) -> DbRef {
 -        let errors = self
 -            .allocations
 -            .get(of.store_nr as usize)
--            .filter(|s| !s.free)
+-            .filter(|s| s.live)
 -            .map(|s| s.parse_errors.clone())
 -            .unwrap_or_default();
 +        // SABOTAGE (@C148 reverted): the errors of the LAST parse, whatever record is asked.
@@ -31,7 +31,7 @@ index ae4b9a150..ad3cd89f7 100644
          self.text_vector(&errors)
      }
  
-@@ -683,6 +686,7 @@ impl Stores {
+@@ -881,6 +884,7 @@ impl Stores {
      /// are its errors, one per value that did not fit, empty for a parse that succeeded
      /// (@C148).  Both forms file here — the text read and the `JsonValue` walk.
      pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, errs: Vec<String>) {

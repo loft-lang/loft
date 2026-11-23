@@ -226,7 +226,7 @@ fn c_type_table(c: &str) -> String {
             && let Some((name, list)) = rest.split_once("[] = ")
         {
             let n = numbers(list.trim_end_matches(';'));
-            let per: Vec<String> = n.chunks(5).map(|f| f.join(",")).collect();
+            let per: Vec<String> = n.chunks(6).map(|f| f.join(",")).collect();
             fields.insert(name.to_string(), per);
             continue;
         }

@@ -19,7 +19,6 @@ tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
 tests/scripts/2168-a-unit-variant-test-before-a-block-parses.loft
 tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft
 tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft
-tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft
 tests/scripts/2178-a-paged-load-relocates-an-enum-variants-payload.loft
 tests/scripts/2206-a-generic-match-returning-its-parameter-is-lifted-inline.loft
 tests/scripts/2207-a-tail-self-call-on-a-part-of-an-enum-parameter-jumps.loft
@@ -127,7 +126,6 @@ tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
 tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft
 tests/scripts/a-zero-length-test-counts-no-characters.loft
 tests/scripts/an-append-loop-keeps-one-window.loft
-tests/scripts/an-append-twin-writes-through-its-callers-window.loft
 tests/scripts/an-appended-call-result-arrives-from-every-exit.loft
 tests/scripts/an-early-exit-that-builds-a-text-is-written-as-a-cold-helper.loft
 tests/scripts/an-element-is-built-in-place-by-its-call-and-in-either-arm.loft

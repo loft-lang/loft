@@ -572,7 +572,7 @@ impl Stores {
             // source must short-circuit here (the eventual `free` is already sentinel-safe).
             && value.store_nr != u16::MAX
             && !self.is_stack_store(value.store_nr)
-            && !self.allocations[value.store_nr as usize].free
+            && self.allocations[value.store_nr as usize].live
             && !self.allocations[value.store_nr as usize].read_only
             && !self.allocations[value.store_nr as usize].is_free_protected()
         {
@@ -846,7 +846,7 @@ impl Stores {
             // Sentinel guard: the `allocations[..]` prechecks index by store_nr.
             && src.store_nr != u16::MAX
             && !self.is_stack_store(src.store_nr)
-            && !self.allocations[src.store_nr as usize].free
+            && self.allocations[src.store_nr as usize].live
             && !self.allocations[src.store_nr as usize].read_only
             && !self.allocations[src.store_nr as usize].is_free_protected()
         {
