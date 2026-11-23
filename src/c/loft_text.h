@@ -5,8 +5,6 @@
 #include <string.h>
 #include <time.h>
 
-typedef struct { const char *p; size_t len; } loft_str;
-typedef struct { char *p; size_t len; size_t cap; } loft_text;
 
 
 static loft_str loft_lit(loft_cx *cx, const char *p, size_t len) {
@@ -37,14 +35,6 @@ static int loft_str_is_null(loft_cx *cx, loft_str s) {
  * buffer directly stays right; a buffer past the cache's depth goes back to malloc.  Measured on
  * the library benches' text routines (gcc -O3, one E-core): markdown render_inline -27 %,
  * server header -16 %. */
-/* A header built without `loft_cc.h` keeps one cache: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-#define LOFT_TP_CLASSES 9
-#define LOFT_TP_DEPTH 32
-static LOFT_TLS char *loft_tp_blocks[LOFT_TP_CLASSES][LOFT_TP_DEPTH];
-static LOFT_TLS unsigned char loft_tp_n[LOFT_TP_CLASSES];
 static int loft_tp_class(loft_cx *cx, size_t cap) {
     if (cap < 16 || cap > 4096 || (cap & (cap - 1)) != 0) return -1;
     int c = 0;
@@ -67,7 +57,7 @@ static char *loft_tp_take(loft_cx *cx, size_t cap) {
     /* No context (a component built without the program's runtime): no pool. */
     if (!cx) return (char *) malloc(cap);
     int c = loft_tp_class(cx, cap);
-    if (c >= 0 && loft_tp_n[c]) return loft_tp_blocks[c][--loft_tp_n[c]];
+    if (c >= 0 && cx->tp_n[c]) return cx->tp_blocks[c][--cx->tp_n[c]];
     return (char *) malloc(cap);
 }
 static void loft_tp_give(loft_cx *cx, char *p, size_t cap) {
@@ -80,8 +70,8 @@ static void loft_tp_give(loft_cx *cx, char *p, size_t cap) {
         return;
     }
     int c = loft_tp_class(cx, cap);
-    if (c >= 0 && loft_tp_n[c] < LOFT_TP_DEPTH) {
-        loft_tp_blocks[c][loft_tp_n[c]++] = p;
+    if (c >= 0 && cx->tp_n[c] < LOFT_TP_DEPTH) {
+        cx->tp_blocks[c][cx->tp_n[c]++] = p;
         return;
     }
     free(p);
@@ -220,14 +210,17 @@ static void loft_text_free(loft_cx *cx, loft_text *t) {
     t->cap = 0;
 }
 
-/* Nothing is parked on a `par` worker: its thread ends with the job (its slots with it), and
- * the job runs on a store table of its own. */
-static LOFT_TLS int loft_no_park = 0;
+/* The parks are statics the main thread owns: a `par` worker and a hosted unit's bridge call
+ * (`cx->no_park`) neither take from them nor park into them. */
 
 /* A frame's work text kept between its calls (`FnWriter::park_work_texts`): taken empty from
  * its slot at entry — the slot left empty, so a recursive frame takes nothing — and parked
  * back at each release, or freed when the slot is taken again meanwhile. */
 static inline loft_text loft_wpark_take(loft_cx *cx, loft_text *slot) {
+    if (cx->no_park) {
+        loft_text none = { 0, 0, 0 };
+        return none;
+    }
     loft_text t = *slot;
     t.len = 0;
     slot->p = 0;
@@ -236,7 +229,7 @@ static inline loft_text loft_wpark_take(loft_cx *cx, loft_text *slot) {
     return t;
 }
 static inline void loft_wpark_put(loft_cx *cx, loft_text *slot, loft_text *t) {
-    if (!loft_no_park && !slot->p && t->p) {
+    if (!cx->no_park && !slot->p && t->p) {
         *slot = *t;
         slot->len = 0;
         t->p = 0;

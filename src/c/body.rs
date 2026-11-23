@@ -1343,8 +1343,8 @@ impl<'a> FnWriter<'a> {
 
     /// `@FR-R-WorkPark`: a frame's work texts — the `__work…` texts the parser builds a text into, owned by
     /// this frame — keep their room between its calls: each is taken from a slot of its own
-    /// (per function and thread) at entry, empty, and parked there at each release instead of
-    /// freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;
+    /// (per function, a static the main thread owns: a `par` worker takes and parks nothing) at
+    /// entry, empty, and parked there at each release instead of freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;
     /// a taken text is an empty text, as a fresh one is.  `LOFT_NO_WORK_PARK=1` frees them.
     fn park_work_texts(&self, mut out: String) -> String {
         if crate::env_once!(std::env::var("LOFT_NO_WORK_PARK").is_ok_and(|v| v != "0"))
@@ -1370,7 +1370,7 @@ impl<'a> FnWriter<'a> {
             out = out.replacen(
                 &decl,
                 &format!(
-                    "    static LOFT_TLS loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(cx, &{slot});\n"
+                    "    static loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(cx, &{slot});\n"
                 ),
                 1,
             );
@@ -5359,7 +5359,7 @@ impl<'a> FnWriter<'a> {
         kept.sort_unstable();
         // `@FR-R-FnRefBuffer`'s frame clause: a function value's kept record store is parked
         // between calls of this function — taken before the loop, parked after it — so the
-        // target fills one store per thread rather than one per call.
+        // target fills one store rather than one per call.
         let d = self.d;
         let park = move |v: u16| -> String { format!("loft_park{d}_{v}") };
         let parked: Vec<u16> =
@@ -5376,7 +5376,7 @@ impl<'a> FnWriter<'a> {
         for &v in &parked {
             let (var, slot) = (self.var(v), park(v));
             self.decls.push(format!(
-                "static LOFT_TLS loft_ref {slot} = {{ 0xFFFF, 0, 0, 0 }};"
+                "static loft_ref {slot} = {{ 0xFFFF, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("loft_park_take(cx, &{slot}, &{var});"));
         }
@@ -7203,7 +7203,7 @@ impl<'a> FnWriter<'a> {
         );
         let clos = format!("{}.clos", self.var(*fv));
         self.line(ind, &format!("{dst} = {name};"));
-        self.line(ind, &format!("{since} = (int64_t) loft_stores_allocated;"));
+        self.line(ind, &format!("{since} = (int64_t) cx->stores_allocated;"));
         // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
         // an answer in that store is the binding already.
         let in_place = self.lr.fnref_bufs.contains(&var) && self.lr_kept(var);

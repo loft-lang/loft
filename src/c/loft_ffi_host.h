@@ -6,75 +6,80 @@
  * into this runtime's allocator.  Pasted into a unit that calls such a native (`LOFT_FFI`);
  * POSIX hosts (Windows is @PLN203 C8's). */
 
-/* The handle's context is the store's NUMBER, as the interpreter's host sets it
- * (`extensions::make_loft_store`): a library names the store of a heap answer by it
- * (`loft_ffi_store_nr`), and the store table may move while the call runs. */
+/* The handle's context is the store's NUMBER in its low 16 bits, as the interpreter's host sets
+ * it (`extensions::make_loft_store`): a library names the store of a heap answer by it
+ * (`loft_ffi_store_nr`, which reads those bits alone), and the store table may move while the
+ * call runs.  Above them it carries the store context of the thread that made the call, which a
+ * callback the library makes into this runtime works in: a `par` worker's own table, its own
+ * claim log.  Room for both needs 64-bit pointers. */
+typedef char loft_ffi_handle_fits[sizeof(uintptr_t) >= 8 ? 1 : -1];
+static void *loft_ffi_handle(loft_cx *cx, uint16_t nr) {
+    return (void *) (((uintptr_t) cx << 16) | nr);
+}
+static loft_cx *loft_ffi_handle_cx(loft_ffi_store_ctx c) {
+    return (loft_cx *) ((uintptr_t) c.opaque >> 16);
+}
+static uint16_t loft_ffi_handle_nr(loft_ffi_store_ctx c) {
+    return (uint16_t) (uintptr_t) c.opaque;
+}
 static loft_store_t *loft_ffi_ctx_store(loft_cx *cx, loft_ffi_store_ctx c) {
-    return &loft_stores[(uint16_t) (uintptr_t) c.opaque];
+    return &cx->stores[loft_ffi_handle_nr(c)];
 }
 
 /* loft#2227 — the records ONE call pinned to an argument's store claims there (the answer and
  * its scratch, never what an argument held before the call), for `loft_ffi_own_*` to delete after
- * copying the answer out: `extensions::claim_log_*`, the interpreter's twin. */
-/* Per THREAD (`LOFT_TLS`): `par` workers call natives concurrently, and one shared log let a
- * worker's copy-out delete the records another worker's call had just claimed. */
-static LOFT_TLS int loft_ffi_log_on;
-static LOFT_TLS uint16_t loft_ffi_log_store;
-static LOFT_TLS uint32_t *loft_ffi_log_recs;
-static LOFT_TLS uint32_t loft_ffi_log_n, loft_ffi_log_cap;
-
+ * copying the answer out: `extensions::claim_log_*`, the interpreter's twin.  The log is the
+ * calling thread's (`cx->ffi_log_*`): `par` workers call natives concurrently, and one shared
+ * log let a worker's copy-out delete the records another worker's call had just claimed. */
 static void loft_ffi_log_begin(loft_cx *cx, uint16_t nr) {
-    loft_ffi_log_on = 1;
-    loft_ffi_log_store = nr;
-    loft_ffi_log_n = 0;
+    cx->ffi_log_on = 1;
+    cx->ffi_log_store = nr;
+    cx->ffi_log_n = 0;
 }
 
 static void loft_ffi_log_note(loft_cx *cx, uint16_t nr, uint32_t old, uint32_t rec) {
-    if (!loft_ffi_log_on || nr != loft_ffi_log_store) return;
+    if (!cx->ffi_log_on || nr != cx->ffi_log_store) return;
     if (old) {
-        for (uint32_t i = 0; i < loft_ffi_log_n; i++)
-            if (loft_ffi_log_recs[i] == old) { loft_ffi_log_recs[i] = rec; return; }
+        for (uint32_t i = 0; i < cx->ffi_log_n; i++)
+            if (cx->ffi_log_recs[i] == old) { cx->ffi_log_recs[i] = rec; return; }
         return;
     }
-    if (loft_ffi_log_n == loft_ffi_log_cap) {
-        loft_ffi_log_cap = loft_ffi_log_cap ? loft_ffi_log_cap * 2 : 16;
-        loft_ffi_log_recs = (uint32_t *) realloc(loft_ffi_log_recs, loft_ffi_log_cap * sizeof(uint32_t));
+    if (cx->ffi_log_n == cx->ffi_log_cap) {
+        cx->ffi_log_cap = cx->ffi_log_cap ? cx->ffi_log_cap * 2 : 16;
+        cx->ffi_log_recs = (uint32_t *) realloc(cx->ffi_log_recs, cx->ffi_log_cap * sizeof(uint32_t));
     }
-    loft_ffi_log_recs[loft_ffi_log_n++] = rec;
+    cx->ffi_log_recs[cx->ffi_log_n++] = rec;
 }
 
 static uint32_t loft_ffi_claim(loft_ffi_store_ctx c, uint32_t words) {
-    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
-    loft_cx *cx = &loft_main_cx;
+    loft_cx *cx = loft_ffi_handle_cx(c);
     uint32_t rec = loft_claim(cx, loft_ffi_ctx_store(cx, c), words);
-    loft_ffi_log_note(cx, (uint16_t) (uintptr_t) c.opaque, 0, rec);
+    loft_ffi_log_note(cx, loft_ffi_handle_nr(c), 0, rec);
     return rec;
 }
 
 static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size) {
-    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
-    loft_cx *cx = &loft_main_cx;
+    loft_cx *cx = loft_ffi_handle_cx(c);
     loft_store_t *s = loft_ffi_ctx_store(cx, c);
     *ptr = s->buf;
     *size = s->size;
 }
 
 static uint32_t loft_ffi_resize(loft_ffi_store_ctx c, uint32_t rec, uint32_t words) {
-    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
-    loft_cx *cx = &loft_main_cx;
+    loft_cx *cx = loft_ffi_handle_cx(c);
     uint32_t to = loft_st_resize(cx, loft_ffi_ctx_store(cx, c), rec, words);
-    loft_ffi_log_note(cx, (uint16_t) (uintptr_t) c.opaque, rec, to);
+    loft_ffi_log_note(cx, loft_ffi_handle_nr(c), rec, to);
     return to;
 }
 
 /* Store `nr` as the library sees it.  A library that hands bytes over to be adopted
  * (`foreign_fn`) is not carried yet: the field is null, as on a host that predates it. */
 static loft_ffi_store loft_ffi_store_of(loft_cx *cx, uint16_t nr) {
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     loft_ffi_store f;
     f.ptr = s->buf;
     f.size = s->size;
-    f.ctx.opaque = (void *) (uintptr_t) nr;
+    f.ctx.opaque = loft_ffi_handle(cx, nr);
     f.claim_fn = loft_ffi_claim;
     f.reload_fn = loft_ffi_reload;
     f.resize_fn = loft_ffi_resize;
@@ -87,13 +92,13 @@ static loft_ffi_store loft_ffi_store_of(loft_cx *cx, uint16_t nr) {
  * the library reads.  Only a unit that maps a file has a foreign store. */
 #ifdef LOFT_FOREIGN
 static int loft_ffi_is_foreign(loft_cx *cx, loft_ref a) {
-    return a.rec != 0 && a.store_nr < loft_nstores && loft_st_is_foreign(cx, &loft_stores[a.store_nr]);
+    return a.rec != 0 && a.store_nr < cx->nstores && loft_st_is_foreign(cx, &cx->stores[a.store_nr]);
 }
 
 static uint32_t loft_ffi_copy_in(loft_cx *cx, uint32_t pin, loft_ref a) {
-    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
+    loft_fspan sp = cx->stores[a.store_nr].foreign.span;
     size_t bytes = (size_t) sp.len * sp.elem;
-    loft_store_t *d = &loft_stores[pin];
+    loft_store_t *d = &cx->stores[pin];
     uint32_t rec = loft_st_claim(cx, d, (uint32_t) ((bytes + 15) / 8));
     loft_st_set_u32(cx, d, rec, 4, sp.len);
     if (bytes) memcpy(d->buf + (size_t) rec * 8 + 8, sp.base, bytes);
@@ -102,8 +107,8 @@ static uint32_t loft_ffi_copy_in(loft_cx *cx, uint32_t pin, loft_ref a) {
 
 /* `Stores::bridge_args_done`: whether the library wrote through the copy — its length or a byte. */
 static int loft_ffi_copy_changed(loft_cx *cx, loft_ref a, uint32_t pin, uint32_t rec) {
-    loft_fspan sp = loft_stores[a.store_nr].foreign.span;
-    loft_store_t *d = &loft_stores[pin];
+    loft_fspan sp = cx->stores[a.store_nr].foreign.span;
+    loft_store_t *d = &cx->stores[pin];
     return loft_st_u32(cx, d, rec, 4) != sp.len
         || (sp.len && memcmp(d->buf + (size_t) rec * 8 + 8, sp.base, (size_t) sp.len * sp.elem) != 0);
 }
@@ -117,7 +122,7 @@ static int loft_ffi_copy_changed(loft_cx *cx, loft_ref a, uint32_t pin, uint32_t
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
 static loft_ref loft_ffi_vector_answer(loft_cx *cx, loft_ffi_ref r) {
     if (r.rec == 0 && r.pos == 0) return loft_ref_null(cx);
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_store_t *s = &cx->stores[r.store_nr];
     uint32_t h = loft_claim(cx, s, 1);
     loft_set_u32(cx, s, h, 4, r.rec);
     loft_ref v = { r.store_nr, h, 4, 0 };
@@ -159,7 +164,7 @@ static void *loft_ffi_lookup(loft_cx *cx, void *h, const char *sym) {
 
 /* `Store::snapshot_copy` (`Stores::clone_store_for_call`, loft#2239) — a writable copy of store
  * `from` in a store of its own, for ONE native call whose answer must not be claimed where `from`
- * lives: a store the workers of a running `par` share (`loft_par_sharing`), or a pinned one.
+ * lives: a store the workers of a running `par` share (`cx->par_sharing`), or a pinned one.
  * Every record keeps its number, so the arguments only change their store. */
 static void loft_ffi_bits_copy(loft_cx *cx, loft_bits *d, const loft_bits *s) {
     if (d->cap < s->nwords) {
@@ -174,8 +179,8 @@ static void loft_ffi_bits_copy(loft_cx *cx, loft_bits *d, const loft_bits *s) {
 
 static uint16_t loft_ffi_clone_store(loft_cx *cx, uint16_t from) {
     uint16_t ns = (uint16_t) loft_store_new(cx);
-    loft_store_t *d = &loft_stores[ns];
-    const loft_store_t *s = &loft_stores[from];
+    loft_store_t *d = &cx->stores[ns];
+    const loft_store_t *s = &cx->stores[from];
     if (d->size != s->size) {
         loft_heap_moved(cx, d, d->size, s->size);
         d->buf = (uint8_t *) realloc(d->buf, (size_t) s->size * 8);
@@ -204,7 +209,7 @@ static uint16_t loft_ffi_clone_store(loft_cx *cx, uint16_t from) {
 
 /* The store a pinned native call works in: `pn` itself, or a copy of it when it is shared. */
 static uint16_t loft_ffi_call_store(loft_cx *cx, uint16_t pn) {
-    return (loft_par_sharing || loft_stores[pn].pinned) ? loft_ffi_clone_store(cx, pn) : pn;
+    return (cx->par_sharing || cx->stores[pn].pinned) ? loft_ffi_clone_store(cx, pn) : pn;
 }
 
 /* The copy a call was given goes once its answer is copied out. */
@@ -217,10 +222,10 @@ static void loft_ffi_drop_call_store(loft_cx *cx, uint16_t cs, uint16_t pn) {
 
 /* The logged records go, the log closes. */
 static void loft_ffi_log_drop(loft_cx *cx, uint16_t nr) {
-    for (uint32_t i = 0; i < loft_ffi_log_n; i++)
-        if (loft_ffi_log_recs[i]) loft_st_delete(cx, &loft_stores[nr], loft_ffi_log_recs[i]);
-    loft_ffi_log_on = 0;
-    loft_ffi_log_n = 0;
+    for (uint32_t i = 0; i < cx->ffi_log_n; i++)
+        if (cx->ffi_log_recs[i]) loft_st_delete(cx, &cx->stores[nr], cx->ffi_log_recs[i]);
+    cx->ffi_log_on = 0;
+    cx->ffi_log_n = 0;
 }
 
 /* loft#2227, `@FR-F-Ret` (`Stores::own_bridge_answer`) — a heap answer built in the argument's
@@ -228,19 +233,19 @@ static void loft_ffi_log_drop(loft_cx *cx, uint16_t nr) {
  * `loft_vec_add`) or its record type (`loft_copy_record`); then only what the call claimed is
  * deleted, and the vector's header. */
 static loft_ref loft_ffi_own_vector(loft_cx *cx, const loft_tdesc *T, uint16_t elem_tp, loft_ref h) {
-    if (h.rec == 0) { loft_ffi_log_on = 0; return h; }
+    if (h.rec == 0) { cx->ffi_log_on = 0; return h; }
     uint16_t ns = (uint16_t) loft_store_new(cx);
-    uint32_t root = loft_claim(cx, &loft_stores[ns], 1);
-    loft_set_u32(cx, &loft_stores[ns], root, 4, 0);
+    uint32_t root = loft_claim(cx, &cx->stores[ns], 1);
+    loft_set_u32(cx, &cx->stores[ns], root, 4, 0);
     loft_ref v = { ns, root, 4, 0 };
     loft_vec_add(cx, T, elem_tp, v, h);
     loft_ffi_log_drop(cx, h.store_nr);
-    loft_st_delete(cx, &loft_stores[h.store_nr], h.rec);
+    loft_st_delete(cx, &cx->stores[h.store_nr], h.rec);
     return v;
 }
 
 static loft_ref loft_ffi_own_record(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r) {
-    if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
+    if (r.rec == 0) { cx->ffi_log_on = 0; return r; }
     loft_ref d = { 0xFFFF, 0, 0, 0 };
     loft_database_typed(cx, &d, T[tp].size, tp);
     loft_copy_record(cx, T, tp, r, d, 4);

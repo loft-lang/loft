@@ -127,7 +127,7 @@ impl Cx<'_> {
                     format!("{call}; return;")
                 } else if hold {
                     format!(
-                        "uint64_t sn = loft_stores_allocated; loft_ref r = {call}; loft_fnref_mint(cx, r, sn, f.clos); return r;"
+                        "uint64_t sn = cx->stores_allocated; loft_ref r = {call}; loft_fnref_mint(cx, r, sn, f.clos); return r;"
                     )
                 } else {
                     format!("return {call};")
@@ -235,7 +235,7 @@ impl Cx<'_> {
             }
             let _ = writeln!(
                 out,
-                "    loft_host_call_ref(loft_host_stores, (uint32_t) f.d, cl, la, {n}, r);\n    loft_host_sync(cx);"
+                "    loft_host_call_ref(cx->host_stores, (uint32_t) f.d, cl, la, {n}, r);\n    loft_host_sync(cx);"
             );
             let _ = writeln!(
                 out,
@@ -454,7 +454,7 @@ impl Cx<'_> {
         // copies an older one at once (`opaque_callref_stmt`), so nothing is held for it.
         let hold = heap_answer && !buf;
         if hold {
-            out.push_str(" uint64_t sn = loft_stores_allocated;");
+            out.push_str(" uint64_t sn = cx->stores_allocated;");
         }
         let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
         if let Some(tp) = vec_tp {

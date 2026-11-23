@@ -1590,7 +1590,7 @@ static int loft_uc_convert(loft_cx *cx, loft_urun *r, uint32_t pair, loft_ref fr
 
 /* `widen`: a number read through the old encoding and written through the new one. */
 static void loft_uc_widen(loft_cx *cx, loft_urun *r, const loft_ln *on, const loft_ln *nn, loft_ref from, loft_ref to) {
-    loft_store_t *os = &loft_stores[from.store_nr], *ns = loft_store_of(cx, to);
+    loft_store_t *os = &cx->stores[from.store_nr], *ns = loft_store_of(cx, to);
     uint8_t *src = loft_at(cx, os, from.rec, from.pos), *dst = loft_at(cx, ns, to.rec, to.pos);
     (void) r;
     if (on->kind == LOFT_LN_BASE && on->base == LOFT_LB_SINGLE) {
@@ -1663,7 +1663,7 @@ static int loft_uc_ref_by_place(const void *a, const void *b) {
 }
 
 static loft_ref *loft_uc_old_elements(loft_cx *cx, loft_urun *r, const loft_ln *on, loft_ref from, uint32_t *n, int *absent) {
-    loft_store_t *s = &loft_stores[from.store_nr];
+    loft_store_t *s = &cx->stores[from.store_nr];
     uint32_t cur = loft_u32(cx, s, from.rec, from.pos);
     *n = 0;
     *absent = cur == 0xFFFFFFFFu;
@@ -1843,7 +1843,7 @@ static uint16_t loft_uc_scratch(loft_cx *cx, loft_urun *r, uint16_t version_tp) 
     uint32_t words = (8 + r->P[version_tp].size + 7) / 8;
     if (words < 2) words = 2;
     uint16_t nr = loft_store_scratch(cx, words + 3);
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     uint32_t rec = loft_st_claim(cx, s, words);
     loft_zero_fill(cx, s, rec);
     int64_t t[3];
@@ -1870,11 +1870,11 @@ static int loft_uc_owe_routine(loft_cx *cx, loft_urun *r, uint32_t proj, loft_re
         if (loft_ur_tp[i] == tp) { old_tp = loft_ur_old[i]; version_tp = loft_ur_ver[i]; }
     if (old_tp == 0xFFFF || version_tp == 0xFFFF) return 1;
     uint16_t sc = loft_uc_scratch(cx, r, version_tp);
-    loft_store_t *s = &loft_stores[sc];
+    loft_store_t *s = &cx->stores[sc];
     uint32_t words = (8 + r->P[old_tp].size + 7) / 8;
     if (words < 2) words = 2;
     uint32_t rec = loft_st_claim(cx, s, words);
-    loft_zero_fill(cx, &loft_stores[sc], rec);
+    loft_zero_fill(cx, &cx->stores[sc], rec);
     loft_ref old = { sc, rec, 8, 0 };
     int was = r->projecting;
     r->projecting = 1;
@@ -1899,7 +1899,7 @@ static int loft_uc_convert(loft_cx *cx, loft_urun *r, uint32_t pair, loft_ref fr
         return 1;
     case LOFT_HOW_WIDEN: loft_uc_widen(cx, r, on, nn, from, to); return 1;
     case LOFT_HOW_REFERENCE: {
-        loft_store_t *s = &loft_stores[from.store_nr];
+        loft_store_t *s = &cx->stores[from.store_nr];
         uint32_t sn = loft_u32(cx, s, from.rec, from.pos), rec = loft_u32(cx, s, from.rec, from.pos + 4),
                  pos = loft_u32(cx, s, from.rec, from.pos + 8);
         loft_store_t *t = loft_store_of(cx, to);
@@ -1919,7 +1919,7 @@ static int loft_uc_convert(loft_cx *cx, loft_urun *r, uint32_t pair, loft_ref fr
         return 1;
     }
     case LOFT_HOW_VARIANTS: {
-        int raw = (int) *loft_at(cx, &loft_stores[from.store_nr], from.rec, from.pos);
+        int raw = (int) *loft_at(cx, &cx->stores[from.store_nr], from.rec, from.pos);
         int i = raw - 1;
         uint8_t *dst = loft_at(cx, loft_store_of(cx, to), to.rec, to.pos);
         if (i >= 0 && i < (int) p->nv && p->vto[i] >= 0) {
@@ -2012,7 +2012,7 @@ static uint16_t loft_up_convert(loft_cx *cx, loft_urun *run, const loft_upmap *m
     uint32_t words = (8 + (uint32_t) nd->n[new_root].size + 7) / 8;
     if (words < 2) words = 2;
     uint16_t dst_nr = loft_store_scratch(cx, words + 3);
-    loft_store_t *d = &loft_stores[dst_nr];
+    loft_store_t *d = &cx->stores[dst_nr];
     uint32_t root = loft_st_claim(cx, d, words);
     if (root != LOFT_ST_PRIMARY) {
         loft_ub_puts(cx, why, "a fresh store did not hand out its first record");
@@ -2021,7 +2021,7 @@ static uint16_t loft_up_convert(loft_cx *cx, loft_urun *run, const loft_upmap *m
     }
     loft_zero_fill(cx, d, root);
     /* The root record's back-pointer word travels with it. */
-    loft_set_u32(cx, d, root, 4, loft_u32(cx, &loft_stores[old_nr], LOFT_ST_PRIMARY, 4));
+    loft_set_u32(cx, d, root, 4, loft_u32(cx, &cx->stores[old_nr], LOFT_ST_PRIMARY, 4));
     run->m = m;
     run->od = od;
     run->nd = nd;
@@ -2058,7 +2058,7 @@ static uint16_t loft_up_convert(loft_cx *cx, loft_urun *run, const loft_upmap *m
         loft_store_drop(cx, dst_nr);
         return 0xFFFF;
     }
-    LOFT_SET_KNOWN(loft_stores[dst_nr], tp);
+    LOFT_SET_KNOWN(cx->stores[dst_nr], tp);
     return dst_nr;
 }
 
@@ -2155,7 +2155,7 @@ static int loft_up_load(loft_cx *cx, loft_ref r, const loft_sidecar *sc, const c
     {
         /* `place_converted`: the new store's image adopted as `r`'s store, which keeps its type
          * and its liveness. */
-        loft_store_t *d = &loft_stores[dst_nr];
+        loft_store_t *d = &cx->stores[dst_nr];
         uint32_t live_end = loft_image_live_end(cx, d);
         if (live_end == 0) {
             loft_ub_puts(cx, why, "the converted store does not hold together");

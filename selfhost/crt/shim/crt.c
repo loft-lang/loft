@@ -172,7 +172,7 @@ int64_t loft_crt_stack_new(int64_t *io, int64_t n, int64_t bytes) {
     loft_cx *cx = &loft_main_cx;
     loft_ref r = loft_ref_null(cx);
     loft_database(cx, &r, (uint32_t) bytes);
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_store_t *s = &cx->stores[r.store_nr];
     s->pinned = 1;
     loft_crt_stack_span(cx, s);
     loft_crt_put_ref(cx, io, n, r);
@@ -182,7 +182,7 @@ int64_t loft_crt_stack_new(int64_t *io, int64_t n, int64_t bytes) {
 /* `State::grow_stack`: the store grown until record 1 holds `bytes` of frame. */
 void loft_crt_stack_grow(int64_t store, int64_t bytes) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     uint32_t words = (uint32_t) ((8 + bytes + 7) / 8) + 1;
     if (s->size >= LOFT_ST_PRIMARY + words) return;
     loft_resize_store(cx, s, LOFT_ST_PRIMARY + words);
@@ -193,7 +193,7 @@ void loft_crt_stack_grow(int64_t store, int64_t bytes) {
  * bytes, a `String`), an argument a `loft_str` view (16 bytes, a `&str`) of a copy the call made
  * and its return releases. */
 static uint8_t *loft_crt_slot_at(loft_cx *cx, int64_t store, int64_t at) {
-    return loft_stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
+    return cx->stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
 }
 
 /* The interpreter's frame bytes as `State::get_stack` / `put_stack` / `get_var` / `put_var`
@@ -620,20 +620,20 @@ int64_t loft_crt_store_from_image(int64_t *io, int64_t n_io, const char *bytes, 
 /* Is store `nr` live?  A freed store answers 0 (`Store::is_free`). */
 int64_t loft_crt_store_live(int64_t nr) {
     loft_cx *cx = &loft_main_cx;
-    return nr >= 0 && nr < loft_nstores && loft_stores[nr].live ? 1 : 0;
+    return nr >= 0 && nr < cx->nstores && cx->stores[nr].live ? 1 : 0;
 }
 
 /* The type a typed mint gave store `nr`'s root (`Store::known_type`), 65535 for none. */
 int64_t loft_crt_store_known(int64_t nr) {
     loft_cx *cx = &loft_main_cx;
-    return nr >= 0 && nr < loft_nstores ? loft_stores[nr].known : 0xFFFF;
+    return nr >= 0 && nr < cx->nstores ? cx->stores[nr].known : 0xFFFF;
 }
 
 /* As `Stores::place_record_prefilled` when the host names no store: the fresh store keeps the
  * placed record's type. */
 void loft_crt_set_store_known(int64_t nr, int64_t tp) {
     loft_cx *cx = &loft_main_cx;
-    if (nr >= 0 && nr < loft_nstores) loft_stores[nr].known = (uint16_t) tp;
+    if (nr >= 0 && nr < cx->nstores) cx->stores[nr].known = (uint16_t) tp;
 }
 
 /* The run image's runner (step 3): text views on the stack as `State::get_text_sub`,
@@ -888,12 +888,12 @@ void loft_crt_release_frame_hold(int64_t s, int64_t r, int64_t p) {
  * from one already there by them (loft#1185, `State::release_fnref_bufs`). */
 int64_t loft_crt_serial_now(void) {
     loft_cx *cx = &loft_main_cx;
-    return (int64_t) loft_stores_allocated;
+    return (int64_t) cx->stores_allocated;
 }
 
 int64_t loft_crt_store_serial(int64_t nr) {
     loft_cx *cx = &loft_main_cx;
-    return nr >= 0 && nr < loft_nstores ? (int64_t) loft_stores[nr].serial : 0;
+    return nr >= 0 && nr < cx->nstores ? (int64_t) cx->stores[nr].serial : 0;
 }
 
 /* A text the runner keeps for the whole run (an enum variant's name, which Rust views in its type
@@ -1110,7 +1110,7 @@ int64_t loft_crt_stack_str(char *out, int64_t cap, int64_t store, int64_t at) {
 /* The run's end: the stack store released (a pinned store keeps itself from `loft_free_ref`). */
 void loft_crt_stack_free(int64_t store) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 0;
     loft_free_ref(cx, loft_crt_ref(cx, store, LOFT_ST_PRIMARY, 8));
 }
@@ -1118,21 +1118,21 @@ void loft_crt_stack_free(int64_t store) {
 /* A store's length in 8-byte words (`Store::capacity_words`). */
 int64_t loft_crt_store_words(int64_t store) {
     loft_cx *cx = &loft_main_cx;
-    return store >= 0 && store < loft_nstores ? (int64_t) loft_stores[store].size : 0;
+    return store >= 0 && store < cx->nstores ? (int64_t) cx->stores[store].size : 0;
 }
 
 /* A store's first `n` words copied into `out` (a byte vector's buffer, `n * 8` bytes): the
  * words `const_code` writes for a constant's store (`loft_cwords<d>`). */
 void loft_crt_store_bytes(char *out, int64_t store, int64_t n) {
     loft_cx *cx = &loft_main_cx;
-    memcpy(out, loft_stores[store].buf, (size_t) n * 8);
+    memcpy(out, cx->stores[store].buf, (size_t) n * 8);
 }
 
 /* A constant's store built (`consts.loft`): pinned and read-only, as `Store::lock_constant` and
  * `loft_const_store` leave it. */
 void loft_crt_lock_constant(int64_t store) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 1;
     s->read_only = 1;
 }
@@ -1141,7 +1141,7 @@ void loft_crt_lock_constant(int64_t store) {
  * stack store is. */
 void loft_crt_free_constant(int64_t store) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 0;
     s->read_only = 0;
     loft_free_ref(cx, loft_crt_ref(cx, store, LOFT_ST_PRIMARY, 8));
@@ -1153,7 +1153,7 @@ void loft_crt_free_constant(int64_t store) {
  * FIELD read as a value). */
 int64_t loft_crt_place_ref(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     loft_ref x;
     x.store_nr = (uint16_t) loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos);
     x.rec = loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4);
@@ -1165,7 +1165,7 @@ int64_t loft_crt_place_ref(int64_t *out, int64_t n, int64_t store, int64_t rec, 
 void loft_crt_set_place_ref(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                             int64_t r_pos) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos, (uint32_t) r_store);
     loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4, (uint32_t) r_rec);
     loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 8, (uint32_t) r_pos);
@@ -1430,7 +1430,7 @@ void loft_crt_vec_finish(int64_t store, int64_t rec, int64_t pos) {
 int64_t loft_crt_live_stores(void) {
     loft_cx *cx = &loft_main_cx;
     int64_t n = 0;
-    for (uint32_t i = 0; i < loft_nstores; i++) n += loft_stores[i].live ? 1 : 0;
+    for (uint32_t i = 0; i < cx->nstores; i++) n += cx->stores[i].live ? 1 : 0;
     return n;
 }
 
@@ -1761,14 +1761,14 @@ int64_t loft_crt_drop_leave(int64_t store, int64_t tp) {
 /* `Store::released_root`: was the root record of `store` released by its `OpDrop`? */
 int64_t loft_crt_drop_released(int64_t store) {
     loft_cx *cx = &loft_main_cx;
-    return store >= 0 && (uint64_t) store < loft_nstores && loft_stores[store].live
-        && loft_stores[store].released_root;
+    return store >= 0 && (uint64_t) store < cx->nstores && cx->stores[store].live
+        && cx->stores[store].released_root;
 }
 
 int64_t loft_crt_ref_removed(int64_t store, int64_t rec) {
     loft_cx *cx = &loft_main_cx;
-    return rec != 0 && store >= 0 && (uint64_t) store < loft_nstores
-        && loft_st_is_removed(cx, &loft_stores[store], (uint32_t) rec);
+    return rec != 0 && store >= 0 && (uint64_t) store < cx->nstores
+        && loft_st_is_removed(cx, &cx->stores[store], (uint32_t) rec);
 }
 
 /* `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`. */
@@ -3169,7 +3169,7 @@ void loft_crt_move_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int
 /* A cell's reference read and written raw, as Rust's slot operators do (`read::<DbRef>`). */
 static loft_ref loft_crt_cell_get(loft_cx *cx, loft_ref at, uint32_t fld) {
     loft_ref x = loft_ref_null(cx);
-    if (at.rec == 0 || at.store_nr >= loft_nstores) return x;
+    if (at.rec == 0 || at.store_nr >= cx->nstores) return x;
     loft_store_t *s = loft_store_of(cx, at);
     x.store_nr = (uint16_t) loft_u32(cx, s, at.rec, at.pos + fld);
     x.rec = loft_u32(cx, s, at.rec, at.pos + fld + 4);
@@ -3178,7 +3178,7 @@ static loft_ref loft_crt_cell_get(loft_cx *cx, loft_ref at, uint32_t fld) {
 }
 
 static void loft_crt_cell_set(loft_cx *cx, loft_ref at, loft_ref x) {
-    if (at.rec == 0 || at.store_nr >= loft_nstores) return;
+    if (at.rec == 0 || at.store_nr >= cx->nstores) return;
     loft_store_t *s = loft_store_of(cx, at);
     loft_set_u32(cx, s, at.rec, at.pos, x.store_nr);
     loft_set_u32(cx, s, at.rec, at.pos + 4, x.rec);
@@ -3196,14 +3196,14 @@ int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_
  * written at the address `to` (`OpGetStackRef`'s arm). */
 int64_t loft_crt_place_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t part) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     uint32_t v = loft_u32(cx, s, (uint32_t) rec, (uint32_t) (pos + part * 4));
     return part == 0 ? (int64_t) (uint16_t) v : (int64_t) v;
 }
 extern void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos);
 LOFT_STEP_FN void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos) {
     loft_cx *cx = &loft_main_cx;
-    loft_store_t *s = &loft_stores[store];
+    loft_store_t *s = &cx->stores[store];
     loft_twin_poke_ref(to, (uint16_t) loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos),
                        loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4),
                        loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 8));

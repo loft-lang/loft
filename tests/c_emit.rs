@@ -337,6 +337,7 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
     let mut c = String::from(include_str!("../src/c/loft_os.h"));
     c.push_str(include_str!("../src/c/loft_width.h"));
     c.push_str(include_str!("../src/c/loft_cc.h"));
+    c.push_str(include_str!("../src/c/loft_cx.h"));
     let _ = write!(
         c,
         "\nstatic const int64_t edges[] = {{ {} }};\nint main(void) {{\n    size_t n = sizeof edges / sizeof edges[0];\n    for (size_t i = 0; i < n; i++) for (size_t j = 0; j < n; j++) {{\n        int64_t a = edges[i], b = edges[j], r;\n        int o = LOFT_ADD_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_SUB_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_MUL_OVF(a, b, &r); printf(\"%d %lld\\n\", o, o ? 0LL : (long long) r);\n    }}\n    return 0;\n}}\n",
@@ -2525,6 +2526,7 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
     let mut c = String::from(
         "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str(
         r#"
@@ -2708,6 +2710,7 @@ fn a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes() {
         "#if !defined(_WIN32)\n#define _POSIX_C_SOURCE 200809L\n#define LOFT_POSIX_HOST 1\n#endif\n\
          #include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str("#if defined(_WIN32)\n#include <windows.h>\n#endif\n");
     c.push_str(include_str!("../src/c/loft_mapped.h"));
@@ -3713,6 +3716,7 @@ fn a_growth_past_the_word_count_stops_the_c() {
     let mut c = String::from(
         "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str(
         "\nint main(void) {\n    loft_cx *cx = &loft_main_cx;\n    loft_store_t s;\n    memset(&s, 0, sizeof s);\n    \
@@ -3947,6 +3951,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_cx.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
@@ -3974,8 +3979,8 @@ int main(int argc, char **argv) {
     st.defined = 1;
     st.live = 1;
     loft_st_init(cx, &st);
-    loft_stores = &st;
-    loft_nstores = 1;
+    cx->stores = &st;
+    cx->nstores = 1;
     const loft_key *keys[4] = { K_INT, K_TEXT, K_INT, K_INT };
     uint32_t strides[4] = { 16, 16, 0, 16 };
     uint32_t root = loft_st_claim(cx, &st, 3);
@@ -4247,6 +4252,7 @@ fn the_c_index_files_every_record_where_btree_does() {
         include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_cx.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
@@ -4289,8 +4295,8 @@ int main(int argc, char **argv) {
     st.defined = 1;
     st.live = 1;
     loft_st_init(cx, &st);
-    loft_stores = &st;
-    loft_nstores = 1;
+    cx->stores = &st;
+    cx->nstores = 1;
     const loft_key *keys[3] = { K_INT, K_TEXT, K_PAIR };
     int nks[3] = { 1, 1, 2 };
     uint32_t root = loft_st_claim(cx, &st, 3);
@@ -4553,6 +4559,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
         include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_cx.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
@@ -4595,8 +4602,8 @@ int main(int argc, char **argv) {
     st.defined = 1;
     st.live = 1;
     loft_st_init(cx, &st);
-    loft_stores = &st;
-    loft_nstores = 1;
+    cx->stores = &st;
+    cx->nstores = 1;
     uint32_t root = loft_st_claim(cx, &st, 3);
     loft_ref pts = { 0, root, 8 }, words = { 0, root, 12 };
     FILE *f = fopen(argv[argc - 1], "r");
@@ -5197,6 +5204,7 @@ fn the_c_reads_json_as_json_rs_does() {
         include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_cx.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
@@ -8270,6 +8278,7 @@ fn the_transient_arena_gives_back_what_a_mark_took() {
         include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_cx.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
@@ -8312,9 +8321,9 @@ int main(void) {
     /* spill: past the base block, into blocks of their own */
     loft_ta_mark_t s0 = loft_ta_mark(cx);
     void *base = loft_ta_alloc(cx, LOFT_TA_BASE - 64);
-    CHECK(loft_ta_spill == 0, "the base block holds it");
+    CHECK(cx->ta_spill == 0, "the base block holds it");
     unsigned char *sp = (unsigned char *) loft_ta_alloc(cx, 128);
-    CHECK(loft_ta_spill != 0, "a spill block");
+    CHECK(cx->ta_spill != 0, "a spill block");
     CHECK(((uintptr_t) sp & 7) == 0, "a spill is 8-aligned");
     loft_ta_mark_t sm = loft_ta_mark(cx);
     unsigned char *same = (unsigned char *) loft_ta_alloc(cx, 64);
@@ -8325,11 +8334,11 @@ int main(void) {
     loft_ta_mark_t s1 = loft_ta_mark(cx);
     unsigned char *big = (unsigned char *) loft_ta_alloc(cx, 3 * LOFT_TA_BASE);
     big[3 * LOFT_TA_BASE - 1] = 1;
-    CHECK(loft_ta_spill->cap >= 3 * LOFT_TA_BASE, "a block as big as the allocation");
+    CHECK(cx->ta_spill->cap >= 3 * LOFT_TA_BASE, "a block as big as the allocation");
     loft_ta_back(cx, s1);
     CHECK(loft_ta_alloc(cx, 8) == sp + 128, "back to the first spill, its top kept");
     loft_ta_back(cx, s0);
-    CHECK(loft_ta_spill == 0, "every spill freed");
+    CHECK(cx->ta_spill == 0, "every spill freed");
     CHECK(loft_ta_alloc(cx, 8) == base, "back in the base block");
     loft_ta_back(cx, s0);
     printf("%s\n", fails ? "failed" : "ok");

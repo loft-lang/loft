@@ -236,13 +236,13 @@ static int loft_net_gate_pinned(loft_cx *cx, const char *u, const loft_sidecar *
 static int loft_image_load_url(loft_cx *cx, loft_ref r, loft_str url, const char *sha, const char *schema_sha,
                                const loft_sidecar *sc) {
     const char *who = sha ? "store_load_url" : "store_load_url_trusted";
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
+    if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores) return 0;
     char *u = loft_cstr_own(cx, url);
     char err[1024];
     loft_bytes b;
     long recorded = -1;
     loft_gate_trie_v1 = 0;
-    int gate = sc && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp ? loft_net_gate_pinned(cx, u, sc, who, &recorded, 1, schema_sha) : 1;
+    int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_net_gate_pinned(cx, u, sc, who, &recorded, 1, schema_sha) : 1;
     if (gate == 0) {
         free(u);
         return 0;

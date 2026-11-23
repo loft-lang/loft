@@ -563,7 +563,7 @@ static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
     FILE *f = loft_dump_file(cx);
     if (!f || s->serial == 0) return;
     fprintf(f, "S %s %u %u %u\n", loft_trace_name(cx, s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
-            (unsigned) (s - loft_stores));
+            (unsigned) (s - cx->stores));
     for (uint32_t w = 0; w < s->claims.nwords; w++) {
         for (uint32_t b = 0; b < 64; b++) {
             if (!loft_bit64_test(cx, s->claims.bits[w], b)) continue;
@@ -585,8 +585,8 @@ static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
     (void) planted;
 }
 static void loft_store_dump(loft_cx *cx) {
-    for (uint32_t nr = 0; nr < loft_nstores; nr++)
-        if (loft_stores[nr].live) loft_store_dump_one(cx, &loft_stores[nr]);
+    for (uint32_t nr = 0; nr < cx->nstores; nr++)
+        if (cx->stores[nr].live) loft_store_dump_one(cx, &cx->stores[nr]);
     if (loft_dump_file(cx)) fflush(loft_dump_file(cx));
 }
 #endif
@@ -609,11 +609,11 @@ static void loft_leak_report(loft_cx *cx) {
     int strict = 0;
 #endif
     if (!check && !strict) return;
-    kt = (uint32_t *) calloc(loft_nstores + 1, sizeof *kt);
-    count = (uint32_t *) calloc(loft_nstores + 1, sizeof *count);
+    kt = (uint32_t *) calloc(cx->nstores + 1, sizeof *kt);
+    count = (uint32_t *) calloc(cx->nstores + 1, sizeof *count);
     if (!kt || !count) { fputs("loft: out of memory\n", stderr); abort(); }
-    for (i = 0; i < loft_nstores; i++) {
-        const loft_store_t *s = &loft_stores[i];
+    for (i = 0; i < cx->nstores; i++) {
+        const loft_store_t *s = &cx->stores[i];
         if (!s->live || s->pinned || s->read_only) continue;
         for (j = 0; j < nk && kt[j] != s->known; j++) {} /* LOFT_RAW_KNOWN: the store as it is in memory */
         if (j == nk) { kt[nk] = s->known; count[nk] = 0; nk++; } /* LOFT_RAW_KNOWN: the store as it is in memory */
@@ -682,16 +682,16 @@ static void loft_leak_report(loft_cx *cx) {
     /* The interpreter's `[leak-site]` lines: the stores left, grouped by where each was made
      * (function, file and line — a C unit has no bytecode position) and by type, most first. */
     if (total) {
-        uint32_t *who = (uint32_t *) calloc(loft_nstores + 1, sizeof *who), *many = (uint32_t *) calloc(loft_nstores + 1, sizeof *many);
+        uint32_t *who = (uint32_t *) calloc(cx->nstores + 1, sizeof *who), *many = (uint32_t *) calloc(cx->nstores + 1, sizeof *many);
         uint32_t ng = 0;
         if (!who || !many) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (i = 0; i < loft_nstores; i++) {
-            const loft_store_t *s = &loft_stores[i];
+        for (i = 0; i < cx->nstores; i++) {
+            const loft_store_t *s = &cx->stores[i];
             if (!s->live || s->pinned || s->read_only) continue;
-            const loft_leak_site *a = i < loft_nsites ? &loft_sites[i] : 0;
+            const loft_leak_site *a = i < cx->nsites ? &cx->sites[i] : 0;
             for (j = 0; j < ng; j++) {
-                const loft_store_t *t = &loft_stores[who[j]];
-                const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
+                const loft_store_t *t = &cx->stores[who[j]];
+                const loft_leak_site *b = who[j] < cx->nsites ? &cx->sites[who[j]] : 0;
                 if (t->known == s->known && (a == 0) == (b == 0) && /* LOFT_RAW_KNOWN: the store as it is in memory */
                     (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line
                                 && a->cfn == b->cfn && a->cline == b->cline)))
@@ -706,8 +706,8 @@ static void loft_leak_report(loft_cx *cx) {
                 who[j] = who[j - 1]; many[j] = many[j - 1]; who[j - 1] = a; many[j - 1] = b;
             }
         for (i = 0; i < ng; i++) {
-            const loft_store_t *s = &loft_stores[who[i]];
-            const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
+            const loft_store_t *s = &cx->stores[who[i]];
+            const loft_leak_site *a = who[i] < cx->nsites ? &cx->sites[who[i]] : 0;
             fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()", (unsigned) many[i],
                     LOFT_KNOWN(*s) < loft_ntn ? loft_tn[LOFT_KNOWN(*s)] : "?", (unsigned) LOFT_KNOWN(*s),
                     a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");

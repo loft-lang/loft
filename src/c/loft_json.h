@@ -997,7 +997,7 @@ static loft_ref loft_jv_null(loft_cx *cx) {
     if (!made) {
         sentinel = loft_jv_alloc(cx);
         loft_set_byte(cx, sentinel, 0, LOFT_JD_NULL);
-        loft_stores[sentinel.store_nr].pinned = 1;
+        cx->stores[sentinel.store_nr].pinned = 1;
         made = 1;
     }
     return sentinel;

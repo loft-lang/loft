@@ -10,6 +10,7 @@
 #include "loft_os.h"
 #include "loft_width.h"
 #include "loft_cc.h"
+#include "loft_cx.h"
 #include "loft_text.h"
 /* The program's store context (@PLN226) does not reach a component, which the program calls
  * through the loft-ffi ABI: its calls of the runtime pass none — the text pool then takes and

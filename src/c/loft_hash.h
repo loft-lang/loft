@@ -1804,7 +1804,7 @@ LOFT_HOT_INLINE void loft_hh_resolve(loft_cx *cx, loft_hh *h, loft_ref c) {
  * one it was resolved under, and the collection slot naming the same claim? */
 LOFT_HOT_INLINE int loft_hh_live(loft_cx *cx, const loft_hh *h, loft_ref c) {
     if (h->nr != c.store_nr || h->rec != c.rec || h->pos != c.pos) return 0;
-    loft_store_t *s = &loft_stores[c.store_nr];
+    loft_store_t *s = &cx->stores[c.store_nr];
     return s->hgen == h->gen && loft_collection_rec(cx, s, c.rec, c.pos) == h->claim;
 }
 
@@ -1828,7 +1828,7 @@ static void loft_hh_verify(loft_cx *cx, const loft_hh *h, loft_ref c) {
 
 /* The slow half of `loft_hh_ready`: `h` resolved for place `c` again, or `c` refused. */
 LOFT_HOT_INLINE int loft_hh_reready(loft_cx *cx, loft_hh *h, loft_ref c) {
-    if (c.store_nr == 0xFFFF || c.rec == 0 || c.store_nr >= loft_nstores) return 0;
+    if (c.store_nr == 0xFFFF || c.rec == 0 || c.store_nr >= cx->nstores) return 0;
     loft_hh_resolve(cx, h, c);
     return h->ok;
 }
@@ -1837,7 +1837,7 @@ LOFT_HOT_INLINE int loft_hh_reready(loft_cx *cx, loft_hh *h, loft_ref c) {
  * empty handle names record 0xFFFFFFFF, which no place does, so it never passes the compare. */
 LOFT_HOT_INLINE int loft_hh_ready(loft_cx *cx, loft_hh *h, loft_ref c) {
     if (h->nr == c.store_nr && h->rec == c.rec && h->pos == c.pos) {
-        loft_store_t *s = &loft_stores[c.store_nr];
+        loft_store_t *s = &cx->stores[c.store_nr];
         if (s->hgen == h->gen && loft_collection_rec(cx, s, c.rec, c.pos) == h->claim) {
 #ifdef LOFT_KEYED_VERIFY
             loft_hh_verify(cx, h, c);
@@ -1890,7 +1890,7 @@ static void loft_hh_verify_found(loft_cx *cx, const char *what, loft_ref c, cons
 LOFT_HOT_INLINE loft_ref loft_hh_find_i64(loft_cx *cx, loft_hh *h, loft_ref c, const loft_key *keys, int64_t key) {
     if (!loft_hh_ready(cx, h, c)) return loft_h_find_i64(cx, c, keys, key);
     uint32_t index, val;
-    loft_ref e = loft_hh_probe_i64(cx, h, &loft_stores[c.store_nr], key, keys[0].pos, &index, &val);
+    loft_ref e = loft_hh_probe_i64(cx, h, &cx->stores[c.store_nr], key, keys[0].pos, &index, &val);
 #ifdef LOFT_KEYED_VERIFY
     loft_hh_verify_found(cx, "lookup", c, keys, key, e);
 #endif
@@ -1900,7 +1900,7 @@ LOFT_HOT_INLINE loft_ref loft_hh_find_i64(loft_cx *cx, loft_hh *h, loft_ref c, c
 /* `loft_hash_len` through handle `h`. */
 LOFT_HOT_INLINE int64_t loft_hh_len(loft_cx *cx, loft_hh *h, loft_ref c) {
     if (!loft_hh_ready(cx, h, c)) return loft_hash_len(cx, c);
-    return loft_u32(cx, &loft_stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
+    return loft_u32(cx, &cx->stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
 }
 
 /* `loft_h_remove_at` on a ready handle's table (`@FR-Col-Remove`): bucket `hole` is emptied and
@@ -1935,7 +1935,7 @@ LOFT_HOT_INLINE void loft_hh_remove_i64(loft_cx *cx, loft_hh *h, const loft_tdes
         loft_hash_remove_i64(cx, T, elem, c, key, keys, nk, view);
         return;
     }
-    loft_store_t *s = &loft_stores[c.store_nr];
+    loft_store_t *s = &cx->stores[c.store_nr];
     if (LOFT_WRITE_REFUSED(s) || loft_u32(cx, s, h->claim, LOFT_H_LEN_FLD) == 0) {
         loft_hash_remove_i64(cx, T, elem, c, key, keys, nk, view);
         return;
@@ -1956,7 +1956,7 @@ LOFT_HOT_INLINE void loft_hh_remove_i64(loft_cx *cx, loft_hh *h, const loft_tdes
 LOFT_HOT_INLINE loft_ref loft_hh_insert(loft_cx *cx, loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec,
                                const loft_key *keys, int nk, int secondary) {
     if (rec.rec != 0 && rec.store_nr == c.store_nr && loft_h_int_key(cx, keys, nk) && loft_hh_ready(cx, h, c)) {
-        loft_store_t *s = &loft_stores[c.store_nr];
+        loft_store_t *s = &cx->stores[c.store_nr];
         loft_hents ents = h->ents;
         if (!LOFT_WRITE_REFUSED(s) && loft_h_insert_int_at(cx, c, s, h->claim, h->count, h->seed, &ents, rec, keys)) {
             loft_h_verify_filed(cx, c, rec, keys);
@@ -2099,7 +2099,7 @@ static loft_ref loft_scratch_of(loft_cx *cx, loft_ref c, const loft_ref *e, cons
         loft_ref fresh = loft_ref_null(cx);
         loft_database(cx, &fresh, 1);
         home = fresh.store_nr;
-        s = &loft_stores[home];
+        s = &cx->stores[home];
     }
     uint32_t words = (n * width + 8 + 7) / 8;
     uint32_t vec = loft_st_claim(cx, s, words < 1 ? 1 : words);

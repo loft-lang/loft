@@ -427,7 +427,7 @@ static void loft_rekey_walk(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, u
 /* A fresh store of `words` zeroed words in the lowest free slot, uncounted (`adopt_store`). */
 static uint16_t loft_store_scratch(loft_cx *cx, uint32_t words) {
     uint32_t nr = loft_store_make(cx, 0);
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     loft_heap_moved(cx, s, s->size, words < 4 ? 4 : words);
     free(s->buf);
     s->size = words < 4 ? 4 : words;
@@ -441,7 +441,7 @@ static uint16_t loft_store_scratch(loft_cx *cx, uint32_t words) {
 /* `take_store` + `release_slot`: the slot is free again, holding the freed sentinel
  * (`Store::new_freed_sentinel`, four words, parking on) its next store is made in. */
 static void loft_store_drop(loft_cx *cx, uint16_t nr) {
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     if (s->mapped) loft_map_release_hook(cx, s);
     loft_heap_moved(cx, s, s->size, 4);
     free(s->buf);
@@ -655,9 +655,9 @@ static char *loft_cpath(loft_cx *cx, loft_str p, const char *suffix) {
  * a scratch store, its trees laid out, written to `path` sized to its content, and the sidecar
  * beside it.  0 on a store with no root, a type no sidecar was prepared for, or an I/O error. */
 static int loft_image_write(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, loft_ref r, loft_str path, const loft_sidecar *sc) {
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || !loft_stores[r.store_nr].live) return 0;
-    uint16_t tp = LOFT_KNOWN(loft_stores[r.store_nr]);
-    int32_t header = loft_st_i32(cx, &loft_stores[r.store_nr], 1, 0);
+    if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores || !cx->stores[r.store_nr].live) return 0;
+    uint16_t tp = LOFT_KNOWN(cx->stores[r.store_nr]);
+    int32_t header = loft_st_i32(cx, &cx->stores[r.store_nr], 1, 0);
     if (tp == 0xFFFF || header <= 0 || sc == 0 || sc->tp != tp) return 0;
     uint16_t dst;
     loft_ref to;
@@ -681,13 +681,13 @@ static int loft_image_write(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, l
 #endif
     } else {
         dst = loft_store_scratch(cx, (uint32_t) header + 2);
-        loft_store_t *d0 = &loft_stores[dst];
+        loft_store_t *d0 = &cx->stores[dst];
         if (loft_st_claim(cx, d0, (uint32_t) header) != 1) {
             loft_store_drop(cx, dst);
             return 0;
         }
         int32_t dst_header = loft_st_i32(cx, d0, 1, 0);
-        memcpy(d0->buf + 8, loft_stores[r.store_nr].buf + 8, (size_t) header * 8);
+        memcpy(d0->buf + 8, cx->stores[r.store_nr].buf + 8, (size_t) header * 8);
         loft_st_set_i32(cx, d0, 1, 0, dst_header);
         loft_ref src = { r.store_nr, 1, 8, 0 };
         to.store_nr = dst;
@@ -695,13 +695,13 @@ static int loft_image_write(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, l
         to.pos = 8;
         loft_copy_claims(cx, T, tp, src, to);
     }
-    loft_store_t *d = &loft_stores[dst];
+    loft_store_t *d = &cx->stores[dst];
     LOFT_SET_KNOWN(*d, tp);
     if (loft_type_has_tree(cx, T, ntypes, tp, 0)) {
         uint32_t budget = 200000;
         (void) loft_relayout_walk(cx, T, ntypes, tp, to, &budget);
     }
-    d = &loft_stores[dst];
+    d = &cx->stores[dst];
     uint32_t live_end = loft_image_live_end(cx, d);
     int ok = 0;
     if (live_end != 0) {
@@ -1146,7 +1146,7 @@ static void loft_trie_refile(loft_cx *cx, const loft_tdesc *T, uint16_t tp, uint
     if (!tries.tp) { fputs("loft: out of memory\n", stderr); abort(); }
     tries.cap = 0;
     loft_kind_slots(cx, T, tp, root, &tries, 0, LOFT_T_TRIE);
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     for (size_t i = 0; i < tries.n; i++) {
         loft_ref c = tries.p[i];
         const loft_tdesc *d = &T[tries.tp[i]];
@@ -1168,7 +1168,7 @@ static int loft_rebase_refs(loft_cx *cx, const loft_sidecar *sc, uint16_t nr, lo
     loft_ref root = { nr, LOFT_ST_PRIMARY, 8, 0 };
     loft_refs all = { 0, 0, 0, 0 };
     loft_ref_slots(cx, sc->types, sc->tp, root, &all, 0);
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     int ok = 1;
     size_t live = 0;
     for (size_t i = 0; i < all.n; i++) {
@@ -1218,10 +1218,10 @@ static void loft_rekey_image(loft_cx *cx, const loft_sidecar *sc, loft_ref r) {
 
 static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(cx, path)) return 0;
+    if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores || loft_path_refused(cx, path)) return 0;
     char *p = loft_cpath(cx, path, 0);
     loft_gate_trie_v1 = 0;
-    int gate = sc && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp ? loft_image_gate(cx, p, sc, who, 1) : 1;
+    int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_image_gate(cx, p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
@@ -1326,8 +1326,8 @@ static int loft_image_adopt(loft_cx *cx, loft_ref r, uint8_t *bytes, size_t n, i
     /* `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything follows
      * a number the image holds, the rebase below included.  The image stands in the slot for
      * the walk and is taken out again: nothing is adopted yet. */
-    if (untrusted && loft_T && LOFT_KNOWN(loft_stores[r.store_nr]) != 0xFFFF) {
-        loft_store_t *t = &loft_stores[r.store_nr];
+    if (untrusted && loft_T && LOFT_KNOWN(cx->stores[r.store_nr]) != 0xFFFF) {
+        loft_store_t *t = &cx->stores[r.store_nr];
         uint8_t *held_buf = t->buf;
         uint32_t held_size = t->size;
         t->buf = bytes;
@@ -1346,10 +1346,10 @@ static int loft_image_adopt(loft_cx *cx, loft_ref r, uint8_t *bytes, size_t n, i
     }
     /* A store in memory records no length: only a written image does (`(S-Frame)`). */
     memcpy(bytes + 4, &unrecorded, 4);
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_store_t *s = &cx->stores[r.store_nr];
     /* `adopt_image`: the image's references re-pointed at this slot, read off its own bytes; a
      * refusal leaves the store as it was. */
-    if (sc && sc->types && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp) {
+    if (sc && sc->types && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp) {
         uint8_t *old_buf = s->buf;
         uint32_t old_size = s->size;
         s->buf = bytes;
@@ -1681,11 +1681,11 @@ static void loft_validate_claims(loft_cx *cx, const loft_tdesc *T, uint32_t nt, 
 }
 
 static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
-    if (r.store_nr >= loft_nstores) {
+    if (r.store_nr >= cx->nstores) {
         LOFT_VC_BAD("ref #%u.%u,%u \xe2\x80\x94 store out of range", (unsigned) r.store_nr, r.rec, r.pos);
         return;
     }
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_store_t *s = &cx->stores[r.store_nr];
     if (!s->live) {
         LOFT_VC_BAD("ref #%u.%u,%u \xe2\x80\x94 store FREED", (unsigned) r.store_nr, r.rec, r.pos);
         return;
@@ -1883,7 +1883,7 @@ static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t n
                 LOFT_VC_BAD("stored reference names byte %u of record %u, which holds %u words", at_byte, to, words);
         } else if (loft_vc_own != LOFT_VC_LIVE) {
             LOFT_VC_BAD("stored reference names store #%u, which is not part of the file", sn);
-        } else if (sn != 0xFFFFu && sn >= loft_nstores) {
+        } else if (sn != 0xFFFFu && sn >= cx->nstores) {
             LOFT_VC_BAD("stored DbRef names store #%u, out of range", sn);
         }
         return;
@@ -1925,8 +1925,8 @@ static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t n
  * store was minted as, or the field of it at `r`'s offset (`type_at`) — false for a store
  * minted as no type. */
 static uint8_t loft_store_verify(loft_cx *cx, const loft_tdesc *T, uint32_t nt, loft_ref r) {
-    if (r.store_nr >= loft_nstores) return 0;
-    uint16_t tp = LOFT_KNOWN(loft_stores[r.store_nr]);
+    if (r.store_nr >= cx->nstores) return 0;
+    uint16_t tp = LOFT_KNOWN(cx->stores[r.store_nr]);
     if (tp == 0xFFFF || tp >= nt) return 0;
     if (r.pos > 8 && T[tp].kind == LOFT_T_STRUCT) {
         for (uint16_t i = 0; i < T[tp].n; i++)
@@ -1936,7 +1936,7 @@ static uint8_t loft_store_verify(loft_cx *cx, const loft_tdesc *T, uint32_t nt, 
             }
     }
     uint32_t problems = 0;
-    loft_vc_begin(cx, &loft_stores[r.store_nr]);
+    loft_vc_begin(cx, &cx->stores[r.store_nr]);
     loft_validate_claims(cx, T, nt, tp, r, &problems);
     free(loft_vc_starts);
     loft_vc_starts = 0;

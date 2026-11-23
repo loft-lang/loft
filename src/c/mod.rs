@@ -44,6 +44,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_os.h"),
     include_str!("loft_width.h"),
     include_str!("loft_cc.h"),
+    include_str!("loft_cx.h"),
     include_str!("loft_text.h"),
     include_str!("loft_store.h"),
     include_str!("loft_rt.h"),
@@ -4726,18 +4727,18 @@ fn foreign_vector_args(
         );
     }
     if heap_answer {
-        let _ = writeln!(post, "    if (!loft_stores[pin].read_only) {{");
+        let _ = writeln!(post, "    if (!cx->stores[pin].read_only) {{");
     } else {
         let _ = writeln!(
             post,
             "    if (pminted) loft_free_ref(cx, (loft_ref) {{ (uint16_t) pin, 1, 0, 0 }});"
         );
-        let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
+        let _ = writeln!(post, "    else if (!cx->stores[pin].read_only) {{");
     }
     for i in &vec_args {
         let _ = writeln!(
             post,
-            "        if (cp{i}) loft_st_delete(cx, &loft_stores[pin], cp{i});"
+            "        if (cp{i}) loft_st_delete(cx, &cx->stores[pin], cp{i});"
         );
     }
     let _ = writeln!(post, "    }}");
@@ -5134,8 +5135,8 @@ fn framed(
         (push, String::new())
     } else {
         (
-            format!("{push}    size_t fm = loft_nfnrefs;\n"),
-            "    if (loft_nfnrefs != fm) loft_fnref_release(cx, fm);\n".to_string(),
+            format!("{push}    size_t fm = cx->nfnrefs;\n"),
+            "    if (cx->nfnrefs != fm) loft_fnref_release(cx, fm);\n".to_string(),
         )
     };
     if ret == CType::Void {
@@ -5310,7 +5311,7 @@ pub fn emit_tests_of(
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    cx->in_test = 1;\n",
         anchor(stores)
     );
     // Each test runs in a wrapper of its own, called through a `volatile` pointer that no
@@ -5345,7 +5346,7 @@ pub fn emit_tests_of(
         if subs.is_empty() {
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    if (setjmp(loft_test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(cx, loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
+                "    LOFT_FRAMES_RESET();\n    loft_mark = cx->stores_allocated;\n    if (setjmp(cx->test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(cx, loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
             );
         } else {
             // Passes only by failing, with one of the expected messages in its own.
@@ -5355,8 +5356,8 @@ pub fn emit_tests_of(
                 .collect();
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
-                 if (setjmp(loft_test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
+                "    LOFT_FRAMES_RESET();\n    loft_mark = cx->stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
+                 if (setjmp(cx->test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
                  else {{ loft_release_stores_since(cx, loft_mark); if (!loft_failed_with(cx, want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }} }}",
                 list.join(", "),
                 subs.len()

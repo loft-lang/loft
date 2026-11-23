@@ -7,8 +7,41 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, `status:next` on [loft-lang/plans#226](https://github.com/loft-lang/plans/issues/226).
-Design stated by the owner; no phase started.
+Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plans/issues/226).
+
+| Phase | State |
+|---|---|
+| P0 | done: measured below |
+| P2a | done (f048ff16e): every C runtime and emitted function takes `loft_cx *cx` first; fixed ABIs declare theirs |
+| P2b | done: the state of `loft_text.h`, `loft_store.h`, `loft_rt.h`, `par`, the FFI claim log and the hosted bridge is fields of `struct loft_cx` (`src/c/loft_cx.h`); workers', hosted units' and HTTP workers' contexts made as below; TSan clean on the `par` corpus |
+| P3 | done: the parks are main-thread statics (below) |
+| P1, P4 | open: the rest of `git grep -c LOFT_TLS -- src/c` |
+| P4b, P5 | open |
+
+### Decisions taken while building it
+
+- **One struct, like `Stores`.**  Every per-thread variable is a field of `struct loft_cx`, named
+  without its `loft_` prefix (`loft_stores` → `cx->stores`).  The header holds by value only the
+  types it defines (`loft_text`, `loft_ref`, the jump buffer, the hosted locals entry, the show
+  callback); a field pointing at a runtime type names its struct tag.
+- **A worker's context is made by its caller** in `loft_par_job_init`, before the thread starts:
+  `loft_cx_fresh`, its table the copy, `no_park` set.  `loft_cx_end` releases what a context
+  holds besides its table — what a thread's exit leaked before.
+- **The parks are the main thread's.**  A park slot is a plain static; `loft_wpark_take`,
+  `loft_park_take` and the puts all check `cx->no_park`, so a `par` worker and a hosted bridge
+  call never touch one.  (A per-thread slot was always empty on a worker before: same answers.)
+- **A hosted unit's context belongs to the `Stores` that calls it** (`HostedTable::cx_of`,
+  `host_abi::HostedContexts`), as its table view does: an interpreter `par` worker's `Stores` is
+  its own, and so is its context.  The entry is appended to `HostedTable`, so `HOST_ABI` stays.
+- **A library native's callback finds its caller's context in the store handle.**  The loft-ffi
+  ABI fixes `opaque` as the store number, and both the C helper and the Rust crate read its low
+  16 bits alone (`loft_ffi_store_nr`); the context pointer rides above them
+  (`loft_ffi_handle`).  It needs 64-bit pointers, asserted at compile time.  The interpreter's
+  own callbacks (`extensions.rs`, `CURRENT_STORES`) can carry theirs the same way in P4b.
+- **The TLS archive keeps its C ABI** (`loft_tls.c`, `loft_ssh.c`, compiled apart): its
+  prototypes take no context.
+- **The `net` component passes a null context**, which means "no text pool"; it reaches no other
+  field.  Its web, server and SSH state is P4's, and needs a context in the component's ABI.
 
 ## Goal
 

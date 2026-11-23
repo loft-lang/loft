@@ -728,42 +728,42 @@ static int loft_lazy_miss(loft_cx *cx, loft_ref coll, const loft_kv *key, int n)
         const char *volatile key_p = key_text.p;
         volatile size_t key_n = key_text.len;
         jmp_buf jb;
-        jmp_buf *volatile outer = loft_lazy_jmp;
-        volatile uint64_t serial0 = loft_stores_allocated;
+        jmp_buf *volatile outer = cx->lazy_jmp;
+        volatile uint64_t serial0 = cx->stores_allocated;
 #if defined(LOFT_CALL_CHAIN)
-        volatile size_t depth = loft_nframes;
+        volatile size_t depth = cx->nframes;
 #endif
         volatile int64_t answer = 0;
 #if defined(LOFT_HALT_RELEASE)
-        volatile size_t held_outer = loft_lazy_held_floor;
+        volatile size_t held_outer = cx->lazy_held_floor;
 #endif
         if (setjmp(jb) == 0) {
-            loft_lazy_jmp = &jb;
+            cx->lazy_jmp = &jb;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = loft_nheld;
+            cx->lazy_held_floor = cx->nheld;
 #endif
             answer = driver(cx, coll, loft_view(cx, &b->source), key_i, loft_lit(cx, key_p, key_n));
-            loft_lazy_jmp = outer;
+            cx->lazy_jmp = outer;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = held_outer;
+            cx->lazy_held_floor = held_outer;
 #endif
         } else {
             /* The driver faulted: the stores its abandoned frames made are freed (the teardown
              * the fault skipped, `lazy_watch_end`) — their texts went before the jump — and the
              * fault is the collection's failure. */
-            loft_lazy_jmp = outer;
+            cx->lazy_jmp = outer;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = held_outer;
+            cx->lazy_held_floor = held_outer;
 #endif
-            for (uint32_t i = 0; i < loft_nstores; i++)
-                if (loft_stores[i].live && loft_stores[i].serial > serial0) {
+            for (uint32_t i = 0; i < cx->nstores; i++)
+                if (cx->stores[i].live && cx->stores[i].serial > serial0) {
                     loft_ref r = { (uint16_t) i, 0, 0, 0 };
                     loft_free_ref(cx, r);
                 }
 #if defined(LOFT_CALL_CHAIN)
-            loft_nframes = depth;
+            cx->nframes = depth;
 #endif
-            loft_lazy_refuse(cx, coll, loft_view(cx, &loft_lazy_fault));
+            loft_lazy_refuse(cx, coll, loft_view(cx, &cx->lazy_fault));
             /* The lookup is asked again, as the interpreter's `find_or_fetch` asks it after any
              * fetch: a row the driver inserted before it faulted is resident, and found. */
             return 1;

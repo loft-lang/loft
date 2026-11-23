@@ -131,7 +131,7 @@ mod tests {
         let unit = crate::c::emit_unit(&p.data, &p.database, &[p.data.def_nr(&format!("n_{f}"))])
             .unwrap_or_else(|r| panic!("{f} is carried: {r:?}"));
         let head = unit
-            .find(&format!("n_{f}__fr(int64_t v0_x, int64_t v1_t) {{"))
+            .find(&format!("n_{f}__fr(loft_cx *cx, int64_t v0_x, int64_t v1_t) {{"))
             .unwrap_or_else(|| panic!("no body of {f}"));
         let body = &unit[head..];
         body[..body.find("\n}\n").map_or(body.len(), |e| e + 3)].to_string()

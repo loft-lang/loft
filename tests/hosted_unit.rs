@@ -137,7 +137,7 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   WITNESS: "`twice_by` … the answer's bits are 0x8 interpreted, 0x8000000000000000 compiled",
 ///   and without the verify "assertion failed: twice_by null".
 ///   A SABOTAGE (2026-11-23): with a unit parking stores across calls (`loft_host_enter`
-///   leaving `loft_no_park` off), `styled`'s lifted record is never freed.  WITNESS:
+///   leaving `cx->no_park` off), `styled`'s lifted record is never freed.  WITNESS:
 ///   "[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=100 Bag×1".
 ///   A SABOTAGE (2026-11-23): with the unit's generator step answering "ended" after every
 ///   step (`loft_shared_gen_next`), `upto` yields nothing.  WITNESS: "assertion failed: upto 0".

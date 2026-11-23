@@ -24,6 +24,7 @@ const NET: &[(&str, &str)] = &[
     ("loft_os.h", include_str!("loft_os.h")),
     ("loft_width.h", include_str!("loft_width.h")),
     ("loft_cc.h", include_str!("loft_cc.h")),
+    ("loft_cx.h", include_str!("loft_cx.h")),
     ("loft_text.h", include_str!("loft_text.h")),
     ("loft_sock.h", include_str!("loft_sock.h")),
     ("loft_https.h", include_str!("loft_https.h")),

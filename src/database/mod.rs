@@ -521,6 +521,9 @@ pub struct Stores {
     pub bridge_text_dest: Option<crate::keys::DbRef>,
     /// `@PLN206 P4` — the table as a hosted C unit reads it (`host_abi::TableView`).
     pub hosted_view: crate::host_abi::TableView,
+    /// `@PLN226` — the store contexts hosted C units keep for this `Stores`
+    /// (`host_abi::HostedContexts`).
+    pub hosted_cx: crate::host_abi::HostedContexts,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -817,6 +820,7 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1638,6 +1642,7 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),

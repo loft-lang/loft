@@ -3398,6 +3398,7 @@ impl Stores {
             free_bits,
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),

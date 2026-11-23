@@ -21,7 +21,7 @@ static uint16_t loft_par_take(loft_cx *cx, loft_par_move *m, uint32_t k, int *fr
     *fresh = *slot == 0xFFFF;
     if (*fresh) {
         uint32_t nr = loft_store_make(cx, 0);
-        loft_store_t *s = &loft_stores[nr];
+        loft_store_t *s = &cx->stores[nr];
         loft_heap_moved(cx, s, s->size, 0);
         free(s->buf);
         free(s->claims.bits);
@@ -39,13 +39,13 @@ static uint16_t loft_par_take(loft_cx *cx, loft_par_move *m, uint32_t k, int *fr
 
 static void loft_par_move_rows(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, uint16_t kt, loft_par_slot *b, loft_word lo,
                                loft_word hi, uint32_t parent_n) {
-    loft_par_move m = { loft_stores, loft_nstores, parent_n, 0 };
+    loft_par_move m = { cx->stores, cx->nstores, parent_n, 0 };
     m.moved = (uint16_t *) malloc((size_t) (m.wn > parent_n ? m.wn - parent_n : 1) * sizeof *m.moved);
     if (!m.moved) { fputs("loft: out of memory\n", stderr); abort(); }
     for (uint32_t k = parent_n; k < m.wn; k++) m.moved[k - parent_n] = 0xFFFF;
-    loft_stores = loft_par_caller;
-    loft_nstores = loft_par_caller_n;
-    loft_hint_table = 0;
+    cx->stores = cx->par_caller;
+    cx->nstores = cx->par_caller_n;
+    cx->hint_table = 0;
     /* The records to walk: each row's, then each reference's target; `seen` keeps a record
      * walked once, so a cycle of references ends. */
     loft_refs todo = { 0, 0, 0, 0 };
@@ -100,9 +100,9 @@ static void loft_par_move_rows(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes
     free(todo.tp);
     free(seen.p);
     free(m.moved);
-    loft_par_caller = loft_stores;
-    loft_par_caller_n = loft_nstores;
-    loft_stores = m.wt;
-    loft_nstores = m.wn;
-    loft_hint_table = 0;
+    cx->par_caller = cx->stores;
+    cx->par_caller_n = cx->nstores;
+    cx->stores = m.wt;
+    cx->nstores = m.wn;
+    cx->hint_table = 0;
 }

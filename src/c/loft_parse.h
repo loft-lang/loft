@@ -723,15 +723,15 @@ static const loft_rd_place *loft_rd_find(loft_cx *cx, const char *p, size_t n) {
 }
 
 static int loft_rd_removed(loft_cx *cx, loft_ref r) {
-    return r.store_nr < loft_nstores && loft_stores[r.store_nr].live && loft_st_is_removed(cx, &loft_stores[r.store_nr], r.rec);
+    return r.store_nr < cx->nstores && cx->stores[r.store_nr].live && loft_st_is_removed(cx, &cx->stores[r.store_nr], r.rec);
 }
 
 /* `@FR-H-Removed` — a pointer may name this record before the read ends, so it is marked as
  * named now: a removal during the read then keeps its position, no later record takes it, and
  * the pointer finds a removed record instead of a stranger. */
 static void loft_rd_mark(loft_cx *cx, loft_ref r) {
-    if (r.store_nr >= loft_nstores || !loft_stores[r.store_nr].live) return;
-    loft_store_t *s = &loft_stores[r.store_nr];
+    if (r.store_nr >= cx->nstores || !cx->stores[r.store_nr].live) return;
+    loft_store_t *s = &cx->stores[r.store_nr];
     if (r.rec < LOFT_ST_PRIMARY || r.rec >= s->size || loft_bits_contains(cx, &s->referenced, r.rec)) return;
     loft_bits_insert(cx, &s->referenced, r.rec);
     if (loft_rd_nmarked == loft_rd_cmarked) {
@@ -842,8 +842,8 @@ static void loft_rd_resolve(loft_cx *cx, loft_werrs *errs) {
      * record is.  One removed during the read keeps its position. */
     for (size_t i = 0; i < loft_rd_nmarked; i++) {
         loft_ref r = loft_rd_marked[i];
-        if (r.rec != 0 && r.store_nr < loft_nstores && loft_stores[r.store_nr].live && !loft_rd_removed(cx, r))
-            loft_bits_remove(cx, &loft_stores[r.store_nr].referenced, r.rec);
+        if (r.rec != 0 && r.store_nr < cx->nstores && cx->stores[r.store_nr].live && !loft_rd_removed(cx, r))
+            loft_bits_remove(cx, &cx->stores[r.store_nr].referenced, r.rec);
     }
     loft_rd_nmarked = 0;
     loft_rd_on = 0;
@@ -1447,11 +1447,11 @@ static void loft_perrs_swap(loft_cx *cx, uint16_t a, uint16_t b) {
  * errors of the parse that built it, or none when no parse did.  `fresh`: the root was just
  * minted for this copy (a bind), so it is a `tp` by construction. */
 static void loft_perrs_deliver(loft_cx *cx, loft_ref data, loft_ref to, uint16_t tp, int fresh) {
-    if (data.store_nr == to.store_nr || data.store_nr >= loft_nstores || to.store_nr >= loft_nstores) return;
+    if (data.store_nr == to.store_nr || data.store_nr >= cx->nstores || to.store_nr >= cx->nstores) return;
     if (to.rec != 1 || to.pos != 8) return;
     loft_perrs_of(cx, to.store_nr > data.store_nr ? to.store_nr : data.store_nr);
     loft_perrs *dest = &loft_store_perrs[to.store_nr];
-    uint16_t known = LOFT_KNOWN(loft_stores[to.store_nr]);
+    uint16_t known = LOFT_KNOWN(cx->stores[to.store_nr]);
     uint16_t root = known == 0xFFFF ? dest->tp : known;
     if (!fresh && root != tp) return;
     loft_perrs *src = &loft_store_perrs[data.store_nr];
@@ -1486,9 +1486,9 @@ static uint16_t loft_parsed_vector(loft_cx *cx, loft_ref db) {
  * `data`.  A whole write takes the incoming value's errors or none; an append only when it
  * fills an empty vector no parse built from a whole parsed one. */
 static void loft_perrs_deliver_vector(loft_cx *cx, loft_ref data, loft_ref to, int whole) {
-    if (data.store_nr == to.store_nr || to.store_nr == 0xFFFF || to.store_nr >= loft_nstores || to.rec != 1) return;
-    if (!loft_stores[to.store_nr].live) return;
-    if (loft_parsed_vector(cx, to) == 0xFFFF && !loft_is_main_vector(cx, LOFT_KNOWN(loft_stores[to.store_nr]))) return;
+    if (data.store_nr == to.store_nr || to.store_nr == 0xFFFF || to.store_nr >= cx->nstores || to.rec != 1) return;
+    if (!cx->stores[to.store_nr].live) return;
+    if (loft_parsed_vector(cx, to) == 0xFFFF && !loft_is_main_vector(cx, LOFT_KNOWN(cx->stores[to.store_nr]))) return;
     uint16_t parsed = loft_parsed_vector(cx, data);
     loft_perrs *dest = loft_perrs_of(cx, to.store_nr);
     if (!whole && (parsed == 0xFFFF || dest->tp != 0xFFFF || loft_vec_len(cx, to) != 0)) return;
@@ -1515,7 +1515,7 @@ static loft_ref loft_text_target(loft_cx *cx, loft_pw *w, uint16_t tp) {
     loft_database(cx, &r, (words - 1) * 8);
     /* The store's root is a `tp` record, which `known` says (STORE_MODEL D48): the interpreter
      * reads it for a store it frees, a hosted unit's stores included. */
-    LOFT_SET_KNOWN(loft_stores[r.store_nr], tp);
+    LOFT_SET_KNOWN(cx->stores[r.store_nr], tp);
     loft_perrs_clear(cx, loft_perrs_of(cx, r.store_nr));
     loft_pw_default(cx, w, tp, 1, 1, r);
     return r;
@@ -1592,7 +1592,7 @@ static loft_ref loft_parse_errors_of(loft_cx *cx, loft_ref of) {
     loft_ref vec = loft_ref_null(cx);
     loft_database(cx, &vec, 4 * 8 - 8);
     loft_set_u32(cx, loft_store_of(cx, vec), vec.rec, vec.pos, 0);
-    if (of.store_nr == 0xFFFF || of.store_nr >= loft_nstores || !loft_stores[of.store_nr].live) return vec;
+    if (of.store_nr == 0xFFFF || of.store_nr >= cx->nstores || !cx->stores[of.store_nr].live) return vec;
     loft_perrs *pe = loft_perrs_of(cx, of.store_nr);
     for (size_t i = 0; i < pe->n; i++) {
         loft_ref e = loft_vec_append(cx, vec, 4);
@@ -1846,7 +1846,7 @@ static loft_ref loft_struct_from_jsonvalue(loft_cx *cx, const loft_ptype *P, lof
     if (words < 2) words = 2;
     loft_ref r = loft_ref_null(cx);
     loft_database(cx, &r, (words - 1) * 8);
-    LOFT_SET_KNOWN(loft_stores[r.store_nr], kt); /* the root's type, as `loft_text_target` (D48) */
+    LOFT_SET_KNOWN(cx->stores[r.store_nr], kt); /* the root's type, as `loft_text_target` (D48) */
     size_t seen = loft_jerr_n;
     loft_jsv_struct(cx, &w, r, kt, src);
     loft_perrs *pe = loft_perrs_of(cx, r.store_nr);

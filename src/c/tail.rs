@@ -174,7 +174,8 @@ fn exit_at(lines: &[&str], ret: usize, nested: &HashSet<&str>) -> Option<Exit> {
             return None;
         }
     }
-    let writes = format!("(&{x}");
+    // A release names what it writes first after the store context: `loft_free_var(cx, &x)`.
+    let writes = format!("(cx, &{x}");
     let mut stmts = Vec::with_capacity(ret - from + 2);
     // The tail's read of the result moves to the front when no other statement of the tail
     // names what it reads: a release writes only what it names, so the value is the one the
@@ -329,7 +330,7 @@ pub(crate) fn merge(name: &str, ret: &str, body: &str) -> Option<String> {
     Some(text)
 }
 
-/// The store variable a release statement frees (`loft_free_var(&x)`, `…_distinct(&x, w)`).
+/// The store variable a release statement frees (`loft_free_var(cx, &x)`, `…_distinct(cx, &x, w)`).
 fn freed_ref(t: &str) -> Option<&str> {
     let r = t
         .strip_prefix("loft_free_var(cx, &")
@@ -402,7 +403,7 @@ fn probe(name: &str, body: &str) -> Option<String> {
         for v in all.iter().filter(|v| !here.contains(v)) {
             let _ = writeln!(
                 out,
-                "    if ({v}.store_nr != 0xFFFF) fprintf(stderr, \"[tail-held]\\t{name}\\t{v}\\t{k}\\t%d\\n\", (int) ({v}.store_nr < loft_nstores ? (int) loft_stores[{v}.store_nr].live : -1));"
+                "    if ({v}.store_nr != 0xFFFF) fprintf(stderr, \"[tail-held]\\t{name}\\t{v}\\t{k}\\t%d\\n\", (int) ({v}.store_nr < cx->nstores ? (int) cx->stores[{v}.store_nr].live : -1));"
             );
         }
     }

@@ -1003,13 +1003,13 @@ mod tests {
 
     #[test]
     fn a_static_slot_moves_out_under_the_functions_name() {
-        let slot = "    static LOFT_TLS loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
-                    loft_text v2_w = loft_wpark_take(&loft_wp7_1);\n";
+        let slot = "    static loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
+                    loft_text v2_w = loft_wpark_take(cx, &loft_wp7_1);\n";
         let out = split(&body(slot, &read("v2_w.len"))).expect("split");
-        let moved = "static LOFT_TLS loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
+        let moved = "static loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
         assert!(out.starts_with(moved), "{out}");
         assert!(
-            out.contains("loft_fr->v2_w = loft_wpark_take(&n_f__fr__loft_wp7_1);"),
+            out.contains("loft_fr->v2_w = loft_wpark_take(cx, &n_f__fr__loft_wp7_1);"),
             "{out}"
         );
     }

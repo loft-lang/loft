@@ -63,28 +63,6 @@ static inline void loft_fault_end(loft_cx *cx, FILE *f) {
     fputs("}\n", f);
     fflush(f);
 }
-#ifndef LOFT_NO_JUMPS
-#include <setjmp.h>
-/* MinGW-w64 on 64-bit Windows spells `setjmp(b)` as `_setjmp(b, <frame>)`, which makes the
- * `longjmp` out of a failed test run Windows' SEH unwind through every frame in between — and
- * that unwind faults on frames gcc optimised (2121's halted tests, strict build, -O1: a jump to
- * nowhere; -O0, `-fno-inline` or a null frame: right).  A null frame is MinGW's own way to ask
- * for the plain register restore every other platform's `longjmp` does; no loft frame has a
- * destructor for the unwind to run. */
-#if defined(__MINGW32__) && defined(_WIN64)
-#undef setjmp
-#define setjmp(b) _setjmp((b), NULL)
-#endif
-#define LOFT_JMP_BUF jmp_buf
-#define LOFT_LONGJMP(b) longjmp(b, 1)
-#else
-/* A unit that runs no test and binds no lazy collection never jumps (`LOFT_NO_JUMPS`, a browser
- * page's module): wasm has setjmp only through its exception-handling proposal, which asyncify
- * cannot carry, so the unit holds no jump buffer at all and these sites are unreachable. */
-typedef struct { int unused; } loft_no_jmp_buf;
-#define LOFT_JMP_BUF loft_no_jmp_buf
-#define LOFT_LONGJMP(b) abort()
-#endif
 #include <errno.h>
 #include <math.h>
 #include <float.h>
@@ -113,12 +91,12 @@ static double loft_usage_pct(loft_cx *cx, uint64_t a, uint64_t b) {
 static loft_text loft_store_memory(loft_cx *cx, const char *const *names, uint32_t nnames) {
     uint32_t live = 0;
     uint64_t cap = 0, data = 0, fr = 0, recs = 0, free_blk = 0, mergeable = 0;
-    uint32_t *rows = (uint32_t *) malloc(sizeof(uint32_t) * (loft_nstores ? loft_nstores : 1));
-    loft_usage *us = (loft_usage *) malloc(sizeof(loft_usage) * (loft_nstores ? loft_nstores : 1));
+    uint32_t *rows = (uint32_t *) malloc(sizeof(uint32_t) * (cx->nstores ? cx->nstores : 1));
+    loft_usage *us = (loft_usage *) malloc(sizeof(loft_usage) * (cx->nstores ? cx->nstores : 1));
     if (!rows || !us) { fputs("loft: out of memory\n", stderr); abort(); }
-    for (uint32_t i = 0; i < loft_nstores; i++) {
-        if (!loft_stores[i].live) continue;
-        loft_usage u = loft_st_usage(cx, &loft_stores[i]);
+    for (uint32_t i = 0; i < cx->nstores; i++) {
+        if (!cx->stores[i].live) continue;
+        loft_usage u = loft_st_usage(cx, &cx->stores[i]);
         us[i] = u;
         live++;
         cap += u.capacity_words;
@@ -146,7 +124,7 @@ static loft_text loft_store_memory(loft_cx *cx, const char *const *names, uint32
     for (uint32_t k = 0; k < live && k < 8; k++) {
         uint32_t i = rows[k];
         loft_usage u = us[i];
-        uint16_t kt = LOFT_KNOWN(loft_stores[i]);
+        uint16_t kt = LOFT_KNOWN(cx->stores[i]);
         const char *tname = kt < nnames && names[kt] ? names[kt] : "?";
         char idx[16];
         snprintf(idx, sizeof idx, "%u", i);
@@ -765,53 +743,42 @@ LOFT_HOT_INLINE int64_t loft_wrap_rem(loft_cx *cx, int64_t a, int64_t b) {
     return b == -1 ? 0 : a % b;
 }
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
-static LOFT_TLS LOFT_JMP_BUF loft_test_jmp;
-static LOFT_TLS int loft_in_test = 0;
 
 /* The message of the last failed assert, for a test expected to fail with it. */
-static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
 
 /* The texts the running frames hold (loft#2198), in a unit that runs tests: a fault that ends a
  * test `longjmp`s past every scope-exit free, so each function names the slots its epilogue
  * frees (`LOFT_HOLD`), its wrapper drops them again on return (`LOFT_HOLD_MARK`/`_BACK`), and a
  * halt releases what the abandoned frames still hold before it jumps — while those frames are
  * still on the stack.  A unit that binds a lazy collection keeps them too, since a driver's fault
- * is contained and the program goes on (`loft_lazy_held_floor`).  Every other unit compiles this
+ * is contained and the program goes on (`cx->lazy_held_floor`).  Every other unit compiles this
  * to nothing: there a halt ends the process. */
 #ifdef LOFT_HALT_RELEASE
-typedef struct { loft_text *const *slot; size_t n; } loft_held_frame;
-static LOFT_TLS loft_held_frame *loft_held = 0;
-static LOFT_TLS size_t loft_nheld = 0, loft_capheld = 0;
+typedef struct loft_held_frame { loft_text *const *slot; size_t n; } loft_held_frame;
 static void loft_hold(loft_cx *cx, loft_text *const *slot, size_t n) {
-    if (loft_nheld == loft_capheld) {
-        loft_capheld = loft_capheld ? loft_capheld * 2 : 64;
-        loft_held = (loft_held_frame *) realloc(loft_held, loft_capheld * sizeof *loft_held);
-        if (!loft_held) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->nheld == cx->capheld) {
+        cx->capheld = cx->capheld ? cx->capheld * 2 : 64;
+        cx->held = (loft_held_frame *) realloc(cx->held, cx->capheld * sizeof *cx->held);
+        if (!cx->held) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_held[loft_nheld].slot = slot;
-    loft_held[loft_nheld].n = n;
-    loft_nheld++;
+    cx->held[cx->nheld].slot = slot;
+    cx->held[cx->nheld].n = n;
+    cx->nheld++;
 }
 /* Free the texts of every frame above `floor`, innermost first; a slot already freed is empty. */
 static void loft_release_held(loft_cx *cx, size_t floor) {
-    while (loft_nheld > floor) {
-        loft_held_frame *f = &loft_held[--loft_nheld];
+    while (cx->nheld > floor) {
+        loft_held_frame *f = &cx->held[--cx->nheld];
         for (size_t i = 0; i < f->n; i++) loft_text_free(cx, f->slot[i]);
     }
 }
 #define LOFT_HOLD(n, ...) loft_text *const loft_hd[] = { __VA_ARGS__ }; loft_hold(cx, loft_hd, n)
-#define LOFT_HOLD_MARK(m) size_t m = loft_nheld
-#define LOFT_HOLD_BACK(m) (loft_nheld = (m))
+#define LOFT_HOLD_MARK(m) size_t m = cx->nheld
+#define LOFT_HOLD_BACK(m) (cx->nheld = (m))
 #define LOFT_RELEASE_HELD(floor) loft_release_held(cx, floor)
 /* The depth a contained fault releases down to: the frames under the lazy driver keep theirs. */
-static LOFT_TLS size_t loft_lazy_held_floor = 0;
 #else
 #define LOFT_HOLD(n, ...) ((void) 0)
 #define LOFT_HOLD_MARK(m) ((void) 0)
@@ -823,16 +790,14 @@ static void loft_fault_where(loft_cx *cx, loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
  * not the program — `loft_lazy_miss` set the jump and records `<kind>: <prefix><message>` as the
  * collection's failure, the message as the fault reads (`assertion failed: …`, `panic: …`). */
-static LOFT_TLS LOFT_JMP_BUF *loft_lazy_jmp = 0;
-static LOFT_TLS loft_text loft_lazy_fault = { 0, 0, 0 };
 static void loft_lazy_contain(loft_cx *cx, const char *label, const char *prefix, loft_str message) {
-    loft_lazy_fault.len = 0;
-    loft_push(cx, &loft_lazy_fault, label, strlen(label));
-    loft_push(cx, &loft_lazy_fault, ": ", 2);
-    loft_push(cx, &loft_lazy_fault, prefix, strlen(prefix));
-    loft_push(cx, &loft_lazy_fault, message.p, message.len);
-    LOFT_RELEASE_HELD(loft_lazy_held_floor);
-    LOFT_LONGJMP(*loft_lazy_jmp);
+    cx->lazy_fault.len = 0;
+    loft_push(cx, &cx->lazy_fault, label, strlen(label));
+    loft_push(cx, &cx->lazy_fault, ": ", 2);
+    loft_push(cx, &cx->lazy_fault, prefix, strlen(prefix));
+    loft_push(cx, &cx->lazy_fault, message.p, message.len);
+    LOFT_RELEASE_HELD(cx->lazy_held_floor);
+    LOFT_LONGJMP(*cx->lazy_jmp);
 }
 
 /* loft#1056 — a halting fault is the PROGRAM's halt, reported once however many `par` workers
@@ -845,7 +810,7 @@ static void loft_lazy_contain(loft_cx *cx, const char *label, const char *prefix
 static volatile long loft_halt_claimed = 0;
 static void loft_halt_claim(loft_cx *cx) {
     long was;
-    if (loft_in_test) return;
+    if (cx->in_test) return;
 #if defined(LOFT_GNU)
     was = __atomic_exchange_n(&loft_halt_claimed, 1L, __ATOMIC_SEQ_CST);
 #elif defined(LOFT_MSVC)
@@ -865,8 +830,8 @@ static int (*loft_fault_logger)(loft_cx *cx, int sev, const char *label, const c
 
 static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
-    if (loft_lazy_jmp) loft_lazy_contain(cx, "assertion_failed", "assertion failed: ", message);
-    if (!loft_in_test && loft_fault_logger &&
+    if (cx->lazy_jmp) loft_lazy_contain(cx, "assertion_failed", "assertion failed: ", message);
+    if (!cx->in_test && loft_fault_logger &&
         loft_fault_logger(cx, 2, "assertion_failed", "assertion failed: ", message, file, line))
         return;
     loft_halt_claim(cx);
@@ -874,11 +839,11 @@ static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str fi
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
-    if (!loft_in_test) loft_fault_where(cx, file, line);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, "assertion failed: ", 18);
-    loft_push(cx, &loft_fail_msg, message.p, message.len);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    if (!cx->in_test) loft_fault_where(cx, file, line);
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, "assertion failed: ", 18);
+    loft_push(cx, &cx->fail_msg, message.p, message.len);
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     fflush(stdout);
     LOFT_EXIT(1);
 }
@@ -920,16 +885,16 @@ static int loft_locked_write_on(loft_cx *cx, uint8_t kind) {
      * discard every path below ends the run — so the compiler knows a write's lock test never
      * returns into the code after it, and keeps what that code holds in registers. */
 #ifndef LOFT_NO_LOCKS
-    if (!loft_in_test && loft_locked_logger && loft_locked_logger(cx, msg)) return 1;
+    if (!cx->in_test && loft_locked_logger && loft_locked_logger(cx, msg)) return 1;
 #endif
     loft_halt_claim(cx);
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
     fputc('\n', stderr);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, msg, strlen(msg));
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, msg, strlen(msg));
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     fflush(stdout);
     LOFT_EXIT(1);
 }
@@ -943,38 +908,27 @@ static void loft_stack_overflow(loft_cx *cx, const char *file, uint32_t line) {
     int n = snprintf(msg, sizeof msg, "call stack overflow \xe2\x80\x94 exceeded %d stack frames",
                      (int) LOFT_MAX_CALL_DEPTH);
     /* Inside a lazy driver it ends the driver, not the program, as an assertion does. */
-    if (loft_lazy_jmp) loft_lazy_contain(cx, "stack_overflow", "", loft_lit(cx, msg, (size_t) n));
+    if (cx->lazy_jmp) loft_lazy_contain(cx, "stack_overflow", "", loft_lit(cx, msg, (size_t) n));
     loft_halt_claim(cx);
     fflush(stdout);
     fputs("error: ", stderr);
     fwrite(msg, 1, (size_t) n, stderr);
     fputc('\n', stderr);
-    if (!loft_in_test) loft_fault_where(cx, loft_lit(cx, file, strlen(file)), line);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, msg, (size_t) n);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    if (!cx->in_test) loft_fault_where(cx, loft_lit(cx, file, strlen(file)), line);
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, msg, (size_t) n);
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     fflush(stdout);
     LOFT_EXIT(1);
 }
 #endif
 
-/* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
- * other unit keeps them where the build asks for the call chain a fault prints
- * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE) \
-     || defined(LOFT_ALLOC_TRACE)) \
-    && !defined(LOFT_CALL_CHAIN)
-#define LOFT_CALL_CHAIN 1
-#endif
 #ifdef LOFT_CALL_CHAIN
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
-typedef struct { const char *fn, *file; uint32_t site, decl; } loft_frame;
-static LOFT_TLS loft_frame *loft_frames = 0;
-static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
+typedef struct loft_frame { const char *fn, *file; uint32_t site, decl; } loft_frame;
 /* The frames below this one are the caller's while the thread runs a `par` slice itself: a fault
  * there names the worker's own frames, as one on a thread of its own does (loft#1056). */
-static LOFT_TLS size_t loft_frames_floor = 0;
 #ifdef LOFT_MAX_CALL_DEPTH
 static void loft_stack_overflow(loft_cx *cx, const char *file, uint32_t line);
 #endif
@@ -984,29 +938,29 @@ static void loft_frame_push(loft_cx *cx, const char *fn, const char *file, uint3
     /* The call-depth cap (`call_frames::cr_call_push`): checked BEFORE the push, so a refused
      * call never runs, and reported at the declaration of the function that is running — the
      * frame below — as the interpreter's `State::fn_call` reports it (loft#1058). */
-    if (loft_nframes >= LOFT_MAX_CALL_DEPTH) {
-        const loft_frame *below = loft_nframes ? &loft_frames[loft_nframes - 1] : 0;
+    if (cx->nframes >= LOFT_MAX_CALL_DEPTH) {
+        const loft_frame *below = cx->nframes ? &cx->frames[cx->nframes - 1] : 0;
         loft_stack_overflow(cx, below ? below->file : file, below ? below->decl : decl);
     }
 #endif
-    if (loft_nframes == loft_capframes) {
-        loft_capframes = loft_capframes ? loft_capframes * 2 : 64;
-        loft_frames = (loft_frame *) realloc(loft_frames, loft_capframes * sizeof *loft_frames);
-        if (!loft_frames) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->nframes == cx->capframes) {
+        cx->capframes = cx->capframes ? cx->capframes * 2 : 64;
+        cx->frames = (loft_frame *) realloc(cx->frames, cx->capframes * sizeof *cx->frames);
+        if (!cx->frames) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_frames[loft_nframes].fn = fn;
-    loft_frames[loft_nframes].file = file;
-    loft_frames[loft_nframes].site = 0;
-    loft_frames[loft_nframes].decl = decl;
-    loft_nframes++;
+    cx->frames[cx->nframes].fn = fn;
+    cx->frames[cx->nframes].file = file;
+    cx->frames[cx->nframes].site = 0;
+    cx->frames[cx->nframes].decl = decl;
+    cx->nframes++;
 }
 
 static void loft_frame_pop(loft_cx *cx) {
-    if (loft_nframes) loft_nframes--;
+    if (cx->nframes) cx->nframes--;
 }
 
 static void loft_frame_site(loft_cx *cx, uint32_t line) {
-    if (loft_nframes) loft_frames[loft_nframes - 1].site = line;
+    if (cx->nframes) cx->frames[cx->nframes - 1].site = line;
 }
 #ifdef LOFT_ALLOC_TRACE
 /* `LOFT_ALLOC_TRACE`'s sites (`store_census::alloc_event`): `@ <line>` before an event whose
@@ -1014,38 +968,35 @@ static void loft_frame_site(loft_cx *cx, uint32_t line) {
  * line only before a statement that can fault, so a function that has none gives its
  * declaration instead, written `~<line>`. */
 static void loft_trace_site(loft_cx *cx, FILE *f) {
-    static LOFT_TLS uint32_t last = 0;
-    if (!loft_nframes) return;
-    const loft_frame *fr = &loft_frames[loft_nframes - 1];
+    if (!cx->nframes) return;
+    const loft_frame *fr = &cx->frames[cx->nframes - 1];
     uint32_t key = fr->site ? fr->site : fr->decl | 0x80000000u;
-    if ((key & 0x7FFFFFFFu) == 0 || key == last) return;
-    last = key;
+    if ((key & 0x7FFFFFFFu) == 0 || key == cx->trace_last_site) return;
+    cx->trace_last_site = key;
     fprintf(f, fr->site ? "@ %u\n" : "@ ~%u\n", (unsigned) (key & 0x7FFFFFFFu));
 }
 static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) = loft_trace_site;
 #endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
-#define LOFT_FRAMES_RESET() (loft_nframes = 0)
-#define LOFT_HDEPTH ((uint32_t) loft_nframes)
+#define LOFT_FRAMES_RESET() (cx->nframes = 0)
+#define LOFT_HDEPTH ((uint32_t) cx->nframes)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
 #ifdef LOFT_HOSTED
 /* `@PLN206 P7` — a hosted unit's call depth with no call chain to read it from: what tells a
  * routine it is the one the interpreter called (`loft_pause_asked`). */
-static LOFT_TLS uint32_t loft_hdepth = 0;
-#define loft_frame_push(cx, fn, file, decl) ((void) loft_hdepth++)
-#define loft_frame_pop(cx) ((void) loft_hdepth--)
-#define LOFT_HDEPTH loft_hdepth
-#elif defined(LOFT_MAX_CALL_DEPTH) && !defined(LOFT_THREADS)
+#define loft_frame_push(cx, fn, file, decl) ((void) (cx)->hdepth++)
+#define loft_frame_pop(cx) ((void) (cx)->hdepth--)
+#define LOFT_HDEPTH cx->hdepth
+#elif defined(LOFT_MAX_CALL_DEPTH)
 /* The lean tier's frame entry (`call_frames::cr_call_push_lean`, the rustc writer's `--ship`):
  * the call-depth cap without the frame record — checked before the push, at the same cap, the
- * report naming this call's own entry site (there is no frame below to read).  A unit whose
- * `par` runs on threads keeps its count in a worker's store context (@PLN226). */
-static uint32_t loft_cdepth = 0;
+ * report naming this call's own entry site (there is no frame below to read).  The count is the
+ * running thread's: a field of its store context. */
 #define loft_frame_push(cx, fn, file, decl) \
-    (LOFT_UNLIKELY(loft_cdepth >= (uint32_t) LOFT_MAX_CALL_DEPTH) ? loft_stack_overflow(cx, (file), (decl)) \
-                                                                   : (void) loft_cdepth++)
-#define loft_frame_pop(cx) ((void) (loft_cdepth > 0 && loft_cdepth--))
+    (LOFT_UNLIKELY((cx)->cdepth >= (uint32_t) LOFT_MAX_CALL_DEPTH) ? loft_stack_overflow(cx, (file), (decl)) \
+                                                                    : (void) (cx)->cdepth++)
+#define loft_frame_pop(cx) ((void) ((cx)->cdepth > 0 && (cx)->cdepth--))
 #else
 #define loft_frame_push(cx, fn, file, decl) ((void) 0)
 #define loft_frame_pop(cx) ((void) 0)
@@ -1058,10 +1009,10 @@ static uint32_t loft_cdepth = 0;
  * says where. */
 static void loft_fault_chain(loft_cx *cx) {
 #ifdef LOFT_CALL_CHAIN
-    size_t top = loft_nframes, n = top - loft_frames_floor, shown = n < 5 ? n : 5;
+    size_t top = cx->nframes, n = top - cx->frames_floor, shown = n < 5 ? n : 5;
     if (n <= 1) return;
-    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", loft_frames[top - 1].fn);
-    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", loft_frames[top - 1 - i].fn);
+    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", cx->frames[top - 1].fn);
+    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", cx->frames[top - 1 - i].fn);
     if (n > 5) fprintf(stderr, "        \xe2\x80\xa6 (%lu more frames)\n", (unsigned long) (n - 5));
 #endif
 }
@@ -1107,19 +1058,19 @@ static void loft_fault_where(loft_cx *cx, loft_str file, int64_t line) {
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_cx *cx, loft_str message, loft_str file, int64_t line) {
-    if (loft_lazy_jmp) loft_lazy_contain(cx, "user_panic", "panic: ", message);
-    if (!loft_in_test && loft_fault_logger && loft_fault_logger(cx, 3, "user_panic", "panic: ", message, file, line))
+    if (cx->lazy_jmp) loft_lazy_contain(cx, "user_panic", "panic: ", message);
+    if (!cx->in_test && loft_fault_logger && loft_fault_logger(cx, 3, "user_panic", "panic: ", message, file, line))
         return;
     loft_halt_claim(cx);
     fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
-    if (!loft_in_test) loft_fault_where(cx, file, line);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, "panic: ", 7);
-    loft_push(cx, &loft_fail_msg, message.p, message.len);
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    if (!cx->in_test) loft_fault_where(cx, file, line);
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, "panic: ", 7);
+    loft_push(cx, &cx->fail_msg, message.p, message.len);
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     fflush(stdout);
     LOFT_EXIT(1);
 }
@@ -1127,13 +1078,13 @@ static void loft_panic(loft_cx *cx, loft_str message, loft_str file, int64_t lin
 /* exit(code) (runtime_error::exit_program): the program ends in silence with the code's low
  * byte as its status; under the test runner it ends the test as a failure. */
 static void loft_exit(loft_cx *cx, int64_t code) {
-    if (loft_in_test) {
+    if (cx->in_test) {
         char m[48];
         sprintf(m, "exit %lld", (long long) code);
-        loft_fail_msg.len = 0;
-        loft_push(cx, &loft_fail_msg, m, strlen(m));
+        cx->fail_msg.len = 0;
+        loft_push(cx, &cx->fail_msg, m, strlen(m));
         LOFT_RELEASE_HELD(0);
-        LOFT_LONGJMP(loft_test_jmp);
+        LOFT_LONGJMP(cx->test_jmp);
     }
     fflush(stdout);
     fflush(stderr);
@@ -1144,8 +1095,8 @@ static void loft_exit(loft_cx *cx, int64_t code) {
 static int loft_failed_with(loft_cx *cx, const loft_str *want, size_t n) {
     for (size_t i = 0; i < n; i++) {
         if (want[i].len == 0) return 1;
-        for (size_t at = 0; at + want[i].len <= loft_fail_msg.len; at++) {
-            if (memcmp(loft_fail_msg.p + at, want[i].p, want[i].len) == 0) return 1;
+        for (size_t at = 0; at + want[i].len <= cx->fail_msg.len; at++) {
+            if (memcmp(cx->fail_msg.p + at, want[i].p, want[i].len) == 0) return 1;
         }
     }
     return 0;
@@ -1457,13 +1408,6 @@ LOFT_HOT_INLINE void loft_tw_sync(loft_cx *cx, const loft_tw *w, loft_text *t) {
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
  * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
  * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
-/* A reference (`DbRef`).  The trailing pad makes it 16 bytes, so `rec` and `pos` travel in
- * separate eightbytes of the calling convention: at 12 bytes gcc passes `store_nr|rec` and
- * `pos` in two registers, spills them as an 8-byte and a 4-byte store, and reloads `rec|pos`
- * with one 8-byte load spanning both — a store-forwarding stall on every reference a call
- * takes.  The pad is never read; a positional initialiser leaves it zero.  Measured over the
- * library benches: gcc −3 % (cbor decode −35 %), clang neutral (@PLN210 P1). */
-typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; uint32_t pad_; } loft_ref;
 /* `@FR-R-RefParam`: a reference parameter arrives as `<name>__in` and the body's first statement
  * makes the local `<name>` of it (`tidy_unit`).  The pad above keeps `rec|pos` out of one
  * register, but their bytes still lie side by side once gcc spills the two eightbytes, and a body
@@ -1512,11 +1456,11 @@ static loft_ref loft_ref_null_reported(loft_cx *cx) {
  * and so does a test, which runs with no logger on the interpreter. */
 static void (*loft_warn_logger)(loft_cx *cx, loft_str, loft_str, int64_t) = 0;
 static LOFT_COLD void loft_fault_report(loft_cx *cx, const char *message, const char *file, uint32_t line) {
-    if (loft_warn_logger && !loft_in_test)
+    if (loft_warn_logger && !cx->in_test)
         loft_warn_logger(cx, loft_lit(cx, message, strlen(message)), loft_lit(cx, file, strlen(file)), line);
     /* `--dev-soft-halt`: the fault on stderr as well, in the interpreter's words — the message
      * without its `[kind]` label — and the run ends non-zero. */
-    if (!loft_in_test && loft_soft_halt(cx)) {
+    if (!cx->in_test && loft_soft_halt(cx)) {
         const char *m = message;
         if (*m == '[') {
             const char *close = strchr(m, ']');
@@ -1531,7 +1475,7 @@ static LOFT_COLD void loft_fault_report(loft_cx *cx, const char *message, const 
 static LOFT_COLD void loft_fault_reportf(loft_cx *cx, const char *file, uint32_t line, const char *fmt, ...) {
     char m[256];
     va_list ap;
-    if (!loft_warn_logger || loft_in_test) return;
+    if (!loft_warn_logger || cx->in_test) return;
     va_start(ap, fmt);
     vsnprintf(m, sizeof m, fmt, ap);
     va_end(ap);
@@ -1571,15 +1515,13 @@ static LOFT_COLD void loft_write_dropped(loft_cx *cx, loft_ref r, const char *fi
  * names the free that killed it, and the re-free census (`LOFT_DOUBLE_FREE`) tells a re-free from
  * the same site from one from another.  Kept by either instrument, as the interpreter keeps it. */
 #if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)
-typedef struct { const char *fn, *file; uint32_t line; } loft_free_site;
-static LOFT_TLS loft_free_site *loft_freed_at = 0;
-static LOFT_TLS uint32_t loft_nfreed_at = 0;
+typedef struct loft_free_site { const char *fn, *file; uint32_t line; } loft_free_site;
 
 /* Where the program is now: the innermost frame and the line it is at. */
 static loft_free_site loft_site_here(loft_cx *cx) {
     loft_free_site w = { 0, 0, 0 };
-    if (loft_nframes) {
-        const loft_frame *f = &loft_frames[loft_nframes - 1];
+    if (cx->nframes) {
+        const loft_frame *f = &cx->frames[cx->nframes - 1];
         w.fn = f->fn;
         w.file = f->file;
         w.line = f->site ? f->site : f->decl;
@@ -1588,20 +1530,20 @@ static loft_free_site loft_site_here(loft_cx *cx) {
 }
 
 static void loft_note_free(loft_cx *cx, uint32_t nr) {
-    if (nr >= loft_nfreed_at) {
-        uint32_t n = loft_nfreed_at ? loft_nfreed_at * 2 : 64;
+    if (nr >= cx->nfreed_at) {
+        uint32_t n = cx->nfreed_at ? cx->nfreed_at * 2 : 64;
         if (n <= nr) n = nr + 1;
-        loft_freed_at = (loft_free_site *) realloc(loft_freed_at, (size_t) n * sizeof *loft_freed_at);
-        if (!loft_freed_at) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(loft_freed_at + loft_nfreed_at, 0, (size_t) (n - loft_nfreed_at) * sizeof *loft_freed_at);
-        loft_nfreed_at = n;
+        cx->freed_at = (loft_free_site *) realloc(cx->freed_at, (size_t) n * sizeof *cx->freed_at);
+        if (!cx->freed_at) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(cx->freed_at + cx->nfreed_at, 0, (size_t) (n - cx->nfreed_at) * sizeof *cx->freed_at);
+        cx->nfreed_at = n;
     }
-    loft_freed_at[nr] = loft_site_here(cx);
+    cx->freed_at[nr] = loft_site_here(cx);
 }
 
 /* The free that last released slot `nr`, or 0 when none was recorded. */
 static const loft_free_site *loft_freed_site(loft_cx *cx, uint32_t nr) {
-    return nr < loft_nfreed_at && loft_freed_at[nr].fn ? &loft_freed_at[nr] : 0;
+    return nr < cx->nfreed_at && cx->freed_at[nr].fn ? &cx->freed_at[nr] : 0;
 }
 
 static int loft_same_site(loft_cx *cx, const loft_free_site *a, const loft_free_site *b) {
@@ -1611,12 +1553,11 @@ static int loft_same_site(loft_cx *cx, const loft_free_site *a, const loft_free_
 
 #ifdef LOFT_STRICT_STORES
 static uint64_t loft_strict_violations = 0;
-static LOFT_TLS uint32_t loft_strict_floor = 0;
 
 static LOFT_COLD void loft_strict_use_after_free(loft_cx *cx, loft_ref r) {
     uint64_t n = loft_strict_violations++;
     if (n < 20) {
-        uint16_t kt = LOFT_KNOWN(loft_stores[r.store_nr]);
+        uint16_t kt = LOFT_KNOWN(cx->stores[r.store_nr]);
         const loft_free_site *w = loft_freed_site(cx, r.store_nr);
         loft_free_site here = loft_site_here(cx);
         fflush(stdout);
@@ -1656,18 +1597,18 @@ static LOFT_COLD void loft_strict_use_after_free(loft_cx *cx, loft_ref r) {
 
 LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_cx *cx, loft_ref r) {
 #ifdef LOFT_STRICT_STORES
-    if (LOFT_UNLIKELY(r.store_nr < loft_nstores && !loft_stores[r.store_nr].live)) loft_strict_use_after_free(cx, r);
+    if (LOFT_UNLIKELY(r.store_nr < cx->nstores && !cx->stores[r.store_nr].live)) loft_strict_use_after_free(cx, r);
 #endif
-    return &loft_stores[r.store_nr];
+    return &cx->stores[r.store_nr];
 }
 
 /* `#lock = …` (`n_set_store_lock`) and `#lock` (`n_get_store_lock`): the store holding `r`. */
 static void loft_set_store_lock(loft_cx *cx, loft_ref r, uint8_t locked) {
-    if (r.rec == 0 || r.store_nr >= loft_nstores) return;
+    if (r.rec == 0 || r.store_nr >= cx->nstores) return;
     /* A constant and foreign bytes stay read-only: `#lock = false` is the author's own lock's
      * cure (`Store::unlock` is not reachable from loft for them). */
-    if (loft_stores[r.store_nr].read_only > LOFT_RO_LOCK) return;
-    loft_stores[r.store_nr].read_only = locked == 1;
+    if (cx->stores[r.store_nr].read_only > LOFT_RO_LOCK) return;
+    cx->stores[r.store_nr].read_only = locked == 1;
 }
 
 /* A text lent as a `loft_text` that owns nothing (capacity 0): a borrowed member of a by-value
@@ -1686,12 +1627,12 @@ static void loft_yield_frame(loft_cx *cx) {}
 
 /* `store_reclaim(r)` (`Stores::reclaim_store`): the bytes the store holding `r` gave back. */
 static int64_t loft_store_reclaim(loft_cx *cx, loft_ref r) {
-    if (r.store_nr >= loft_nstores) return 0;
-    return (int64_t) loft_st_reclaim_tail(cx, &loft_stores[r.store_nr]) * 8;
+    if (r.store_nr >= cx->nstores) return 0;
+    return (int64_t) loft_st_reclaim_tail(cx, &cx->stores[r.store_nr]) * 8;
 }
 
 static uint8_t loft_get_store_lock(loft_cx *cx, loft_ref r) {
-    return (uint8_t) (r.rec != 0 && r.store_nr < loft_nstores && loft_stores[r.store_nr].read_only);
+    return (uint8_t) (r.rec != 0 && r.store_nr < cx->nstores && cx->stores[r.store_nr].read_only);
 }
 
 
@@ -1705,26 +1646,24 @@ static uint8_t loft_get_store_lock(loft_cx *cx, loft_ref r) {
 /* The caller's function and line beside the maker's: a store a callee makes into a buffer its
  * caller handed it (a hidden return buffer) is the caller's to release, so the caller is where
  * a leak of it is decided. */
-typedef struct { const char *fn, *file; uint32_t line; const char *cfn; uint32_t cline; } loft_leak_site;
-static LOFT_TLS loft_leak_site *loft_sites = 0;
-static LOFT_TLS uint32_t loft_nsites = 0;
+typedef struct loft_leak_site { const char *fn, *file; uint32_t line; const char *cfn; uint32_t cline; } loft_leak_site;
 static void loft_note_site(loft_cx *cx, uint32_t nr) {
-    if (nr >= loft_nsites) {
-        uint32_t n = loft_nsites ? loft_nsites * 2 : 64;
+    if (nr >= cx->nsites) {
+        uint32_t n = cx->nsites ? cx->nsites * 2 : 64;
         if (n <= nr) n = nr + 1;
-        loft_sites = (loft_leak_site *) realloc(loft_sites, (size_t) n * sizeof *loft_sites);
-        if (!loft_sites) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(loft_sites + loft_nsites, 0, (size_t) (n - loft_nsites) * sizeof *loft_sites);
-        loft_nsites = n;
+        cx->sites = (loft_leak_site *) realloc(cx->sites, (size_t) n * sizeof *cx->sites);
+        if (!cx->sites) { fputs("loft: out of memory\n", stderr); abort(); }
+        memset(cx->sites + cx->nsites, 0, (size_t) (n - cx->nsites) * sizeof *cx->sites);
+        cx->nsites = n;
     }
-    loft_leak_site *w = &loft_sites[nr];
-    if (loft_nframes) {
-        const loft_frame *f = &loft_frames[loft_nframes - 1];
+    loft_leak_site *w = &cx->sites[nr];
+    if (cx->nframes) {
+        const loft_frame *f = &cx->frames[cx->nframes - 1];
         w->fn = f->fn;
         w->file = f->file;
         w->line = f->site ? f->site : f->decl;
-        if (loft_nframes > 1) {
-            const loft_frame *c = &loft_frames[loft_nframes - 2];
+        if (cx->nframes > 1) {
+            const loft_frame *c = &cx->frames[cx->nframes - 2];
             w->cfn = c->fn;
             w->cline = c->site ? c->site : c->decl;
         } else {
@@ -1742,10 +1681,10 @@ static void loft_note_site(loft_cx *cx, uint32_t nr) {
 #endif
 
 /* ── A hosted unit (`@PLN206 P4`, `-DLOFT_HOSTED`) ──────────────────────────────────────────
- * A unit the interpreter adopts works on the interpreter's stores: `loft_stores` is the
+ * A unit the interpreter adopts works on the interpreter's stores: `cx->stores` is the
  * interpreter's table, whose entries are its `Store`s (`LOFT_HOST_STORE_TAIL`), and a store's
  * birth and death are the interpreter's acts (`host_abi::HostedTable`).  Everything inside a
- * store the unit does itself on the shared prefix.  `loft_host_stores` is the interpreter's
+ * store the unit does itself on the shared prefix.  `cx->host_stores` is the interpreter's
  * `Stores` of the bridge call running on this thread. */
 #ifdef LOFT_HOSTED
 typedef struct {
@@ -1761,37 +1700,24 @@ typedef struct {
     const volatile uint8_t *pause;
     uint32_t (*handover)(void *stores, const char *key, size_t key_len, uint32_t scope,
                          const unsigned char *entries, uint32_t n);
+    /* `@PLN226` — this unit's store context for `stores` (`loft_host_cx`). */
+    void *(*cx_of)(void *stores, const void *unit, void *(*make)(void), void (*end)(void *));
 } loft_hosted_table;
 static const loft_hosted_table *loft_hosted = 0;
-static LOFT_TLS void *loft_host_stores = 0;
 /* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
-static LOFT_TLS uint32_t loft_br_hdepth = 0xFFFFFFFFu;
 /* A hand-over the interpreter refused holds for the rest of the bridge call: the routine runs on
  * compiled, and the interpreter takes the pause once it returns.  Asking again each round would
  * cost the round a call into the interpreter. */
-static LOFT_TLS int loft_ho_off = 0;
 
 /* `@PLN206 P7` — a pause the debugger asked for, seen by the routine the interpreter called
  * (no deeper one: that routine's frame is live under the call it is in), at a loop's head. */
 static int loft_pause_asked(loft_cx *cx) {
-    return loft_hosted && loft_hosted->pause && *loft_hosted->pause && !loft_ho_off
-        && LOFT_HDEPTH == loft_br_hdepth + 1u;
+    return loft_hosted && loft_hosted->pause && *loft_hosted->pause && !cx->ho_off
+        && LOFT_HDEPTH == cx->br_hdepth + 1u;
 }
-/* One local of the routine, offered to the interpreter by name: kind 0 integer, 1 float,
- * 2 text, 3 reference, 4 boolean or plain enum, 5 single. */
-typedef struct {
-    const char *name;
-    uint32_t kind, rs;
-    loft_word bits;
-    const char *p;
-    size_t len;
-    uint32_t rr, rp;
-} loft_ho_entry;
-static LOFT_TLS loft_ho_entry loft_hov[256];
-static LOFT_TLS uint32_t loft_nhov = 0;
 static void loft_ho_put(loft_cx *cx, const char *name, uint32_t kind, loft_word bits, loft_str t, loft_ref r) {
-    if (loft_nhov >= 256) return;
-    loft_ho_entry *e = &loft_hov[loft_nhov++];
+    if (cx->nhov >= 256) return;
+    loft_ho_entry *e = &cx->hov[cx->nhov++];
     e->name = name;
     e->kind = kind;
     e->bits = bits;
@@ -1803,11 +1729,11 @@ static void loft_ho_put(loft_cx *cx, const char *name, uint32_t kind, loft_word 
 }
 static loft_str loft_ho_nostr(loft_cx *cx) { loft_str s = { 0, 0 }; return s; }
 static int loft_ho_commit(loft_cx *cx, const char *key, uint32_t scope) {
-    uint32_t n = loft_nhov;
-    loft_nhov = 0;
-    int taken = (int) loft_hosted->handover(loft_host_stores, key, strlen(key), scope,
-                                            (const unsigned char *) loft_hov, n);
-    if (!taken) loft_ho_off = 1;
+    uint32_t n = cx->nhov;
+    cx->nhov = 0;
+    int taken = (int) loft_hosted->handover(cx->host_stores, key, strlen(key), scope,
+                                            (const unsigned char *) cx->hov, n);
+    if (!taken) cx->ho_off = 1;
     return taken;
 }
 
@@ -1819,18 +1745,18 @@ static void loft_host_sync(loft_cx *cx) {
      * call and after each act the unit leaves to it: read in place, no call back. */
     typedef struct { uint8_t *table; uint32_t n; uint64_t serial; } loft_table_view;
     loft_table_view v;
-    memcpy(&v, (const char *) loft_host_stores + LOFT_STORES_VIEW_AT, sizeof v);
-    loft_stores = (loft_store_t *) v.table;
-    loft_nstores = v.n;
-    loft_stores_allocated = v.serial;
+    memcpy(&v, (const char *) cx->host_stores + LOFT_STORES_VIEW_AT, sizeof v);
+    cx->stores = (loft_store_t *) v.table;
+    cx->nstores = v.n;
+    cx->stores_allocated = v.serial;
 #else
     uint32_t n = 0;
     uint64_t serial = 0;
-    loft_stores = (loft_store_t *) loft_hosted->table(loft_host_stores, &n, &serial);
-    loft_nstores = n;
-    loft_stores_allocated = serial;
+    cx->stores = (loft_store_t *) loft_hosted->table(cx->host_stores, &n, &serial);
+    cx->nstores = n;
+    cx->stores_allocated = serial;
 #endif
-    loft_hint_table = 0;
+    cx->hint_table = 0;
 }
 #endif
 
@@ -1838,28 +1764,28 @@ static uint32_t loft_store_make(loft_cx *cx, int counted) {
     uint32_t nr = 0;
 #ifdef LOFT_HOSTED
     /* The interpreter makes the store: a live, counted one with no record. */
-    if (loft_host_stores) {
+    if (cx->host_stores) {
         (void) counted;
-        nr = loft_hosted->store_new(loft_host_stores);
+        nr = loft_hosted->store_new(cx->host_stores);
         loft_host_sync(cx);
         return nr;
     }
 #endif
 #ifdef LOFT_STRICT_STORES
     /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
-    nr = loft_strict_floor;
+    nr = cx->strict_floor;
 #endif
 #ifndef LOFT_STRICT_STORES
-    if (loft_hint_table == loft_stores && loft_hint <= loft_nstores) nr = loft_hint;
+    if (cx->hint_table == cx->stores && cx->hint <= cx->nstores) nr = cx->hint;
 #endif
-    while (nr < loft_nstores && loft_stores[nr].live) nr++;
+    while (nr < cx->nstores && cx->stores[nr].live) nr++;
 #ifdef LOFT_STRICT_STORES
-    loft_strict_floor = nr + 1;
+    cx->strict_floor = nr + 1;
 #endif
 #ifdef LOFT_STRICT_STORES
     if (nr >= 0xFFFF) {
         uint32_t live = 0, i;
-        for (i = 0; i < loft_nstores; i++) live += loft_stores[i].live != 0;
+        for (i = 0; i < cx->nstores; i++) live += cx->stores[i].live != 0;
         fprintf(stderr, "loft: store table exhausted by the checking mode, not by a leak: this run made 65535 "
                         "stores and %u are live.  LOFT_STRICT_STORES never reuses a freed store number, so that "
                         "a stale reference cannot reach a newer store, and store_nr is u16.  This program frees "
@@ -1869,18 +1795,18 @@ static uint32_t loft_store_make(loft_cx *cx, int counted) {
     }
 #endif
     if (nr >= 0xFFFF) { fputs("loft: store table exhausted: 65535 stores live at once\n", stderr); abort(); }
-    if (nr == loft_nstores) {
-        uint32_t n = loft_nstores ? loft_nstores * 2 : 16;
+    if (nr == cx->nstores) {
+        uint32_t n = cx->nstores ? cx->nstores * 2 : 16;
         if (n > 0xFFFF) n = 0xFFFF;
-        loft_store_t *s = (loft_store_t *) realloc(loft_stores, n * sizeof *s);
+        loft_store_t *s = (loft_store_t *) realloc(cx->stores, n * sizeof *s);
         if (!s) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(s + loft_nstores, 0, (n - loft_nstores) * sizeof *s);
-        loft_stores = s;
-        loft_nstores = n;
+        memset(s + cx->nstores, 0, (n - cx->nstores) * sizeof *s);
+        cx->stores = s;
+        cx->nstores = n;
     }
-    loft_hint_table = loft_stores;
-    loft_hint = nr + 1;
-    loft_store_t *s = &loft_stores[nr];
+    cx->hint_table = cx->stores;
+    cx->hint = nr + 1;
+    loft_store_t *s = &cx->stores[nr];
 #ifdef LOFT_LEAK_SITES
     loft_note_site(cx, nr);
 #endif
@@ -1900,10 +1826,10 @@ static uint32_t loft_store_make(loft_cx *cx, int counted) {
     s->closure_shares = 0;
     s->serial = 0;
 #ifdef LOFT_ALLOC_TRACE
-    s->trace_worker = loft_trace_worker;
+    s->trace_worker = cx->trace_worker;
 #endif
     if (counted) {
-        s->serial = ++loft_stores_allocated;
+        s->serial = ++cx->stores_allocated;
         LOFT_TRACE("N %s %u\n", loft_trace_name(cx, s), s->size);
     }
     return nr;
@@ -2053,15 +1979,15 @@ static void loft_database(loft_cx *cx, loft_ref *var, uint32_t bytes) {
     uint32_t *kept = 0, nkept = 0;
     /* `@FR-G-Arg-Rebind`: a store a live generator frame names keeps the value the frame was
      * handed — the rebind orphans it and mints into a fresh store. */
-    if (var->store_nr != 0xFFFF && var->store_nr < loft_nstores && loft_stores[var->store_nr].frame_holds) {
-        loft_stores[var->store_nr].orphaned = 1;
+    if (var->store_nr != 0xFFFF && var->store_nr < cx->nstores && cx->stores[var->store_nr].frame_holds) {
+        cx->stores[var->store_nr].orphaned = 1;
         var->store_nr = 0xFFFF;
     }
-    if (var->store_nr != 0xFFFF && var->store_nr < loft_nstores) {
+    if (var->store_nr != 0xFFFF && var->store_nr < cx->nstores) {
         /* `Stores::clear`: the slot the variable names made again in place — a freed one too,
          * which keeps its serial — its tombstones kept. */
         nr = var->store_nr;
-        loft_store_t *s = &loft_stores[nr];
+        loft_store_t *s = &cx->stores[nr];
 #ifdef LOFT_DOUBLE_FREE
         if (!s->live && !s->pinned) loft_note_revival(cx, nr);
 #endif
@@ -2077,7 +2003,7 @@ static void loft_database(loft_cx *cx, loft_ref *var, uint32_t bytes) {
     }
     /* `alloc_record_into`: the root claimed, its payload zeroed — a fresh store's collection
      * handles must read "none" — and its type tag at byte 4 (none yet). */
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     uint32_t rec = loft_st_claim(cx, s, (bytes + 15) / 8);
     memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) loft_st_i32(cx, s, rec, 0) * 8 - 4);
     loft_set_u32(cx, s, rec, 4, 0xFFFFu);
@@ -2106,7 +2032,7 @@ static void loft_database_typed(loft_cx *cx, loft_ref *var, uint32_t bytes, uint
     /* `@FR-R-HostStore`: a buffer naming its caller's store — the record is claimed there,
      * zeroed (the literal that follows writes every field). */
     if (var->store_nr != 0xFFFF && var->rec == 0 && (var->pos & LOFT_STORE_BUF_BIT)) {
-        loft_store_t *s = &loft_stores[var->store_nr];
+        loft_store_t *s = &cx->stores[var->store_nr];
         uint32_t rec = loft_claim(cx, s, 1 + (bytes + 7) / 8);
         var->rec = rec;
         var->pos = 8;
@@ -2114,8 +2040,8 @@ static void loft_database_typed(loft_cx *cx, loft_ref *var, uint32_t bytes, uint
         return;
     }
     loft_database(cx, var, bytes);
-    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
-    loft_set_u32(cx, &loft_stores[var->store_nr], var->rec, 4, loft_tp_out(cx, tp));
+    LOFT_SET_KNOWN(cx->stores[var->store_nr], tp);
+    loft_set_u32(cx, &cx->stores[var->store_nr], var->rec, 4, loft_tp_out(cx, tp));
 }
 
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
@@ -2127,19 +2053,19 @@ struct loft_tdesc_s;
 static void loft_remove_claims(loft_cx *cx, const struct loft_tdesc_s *T, uint16_t tp, loft_ref r);
 
 static void loft_database_wrapper(loft_cx *cx, const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
-    if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < loft_nstores
-        && !(var->rec == 1 && LOFT_KNOWN(loft_stores[var->store_nr]) == tp)) {
+    if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < cx->nstores
+        && !(var->rec == 1 && LOFT_KNOWN(cx->stores[var->store_nr]) == tp)) {
         /* The collection the place held is released, then its handle emptied. */
         loft_remove_claims(cx, T, tp, *var);
-        loft_set_u32(cx, &loft_stores[var->store_nr], var->rec, var->pos, 0);
+        loft_set_u32(cx, &cx->stores[var->store_nr], var->rec, var->pos, 0);
         return;
     }
     loft_database(cx, var, bytes);
-    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
+    LOFT_SET_KNOWN(cx->stores[var->store_nr], tp);
     /* The root carries its type at byte 4, as `OpDatabase` writes it and the typed mint does
      * (`loft_database_typed`): `sizeof` of a reference reads it (`OpSizeofRef`), on the
      * interpreter's side of a hosted unit too (STORE_MODEL D47). */
-    loft_set_u32(cx, &loft_stores[var->store_nr], var->rec, 4, loft_tp_out(cx, tp));
+    loft_set_u32(cx, &cx->stores[var->store_nr], var->rec, 4, loft_tp_out(cx, tp));
 }
 
 static loft_fn loft_fn_make(loft_cx *cx, int64_t d, loft_ref clos) {
@@ -2164,9 +2090,7 @@ static loft_word loft_funit(loft_cx *cx, loft_word h);
 /* `Stores::evacuated` (`@FR-H-RefHome`): the copy each record a stored reference named was
  * evacuated to, per holder store, so a second holder in that store shares the one copy; an
  * entry goes with the store its record lived in. */
-typedef struct { loft_ref old; uint16_t holder; loft_ref copy; } loft_evac;
-static LOFT_TLS loft_evac *loft_evacs = 0;
-static LOFT_TLS uint32_t loft_nevacs = 0, loft_evac_cap = 0;
+typedef struct loft_evac { loft_ref old; uint16_t holder; loft_ref copy; } loft_evac;
 
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
 static void loft_gen_free(loft_cx *cx, loft_ref g);
@@ -2182,51 +2106,47 @@ static void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr);
  * its exits: everything allocated since dies at once, so nothing is freed node by node and
  * nothing reaches the leak report.  A spill that cannot be allocated halts as a store that
  * cannot grow does. */
-#define LOFT_TA_BASE 65536
 typedef struct loft_ta_blk { struct loft_ta_blk *prev; size_t cap, top; } loft_ta_blk;
 typedef struct { size_t top; loft_ta_blk *spill; size_t spill_top; } loft_ta_mark_t;
-static LOFT_TLS uint64_t loft_ta_base[LOFT_TA_BASE / 8];
-static LOFT_TLS size_t loft_ta_top = 0;
-static LOFT_TLS loft_ta_blk *loft_ta_spill = 0;
 
 static inline loft_ta_mark_t loft_ta_mark(loft_cx *cx) {
-    loft_ta_mark_t m = { loft_ta_top, loft_ta_spill, loft_ta_spill ? loft_ta_spill->top : 0 };
+    loft_ta_mark_t m = { cx->ta_top, cx->ta_spill, cx->ta_spill ? cx->ta_spill->top : 0 };
     return m;
 }
 
 /* `n` bytes, 8-aligned, zeroed. */
 static inline void *loft_ta_alloc(loft_cx *cx, size_t n) {
     n = (n + 7) & ~(size_t) 7;
-    if (!loft_ta_spill && loft_ta_top + n <= LOFT_TA_BASE) {
-        void *p = (unsigned char *) loft_ta_base + loft_ta_top;
-        loft_ta_top += n;
+    if (!cx->ta_spill && cx->ta_top + n <= LOFT_TA_BASE) {
+        void *p = (unsigned char *) cx->ta_base + cx->ta_top;
+        cx->ta_top += n;
         memset(p, 0, n);
         return p;
     }
-    if (!loft_ta_spill || loft_ta_spill->top + n > loft_ta_spill->cap) {
+    if (!cx->ta_spill || cx->ta_spill->top + n > cx->ta_spill->cap) {
         size_t cap = n > LOFT_TA_BASE ? n : LOFT_TA_BASE;
         loft_ta_blk *b = (loft_ta_blk *) malloc(sizeof(loft_ta_blk) + cap);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
-        b->prev = loft_ta_spill;
+        b->prev = cx->ta_spill;
         b->cap = cap;
         b->top = 0;
-        loft_ta_spill = b;
+        cx->ta_spill = b;
     }
-    void *p = (unsigned char *) (loft_ta_spill + 1) + loft_ta_spill->top;
-    loft_ta_spill->top += n;
+    void *p = (unsigned char *) (cx->ta_spill + 1) + cx->ta_spill->top;
+    cx->ta_spill->top += n;
     memset(p, 0, n);
     return p;
 }
 
 /* Everything allocated since `m` dies: the spill blocks made after it are freed. */
 static inline void loft_ta_back(loft_cx *cx, loft_ta_mark_t m) {
-    while (loft_ta_spill && loft_ta_spill != m.spill) {
-        loft_ta_blk *b = loft_ta_spill;
-        loft_ta_spill = b->prev;
+    while (cx->ta_spill && cx->ta_spill != m.spill) {
+        loft_ta_blk *b = cx->ta_spill;
+        cx->ta_spill = b->prev;
         free(b);
     }
-    if (loft_ta_spill) loft_ta_spill->top = m.spill_top;
-    loft_ta_top = m.top;
+    if (cx->ta_spill) cx->ta_spill->top = m.spill_top;
+    cx->ta_top = m.top;
 }
 
 /* A transient vector: its elements in the arena, `n` of them, room for `cap`. */
@@ -2277,17 +2197,13 @@ static inline loft_str loft_ta_str(loft_cx *cx, loft_str s) {
  * a few per thread, kept across uses instead of minted and freed per use.  An idle carrier is
  * PINNED, so the leak report passes it by and a stray free leaves it alone; one in use is an
  * ordinary store until the free that would have released it gives it back (`loft_free_ref`). */
-#define LOFT_SLICE_POOL 16
-static LOFT_TLS loft_ref loft_sp_ref[LOFT_SLICE_POOL];
-static LOFT_TLS uint8_t loft_sp_used[LOFT_SLICE_POOL];
-static LOFT_TLS int loft_sp_n = 0;
 
 /* Give carrier `nr` back if it is one in use: answers whether it was. */
 static int loft_slice_give(loft_cx *cx, uint32_t nr) {
-    for (int i = 0; i < loft_sp_n; i++) {
-        if (loft_sp_used[i] && loft_sp_ref[i].store_nr == nr) {
-            loft_sp_used[i] = 0;
-            loft_stores[nr].pinned = 1;
+    for (int i = 0; i < cx->sp_n; i++) {
+        if (cx->sp_used[i] && cx->sp_ref[i].store_nr == nr) {
+            cx->sp_used[i] = 0;
+            cx->stores[nr].pinned = 1;
             return 1;
         }
     }
@@ -2313,12 +2229,12 @@ static int loft_refree_allowed(loft_cx *cx) {
  * the run as a store freed twice does.  Only the root record of a store of type `tp` is marked
  * (`Stores::is_own_root`): a value held inline can share its position. */
 static int loft_drop_own_root(loft_cx *cx, loft_ref r, uint16_t tp) {
-    return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < loft_nstores
-        && loft_stores[r.store_nr].live && LOFT_KNOWN(loft_stores[r.store_nr]) == tp;
+    return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < cx->nstores
+        && cx->stores[r.store_nr].live && LOFT_KNOWN(cx->stores[r.store_nr]) == tp;
 }
 
 static void loft_drop_enter(loft_cx *cx, loft_ref r, uint16_t tp) {
-    if (!loft_drop_own_root(cx, r, tp) || !loft_stores[r.store_nr].released_root)
+    if (!loft_drop_own_root(cx, r, tp) || !cx->stores[r.store_nr].released_root)
         return;
     char m[240];
     snprintf(m, sizeof m,
@@ -2327,14 +2243,14 @@ static void loft_drop_enter(loft_cx *cx, loft_ref r, uint16_t tp) {
              (unsigned) r.rec, (unsigned) r.store_nr);
     fflush(stdout);
     fprintf(stderr, "error: %s\n", m);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, m, strlen(m));
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, m, strlen(m));
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     LOFT_EXIT(1);
 }
 
 static void loft_drop_leave(loft_cx *cx, loft_ref r, uint16_t tp) {
-    if (loft_drop_own_root(cx, r, tp)) loft_stores[r.store_nr].released_root = 1;
+    if (loft_drop_own_root(cx, r, tp)) cx->stores[r.store_nr].released_root = 1;
 }
 
 static void loft_refree_fail(loft_cx *cx, uint32_t nr) {
@@ -2344,9 +2260,9 @@ static void loft_refree_fail(loft_cx *cx, uint32_t nr) {
              (unsigned) nr);
     fflush(stdout);
     fprintf(stderr, "error: %s\n", m);
-    loft_fail_msg.len = 0;
-    loft_push(cx, &loft_fail_msg, m, strlen(m));
-    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    cx->fail_msg.len = 0;
+    loft_push(cx, &cx->fail_msg, m, strlen(m));
+    if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
     LOFT_EXIT(1);
 }
 
@@ -2358,9 +2274,9 @@ static void loft_free_ref(loft_cx *cx, loft_ref r) {
         loft_gen_free(cx, r);
         return;
     }
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
-    if (loft_sp_n && loft_slice_give(cx, r.store_nr)) return;
-    loft_store_t *s = &loft_stores[r.store_nr];
+    if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores) return;
+    if (cx->sp_n && loft_slice_give(cx, r.store_nr)) return;
+    loft_store_t *s = &cx->stores[r.store_nr];
 #ifdef LOFT_DOUBLE_FREE
     if (!s->pinned && !s->live) loft_note_double_free(cx, r.store_nr);
 #else
@@ -2380,15 +2296,15 @@ static void loft_free_ref(loft_cx *cx, loft_ref r) {
         s->closure_shares--;
         return;
     }
-    for (uint32_t i = 0; i < loft_nevacs;) {
-        if (loft_evacs[i].old.store_nr == r.store_nr) loft_evacs[i] = loft_evacs[--loft_nevacs];
+    for (uint32_t i = 0; i < cx->nevacs;) {
+        if (cx->evacs[i].old.store_nr == r.store_nr) cx->evacs[i] = cx->evacs[--cx->nevacs];
         else i++;
     }
 #ifdef LOFT_HOSTED
     /* The interpreter releases the store (`Stores::free_named`): its own fields and its
      * table's bookkeeping go with it. */
-    if (loft_host_stores) {
-        loft_hosted->store_free(loft_host_stores, r.store_nr);
+    if (cx->host_stores) {
+        loft_hosted->store_free(cx->host_stores, r.store_nr);
         loft_host_sync(cx);
         return;
     }
@@ -2407,8 +2323,8 @@ static void loft_free_ref(loft_cx *cx, loft_ref r) {
     /* `Stores::trim_free_top`, as the interpreter's strict mode keeps it: a freed TOP slot
      * lowers the floor, down past every dead slot under it, so the next store takes that
      * number again — a run that frees and re-makes in a loop stays within the table. */
-    if (r.store_nr + 1u == loft_strict_floor)
-        while (loft_strict_floor > 0 && !loft_stores[loft_strict_floor - 1].live) loft_strict_floor--;
+    if (r.store_nr + 1u == cx->strict_floor)
+        while (cx->strict_floor > 0 && !cx->stores[cx->strict_floor - 1].live) cx->strict_floor--;
 #endif
     LOFT_TRACE("F %s\n", loft_trace_name(cx, s));
 #ifdef LOFT_FOREIGN
@@ -2434,11 +2350,11 @@ static void loft_free_ref(loft_cx *cx, loft_ref r) {
 
 /* A failed test `longjmp`s past every scope-exit free of its frames, the stores they made among
  * them.  The interpreter runs each test in a fork of its own program, so nothing a test made
- * outlives it; here every store made since `mark` (`loft_stores_allocated` as the test began)
+ * outlives it; here every store made since `mark` (`cx->stores_allocated` as the test began)
  * that is still live and not pinned is released (@PLN206 D31). */
 LOFT_NOINLINE static void loft_release_stores_since(loft_cx *cx, uint64_t mark) {
-    for (uint32_t i = 0; i < loft_nstores; i++) {
-        const loft_store_t *s = &loft_stores[i];
+    for (uint32_t i = 0; i < cx->nstores; i++) {
+        const loft_store_t *s = &cx->stores[i];
         if (s->live && !s->pinned && s->serial > mark) {
             loft_ref r = { (uint16_t) i, 1, 8, 0 };
             loft_free_ref(cx, r);
@@ -2451,29 +2367,27 @@ LOFT_NOINLINE static void loft_release_stores_since(loft_cx *cx, uint64_t mark) 
  * it ran to its end — and the function that resumes it: that function restores the locals
  * from the frame, jumps to the label after the last `yield`, and at the next `yield` saves
  * them and returns the value through `out`.  An iterator value names a frame's slot in
- * `loft_gens`: store number 0xFFFE, record slot + 1. */
+ * `cx->gens`: store number 0xFFFE, record slot + 1. */
 typedef struct { int32_t state; int32_t done; } loft_gen_head;
 /* `holds`: the holders that share the frame (`(G-Hold)`) — a release by one of several gives its
  * hold back, and the last one releases the frame. */
-typedef struct { void *frame; void (*resume)(loft_cx *cx, void *frame, void *out); void (*release)(loft_cx *cx, void *frame); uint32_t holds; } loft_gen_slot;
-static LOFT_TLS loft_gen_slot *loft_gens = 0;
-static LOFT_TLS uint32_t loft_ngens = 0;
+typedef struct loft_gen_slot { void *frame; void (*resume)(loft_cx *cx, void *frame, void *out); void (*release)(loft_cx *cx, void *frame); uint32_t holds; } loft_gen_slot;
 
 static loft_ref loft_gen_new(loft_cx *cx, void *frame, void (*resume)(loft_cx *, void *, void *), void (*release)(loft_cx *, void *)) {
     uint32_t i = 0;
-    while (i < loft_ngens && loft_gens[i].frame) i++;
-    if (i == loft_ngens) {
-        uint32_t n = loft_ngens ? loft_ngens * 2 : 16;
-        loft_gen_slot *g = (loft_gen_slot *) realloc(loft_gens, n * sizeof *g);
+    while (i < cx->ngens && cx->gens[i].frame) i++;
+    if (i == cx->ngens) {
+        uint32_t n = cx->ngens ? cx->ngens * 2 : 16;
+        loft_gen_slot *g = (loft_gen_slot *) realloc(cx->gens, n * sizeof *g);
         if (!g) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(g + loft_ngens, 0, (n - loft_ngens) * sizeof *g);
-        loft_gens = g;
-        loft_ngens = n;
+        memset(g + cx->ngens, 0, (n - cx->ngens) * sizeof *g);
+        cx->gens = g;
+        cx->ngens = n;
     }
-    loft_gens[i].frame = frame;
-    loft_gens[i].resume = resume;
-    loft_gens[i].release = release;
-    loft_gens[i].holds = 1;
+    cx->gens[i].frame = frame;
+    cx->gens[i].resume = resume;
+    cx->gens[i].release = release;
+    cx->gens[i].holds = 1;
     loft_ref r = {0};
     r.store_nr = 0xFFFE;
     r.rec = i + 1;
@@ -2482,8 +2396,8 @@ static loft_ref loft_gen_new(loft_cx *cx, void *frame, void (*resume)(loft_cx *,
 }
 
 static loft_gen_slot *loft_gen_of(loft_cx *cx, loft_ref g) {
-    if (g.store_nr != 0xFFFE || g.rec == 0 || g.rec > loft_ngens || !loft_gens[g.rec - 1].frame) return 0;
-    return &loft_gens[g.rec - 1];
+    if (g.store_nr != 0xFFFE || g.rec == 0 || g.rec > cx->ngens || !cx->gens[g.rec - 1].frame) return 0;
+    return &cx->gens[g.rec - 1];
 }
 
 /* OpCoroutineNext: the generator runs to its next `yield`, whose value lands in `*out`; one
@@ -2511,15 +2425,15 @@ static uint8_t loft_gen_exhausted(loft_cx *cx, loft_ref g) {
  * of a heap argument it was handed; answers whether it did — the null reference, a generator
  * and a freed store are not held. */
 static int loft_hold_for_frame(loft_cx *cx, loft_ref r) {
-    if (r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return 0;
-    loft_stores[r.store_nr].frame_holds++;
+    if (r.store_nr >= cx->nstores || r.rec == 0 || !cx->stores[r.store_nr].live) return 0;
+    cx->stores[r.store_nr].frame_holds++;
     return 1;
 }
 
 /* `Stores::release_frame_hold`: the last hold on a store its owner already released frees it. */
 static void loft_release_frame_hold(loft_cx *cx, loft_ref r) {
-    if (r.store_nr >= loft_nstores) return;
-    loft_store_t *s = &loft_stores[r.store_nr];
+    if (r.store_nr >= cx->nstores) return;
+    loft_store_t *s = &cx->stores[r.store_nr];
     if (!s->frame_holds) return;
     s->frame_holds--;
     if (!s->frame_holds && s->orphaned) {
@@ -2546,7 +2460,7 @@ static loft_ref loft_const_store(loft_cx *cx, const uint32_t *words, uint32_t n)
     /* The interpreter's constant store is its own, made before the program's: it takes no
      * serial here either, so the program's stores are numbered alike. */
     uint32_t nr = loft_store_make(cx, 0);
-    loft_store_t *s = &loft_stores[nr];
+    loft_store_t *s = &cx->stores[nr];
     if (n > s->size) {
         loft_heap_moved(cx, s, s->size, n);
         uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
@@ -2575,7 +2489,7 @@ static int loft_ref_eq(loft_cx *cx, loft_ref a, loft_ref b) {
 
 /* OpStoreLive (Stores::store_live): the reference names a record of a store not freed. */
 static int loft_store_live(loft_cx *cx, loft_ref r) {
-    return r.rec != 0 && r.store_nr != 0xFFFF && r.store_nr < loft_nstores && loft_stores[r.store_nr].live;
+    return r.rec != 0 && r.store_nr != 0xFFFF && r.store_nr < cx->nstores && cx->stores[r.store_nr].live;
 }
 
 LOFT_HOT_INLINE loft_ref loft_field(loft_cx *cx, loft_ref r, uint32_t fld) {
@@ -2847,8 +2761,8 @@ static void loft_remove_record(loft_cx *cx, loft_store_t *s, uint32_t rec) {
 }
 
 LOFT_HOT_INLINE int loft_record_removed(loft_cx *cx, loft_ref x) {
-    if (x.rec == 0 || x.store_nr == 0xFFFF || x.store_nr >= loft_nstores || !loft_stores[x.store_nr].live) return 0;
-    return loft_st_is_removed(cx, &loft_stores[x.store_nr], x.rec);
+    if (x.rec == 0 || x.store_nr == 0xFFFF || x.store_nr >= cx->nstores || !cx->stores[x.store_nr].live) return 0;
+    return loft_st_is_removed(cx, &cx->stores[x.store_nr], x.rec);
 }
 
 LOFT_HOT_INLINE loft_ref loft_get_dbref(loft_cx *cx, loft_ref r, uint32_t fld) {
@@ -2869,7 +2783,7 @@ LOFT_HOT_INLINE void loft_set_dbref(loft_cx *cx, loft_ref r, uint32_t fld, loft_
     loft_set_u32(cx, s, r.rec, r.pos + fld + 4, x.rec);
     loft_set_u32(cx, s, r.rec, r.pos + fld + 8, x.pos);
     /* `Stores::set_db_ref`: the record named is marked, so removing it leaves a tombstone. */
-    if (x.rec != 0 && x.store_nr < loft_nstores && loft_stores[x.store_nr].live) loft_st_note_referenced(cx, &loft_stores[x.store_nr], x.rec);
+    if (x.rec != 0 && x.store_nr < cx->nstores && cx->stores[x.store_nr].live) loft_st_note_referenced(cx, &cx->stores[x.store_nr], x.rec);
 }
 
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
@@ -2886,30 +2800,30 @@ LOFT_HOT_INLINE uint32_t loft_collection_rec(loft_cx *cx, loft_store_t *s, uint3
 static void loft_slice_take(loft_cx *cx, const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
     int i = 0;
     if (var->store_nr == 0xFFFF) {
-        while (i < loft_sp_n && loft_sp_used[i]) i++;
+        while (i < cx->sp_n && cx->sp_used[i]) i++;
     } else {
-        while (i < loft_sp_n && !(loft_sp_used[i] && loft_sp_ref[i].store_nr == var->store_nr)) i++;
-        if (i == loft_sp_n) i = LOFT_SLICE_POOL;
+        while (i < cx->sp_n && !(cx->sp_used[i] && cx->sp_ref[i].store_nr == var->store_nr)) i++;
+        if (i == cx->sp_n) i = LOFT_SLICE_POOL;
     }
-    if (i == loft_sp_n && i < LOFT_SLICE_POOL) {
+    if (i == cx->sp_n && i < LOFT_SLICE_POOL) {
         loft_ref r = loft_ref_null(cx);
         loft_database(cx, &r, bytes);
-        loft_sp_ref[i] = r;
-        loft_sp_used[i] = 0;
-        loft_sp_n++;
+        cx->sp_ref[i] = r;
+        cx->sp_used[i] = 0;
+        cx->sp_n++;
     }
-    if (i >= loft_sp_n) {
+    if (i >= cx->sp_n) {
         loft_database_wrapper(cx, T, var, bytes, tp);
         return;
     }
-    loft_ref r = loft_sp_ref[i];
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_ref r = cx->sp_ref[i];
+    loft_store_t *s = &cx->stores[r.store_nr];
 #ifdef LOFT_FOREIGN
     loft_st_release_foreign(cx, s);
 #endif
     uint32_t v = loft_collection_rec(cx, s, r.rec, r.pos);
     if (v != 0) loft_set_u32(cx, s, v, 4, 0);
-    loft_sp_used[i] = 1;
+    cx->sp_used[i] = 1;
     s->pinned = 0;
     LOFT_SET_KNOWN(*s, tp);
     *var = r;
@@ -3163,7 +3077,7 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_cx *cx, loft_ref v) {
  * another vector's record or changes its length, `@FR-R-Base`), the store's memory may have
  * moved, so the base is derived again from the held record — one load, no record walk. */
 LOFT_HOT_INLINE loft_vh loft_vh_fresh(loft_cx *cx, loft_vh h) {
-    if (h.rec != 0) h.base = loft_elem_base(cx, &loft_stores[h.store_nr], h.rec);
+    if (h.rec != 0) h.base = loft_elem_base(cx, &cx->stores[h.store_nr], h.rec);
     return h;
 }
 
@@ -3434,16 +3348,16 @@ static loft_int loft_text_size(loft_cx *cx, loft_str s) {
 /* A free a call's argument protection declines (Store::is_free_protected): a displaced store,
  * a copy's or a keyed write's given-up source.  A plain scope-exit free is not one. */
 static int loft_free_protected(loft_cx *cx, loft_ref r) {
-    return r.store_nr < loft_nstores && loft_stores[r.store_nr].protect > 0;
+    return r.store_nr < cx->nstores && cx->stores[r.store_nr].protect > 0;
 }
 
 /* protect_store_frees / unprotect_store_frees: the call bracket around a reference argument. */
 static void loft_protect(loft_cx *cx, loft_ref r) {
-    if (r.store_nr < loft_nstores) loft_stores[r.store_nr].protect++;
+    if (r.store_nr < cx->nstores) cx->stores[r.store_nr].protect++;
 }
 
 static void loft_unprotect(loft_cx *cx, loft_ref r) {
-    if (r.store_nr < loft_nstores && loft_stores[r.store_nr].protect > 0) loft_stores[r.store_nr].protect--;
+    if (r.store_nr < cx->nstores && cx->stores[r.store_nr].protect > 0) cx->stores[r.store_nr].protect--;
 }
 
 static void loft_free_displaced(loft_cx *cx, loft_ref displaced, loft_ref witness) {
@@ -3465,10 +3379,11 @@ LOFT_HOT_INLINE void loft_free_var(loft_cx *cx, loft_ref *v) {
 }
 
 /* @FR-R-FnRefBuffer's frame clause: a kept record store parked between calls of the function
- * that keeps it, one slot per function and thread.  Taking empties the slot, so a recursive or
- * re-entered frame mints its own; parking into a full slot frees instead. */
+ * that keeps it, one slot per function, a static the main thread owns: a `par` worker and a
+ * hosted unit's bridge call (`cx->no_park`) neither take nor park.  Taking empties the slot, so
+ * a recursive or re-entered frame mints its own; parking into a full slot frees instead. */
 static inline void loft_park_take(loft_cx *cx, loft_ref *slot, loft_ref *v) {
-    if (v->store_nr != 0xFFFF || slot->store_nr == 0xFFFF) return;
+    if (cx->no_park || v->store_nr != 0xFFFF || slot->store_nr == 0xFFFF) return;
     *v = *slot;
     slot->store_nr = 0xFFFF;
     slot->rec = 0;
@@ -3477,21 +3392,19 @@ static inline void loft_park_take(loft_cx *cx, loft_ref *slot, loft_ref *v) {
 /* The slots a store was ever parked in, so the program's end can give their stores back
  * (`loft_parks_drain`): a parked store is a cache of the next call's, and at exit there is no
  * next call — left in its slot it reads as a store never freed.  `par` workers never park
- * (`loft_no_park`), so the main thread's list holds every slot. */
-static LOFT_TLS loft_ref **loft_park_slots = 0;
-static LOFT_TLS uint32_t loft_npark_slots = 0, loft_park_slots_cap = 0;
+ * (`cx->no_park`), so the main thread's list holds every slot. */
 static void loft_park_register(loft_cx *cx, loft_ref *slot) {
-    for (uint32_t i = 0; i < loft_npark_slots; i++)
-        if (loft_park_slots[i] == slot) return;
-    if (loft_npark_slots == loft_park_slots_cap) {
-        loft_park_slots_cap = loft_park_slots_cap ? loft_park_slots_cap * 2 : 8;
-        loft_park_slots = (loft_ref **) realloc(loft_park_slots, loft_park_slots_cap * sizeof *loft_park_slots);
-        if (!loft_park_slots) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < cx->npark_slots; i++)
+        if (cx->park_slots[i] == slot) return;
+    if (cx->npark_slots == cx->park_slots_cap) {
+        cx->park_slots_cap = cx->park_slots_cap ? cx->park_slots_cap * 2 : 8;
+        cx->park_slots = (loft_ref **) realloc(cx->park_slots, cx->park_slots_cap * sizeof *cx->park_slots);
+        if (!cx->park_slots) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_park_slots[loft_npark_slots++] = slot;
+    cx->park_slots[cx->npark_slots++] = slot;
 }
 static inline void loft_park_put(loft_cx *cx, loft_ref *slot, loft_ref *v) {
-    if (!loft_no_park && slot->store_nr == 0xFFFF && v->store_nr != 0xFFFF) {
+    if (!cx->no_park && slot->store_nr == 0xFFFF && v->store_nr != 0xFFFF) {
         loft_park_register(cx, slot);
         *slot = *v;
         v->store_nr = 0xFFFF;
@@ -3505,10 +3418,10 @@ static inline void loft_park_put(loft_cx *cx, loft_ref *slot, loft_ref *v) {
 /* The program's end: every parked store given back, so a store kept for a next call that never
  * comes is not reported as never freed (`loft_leak_report`). */
 static void loft_parks_drain(loft_cx *cx) {
-    for (uint32_t i = 0; i < loft_npark_slots; i++) loft_free_var(cx, loft_park_slots[i]);
-    free(loft_park_slots);
-    loft_park_slots = 0;
-    loft_npark_slots = loft_park_slots_cap = 0;
+    for (uint32_t i = 0; i < cx->npark_slots; i++) loft_free_var(cx, cx->park_slots[i]);
+    free(cx->park_slots);
+    cx->park_slots = 0;
+    cx->npark_slots = cx->park_slots_cap = 0;
 }
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the
@@ -3524,10 +3437,10 @@ LOFT_HOT_INLINE void loft_free_var_distinct(loft_cx *cx, loft_ref *v, loft_ref w
  * argument or a capture that predates it (or the closure's own record)?  A null is adopted as
  * the null it is. */
 static int loft_fnref_minted(loft_cx *cx, loft_ref r, uint64_t since, loft_ref clos) {
-    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return 1;
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= cx->nstores) return 1;
     if (clos.store_nr != 0xFFFF && r.store_nr == clos.store_nr) return 0;
-    if (!loft_stores[r.store_nr].live) return 1;
-    return loft_stores[r.store_nr].serial > since;
+    if (!cx->stores[r.store_nr].live) return 1;
+    return cx->stores[r.store_nr].serial > since;
 }
 
 /* The stores a call through a function value handed back that no bind adopted — the buffer it
@@ -3536,30 +3449,28 @@ static int loft_fnref_minted(loft_cx *cx, loft_ref r, uint64_t since, loft_ref c
  * may say it owns nothing (a local that borrows on one assignment and receives this store on
  * another), so the FRAME holding it is its owner: a frame whose answer is no heap value frees
  * what it holds when it ends, one that answers a heap value hands it up (`framed`). */
-typedef struct { loft_ref r; uint64_t serial; } loft_fnref_held;
-static LOFT_TLS loft_fnref_held *loft_fnrefs = 0;
-static LOFT_TLS size_t loft_nfnrefs = 0, loft_capfnrefs = 0;
+typedef struct loft_fnref_held { loft_ref r; uint64_t serial; } loft_fnref_held;
 
 /* One allocation is one entry: an entry left by a store its owner already freed names the same
  * slot as a store minted into it later, so it is replaced where it stands. */
 static void loft_fnref_hold(loft_cx *cx, loft_ref r) {
-    if (r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return;
-    uint64_t serial = loft_stores[r.store_nr].serial;
-    for (size_t i = 0; i < loft_nfnrefs; i++) {
-        if (loft_fnrefs[i].r.store_nr == r.store_nr) {
-            loft_fnrefs[i].r = r;
-            loft_fnrefs[i].serial = serial;
+    if (r.store_nr >= cx->nstores || r.rec == 0 || !cx->stores[r.store_nr].live) return;
+    uint64_t serial = cx->stores[r.store_nr].serial;
+    for (size_t i = 0; i < cx->nfnrefs; i++) {
+        if (cx->fnrefs[i].r.store_nr == r.store_nr) {
+            cx->fnrefs[i].r = r;
+            cx->fnrefs[i].serial = serial;
             return;
         }
     }
-    if (loft_nfnrefs == loft_capfnrefs) {
-        loft_capfnrefs = loft_capfnrefs ? loft_capfnrefs * 2 : 16;
-        loft_fnrefs = (loft_fnref_held *) realloc(loft_fnrefs, loft_capfnrefs * sizeof *loft_fnrefs);
-        if (!loft_fnrefs) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->nfnrefs == cx->capfnrefs) {
+        cx->capfnrefs = cx->capfnrefs ? cx->capfnrefs * 2 : 16;
+        cx->fnrefs = (loft_fnref_held *) realloc(cx->fnrefs, cx->capfnrefs * sizeof *cx->fnrefs);
+        if (!cx->fnrefs) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_fnrefs[loft_nfnrefs].r = r;
-    loft_fnrefs[loft_nfnrefs].serial = serial;
-    loft_nfnrefs++;
+    cx->fnrefs[cx->nfnrefs].r = r;
+    cx->fnrefs[cx->nfnrefs].serial = serial;
+    cx->nfnrefs++;
 }
 
 /* `cr_fnref_buf`: the buffer a dispatch arm minted is the call's answer — held by the frame —
@@ -3575,19 +3486,19 @@ static void loft_fnref_buf(loft_cx *cx, loft_ref r, loft_ref hb) {
 /* `cr_fnref_minted`: a store the call minted is held by the frame; one that predates the call
  * (an argument, a capture) or is the closure's own record belongs further up. */
 static void loft_fnref_mint(loft_cx *cx, loft_ref r, uint64_t since, loft_ref clos) {
-    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= cx->nstores) return;
     if (clos.store_nr != 0xFFFF && r.store_nr == clos.store_nr) return;
-    if (!loft_stores[r.store_nr].live || loft_stores[r.store_nr].serial <= since) return;
+    if (!cx->stores[r.store_nr].live || cx->stores[r.store_nr].serial <= since) return;
     loft_fnref_hold(cx, r);
 }
 
 /* `cr_fnref_adopt`: a bind that adopts the answer is its one owner; the frame lets it go. */
 static void loft_fnref_adopt(loft_cx *cx, loft_ref src) {
-    for (size_t i = loft_nfnrefs; i-- > 0;) {
-        if (loft_fnrefs[i].r.store_nr == src.store_nr) {
+    for (size_t i = cx->nfnrefs; i-- > 0;) {
+        if (cx->fnrefs[i].r.store_nr == src.store_nr) {
             /* In order: every frame's mark keeps meaning the entries above it are its own. */
-            memmove(&loft_fnrefs[i], &loft_fnrefs[i + 1], (loft_nfnrefs - i - 1) * sizeof *loft_fnrefs);
-            loft_nfnrefs--;
+            memmove(&cx->fnrefs[i], &cx->fnrefs[i + 1], (cx->nfnrefs - i - 1) * sizeof *cx->fnrefs);
+            cx->nfnrefs--;
             return;
         }
     }
@@ -3597,10 +3508,10 @@ static void loft_fnref_adopt(loft_cx *cx, loft_ref src) {
  * still the allocation it named, since the frame may have freed it itself and the slot be
  * another's by now. */
 static void loft_fnref_release(loft_cx *cx, size_t mark) {
-    while (loft_nfnrefs > mark) {
-        loft_fnref_held h = loft_fnrefs[--loft_nfnrefs];
-        if (h.r.store_nr < loft_nstores && loft_stores[h.r.store_nr].live
-            && loft_stores[h.r.store_nr].serial == h.serial)
+    while (cx->nfnrefs > mark) {
+        loft_fnref_held h = cx->fnrefs[--cx->nfnrefs];
+        if (h.r.store_nr < cx->nstores && cx->stores[h.r.store_nr].live
+            && cx->stores[h.r.store_nr].serial == h.serial)
             loft_free_ref(cx, h.r);
     }
 }
@@ -3704,7 +3615,7 @@ LOFT_HOT_INLINE loft_str loft_pa_text(loft_cx *cx, const uint8_t *p, uint32_t fl
     if (!p) return loft_null_text(cx);
     uint32_t srec;
     memcpy(&srec, p + fld, 4);
-    return loft_store_str(cx, &loft_stores[store_nr], srec);
+    return loft_store_str(cx, &cx->stores[store_nr], srec);
 }
 
 static loft_str loft_get_text(loft_cx *cx, loft_ref r, uint32_t fld) {
@@ -3838,43 +3749,40 @@ static void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, l
 /* `@FR-L-OutOfLine`: the child records a copy or a release has met and not yet walked, and how
  * deep the walk is; the outermost call walks them as a loop, so a chain of any length takes no
  * stack per link (Stores::copy_claims, Stores::remove_claims). */
-typedef struct { uint16_t tp; uint8_t release; loft_ref from, to; } loft_child_job;
-static LOFT_TLS loft_child_job *loft_child_jobs;
-static LOFT_TLS size_t loft_child_njobs, loft_child_cap;
-static LOFT_TLS int loft_child_depth;
+typedef struct loft_child_job { uint16_t tp; uint8_t release; loft_ref from, to; } loft_child_job;
 
 static void loft_child_push(loft_cx *cx, uint16_t tp, int release, loft_ref from, loft_ref to) {
-    if (loft_child_njobs == loft_child_cap) {
-        loft_child_cap = loft_child_cap ? loft_child_cap * 2 : 64;
-        loft_child_jobs = (loft_child_job *) realloc(loft_child_jobs, loft_child_cap * sizeof(loft_child_job));
-        if (!loft_child_jobs) abort();
+    if (cx->child_njobs == cx->child_cap) {
+        cx->child_cap = cx->child_cap ? cx->child_cap * 2 : 64;
+        cx->child_jobs = (loft_child_job *) realloc(cx->child_jobs, cx->child_cap * sizeof(loft_child_job));
+        if (!cx->child_jobs) abort();
     }
     loft_child_job j = { tp, (uint8_t) release, from, to };
-    loft_child_jobs[loft_child_njobs++] = j;
+    cx->child_jobs[cx->child_njobs++] = j;
 }
 
 static void loft_copy_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
 static void loft_remove_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
 
 static void loft_child_drain(loft_cx *cx, const loft_tdesc *T) {
-    while (loft_child_njobs) {
-        loft_child_job j = loft_child_jobs[--loft_child_njobs];
-        loft_child_depth++;
+    while (cx->child_njobs) {
+        loft_child_job j = cx->child_jobs[--cx->child_njobs];
+        cx->child_depth++;
         if (j.release) {
             loft_remove_claims_one(cx, T, j.tp, j.from, 0);
             loft_st_delete(cx, loft_store_of(cx, j.from), j.from.rec);
         } else {
             loft_copy_claims_one(cx, T, j.tp, j.from, j.to);
         }
-        loft_child_depth--;
+        cx->child_depth--;
     }
 }
 
 static void loft_copy_claims(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
-    loft_child_depth++;
+    cx->child_depth++;
     loft_copy_claims_one(cx, T, tp, from, to);
-    loft_child_depth--;
-    if (loft_child_depth == 0) loft_child_drain(cx, T);
+    cx->child_depth--;
+    if (cx->child_depth == 0) loft_child_drain(cx, T);
 }
 
 static void loft_copy_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
@@ -4021,9 +3929,9 @@ static int (*loft_swap_blocked_hook)(loft_cx *cx);
 /* `reset_dest`: the destination must hold nothing but its root (a copy's); a keyed rebind's
  * destination is its collection's own store, whose old content leaves with the released slot. */
 static int loft_swap_in(loft_cx *cx, uint16_t tp, loft_ref src, loft_ref dst, int reset_dest) {
-    if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
+    if (src.store_nr == dst.store_nr || src.store_nr >= cx->nstores || dst.store_nr >= cx->nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
-    loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
+    loft_store_t *a = &cx->stores[src.store_nr], *b = &cx->stores[dst.store_nr];
     if (!a->live || !b->live || LOFT_KNOWN(*a) != tp || LOFT_KNOWN(*b) != tp || a->pinned || b->pinned) return 0;
     /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
      * with the content) nor serving foreign bytes nor bound to a file; only the RELEASED store's
@@ -4261,14 +4169,14 @@ static loft_ref loft_stack_trace(loft_cx *cx) {
     loft_ref vec = loft_ref_null(cx);
     loft_database(cx, &vec, LOFT_SF_SIZE * 8 - 8);
     loft_set_u32(cx, loft_store_of(cx, vec), vec.rec, vec.pos, 0);
-    for (size_t i = 0; i < loft_nframes; i++) {
+    for (size_t i = 0; i < cx->nframes; i++) {
         loft_ref e = loft_vec_append(cx, vec, LOFT_SF_SIZE);
-        loft_set_text(cx, e, LOFT_SF_FUNCTION, loft_lit(cx, loft_frames[i].fn, strlen(loft_frames[i].fn)));
-        loft_set_text(cx, e, LOFT_SF_FILE, loft_lit(cx, loft_frames[i].file, strlen(loft_frames[i].file)));
+        loft_set_text(cx, e, LOFT_SF_FUNCTION, loft_lit(cx, cx->frames[i].fn, strlen(cx->frames[i].fn)));
+        loft_set_text(cx, e, LOFT_SF_FILE, loft_lit(cx, cx->frames[i].file, strlen(cx->frames[i].file)));
 #ifdef LOFT_STD_INT4
-        loft_set_int4(cx, e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+        loft_set_int4(cx, e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) cx->frames[i - 1].site);
 #else
-        loft_set_int(cx, e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+        loft_set_int(cx, e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) cx->frames[i - 1].site);
 #endif
         loft_set_u32(cx, loft_store_of(cx, e), e.rec, e.pos + LOFT_SF_ARGS, 0);
         loft_set_u32(cx, loft_store_of(cx, e), e.rec, e.pos + LOFT_SF_VARS, 0);
@@ -4370,7 +4278,7 @@ static loft_win loft_win_of(loft_cx *cx, loft_ref v, uint32_t size) {
  * with no room never moved its length, and a locked store is not written. */
 static void loft_win_sync(loft_cx *cx, loft_win w) {
     if (w.rec == 0 || w.cap == 0) return;
-    memcpy(loft_at(cx, &loft_stores[w.store_nr], w.rec, 4), &w.len, 4);
+    memcpy(loft_at(cx, &cx->stores[w.store_nr], w.rec, 4), &w.len, 4);
 }
 
 /* vector::reserve_more: room for `extra` MORE elements than the vector holds; nothing when the
@@ -4558,7 +4466,7 @@ LOFT_HOT_INLINE void loft_ph_finish(loft_cx *cx, loft_ph *h) {
         return;
     }
     h->len++;
-    memcpy(loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+    memcpy(loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 4), &h->len, 4);
 }
 
 /* `@FR-R-Push`: a scalar push through a held push header — the slot past the length while it
@@ -4569,7 +4477,7 @@ LOFT_HOT_INLINE void loft_ph_finish(loft_cx *cx, loft_ph *h) {
     LOFT_HOT_INLINE void loft_ph_put##W(loft_cx *cx, loft_ph *h, T bits) {                               \
         loft_ref e = loft_ph_new(cx, h, W);                                                     \
         if (LOFT_UNLIKELY(e.rec == 0)) return;                                              \
-        memcpy(loft_at(cx, &loft_stores[e.store_nr], e.rec, e.pos), &bits, W);                  \
+        memcpy(loft_at(cx, &cx->stores[e.store_nr], e.rec, e.pos), &bits, W);                  \
         loft_ph_finish(cx, h);                                                                  \
     }
 LOFT_PH_PUT(8, uint64_t)
@@ -4624,8 +4532,8 @@ LOFT_HOT_INLINE loft_vh loft_ph_vh(loft_cx *cx, const loft_ph *h) {
     r.store_nr = h->v.store_nr;
     r.rec = h->rec;
     r.len = h->len;
-    r.base = h->rec != 0 ? loft_elem_base(cx, &loft_stores[h->v.store_nr], h->rec) : 0;
-    r.locked = h->rec != 0 && loft_stores[h->v.store_nr].read_only;
+    r.base = h->rec != 0 ? loft_elem_base(cx, &cx->stores[h->v.store_nr], h->rec) : 0;
+    r.locked = h->rec != 0 && cx->stores[h->v.store_nr].read_only;
     return r;
 }
 
@@ -4636,14 +4544,14 @@ LOFT_HOT_INLINE int64_t loft_ph_get_int(loft_cx *cx, const loft_ph *h, uint32_t 
     int64_t f = from < 0 ? from + (int64_t) h->len : from;
     if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return LOFT_NULL;
     int64_t v;
-    memcpy(&v, loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    memcpy(&v, loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
     return v;
 }
 LOFT_HOT_INLINE double loft_ph_get_float(loft_cx *cx, const loft_ph *h, uint32_t size, loft_int from, uint32_t fld) {
     int64_t f = from < 0 ? from + (int64_t) h->len : from;
     if (LOFT_UNLIKELY((uint64_t) f >= h->len)) return (double) NAN;
     double v;
-    memcpy(&v, loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
+    memcpy(&v, loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 8 + (uint32_t) f * size + fld), 8);
     return v;
 }
 
@@ -4657,7 +4565,7 @@ LOFT_HOT_INLINE void loft_ph_keep(loft_cx *cx, loft_ph *h, int64_t lo, int64_t h
         if (hi < 0) hi = 0;
         if ((uint64_t) hi < h->len) {
             h->len = (uint32_t) hi;
-            memcpy(loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+            memcpy(loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 4), &h->len, 4);
         }
         return;
     }
@@ -4684,9 +4592,9 @@ LOFT_HOT_INLINE void loft_ph_keep(loft_cx *cx, loft_ph *h, int64_t lo, int64_t h
         }                                                                                   \
         for (uint32_t i = 0; i < k; i++) loft_ph_put##B##W(cx, h, bits[i]);                 \
     }
-LOFT_PH_RUN(8, uint64_t, , loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 0))
-LOFT_PH_RUN(4, uint32_t, , loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 0))
-LOFT_PH_RUN(1, uint8_t, , loft_at(cx, &loft_stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(8, uint64_t, , loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(4, uint32_t, , loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 0))
+LOFT_PH_RUN(1, uint8_t, , loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 0))
 LOFT_PH_RUN(8, uint64_t, b, h->base)
 LOFT_PH_RUN(4, uint32_t, b, h->base)
 LOFT_PH_RUN(1, uint8_t, b, h->base)
@@ -4754,7 +4662,7 @@ static void loft_vec_keep_range(loft_cx *cx, loft_ref v, int64_t lo, int64_t hi,
  * held.  Either way the source is left zeroed. */
 static void loft_move_field(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst) {
     if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0
-        || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return;
+        || src.store_nr >= cx->nstores || dst.store_nr >= cx->nstores) return;
     uint32_t size = T[tp].size;
     loft_copy_bytes(cx, dst, 0, src, 0, size);
     if (src.store_nr != dst.store_nr) {
@@ -4883,10 +4791,10 @@ static void loft_vec_append_copy(loft_cx *cx, const loft_tdesc *T, uint16_t ctp,
 static void loft_remove_claims(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 static void loft_remove_claims_mode(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
-    loft_child_depth++;
+    cx->child_depth++;
     loft_remove_claims_one(cx, T, tp, r, borrowed);
-    loft_child_depth--;
-    if (loft_child_depth == 0) loft_child_drain(cx, T);
+    cx->child_depth--;
+    if (cx->child_depth == 0) loft_child_drain(cx, T);
 }
 
 static void loft_remove_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
@@ -5070,9 +4978,9 @@ static void loft_vec_clear_release_body(loft_cx *cx, const loft_tdesc *T, uint32
  * plain mint.  `-DLOFT_NO_KEEP_ROOM` keeps the plain mint everywhere. */
 static void loft_database_room(loft_cx *cx, const loft_tdesc *T, uint32_t nt, loft_ref *var, uint32_t bytes, uint16_t tp) {
 #ifndef LOFT_NO_KEEP_ROOM
-    if (var->store_nr != 0xFFFF && var->rec == 1 && var->store_nr < loft_nstores
-        && loft_stores[var->store_nr].live && !loft_stores[var->store_nr].frame_holds
-        && LOFT_KNOWN(loft_stores[var->store_nr]) == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
+    if (var->store_nr != 0xFFFF && var->rec == 1 && var->store_nr < cx->nstores
+        && cx->stores[var->store_nr].live && !cx->stores[var->store_nr].frame_holds
+        && LOFT_KNOWN(cx->stores[var->store_nr]) == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
         && T[tp].n == 1) {
         uint16_t vt = T[tp].fields[0].type;
         uint16_t elem = vt < nt && T[vt].kind == LOFT_T_VECTOR ? T[vt].elem : 0xFFFF;
@@ -6224,7 +6132,7 @@ static void loft_show_dbref(loft_cx *cx, loft_text *s, loft_ref r) {
     uint32_t w[3];
     memcpy(w, loft_at(cx, loft_store_of(cx, r), r.rec, r.pos), 12);
     uint16_t nr = (uint16_t) w[0];
-    if (w[1] == 0 || (nr < loft_nstores && loft_st_is_removed(cx, &loft_stores[nr], w[1]))) {
+    if (w[1] == 0 || (nr < cx->nstores && loft_st_is_removed(cx, &cx->stores[nr], w[1]))) {
         loft_push(cx, s, "null", 4);
     } else if (nr == 0xFFFE || nr == 0xFFFF) {
         loft_push(cx, s, "iterator", 8);
@@ -6286,37 +6194,30 @@ static void loft_show_close_now(loft_cx *cx, loft_text *s, int fmt, int ind, int
 /* `@FR-L-OutOfLine` (ShowDb::write): a chain of out-of-line children renders as a LOOP.  The
  * record whose last field holds a child leaves it in the tail; the closing text of every frame
  * the chain leaves waits on the closer stack until the chain ends. */
-typedef void (*loft_show1_fn)(loft_cx *, loft_text *, loft_ref, int, int);
-typedef struct { uint8_t brace; int fmt, ind, c, any; } loft_show_closer;
-static LOFT_TLS loft_show_closer *loft_closers;
-static LOFT_TLS size_t loft_nclosers, loft_closers_cap;
-static LOFT_TLS loft_show1_fn loft_tail_fn;
-static LOFT_TLS loft_ref loft_tail_ref;
-static LOFT_TLS int loft_tail_ind;
+typedef struct loft_show_closer { uint8_t brace; int fmt, ind, c, any; } loft_show_closer;
 
 static void loft_show_defer(loft_cx *cx, uint8_t brace, int fmt, int ind, int c, int any) {
-    if (loft_nclosers == loft_closers_cap) {
-        loft_closers_cap = loft_closers_cap ? loft_closers_cap * 2 : 64;
-        loft_closers = (loft_show_closer *) realloc(loft_closers, loft_closers_cap * sizeof(loft_show_closer));
-        if (!loft_closers) abort();
+    if (cx->nclosers == cx->closers_cap) {
+        cx->closers_cap = cx->closers_cap ? cx->closers_cap * 2 : 64;
+        cx->closers = (loft_show_closer *) realloc(cx->closers, cx->closers_cap * sizeof(loft_show_closer));
+        if (!cx->closers) abort();
     }
     loft_show_closer k = { brace, fmt, ind, c, any };
-    loft_closers[loft_nclosers++] = k;
+    cx->closers[cx->nclosers++] = k;
 }
 
 static void loft_show_close(loft_cx *cx, loft_text *s, int fmt, int ind, int c, int any) {
-    if (loft_tail_fn) loft_show_defer(cx, 0, fmt, ind, c, any);
+    if (cx->tail_fn) loft_show_defer(cx, 0, fmt, ind, c, any);
     else loft_show_close_now(cx, s, fmt, ind, c, any);
 }
 
 /* A variant's JSON wrapper closing: now, or after a pending chain. */
 static void loft_show_brace(loft_cx *cx, loft_text *s) {
-    if (loft_tail_fn) loft_show_defer(cx, 1, 0, 0, 0, 0);
+    if (cx->tail_fn) loft_show_defer(cx, 1, 0, 0, 0, 0);
     else loft_push_char(cx, s, '}');
 }
 
 /* The reference-render path of a chain (`loft_show_top`, below). */
-static LOFT_TLS int loft_rr_on;
 static void loft_rr_pop(loft_cx *cx);
 static void loft_rr_tail_save(loft_cx *cx);
 static void loft_rr_tail_take(loft_cx *cx);
@@ -6328,27 +6229,27 @@ static void loft_rr_restore(loft_cx *cx, loft_rr_saved *k);
  * field's name is on the reference-render path; a child left for the loop takes it along. */
 static void loft_show_tail(loft_cx *cx, loft_text *s, loft_show1_fn f, loft_ref r, int ind) {
     if (r.rec == 0) { loft_push(cx, s, "null", 4); loft_rr_pop(cx); return; }
-    loft_tail_fn = f;
-    loft_tail_ref = r;
-    loft_tail_ind = ind;
+    cx->tail_fn = f;
+    cx->tail_ref = r;
+    cx->tail_ind = ind;
     loft_rr_tail_save(cx);
 }
 
 static void loft_show_run(loft_cx *cx, loft_text *s, loft_show1_fn f, loft_ref r, int fmt, int ind) {
-    size_t mark = loft_nclosers;
+    size_t mark = cx->nclosers;
     loft_rr_saved saved = { 0, 0, 0, 0 };
-    int track = loft_rr_on;
+    int track = cx->rr_on;
     if (track) saved = loft_rr_save(cx);
     f(cx, s, r, fmt, ind);
-    while (loft_tail_fn) {
-        loft_show1_fn g = loft_tail_fn;
-        loft_tail_fn = 0;
+    while (cx->tail_fn) {
+        loft_show1_fn g = cx->tail_fn;
+        cx->tail_fn = 0;
         loft_rr_tail_take(cx);
-        g(cx, s, loft_tail_ref, fmt, loft_tail_ind);
+        g(cx, s, cx->tail_ref, fmt, cx->tail_ind);
     }
     if (track) loft_rr_restore(cx, &saved);
-    while (loft_nclosers > mark) {
-        loft_show_closer k = loft_closers[--loft_nclosers];
+    while (cx->nclosers > mark) {
+        loft_show_closer k = cx->closers[--cx->nclosers];
         if (k.brace) loft_push_char(cx, s, '}');
         else loft_show_close_now(cx, s, k.fmt, k.ind, k.c, k.any);
     }
@@ -6403,58 +6304,44 @@ static void loft_show_list(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int i
  * along under `$refs`.  The context is per render: the path the walk is at, the pointer of every
  * record it has written (first one wins), and the target of every reference it met — a
  * reference leaves a marker the end of the render patches once every pointer is known.
- * (`loft_rr_on`, the flag every helper asks first, is declared beside the chain loop.) */
-static LOFT_TLS loft_text loft_rr_path;           /* "/leaves/1": the pointer without its '#' */
-static LOFT_TLS size_t *loft_rr_marks;             /* the path's length before each push */
-static LOFT_TLS size_t loft_rr_nmarks, loft_rr_cmarks;
-typedef struct { uint16_t nr; uint32_t rec, pos; size_t at, len; } loft_rr_place;
-static LOFT_TLS loft_rr_place *loft_rr_at;         /* a record's pointer, in loft_rr_pool */
-static LOFT_TLS size_t loft_rr_nat, loft_rr_cat;
-static LOFT_TLS size_t *loft_rr_tab;               /* open-addressed index into loft_rr_at */
-static LOFT_TLS size_t loft_rr_ctab;
-static LOFT_TLS loft_text loft_rr_pool;
-typedef struct { uint16_t nr; uint32_t rec, pos; loft_show_fn f; } loft_rr_target;
-static LOFT_TLS loft_rr_target *loft_rr_t;
-static LOFT_TLS size_t loft_rr_nt, loft_rr_ct;
+ * (`cx->rr_on`, the flag every helper asks first, is declared beside the chain loop.) */
+typedef struct loft_rr_place { uint16_t nr; uint32_t rec, pos; size_t at, len; } loft_rr_place;
+typedef struct loft_rr_target { uint16_t nr; uint32_t rec, pos; loft_show_fn f; } loft_rr_target;
 /* The path an out-of-line child is written at (ShowDb::write's tail_path). */
-static LOFT_TLS loft_text loft_rr_tail_path;
-static LOFT_TLS size_t *loft_rr_tail_marks;
-static LOFT_TLS size_t loft_rr_tail_nmarks;
-static LOFT_TLS int loft_rr_tail_set;
 
 #define LOFT_RR_MARK_OPEN "\001\002R"
 #define LOFT_RR_MARK_CLOSE '\002'
 
 static void loft_rr_push_raw(loft_cx *cx, const char *seg, size_t n) {
-    if (!loft_rr_on) return;
-    if (loft_rr_nmarks == loft_rr_cmarks) {
-        loft_rr_cmarks = loft_rr_cmarks ? loft_rr_cmarks * 2 : 32;
-        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
-        if (!loft_rr_marks) abort();
+    if (!cx->rr_on) return;
+    if (cx->rr_nmarks == cx->rr_cmarks) {
+        cx->rr_cmarks = cx->rr_cmarks ? cx->rr_cmarks * 2 : 32;
+        cx->rr_marks = (size_t *) realloc(cx->rr_marks, cx->rr_cmarks * sizeof(size_t));
+        if (!cx->rr_marks) abort();
     }
-    loft_rr_marks[loft_rr_nmarks++] = loft_rr_path.len;
-    loft_push_char(cx, &loft_rr_path, '/');
+    cx->rr_marks[cx->rr_nmarks++] = cx->rr_path.len;
+    loft_push_char(cx, &cx->rr_path, '/');
     /* RFC 6901: `~` is `~0` and `/` is `~1` inside a segment. */
     for (size_t i = 0; i < n; i++) {
-        if (seg[i] == '~') loft_push(cx, &loft_rr_path, "~0", 2);
-        else if (seg[i] == '/') loft_push(cx, &loft_rr_path, "~1", 2);
-        else loft_push_char(cx, &loft_rr_path, seg[i]);
+        if (seg[i] == '~') loft_push(cx, &cx->rr_path, "~0", 2);
+        else if (seg[i] == '/') loft_push(cx, &cx->rr_path, "~1", 2);
+        else loft_push_char(cx, &cx->rr_path, seg[i]);
     }
 }
 
 static void loft_rr_push(loft_cx *cx, const char *name) {
-    if (loft_rr_on) loft_rr_push_raw(cx, name, strlen(name));
+    if (cx->rr_on) loft_rr_push_raw(cx, name, strlen(name));
 }
 
 static void loft_rr_push_index(loft_cx *cx, uint32_t i) {
-    if (!loft_rr_on) return;
+    if (!cx->rr_on) return;
     char b[16];
     int n = snprintf(b, sizeof b, "%u", (unsigned) i);
     loft_rr_push_raw(cx, b, (size_t) n);
 }
 
 static void loft_rr_pop(loft_cx *cx) {
-    if (loft_rr_on && loft_rr_nmarks) loft_rr_path.len = loft_rr_marks[--loft_rr_nmarks];
+    if (cx->rr_on && cx->rr_nmarks) cx->rr_path.len = cx->rr_marks[--cx->rr_nmarks];
 }
 
 static size_t loft_rr_hash(loft_cx *cx, uint16_t nr, uint32_t rec, uint32_t pos) {
@@ -6467,12 +6354,12 @@ static size_t loft_rr_hash(loft_cx *cx, uint16_t nr, uint32_t rec, uint32_t pos)
 
 /* The pointer recorded for a record, or NULL. */
 static const loft_rr_place *loft_rr_find(loft_cx *cx, uint16_t nr, uint32_t rec, uint32_t pos) {
-    if (!loft_rr_ctab) return 0;
-    size_t m = loft_rr_ctab - 1;
+    if (!cx->rr_ctab) return 0;
+    size_t m = cx->rr_ctab - 1;
     for (size_t i = loft_rr_hash(cx, nr, rec, pos) & m;; i = (i + 1) & m) {
-        size_t k = loft_rr_tab[i];
+        size_t k = cx->rr_tab[i];
         if (k == 0) return 0;
-        const loft_rr_place *p = &loft_rr_at[k - 1];
+        const loft_rr_place *p = &cx->rr_at[k - 1];
         if (p->nr == nr && p->rec == rec && p->pos == pos) return p;
     }
 }
@@ -6480,91 +6367,91 @@ static const loft_rr_place *loft_rr_find(loft_cx *cx, uint16_t nr, uint32_t rec,
 /* Record `r`'s pointer as the path the walk is at, unless it has one: first one wins. */
 static void loft_rr_place_at(loft_cx *cx, uint16_t nr, uint32_t rec, uint32_t pos, const char *p, size_t n) {
     if (loft_rr_find(cx, nr, rec, pos)) return;
-    if (loft_rr_nat == loft_rr_cat) {
-        loft_rr_cat = loft_rr_cat ? loft_rr_cat * 2 : 64;
-        loft_rr_at = (loft_rr_place *) realloc(loft_rr_at, loft_rr_cat * sizeof(loft_rr_place));
-        if (!loft_rr_at) abort();
+    if (cx->rr_nat == cx->rr_cat) {
+        cx->rr_cat = cx->rr_cat ? cx->rr_cat * 2 : 64;
+        cx->rr_at = (loft_rr_place *) realloc(cx->rr_at, cx->rr_cat * sizeof(loft_rr_place));
+        if (!cx->rr_at) abort();
     }
-    if (2 * (loft_rr_nat + 1) > loft_rr_ctab) {
-        size_t c = loft_rr_ctab ? loft_rr_ctab * 2 : 128;
-        free(loft_rr_tab);
-        loft_rr_tab = (size_t *) calloc(c, sizeof(size_t));
-        if (!loft_rr_tab) abort();
-        loft_rr_ctab = c;
-        for (size_t k = 0; k < loft_rr_nat; k++) {
-            size_t i = loft_rr_hash(cx, loft_rr_at[k].nr, loft_rr_at[k].rec, loft_rr_at[k].pos) & (c - 1);
-            while (loft_rr_tab[i]) i = (i + 1) & (c - 1);
-            loft_rr_tab[i] = k + 1;
+    if (2 * (cx->rr_nat + 1) > cx->rr_ctab) {
+        size_t c = cx->rr_ctab ? cx->rr_ctab * 2 : 128;
+        free(cx->rr_tab);
+        cx->rr_tab = (size_t *) calloc(c, sizeof(size_t));
+        if (!cx->rr_tab) abort();
+        cx->rr_ctab = c;
+        for (size_t k = 0; k < cx->rr_nat; k++) {
+            size_t i = loft_rr_hash(cx, cx->rr_at[k].nr, cx->rr_at[k].rec, cx->rr_at[k].pos) & (c - 1);
+            while (cx->rr_tab[i]) i = (i + 1) & (c - 1);
+            cx->rr_tab[i] = k + 1;
         }
     }
-    loft_rr_place e = { nr, rec, pos, loft_rr_pool.len, n };
-    if (n) loft_push(cx, &loft_rr_pool, p, n);
-    loft_rr_at[loft_rr_nat++] = e;
-    size_t i = loft_rr_hash(cx, nr, rec, pos) & (loft_rr_ctab - 1);
-    while (loft_rr_tab[i]) i = (i + 1) & (loft_rr_ctab - 1);
-    loft_rr_tab[i] = loft_rr_nat;
+    loft_rr_place e = { nr, rec, pos, cx->rr_pool.len, n };
+    if (n) loft_push(cx, &cx->rr_pool, p, n);
+    cx->rr_at[cx->rr_nat++] = e;
+    size_t i = loft_rr_hash(cx, nr, rec, pos) & (cx->rr_ctab - 1);
+    while (cx->rr_tab[i]) i = (i + 1) & (cx->rr_ctab - 1);
+    cx->rr_tab[i] = cx->rr_nat;
 }
 
 /* A record of struct or enum type is being written: its pointer is where the walk is. */
 static void loft_rr_record(loft_cx *cx, loft_ref r) {
-    if (loft_rr_on) loft_rr_place_at(cx, r.store_nr, r.rec, r.pos, loft_rr_path.p, loft_rr_path.len);
+    if (cx->rr_on) loft_rr_place_at(cx, r.store_nr, r.rec, r.pos, cx->rr_path.p, cx->rr_path.len);
 }
 
 /* An out-of-line child left for the chain loop is written at the path its field had. */
 static void loft_rr_tail_save(loft_cx *cx) {
-    if (!loft_rr_on) return;
-    loft_rr_tail_path.len = 0;
-    if (loft_rr_path.len) loft_push(cx, &loft_rr_tail_path, loft_rr_path.p, loft_rr_path.len);
-    loft_rr_tail_marks = (size_t *) realloc(loft_rr_tail_marks, (loft_rr_nmarks + 1) * sizeof(size_t));
-    if (!loft_rr_tail_marks) abort();
-    if (loft_rr_nmarks) memcpy(loft_rr_tail_marks, loft_rr_marks, loft_rr_nmarks * sizeof(size_t));
-    loft_rr_tail_nmarks = loft_rr_nmarks;
-    loft_rr_tail_set = 1;
+    if (!cx->rr_on) return;
+    cx->rr_tail_path.len = 0;
+    if (cx->rr_path.len) loft_push(cx, &cx->rr_tail_path, cx->rr_path.p, cx->rr_path.len);
+    cx->rr_tail_marks = (size_t *) realloc(cx->rr_tail_marks, (cx->rr_nmarks + 1) * sizeof(size_t));
+    if (!cx->rr_tail_marks) abort();
+    if (cx->rr_nmarks) memcpy(cx->rr_tail_marks, cx->rr_marks, cx->rr_nmarks * sizeof(size_t));
+    cx->rr_tail_nmarks = cx->rr_nmarks;
+    cx->rr_tail_set = 1;
     loft_rr_pop(cx);
 }
 
 /* The whole path, for a chain loop to put back once its children are written. */
 static loft_rr_saved loft_rr_save(loft_cx *cx) {
-    loft_rr_saved k = { 0, loft_rr_path.len, 0, loft_rr_nmarks };
-    if (loft_rr_path.len) {
-        k.p = (char *) malloc(loft_rr_path.len);
+    loft_rr_saved k = { 0, cx->rr_path.len, 0, cx->rr_nmarks };
+    if (cx->rr_path.len) {
+        k.p = (char *) malloc(cx->rr_path.len);
         if (!k.p) abort();
-        memcpy(k.p, loft_rr_path.p, loft_rr_path.len);
+        memcpy(k.p, cx->rr_path.p, cx->rr_path.len);
     }
-    if (loft_rr_nmarks) {
-        k.marks = (size_t *) malloc(loft_rr_nmarks * sizeof(size_t));
+    if (cx->rr_nmarks) {
+        k.marks = (size_t *) malloc(cx->rr_nmarks * sizeof(size_t));
         if (!k.marks) abort();
-        memcpy(k.marks, loft_rr_marks, loft_rr_nmarks * sizeof(size_t));
+        memcpy(k.marks, cx->rr_marks, cx->rr_nmarks * sizeof(size_t));
     }
     return k;
 }
 
 static void loft_rr_restore(loft_cx *cx, loft_rr_saved *k) {
-    loft_rr_path.len = 0;
-    if (k->len) loft_push(cx, &loft_rr_path, k->p, k->len);
-    if (k->n > loft_rr_cmarks) {
-        loft_rr_cmarks = k->n;
-        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
-        if (!loft_rr_marks) abort();
+    cx->rr_path.len = 0;
+    if (k->len) loft_push(cx, &cx->rr_path, k->p, k->len);
+    if (k->n > cx->rr_cmarks) {
+        cx->rr_cmarks = k->n;
+        cx->rr_marks = (size_t *) realloc(cx->rr_marks, cx->rr_cmarks * sizeof(size_t));
+        if (!cx->rr_marks) abort();
     }
-    if (k->n) memcpy(loft_rr_marks, k->marks, k->n * sizeof(size_t));
-    loft_rr_nmarks = k->n;
+    if (k->n) memcpy(cx->rr_marks, k->marks, k->n * sizeof(size_t));
+    cx->rr_nmarks = k->n;
     free(k->p);
     free(k->marks);
 }
 
 static void loft_rr_tail_take(loft_cx *cx) {
-    if (!loft_rr_on || !loft_rr_tail_set) return;
-    loft_rr_tail_set = 0;
-    loft_rr_path.len = 0;
-    if (loft_rr_tail_path.len) loft_push(cx, &loft_rr_path, loft_rr_tail_path.p, loft_rr_tail_path.len);
-    if (loft_rr_tail_nmarks > loft_rr_cmarks) {
-        loft_rr_cmarks = loft_rr_tail_nmarks;
-        loft_rr_marks = (size_t *) realloc(loft_rr_marks, loft_rr_cmarks * sizeof(size_t));
-        if (!loft_rr_marks) abort();
+    if (!cx->rr_on || !cx->rr_tail_set) return;
+    cx->rr_tail_set = 0;
+    cx->rr_path.len = 0;
+    if (cx->rr_tail_path.len) loft_push(cx, &cx->rr_path, cx->rr_tail_path.p, cx->rr_tail_path.len);
+    if (cx->rr_tail_nmarks > cx->rr_cmarks) {
+        cx->rr_cmarks = cx->rr_tail_nmarks;
+        cx->rr_marks = (size_t *) realloc(cx->rr_marks, cx->rr_cmarks * sizeof(size_t));
+        if (!cx->rr_marks) abort();
     }
-    if (loft_rr_tail_nmarks) memcpy(loft_rr_marks, loft_rr_tail_marks, loft_rr_tail_nmarks * sizeof(size_t));
-    loft_rr_nmarks = loft_rr_tail_nmarks;
+    if (cx->rr_tail_nmarks) memcpy(cx->rr_marks, cx->rr_tail_marks, cx->rr_tail_nmarks * sizeof(size_t));
+    cx->rr_nmarks = cx->rr_tail_nmarks;
 }
 
 /* A stored reference FIELD (ShowDb::write_reference_marker): under a tracking render a live
@@ -6574,63 +6461,63 @@ static void loft_show_ref_field(loft_cx *cx, loft_text *s, loft_ref r, int fmt, 
     uint32_t w[3];
     memcpy(w, loft_at(cx, loft_store_of(cx, r), r.rec, r.pos), 12);
     uint16_t nr = (uint16_t) w[0];
-    if (!loft_rr_on || w[1] == 0 || nr == 0xFFFF || nr == 0xFFFE
-        || (nr < loft_nstores && loft_st_is_removed(cx, &loft_stores[nr], w[1]))) {
+    if (!cx->rr_on || w[1] == 0 || nr == 0xFFFF || nr == 0xFFFE
+        || (nr < cx->nstores && loft_st_is_removed(cx, &cx->stores[nr], w[1]))) {
         (void) fmt; (void) ind;
         loft_show_dbref(cx, s, r);
         return;
     }
-    if (loft_rr_nt == loft_rr_ct) {
-        loft_rr_ct = loft_rr_ct ? loft_rr_ct * 2 : 16;
-        loft_rr_t = (loft_rr_target *) realloc(loft_rr_t, loft_rr_ct * sizeof(loft_rr_target));
-        if (!loft_rr_t) abort();
+    if (cx->rr_nt == cx->rr_ct) {
+        cx->rr_ct = cx->rr_ct ? cx->rr_ct * 2 : 16;
+        cx->rr_t = (loft_rr_target *) realloc(cx->rr_t, cx->rr_ct * sizeof(loft_rr_target));
+        if (!cx->rr_t) abort();
     }
     loft_rr_target t = { nr, w[1], w[2], f };
-    loft_rr_t[loft_rr_nt] = t;
+    cx->rr_t[cx->rr_nt] = t;
     loft_push(cx, s, LOFT_RR_MARK_OPEN, 3);
-    loft_push_i64(cx, s, (int64_t) loft_rr_nt);
+    loft_push_i64(cx, s, (int64_t) cx->rr_nt);
     loft_push_char(cx, s, LOFT_RR_MARK_CLOSE);
-    loft_rr_nt++;
+    cx->rr_nt++;
 }
 
 static void loft_rr_reset(loft_cx *cx) {
-    loft_rr_path.len = 0;
-    loft_rr_nmarks = 0;
-    loft_rr_nat = 0;
-    loft_rr_nt = 0;
-    loft_rr_pool.len = 0;
-    loft_rr_tail_set = 0;
-    if (loft_rr_ctab) memset(loft_rr_tab, 0, loft_rr_ctab * sizeof(size_t));
+    cx->rr_path.len = 0;
+    cx->rr_nmarks = 0;
+    cx->rr_nat = 0;
+    cx->rr_nt = 0;
+    cx->rr_pool.len = 0;
+    cx->rr_tail_set = 0;
+    if (cx->rr_ctab) memset(cx->rr_tab, 0, cx->rr_ctab * sizeof(size_t));
 }
 
 /* Stores::render_top: render `r` by `f` into `s`, references as pointers, the targets the value
  * does not reach under `$refs` (an object gains it as its last member, any other value is
  * wrapped as `{"$value": …, "$refs": […]}`).  A render inside a render writes as before. */
 static void loft_show_top(loft_cx *cx, loft_text *s, loft_show_fn f, loft_ref r, int fmt) {
-    if (loft_rr_on) { f(cx, s, r, fmt, 0); return; }
+    if (cx->rr_on) { f(cx, s, r, fmt, 0); return; }
     loft_rr_reset(cx);
-    loft_rr_on = 1;
+    cx->rr_on = 1;
     int pretty = fmt & 1;
     loft_text body = { 0, 0, 0 };
     f(cx, &body, r, fmt, 0);
     loft_text list = { 0, 0, 0 };
     size_t nrefs = 0;
-    for (size_t k = 0; k < loft_rr_nt; k++) {
-        loft_rr_target t = loft_rr_t[k];
+    for (size_t k = 0; k < cx->rr_nt; k++) {
+        loft_rr_target t = cx->rr_t[k];
         if (!t.f || loft_rr_find(cx, t.nr, t.rec, t.pos)) continue;
-        loft_rr_path.len = 0;
-        loft_rr_nmarks = 0;
+        cx->rr_path.len = 0;
+        cx->rr_nmarks = 0;
         char seg[16];
         int n = snprintf(seg, sizeof seg, "%u", (unsigned) nrefs);
         loft_rr_push_raw(cx, "$refs", 5);
         loft_rr_push_raw(cx, seg, (size_t) n);
-        loft_rr_place_at(cx, t.nr, t.rec, t.pos, loft_rr_path.p, loft_rr_path.len);
+        loft_rr_place_at(cx, t.nr, t.rec, t.pos, cx->rr_path.p, cx->rr_path.len);
         if (nrefs) loft_push_char(cx, &list, ',');
         loft_ref tr = { t.nr, t.rec, t.pos, 0 };
         t.f(cx, &list, tr, fmt, 1);
         nrefs++;
     }
-    loft_rr_on = 0;
+    cx->rr_on = 0;
     int wrapped = 0;
     if (nrefs) {
         loft_text b2 = { 0, 0, 0 };
@@ -6670,11 +6557,11 @@ static void loft_show_top(loft_cx *cx, loft_text *s, loft_show_fn f, loft_ref r,
         loft_push(cx, s, body.p + i, j - i);
         size_t k = 0, e = j + 3;
         while (e < body.len && body.p[e] != LOFT_RR_MARK_CLOSE) k = k * 10 + (size_t) (body.p[e++] - '0');
-        const loft_rr_place *p = k < loft_rr_nt ? loft_rr_find(cx, loft_rr_t[k].nr, loft_rr_t[k].rec, loft_rr_t[k].pos) : 0;
+        const loft_rr_place *p = k < cx->rr_nt ? loft_rr_find(cx, cx->rr_t[k].nr, cx->rr_t[k].rec, cx->rr_t[k].pos) : 0;
         if (!p) {
             loft_push(cx, s, "null", 4);
         } else {
-            const char *pp = p->len ? loft_rr_pool.p + p->at : "";
+            const char *pp = p->len ? cx->rr_pool.p + p->at : "";
             int in_refs = p->len >= 7 && memcmp(pp, "/$refs/", 7) == 0;
             loft_push_cstr(cx, s, "{\"$ref\":\"#");
             if (wrapped && !in_refs) loft_push(cx, s, "/$value", 7);
@@ -6707,24 +6594,22 @@ static loft_ref loft_arguments(loft_cx *cx) {
 
 /* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: a per-thread
  * buffer the appends grow and `pack_take` hands over as a text, bytes verbatim, emptying it. */
-static LOFT_TLS uint8_t *loft_pk_p = 0;
-static LOFT_TLS size_t loft_pk_n = 0, loft_pk_cap = 0;
 static void loft_pk_push(loft_cx *cx, const uint8_t *b, size_t n) {
-    if (loft_pk_n + n > loft_pk_cap) {
-        size_t cap = loft_pk_cap ? loft_pk_cap * 2 : 64;
-        while (cap < loft_pk_n + n) cap *= 2;
-        uint8_t *p = (uint8_t *) realloc(loft_pk_p, cap);
+    if (cx->pk_n + n > cx->pk_cap) {
+        size_t cap = cx->pk_cap ? cx->pk_cap * 2 : 64;
+        while (cap < cx->pk_n + n) cap *= 2;
+        uint8_t *p = (uint8_t *) realloc(cx->pk_p, cap);
         if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-        loft_pk_p = p;
-        loft_pk_cap = cap;
+        cx->pk_p = p;
+        cx->pk_cap = cap;
     }
-    memcpy(loft_pk_p + loft_pk_n, b, n);
-    loft_pk_n += n;
+    memcpy(cx->pk_p + cx->pk_n, b, n);
+    cx->pk_n += n;
 }
-static inline void loft_pack_reset(loft_cx *cx) { loft_pk_n = 0; }
+static inline void loft_pack_reset(loft_cx *cx) { cx->pk_n = 0; }
 static inline void loft_pack_u8(loft_cx *cx, int64_t b) {
-    if (loft_pk_n < loft_pk_cap) {
-        loft_pk_p[loft_pk_n++] = (uint8_t) b;
+    if (cx->pk_n < cx->pk_cap) {
+        cx->pk_p[cx->pk_n++] = (uint8_t) b;
     } else {
         uint8_t x = (uint8_t) b;
         loft_pk_push(cx, &x, 1);
@@ -6739,8 +6624,8 @@ static void loft_pack_u32_le(loft_cx *cx, int64_t v) {
     loft_pk_push(cx, x, 4);
 }
 static loft_text loft_pack_take(loft_cx *cx) {
-    loft_text t = loft_text_own(cx, loft_lit(cx, loft_pk_n ? (const char *) loft_pk_p : "", loft_pk_n));
-    loft_pk_n = 0;
+    loft_text t = loft_text_own(cx, loft_lit(cx, cx->pk_n ? (const char *) cx->pk_p : "", cx->pk_n));
+    cx->pk_n = 0;
     return t;
 }
 /* byte_at(idx, t): the byte at `idx`, or -1 outside the text. */
@@ -7508,9 +7393,7 @@ static int loft_eq_vector(loft_cx *cx, loft_ref a, loft_ref b, uint32_t size, lo
 /* `@FR-L-OutOfLine` (eq_content's `EqState`): the child pairs a comparison has met and not
  * yet compared; `loft_eq_content` compares them as a loop, so a chain of any length takes no
  * stack per link. */
-typedef struct { loft_ref a, b; loft_eq_fn f; } loft_eq_job;
-static LOFT_TLS loft_eq_job *loft_eq_jobs = 0;
-static LOFT_TLS size_t loft_eq_njobs = 0, loft_eq_jobs_cap = 0;
+typedef struct loft_eq_job { loft_ref a, b; loft_eq_fn f; } loft_eq_job;
 
 static int loft_eq_child(loft_cx *cx, loft_ref a, loft_ref b, loft_eq_fn f) {
     int s = loft_eq_start(cx, a, b);
@@ -7518,50 +7401,48 @@ static int loft_eq_child(loft_cx *cx, loft_ref a, loft_ref b, loft_eq_fn f) {
     loft_ref ca = { a.store_nr, loft_u32(cx, loft_store_of(cx, a), a.rec, a.pos), 8, 0 };
     loft_ref cb = { b.store_nr, loft_u32(cx, loft_store_of(cx, b), b.rec, b.pos), 8, 0 };
     if (ca.rec == 0 || cb.rec == 0) return ca.rec == 0 && cb.rec == 0;
-    if (loft_eq_njobs == loft_eq_jobs_cap) {
-        loft_eq_jobs_cap = loft_eq_jobs_cap ? loft_eq_jobs_cap * 2 : 64;
-        loft_eq_jobs = (loft_eq_job *) realloc(loft_eq_jobs, loft_eq_jobs_cap * sizeof *loft_eq_jobs);
-        if (!loft_eq_jobs) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->eq_njobs == cx->eq_jobs_cap) {
+        cx->eq_jobs_cap = cx->eq_jobs_cap ? cx->eq_jobs_cap * 2 : 64;
+        cx->eq_jobs = (loft_eq_job *) realloc(cx->eq_jobs, cx->eq_jobs_cap * sizeof *cx->eq_jobs);
+        if (!cx->eq_jobs) { fputs("loft: out of memory\n", stderr); abort(); }
     }
     loft_eq_job j = { ca, cb, f };
-    loft_eq_jobs[loft_eq_njobs++] = j;
+    cx->eq_jobs[cx->eq_njobs++] = j;
     return 1;
 }
 
 /* The record pairs under comparison: a pair met again is equal, which is where a cycle ends. */
-static LOFT_TLS loft_ref *loft_eq_seen = 0;
-static LOFT_TLS size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
 
 static int loft_eq_reference(loft_cx *cx, loft_ref fa, loft_ref fb, uint16_t target, loft_eq_fn f) {
     loft_ref ra = loft_get_dbref(cx, fa, 0), rb = loft_get_dbref(cx, fb, 0);
     if (ra.rec == 0 || rb.rec == 0) return ra.rec == 0 && rb.rec == 0;
-    for (size_t i = 0; i < loft_eq_seen_n; i += 3) {
-        if (loft_same_place(cx, loft_eq_seen[i], ra) && loft_same_place(cx, loft_eq_seen[i + 1], rb)
-            && loft_eq_seen[i + 2].rec == target) return 1;
+    for (size_t i = 0; i < cx->eq_seen_n; i += 3) {
+        if (loft_same_place(cx, cx->eq_seen[i], ra) && loft_same_place(cx, cx->eq_seen[i + 1], rb)
+            && cx->eq_seen[i + 2].rec == target) return 1;
     }
-    if (loft_eq_seen_n + 3 > loft_eq_seen_cap) {
-        loft_eq_seen_cap = loft_eq_seen_cap ? loft_eq_seen_cap * 2 : 48;
-        loft_eq_seen = (loft_ref *) realloc(loft_eq_seen, loft_eq_seen_cap * sizeof *loft_eq_seen);
-        if (!loft_eq_seen) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->eq_seen_n + 3 > cx->eq_seen_cap) {
+        cx->eq_seen_cap = cx->eq_seen_cap ? cx->eq_seen_cap * 2 : 48;
+        cx->eq_seen = (loft_ref *) realloc(cx->eq_seen, cx->eq_seen_cap * sizeof *cx->eq_seen);
+        if (!cx->eq_seen) { fputs("loft: out of memory\n", stderr); abort(); }
     }
     loft_ref t = { 0, target, 0, 0 };
-    loft_eq_seen[loft_eq_seen_n++] = ra;
-    loft_eq_seen[loft_eq_seen_n++] = rb;
-    loft_eq_seen[loft_eq_seen_n++] = t;
+    cx->eq_seen[cx->eq_seen_n++] = ra;
+    cx->eq_seen[cx->eq_seen_n++] = rb;
+    cx->eq_seen[cx->eq_seen_n++] = t;
     return f(cx, ra, rb);
 }
 
 /* OpEqContent: one comparison, with a list of pairs of its own, its child pairs compared as a
  * loop (`loft_eq_child`). */
 static int loft_eq_content(loft_cx *cx, loft_eq_fn f, loft_ref a, loft_ref b) {
-    loft_eq_seen_n = 0;
-    loft_eq_njobs = 0;
+    cx->eq_seen_n = 0;
+    cx->eq_njobs = 0;
     int r = f(cx, a, b);
-    while (r && loft_eq_njobs > 0) {
-        loft_eq_job j = loft_eq_jobs[--loft_eq_njobs];
+    while (r && cx->eq_njobs > 0) {
+        loft_eq_job j = cx->eq_jobs[--cx->eq_njobs];
         r = j.f(cx, j.a, j.b);
     }
-    loft_eq_njobs = 0;
+    cx->eq_njobs = 0;
     return r;
 }
 
@@ -7793,7 +7674,7 @@ static void loft_vec_slice_view(loft_cx *cx, loft_ref v, loft_ref o, int64_t lo,
 static loft_ref loft_place_record(loft_cx *cx, loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n,
                                   int foreign) {
     loft_ref r = {0};
-    if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= loft_nstores) {
+    if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= cx->nstores) {
         r = loft_ref_null(cx);
         loft_database(cx, &r, size);
     } else {
@@ -7813,13 +7694,13 @@ static loft_ref loft_place_record(loft_cx *cx, loft_ref host, uint16_t tp, uint3
 static void loft_evacuate(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref holder, uint32_t fld, loft_ref home,
                           uint32_t size, const uint8_t *image, uint32_t n, int foreign) {
     if (holder.rec == 0 || holder.store_nr == 0xFFFF || home.store_nr == 0xFFFF
-        || holder.store_nr == home.store_nr || holder.store_nr >= loft_nstores)
+        || holder.store_nr == home.store_nr || holder.store_nr >= cx->nstores)
         return;
     loft_ref old = loft_get_dbref(cx, holder, fld);
     if (old.rec == 0 || old.store_nr != home.store_nr) return;
     loft_ref copy = loft_ref_null(cx);
-    for (uint32_t i = 0; i < loft_nevacs; i++) {
-        loft_evac *e = &loft_evacs[i];
+    for (uint32_t i = 0; i < cx->nevacs; i++) {
+        loft_evac *e = &cx->evacs[i];
         if (e->old.store_nr == old.store_nr && e->old.rec == old.rec && e->old.pos == old.pos
             && e->holder == holder.store_nr) {
             copy = e->copy;
@@ -7831,15 +7712,15 @@ static void loft_evacuate(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_re
         loft_remove_claims(cx, T, tp, copy);
         loft_copy_bytes(cx, copy, 0, old, 0, T[tp].size);
         loft_copy_claims(cx, T, tp, old, copy);
-        if (loft_nevacs == loft_evac_cap) {
-            loft_evac_cap = loft_evac_cap ? loft_evac_cap * 2 : 8;
-            loft_evacs = (loft_evac *) realloc(loft_evacs, loft_evac_cap * sizeof *loft_evacs);
-            if (!loft_evacs) { fputs("loft: out of memory\n", stderr); abort(); }
+        if (cx->nevacs == cx->evac_cap) {
+            cx->evac_cap = cx->evac_cap ? cx->evac_cap * 2 : 8;
+            cx->evacs = (loft_evac *) realloc(cx->evacs, cx->evac_cap * sizeof *cx->evacs);
+            if (!cx->evacs) { fputs("loft: out of memory\n", stderr); abort(); }
         }
-        loft_evacs[loft_nevacs].old = old;
-        loft_evacs[loft_nevacs].holder = holder.store_nr;
-        loft_evacs[loft_nevacs].copy = copy;
-        loft_nevacs++;
+        cx->evacs[cx->nevacs].old = old;
+        cx->evacs[cx->nevacs].holder = holder.store_nr;
+        cx->evacs[cx->nevacs].copy = copy;
+        cx->nevacs++;
     }
     loft_set_dbref(cx, holder, fld, copy);
 }
@@ -7847,13 +7728,13 @@ static void loft_evacuate(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_re
 /* OpFreeRecordIn (Stores::free_record_in): a store's root record frees the store; a placed
  * record releases what it owns and its block goes back to the host's store (`@FR-R-Place`). */
 static void loft_free_record_in(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r) {
-    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= cx->nstores) return;
     if (r.rec == 1 && r.pos == 8) {
         loft_free_ref(cx, r);
         return;
     }
     loft_remove_claims(cx, T, tp, r);
-    loft_st_delete(cx, &loft_stores[r.store_nr], r.rec);
+    loft_st_delete(cx, &cx->stores[r.store_nr], r.rec);
 }
 
 /* OpMoveRecord (Stores::move_record_out, `@FR-R-MoveLast`): the last use of an owned record
@@ -7862,7 +7743,7 @@ static void loft_free_record_in(loft_cx *cx, const loft_tdesc *T, uint16_t tp, l
  * release. */
 static void loft_move_record_out(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst) {
     if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
-    if (src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return;
+    if (src.store_nr >= cx->nstores || dst.store_nr >= cx->nstores) return;
     loft_remove_claims(cx, T, tp, dst);
     loft_copy_bytes(cx, dst, 0, src, 0, T[tp].size);
     if (src.store_nr != dst.store_nr) {
@@ -7870,7 +7751,7 @@ static void loft_move_record_out(loft_cx *cx, const loft_tdesc *T, uint16_t tp, 
         loft_free_record_in(cx, T, tp, src);
         return;
     }
-    loft_st_delete(cx, &loft_stores[src.store_nr], src.rec);
+    loft_st_delete(cx, &cx->stores[src.store_nr], src.rec);
 }
 
 /* OpClear with `@FR-R-Reuse`'s reset flag (Stores::reset_pool_root): a pooled call buffer at its
@@ -7882,8 +7763,8 @@ static int loft_reset_pool_root(loft_cx *cx, loft_ref r, uint16_t tp, uint32_t s
     (void) r; (void) tp; (void) size; (void) image; (void) n;
     return 0;
 #else
-    if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
-    loft_store_t *s = &loft_stores[r.store_nr];
+    if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= cx->nstores) return 0;
+    loft_store_t *s = &cx->stores[r.store_nr];
     if (!s->live || s->pinned || LOFT_KNOWN(*s) != tp || s->frame_holds) return 0;
     /* A locked store is not re-minted, nor one bound to a file or serving foreign bytes: the
      * caller walks. */

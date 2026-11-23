@@ -5,17 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The store context (`loft_cc.h`), named again for the c_emit harness, which compiles this
- * header on its own. */
-typedef struct loft_cx loft_cx;
-/* The store context's body.  @PLN226 P2a threads it through every function that reaches a
- * thread's state while that state still sits where it was; P2b moves the state in. */
-struct loft_cx {
-    int loft_p2a;
-};
-/* The main thread's context: the one `main` hands to everything it calls. */
-static loft_cx loft_main_cx;
-
 /* ── The store allocator ───────────────────────────────────────────────────────────────────
  * A PORT of `src/store.rs`'s allocator, line for line, with every switch at its default: the
  * memory model is loft's, so a store holds the same bytes at the same positions as on the
@@ -257,7 +246,7 @@ typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos
  * a Rust `bool`.  The fields after `hgen` are this runtime's alone.  (`known`: the type of the
  * store's root record, 0xFFFF for none; `protect`: the calls in flight that hold this store as
  * an argument.) */
-typedef struct {
+typedef struct loft_store_t {
     uint8_t *buf;
     uint32_t size;
     uint8_t live;
@@ -307,7 +296,7 @@ typedef struct {
     /* `@PLN206 P3` — a HOSTED unit works on the interpreter's store table: each entry is an
      * interpreter `Store`, whose own fields follow the shared prefix in these bytes, which this
      * runtime never reads or writes.  The host passes their length (`store::HOST_STORE_TAIL`),
-     * so `loft_stores[nr]` is the interpreter's `allocations[nr]`. */
+     * so `cx->stores[nr]` is the interpreter's `allocations[nr]`. */
 #if defined(LOFT_FOREIGN) || defined(LOFT_ALLOC_TRACE)
 #error "a hosted unit keeps no store field of its own: build it without LOFT_FOREIGN and LOFT_ALLOC_TRACE"
 #endif
@@ -352,33 +341,22 @@ static inline uint16_t loft_tp_in(loft_cx *cx, uint16_t t) {
 #define LOFT_KNOWN(st) loft_tp_in(cx, (st).known)
 #define LOFT_SET_KNOWN(st, tp) ((st).known = loft_tp_out(cx, tp))
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-static LOFT_TLS loft_store_t *loft_stores = 0;
-static LOFT_TLS uint32_t loft_nstores = 0;
-static LOFT_TLS uint64_t loft_stores_allocated = 0;
-/* `loft_store_make`'s hint: every slot of `loft_hint_table` under `loft_hint` is live, so the
+/* `loft_store_make`'s hint: every slot of `cx->hint_table` under `cx->hint` is live, so the
  * search for the lowest free slot starts there — the same slot the search from 0 finds, without
  * walking the live ones each time.  A slot freed lowers it (`loft_store_freed`); a table other
  * than the one it was taken on (a `par` worker's, a reallocation) reads it as 0. */
-static LOFT_TLS const loft_store_t *loft_hint_table = 0;
-static LOFT_TLS uint32_t loft_hint = 0;
 
 static inline void loft_store_freed(loft_cx *cx, uint32_t nr) {
-    if (loft_hint_table == loft_stores && nr < loft_hint) loft_hint = nr;
+    if (cx->hint_table == cx->stores && nr < cx->hint) cx->hint = nr;
 }
 
 /* `@FR-R-TableHandle`: store `s` takes a table generation no store has had.  Every path that
  * changes a table's claim, size, slot width, entry kind, seed or entry directory calls it, and so
  * does every path that replaces a store's content: a handle then sees the change at its next use. */
-static LOFT_TLS uint64_t loft_hgen_next = 0;
-static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++loft_hgen_next; }
+static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++cx->hgen_next; }
 
 /* ── The heap ceiling (store_budget.rs) ──────────────────────────────────────────────────
- * `loft_heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
+ * `cx->heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
  * `loft_heap_limit` (0: none, the default).  Every site that sizes a store's buffer calls
  * `loft_heap_moved` with the buffer's old and new word counts BEFORE it allocates, so a growth
  * that would cross the ceiling stops the run with the store as it was, and the report names the
@@ -387,7 +365,6 @@ static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++l
 static const char *const *loft_tn = 0;
 static uint32_t loft_ntn = 0;
 /* Each thread counts its own stores' bytes; the limit is the program's. */
-static LOFT_TLS uint64_t loft_heap_total = 0;
 static uint64_t loft_heap_limit = 0;
 
 static void loft_heap_human(loft_cx *cx, char *out, uint64_t b) {
@@ -437,13 +414,13 @@ static void loft_heap_moved(loft_cx *cx, const loft_store_t *s, uint32_t old_wor
     uint64_t old_b = (uint64_t) old_words * 8, new_b = (uint64_t) new_words * 8;
     if (new_b <= old_b) {
         uint64_t freed = old_b - new_b;
-        loft_heap_total = loft_heap_total > freed ? loft_heap_total - freed : 0;
+        cx->heap_total = cx->heap_total > freed ? cx->heap_total - freed : 0;
         return;
     }
-    if (loft_heap_limit && loft_heap_total + (new_b - old_b) > loft_heap_limit) {
+    if (loft_heap_limit && cx->heap_total + (new_b - old_b) > loft_heap_limit) {
         char used[32], cap[32], from[32], to[32];
         uint16_t kt = LOFT_KNOWN(*s);
-        loft_heap_human(cx, used, loft_heap_total);
+        loft_heap_human(cx, used, cx->heap_total);
         loft_heap_human(cx, cap, loft_heap_limit);
         loft_heap_human(cx, from, old_b);
         loft_heap_human(cx, to, new_b);
@@ -456,7 +433,7 @@ static void loft_heap_moved(loft_cx *cx, const loft_store_t *s, uint32_t old_wor
         fputs("\n  Raise or remove the limit with LOFT_MEMORY_LIMIT=<size|0>, e.g. 8G.\n", stderr);
         LOFT_EXIT(101);
     }
-    loft_heap_total += new_b - old_b;
+    cx->heap_total += new_b - old_b;
 }
 
 #ifdef LOFT_ALLOC_TRACE
@@ -484,7 +461,6 @@ static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);
  * that made it (`trace_worker`), and the trace names it `<worker>.<serial>` as the
  * interpreter's does — one name per store however threads interleave, and after its adoption
  * into the caller's table. */
-static LOFT_TLS uint32_t loft_trace_worker = 0;
 /* One event, written whole (its line formatted first). */
 static void loft_trace_emit(loft_cx *cx, FILE *f, const char *line) {
     if (loft_trace_site_hook) loft_trace_site_hook(cx, f);
@@ -493,12 +469,11 @@ static void loft_trace_emit(loft_cx *cx, FILE *f, const char *line) {
 /* A store's name in the trace: its serial, prefixed with the worker that made it
  * (`Store::trace_name`).  One buffer per thread, read before the next call. */
 static const char *loft_trace_name(loft_cx *cx, const loft_store_t *s) {
-    static LOFT_TLS char loft_tn_[48];
     if (s->trace_worker)
-        snprintf(loft_tn_, sizeof loft_tn_, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
+        snprintf(cx->trace_name_buf, sizeof cx->trace_name_buf, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
     else
-        snprintf(loft_tn_, sizeof loft_tn_, "%llu", (unsigned long long) s->serial);
-    return loft_tn_;
+        snprintf(cx->trace_name_buf, sizeof cx->trace_name_buf, "%llu", (unsigned long long) s->serial);
+    return cx->trace_name_buf;
 }
 /* A `par` region's bounds (`P`, `Q`), marked where the loop's queue starts and its buffer is
  * dropped, as the interpreter marks them (`store_census::par_mark`); usable in an expression. */

@@ -251,7 +251,8 @@ pub(crate) fn crossings(program: &str) -> BTreeMap<Entry, u32> {
                     function: function.to_string(),
                     class: class_of(callee),
                     what: if class_of(callee) == "value" {
-                        conv.trim_end_matches(['(', ' ']).to_string()
+                        // The conversion's own name: `loft_w64(cx, ` is `loft_w64`.
+                        conv.split('(').next().unwrap_or(conv).trim_end().to_string()
                     } else {
                         callee.to_string()
                     },

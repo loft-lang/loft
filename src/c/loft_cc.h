@@ -20,11 +20,6 @@
 #ifndef LOFT_CC_H
 #define LOFT_CC_H
 
-/* The store context (@PLN226): what a thread of the program owns — the store table it reads
- * and makes stores in, its frames, its fault state.  The main thread has one; a `par` worker is
- * handed its own, made before it starts.  Every function that reaches it takes it first, as
- * `cx`, and passes it on: nothing reaches a thread's state any other way. */
-typedef struct loft_cx loft_cx;
 
 /* The OS the unit asks for (`LOFT_POSIX`, `LOFT_POSIX_HOST`) is `loft_os.h`'s, the unit's first
  * text: a request after a system header is not heard. */

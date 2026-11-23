@@ -249,7 +249,7 @@ static int loft_bt_full(loft_cx *cx, const loft_bt_probe *p, uint32_t rec, const
         loft_ref mine = { p->store_nr, p->rec, 8, 0 };
         return loft_key_cmp_refs(cx, mine, other, keys, nk);
     }
-    return loft_key_cmp_val(cx, p->kv, p->n, loft_stores + p->store_nr, rec, 8, keys);
+    return loft_key_cmp_val(cx, p->kv, p->n, cx->stores + p->store_nr, rec, 8, keys);
 }
 
 /* The leading `skip` bytes of word `k` of `bytes`, the rest zero. */

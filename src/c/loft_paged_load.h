@@ -28,14 +28,14 @@ static int loft_net_gate(loft_cx *cx, const char *u, const loft_sidecar *sc, con
  * gated by its fetched sidecar (`check_sidecar`) and read by range. */
 static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path, const loft_sidecar *sc, const char *refusal) {
     memset(r, 0, sizeof *r);
-    if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores) return 0;
+    if (local.store_nr == 0xFFFF || local.store_nr >= cx->nstores) return 0;
     char *p = loft_cpath(cx, path, 0);
     int url = loft_pg_is_url(cx, p);
     if (!url && loft_path_refused(cx, path)) {
         free(p);
         return 0;
     }
-    uint16_t known = LOFT_KNOWN(loft_stores[local.store_nr]);
+    uint16_t known = LOFT_KNOWN(cx->stores[local.store_nr]);
     char err[1100];
     loft_gate_paged = 1;
     loft_gate_trie_v1 = 0;
@@ -178,7 +178,7 @@ static uint32_t loft_pg_copy_flat(loft_cx *cx, loft_pg *r, uint16_t store_nr, ui
         uint64_t words = (8 + (uint64_t) len * esize + 7) / 8;
         if (words < ssz) want = (uint32_t) words;
     }
-    loft_store_t *s = &loft_stores[store_nr];
+    loft_store_t *s = &cx->stores[store_nr];
     uint32_t nrec = loft_st_claim(cx, s, want < 2 ? 2 : want);
     loft_zero_fill(cx, s, nrec);
     size_t body = want * 8 > 4 ? (size_t) want * 8 - 4 : 0;
@@ -210,24 +210,24 @@ static void loft_pg_relocate(loft_cx *cx, loft_pg *r, const loft_tdesc *T, uint1
         const loft_tdesc *ft = &T[f->type];
         uint32_t at = dst_fb + f->pos, sub, nrec;
         if (ft->kind == LOFT_T_TEXT || (ft->kind == LOFT_T_VECTOR && T[ft->elem].kind == LOFT_T_SCALAR)) {
-            sub = loft_u32(cx, &loft_stores[store_nr], dst_rec, at);
+            sub = loft_u32(cx, &cx->stores[store_nr], dst_rec, at);
             if (sub != 0) {
                 nrec = loft_pg_copy_flat(cx, r, store_nr, sub, ft->kind == LOFT_T_TEXT ? 1 : T[ft->elem].size);
-                loft_set_u32(cx, &loft_stores[store_nr], dst_rec, at, nrec);
+                loft_set_u32(cx, &cx->stores[store_nr], dst_rec, at, nrec);
             }
         } else if (ft->kind == LOFT_T_STRUCT) {
             loft_pg_relocate(cx, r, T, store_nr, dst_rec, at, f->type);
         } else if (ft->kind == LOFT_T_ENUM) {
             /* An enum: its tag byte (1 is the first variant, 0 null), and a struct-enum
              * variant's payload at the same position, as `copy_claims` walks it. */
-            int e = (int) *loft_at(cx, &loft_stores[store_nr], dst_rec, at) - 1;
+            int e = (int) *loft_at(cx, &cx->stores[store_nr], dst_rec, at) - 1;
             if (e >= 0 && e < (int) ft->n && ft->variants[e] != 0xFFFF)
                 loft_pg_relocate(cx, r, T, store_nr, dst_rec, at, ft->variants[e]);
         } else if (ft->kind == LOFT_T_VECTOR) {
-            sub = loft_u32(cx, &loft_stores[store_nr], dst_rec, at);
+            sub = loft_u32(cx, &cx->stores[store_nr], dst_rec, at);
             if (sub != 0) {
                 nrec = loft_pg_copy_vector(cx, r, T, store_nr, sub, ft->elem);
-                loft_set_u32(cx, &loft_stores[store_nr], dst_rec, at, nrec);
+                loft_set_u32(cx, &cx->stores[store_nr], dst_rec, at, nrec);
             }
         }
     }
@@ -248,7 +248,7 @@ static uint32_t loft_pg_copy_vector(loft_cx *cx, loft_pg *r, const loft_tdesc *T
  * relocated, and filed by the collection's own insert. */
 static int loft_pg_copy_entry(loft_cx *cx, loft_pg *r, const loft_tdesc *T, loft_ref local, uint16_t content, const loft_key *keys,
                               int nk, int kind, uint32_t src_rec, uint32_t src_pos) {
-    loft_store_t *s = &loft_stores[local.store_nr];
+    loft_store_t *s = &cx->stores[local.store_nr];
     uint32_t bytes;
     loft_ref e = {0};
     if (kind == LOFT_PG_HASH) {
@@ -432,7 +432,7 @@ static int64_t loft_pg_load_range(loft_cx *cx, const loft_tdesc *T, loft_ref loc
         }
         count = (uint32_t) at.n;
         if (count != 0) {
-            loft_store_t *s = &loft_stores[local.store_nr];
+            loft_store_t *s = &cx->stores[local.store_nr];
             uint32_t words = (8 + count * esize + 7) / 8, vec;
             vec = loft_st_claim(cx, s, words < 2 ? 2 : words);
             loft_zero_fill(cx, s, vec);

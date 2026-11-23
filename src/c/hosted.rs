@@ -5,7 +5,7 @@
 //! `@PLN206 P4` — a HOSTED unit: a library's functions as C that the interpreter adopts, working
 //! on the interpreter's own stores (`doc/claude/plans/206-one-store-model/p3-p4-design.md`).
 //!
-//! The unit is an ordinary one (`emit_unit`) built with `LOFT_HOSTED`: its `loft_stores` is the
+//! The unit is an ordinary one (`emit_unit`) built with `LOFT_HOSTED`: its `cx->stores` is the
 //! interpreter's table, a store's birth and death are the interpreter's (`HostedTable`), and
 //! everything inside a store it does itself on the shared `loft_store_t` prefix.  It exports the
 //! interface a rustc artifact exports, so the interpreter's dispatch is the same: one
@@ -94,10 +94,10 @@ static loft_ref loft_la_ref(loft_cx *cx, const unsigned char *a, size_t i) {
 /* The reference a `&` argument's slot holds: the caller's variable, on the interpreter's
  * stack, in its own layout — not a record field's. */
 static loft_ref loft_slot_ref(loft_cx *cx, loft_ref at, uint32_t fld) {
-    return loft_db_read(cx, loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld);
+    return loft_db_read(cx, cx->stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld);
 }
 static void loft_slot_set_ref(loft_cx *cx, loft_ref at, uint32_t fld, loft_ref r) {
-    loft_db_write(cx, loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
+    loft_db_write(cx, cx->stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
 }
 /* A function value the interpreter hands in, numbered as the unit's values are: by the
  * interpreter (`loft_fhost`). */
@@ -117,8 +117,8 @@ static void loft_la_set_bits(loft_cx *cx, unsigned char *a, int64_t v) {
     memcpy(a + LOFT_LA_SCALAR, &v, 8);
 }
 /* A text answer: its bytes, valid until the unit's next call — the dispatcher copies them at
- * once.  The text a function answers, owned: held until the unit's next text answer. */
-static LOFT_TLS loft_text loft_br_answer;
+ * once.  The text a function answers is owned by the calling thread's context (`cx->br_answer`),
+ * held until its next text answer. */
 static const char loft_br_empty[1] = { 0 };
 static void loft_la_set_text(loft_cx *cx, unsigned char *a, loft_str s) {
     const char *p = s.len ? s.p : loft_br_empty;
@@ -134,11 +134,11 @@ static void loft_la_set_ref(loft_cx *cx, unsigned char *a, loft_ref r) {
  * library again) restores the outer one's on the way out. */
 static int loft_hosted_ready = 0;
 static void *loft_host_enter(loft_cx *cx, void *stores) {
-    void *prev = loft_host_stores;
+    void *prev = cx->host_stores;
     /* A store parked for a function's next call would outlive the bridge call in a slot the
      * interpreter never sees, and no program end drains it: a unit frees what it would park. */
-    loft_no_park = 1;
-    loft_host_stores = stores;
+    cx->no_park = 1;
+    cx->host_stores = stores;
     loft_host_sync(cx);
     if (!loft_hosted_ready) {
         loft_hosted_ready = 1;
@@ -164,33 +164,52 @@ static void *loft_host_enter(loft_cx *cx, void *stores) {
  * must report. */
 static void loft_hosted_plant(loft_cx *cx, loft_ref r) {
     static int planted = 0;
-    if (planted || r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return;
-    if (r.rec >= loft_stores[r.store_nr].size) return;
+    if (planted || r.store_nr >= cx->nstores || r.rec == 0 || !cx->stores[r.store_nr].live) return;
+    if (r.rec >= cx->stores[r.store_nr].size) return;
     planted = 1;
-    loft_stores[r.store_nr].buf[(size_t) r.rec * 8 + r.pos] ^= 0x5A;
+    cx->stores[r.store_nr].buf[(size_t) r.rec * 8 + r.pos] ^= 0x5A;
 }
 #endif
 static void loft_host_leave(loft_cx *cx, void *prev) {
-    loft_host_stores = prev;
+    cx->host_stores = prev;
     if (prev) loft_host_sync(cx);
+}
+
+/* `@PLN226` — the context a bridge call works in: the calling interpreter thread's, kept in the
+ * `Stores` it hands (`HostedTable::cx_of`), made the first time that `Stores` calls in and ended
+ * when it drops.  A `par` worker's `Stores` is its own, and so is its context here. */
+static const char loft_host_unit = 0;
+static void *loft_host_cx_make(void) {
+    loft_cx *cx = (loft_cx *) malloc(sizeof *cx);
+    if (!cx) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_cx_fresh(cx);
+    return cx;
+}
+static void loft_host_cx_end(void *p) {
+    loft_cx *cx = (loft_cx *) p;
+    loft_text_free(cx, &cx->br_answer);
+    loft_text_free(cx, &cx->gen_text);
+    loft_cx_end(cx);
+    free(p);
+}
+static loft_cx *loft_host_cx(void *stores) {
+    return (loft_cx *) loft_hosted->cx_of(stores, &loft_host_unit, loft_host_cx_make, loft_host_cx_end);
 }
 
 /* `@PLN206` — a generator the unit made, driven by the interpreter (`HostedTable::gen_adopt`):
  * one step of the frame in `slot`, its value of `kind` (0 integer, 1 float, 2 text, 3
  * reference, 4 boolean) in `out`; 1 when it yielded, 0 when it ran to its end. */
-static LOFT_TLS loft_text loft_gen_text;
 __attribute__((visibility("default"))) uint32_t loft_shared_gen_next(void *loft_st, uint32_t slot, uint32_t kind, unsigned char *out) {
-    /* @PLN226 P2b: the context of the interpreter thread that calls, from `loft_st`. */
-    loft_cx *cx = &loft_main_cx;
+    loft_cx *cx = loft_host_cx(loft_st);
     void *prev = loft_host_enter(cx, loft_st);
     loft_ref g = { 0xFFFE, slot, 0, 0 };
     loft_gen_slot *s = loft_gen_of(cx, g);
     uint32_t got = 0;
     if (s && !((loft_gen_head *) s->frame)->done) {
         if (kind == 2) {
-            loft_text_set(cx, &loft_gen_text, loft_null_text(cx));
-            s->resume(cx, s->frame, &loft_gen_text);
-            loft_la_set_text(cx, out, loft_view(cx, &loft_gen_text));
+            loft_text_set(cx, &cx->gen_text, loft_null_text(cx));
+            s->resume(cx, s->frame, &cx->gen_text);
+            loft_la_set_text(cx, out, loft_view(cx, &cx->gen_text));
         } else if (kind == 3) {
             loft_ref v = loft_ref_null(cx);
             s->resume(cx, s->frame, &v);
@@ -216,8 +235,7 @@ __attribute__((visibility("default"))) uint32_t loft_shared_gen_next(void *loft_
     return got;
 }
 __attribute__((visibility("default"))) void loft_shared_gen_free(void *loft_st, uint32_t slot) {
-    /* @PLN226 P2b: the context of the interpreter thread that calls, from `loft_st`. */
-    loft_cx *cx = &loft_main_cx;
+    loft_cx *cx = loft_host_cx(loft_st);
     void *prev = loft_host_enter(cx, loft_st);
     loft_ref g = { 0xFFFE, slot, 0, 0 };
     loft_gen_free(cx, g);
@@ -425,8 +443,8 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         // A text answer crosses as its bytes, which the dispatcher copies into the caller's
         // destination at once (`extensions::shared_store_dispatch_raw`).
         CType::Text => format!(
-            "    loft_text_free(cx, &loft_br_answer);\n    loft_br_answer = {call};\n    \
-             loft_la_set_text(cx, loft_r, loft_view(cx, &loft_br_answer));\n"
+            "    loft_text_free(cx, &cx->br_answer);\n    cx->br_answer = {call};\n    \
+             loft_la_set_text(cx, loft_r, loft_view(cx, &cx->br_answer));\n"
         ),
         _ => return Err("a result of a shape the bridge does not carry".into()),
     };
@@ -438,11 +456,10 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     }
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         /* @PLN226 P2b: the context of the interpreter thread that calls, from `loft_st`. */\n    \
-         loft_cx *cx = &loft_main_cx;\n    void *loft_prev = loft_host_enter(cx, loft_st);\n    (void) loft_n;\n    \
-         uint32_t loft_bhd = loft_br_hdepth;\n    int loft_bho = loft_ho_off;\n    \
-         loft_br_hdepth = LOFT_HDEPTH;\n    loft_ho_off = 0;\n\
-         {held}{places}{store}{back}{freed}{plant}    loft_br_hdepth = loft_bhd;\n    loft_ho_off = loft_bho;\n    loft_host_leave(cx, loft_prev);\n}}\n"
+         loft_cx *cx = loft_host_cx(loft_st);\n    void *loft_prev = loft_host_enter(cx, loft_st);\n    (void) loft_n;\n    \
+         uint32_t loft_bhd = cx->br_hdepth;\n    int loft_bho = cx->ho_off;\n    \
+         cx->br_hdepth = LOFT_HDEPTH;\n    cx->ho_off = 0;\n\
+         {held}{places}{store}{back}{freed}{plant}    cx->br_hdepth = loft_bhd;\n    cx->ho_off = loft_bho;\n    loft_host_leave(cx, loft_prev);\n}}\n"
     ))
 }
 

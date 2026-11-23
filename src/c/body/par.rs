@@ -170,7 +170,7 @@ impl FnWriter<'_> {
             // A result is ADOPTED when the worker made its store (`n_parallel_buf_drop_ref`
             // frees only those); a pass-through of the element names the source's.
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_b[loft_i].r = {call}; \
                  loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}"
             ),
             CType::Fn => format!("loft_b[loft_i].fn = {call};"),
@@ -320,7 +320,7 @@ impl FnWriter<'_> {
                 )
             }
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; \
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_ref loft_r = {call}; \
                  if (loft_fnref_minted(cx, loft_r, loft_s, loft_ref_null(cx))) loft_free_ref(cx, loft_r); }}"
             ),
             _ => format!("(void) {call};"),
@@ -366,7 +366,7 @@ impl FnWriter<'_> {
             CType::Text => format!("loft_b[loft_i].t = {call};"),
             // As the in-order route: the row's own store is ADOPTED when the worker made it.
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_b[loft_i].r = {call}; \
                  loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}"
             ),
             _ => format!("{call};"),

@@ -1660,7 +1660,7 @@ static void loft_sw_remove_snapshot(loft_cx *cx, const char *snap) {
 /* `swap_world(w)`: register `w` as the snapshot root and, in a swap target, restore the previous
  * build's world into it in place; 1 when a restore happened. */
 static uint8_t loft_swap_world(loft_cx *cx, loft_ref w, const loft_sidecar *sc, loft_swap_show_fn show) {
-    uint16_t kt = w.store_nr < loft_nstores ? LOFT_KNOWN(loft_stores[w.store_nr]) : 0xFFFF;
+    uint16_t kt = w.store_nr < cx->nstores ? LOFT_KNOWN(cx->stores[w.store_nr]) : 0xFFFF;
     if (w.store_nr == 0xFFFF || kt == 0xFFFF) {
         fputs("loft-swap: swap_world got a record with no known type; swaps disabled\n", stderr);
         return 0;
@@ -1742,7 +1742,7 @@ static uint8_t loft_swap_world_untyped(loft_cx *cx, loft_ref w) { return loft_sw
  * store of its own (`LOFT_NO_SWAP_IMAGE` sends it as JSON), else as JSON; the path, malloc'd. */
 static char *loft_sw_snapshot(loft_cx *cx, const char *base) {
     loft_ref w = loft_sw.w;
-    int own = w.store_nr < loft_nstores && LOFT_KNOWN(loft_stores[w.store_nr]) == loft_sw.tp;
+    int own = w.store_nr < cx->nstores && LOFT_KNOWN(cx->stores[w.store_nr]) == loft_sw.tp;
     if (own && !getenv("LOFT_NO_SWAP_IMAGE")) {
         if (loft_sw.sc) {
             char *snap = loft_sw_join(cx, base, ".snap.store");
@@ -2212,6 +2212,7 @@ static void loft_eh_http_run(loft_cx *cx, loft_eh_req *q) {
     free(q->url);
     free(q->body);
     free(q->headers);
+    loft_cx_end(cx);
     free(q);
 }
 
@@ -2237,6 +2238,8 @@ static int64_t loft_kernel_http_fetch(loft_cx *cx, loft_str method, loft_str url
 #if defined(LOFT_SOCKETS) && defined(LOFT_EH_THREADS)
     loft_eh_req *q = (loft_eh_req *) malloc(sizeof *q);
     if (!q) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* The worker's context, made before its thread starts: it reaches no store, only texts. */
+    loft_cx_fresh(&q->cx);
     q->id = id;
     q->method = loft_cstr_own(cx, method);
     q->url = loft_cstr_own(cx, url);
