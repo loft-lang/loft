@@ -131,6 +131,22 @@ static void loft_host_leave(void *prev) {
 }
 ";
 
+/// The C value of argument slot `slot` read as shape `c`, when one slot carries it.
+fn slot_arg(c: CType, slot: usize) -> Option<String> {
+    let bits = format!("loft_la_bits(loft_a, {slot})");
+    Some(match c {
+        CType::Int => bits,
+        CType::Int32 => format!("(int32_t) {bits}"),
+        CType::Float => format!("loft_f64({bits})"),
+        CType::Single => format!("loft_f32((uint32_t) {bits})"),
+        CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
+        CType::Char => format!("(uint32_t) {bits}"),
+        CType::Ref => format!("loft_la_ref(loft_a, {slot})"),
+        CType::Text => format!("loft_la_text(loft_a, {slot})"),
+        _ => return None,
+    })
+}
+
 /// The bridge of function `d` under `symbol`, or why the C bridge does not carry it yet.
 fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let data = cx.data;
@@ -155,7 +171,9 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     // outer call's.
     let mut work = 0usize;
     let mut slot = 0usize;
-    for a in def.attributes() {
+    // The tuple parameters the function takes by address (`@FR-R-ValueRecord`'s pointer clause).
+    let by_address = cx.vr_ptr_params(d);
+    for (i, a) in def.attributes().iter().enumerate() {
         let kind = crate::native_gate::classify_bridge_attr(a, ret_text)
             .ok_or_else(|| format!("parameter `{}` crosses no bridge", a.name))?;
         match kind {
@@ -183,23 +201,25 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                 let c = cx
                     .ctype(&a.typedef)
                     .ok_or_else(|| format!("parameter `{}` has no C shape", a.name))?;
-                let bits = format!("loft_la_bits(loft_a, {slot})");
-                args.push(match c {
-                    CType::Int => bits,
-                    CType::Int32 => format!("(int32_t) {bits}"),
-                    CType::Float => format!("loft_f64({bits})"),
-                    CType::Single => format!("loft_f32((uint32_t) {bits})"),
-                    CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
-                    CType::Char => format!("(uint32_t) {bits}"),
-                    CType::Ref => format!("loft_la_ref(loft_a, {slot})"),
-                    CType::Text => format!("loft_la_text(loft_a, {slot})"),
-                    _ => {
-                        return Err(format!(
-                            "parameter `{}` of a shape the bridge does not carry",
-                            a.name
-                        ));
+                let unc = || format!("parameter `{}` of a shape the bridge does not carry", a.name);
+                // A tuple crosses as its leaves, one slot each in element order, as the
+                // dispatcher pops them (`SharedSig::pops`): the C tuple is built from them.
+                if let CType::Tuple(id) = c {
+                    let shapes = cx.tuples.borrow()[id as usize].clone();
+                    let mut leaves = Vec::new();
+                    for leaf in &shapes {
+                        // A text leaf is the tuple's own `loft_text`, not a view of the slot.
+                        if *leaf == CType::Text {
+                            return Err(unc());
+                        }
+                        leaves.push(slot_arg(*leaf, slot).ok_or_else(unc)?);
+                        slot += 1;
                     }
-                });
+                    let amp = if by_address.contains(&i) { "&" } else { "" };
+                    args.push(format!("{amp}(loft_tup{id}) {{ {} }}", leaves.join(", ")));
+                    continue;
+                }
+                args.push(slot_arg(c, slot).ok_or_else(unc)?);
                 slot += 1;
             }
         }

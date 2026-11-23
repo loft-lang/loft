@@ -73,6 +73,11 @@ pub fn rename(self: Bag, n: text) {
   self.name = n;
 }
 
+// A tuple argument: its leaves cross one slot each, and the unit builds its own tuple.
+pub fn spread(p: (integer, float, boolean), k: integer) -> float {
+  if p.2 { (p.0 * k) as float * p.1 } else { 0.0 - p.1 }
+}
+
 // An exponential decay: `exp` is one routine on every route — as a power of E, the unit's C
 // `pow`, a compiled `powf` and the interpreter answered up to two units in the last place apart.
 pub fn decay(fall: float) -> float {
