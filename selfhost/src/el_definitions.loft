@@ -1614,6 +1614,22 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    // `tuple_carries_heap`: a tuple parameter holding a collection is read through its own
+    // `__tp_<name>` from the first statement on (made at the start of the first pass, before the body,
+    // as Rust's `parse_function` makes it: the body's mentions of the name read the shadow).
+    if e.first_pass {
+      for ha in arguments {
+        hv = el_vars::var(vars, ha.name);
+        match ha.typedef {
+          TyTuple { elems: hpe } => {
+            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector || el_types::base(hm) is TyReference) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
+              el_vars::promote_tuple_param(vars, hv);
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     // `@FR-F-ParamTuple`: on pass 2 a record-carrying tuple shadow's copy seed is built before
     // the body (`tuple_whole_bind_copy`), its `__ref_p2_N` numbered first, as Rust's is — and
     // minted even where the body only reads and the seed is the plain alias.
@@ -1628,6 +1644,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
                 vars.tp_seed_shadows += [tsh];
                 vars.tp_seed_codes += [tpc!.code];
                 vars.tp_seed_types += [tpc!.tp];
+                // (The shadow takes the COPY's type before the body is read, as Rust's
+                // `set_type(shadow, owned)` does: the body is decided against a shadow borrowing
+                // the seed's `__ref_p2_N`; the finish retypes it to the view where the body only
+                // reads it.  A rule of decision order — the selector sees the seed Rust has.)
+                el_vars::set_var_type(vars, tsh, tpc!.tp);
               }
             }
           },
@@ -1706,21 +1727,6 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.bodies2 += [e.context];
     }
   }
-    // `tuple_carries_heap`: a tuple parameter holding a collection is read through its own
-    // `__tp_<name>` from the first statement on (made after the parameters, on the first pass).
-    if e.first_pass {
-      for ha in arguments {
-        hv = el_vars::var(vars, ha.name);
-        match ha.typedef {
-          TyTuple { elems: hpe } => {
-            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector || el_types::base(hm) is TyReference) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
-              el_vars::promote_tuple_param(vars, hv);
-            }
-          },
-          _ => {}
-        }
-      }
-    }
   if e.first_pass {
     for s in el_vars::minted_parameters(vars) {
       e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];
