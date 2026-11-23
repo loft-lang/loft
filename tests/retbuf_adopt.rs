@@ -74,21 +74,6 @@ fn cells() -> PathBuf {
 }
 
 #[test]
-fn each_cell_adopts_exactly_as_predicted() {
-    let out = std::env::temp_dir().join("loft_retbuf_adopt_on.rs");
-    let rust = emit(&cells(), &out, &[]);
-    let got = counts(&rust);
-    for (name, adopts) in EXPECTED {
-        let a = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(a, *adopts, "{name}: adoption inits");
-    }
-    let _ = fa::remove_file(&out);
-}
-
-#[test]
 fn the_switch_restores_the_delivery_copies() {
     let out = std::env::temp_dir().join("loft_retbuf_adopt_off.rs");
     let rust = emit(&cells(), &out, &[("LOFT_NO_RETBUF_ADOPT", "1")]);

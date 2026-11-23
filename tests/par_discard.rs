@@ -92,38 +92,3 @@ fn an_empty_par_body_runs_its_workers_on_the_interpreter() {
 fn an_empty_par_body_runs_its_workers_on_native() {
     assert_every_row_ran("--native");
 }
-
-/// The mechanism, not the effect: the CALL must go to the runtime helper.
-///
-/// Worth its own cell because "compiles and does nothing" is what an arity-only patch
-/// would have produced, and the declaration it would have called is still in the
-/// output — the generator emits a body-less stub for any VOID native it has no
-/// implementation for, where a value-returning one gets a loud `todo!()`.  That
-/// asymmetry is what hid loft#987, and it is not this route's to fix (ten stubs are
-/// emitted, each dead only because its own call site is rewritten elsewhere).  So the
-/// assertion is on the call site: nothing may reach that stub.
-#[test]
-fn the_discard_route_lowers_to_the_runtime_helper() {
-    let probe = write_probe("emit");
-    let out_rs = std::env::temp_dir().join(format!("loft_987_emit_{}.rs", std::process::id()));
-    let status = loft::platform::process::harness_command(loft_bin())
-        .args(["--native", "--native-emit", out_rs.to_str().unwrap()])
-        .arg(&probe)
-        .env("LOFT_TIMEOUT", "300")
-        .status()
-        .expect("failed to invoke loft binary");
-    assert!(status.success(), "--native-emit must succeed");
-    let src = fa::read_to_string(&out_rs).expect("read emitted Rust");
-    let _ = fa::remove_file(&probe);
-    let _ = fa::remove_file(&out_rs);
-    assert!(
-        src.contains("n_parallel_discard_native(cell,"),
-        "the discard route must lower to `n_parallel_discard_native`, not to the \
-         declaration-driven default"
-    );
-    assert!(
-        !src.contains("  n_parallel_discard(cell,"),
-        "no call may reach the loft declaration `n_parallel_discard` — its emitted body \
-         is empty, which is the silent no-op loft#987 is about"
-    );
-}

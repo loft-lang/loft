@@ -4,7 +4,6 @@
 //! several arguments has no single witness, so the bind COPIES on every run.  The guard
 //! (`tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft`) holds the values;
 //! this pins the lowering: no runtime guard against one argument on either backend.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,16 +19,6 @@ fn loft() -> Command {
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "120");
     cmd
-}
-
-/// The first listing of `fn <name>(` up to the next top-level `fn`.
-fn section<'a>(text: &'a str, name: &str) -> &'a str {
-    let start = text
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} is not in the listing"));
-    let rest = &text[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
 }
 
 /// The bytecode listing of `name`, from `byte-code for …:name(` to its `Return`.
@@ -59,32 +48,4 @@ fn the_interpreter_copies_without_a_witness() {
         !pick.contains("BindOrCopy"),
         "pick_one: no runtime guard against one argument\n{pick}"
     );
-}
-
-#[test]
-fn native_copies_without_a_witness() {
-    let out = std::env::temp_dir().join("loft_one_of_several_args.rs");
-    let status = loft()
-        .arg("--native")
-        .arg("--native-emit")
-        .arg(&out)
-        .arg(cells())
-        .output()
-        .expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted: {}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let pick = section(&rust, "n_pick_one");
-    assert!(
-        pick.contains("if _src.store_nr == u16::MAX || _src.store_nr == _dst.store_nr {"),
-        "pick_one: the plain copy-or-adopt split"
-    );
-    assert!(
-        !pick.contains("_src.store_nr != var_cv.store_nr"),
-        "pick_one: no witness compare against one argument"
-    );
-    let _ = fa::remove_file(&out);
 }

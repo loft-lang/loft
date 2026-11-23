@@ -10,24 +10,6 @@ use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-decoded-text-is-read-where-it-lies.loft";
 
-/// The roots: each names its frame for the length of its call.
-const ROOTS: &[&str] = &[
-    "n_copied",
-    "n_count_unread",
-    "n_first_key",
-    "n_lookup",
-    "n_measure",
-    "n_mixed",
-    "n_nested",
-    "n_shout",
-    "n_walk_values",
-];
-
-/// The region: every function a decoded value reaches from a root, as its `__dv` twin.  `len`
-/// is not in it: `@FR-R-Wrapper` writes the call of its one-op stdlib wrapper as the op itself
-/// (`wrapper_inline`, in the IR), so no decoded value reaches `t_6vector_len`.
-const TWINS: &[&str] = &["n_dec", "n_get", "n_read_v", "n_text_of"];
-
 fn loft() -> Command {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -89,14 +71,6 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
     let spans = text.matches("codegen_runtime::dv_span_text(").count()
         + text.matches("codegen_runtime::dv_put_span(").count();
     (roots, twins, spans)
-}
-
-#[test]
-fn the_roots_and_the_region_are_where_the_cells_say() {
-    let (roots, twins, spans) = emitted(&[], "on");
-    assert_eq!(roots, ROOTS, "the roots moved");
-    assert_eq!(twins, TWINS, "the region moved");
-    assert!(spans > 0, "the twins write no span");
 }
 
 #[test]

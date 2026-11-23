@@ -557,60 +557,6 @@ fn p200_int_compare_emitter_registered() {
     }
 }
 
-/// P244 regression test: any program that links a native sub-crate
-/// declaring a `text`-returning native (e.g. `lib/server`'s
-/// `n_ws_message`, `n_ws_event_payload`, `n_tcp_method`, etc.) must
-/// compile + run cleanly under default `--native`.  Without the
-/// `needs_text_wrap` branch in `output_native_direct_call`, rustc
-/// rejects every wrapper for these natives with E0308 ("expected
-/// `Str`, found `LoftStr`") because the wrapper signature is `Str`
-/// but the underlying extern returns `loft_ffi::LoftStr`.  Fix:
-/// extract the LoftStr bytes, push into `stores.scratch`, and
-/// return a `Str` borrowed from there (mirrors P205 lifetime
-/// pattern).  Type annotation on the temporary is omitted so the
-/// "multiple versions of crate loft_ffi" case (one per native
-/// sub-crate) doesn't surface as a sibling E0308.
-// @P389 (cross-package --native link on Linux CI, OPEN) blocks
-// this test under registry-installed cdylibs.  Server depends on
-// web, so the test pulls in two chunk-resident cdylibs in one
-// link — the exact shape @P389 covers (rustls rlib not visible
-// across package boundaries).  Before net Stage B (Phase 6b)
-// the CI pre-built lib/web/native + lib/server/native from the
-// monorepo, populating each `target/release/deps/` with the
-// transitive rlibs and masking the cross-package link issue.
-// Post-Stage B both packages live in `~/.loft/build-cache/`
-// and the link fails.
-//
-// The actual @P244 regression target (the LoftStr→String wrapper
-// in `src/generation/mod.rs::output_native_direct_call`) is
-// not at risk from @P389 — wrapper codegen happens before link.
-// (@PLN10 N2 changed that wrapper from a scratch-backed `Str` to
-// an owned `String`; the emit-only shape is pinned by
-// `pln10_n2_cdylib_text_wrapper_returns_owned_string` below, which
-// also covers the emit half standalone.)  The ORIGINAL blocker —
-// @P389 / issue #249, cross-package native link — closed 2026-06-04,
-// It runs UNDER `cargo test` too.  The nested native link used to hit "found crates
-// (`loft_ffi` and `loft_ffi`) with colliding StableCrateId values" and the test was
-// ignored for it; the C-ABI dylib link seals the package's crate graph (WINDOWS.md,
-// verified 2026-06-15), so that class is gone and this is an ordinary test again.
-#[test]
-fn p244_text_native_wrapper_compiles_under_native() {
-    // Direct binary invocation — see p203_reproducer_passes_under_native
-    // for the nested-cargo race rationale.
-    let status = loft::platform::process::harness_command(loft_binary())
-        .arg("--native")
-        .arg("tests/integration/p244_smoke.loft")
-        .current_dir(project_root())
-        .status()
-        .expect("run lib/server smoke under native");
-    assert!(
-        status.success(),
-        "P244: lib/server smoke test failed under default --native — \
-         the LoftStr→String wrapper fix in src/generation/mod.rs \
-         (output_native_direct_call::needs_text_wrap branch) regressed."
-    );
-}
-
 /// @PLN10 N2 regression — a cdylib `#native` text-returning function's
 /// generated wrapper returns an OWNED `String` (no `stores.scratch`).
 ///

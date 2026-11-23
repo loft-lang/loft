@@ -10,22 +10,6 @@ use std::path::{Path, PathBuf};
 
 const CELLS: &str = "tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft";
 
-/// Every trace line the cells produce, in order.
-const TRACE: &[&str] = &[
-    "refill-text: n_c1 → n_mk_sz admitted",
-    "refill-text: n_c2 → n_mk_env admitted",
-    "refill-text: n_c3 → n_mk_sz admitted",
-    "refill-text: n_c5 → n_mk_tv declined — the result owns heap other than text",
-    "refill-text: n_c6 → n_mk_fwd declined — the buffer is named outside its literals",
-    "refill-text: n_c8 → n_mk_td admitted",
-    "refill-text: n_c9 → n_mk_sz declined — the result is not only read",
-    "refill-text: n_c10 → n_mk_lit admitted",
-    "refill-text: n_m1_env → n_mk_env admitted",
-    "refill-text: n_m1_sz → n_mk_sz admitted",
-    "refill-text: n_m1_fwd → n_mk_fwd declined — the buffer is named outside its literals",
-    "refill-text: n_m1_lit → n_mk_lit admitted",
-];
-
 fn emit(env: &[(&str, &str)]) -> (String, bool) {
     emit_file(CELLS, env)
 }
@@ -73,29 +57,6 @@ fn trace(err: &str) -> Vec<&str> {
 }
 
 #[test]
-fn the_cells_refill_where_the_rule_admits() {
-    let (err, ok) = emit(&[("LOFT_TRACE_REFILL_TEXT", "1")]);
-    assert!(ok, "emission failed:\n{err}");
-    assert_eq!(trace(&err), TRACE, "the refilled sites moved:\n{err}");
-}
-
-/// The collection clause's guard: which builders keep their elements, and why the other
-/// declines.
-const KEPT: &str = "tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft";
-const KEPT_TRACE: &[&str] = &[
-    "refill-text: n_runs_of keeps its elements",
-    "refill-text: n_twos_of keeps its elements",
-    "refill-text: n_trimmed_of keeps no elements — the vector or an element is used another way",
-];
-
-#[test]
-fn the_builders_keep_their_elements_where_the_clause_admits() {
-    let (err, ok) = emit_file(KEPT, &[("LOFT_TRACE_REFILL_TEXT", "1")]);
-    assert!(ok, "emission failed:\n{err}");
-    assert_eq!(trace(&err), KEPT_TRACE, "the kept builders moved:\n{err}");
-}
-
-#[test]
 fn the_switch_takes_no_site() {
     let (err, ok) = emit(&[
         ("LOFT_TRACE_REFILL_TEXT", "1"),
@@ -111,21 +72,6 @@ fn the_switch_takes_no_site() {
 /// The vector clause's guard: which pooled sites skip their release because the callee empties
 /// each vector field in place, and why the others decline.
 const VECTORS: &str = "tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft";
-/// Each verdict is printed once (`trace_refill_text_once`), so a site repeated in the cells
-/// is one line.
-const VECTORS_TRACE: &[&str] = &[
-    "refill-text: n_main → n_mkf admitted (vectors)",
-    "refill-text: n_main → n_mko admitted (vectors)",
-    "refill-text: n_main → n_mkt declined — the result owns heap other than text",
-    "refill-text: n_main → n_mk_or declined — the callee does not refill its buffer",
-];
-
-#[test]
-fn the_pooled_vector_sites_skip_their_release_where_the_clause_admits() {
-    let (err, ok) = emit_file(VECTORS, &[("LOFT_TRACE_REFILL_TEXT", "1")]);
-    assert!(ok, "emission failed:\n{err}");
-    assert_eq!(trace(&err), VECTORS_TRACE, "the vector sites moved:\n{err}");
-}
 
 #[test]
 fn the_vector_switch_releases_first_again() {

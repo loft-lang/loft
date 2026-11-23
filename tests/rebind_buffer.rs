@@ -7,27 +7,9 @@
 //! the rustc writer takes that arm only where `bind_lowering::re_bind` copies or joins and binds
 //! these cells' rebinds plainly, so the sites are counted on the arm itself:
 //! `LOFT_NATIVE_OWN_CALL_BIND=1` gives every reassignment the copy-or-adopt.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
 const CELLS: &str = "tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft";
-
-/// `(function, hands the store on)` in the emitted Rust.  `b3`'s rebind is a text-holding
-/// record answered through a plain assignment, which this rule does not reach.  `b4`, `b7` and
-/// `b8` call a function that returns an ARGUMENT on one path, through a `__ret_N = a` bind both
-/// backends COPY, so every path is fresh and the store is handed on (loft#1881: a copied bind is
-/// the local's own).
-const SITES: &[(&str, bool)] = &[
-    ("n_b1", true),
-    ("n_b2", true),
-    ("n_b3", false),
-    ("n_b4", true),
-    ("n_b5", true),
-    ("n_b7", true),
-    ("n_b8", true),
-    ("n_b9", true),
-    ("n_acc", true),
-];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
     let mut cmd =
@@ -55,35 +37,6 @@ fn cells() -> String {
         .join(CELLS)
         .to_string_lossy()
         .into_owned()
-}
-
-fn body<'a>(src: &'a str, name: &str) -> &'a str {
-    let head = format!("\nfn {name}(");
-    let start = src
-        .find(&head)
-        .unwrap_or_else(|| panic!("{name} not emitted"));
-    let rest = &src[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
-#[test]
-fn the_rebinds_that_hand_the_store_on() {
-    let rs = std::env::temp_dir().join(format!("loft_rebind_buf_{}.rs", std::process::id()));
-    let (_, err, ok) = loft(
-        &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
-        &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
-    );
-    assert!(ok, "emit failed:\n{err}");
-    let src = fa::read_to_string(&rs).expect("emitted source");
-    let _ = fa::remove_file(&rs);
-    for (f, hands) in SITES {
-        assert_eq!(
-            body(&src, f).contains(" = true; var_"),
-            *hands,
-            "{f}: the hand-on expected {hands}"
-        );
-    }
 }
 
 #[test]

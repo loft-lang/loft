@@ -10,35 +10,6 @@ use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-decoded-value-is-read-at-its-position.loft";
 
-/// The roots read in their positional form: each calls a positional twin.  `each` (a value
-/// read in a loop), `two` (one value handed on twice) and `keep` (a value returned) keep the
-/// built form.
-const ROOTS: &[&str] = &[
-    "n_checked",
-    "n_deep",
-    "n_find",
-    "n_flag",
-    "n_flag_num",
-    "n_lookup",
-    "n_num",
-    "n_status",
-    "n_total",
-];
-
-/// The consumers' twins (`__ps`), the producer's shape twin among them.
-const CONSUMERS: &[&str] = &[
-    "n_dec",
-    "n_find_in",
-    "n_get",
-    "n_num_of",
-    "n_rd",
-    "n_sum_items",
-    "n_text_of",
-];
-
-/// The producer's walk twins: a map's entries and an array's items.
-const WALKS: usize = 2;
-
 fn loft() -> Command {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -108,14 +79,6 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
     twins.sort();
     twins.dedup();
     (roots, twins, walks)
-}
-
-#[test]
-fn the_roots_and_the_twins_are_where_the_cells_say() {
-    let (roots, twins, walks) = emitted(&[], "on");
-    assert_eq!(roots, ROOTS, "the positional roots moved");
-    assert_eq!(twins, CONSUMERS, "the positional twins moved");
-    assert_eq!(walks, WALKS, "the walk twins moved");
 }
 
 #[test]

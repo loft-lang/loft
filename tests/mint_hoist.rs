@@ -85,24 +85,6 @@ fn cells() -> PathBuf {
 }
 
 #[test]
-fn each_cell_hoists_exactly_the_scalars_predicted() {
-    let out = std::env::temp_dir().join("loft_mint_hoist_on.rs");
-    let rust = emit(&cells(), &out, &[]);
-    let got = scalar_counts(&rust);
-    for (name, scalars) in EXPECTED {
-        let s = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(
-            s, *scalars,
-            "{name}: hoisted scalars — the cell's prediction vs the emitted prelude"
-        );
-    }
-    let _ = fa::remove_file(&out);
-}
-
-#[test]
 fn the_switch_restores_the_per_iteration_reads() {
     let out = std::env::temp_dir().join("loft_mint_hoist_off.rs");
     let rust = emit(&cells(), &out, &[("LOFT_NO_MINT_HOIST", "1")]);

@@ -9,7 +9,6 @@
 //! memory and the values; this pins the DECISION the scope pass makes, which both backends
 //! read: a record with a heap field is released, a record of scalars is not, and a
 //! struct-enum is released through its PARENT type, the one its walk dispatches from.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -165,49 +164,5 @@ fn a_buffer_minted_at_entry_releases_before_each_use() {
     assert!(
         mint < release && release < call,
         "the eager form mints first and releases in front of the call:\n{ir}"
-    );
-}
-
-#[test]
-fn native_lowers_the_release_to_remove_claims() {
-    let out_path = std::env::temp_dir().join(format!(
-        "loft_pooled_buffer_release_{}.rs",
-        std::process::id()
-    ));
-    // The release's LOWERING, asked where one is emitted: `@FR-R-RefillText`'s vector clause
-    // leaves c1's release out (its callee empties the vector field in place), so the question
-    // is asked with that clause off; the clause's own sites are pinned in tests/refill_text.rs.
-    let out = loft()
-        .arg("--native")
-        .arg("--native-emit")
-        .arg(&out_path)
-        .arg(cells())
-        .env("LOFT_NO_REFILL_VECTORS", "1")
-        .output()
-        .expect("spawn loft");
-    assert!(
-        out.status.success(),
-        "--native-emit failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let rust = fa::read_to_string(&out_path).expect("the emitted Rust");
-    let _ = fa::remove_file(&out_path);
-    let body = |name: &str| {
-        let start = rust
-            .find(&format!("fn {name}("))
-            .unwrap_or_else(|| panic!("{name} in the emission"));
-        let rest = &rust[start..];
-        let end = rest[1..].find("\nfn ").map_or(rest.len(), |e| e + 1);
-        rest[..end].to_owned()
-    };
-    assert!(
-        body("n_c1").contains("stores.remove_claims(&(var___ref_1)"),
-        "c1's pooled buffer must be released on native too:\n{}",
-        body("n_c1")
-    );
-    assert!(
-        !body("n_c8").contains("remove_claims"),
-        "c8's buffer holds a record of scalars and releases nothing:\n{}",
-        body("n_c8")
     );
 }

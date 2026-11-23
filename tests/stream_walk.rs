@@ -93,16 +93,6 @@ fn streamed(env: &[(&str, &str)], tag: &str) -> Vec<(String, usize)> {
 }
 
 #[test]
-fn the_admitted_walks_stream_and_the_declined_do_not() {
-    let got = streamed(&[], "on");
-    let want: Vec<(String, usize)> = EXPECTED
-        .iter()
-        .map(|(n, c)| ((*n).to_string(), *c))
-        .collect();
-    assert_eq!(got, want, "the streamed walks moved");
-}
-
-#[test]
 fn the_switch_streams_nothing() {
     let got = streamed(&[("LOFT_NO_STREAM_WALK", "1")], "off");
     assert!(

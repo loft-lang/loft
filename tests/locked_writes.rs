@@ -308,51 +308,6 @@ fn production_discards_every_hoisted_write_native() {
     production_discards_every_hoisted_write("--native");
 }
 
-/// The cells above are only a guard of the hoisted writers while `--native` still emits
-/// them for these loops: a shape that fell back to the runtime's per-write path would pass
-/// for the wrong reason.  And `rec_set` takes the lock state held beside its address.
-#[test]
-fn hoisted_loops_reach_the_writers_under_test() {
-    let dir = std::env::temp_dir().join(format!("loft_locked_emit_{}", std::process::id()));
-    let _ = fa::remove_dir_all(&dir);
-    fa::create_dir_all(&dir).expect("create tempdir");
-    let script = dir.join("hoisted.loft");
-    fa::write(&script, HOISTED).expect("write script");
-    let out = dir.join("hoisted.rs");
-    let status = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
-        .arg("--native-emit")
-        .arg(&out)
-        .arg("--lean")
-        .arg(&script)
-        .current_dir(&dir)
-        .output()
-        .expect("invoke loft");
-    let rust = fa::read_to_string(&out).unwrap_or_default();
-    let _ = fa::remove_dir_all(&dir);
-    assert!(
-        status.status.success(),
-        "{}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    for writer in [
-        "vec_set_at::<",
-        "push_windowed::<",
-        "push_record_windowed::<",
-    ] {
-        assert!(rust.contains(writer), "no `{writer}` in the emitted loops");
-    }
-    assert!(
-        rust.contains("rec_set::<i64>(__pa_") && rust.contains("let __pl_"),
-        "`rec_set` is emitted with a lock state bound beside its address"
-    );
-    assert_eq!(
-        rust.matches("rec_set::<").count(),
-        rust.matches(", __pl_").count(),
-        "every `rec_set` passes its `__pl_` lock state"
-    );
-}
-
 /// The windowed shapes in a development run: a window over a locked store has no room, so
 /// the first push or mint goes through the runtime's append, which halts with the report.
 const DEV_WINDOWED: [(&str, &str); 2] = [

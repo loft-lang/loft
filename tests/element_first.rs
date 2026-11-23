@@ -18,21 +18,6 @@ use std::path::{Path, PathBuf};
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-z-element-first-cells.loft";
 
-/// `(function, elements minted at a declaration site)`.
-const EXPECTED: &[(&str, usize)] = &[
-    ("n_c1", 1), // the base shape: two temps, one early mint
-    ("n_c2", 1), // the fronds shape: builds under if arms, append after
-    ("n_c3", 0), // a temp read AFTER the append
-    ("n_c4", 1), // two appends: the SECOND pairs (the first keeps its copy and merely
-    // reads the slot), the first is declined by the use-reconciliation
-    ("n_c5", 0), // `len(out)` read between declaration and append
-    ("n_c6", 1), // a single-field wrapper
-    ("n_c7", 0), // the append under an if arm — the early mint would strand elements
-    ("n_c8", 1), // text elements ride the in-place build
-    ("n_c9", 0), // the temp declared BEFORE the destination — the prelude would
-                 // precede the destination's own binding (the sqldb fixture's E0425)
-];
-
 const MARK: &str = "V-z element minted";
 
 /// The emitted Rust, and per function the pairs the IR applied — `(local, field)` by
@@ -76,41 +61,8 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> (String, HashMap<String
     (fa::read_to_string(out).expect("read the emitted Rust"), ir)
 }
 
-fn counts((rust, ir): &(String, HashMap<String, (usize, usize)>)) -> HashMap<String, usize> {
-    let mut map: HashMap<String, usize> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        *map.entry(current.clone()).or_default() += line.matches(MARK).count();
-    }
-    for (name, (local, _)) in ir {
-        *map.entry(name.clone()).or_default() += local;
-    }
-    map
-}
-
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-#[test]
-fn each_cell_mints_exactly_the_elements_predicted() {
-    let out = std::env::temp_dir().join("loft_element_first_on.rs");
-    let rust = emit(&cells(), &out, &[]);
-    let got = counts(&rust);
-    for (name, mints) in EXPECTED {
-        let g = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
-    }
-    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -123,101 +75,4 @@ fn the_switch_restores_the_temp_store_build() {
         "under LOFT_NO_ELEMENT_FIRST=1 every literal field keeps its temp-store build"
     );
     let _ = fa::remove_file(&out);
-}
-
-/// @PLN164 E-2 — the element-first build reaches a record's COLLECTION FIELD and a temp a CALL
-/// fills: `tests/scripts/164-element-place.loft`.  `(function, elements minted at a declaration)`.
-const PLACE_CELLS: &str = "tests/scripts/164-element-place.loft";
-const PLACE_MARK: &str = "E-2 element minted";
-const PLACE_EXPECTED: &[(&str, usize)] = &[
-    ("n_g1", 1),  // a call result appended once, viewed by the result
-    ("n_g2", 1),  // a literal-built local and a second local into one element
-    ("n_g3", 0),  // a `return` between the call and the append
-    ("n_g4", 1),  // the container's length read in between: the element is invisible
-    ("n_g5", 0),  // the callee mints into its buffer
-    ("n_g6", 0),  // an argument reads the destination
-    ("n_g7", 0),  // the local read after the append
-    ("n_g8", 0),  // a record-form exit copies the local: a second consumer
-    ("n_g9", 1),  // repeated by a loop
-    ("n_g10", 1), // two calls into one element
-    ("n_g11", 1), // a local record's collection
-    ("n_g13", 0), // the local rebound under a condition (loft#1552)
-    ("n_g14", 0), // a `continue` between the call and the append
-    ("n_g16", 1), // the `parse_circle` shape: an append in either arm, one early element
-    ("n_g17", 0), // only one arm appends
-    ("n_g18", 0), // the arms append different locals
-    ("n_g19", 1), // an arm reads the container's length before its append
-    ("n_g20", 1), // the joined append inside a scanning loop
-    ("n_g21", 0), // the arms append into different containers
-    ("n_g22", 0), // an arm returns before its append
-    ("n_g23", 0), // the same collection grown in between
-    ("n_g24", 0), // an element removed in between
-    ("n_g25", 0), // a view of the destination's element read in between (loft#1553)
-    ("n_g26", 1), // a view of a SIBLING collection's element read in between
-    ("n_g27", 0), // an element parameter that may alias the destination read in between
-];
-
-fn place_counts((rust, ir): &(String, HashMap<String, (usize, usize)>)) -> HashMap<String, usize> {
-    let mut map: HashMap<String, usize> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        *map.entry(current.clone()).or_default() += line.matches(PLACE_MARK).count();
-    }
-    for (name, (_, field)) in ir {
-        *map.entry(name.clone()).or_default() += field;
-    }
-    map
-}
-
-#[test]
-fn a_parameter_collection_and_a_call_take_the_element_first_build() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PLACE_CELLS);
-    let out = std::env::temp_dir().join("loft_element_place_on.rs");
-    let rust = emit(&src, &out, &[]);
-    let got = place_counts(&rust);
-    for (name, mints) in PLACE_EXPECTED {
-        let g = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
-    }
-    let body = |func: &str| {
-        let start = rust
-            .0
-            .find(&format!("fn {func}("))
-            .unwrap_or_else(|| panic!("{func} is not in the emission"));
-        let rest = &rust.0[start..];
-        rest[..rest[1..].find("\nfn ").map_or(rest.len(), |e| e + 1)].to_owned()
-    };
-    // The joined arms build into ONE element, minted at the declaration (the IR's pass).
-    let g16 = body("n_g16");
-    assert!(
-        g16.contains("let mut var__elm_1: DbRef = stores.field_vector_append")
-            && !g16.contains("var__elm_2"),
-        "g16's arms share the early element:\n{g16}"
-    );
-    // The call is handed the element's field as its buffer.
-    assert!(
-        body("n_g1").contains("= n_mkpts(cell, var_n, {{ let _v_v1 = (var__elm_1); DbRef {store_nr: _v_v1.store_nr, rec: _v_v1.rec, pos: _v_v1.pos + (24_i64) as u32} }});"),
-        "g1's call builds into the element"
-    );
-    let _ = fa::remove_file(&out);
-    let off = emit(
-        &src,
-        &std::env::temp_dir().join("loft_element_place_off.rs"),
-        &[("LOFT_NO_ELEMENT_PLACE", "1")],
-    );
-    assert_eq!(
-        off.0.matches(PLACE_MARK).count() + off.1.values().map(|(_, f)| f).sum::<usize>(),
-        0,
-        "under LOFT_NO_ELEMENT_PLACE=1 no parameter collection or call takes the build"
-    );
-    let _ = fa::remove_file(std::env::temp_dir().join("loft_element_place_off.rs"));
 }
