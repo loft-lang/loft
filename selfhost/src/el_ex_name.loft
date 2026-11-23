@@ -36,6 +36,7 @@ use el_ex_assign;
 use el_ex_closure;
 use el_ex_tuple;
 use el_ex_bind;
+use el_ex_into;
 
 // `type_name(T)` of a plain declared struct; anything else is refused by name.
 pub fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
@@ -476,6 +477,18 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     for c in e.captures {
       if c.name == name {
         if e.closure_var < 0 || e.closure_rec < 0 {
+          // (`parse_var_inner`'s capture arm on the first pass: a placeholder variable of the
+          // capture's name, user-named — later reads on this pass find it as a local; pass 2
+          // reads the closure record and retires it.)
+          if e.first_pass {
+            // (Typed as Rust's arm types it, `t = ctype`: the captured type with no deps — a loop
+            // over it gives a bare element, which pass 2's `loop_variable` re-types.)
+            ctp = el_types::without_deps(c.tp);
+            pv = el_vars::add_variable(vars, name, ctp);
+            el_vars::mark_user_named(vars, pv, "parse_var_inner");
+            el_vars::in_use(vars, pv, true);
+            return ex(ir::NdVar { n: pv }, ctp);
+          }
           return ex(ir::NdNull, c.tp);
         }
         el_vars::in_use(vars, e.closure_var, true);
@@ -550,7 +563,7 @@ pub fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) ->
     return ex(if a < 0 { ir::NdNull } else { el::def(e, en).attributes[a]!.value[0] }, ret);
   }
   w = el_vars::work_ref(vars, ret);
-  body = el_ex_place::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
+  body = el_ex_into::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
   if body == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
