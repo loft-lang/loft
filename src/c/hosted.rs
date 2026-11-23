@@ -238,6 +238,10 @@ fn slot_arg(c: CType, slot: usize) -> Option<String> {
 }
 
 /// The bridge of function `d` under `symbol`, or why the C bridge does not carry it yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per argument and answer shape the bridge carries"
+)]
 fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let data = cx.data;
     let def = data.def(d);

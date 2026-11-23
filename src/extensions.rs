@@ -1454,10 +1454,9 @@ fn shared_store_dispatch_raw(
     // (an interpreted body, the verify's twin) sets and takes the shared field for itself.
     if let Some(dest) = text_dest_of_call
         && !ret.text_ptr.is_null()
+        && stores.bridge_text_dest == Some(dest)
     {
-        if stores.bridge_text_dest == Some(dest) {
-            stores.bridge_text_dest = None;
-        }
+        stores.bridge_text_dest = None;
     }
     if let Some(dest) = text_dest_of_call
         && !ret.text_ptr.is_null()

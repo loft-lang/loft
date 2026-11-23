@@ -63,6 +63,10 @@ impl Cx<'_> {
     }
 
     /// Every dispatcher, after the prototypes of `fns`, the functions the unit writes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one dispatcher's prologue, argument pops and answer, in order"
+    )]
     pub(crate) fn dispatch_code(&self, fns: &[u32]) -> Result<String, String> {
         let sigs = self.fn_sigs.borrow().clone();
         let values = self.fn_values.borrow().clone();

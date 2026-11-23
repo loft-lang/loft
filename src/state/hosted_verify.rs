@@ -14,6 +14,8 @@
 //! its own.  Run under `LOFT_POISON_CLAIM` (and a unit built under it), a byte nothing wrote
 //! reads the same on both sides.
 
+use std::fmt::Write as _;
+
 use super::State;
 use crate::database::Stores;
 use crate::host_abi::LibArg;
@@ -161,6 +163,10 @@ impl State {
     /// # Safety
     /// As the dispatcher's own call: `bridge` is a loaded artifact's bridge for `d_nr`, `args`
     /// the slots it takes, and `ret` room for its answer.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the twin's run and the comparison of the two worlds, in order"
+    )]
     pub(crate) unsafe fn verify_compiled_call(
         &mut self,
         d_nr: u32,
@@ -354,7 +360,7 @@ impl State {
                     || "?".to_string(),
                     |f| data.def(f as u32).original_name().clone(),
                 );
-            why.push_str(&format!(" — made at bytecode {at}, in `{maker}`"));
+            let _ = write!(why, " — made at bytecode {at}, in `{maker}`");
         }
         if diff.is_none() {
             diff = slot_diff;
@@ -392,7 +398,10 @@ fn set_slot_bytes(stores: &mut Stores, r: &DbRef, bytes: &[u8]) {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 thread_local! {

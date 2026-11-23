@@ -7,6 +7,8 @@
 //! (`native_adopt::adopt_shared_cdylib`) and the Rust writer builds
 //! (`native_lib::build_shared_artifact`); neither names the other, so the two meet here.
 
+use std::fmt::Write as _;
+
 use crate::data::Data;
 use crate::database::Stores;
 use crate::interp::native_adopt::Adopt;
@@ -192,7 +194,7 @@ pub fn parse_library_alone(
     ));
     let mut program = format!("use {name};\n");
     for d in &deps {
-        program.push_str(&format!("use {d};\n"));
+        let _ = writeln!(program, "use {d};");
     }
     crate::file_access::write(&tmp, program)
         .map_err(|e| format!("write {}: {e}", tmp.display()))?;
