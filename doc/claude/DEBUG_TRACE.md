@@ -175,9 +175,10 @@ the scope pass), so a wrong one is seen where it is made rather than as a fault 
 
 When a `[state]` flag differs, the varflag trace names the rule to port, found in one run.
 Trace the run the image comes from: `LOFT_EMIT_PARSED=<img> loft prog.loft` with
-`LOFT_TRACE_VARFLAGS=*`.  The image is written before codegen, and a full interpreter run also
-traces codegen's own `skip_free` sweep (src/state/codegen.rs), which then names codegen as the
-setter of a flag the image got from a parser rule.  Each implementation makes a compared
+`LOFT_TRACE_VARFLAGS=*`.  The image is written before codegen.  A full interpreter run prints
+the parser rule's line (the function as `__lambda_r6_0`) AND a second line from codegen's own
+`skip_free` sweep (src/state/codegen.rs, the function as `n___lambda_r6_0`).  A filter on one
+spelling of the function sees only one of them, and codegen's is not the image's rule.  Each implementation makes a compared
 decision in a corresponding routine, so the rule this trace names on one side is the routine
 to look for on the other.
 `LOFT_SKIPFREE_TRACE=<name>|*` is the older `skip_free`-only form on the Rust front end.
