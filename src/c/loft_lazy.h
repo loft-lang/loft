@@ -687,8 +687,9 @@ static int64_t loft_lazy_range(loft_ref coll, int64_t lo, int64_t hi) {
 #endif
 }
 
-/* `Stores::fetch_missing`: the lookup on bound collection `coll` missed `key`; 1 when the source
- * inserted the entry and the lookup is to be run again. */
+/* `Stores::fetch_missing`: the lookup on bound collection `coll` missed `key`; 1 when the lookup
+ * is to be run again — the source inserted the entry, or a loft driver faulted after inserting
+ * what it did. */
 static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
     loft_lazy_bind *b = loft_lazy_binding(coll);
     if (!b) return 0;
@@ -763,7 +764,9 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
             loft_nframes = depth;
 #endif
             loft_lazy_refuse(coll, loft_view(&loft_lazy_fault));
-            return 0;
+            /* The lookup is asked again, as the interpreter's `find_or_fetch` asks it after any
+             * fetch: a row the driver inserted before it faulted is resident, and found. */
+            return 1;
         }
         if (answer != 0 && answer != 1) {
             snprintf(why, sizeof why, "`lazy_fetch` answered %lld; it must answer 1 (inserted) or 0 (absent)",

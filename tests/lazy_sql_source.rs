@@ -1,7 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: a loft lazy driver and its contained fault differ on the C — its `--native` runs as `--native-rust` until then.
-//
 // @PLN129 arc B — the database source, from the C surface up.
 //
 // The first test here is step 0's probe, GRADUATED rather than deleted: it is
