@@ -214,7 +214,13 @@ def flag_reasons(text, rust):
         m = VARFLAG_LINE.match(l)
         if m:
             flag, var, fn, why = m.groups()
-            out[(fn[2:] if fn.startswith("n_") else fn, var, flag)].add(rust_rule(why) if rust else why)
+            key = fn[2:] if fn.startswith("n_") else fn
+            # A CLEARED flag (`-user_named`, `retire_capture_placeholders`) is no longer in the
+            # image: the rules that set it are dropped, as the image has none.
+            if flag.startswith("-"):
+                out.pop((key, var, flag[1:]), None)
+                continue
+            out[(key, var, flag)].add(rust_rule(why) if rust else why)
     return out
 
 
