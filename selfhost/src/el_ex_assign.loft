@@ -1810,6 +1810,15 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     vars.bind_declares = declaring;
     o = el_ex_place::object_into(e, vars, v, rhs!);
     vars.bind_declares = false;
+    // (`@FR-B-Scope`: the literal was built into the ended binding's variable before the split,
+    // as Rust's value is parsed before it; the build is renamed onto the new binding.)
+    if ended_bind >= 0 && ended_bind == v {
+      nv = split_ended_bind(e, vars, v, el_types::unrewritten(o.tp), el_ex_pattern::statement_end(e, at), true);
+      if nv != v {
+        o = ex(el_ex_base::rename_var(o.code, v, nv), o.tp);
+        v = nv;
+      }
+    }
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(o.tp)) {
       el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
@@ -1944,8 +1953,12 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // own, named by the statement's position (`rebind_after_block`).
   // A loop's variable splits at ANY type, on both passes: it viewed an element of the walked
   // collection, so a bind that reused it would write through that view.
-  if ended_bind >= 0 && ended_bind == v && (el_vars::was_loop_var(vars, v) || (!el_types::is_unknown(x.tp) && (el_ex_closure::retype_refused(e, vars, v, x.tp) || el_ex_closure::differs_in_absence(e, vars, v, x.tp)))) {
-    v = el_ex_closure::rebind_after_block(e, vars, v, x.tp, at);
+  if ended_bind >= 0 && ended_bind == v {
+    nv = split_ended_bind(e, vars, v, x.tp, el_ex_pattern::statement_end(e, at), true);
+    if nv != v {
+      x = ex(el_ex_base::rename_var(x.code, v, nv), x.tp);
+      v = nv;
+    }
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
     v = el_vars::promote_text_param(vars, v);
@@ -2523,4 +2536,29 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
+// `@FR-B-Scope`, loft#1700: does this bind, after `old`'s block ended, start a binding of its own
+// — a loop's variable at any type; a known type its old binding refuses, that the first pass
+// could not type it against yet (`rebind_split_unforced`), or (an undeclared bind only) that
+// differs from it only in absence?  The new binding (`rebind_after_block`, named by the token
+// `tok` ends at), or `old`.  The plain bind and the declared one both ask (Rust's two sites).
+pub fn split_ended_bind(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, tok: integer, plain: boolean) -> integer {
+  if el_vars::was_loop_var(vars, old) || (!el_types::is_unknown(t) && (el_ex_closure::retype_refused(e, vars, old, t) || el_ex_closure::rebind_split_unforced(e, vars, old, t, tok) || (plain && el_ex_closure::differs_in_absence(e, vars, old, t)))) {
+    return el_ex_closure::rebind_after_block(e, vars, old, t, tok);
+  }
+  old
+}
+
+// `bind_after_end` for the name `name`: its binding, when that binding's block has ended and
+// this bind may start one of its own; -1 otherwise.  (A body local bound again in ANOTHER loop
+// is the per-loop split's, loft#1145; a loop's own variable is never that local.)
+pub fn ended_binding(vars: el_vars::Vars, name: text) -> integer {
+  known = el_vars::var(vars, name);
+  if known < 0 || el_vars::name_of(vars, known) != name || !el_vars::binding_ended(vars, known) {
+    return -1;
+  }
+  now = el_vars::current_loop(vars);
+  was = el_vars::binding_loop(vars, known);
+  if el_vars::was_loop_var(vars, known) || !(now >= 0 && was >= 0 && now != was) { known } else { -1 }
 }

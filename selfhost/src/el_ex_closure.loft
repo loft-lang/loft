@@ -660,15 +660,40 @@ pub fn differs_in_absence(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::Ty
   }
 }
 
-// `Parser::rebind_after_block`: the new binding `name#<line * 100000 + column>` of the ended
-// `old`, named by the position after the statement (pass-stable, where a counter is not), typed
-// as its value, its spelling taken over until the enclosing block ends.
-pub fn rebind_after_block(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, at: integer) -> integer {
+// `Parser::rebind_names`: the spelling `old` is bound under …
+fn rebind_spelling(vars: el_vars::Vars, old: integer) -> text {
   bound = el_vars::name_of(vars, old);
-  name = if bound.contains("#") { bound[0..bound.find("#") ?? len(bound)] } else { bound };
-  p = el::pos_at(e, el_ex_pattern::statement_end(e, at));
+  if bound.contains("#") { bound[0..bound.find("#") ?? len(bound)] } else { bound }
+}
+
+// … and the position-named variable a bind after its block ended takes at `at`.
+fn rebind_own(e: el::El, vars: el_vars::Vars, old: integer, tok: integer) -> text {
+  p = el::pos_at(e, tok);
   col = if p.pos > 99999 { 99999 } else { p.pos };
-  nv = el_vars::add_variable(vars, "{name}#{p.line * 100000 + col}", el_types::unrewritten(t));
+  "{rebind_spelling(vars, old)}#{p.line * 100000 + col}"
+}
+
+// `Parser::rebind_split_unforced` (`@FR-B-Scope`): a bind after `old`'s block ended, at the
+// KNOWN type `t`, that starts a new binding although no type refusal forces it — on the first
+// pass where the ended binding is still untyped, on the second wherever the first split (its
+// position-named variable exists), so the split is the statement's on both passes.
+pub fn rebind_split_unforced(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, tok: integer) -> boolean {
+  if el_types::is_unknown(t) || vars.vars[old].argument || vars.annotated.contains(old) {
+    return false;
+  }
+  if e.first_pass {
+    return el_types::is_unknown(el_vars::tp(vars, old));
+  }
+  el_vars::var(vars, rebind_own(e, vars, old, tok)) >= 0
+}
+
+// `Parser::rebind_after_block`: the new binding `name#<line * 100000 + column>` of the ended
+// `old`, named by the position after the token `tok` (the statement's end for a plain bind, the
+// `=` for a declared one: pass-stable, where a counter is not), typed
+// as its value, its spelling taken over until the enclosing block ends.
+pub fn rebind_after_block(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, tok: integer) -> integer {
+  name = rebind_spelling(vars, old);
+  nv = el_vars::add_variable(vars, rebind_own(e, vars, old, tok), el_types::unrewritten(t));
   el_vars::set_defined(vars, nv);
   el_vars::set_name(vars, name, nv);
   if len(vars.rebind_frames) > 0 {

@@ -2710,6 +2710,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     el::refuse(e, "a `&` or `const` declaration, or one without a value");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  ended = el_ex_assign::ended_binding(vars, name);
   v = el_ex_object::binding_var(e, vars, name);
   if v < 0 {
     return ex(ir::NdNull, ir::TyVoid);
@@ -2717,6 +2718,11 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   declared = el_types::parse_type(e, tn!);
   if declared == null {
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `@FR-B-Scope`, loft#1700: a DECLARED bind after the name's block ended starts a binding of
+  // its own as the undeclared one does, named by the position past its `=`.
+  if ended >= 0 && ended == v {
+    v = el_ex_assign::split_ended_bind(e, vars, v, declared!, el_ex_null::node_start(e, rhs!) - 1, false);
   }
   if !el_vars::change_var_type(e, vars, v, declared!) {
     el::refuse(e, "a declaration that changes a local's type");
