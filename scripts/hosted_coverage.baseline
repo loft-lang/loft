@@ -1,18 +1,7 @@
 # The public library functions a hosted C unit leaves interpreted, and why
 # (scripts/hosted_coverage.py; only shrinks).  <package>\t<function>\t<why>
-hex_world	ensure_chunk	parameter `self` has no C shape
-hex_world	set_cell	parameter `self` has no C shape
-hex_world	tick_and_decay	parameter `self` has no C shape
-hex_world	world_load	parameter `self` has no C shape
-input	input_set_bindings	parameter `self` has no C shape
-input	input_tick	parameter `self` has no C shape
-input	input_tick_device	parameter `self` has no C shape
-input	input_tick_from_state	parameter `self` has no C shape
 regex	split_on	an iterator
-scene3d	free_camera	parameter `eye` of a shape the bridge does not carry
 script	walk	an iterator
-tiles	draw_ground	parameter `lift` of a shape the bridge does not carry
-tiles	draw_turned	parameter `pivot` of a shape the bridge does not carry
 zttext	anchor_at	parameter `resolve` of a shape the bridge does not carry
 zttext	apply_bidi	parameter `resolve` of a shape the bridge does not carry
 zttext	caret_at	parameter `resolve` of a shape the bridge does not carry
