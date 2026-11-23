@@ -383,8 +383,9 @@ pub(crate) enum RunReport {
 }
 
 /// `@PLN226` — what one run reports once, and its store timeline (`LOFT_STORES=timeline`): kept
-/// in the run's `Stores` rather than in thread-locals.  Behind locks, because the reports are
-/// made from `&self` reads; a `par` worker's `Stores` is its own, as each thread's sets were.
+/// in the run's `Stores` rather than in thread-locals.  `RefCell`s, not locks: the reports are
+/// made from `&self` reads, and a `Stores` is used by one thread at a time (`@FR-C-Own`) — a `par`
+/// worker's `Stores` is its own, as each thread's sets were.
 #[derive(Default)]
 pub(crate) struct RunDiagnostics {
     reported: std::cell::RefCell<std::collections::HashSet<(RunReport, u16, u32, u32)>>,
@@ -561,6 +562,8 @@ pub struct Stores {
     pub(crate) checks: crate::keys::StoreChecks,
     /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
     pub(crate) run: RunDiagnostics,
+    /// `@PLN226` — the render in progress (`format::RenderState`).
+    pub(crate) render: std::cell::RefCell<format::RenderState>,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -860,6 +863,7 @@ impl Clone for Stores {
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
             run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1684,6 +1688,7 @@ impl Stores {
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
             run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),

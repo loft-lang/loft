@@ -3396,6 +3396,7 @@ impl Stores {
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
             run: super::RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),

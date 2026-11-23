@@ -122,12 +122,9 @@ static void loft_proc_forward(int sig) {
 }
 
 static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
-    static int installed = 0;
-    /* `@FR-C-Publish`: the handlers installed once, and the groups table written, under the
-     * lock. */
-    loft_pub_lock();
-    if (!installed) {
-        installed = 1;
+    static int once = 0;
+    /* `@FR-C-Publish`: the handlers installed once, by the first thread that starts a child. */
+    if (loft_once_begin(&once)) {
         for (int i = 0; i < 4; i++) {
             sigaction(loft_proc_forwarded[i], 0, &loft_proc_previous[i]);
             /* An ignored signal is ignored by the children too: there is nothing to pass on. */
@@ -140,16 +137,14 @@ static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
             sigemptyset(&act.sa_mask);
             sigaction(loft_proc_forwarded[i], &act, 0);
         }
+        loft_once_end(&once);
     }
-    /* The groups table too: any thread that starts or ends a child writes it. */
+    /* The groups table: any thread that starts or ends a child writes it, and the signal
+     * handler reads it — each slot taken or given back by one compare-and-swap. */
     for (size_t i = 0; i < 256; i++) {
-        if (on && loft_proc_groups[i] == 0) {
-            loft_proc_groups[i] = group;
-            break;
-        }
-        if (!on && loft_proc_groups[i] == group) loft_proc_groups[i] = 0;
+        sig_atomic_t expect = on ? 0 : (sig_atomic_t) group;
+        if (LOFT_PUB_CAS(loft_proc_groups[i], expect, on ? (sig_atomic_t) group : 0) && on) break;
     }
-    loft_pub_unlock();
 }
 
 /* A started child: its id (which names its group) and the pipes this program holds, -1 for one

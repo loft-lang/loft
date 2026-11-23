@@ -54,15 +54,13 @@
  * a second `WSAStartup` only counts — and nothing to do under POSIX. */
 static void loft_sock_ready(loft_cx *cx) {
 #if defined(_WIN32)
-    /* `@FR-C-Publish`: Winsock started once, under the lock. */
-    static int started = 0;
-    loft_pub_lock();
-    if (!started) {
+    /* `@FR-C-Publish`: Winsock started once, by the first thread that needs it. */
+    static int once = 0;
+    if (loft_once_begin(&once)) {
         WSADATA w;
         WSAStartup(MAKEWORD(2, 2), &w);
-        started = 1;
+        loft_once_end(&once);
     }
-    loft_pub_unlock();
 #endif
 }
 

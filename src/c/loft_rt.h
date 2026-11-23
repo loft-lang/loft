@@ -23,18 +23,15 @@
 /* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
  * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
 static inline FILE *loft_fault_file(loft_cx *cx) {
-    /* `@FR-C-Publish`: opened once, by the first thread that faults, under the lock. */
-    static int ready = 0;
+    /* `@FR-C-Publish`: opened once, by the first thread that faults (`loft_once_begin`). */
+    static int once = 0;
     static FILE *f = NULL;
-    loft_pub_lock();
-    if (!ready) {
+    if (loft_once_begin(&once)) {
         const char *p = getenv("LOFT_FAULT_LOG");
-        ready = 1;
         if (p && *p) f = fopen(p, "a");
+        loft_once_end(&once);
     }
-    FILE *got = f;
-    loft_pub_unlock();
-    return got;
+    return f;
 }
 static inline void loft_fault_str(loft_cx *cx, FILE *f, const char *s, size_t n) {
     size_t i;

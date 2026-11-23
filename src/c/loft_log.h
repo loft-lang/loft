@@ -550,24 +550,20 @@ static int loft_log_locked_write(loft_cx *cx, const char *advice) {
  * the positive control `scripts/store_diff.py --plant` must report. */
 #if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
 static FILE *loft_dump_file(loft_cx *cx) {
+    /* `@FR-C-Publish`: opened once, by the first thread that dumps (`loft_once_begin`). */
     static FILE *f = 0;
-    static int opened = 0;
-    loft_pub_lock();
-    if (!opened) {
+    static int once = 0;
+    if (loft_once_begin(&once)) {
         const char *path = getenv("LOFT_STORE_DUMP");
-        opened = 1;
         if (path && *path) f = fopen(path, "w");
+        loft_once_end(&once);
     }
-    FILE *got = f;
-    loft_pub_unlock();
-    return got;
+    return f;
 }
 static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
     static int planted = 0;
     FILE *f = loft_dump_file(cx);
     if (!f || s->serial == 0) return;
-    /* `@FR-C-Publish`: one store's lines whole, and the planted byte once, under the lock. */
-    loft_pub_lock();
     fprintf(f, "S %s %u %u %u\n", loft_trace_name(cx, s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
             (unsigned) (s - cx->stores));
     for (uint32_t w = 0; w < s->claims.nwords; w++) {
@@ -588,7 +584,6 @@ static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
             fputc('\n', f);
         }
     }
-    loft_pub_unlock();
     (void) planted;
 }
 static void loft_store_dump(loft_cx *cx) {

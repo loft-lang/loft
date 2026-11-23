@@ -400,17 +400,41 @@ static inline void loft_pub_unlock(void) { pthread_mutex_unlock(&loft_pub_mutex)
 
 /* LOFT_PUB_GET(slot, out): read `slot` into `out`; LOFT_PUB_SET(slot, v): publish `v`;
  * LOFT_PUB_SWAP(slot, v, out): publish `v`, `out` the value it replaced; LOFT_PUB_ADD(slot, d,
- * out): add `d`, `out` the sum.  Statements, so the lock's spelling is one expression list. */
+ * out): add `d`, `out` the sum; LOFT_PUB_CAS(slot, expect, v): `v` when `slot` holds `expect`,
+ * true when it did (else `expect` reads what it held).  Without the compiler's atomics each is
+ * the lock around one word: doc/claude/LOCKS.md. */
 #if defined(LOFT_THREADS) && defined(LOFT_GNU)
+#define LOFT_PUB_CAS(slot, expect, v) \
+    __atomic_compare_exchange_n(&(slot), &(expect), (v), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
 #define LOFT_PUB_GET(slot, out) ((out) = __atomic_load_n(&(slot), __ATOMIC_ACQUIRE))
 #define LOFT_PUB_SET(slot, v) __atomic_store_n(&(slot), (v), __ATOMIC_RELEASE)
 #define LOFT_PUB_SWAP(slot, v, out) ((out) = __atomic_exchange_n(&(slot), (v), __ATOMIC_SEQ_CST))
 #define LOFT_PUB_ADD(slot, d, out) ((out) = __atomic_add_fetch(&(slot), (d), __ATOMIC_SEQ_CST))
 #else
+#define LOFT_PUB_CAS(slot, expect, v) \
+    (loft_pub_lock(), ((slot) == (expect) ? ((slot) = (v), loft_pub_unlock(), 1) \
+                                         : ((expect) = (slot), loft_pub_unlock(), 0)))
 #define LOFT_PUB_GET(slot, out) (loft_pub_lock(), (out) = (slot), loft_pub_unlock())
 #define LOFT_PUB_SET(slot, v) (loft_pub_lock(), (slot) = (v), loft_pub_unlock())
 #define LOFT_PUB_SWAP(slot, v, out) (loft_pub_lock(), (out) = (slot), (slot) = (v), loft_pub_unlock())
 #define LOFT_PUB_ADD(slot, d, out) (loft_pub_lock(), (out) = ((slot) += (d)), loft_pub_unlock())
 #endif
+
+/* A value set once, by the first thread that asks (Rust's `OnceLock`): `loft_once_begin` answers
+ * 1 to the one thread that is to set it, which then calls `loft_once_end`; every other thread
+ * waits until that set is published, and any thread after it passes at once.  The wait happens at
+ * most once per value and program; nothing is held afterwards. */
+static inline int loft_once_begin(int *state) {
+    int seen;
+    LOFT_PUB_GET(*state, seen);
+    if (seen == 2) return 0;
+    int expect = 0;
+    if (LOFT_PUB_CAS(*state, expect, 1)) return 1;
+    do {
+        LOFT_PUB_GET(*state, seen);
+    } while (seen != 2);
+    return 0;
+}
+static inline void loft_once_end(int *state) { LOFT_PUB_SET(*state, 2); }
 
 #endif
