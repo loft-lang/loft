@@ -300,8 +300,6 @@ def plan(mode, paths, base, want_tests, pr=False, fresh=False):
                           md or rs or loft, "A"))
     if md or stdlib:
         steps.append(Step("doc drift", "scripts/check_doc_drift.sh -q", md or stdlib, "A"))
-    if stdlib or src:
-        steps.append(Step("compiled stdlib", "python3 scripts/compiled_stdlib_fresh.py", stdlib or src, "A"))
     # Phase B — one cargo at a time.
     if rs or stdlib:
         steps.append(Step("build", "cargo build -q --bin loft " + " ".join(PROBE), rs or stdlib, "B"))

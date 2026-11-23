@@ -784,12 +784,11 @@ def threads_of(bench, pkg_dir):
 def require_compiled_stdlib(loft):
     """Refuse to time an interpreter whose compiled standard library is declined (@PLN181).
 
-    The binary bakes the stdlib's compiled bodies against a hash of `default/*.loft`; run
-    against a different `default/` (a stale `src/compiled_stdlib_gen.rs`, or a binary built
-    before the stdlib moved) it declines them all and interprets — correct, and 5-23x slower on
-    text routines.  Measured 2026-10-02, that read as a +2213 % "regression" of an unrelated
-    change.  The binary itself says how many it dispatched (`LOFT_TIMING=1`); none is a refusal
-    here, not a number in the table."""
+    The stdlib's compiled bodies are a C unit the binary builds in the user cache; where it
+    cannot (no C compiler) the binary interprets them — correct, and 5-23x slower on text
+    routines, which reads as a large "regression" of an unrelated change.  The binary itself
+    says how many it dispatched (`LOFT_TIMING=1`); none is a refusal here, not a number in the
+    table."""
     probe = os.path.join(ROOT, "target", "stdlib_probe.loft")
     os.makedirs(os.path.dirname(probe), exist_ok=True)
     with open(probe, "w") as f:
@@ -798,10 +797,10 @@ def require_compiled_stdlib(loft):
                          env={**os.environ, "LOFT_TIMING": "1"}, timeout=120)
     m = re.search(r"compiled stdlib: (\d+) function", out.stderr)
     if not m or int(m.group(1)) == 0:
-        fail(f"{loft} declines its compiled standard library here: it was not compiled from this "
-             "tree's default/*.loft, so the interpreter lane would time the slow path.  Run "
-             "`make compiled-stdlib` and rebuild that binary (or pass --allow-declined-stdlib to "
-             "measure the declined state on purpose).")
+        fail(f"{loft} runs its standard library interpreted here: its C unit could not be built "
+             "(no C compiler, or LOFT_NO_COMPILED_STDLIB is set), so the interpreter lane would "
+             "time the slow path.  `LOFT_HOSTED_VERIFY=1` says why (or pass "
+             "--allow-declined-stdlib to measure the interpreted state on purpose).")
 
 
 def main():

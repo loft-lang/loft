@@ -144,8 +144,7 @@ pub fn emit_bodies(
     stores: &Stores,
     export: &std::collections::HashSet<u32>,
 ) -> Result<String, super::Refusal> {
-    // The Rust build's own set (`stdlib_codegen::export_set`, handed in: the writer of C does
-    // not name the Rust writer's layer): the functions both compile.
+    // The compiled standard library's set (`native_gate::export_set`, handed in).
     let mut set: Vec<u32> = export.iter().copied().collect();
     set.sort_unstable_by_key(|d| data.def(*d).name().to_string());
     let mut carried: Vec<(u32, Vec<Slot>, Slot)> = Vec::new();
@@ -210,8 +209,8 @@ pub fn emit_bodies(
     let whole = format!("{RUNTIME_END}{written}{entries}");
     let kept = tidy::drop_unnamed(&whole, RUNTIME_END);
     // A frame site names its source file as the standard library was found on this machine;
-    // the committed fragment names it as `default/<file>`, as `compiled_stdlib_gen.rs` does, so
-    // it is the same text on every checkout.
+    // the committed fragment names it as `default/<file>`, so it is the same text on every
+    // checkout.
     let mut fragment = kept[RUNTIME_END.len()..].to_string();
     for (d, _, _) in &carried {
         let file = data.def(*d).position().file;

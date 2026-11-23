@@ -53,7 +53,6 @@ codegen_emitter	344.0
 compact	0.6
 compat_floor	0.1
 compile_scaling	1.9
-compiled_stdlib	0.3
 complete_write	0.6
 complexity_lint_ownership	0.4
 concurrent_warm_start	0.4
