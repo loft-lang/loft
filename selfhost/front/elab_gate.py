@@ -533,6 +533,14 @@ def main():
         for fut in cf.as_completed(futs):
             part, f = futs[fut]
             verdict, detail, fns = fut.result()
+            # An agree is valid only when everything aligns (the owner's definition): a program
+            # whose IR agrees but whose contract facts, state or flag reasons do not is
+            # `unaligned`, counted apart from `differ` (which is the IR's).  A fact the port does
+            # not derive yet (`buffer_exits`, P1) stays apart in the contract's `cm`: not derived
+            # is no difference, so it holds no program back until the port derives it.
+            if verdict == "agree" and f in CONTRACT:
+                if CONTRACT[f][0] or STATE.get(f) or REASONS.get(f):
+                    verdict = "unaligned"
             # By function only where it adds to the program's verdict: a refused program (a program
             # that agrees pins all its definitions through the `elab` block already).
             if verdict == "refused":
@@ -545,8 +553,8 @@ def main():
                 results[baseline.name_of(f, root, suite)] = verdict
             rel = os.path.relpath(f, os.path.dirname(root))
             refusals = " | ".join(sorted(set(detail))) if verdict == "refused" else ""
-            # An agreeing program's contract verdict: the facts its functions carry differently.
-            if verdict == "agree" and f in CONTRACT:
+            # An agreeing or unaligned program's layers: the facts its functions carry differently.
+            if verdict in ("agree", "unaligned") and f in CONTRACT:
                 cd, _ = CONTRACT[f]
                 refusals = "contract " + ("agree" if not cd else "differ: " + ", ".join(sorted(cd)))
                 sd = STATE.get(f)
@@ -581,6 +589,7 @@ def main():
         tot.update(c)
     n = total = sum(tot.values()) - tot["noimage"]
     print(f"{tot['agree']} of {n} programs agree; {tot['refused']} refused, {tot['differ']} differ"
+          + (f", {tot['unaligned']} unaligned" if tot["unaligned"] else "")
           + (f"; {tot['noimage']} the Rust front end refuses" if tot["noimage"] else ""))
     if CONTRACT:
         # The reimplementation contract over the programs that agree on their image: a fact a
