@@ -790,11 +790,13 @@ pub fn adopt_shared_cdylib(
     // A hosted C unit (`@PLN206 P5`) names types by the numbers of the program that generated it
     // and translates them by key where they cross into the stores (`loft_tp_out`, `loft_tp_in`),
     // so it runs in any program, as a keyed rustc artifact does; it is a different artifact
-    // from a rustc one, and from a unit built with the verify's switches: its own key.
+    // from a rustc one, and from a unit built with the verify's switches or without its
+    // safepoints (`LOFT_NO_HANDOVER`): its own key.
     let hosted = crate::keys::lib_backend_c();
     let program_fp = if hosted {
         1 | (u64::from(crate::keys::poison_claim()) << 1)
             | (u64::from(crate::keys::hosted_planted()) << 2)
+            | (u64::from(crate::keys::no_handover()) << 3)
     } else if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
         mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
     } else {

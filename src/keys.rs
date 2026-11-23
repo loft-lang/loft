@@ -5231,3 +5231,11 @@ pub fn hosted_verify() -> bool {
 pub fn hosted_planted() -> bool {
     std::env::var_os("LOFT_HOSTED_PLANT").is_some()
 }
+
+/// Is `LOFT_NO_HANDOVER` set: is a hosted unit built without its loop-head safepoints
+/// (`@PLN206 P7`), so a pause waits for the routine to return?  A bisect step, and the
+/// measure of what the safepoints cost.
+#[must_use]
+pub fn no_handover() -> bool {
+    std::env::var("LOFT_NO_HANDOVER").is_ok_and(|v| v != "0")
+}

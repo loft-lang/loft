@@ -5833,6 +5833,7 @@ impl<'a> FnWriter<'a> {
             // state of its own in flight: a write window, a held file cursor, a sticky sum.
             // A sticky sum is offered as its checked value, its flag read (`flag ? null : sum`).
             if self.cx.open
+                && !crate::keys::no_handover()
                 && self.windows.is_empty()
                 && self.ap_loop_windows.is_empty()
                 && self.text_windows.is_empty()
