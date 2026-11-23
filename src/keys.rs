@@ -5183,10 +5183,28 @@ pub fn kept_element_copy() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
 }
 
-/// `@PLN206 P4` — is a `use`d library's artifact a hosted C unit this run (`LOFT_LIB_BACKEND=c`)?
+/// `@PLN206` — is a `use`d library's artifact a hosted C unit?  **DEFAULT ON**:
+/// `LOFT_LIB_BACKEND=rust` builds the rustc artifact instead, and a package whose native part is
+/// a Rust crate takes it too while it is the one being built ([`set_lib_rust_crate`]).
 #[must_use]
 pub fn lib_backend_c() -> bool {
-    std::env::var("LOFT_LIB_BACKEND").is_ok_and(|v| v == "c")
+    !LIB_RUST_CRATE.with(std::cell::Cell::get)
+        && !std::env::var("LOFT_LIB_BACKEND").is_ok_and(|v| v == "rust")
+}
+
+thread_local! {
+    /// Is the library being built or adopted now one whose native part is a Rust crate?
+    static LIB_RUST_CRATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Say whether the library built or adopted next has a Rust crate (`[native] crate` and no
+/// `[c] shim`): a hosted C unit cannot carry its natives, so it takes the rustc artifact.
+/// Read from the package's manifest; `None` (no package) clears it.
+pub fn set_lib_rust_crate(pkg_dir: Option<&str>) {
+    let rust = pkg_dir
+        .and_then(|d| crate::manifest::read_manifest(&format!("{d}/loft.toml")))
+        .is_some_and(|m| m.native_crate.is_some() && m.c_shim.is_empty());
+    LIB_RUST_CRATE.with(|c| c.set(rust));
 }
 
 /// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does

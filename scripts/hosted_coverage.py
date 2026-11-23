@@ -13,7 +13,7 @@ interpreted, against a baseline that only shrinks (@PLN206 coverage).
 Each package is built as a hosted C unit (`loft build-native` with `LOFT_LIB_BACKEND=c`), which
 names every public function the C bridge does not carry and why (`interpreted: <name>\\t<why>`):
 such a function runs interpreted under a program that adopts the library, answering the same,
-only slower.  A package whose native part is a Rust crate (`[native]`) has no unit at all until
+only slower.  A package whose native part is a Rust crate (`[native] crate`) has no unit at all until
 it has a `[c] shim`; it is listed apart and never counted.
 
 Red when a function is interpreted that the baseline does not list (coverage lost), and when the
@@ -39,8 +39,16 @@ def package_name(pkg):
 
 
 def rust_crate(pkg):
-    text = open(os.path.join(pkg, "loft.toml"), encoding="utf-8").read()
-    return re.search(r"^\[native\]", text, re.M) is not None
+    """Is the package's native part a Rust crate (`[native] crate = …`)?  A `[native] component`
+    is a C-ABI library loft ships beside its binary, which a unit calls like any C function."""
+    section = None
+    for line in open(os.path.join(pkg, "loft.toml"), encoding="utf-8"):
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == "[native]" and re.match(r"crate\s*=", line):
+            return True
+    return False
 
 
 def measure(loft, libs, pkg):

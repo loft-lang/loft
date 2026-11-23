@@ -322,7 +322,7 @@ jobs:
       # that unit with NO C compiler on the path (`hosted_suite.py --prebuilt`, which also runs
       # every call into the unit interpreted and compares the two, LOFT_HOSTED_VERIFY).  Red when
       # a test answers differently adopted.  A library the C writer declines has no unit and
-      # passes, said; a package whose native part is a Rust crate (`[native]`) has none until
+      # passes, said; a package whose native part is a Rust crate (`[native] crate`) has none until
       # it has a `[c] shim` (@PLN206 P6).
       - name: Hosted C — ${{ matrix.package }}
         working-directory: ${{ matrix.package }}
@@ -332,7 +332,7 @@ jobs:
           LOFT_POISON_CLAIM: 1
         run: |
           set -o pipefail
-          if grep -q '^\[native\]' loft.toml; then
+          if awk '/^\[/{s=$0} s=="[native]" && /^[[:space:]]*crate[[:space:]]*=/{f=1} END{exit !f}' loft.toml; then
             echo "a Rust native crate: no C unit until it has a [c] shim (@PLN206 P6)"
             exit 0
           fi

@@ -430,6 +430,10 @@ pub fn compiler_identity() -> String {
 /// one: the library then interprets, which answers the same, only slower.
 pub const REFUSED: &str = "the C writer does not carry this library: ";
 
+/// What a hosted build's error starts with when no C compiler could be run to build the unit:
+/// the library then interprets, as a declined one does.
+pub const NO_COMPILER: &str = "no C compiler to build the library with: ";
+
 /// `@PLN206 P5` — the key of each of the unit's type numbers (`lib_ids::TypeNames::key`), and
 /// `loft_map_types`, which asks the interpreter for its number of each at `loft_shared_init` and
 /// fills the two maps a store's root type crosses by (`loft_tp_out`, `loft_tp_in`).  A key the
@@ -546,7 +550,7 @@ pub fn build_artifact(
         .arg("-lm")
         .args(&links)
         .run(&[])
-        .map_err(|e| format!("{cc}: {e}"))?;
+        .map_err(|e| format!("{NO_COMPILER}{cc}: {e}"))?;
     if !ran.status.success() {
         let _ = fa::remove_file(&tmp);
         return Err(format!(

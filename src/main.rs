@@ -9415,6 +9415,7 @@ fn main() {
                 let manifest =
                     loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
                 let pkg_str = pkg_path.to_string_lossy().to_string();
+                loft::keys::set_lib_rust_crate(Some(&pkg_str));
                 // Machine-readable so a publish script can capture it.  The KEY
                 // line differs by native model, because the two cdylibs have
                 // different ABI contracts (see the auto-native branch below):
@@ -10587,6 +10588,7 @@ fn main() {
         extensions::preload_native_libs(&mut p.data, &hand_written);
     }
     for pkg_dir in &pending_native {
+        loft::keys::set_lib_rust_crate(Some(pkg_dir));
         if file_access::is_under(&abs_file, pkg_dir) {
             continue;
         }
@@ -10804,13 +10806,24 @@ fn main() {
                 // `@PLN206 P5` — a hosted C unit the writer declined: the library interprets,
                 // as each function the bridge declines does (only `LOFT_REQUIRE_NATIVE` asks
                 // otherwise).  A unit `cc` refused is a writer defect, and fails below.
+                // No C compiler to build with: the library interprets too, and the one thing to
+                // do about it is said.
                 if !native_required
                     && loft::c::hosted::selected()
                     && e.starts_with(loft::c::hosted::REFUSED)
                 {
+                    if loft::keys::hosted_verify() {
+                        eprintln!("loft: library '{pkg_dir}' runs interpreted this run — {e}");
+                    }
+                    continue;
+                }
+                if !native_required
+                    && loft::c::hosted::selected()
+                    && e.starts_with(loft::c::hosted::NO_COMPILER)
+                {
                     eprintln!(
-                        "loft: library '{pkg_dir}' runs interpreted this run — {e}.  Results \
-                         are unchanged, only slower."
+                        "loft: library '{pkg_dir}' runs interpreted: install a C compiler (cc) \
+                         to run it compiled."
                     );
                     continue;
                 }
