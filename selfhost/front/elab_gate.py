@@ -138,6 +138,39 @@ def state_table(text):
     return out
 
 
+# Every compared fact's TIER: who could observe it differing (the owner's question, and C122's
+# line between the language and the compiler).  Strict equality holds for every tier; the tier
+# says how to read a difference.
+#   T1 semantic — values, faults, effect order, accept or refuse: a defect in one side.  The IR
+#      itself is this tier's channel, but an IR difference can also be representation, so the IR
+#      is reported as `IR` and judged by a reader.
+#   T2 correctness-bearing implementation — ownership and delivery (what is freed, copied,
+#      adopted): invisible when right, a fault or a wrong value when wrong.  Probe which side is
+#      right before either moves.
+#   T3 pure implementation — no program can observe it even when "wrong" (the rule that set a
+#      flag, a temporary's name or number, a slot, a reservation's capacity): transcription; the
+#      cleaner routine wins and Rust may move.
+#   T4 diagnostics — read only by a lint: which warnings appear.
+# `user_named` decides "compiler temporary" (`Function::is_compiler_generated`) only for a name
+# starting with `_`, which codegen reads; on any other name it only feeds the never-read lint.
+TIERS = {
+    "state": {"user_named(_)": "T2", "user_named": "T4", "user_appended": "T4", "copy_bound": "T4"},
+    "contract": {},
+    "reasons": {},
+}
+TIER_DEFAULT = {"state": "T2", "contract": "T2", "reasons": "T3"}
+
+
+def tier(layer, kind):
+    """The tier of a `kind` the `layer` compares (see TIERS)."""
+    return TIERS[layer].get(kind, TIER_DEFAULT[layer])
+
+
+def tagged(layer, kinds):
+    """A program's differing kinds (a set or a counter's keys), each with its tier."""
+    return ", ".join(f"{k} [{tier(layer, k)}]" for k in sorted(kinds))
+
+
 def state_compare(rust, port, own, path=None):
     """{kind: count} of the state items the two images carry differently over the program's
     own functions — a flag by its name, a dep list as `deps`, the inline refs as
@@ -150,7 +183,10 @@ def state_compare(rust, port, own, path=None):
             continue
         r, p = rust.get(key, set()), port.get(key, set())
         for item in r ^ p:
-            kinds["inline_refs" if key[1] == "inline_refs" else item.split("=")[0]] += 1
+            kind = "inline_refs" if key[1] == "inline_refs" else item.split("=")[0]
+            if kind == "user_named" and key[1].startswith("var=_"):
+                kind = "user_named(_)"
+            kinds[kind] += 1
             lines.append(f"{path}\t{key[0]}\t{key[1]}\t{item}\t{'rust' if item in r else 'loft'}\n")
     if lines and path and os.environ.get("LOFT_ELAB_STATE_FILE"):
         with STATE_LOCK, open(os.environ["LOFT_ELAB_STATE_FILE"], "a", encoding="utf-8") as fh:
@@ -556,13 +592,13 @@ def main():
             # An agreeing or unaligned program's layers: the facts its functions carry differently.
             if verdict in ("agree", "unaligned") and f in CONTRACT:
                 cd, _ = CONTRACT[f]
-                refusals = "contract " + ("agree" if not cd else "differ: " + ", ".join(sorted(cd)))
+                refusals = "contract " + ("agree" if not cd else "differ: " + tagged("contract", cd))
                 sd = STATE.get(f)
                 if sd is not None:
-                    refusals += "; state " + ("agree" if not sd else "differ: " + ", ".join(sorted(sd)))
+                    refusals += "; state " + ("agree" if not sd else "differ: " + tagged("state", sd))
                 rd = REASONS.get(f)
                 if rd is not None:
-                    refusals += "; reasons " + ("agree" if not rd else "differ: " + ", ".join(sorted(rd)))
+                    refusals += "; reasons " + ("agree" if not rd else "differ: " + tagged("reasons", rd))
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
@@ -601,7 +637,7 @@ def main():
             cdiff.update({k: 1 for k in cd})
             cmiss.update({k: 1 for k in cm})
         print(f"contract: {cagree} of {len(CONTRACT)} agreeing programs carry every derived fact alike"
-              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in cdiff.most_common()) if cdiff else "")
+              + ("; differ on " + ", ".join(f"{k} {v} [{tier('contract', k)}]" for k, v in cdiff.most_common()) if cdiff else "")
               + ("; not derived yet: " + ", ".join(f"{k} {v}" for k, v in cmiss.most_common()) if cmiss else ""))
     if STATE:
         # The image's function state over the programs that agree on their code: a flag the
@@ -611,7 +647,7 @@ def main():
         for sd in STATE.values():
             skinds.update({k: 1 for k in sd})
         print(f"state: {sagree} of {len(STATE)} agreeing programs carry the same function state"
-              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in skinds.most_common(12)) if skinds else ""))
+              + ("; differ on " + ", ".join(f"{k} {v} [{tier('state', k)}]" for k, v in skinds.most_common(12)) if skinds else ""))
     if REASONS:
         # The rule behind each flag both front ends set: the port follows Rust's reasoning, so a
         # flag set by another rule is a difference even where the state agrees.
@@ -620,7 +656,20 @@ def main():
         for rd in REASONS.values():
             rkinds.update(rd)
         print(f"reasons: {ragree} of {len(REASONS)} agreeing programs set each shared flag by the same rule"
-              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in rkinds.most_common(8)) if rkinds else ""))
+              + ("; differ on " + ", ".join(f"{k} {v} [{tier('reasons', k)}]" for k, v in rkinds.most_common(8)) if rkinds else ""))
+    if CONTRACT:
+        # Each unaligned program by the most severe tier among its differences: what reading
+        # the gate's verdicts asks first (a T2 needs a probe, a T3 or T4 only a transcription).
+        worst = collections.Counter()
+        for f, (cd, _) in CONTRACT.items():
+            tiers = {tier("contract", k) for k in cd} | {tier("state", k) for k in STATE.get(f) or ()} \
+                | {tier("reasons", k) for k in REASONS.get(f) or ()}
+            if tiers:
+                worst[min(tiers)] += 1
+        if worst:
+            print("unaligned by tier: " + ", ".join(f"{t} {worst[t]}" for t in sorted(worst))
+                  + "  (T2 ownership: probe which side is right; T3 implementation: transcribe; "
+                  "T4 lints only)")
     fv = collections.Counter(fn_results.values())
     print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
           f"refused, {fv['beside']} beside a refusal")
