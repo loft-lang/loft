@@ -1769,7 +1769,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     }
     // (A callee's one-buffer marker, `["??"]`, is no borrow of the caller's buffer.)
     buf = el_vars::work_ref(vars, el_types::with_deps(rp, []));
-    vars.vars[buf].caller_hidden_buf = true;
+    el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     // (A callee the port refused whose result borrows its hidden buffer RENAMED onto a local
@@ -1905,7 +1905,7 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
     return null;
   }
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
-  vars.vars[buf].caller_hidden_buf = true;
+  el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
   rt = if e.first_pass { el_types::with_deps(ret, []) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };

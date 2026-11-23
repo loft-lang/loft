@@ -228,9 +228,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       kheld = el_vars::create_unique(vars, "_ncc", lhs);
       el_vars::set_skip_free(vars, kheld, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, kheld);
-      // (found.md row 8: the holder VIEWS the place, an inline ref — its null init mints no
-      // store.)
-      el_vars::mark_inline(vars, kheld, "build_null_coalesce_default_inner");
+      // (`build_null_coalesce_default_inner` marks a keyed hoist `skip_free` and only that: its
+      // null init mints no store because a skip-free `__ncc_N` is an overwritten view
+      // (`keyed_null_mints`), not because it is an inline ref.)
       // (On the first pass too the holder is bound — Rust builds the block on both — so a
       // consumer that asks whether the value runs a bind, a `for`'s source hold, sees it.)
       if e.first_pass {

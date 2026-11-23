@@ -840,7 +840,7 @@ fn pooled(ctx: integer, vars: el_vars::Vars, def: ir::Definition, a_nr: integer,
     }
   }
   vr = el_vars::work_ref(vars, t);
-  vars.vars[vr].caller_hidden_buf = true;
+  el_vars::mark_caller_hidden_buf(vars, vr, "add_defaults");
   pool += [Pool { ctx: ctx, elem: key, k: k, var: vr }];
   vr
 }
