@@ -24,7 +24,12 @@ impl Cx<'_> {
     /// `d` used as a value: a dispatcher arm for it, and the C value that names it.
     pub(crate) fn fn_value(&self, d: u32) -> String {
         self.fn_values.borrow_mut().insert(d);
-        format!("loft_fn_of(INT64_C({d}))")
+        // A hosted unit's value names the function as the interpreter numbers it.
+        if self.open {
+            format!("loft_fn_of(loft_fhost(INT64_C({d})))")
+        } else {
+            format!("loft_fn_of(INT64_C({d}))")
+        }
     }
 
     /// Is `d` a function a value can name (rather than an integer that happens to be one)?
@@ -104,6 +109,9 @@ impl Cx<'_> {
                 if buf { "b" } else { "" },
                 list.join(", ")
             );
+            // A hosted unit's value carries the interpreter's number: the unit's own function is
+            // found by it, any other is the program's, called in the interpreter.
+            out.push_str("#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(f.d);\n");
             if up {
                 let args: Vec<String> = std::iter::once("f".to_string())
                     .chain((0..params.len()).map(|i| format!("a{i}")))
@@ -122,10 +130,10 @@ impl Cx<'_> {
                 };
                 let _ = writeln!(
                     out,
-                    "#ifdef LOFT_HOSTED\n    if (f.d & LOFT_HOST_FN) {{ {body} }}\n#endif"
+                    "    if (loft_ud < 0 && f.d >= 0 && f.d != LOFT_NULL) {{ {body} }}"
                 );
             }
-            out.push_str("    switch (f.d) {\n");
+            out.push_str("    switch (loft_ud) {\n#else\n    switch (f.d) {\n#endif\n");
             // A place is a link the arm hands to the place twin.
             let linked: Vec<(CType, bool)> = params.iter().map(|(c, m)| (*c, *m > 0)).collect();
             let places: Vec<bool> = params.iter().map(|(_, m)| *m == 2).collect();
@@ -183,7 +191,7 @@ impl Cx<'_> {
     /// made by the interpreter (`HostTable::call_ref`), the answer read back.  The interpreter's
     /// table may move under the call: the unit reads it again after.
     pub(crate) fn upcall_code(&self) -> String {
-        let mut out = String::new();
+        let mut out = self.fn_number_code();
         for (id, (params, ret)) in self.fn_sigs.borrow().iter().enumerate() {
             if !upcall_shapes(params, *ret) {
                 continue;
@@ -223,7 +231,7 @@ impl Cx<'_> {
             }
             let _ = writeln!(
                 out,
-                "    loft_host_call_ref(loft_host_stores, (uint32_t) (f.d & ~LOFT_HOST_FN), cl, la, {n}, r);\n    loft_host_sync();"
+                "    loft_host_call_ref(loft_host_stores, (uint32_t) f.d, cl, la, {n}, r);\n    loft_host_sync();"
             );
             let _ = writeln!(
                 out,
@@ -241,13 +249,49 @@ impl Cx<'_> {
         out
     }
 
+    /// `@PLN206` — a hosted unit's function numbers as the interpreter's: each function the unit
+    /// uses as a value, by key (`lib_ids::fn_key`), asked of the interpreter at
+    /// `loft_shared_init` (`HostTable::fn_id`, `loft_map_fns`).  A function the interpreter has
+    /// no number for keeps the unit's.
+    fn fn_number_code(&self) -> String {
+        let values: Vec<u32> = self.fn_values.borrow().iter().copied().collect();
+        let n = values.len();
+        let mut out = String::from("\n/* `@PLN206` — the interpreter's number of each function the unit names as a value. */\n");
+        let _ = writeln!(out, "static const char *const loft_fkeys[{}] = {{", n.max(1));
+        for &d in &values {
+            let key = crate::lib_ids::fn_key(self.data, d);
+            let _ = writeln!(out, "    {},", super::body::c_string(&key));
+        }
+        let _ = writeln!(out, "}};");
+        let unit: Vec<String> = values.iter().map(|d| format!("INT64_C({d})")).collect();
+        let _ = writeln!(
+            out,
+            "static const int64_t loft_funits[{}] = {{ {} }};\nstatic int64_t loft_fhosts[{}];",
+            n.max(1),
+            if unit.is_empty() { "0".to_string() } else { unit.join(", ") },
+            n.max(1)
+        );
+        let _ = writeln!(
+            out,
+            "static int64_t loft_fhost(int64_t d) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_funits[i] == d) return loft_fhosts[i];\n    return d;\n}}\n\
+             static int64_t loft_funit(int64_t h) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_fhosts[i] == h) return loft_funits[i];\n    return -1;\n}}\n\
+             typedef uint32_t (*loft_fn_id_fn)(const void *ids, const uint8_t *key, size_t len);\n\
+             static void loft_map_fns(const unsigned char *loft_t, const void *loft_ids) {{\n    \
+             loft_fn_id_fn id;\n    memcpy(&id, loft_t + LOFT_HT_FN_ID, sizeof id);\n    \
+             for (uint32_t i = 0; i < {n}u; i++) {{\n        uint32_t h = id(loft_ids, (const uint8_t *) loft_fkeys[i], strlen(loft_fkeys[i]));\n        \
+             loft_fhosts[i] = h == 0xFFFFFFFFu ? loft_funits[i] : (int64_t) h;\n    }}\n}}"
+        );
+        out
+    }
+
     /// `loft_drop_closure` (`State::drop_fn_ref`): a function value's closure record releases
     /// what it captured through its type's drop cascade — the hooks of the captured values run
     /// there.  A value with no record, or one in a freed store, releases nothing.
     pub(crate) fn drop_code(&self, fns: &[u32]) -> String {
         let mut out = String::from(
             "\nstatic void loft_drop_closure(loft_fn f) {\n    if (!loft_store_live(f.clos)) return;\n\
-             #ifdef LOFT_HOSTED\n    if (f.d & LOFT_HOST_FN) return; /* the interpreter's closure */\n#endif\n    switch (f.d) {\n",
+             #ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(f.d);\n    if (loft_ud < 0) return; /* the interpreter's closure */\n    switch (loft_ud) {\n\
+             #else\n    switch (f.d) {\n#endif\n",
         );
         for &d in self.fn_values.borrow().iter() {
             let cascade = self.data.drop_cascade_nr(self.data.def(d).closure_record());

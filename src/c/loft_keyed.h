@@ -1935,7 +1935,9 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
     if (getenv("LOFT_TRACE_PAR_WORKERS"))
         fprintf(stderr, "loft: LOFT_TRACE_PAR_WORKERS c n_rows=%lld threads=%lld distinct_workers=%lld\n",
                 (long long) n, (long long) t, (long long) (n > 0 ? t : 0));
-#if defined(LOFT_THREADS)
+/* A hosted unit's stores are the interpreter's, and a call it makes back runs in the
+ * interpreter of the calling thread: its `par` rows run on that thread, with the same answers. */
+#if defined(LOFT_THREADS) && !defined(LOFT_HOSTED)
     if (t > 1) {
         int64_t k;
         loft_par_sharing++;
@@ -2004,7 +2006,7 @@ static void loft_parallel_run(int64_t n, loft_arm_fn const *fns, void *const *pv
     loft_arms a;
     a.fns = fns;
     a.pv = pv;
-#if defined(LOFT_THREADS)
+#if defined(LOFT_THREADS) && !defined(LOFT_HOSTED)
     if (n > 0) {
         int64_t k;
         loft_par_job *jobs = (loft_par_job *) calloc((size_t) n, sizeof *jobs);

@@ -1947,6 +1947,14 @@ static loft_fn loft_fn_of(int64_t d) {
     return loft_fn_make(d, loft_ref_null());
 }
 
+#ifdef LOFT_HOSTED
+/* `@PLN206` — a hosted unit's function values carry the interpreter's function numbers, as its
+ * stores carry the interpreter's type numbers: the unit's function `d` as the interpreter
+ * numbers it, and back (`-1`: none of the unit's, one the interpreter calls). */
+static int64_t loft_fhost(int64_t d);
+static int64_t loft_funit(int64_t h);
+#endif
+
 /* `Stores::evacuated` (`@FR-H-RefHome`): the copy each record a stored reference named was
  * evacuated to, per holder store, so a second holder in that store shares the one copy; an
  * entry goes with the store its record lived in. */

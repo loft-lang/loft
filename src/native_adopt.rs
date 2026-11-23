@@ -377,6 +377,10 @@ pub(crate) unsafe extern "C" fn host_call_ref(
     } else {
         unsafe { (*state).call_back(d_nr, closure, args) }
     };
+    // The call made and freed stores: a hosted unit reads the table again from this view
+    // (`loft_host_sync`), which only the interpreter keeps current.
+    let stores = unsafe { &mut *stores };
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
     unsafe { *ret = result };
 }
 
