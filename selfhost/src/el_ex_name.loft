@@ -480,10 +480,13 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
           // capture's name, user-named — later reads on this pass find it as a local; pass 2
           // reads the closure record and retires it.)
           if e.first_pass {
-            pv = el_vars::add_variable(vars, name, c.tp);
+            // (Typed as Rust's arm types it, `t = ctype`: the captured type with no deps — a loop
+            // over it gives a bare element, which pass 2's `loop_variable` re-types.)
+            ctp = el_types::without_deps(c.tp);
+            pv = el_vars::add_variable(vars, name, ctp);
             el_vars::mark_user_named(vars, pv, "parse_var_inner");
             el_vars::in_use(vars, pv, true);
-            return ex(ir::NdVar { n: pv }, c.tp);
+            return ex(ir::NdVar { n: pv }, ctp);
           }
           return ex(ir::NdNull, c.tp);
         }

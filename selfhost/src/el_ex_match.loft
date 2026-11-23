@@ -1763,11 +1763,9 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
     x = ex(ir::NdVar { n: held_src }, ct);
   }
   el_d = el_types::keyed_elem(ct);
+  // (`for_type`'s keyed arm: the element borrows what the collection's TYPE names — a local's
+  // read names the local; a capture's first-pass placeholder, typed bare, names nothing.)
   elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct));
-  match x.code {
-    NdVar { n } => { elem = el_types::with_deps(elem, [n]); },
-    _ => {}
-  }
   // `keyed_snapshot`: a hash, spatial or trie is walked in key order through a scratch copy of
   // its records (`n_hash_sorted`; a radix tree's walk is ordered already, `n_radix_sorted`),
   // released after the loop.
