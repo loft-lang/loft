@@ -524,6 +524,8 @@ pub struct Stores {
     /// `@PLN226` — the store contexts hosted C units keep for this `Stores`
     /// (`host_abi::HostedContexts`).
     pub hosted_cx: crate::host_abi::HostedContexts,
+    /// `@PLN226` — the store-lifetime detectors' records of this run (`keys::StoreChecks`).
+    pub(crate) checks: crate::keys::StoreChecks,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -821,6 +823,7 @@ impl Clone for Stores {
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1643,6 +1646,7 @@ impl Stores {
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),

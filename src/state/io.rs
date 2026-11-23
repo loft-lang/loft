@@ -1749,14 +1749,14 @@ impl State {
         // source-record pops below are exactly where a stale `Vec3` sub-field surfaces.
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let raw_tp = self.code::<u16>();
         let to = self.get_stack::<DbRef>();
         let data = self.get_stack::<DbRef>();
         self.do_copy_record(data, to, raw_tp);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 
@@ -1872,7 +1872,7 @@ impl State {
                 let copy_line = line_of(&self.line_numbers, self.code_pos);
                 let copy_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                 let (free_pc, free_line, free_d_nr, free_op) =
-                    crate::keys::uaf_freed_pc(data.store_nr)
+                    crate::keys::uaf_freed_pc(&self.database.checks, data.store_nr)
                         .map_or((0, 0, u32::MAX, u16::MAX), |(pc, d, op)| {
                             (pc, line_of(&self.line_numbers, pc), d, op)
                         });
@@ -2366,7 +2366,7 @@ impl State {
         // source record into a parent field; a stale source pop here is a copy-incomplete).
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
@@ -2374,7 +2374,7 @@ impl State {
         let data = self.get_stack::<DbRef>();
         self.database.record_finish(&data, &record, parent_tp, fld);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 

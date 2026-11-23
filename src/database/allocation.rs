@@ -2036,7 +2036,7 @@ impl Stores {
             // instrument this fault's own message recommends — could never see
             // the one free that matters.
             if crate::keys::strict_stores() {
-                crate::keys::strict_note_free(al, self.alloc_pc, name);
+                crate::keys::strict_note_free(&mut self.checks, al, self.alloc_pc, name);
             }
             return;
         }
@@ -2045,7 +2045,7 @@ impl Stores {
         let already_free = !self.allocations[al as usize].live;
         // The double-free audit needs the same record, so it is armed by either instrument.
         if (crate::keys::strict_stores() || crate::keys::double_free_audit()) && !already_free {
-            crate::keys::strict_note_free(al, self.alloc_pc, name);
+            crate::keys::strict_note_free(&mut self.checks, al, self.alloc_pc, name);
         }
         if already_free && crate::keys::double_free_audit() {
             // `@FR-H-FreeTwice` — a CENSUS of refused re-frees, split by the emission that
@@ -2065,7 +2065,7 @@ impl Stores {
             // finds the slot LIVE and takes the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
             // this one, by never recycling a slot.
             let same_site =
-                crate::keys::strict_free_site(al).is_some_and(|(pc, _)| pc == self.alloc_pc);
+                crate::keys::strict_free_site(&self.checks, al).is_some_and(|(pc, _)| pc == self.alloc_pc);
             crate::keys::note_double_free(same_site);
         }
         let store = &mut self.allocations[al as usize];
@@ -2202,7 +2202,7 @@ impl Stores {
         // LOFT_UAF_GEN (c): bump the slot's generation so a DbRef minted at the old
         // gen is detectably stale if read after this free (+ any later reuse).
         if crate::keys::uaf_gen_enabled() {
-            crate::keys::uaf_bump_gen(al);
+            crate::keys::uaf_bump_gen(&mut self.checks, al);
         }
         // S29: mark slot as free in the bitmap so database_named()
         // can reuse it without LIFO ordering.
@@ -2678,6 +2678,7 @@ impl Stores {
         // release binary the probes use, which is why a live UAF read as ordinary data.
         if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
+                &self.checks,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3142,6 +3143,7 @@ impl Stores {
         if crate::keys::strict_stores() && !self.allocations[r.store_nr as usize].live {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
+                &self.checks,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3398,6 +3400,7 @@ impl Stores {
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),

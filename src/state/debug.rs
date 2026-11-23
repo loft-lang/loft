@@ -536,7 +536,7 @@ impl State {
         // premature-free op (the operand-stack stale ref the frame scan misses).
         let free_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
         for &slot in &freed {
-            crate::keys::uaf_record_free(slot, self.code_pos, free_d_nr, u16::MAX);
+            crate::keys::uaf_record_free(&mut self.database.checks, slot, self.code_pos, free_d_nr, u16::MAX);
         }
         // Opcode bytes for the load + free families.  All are < 255 (single
         // byte); bail quietly if that ever changes rather than misdecode.

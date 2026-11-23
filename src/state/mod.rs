@@ -3218,9 +3218,10 @@ impl State {
         // reports at the consuming pop.
         if crate::keys::uaf_gen_enabled() {
             if size == size_of::<DbRef>() as u32 {
-                crate::keys::uaf_move_shadow(pos - self.stack_step(size), fn_stack);
+                let from = pos - self.stack_step(size);
+                crate::keys::uaf_move_shadow(&mut self.database.checks, from, fn_stack);
             } else {
-                crate::keys::uaf_clear_shadow(fn_stack);
+                crate::keys::uaf_clear_shadow(&mut self.database.checks, fn_stack);
             }
         }
         // @PLAN53 cluster 2 / S4: the returned value occupies a stepped slot
@@ -3541,15 +3542,15 @@ impl State {
             // stamp belongs to exactly the pop that matches its push. Clearing on pop stops
             // a stale stamp from surviving to a later unrelated read once a non-DbRef push
             // reuses the offset — the main residual-false-positive source.
-            let stamped = crate::keys::uaf_shadow_gen(self.stack_pos, db.store_nr);
-            crate::keys::uaf_clear_shadow(self.stack_pos);
+            let stamped = crate::keys::uaf_shadow_gen(&self.database.checks, self.stack_pos, db.store_nr);
+            crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
             // Only stamped < current is a genuine reuse-SINCE-push (gen increases
             // monotonically per slot). A stamped >= current is not a reuse-since-push; the
             // `<` test drops stale stamps too.
             if db.store_nr != u16::MAX
                 && (db.store_nr as usize) < self.database.allocations.len()
                 && let Some(stamped) = stamped
-                && stamped < crate::keys::uaf_slot_gen(db.store_nr)
+                && stamped < crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr)
             {
                 thread_local! {
                     static REPORTED_GEN: std::cell::RefCell<std::collections::HashSet<u32>> =
@@ -3575,8 +3576,8 @@ impl State {
                         data.and_then(|d| d.operator_name(opc))
                             .map_or_else(|| format!("op#{opc}"), str::to_string)
                     };
-                    let free_str = crate::keys::uaf_freed_pc_at_gen(db.store_nr, stamped + 1)
-                        .or_else(|| crate::keys::uaf_freed_pc(db.store_nr))
+                    let free_str = crate::keys::uaf_freed_pc_at_gen(&self.database.checks, db.store_nr, stamped + 1)
+                        .or_else(|| crate::keys::uaf_freed_pc(&self.database.checks, db.store_nr))
                         .map_or_else(String::new, |(fpc, _d, op)| {
                             let fline = self
                                 .line_numbers
@@ -3598,7 +3599,7 @@ impl State {
                     // read outside a copy IS a premature-free candidate. This is the distinction
                     // that turns "prematurely freed" (which points at a correctly-placed temp
                     // free) into "incomplete record-copy" (which points at the actual op).
-                    let verdict = if crate::keys::uaf_in_copy() {
+                    let verdict = if crate::keys::uaf_in_copy(&self.database.checks) {
                         "INCOMPLETE RECORD-COPY — a copy read a stale sub-reference; the copy \
                          did not finish deep-copying before the source was freed (the free is \
                          correct — fix the copy, not the free)"
@@ -3613,7 +3614,7 @@ impl State {
                         db.store_nr,
                         db.rec,
                         db.pos,
-                        crate::keys::uaf_slot_gen(db.store_nr),
+                        crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr),
                         self.code_pos,
                     );
                 }
@@ -4094,10 +4095,6 @@ impl State {
                 size_of::<T>() as u32,
             );
         }
-        let m = self
-            .database
-            .store_mut(&self.stack_cur)
-            .addr_mut::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
         // LOFT_UAF_GEN (c): keep the offset's shadow stamp in sync with what is pushed
         // (BEFORE the move below). A DbRef push STAMPS its slot-gen so a later pop after a
         // free+reuse is caught; ANY non-DbRef push CLEARS the offset, so a stale stamp left
@@ -4108,12 +4105,14 @@ impl State {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
                 let db: &DbRef = unsafe { &*(&raw const val).cast::<DbRef>() };
                 if db.store_nr == u16::MAX {
-                    crate::keys::uaf_clear_shadow(self.stack_pos);
+                    crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
                 } else {
+                    let slot_gen = crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr);
                     crate::keys::uaf_stamp_shadow(
+                        &mut self.database.checks,
                         self.stack_pos,
                         db.store_nr,
-                        crate::keys::uaf_slot_gen(db.store_nr),
+                        slot_gen,
                     );
                     // Positive control (LOFT_UAF_GEN_INJECT): age EVERY ref just AFTER
                     // stamping it, so the stamp keeps the older gen and the ref is stale
@@ -4123,13 +4122,17 @@ impl State {
                     // run would still be ambiguous — which is the very thing the control
                     // exists to rule out.
                     if crate::keys::uaf_gen_inject_enabled() {
-                        crate::keys::uaf_bump_gen(db.store_nr);
+                        crate::keys::uaf_bump_gen(&mut self.database.checks, db.store_nr);
                     }
                 }
             } else {
-                crate::keys::uaf_clear_shadow(self.stack_pos);
+                crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
             }
         }
+        let m = self
+            .database
+            .store_mut(&self.stack_cur)
+            .addr_mut::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
         // A WRITE, not an assignment: the slot is fresh stack space (see `put_stack`).
         unsafe { std::ptr::write(m, val) };
         self.stack_pos += self.stack_step(size_of::<T>() as u32);
@@ -8011,7 +8014,7 @@ impl State {
                     let freed = std::mem::take(&mut self.database.uaf_freed_this_op);
                     let d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                     for &slot in &freed {
-                        crate::keys::uaf_record_free(slot, op_pos_rt, d_nr, u16::from(op));
+                        crate::keys::uaf_record_free(&mut self.database.checks, slot, op_pos_rt, d_nr, u16::from(op));
                     }
                 }
             }

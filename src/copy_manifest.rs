@@ -22,7 +22,6 @@
 //! bargain rustc makes with `.clone()`.
 
 use crate::use_analysis::verdicts_for;
-use std::cell::RefCell;
 
 /// Which emitter wrote the copy — named so an uncovered site points straight at the code
 /// that produced it rather than at a line number alone.
