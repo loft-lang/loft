@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C — a library as a hosted unit
 
 //! `@PLN206 P4` — a HOSTED unit: a library's functions as C that the interpreter adopts, working
 //! on the interpreter's own stores (`doc/claude/plans/206-one-store-model/p3-p4-design.md`).

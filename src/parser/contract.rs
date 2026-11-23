@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR)
 
 //! @PLN91 — the reimplementation contract's per-function facts: how a function behaves as its
 //! callers and the later passes see it, beyond its code.  Each is asked of the function by the

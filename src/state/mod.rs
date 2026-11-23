@@ -474,7 +474,7 @@ pub struct CoroutineFrame {
     /// CO1.9/S28: snapshot of `(store_nr, generation)` for all live stores at the moment
     /// of `coroutine_yield`.  Checked at `coroutine_next`; a mismatch means a store was
     /// mutated between yields and any `DbRef` locals held by the generator may be stale.
-    /// Debug builds only, as the warning that reads it (@P324).
+    /// Debug builds only, as the warning that reads it.
     #[cfg(debug_assertions)]
     pub saved_store_generations: Vec<(u16, u32)>,
     /// Which occupant of this slot the frame is.
@@ -2847,9 +2847,9 @@ impl State {
             self.coroutine_frame_mut(idx).saved_text_positions = to_save;
         }
 
-        // CO1.9/S28: snapshot all live, unlocked store generations at the yield point, for
-        // the debug-only warning `coroutine_next` prints when one moved while the generator
-        // was suspended (@P324).  Locked stores are worker snapshots that can never change.
+        // Snapshot all live, unlocked store generations at the yield point, for the
+        // debug-only warning `coroutine_next` prints when one moved while the generator was
+        // suspended.  Locked stores are worker snapshots that can never change.
         // A walk over every store at every yield, so it is compiled where its reader is.
         #[cfg(debug_assertions)]
         {

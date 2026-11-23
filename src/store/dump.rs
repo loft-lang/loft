@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I69 — Word-addressed store
 
 //! `@PLN206 P4c` — `LOFT_STORE_DUMP=<file>`: every store's final content — written when the store
 //! is freed, and for a store still live at the end of the run, at the end — for

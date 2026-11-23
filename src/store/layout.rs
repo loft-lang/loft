@@ -6,7 +6,7 @@
 //! and every offset, the bit set's inner layout and the end of the prefix must equal this
 //! struct's.  A field added, moved or retyped on one side fails here.
 //!
-//! @falsified-at: none — the shared layout is new, so the receipt is a SABOTAGE (2026-11-22):
+//! @falsified-at: none — the shared layout is new, so the receipt is a SABOTAGE:
 //!   with `loft_store_t.live` an `int` again (`src/c/loft_store.h`), every field after it moves.
 //!   CHANNEL: the assertion.  WITNESS: "`known`: C offset against Store's".
 //!   HOLDS: every offset before `live`.

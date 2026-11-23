@@ -156,7 +156,7 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary.  `store_memory()` counts the program's stores only (`Store::runtime_own`), so it answers alike; a store's slot number runs higher in the interpreter by these two, which a stored reference and an image's `slot=` carry and its loader rewrites (loft#2099) |
+| D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary.  `store_memory()` counts the program's stores only (`Store::runtime_own`), so it answers alike; a store's slot number runs higher in the interpreter by these two, which a stored reference and an image's `slot=` carry and its loader rewrites |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
 
 ## How a divergence is closed
