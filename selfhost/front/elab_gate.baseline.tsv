@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	85fc9d6d90a8394d823ea8c4659dc942af1ac842
 
-layer	elab	agree	1402	of	2133
+layer	elab	agree	1404	of	2133
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -483,7 +483,6 @@ elab	refused	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-
 elab	refused	loft-suite/rules/types/C-Var/sibling-variants-join-to-their-enum.loft
 elab	refused	loft-suite/rules/types/D-Json/2557-a-jsonvalue-given-no-value-holds-jnull-wherever-the-null-is-written.loft
 elab	refused	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft
-elab	refused	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft
 elab	refused	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft
 elab	refused	loft-suite/rules/types/I-Join/2545-an-empty-literal-arm-beside-a-late-typed-arm-takes-its-type.loft
 elab	refused	loft-suite/rules/types/I-Join/a-32-bit-arm-widens-to-a-join-past-i32.loft
@@ -736,9 +735,8 @@ elab	refused	tests/scripts/pln133-optional-unify.loft
 elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-order.loft
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
-elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	13367	of	22815
+layer	elab-functions	agree	13352	of	22784
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -9677,9 +9675,6 @@ elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-nu
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_main
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_a_named_variant_is_kept
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_an_unfilled_bare_enum_field_answers_null
-elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::Ty
-elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::TyInt
-elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::TyVoid
 elab-functions	agree	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft::K
 elab-functions	agree	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft::P
@@ -14094,20 +14089,8 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::(schema)
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Box
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Bytes
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Dot
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Kind
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Line
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Ogg
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Rgba
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Shape
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Wav
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
-elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12721	of	18446
+layer	elab-pass1	agree	12725	of	18455
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -22002,6 +21985,9 @@ elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_record_default_fills_each_field
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_field_defaults_to_null
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_local_discharges_to_its_first_variant
+elab-pass1	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::n_main
+elab-pass1	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::n_new_v
+elab-pass1	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::n_show
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_float
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_int
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_struct
@@ -26792,6 +26778,7 @@ elab-pass1	agree	tests/scripts/store_load_layout_gate_changed.loft::n_show
 elab-pass1	agree	tests/scripts/store_load_layout_gate_refused.loft::n_main
 elab-pass1	agree	tests/scripts/store_load_smoke.loft::n_keys_of
 elab-pass1	agree	tests/scripts/store_load_textkey.loft::n_pop_of
+elab-pass1	agree	tests/scripts/store_paged_enum_field.loft::n_main
 elab-pass1	agree	tests/scripts/store_persist_smoke.loft::n_record_keys
 elab-pass1	agree	tests/scripts/store_persist_sorted.loft::n_sorted_keys
 elab-pass1	agree	tests/scripts/store_rebuild_b1.loft::n_i32_of
