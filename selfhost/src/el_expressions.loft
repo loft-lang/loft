@@ -2482,6 +2482,13 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   if copied == null {
     return null;
   }
+  // (Where the shadow a member is read off views a LOCAL — on pass 2 it carries its copy seed's
+  // type through the body, a `__ref_p2_N` mint — Rust's selector takes `MaterializeView`: its
+  // work ref is minted and `Bind { substitute }` unregisters it, `skip_free`, no null-init.)
+  if was_return && !e.first_pass && shadow_views_local(vars, el_ir::last(bl.operators)) {
+    mvw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret)));
+    el_vars::unregister_work_ref(vars, mvw);
+  }
   bl.operators[-1] = if was_return { ir::NdReturn { inner: copied! } } else { copied! };
   bl.result = [if ret is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   ir::NdBlock { block: [bl] }
@@ -2741,6 +2748,31 @@ fn reads_tuple_shadow(vars: el_vars::Vars, n: ir::Node) -> boolean {
     _ => {
       for ch in el_ir::children(el_ir::unspan(n)) {
         if reads_tuple_shadow(vars, ch) {
+          return true;
+        }
+      }
+      false
+    }
+  }
+}
+
+// Does a tuple shadow a member is read off (`__tp_p.0`) borrow a local — not only parameters?
+fn shadow_views_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdTupleGet { var, idx: _ } => {
+      if !starts_with(el_vars::name_of(vars, var), "__tp_") {
+        return false;
+      }
+      for d in el_types::deps(el_vars::tp(vars, var)) {
+        if d >= 0 && d < len(vars.vars) && !vars.vars[d].argument {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      for ch in el_ir::children(el_ir::unspan(n)) {
+        if shadow_views_local(vars, ch) {
           return true;
         }
       }
