@@ -128,7 +128,7 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
         {
             continue;
         }
-        crate::native_adopt::scope_library(pkg_dir);
+        crate::interp::native_adopt::scope_library(pkg_dir);
         let export_of = |p: &crate::parser::Parser| {
             let export = crate::native_lib::library_export_set(&p.data, pkg_dir);
             if crate::c::hosted::selected() {

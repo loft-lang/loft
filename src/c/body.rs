@@ -1421,16 +1421,16 @@ impl<'a> FnWriter<'a> {
                 let none = "loft_ho_nostr(), loft_ref_null()";
                 let put = match w.shapes[v] {
                     CType::Int | CType::Int32 | CType::Char => {
-                        format!("loft_ho_put({name}, 0, (int64_t) {var}, {none});")
+                        format!("loft_ho_put({name}, 0, (loft_word) {var}, {none});")
                     }
                     CType::Float => format!(
                         "{{ double b0 = {var}; int64_t b; memcpy(&b, &b0, 8); loft_ho_put({name}, 1, b, {none}); }}"
                     ),
                     CType::Single => format!(
-                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put({name}, 5, (int64_t) b, {none}); }}"
+                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put({name}, 5, (loft_word) b, {none}); }}"
                     ),
                     CType::Bool | CType::Enum => {
-                        format!("loft_ho_put({name}, 4, (int64_t) {var}, {none});")
+                        format!("loft_ho_put({name}, 4, (loft_word) {var}, {none});")
                     }
                     CType::Text if w.params[v] || w.borrowed[v] => {
                         format!("loft_ho_put({name}, 2, 0, {var}, loft_ref_null());")

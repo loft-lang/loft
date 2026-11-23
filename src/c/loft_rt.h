@@ -1653,14 +1653,14 @@ static int loft_pause_asked(void) {
 typedef struct {
     const char *name;
     uint32_t kind, rs;
-    int64_t bits;
+    loft_word bits;
     const char *p;
     size_t len;
     uint32_t rr, rp;
 } loft_ho_entry;
 static LOFT_TLS loft_ho_entry loft_hov[256];
 static LOFT_TLS uint32_t loft_nhov = 0;
-static void loft_ho_put(const char *name, uint32_t kind, int64_t bits, loft_str t, loft_ref r) {
+static void loft_ho_put(const char *name, uint32_t kind, loft_word bits, loft_str t, loft_ref r) {
     if (loft_nhov >= 256) return;
     loft_ho_entry *e = &loft_hov[loft_nhov++];
     e->name = name;
