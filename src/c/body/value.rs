@@ -330,7 +330,7 @@ impl FnWriter<'_> {
                 // As `loft_rec_w`: a locked store halts the run, or in production answers 0,
                 // the null record, whose writes the run below skips.
                 Some((pa, pl, off)) => format!(
-                    "({pa} && !(LOFT_UNLIKELY({pl}) && loft_locked_write())) ? {pa} + {off} : (uint8_t *) 0"
+                    "({pa} && !(LOFT_UNLIKELY({pl}) && loft_locked_write_on((uint8_t) {pl}))) ? {pa} + {off} : (uint8_t *) 0"
                 ),
                 None => format!("loft_rec_w({d})"),
             };

@@ -1214,11 +1214,11 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
 /* `@FR-H-WriteLocked`: a write that reached a locked store (loft_rt.h).  The allocator compiled
  * on its own (without `loft_cc.h`, as its c_emit harness compiles it) has no locks. */
 #ifdef LOFT_CC_H
-static int loft_locked_write(void);
+static int loft_locked_write_on(uint8_t kind);
 /* True when the write is to be DISCARDED (a production run, `@C80`); a development run stops
  * inside `loft_locked_write`, and a test fails there.  An operation refuses at its ENTRY, before
  * any of its store steps, so a discarded one changes nothing (`@FR-H-WriteLocked-Whole`). */
-#define LOFT_WRITE_REFUSED(s) (LOFT_UNLIKELY((s)->read_only) && loft_locked_write())
+#define LOFT_WRITE_REFUSED(s) (LOFT_UNLIKELY((s)->read_only) && loft_locked_write_on((s)->read_only))
 #else
 #define LOFT_WRITE_REFUSED(s) ((void) (s), 0)
 #endif
@@ -1229,11 +1229,12 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size);
  * record of the size asked for, its payload zeroed, and the store stays locked; the record the
  * program held is unchanged. */
 static uint32_t loft_st_claim_discarded(loft_store_t *s, uint32_t size) {
+    uint8_t kind = s->read_only;
     s->read_only = 0;
     uint32_t pos = loft_st_claim_inner(s, size ? size : 1);
     int32_t words = loft_st_i32(s, pos, 0);
     if (words > 1) memset(s->buf + (size_t) pos * 8 + 8, 0, (size_t) (words - 1) * 8);
-    s->read_only = 1;
+    s->read_only = kind;
     return pos;
 }
 
@@ -1446,7 +1447,7 @@ static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, lo
     s->foreign.span = span;
     s->foreign.slot_rec = rec;
     s->foreign.slot_pos = pos;
-    s->read_only = 1; /* the bytes are the mapping's or the library's: locked, as `Store::make_foreign` */
+    s->read_only = 3; /* the bytes are the mapping's or the library's: locked, as `Store::make_foreign` (LOFT_RO_FOREIGN) */
 }
 
 /* `Store::release_foreign`: the store stops serving the bytes, its slot names the empty vector

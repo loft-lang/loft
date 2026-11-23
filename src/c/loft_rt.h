@@ -885,19 +885,42 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
 
 /* A production run's discard of a locked write (`loft_log_locked_write`), bound by a unit's
  * `main`; null in a runtime built without one, where every locked write halts. */
-static int (*loft_locked_logger)(void) = 0;
+static int (*loft_locked_logger)(const char *advice) = 0;
+
+/* What locked a store (`Store::lock_origin`), kept in its `read_only` byte: the author's
+ * `#lock = true`, a constant (`Store::lock_constant`), or bytes the program does not own
+ * (`Store::FOREIGN_ORIGIN`).  Any of them is non-zero, which is all a write test asks. */
+#define LOFT_RO_LOCK 1
+#define LOFT_RO_CONST 2
+#define LOFT_RO_FOREIGN 3
+
+/* `runtime_error::locked_write_advice`: what a refused write tells its author, by what locked
+ * the store — a constant and foreign bytes are cured by a copy, never by `#lock = false`. */
+static const char *loft_locked_advice(uint8_t kind) {
+    switch (kind) {
+    case LOFT_RO_CONST:
+        return "write to a constant \xe2\x80\x94 a constant is read-only; bind it to a local first "
+               "(`v = NAMES`), which copies, and write through the local";
+    case LOFT_RO_FOREIGN:
+        return "write to bytes the program does not own (a mapped file, a library's buffer, or a "
+               "slice of either) \xe2\x80\x94 they are read-only; copy them first (`w = v`, a bind "
+               "copies) and write the copy";
+    default:
+        return "write to a locked store \xe2\x80\x94 unlock it with `#lock = false` before writing";
+    }
+}
 
 /* `@FR-H-WriteLocked` (`RuntimeError::locked_store_write`): a development run stops at a write
- * into a store the author locked, as the interpreter does; a test fails.  A production run
- * discards the write, logs it, and continues on the store's old bytes
- * (`discard_locked_write_in_production`, `@C80`): the answer is 1, and the caller skips it. */
-static int loft_locked_write(void) {
-    static const char msg[] = "write to a locked store — unlock it with `#lock = false` before writing";
+ * into a read-only store, as the interpreter does; a test fails.  A production run discards the
+ * write, logs it, and continues on the store's old bytes (`discard_locked_write_in_production`,
+ * `@C80`): the answer is 1, and the caller skips it.  `kind` is the store's `read_only` byte. */
+static int loft_locked_write_on(uint8_t kind) {
+    const char *msg = loft_locked_advice(kind);
     /* `@FR-R-NoLocks`: a unit that makes no store read-only never gets here, and without the
      * discard every path below ends the run — so the compiler knows a write's lock test never
      * returns into the code after it, and keeps what that code holds in registers. */
 #ifndef LOFT_NO_LOCKS
-    if (!loft_in_test && loft_locked_logger && loft_locked_logger()) return 1;
+    if (!loft_in_test && loft_locked_logger && loft_locked_logger(msg)) return 1;
 #endif
     loft_halt_claim();
     fflush(stdout);
@@ -905,11 +928,12 @@ static int loft_locked_write(void) {
     fputs(msg, stderr);
     fputc('\n', stderr);
     loft_fail_msg.len = 0;
-    loft_push(&loft_fail_msg, msg, sizeof msg - 1);
+    loft_push(&loft_fail_msg, msg, strlen(msg));
     if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
     fflush(stdout);
     LOFT_EXIT(1);
 }
+#define loft_locked_write() loft_locked_write_on(LOFT_RO_LOCK)
 
 /* The call stack ran past `LOFT_MAX_CALL_DEPTH` (`RuntimeError::stack_overflow`): the program
  * stops as a failed assertion stops it, at `line` of `file`. */
@@ -1630,6 +1654,9 @@ LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_ref r) {
 /* `#lock = …` (`n_set_store_lock`) and `#lock` (`n_get_store_lock`): the store holding `r`. */
 static void loft_set_store_lock(loft_ref r, uint8_t locked) {
     if (r.rec == 0 || r.store_nr >= loft_nstores) return;
+    /* A constant and foreign bytes stay read-only: `#lock = false` is the author's own lock's
+     * cure (`Store::unlock` is not reachable from loft for them). */
+    if (loft_stores[r.store_nr].read_only > LOFT_RO_LOCK) return;
     loft_stores[r.store_nr].read_only = locked == 1;
 }
 
@@ -2525,7 +2552,7 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     if (n < s->size) memset(s->buf + (size_t) n * 8, 0, (size_t) (s->size - n) * 8);
     loft_st_resync(s);
     s->pinned = 1;
-    s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
+    s->read_only = LOFT_RO_CONST; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
     loft_ref r = { (uint16_t) nr, 1, 8, 0 };
     return r;
 }
@@ -2560,7 +2587,7 @@ LOFT_HOT_INLINE int64_t loft_get_int(loft_ref r, uint32_t fld) {
 LOFT_HOT_INLINE uint8_t *loft_rec_ptr(loft_ref r) {
     return r.rec == 0 ? 0 : loft_at(loft_store_of(r), r.rec, r.pos);
 }
-LOFT_HOT_INLINE int loft_rec_locked(loft_ref r) { return r.rec != 0 && loft_store_of(r)->read_only; }
+LOFT_HOT_INLINE int loft_rec_locked(loft_ref r) { return r.rec != 0 ? loft_store_of(r)->read_only : 0; }
 LOFT_HOT_INLINE int64_t loft_pa_i64(const uint8_t *p, uint32_t off) {
     int64_t v;
     if (!p) return LOFT_NULL;
@@ -2582,7 +2609,7 @@ LOFT_HOT_INLINE float loft_pa_f32(const uint8_t *p, uint32_t off) {
 LOFT_HOT_INLINE uint8_t loft_pa_bool(const uint8_t *p, uint32_t off) { return p ? p[off] : LOFT_BOOL_NULL; }
 LOFT_HOT_INLINE void loft_pa_set(uint8_t *p, int locked, uint32_t off, const void *v, size_t n) {
     if (!p) return;
-    if (LOFT_UNLIKELY(locked) && loft_locked_write()) return;
+    if (LOFT_UNLIKELY(locked) && loft_locked_write_on((uint8_t) locked)) return;
     memcpy(p + off, v, n);
 }
 /* A program's field write at a held address: through a null record — `root`, the view the
@@ -3094,7 +3121,14 @@ LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
 /* A vector held for a loop (@FR-R-Header, opt::header): its store, record, length and element
  * base, read once before a loop that writes no store but in place — no record moves and no
  * length changes inside it — so an element read is one bounds test and one load. */
-typedef struct { uint16_t store_nr; uint32_t rec; loft_int len; uint8_t *base; } loft_vh;
+typedef struct { uint16_t store_nr; uint32_t rec; loft_int len; uint8_t *base; uint8_t locked; } loft_vh;
+
+/* `@FR-H-WriteLocked` — a header over a locked store has no writable element: its lock state is
+ * read with the header (no loop the hoist admits locks or unlocks a store), and a write through
+ * it takes the runtime's refusing path (`loft_locked_write`: a development run stops, a
+ * production run discards the write and goes on). */
+#define LOFT_VH_WRITABLE(h) \
+    if (LOFT_UNLIKELY((h).locked) && loft_locked_write_on((h).locked)) return
 /* `base` is the element base (`Store::elem_base`), past the record's header. */
 
 LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
@@ -3103,8 +3137,10 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     h.rec = 0;
     h.len = 0;
     h.base = 0;
+    h.locked = 0;
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
     loft_store_t *s = loft_store_of(v);
+    h.locked = s->read_only;
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) return h;
     h.rec = r;
@@ -3166,6 +3202,7 @@ LOFT_HOT_INLINE uint8_t *loft_vh_addr(loft_vh h, uint32_t size, loft_int from) {
 LOFT_HOT_INLINE void loft_vh_set_int(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
     loft_int f = loft_vh_index(h, from);
     if (f < 0) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -3180,6 +3217,7 @@ LOFT_HOT_INLINE double loft_vh_get_float(loft_vh h, uint32_t size, loft_int from
 LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, loft_int from, uint32_t fld, double v) {
     loft_int f = loft_vh_index(h, from);
     if (f < 0) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -3194,18 +3232,21 @@ LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_vh h, uint32_t size, loft_int f, uin
 
 LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put int");
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 /* @FR-R-Version — a fast twin's boolean element write at an index its precondition proved. */
 LOFT_HOT_INLINE void loft_vh_put_bool(loft_vh h, uint32_t size, loft_int f, uint32_t fld, uint8_t v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put bool");
+    LOFT_VH_WRITABLE(h);
     h.base[(size_t) f * size + fld] = v;
 }
 
 /* @FR-R-Base's guard clause — a float element's write at an index proven in [0, len). */
 LOFT_HOT_INLINE void loft_vh_put_float(loft_vh h, uint32_t size, loft_int f, uint32_t fld, double v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put float");
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -3302,7 +3343,7 @@ static inline int loft_fill_run(loft_vh h, int64_t base, int64_t lo, int64_t hi,
     else if (hi == INT64_MIN) return 0;
     else last = hi - 1;
     if (lo > last || LOFT_ADD_OVF(base, lo, &f) || LOFT_ADD_OVF(base, last, &e)) return 0;
-    if (f < 0 || e >= h.len) return 0;
+    if (f < 0 || e >= h.len || h.locked) return 0;
     *first = f;
     *count = e - f + 1;
     return 1;
@@ -4574,6 +4615,7 @@ LOFT_HOT_INLINE loft_vh loft_ph_vh(const loft_ph *h) {
     r.rec = h->rec;
     r.len = h->len;
     r.base = h->rec != 0 ? loft_elem_base(&loft_stores[h->v.store_nr], h->rec) : 0;
+    r.locked = h->rec != 0 && loft_stores[h->v.store_nr].read_only;
     return r;
 }
 
@@ -8047,6 +8089,7 @@ LOFT_HOT_INLINE void loft_vh_set_int_at(loft_vh h, uint32_t size, loft_int from,
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_at(loft_vh h, uint32_t size, loft_int from, uint32_t fld, double v,
@@ -8056,6 +8099,7 @@ LOFT_HOT_INLINE void loft_vh_set_float_at(loft_vh h, uint32_t size, loft_int fro
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -8126,6 +8170,7 @@ LOFT_HOT_INLINE double loft_vh_get_float_at_nn(loft_vh h, uint32_t size, loft_in
 }
 LOFT_HOT_INLINE void loft_vh_set_int_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v) {
     if (LOFT_VH_OUT(h, f)) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_int_at_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v,
@@ -8134,10 +8179,12 @@ LOFT_HOT_INLINE void loft_vh_set_int_at_nn(loft_vh h, uint32_t size, loft_int f,
         loft_index_miss(f, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, double v) {
     if (LOFT_VH_OUT(h, f)) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, double v,
@@ -8146,6 +8193,7 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_vh h, uint32_t size, loft_int 
         loft_index_miss(f, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -8228,6 +8276,7 @@ LOFT_HOT_INLINE double loft_vh_get_float_at_lt(loft_vh h, uint32_t size, loft_in
 LOFT_HOT_INLINE void loft_vh_set_int_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
     LOFT_VH_LT(h, from, f);
     if (LOFT_UNLIKELY(f < 0)) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_int_at_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v,
@@ -8237,11 +8286,13 @@ LOFT_HOT_INLINE void loft_vh_set_int_at_lt(loft_vh h, uint32_t size, loft_int fr
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, double v) {
     LOFT_VH_LT(h, from, f);
     if (LOFT_UNLIKELY(f < 0)) return;
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_at_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, double v,
@@ -8251,6 +8302,7 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_lt(loft_vh h, uint32_t size, loft_int 
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -8264,11 +8316,13 @@ LOFT_HOT_INLINE void loft_vh_store_u32(loft_vh h, uint32_t size, loft_int f, uin
 }
 LOFT_HOT_INLINE void loft_vh_put_u32(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put u32");
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
     loft_int f = loft_vh_index(h, from);
     if (f < 0) return;
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32_at(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v,
@@ -8278,10 +8332,12 @@ LOFT_HOT_INLINE void loft_vh_set_u32_at(loft_vh h, uint32_t size, loft_int from,
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v) {
     if (LOFT_VH_OUT(h, f)) return;
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32_at_nn(loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v,
@@ -8290,11 +8346,13 @@ LOFT_HOT_INLINE void loft_vh_set_u32_at_nn(loft_vh h, uint32_t size, loft_int f,
         loft_index_miss(f, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
     LOFT_VH_LT(h, from, f);
     if (LOFT_UNLIKELY(f < 0)) return;
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32_at_lt(loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v,
@@ -8304,6 +8362,7 @@ LOFT_HOT_INLINE void loft_vh_set_u32_at_lt(loft_vh h, uint32_t size, loft_int fr
         loft_index_miss(from, h.len, file, line);
         return;
     }
+    LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(h, size, f, fld, v);
 }
 

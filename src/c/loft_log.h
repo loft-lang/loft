@@ -195,6 +195,12 @@ static void loft_log_configure(const char *text, const char *conf_dir) {
 #undef LOFT_KEY
         }
     }
+    /* `--production` reaches a compiled program as `LOFT_PRODUCTION` (the driver sets it), over
+     * whatever the config says, as the interpreter's `Logger` takes the flag. */
+    {
+        const char *p = getenv("LOFT_PRODUCTION");
+        if (p && strcmp(p, "0") != 0) loft_lg.production = 1;
+    }
 }
 
 static char *loft_log_read(const char *p) {
@@ -515,14 +521,18 @@ static int loft_log_production_fault(int sev, const char *label, const char *pre
  * discarded and logged — at the first discard and then at every doubling of the count, so a
  * loop writing a locked vector a million times leaves twenty lines — and the run continues.
  * Answers 0 outside production, where the write halts. */
-static int loft_log_locked_write(void) {
+static int loft_log_locked_write(const char *advice) {
     static uint64_t discarded = 0;
     loft_log_init();
     if (!loft_lg.production) return 0;
     discarded++;
     if ((discarded & (discarded - 1)) == 0) {
-        static const char m[] = "[write_to_locked_store] write to a locked store \xe2\x80\x94 unlock it with `#lock = false` before writing";
-        loft_log_record(LOFT_SEV_ERROR, loft_lit(m, sizeof m - 1), loft_lit("", 0), 0);
+        loft_text m = { 0, 0, 0 };
+        static const char label[] = "[write_to_locked_store] ";
+        loft_push(&m, label, sizeof label - 1);
+        loft_push(&m, advice, strlen(advice));
+        loft_log_record(LOFT_SEV_ERROR, loft_view(&m), loft_lit("", 0), 0);
+        loft_text_free(&m);
     }
     return 1;
 }
