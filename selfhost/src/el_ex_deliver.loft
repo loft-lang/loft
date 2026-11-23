@@ -1610,6 +1610,9 @@ pub fn ncc_capture_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: inte
     },
     _ => { return null; }
   }
+  // (`MaterializeView`'s work ref, minted and retired as on the `if` road above.)
+  mvw = el_vars::work_ref(vars, el_types::without_deps(el_vars::tp(vars, rb)));
+  el_vars::unregister_work_ref(vars, mvw);
   nb.result = [owned];
   bl.operators[-1] = ir::NdBlock { block: [nb] };
   d = e.context;
@@ -1676,6 +1679,10 @@ pub fn capture_if_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integ
   if captures == 0 {
     return null;
   }
+  // (`MaterializeView` mints its work ref, and `ref_return`'s `Bind { substitute }` puts the
+  // buffer in its place and retires it — `unregister_work_ref`: `skip_free`, no null-init.)
+  mvw = el_vars::work_ref(vars, el_types::without_deps(el_vars::tp(vars, rb)));
+  el_vars::unregister_work_ref(vars, mvw);
   ni = el_ir::v_if(cond, arms[0]!, arms[1]!);
   bl.operators[-1] = if returned { ir::NdReturn { inner: ni } } else { ni };
   d = e.context;
