@@ -54,7 +54,7 @@ routine and its port counterpart:
 | R1 | the pass-1 capture placeholder does not survive into pass 2's variable table (or is not made) | 446 items: `user_named` 417, `deps`/`user_appended` 29 | objects.rs `parse_var_inner`'s capture arm (~1261: `create_var` + `mark_user_named`) |
 | R2 | `collect_mutated_captures` lists only the lambda's captures, not every written name in its variable table | 42 items, 17 programs | its candidate list (1a-parser.md § Rust suspects); its readers already intersect with the captures |
 | R3 | NOT a Rust change (measured 11-23): Rust's mark is right.  The port's counterpart must root at the LOWERED place | 2 items | see § R3 below |
-| R4 | a work ref the one-buffer binding substitutes out is retired but stays declared | the lambda `__ref_1 skip_free` items (S3) | `unregister_work_ref` (variables/mod.rs ~4822); its callers control.rs ~12673, ~14115 |
+| R4 | NOT a Rust change (measured 11-23): the port carries Rust's mint-substitute-retire | the 6 lambda `__ref_1 skip_free` items | see § R4 below |
 
 Order: R2 (smallest, readers unaffected), then R1 (the largest gain), then R3 and R4.  For each,
 first probe the claim that nothing observable moves:
@@ -154,3 +154,23 @@ variable the SYNTAX names (`append_place`).  It reaches `__closure` for some cap
 which the porter carried, but not for this text append through a capture.  By the
 corresponding-routine ruling the port's mark roots at its lowered place, as Rust's does.  So
 this is the porter's, and nothing changes in Rust.
+
+## R4, measured (11-23): the port carries the mint-substitute-retire
+
+`LOFT_TRACE_RETPROMO=1` gives Rust's verdict per lambda (image run):
+- **`r6_0` (a-rebind-exchanges…), 1353 `main_2`, a-plain-bind-of-a-fn-ref… `_1`:** the tail's
+  work ref `__ref_1` is classified `SkipInnerRef` on pass 1 and `Bind { … }` with a buffer on
+  pass 2.  So `RetPromotion::Bind { substitute }` (control.rs ~14115) substitutes the call's
+  work ref by the return buffer and retires it (`unregister_work_ref`: `skip_free`, no
+  null-init, no free).
+- **1659's three lambdas** (`coalesced_capture_0`, `capture_or_mint_inline_0`,
+  `nullable_capture_or_null_0`): a return from a block that materialises a view, which mints
+  and retires `__ref_1`.  This is the same rule as 2471's `pick` (the porter's 71006afc3,
+  `branch_view_return`).
+
+In both, the port delivers straight into `__retbuf` and never mints the ref: a different routine
+reaching Rust's answer.  Rust's reasoning holds (a call's answer gets a work ref, and the
+one-buffer binding substitutes it), so under the corresponding-routine ruling the PORT carries
+it.  It mints the call's work ref, substitutes it by the buffer and retires it, at its
+counterparts of the Bind-substitute caller and of the capture-copy roads
+(`capture_tail_copy`/`capture_if_copy`).  No Rust change.
