@@ -174,6 +174,12 @@ the scope pass), so a wrong one is seen where it is made rather than as a fault 
 | `LOFT_TRACE_VARFLAGS=<name>\|*` | a `[varflag] <flag> <var> (var=N) in <fn> @ <rule>` line at each set of an image flag (`skip_free`, `value_const`, `inline_ref`, `captured`, `user_named`, `user_appended`, `copy_bound`) on the variables named `<name>`, or all | the setter call's `file:line`; the enclosing function is the rule | the name of the Rust rule the site mirrors |
 
 When a `[state]` flag differs, the varflag trace names the rule to port, found in one run.
+Trace the run the image comes from: `LOFT_EMIT_PARSED=<img> loft prog.loft` with
+`LOFT_TRACE_VARFLAGS=*`.  The image is written before codegen, and a full interpreter run also
+traces codegen's own `skip_free` sweep (src/state/codegen.rs), which then names codegen as the
+setter of a flag the image got from a parser rule.  Each implementation makes a compared
+decision in a corresponding routine, so the rule this trace names on one side is the routine
+to look for on the other.
 `LOFT_SKIPFREE_TRACE=<name>|*` is the older `skip_free`-only form on the Rust front end.
 
 Both are kept in both front ends for good: they are the reimplementation contract
