@@ -9106,7 +9106,13 @@ impl State {
                     let depth = self.call_stack.len();
                     let line = self.line_at(pc);
                     match mode {
-                        StepMode::Into => depth != start_depth || line != start_line,
+                        // Into a call: at the callee's first line, not its prologue, whose
+                        // first instructions lie before any line of its own.
+                        StepMode::Into => {
+                            (depth > start_depth && self.line_numbers.contains_key(&pc))
+                                || depth < start_depth
+                                || (depth == start_depth && line != start_line)
+                        }
                         StepMode::Over => depth <= start_depth && line != start_line,
                         StepMode::Out => depth < start_depth,
                         StepMode::Continue => false,
