@@ -16,7 +16,7 @@ The tools: `--tools DIR` is a gate run's kept directory (`LOFT_ELAB_KEEP=1`: `de
 (`loft --native-c --out DIR selfhost/front/elab.loft`) by default `DIR/elab/elab`.  Both
 default to `$LOFT_ELAB_TOOLS` and `$LOFT_ELAB_BIN`.
 """
-import argparse, collections, difflib, os, subprocess, sys, tempfile
+import argparse, collections, difflib, os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -27,17 +27,143 @@ def reports(o, path):
     env = dict(os.environ, LOFT_NO_CACHE="1")
     with tempfile.TemporaryDirectory(prefix="loft-probe-") as tmp:
         img = os.path.join(tmp, "p.store")
-        subprocess.run([o.loft, path], env=dict(env, LOFT_EMIT_PARSED=img), capture_output=True,
-                       timeout=180)
+        made = subprocess.run([o.loft, path], env=dict(env, LOFT_EMIT_PARSED=img, LOFT_TRACE_RETPROMO="1", LOFT_REPORT_CONTRACT="1", LOFT_TRACE_VARFLAGS="*"),
+                              capture_output=True, text=True, errors="replace", timeout=180)
         if not os.path.exists(img):
             return None, None, []
         std = os.path.join(o.tools, "std.store")
-        want = subprocess.run([os.path.join(o.tools, "defs", "defs"), img, "program", std],
-                              env=env, capture_output=True, text=True, errors="replace",
-                              timeout=300).stdout.splitlines()
-        m = subprocess.run([o.elab, img, path, std], env=dict(env, LOFT_ELAB_WHERE="1"),
+        dr = subprocess.run([os.path.join(o.tools, "defs", "defs"), img, "program", std],
+                            env=dict(env, LOFT_REPORT_STATE="1"), capture_output=True, text=True,
+                            errors="replace", timeout=300)
+        want = dr.stdout.splitlines()
+        m = subprocess.run([o.elab, img, path, std], env=dict(env, LOFT_ELAB_WHERE="1", LOFT_TRACE_RETPROMO="1", LOFT_REPORT_STATE="1", LOFT_REPORT_CONTRACT="1", LOFT_TRACE_VARFLAGS="*"),
                            capture_output=True, text=True, errors="replace", timeout=300)
+    o.decisions = (made.stderr.splitlines(), m.stderr.splitlines())
+    o.state = ([l for l in dr.stderr.splitlines() if l.startswith("[state] ")],
+               [l for l in m.stderr.splitlines() if l.startswith("[state] ")])
     return want, m.stdout.splitlines(), [l for l in m.stderr.splitlines() if l.startswith("where: ")]
+
+
+RUST_RETPROMO = re.compile(r"^\[retpromo\] fn=(\S+) v=\d+ name=(\S+) pass=(\d) .*=> (\w+)")
+LOFT_RETPROMO = re.compile(r"^\[retpromo\] fn=(\S+) name=(\S+) pass=(\d) => (\w+)")
+
+
+def decisions(o, want):
+    """The return-buffer decisions (`LOFT_TRACE_RETPROMO`) the two front ends take differently:
+    ([(fn, name, pass, rust, loft)] that conflict, [(fn, name, pass, rust)] Rust takes and this
+    port does not report).  Only `Rename` and `Bind` are compared — the verdicts the port names —
+    and only for the program's own functions (those its report lists)."""
+    rust_lines, loft_lines = getattr(o, "decisions", ([], []))
+    own = {m.group(1) for m in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want or []) if m}
+    rust, loft = {}, {}
+    for l in rust_lines:
+        m = RUST_RETPROMO.match(l)
+        if m and m.group(1) in own and m.group(4) in ("Rename", "Bind"):
+            rust[m.group(1, 2, 3)] = m.group(4)
+    for l in loft_lines:
+        m = LOFT_RETPROMO.match(l)
+        if m:
+            loft[m.group(1, 2, 3)] = m.group(4)
+    conflicts = [k + (rust.get(k, "-"), v) for k, v in sorted(loft.items()) if rust.get(k) != v]
+    missing = [k + (v,) for k, v in sorted(rust.items()) if k not in loft]
+    return conflicts, missing
+
+
+STATE = re.compile(r"^\[state\] fn=(\S+) (var=\S+|param=\S+|def|inline_refs)(.*)$")
+
+
+def state_differences(o):
+    """The function state (`LOFT_REPORT_STATE`: variable flags, `inline_refs`) the two images
+    carry differently: [(fn, var, rust flags, loft flags)].  A function only one side reports
+    state for is compared as holding none on the other."""
+    rust_lines, loft_lines = getattr(o, "state", ([], []))
+    def table(lines):
+        t = {}
+        for l in lines:
+            m = STATE.match(l)
+            if m:
+                t[(m.group(1), m.group(2))] = m.group(3).strip()
+        return t
+    rust, loft = table(rust_lines), table(loft_lines)
+    return [k + (rust.get(k, "-"), loft.get(k, "-")) for k in sorted(set(rust) | set(loft))
+            if rust.get(k, "") != loft.get(k, "")]
+
+
+CONTRACT = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
+
+
+def contract_differences(o, want):
+    """The contract facts (`LOFT_REPORT_CONTRACT`) the two front ends answer differently for the
+    program's own functions: [(fn, fact, rust, loft)], a `?` being a fact this port does not
+    derive yet."""
+    rust_lines, loft_lines = getattr(o, "decisions", ([], []))
+    own = {m.group(1) for m in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want or []) if m}
+    def table(lines):
+        t = {}
+        for l in lines:
+            m = CONTRACT.match(l)
+            if m and m.group(1) in own:
+                t[m.group(1)] = dict(kv.split("=", 1) for kv in m.group(2).split(" ") if "=" in kv)
+        return t
+    rust, loft = table(rust_lines), table(loft_lines)
+    out = []
+    for f in sorted(rust):
+        for k, v in rust[f].items():
+            lv = loft.get(f, {}).get(k, "-")
+            if lv != v:
+                out.append((f, k, v, lv))
+    return out
+
+
+def show_contract(diffs, limit):
+    real = [d for d in diffs if d[3] != "?"]
+    gaps = collections.Counter(d[1] for d in diffs if d[3] == "?")
+    if real:
+        print(f"contract facts that differ (LOFT_REPORT_CONTRACT: {len(real)}; fn fact: rust | loft):")
+        for f, k, r, l in real[:limit]:
+            print(f"  {f} {k}: {r} | {l}")
+    if gaps:
+        print("contract facts this port does not derive yet: " + ", ".join(f"{k} ({v})" for k, v in gaps.most_common()))
+
+
+def reason_differences(o, want):
+    """The image flags (`LOFT_TRACE_VARFLAGS`) of the program's own functions the two front ends
+    set by different rules, or only one sets: [(fn, var, flag, rust rules, loft rules)]."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import elab_gate
+    rust_lines, loft_lines = getattr(o, "decisions", ([], []))
+    own = {m.group(1) for m in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want or []) if m}
+    own = {f[2:] if f.startswith("n_") else f for f in own}
+    rust = elab_gate.flag_reasons("\n".join(rust_lines), True)
+    loft = elab_gate.flag_reasons("\n".join(loft_lines), False)
+    show = lambda rs: ",".join(sorted(rs)) or "-"
+    return [k + (show(rust.get(k, ())), show(loft.get(k, ()))) for k in sorted(set(rust) | set(loft))
+            if k[0] in own and rust.get(k, set()) != loft.get(k, set())]
+
+
+def show_reasons(diffs, limit):
+    if diffs:
+        print(f"image flags set by another rule (LOFT_TRACE_VARFLAGS: {len(diffs)}; fn var flag: rust | loft):")
+        for f, v, fl, r, l in diffs[:limit]:
+            print(f"  {f} {v} {fl}: {r} | {l}")
+
+
+def show_state(diffs, limit):
+    if diffs:
+        print(f"function state that differs (LOFT_REPORT_STATE: {len(diffs)}; fn var: rust | loft):")
+        for f, v, r, l in diffs[:limit]:
+            print(f"  {f} {v}: {r} | {l}")
+
+
+def show_decisions(conflicts, missing, all_missing):
+    if conflicts:
+        print("return decisions that differ (LOFT_TRACE_RETPROMO: fn name pass rust loft):")
+        for f, n, p, r, l in conflicts:
+            print(f"  {f} {n} pass {p}: rust {r}, loft {l}")
+    if missing and all_missing:
+        print("return decisions Rust takes that this port does not report:")
+        for f, n, p, r in missing:
+            print(f"  {f} {n} pass {p}: rust {r}")
 
 
 def where(o, path):
@@ -70,6 +196,11 @@ def main():
         want, mine, _ = reports(o, o.arg)
         if want is None:
             sys.exit("the Rust front end wrote no image")
+        conflicts, missing = decisions(o, want)
+        show_decisions(conflicts, missing, want != mine)
+        show_contract(contract_differences(o, want), o.max)
+        show_state(state_differences(o), o.max)
+        show_reasons(reason_differences(o, want), o.max)
         if want == mine:
             print("AGREE")
             return

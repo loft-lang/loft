@@ -1,0 +1,60 @@
+diff --git a/selfhost/src/el_ex_deliver.loft b/selfhost/src/el_ex_deliver.loft
+index 333016e92..4fde4ddfd 100644
+--- a/selfhost/src/el_ex_deliver.loft
++++ b/selfhost/src/el_ex_deliver.loft
+@@ -76,6 +76,11 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
+     tail_buf = match tail { NdVar { n } => if hidden_param(e, vars, n) { n } else { -1 }, _ => -1 };
+     // (A `τ?` body whose every early exit is `return null` delivers nothing through them.)
+     null_exits = result is TyOptional && len(bl.operators) > 0 && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) == el_ex_copy::null_returns_in(e, bl.operators[0..len(bl.operators) - 1]);
++    // (…and so does one whose tail is `null` and whose early exits hand out literals or `null`:
++    // each literal is handed out as built.)
++    if !null_exits && result is TyOptional && len(bl.operators) > 0 && null_tail(e, vars, code) && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) == el_ex_copy::literal_returns(bl.operators[0..len(bl.operators) - 1]) + el_ex_copy::null_returns_in(e, bl.operators[0..len(bl.operators) - 1]) {
++      null_exits = true;
++    }
+     if len(bl.operators) > 0 && !null_exits && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
+       row = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+       if tail_buf >= 0 && row >= 0 {
+@@ -245,6 +250,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
+           ob.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+           return ir::NdBlock { block: [ob] };
+         }
++        // A `null` tail where every early exit hands out a literal or `null`: each literal is
++        // handed out as its build made it, the buffer delivered nothing — the body the bare
++        // `vector<T>?`.
++        if null_tail(e, vars, code) && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::null_returns_in(e, mids) {
++          ob.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
++          return ir::NdBlock { block: [ob] };
++        }
+       },
+       _ => {}
+     }
+@@ -1334,6 +1346,13 @@ fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir:
+   out
+ }
+ 
++// Is the body's tail `null` — the literal, or the reference null sentinel it is converted to in a
++// `vector<T>?` function (`OpNullRefSentinel()`)?
++fn null_tail(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
++  k = el_ex_copy::tail_kind(e, vars, code);
++  k == "null" || k == "call OpNullRefSentinel"
++}
++
+ // `n` with its innermost node replaced by `inner`, its position spans kept.
+ fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
+   match n {
+diff --git a/selfhost/src/el_ex_null.loft b/selfhost/src/el_ex_null.loft
+index 77c533b6a..14152b216 100644
+--- a/selfhost/src/el_ex_null.loft
++++ b/selfhost/src/el_ex_null.loft
+@@ -2530,6 +2530,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
+     if result is TyOptional && (el_types::base(result) is TyVector || el_types::struct_enum_def(result) >= 0) && v.tp is TyNull {
+       return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
+     }
++    // A vector LITERAL returned from a `vector<T>?` function is the vector its build made, handed
++    // out as it is (`return {#Vector …}`): nothing is delivered into the buffer.
++    if result is TyOptional && el_types::base(result) is TyVector && (match el_ir::unspan(v.code) { NdBlock { block } => block[0].name == "Vector", _ => false } || (e.first_pass && hinted && el_ex_place::vec_lit_len(e, x!) > 0)) {
++      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
++    }
+     // A text is returned as it is, the declared result borrowing what the value borrows
+     // (`parse_return`'s `text_return(ls)`); one this frame owns is written into the hidden
+     // buffer after the pass (`el_tret`).

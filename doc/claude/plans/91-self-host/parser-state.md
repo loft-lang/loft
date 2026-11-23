@@ -11,7 +11,7 @@ the elaborator field mirroring it (`—`: none yet).  A *scoped* field is saved 
 a sub-parse: context a caller hands down into an expression, invisible from the function that
 reads it — mirror it before porting a function that reads it (`--missing` lists those not yet).
 
-Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 of 52.
+Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15 of 55.
 
 ## `Parser`, scoped channels
 
@@ -20,7 +20,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.operand_fact` | scoped | 33 | — | @PLN187 — where the operand just parsed holds an abstract alias |
 | `Parser.vars` | scoped | 24 | `Vars` | the function being read: one `Vars` per body, handed down explicitly |
 | `Parser.data` | scoped | 18 | `El.b` | the definitions and the schema, as the image's `Bundle` |
-| `Parser.expected` | scoped | 15 | `Vars.expect` | partial: a bind's target (`expect_node`), a vector literal (`lit_hint`), a short lambda's `fn(…)` (`lambda_… |
+| `Parser.expected` | scoped | 17 | `Vars.expect` | partial: a bind's target (`expect_node`), a vector literal (`lit_hint`), a short lambda's `fn(…)` (`lambda_… |
 | `Parser.null_literal_arms` | scoped | 6 | — | How many arms of the `match` being parsed are written `null` or `{ null }` — read from |
 | `Parser.type_fact` | scoped | 5 | — | @PLN187 — the fact of the type spelling parsed last (`parser::abstract_alias`). |
 | `Parser.captured_names` | scoped | 4 | `El.captures` | Accumulates captured variable names and types during lambda body parsing. |
@@ -43,15 +43,18 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.tuple_self_snapshot` | scoped | 2 | — | `@FR-O-Detach` for a tuple — the snapshot an assignment's value must read instead of |
 | `Parser.unhinted_set_refused` | scoped | 2 | — | That refusal was made: the call it belongs to ends there, so the definitions are not |
 | `Parser.amp_head` | scoped | 1 | — | @PLN87 B-Ref-AnnotationOnly — true while the parser is positioned at the HEAD |
+| `Parser.append_dest` | scoped | 1 | — | The local a `+=` is appending to while its right-hand side is read, or `u16::MAX`. |
 | `Parser.applied_imports` | scoped | 1 | — | every (for_source, lib_source, ImportSpec) pair that |
 | `Parser.assign_replaces` | scoped | 1 | — | Whether [`Parser::assign_target`] is being REPLACED (`=`) rather than appended to. |
 | `Parser.assign_target_discounted` | scoped | 1 | — | The variable named as the target of the `=` being parsed (loft#1816), or `u16::MAX`. |
 | `Parser.bound_method_stubs` | scoped | 1 | — | @PLN125 — every bound-method stub built on pass 1, as |
 | `Parser.boxed_fn_vars` | scoped | 1 | — | The fn-typed variables of the instance being filled whose return the substitution |
+| `Parser.call_def_name` | scoped | 1 | — | The scratch buffer `parse_call` builds a callee's definition name in on pass 1. |
 | `Parser.capture_const` | scoped | 1 | — | loft#1540 — the names in `capture_context` whose value is read-only: an enclosing binding |
 | `Parser.capture_context` | scoped | 1 | `El.captures` | partial: the enclosing locals a lambda may capture, typed |
 | `Parser.capture_fn_lambda` | scoped | 1 | — | loft#1869 — the closure LAMBDA each fn-ref local of the enclosing scope holds, by name, |
 | `Parser.capture_owner` | scoped | 1 | — | Which DEFINITION owns each name in [`Parser::capture_context`] — the function whose |
+| `Parser.closure_arguments` | scoped | 1 | — | loft#2492 — every call argument pass 2 parsed that may carry a closure record, to be |
 | `Parser.default_paths` | scoped | 1 | — | @PLN196 step 9 — the paths of the stored fields the field default being parsed reads |
 | `Parser.deferred_import_misses` | scoped | 1 | — | By-name imports (`use lib::(Name)`) that found nothing while `lib` was SUSPENDED at |
 | `Parser.deferred_unknown` | scoped | 1 | — | `DefType::Unknown` stubs collected by `actual_types_deferred` |
@@ -67,6 +70,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.is_capture_aliases` | scoped | 1 | `Vars.is_aliases` | Field-capture aliases created by `if expr is Variant { field } { body }`. |
 | `Parser.is_capture_bindings` | scoped | 1 | `Vars.is_bindings` | Field-binding Set nodes created by `if expr is Variant { field }`. |
 | `Parser.lambda_result` | scoped | 1 | — | @PLN187 — the fact the last lambda body yielded (`check_result` records it). |
+| `Parser.late_call_joins` | scoped | 1 | — | `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet |
 | `Parser.late_text_tails` | scoped | 1 | — | loft#918 — every `(function, tail variable)` whose promotion pass 1 could not |
 | `Parser.match_subject` | scoped | 1 | — | @PLN187 — the fact of the enclosing `match`'s subject, for its tuple patterns. |
 | `Parser.match_subject_root` | scoped | 1 | — | `@FR-M-Fixed` — the variable at the root of the enclosing `match`'s subject place |
@@ -85,6 +89,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.rebind_lowered` | scoped | 1 | — | The user-visible heap PARAMETER whose whole-binding reassignment already carried its |
 | `Parser.rebuild_watch` | scoped | 1 | — | The local a literal is being rebuilt into, and every variable viewing its store |
 | `Parser.rebuild_watch_hit` | scoped | 1 | — |  |
+| `Parser.ret_proven_present` | scoped | 1 | — | `@FR-N-Road` — the local a return copy's enclosing branch has just PROVEN present: |
 | `Parser.stale_monomorphs` | scoped | 1 | `El.stale` | loft#1023 — `(monomorph, template, bindings)` for each monomorph built |
 | `Parser.subrule_edges` | scoped | 1 | — | @PLN35 PC3 — sub-rule invocation edges `(enclosing_rule, invoked_rule, site, consuming)` |
 | `Parser.unordered_iterator` | scoped | 1 | — | `@FR-Col-Unordered` — set by `parse_in_range` when the iterable is `unordered(c)`, and |
@@ -116,6 +121,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.program_entry` | pass |  | — | The entry file, as the lexer already holds it (a shared handle, no copy), for |
 | `Parser.first_pass` | pass |  | `El.first_pass` |  |
 | `Parser.force_tret` | pass |  | — | @PLN104 P3 — def_nrs the post-pass-2 oracle (`report_tret_promotions`) marks |
+| `Parser.pass1_defs` | pass |  | — | How many definitions pass 1 left: one numbered below it was parsed on pass 1, so pass 2 |
 | `Parser.reverse_iterator` | pass |  | — | Set by `parse_in_range` when `rev(collection)` (without a `..` range) is parsed. |
 | `Parser.iterable_context` | pass |  | — | D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with |
 | `Parser.pending_imports` | pass |  | `El.pending` | Wildcard and selective imports waiting to be applied once the target source is fully parsed. |
@@ -152,6 +158,9 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.abstract_vars` | other |  | — | @PLN187 — the locals that hold an abstract alias, by `(function, variable)`: a lambda's |
 | `Parser.plain_declared` | other |  | — | @PLN187 — the locals declared with a PLAIN type annotation: an abstract value is not |
 | `Parser.mid_return_param_deps` | other |  | — | `@FR-F-Ret` (loft#2179) — the parameters an early `return` has merged into the return's |
+| `Parser.mid_return_justified` | other |  | — | `@FR-F-Ret` — the visible parameters a mid-body `return` justifies as a borrow source, |
+| `Parser.mid_return_prune_pending` | other |  | — |  |
+| `Parser.trace_vars` | other |  | `El.trace_vars` | `LOFT_STATE_TRACE`'s `var` point: per function and pass, the spelled types of its |
 | `Parser.produced` | other |  | — | @PLN187 — the fact a producer that is not a variable or a call (a field read, a |
 | `Parser.comprehension_fact` | other |  | — | @PLN187 — the fact of the comprehension just parsed, for the literal that holds it. |
 | `Parser.pending_key_facts` | other |  | — | @PLN187 — the facts a keyed lookup's key fields are declared with, for `parse_key`. |
@@ -159,6 +168,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.first_bind_targets` | other |  | — | The variables whose FIRST binding is the assignment being parsed, innermost last.  A |
 | `Parser.first_bind_at` | other |  | — | Where each variable is first bound: pass 1 records `(function, variable)` → the |
 | `Parser.update_literals` | other |  | — | `@FR-B-Copy` — the struct literals that are UPDATES (`S { f: e, ..base }`), as |
+| `Parser.effect_free_rhs` | other |  | — | loft#2584 — the assignments whose right side has no call and no block, as |
 | `Parser.demote_literals` | other |  | — | `@FR-R-Demote` — `(function, line, column)` of a literal's `{` whose one out-of-line field |
 | `Parser.demote_declined` | other |  | — | `@FR-R-Demote` — the literals pass 2 found reading their destination beyond the moved |
 | `Parser.binding_starts` | other |  | — | `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the |
@@ -187,6 +197,8 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.compiled_bridges` | other |  | — | @PLN199 A2 — the standard library functions whose compiled bodies the driver points |
 | `Parser.pending_placed_libs` | other |  | — | @PLN119 arc A — libraries that declared `[library] placement = "process"`, |
 | `Parser.pending_pkg_deps` | other |  | — | PKG.3: package dependencies discovered during manifest reading. |
+| `Parser.c_header_dirs` | other |  | — | @C165 — every package registered so far, by name: its directory and the directories of |
+| `Parser.pending_shims` | other |  | — | @C165 — shims that include a header of a dependency not yet registered: (package |
 | `Parser.auto_use_scan_cache` | other |  | — | Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)` |
 | `Parser.pkg_dep_cache` | other |  | — | Per-directory cache for the dep-shadowing guard in `lib_path`: the |
 | `Parser.use_paths` | other |  | — | The FILE each `use` short-name was loaded from, canonicalised (loft#912). |
@@ -215,6 +227,8 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.par_worker_defs` | other |  | — | loft#808 — def_nrs resolved as a `par(r = f(x), N)` worker, recorded on BOTH |
 | `Parser.par_deferred` | other |  | — | loft#1040 — one entry per `par` clause whose ROUTE could not be decided where it |
 | `Parser.par_replay_body` | other |  | — | The body of the par clause being REPLAYED, with the loop-counter variable that |
+| `Parser.tuple_param_seeds` | other |  | — | `@FR-F-ParamTuple` — the entry seed of each tuple parameter shadow with a heap member in |
+| `Parser.last_forward_call` | other |  | — | Pass 1: the definition name of the last call parsed, when no such function was declared |
 | `Parser.infer_ret_defs` | other |  | — | loft#945 — every short `\|x\|` lambda whose return type is to be read off its own |
 | `Parser.adopted_ret_defs` | other |  | — | loft#945 — every def that ACTUALLY adopted its return type from its own body tail, |
 | `Parser.ref_linked_tuple_locals` | other |  | — | Tuple LOCALS that are the source of a `&` link — bound by `b = &a` / `c: &(…) = a`, or |
@@ -227,16 +241,18 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.amp_vector_link_partners` | other |  | — | The other member of each `&`-linked vector pair, both ways round — `q = &v` records |
 | `Parser.literal_chain_lhs` | other |  | — | loft#945 — every `(function, variable)` whose vector LITERAL turned out to be the |
 | `Parser.stub_origin` | other |  | — | Which interface METHOD each bound stub was minted from — durable across both passes. |
+| `Parser.source_refused` | other |  | — | The source of the `for` being parsed was refused where it was written (`rev(n)` over a |
 | `Parser.last_range_from` | other |  | — | O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection. |
 | `Parser.literal_walk` | other |  | — | `@FR-R-LiteralWalk` — the last scalar vector literal `parse_vector` built as a block: |
 | `Parser.last_range_till` | other |  | — |  |
 | `Parser.coalesce_defaults` | other |  | — | The default arms of the `??`s built last, each with the type it SYNTHESISED before it |
-| `Parser.block_path` | other |  | — | `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser |
+| `Parser.block_path` | other |  | `Vars.block_path` | `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser |
 | `Parser.loop_spelling` | other |  | — | The ended binding a `for` statement's spelling named before its variable took it, |
-| `Parser.block_ord` | other |  | — |  |
+| `Parser.block_ord` | other |  | `Vars.block_ord` |  |
 | `Parser.bound_in_block` | other |  | — | The binding's block is kept as its INNERMOST ordinal (`None` = the function's own |
 | `Parser.block_rebinds` | other |  | — | Per open block, the spellings a bind after an ended binding re-pointed there, with the |
 | `Parser.bind_after_end` | other |  | — | The variable a binding name just resolved to when its binding had ENDED — read by the |
+| `Parser.late_join_ended` | other |  | — | The variable the assignment being finished binds after its name's block ended, for |
 | `Parser.match_cursor` | other |  | — | @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an |
 | `Parser.match_cursor_farthest` | other |  | — | @PLN35 PC5 — the attribute index of an OPTIONAL `farthest: integer` field on the cursor |
 | `Parser.cursor_consumed` | other |  | — | `@FR-P-Rule` — the cursor variables whose arm BODY is being parsed after the arm's |
@@ -254,6 +270,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.expr_not_null` | other |  | — | Whether the most recently parsed expression is from a `not null` field access. |
 | `Parser.expr_not_null_name` | other |  | — | The field name for the most recently parsed `not null` field access (for diagnostics). |
 | `Parser.fn_ref_read_attr` | other |  | — | The struct attribute the most recently parsed `fn(…)` FIELD read came from — |
+| `Parser.fn_has_body` | other |  | — | Whether the function whose annotations are being read was written with a body: a |
 | `Parser.unhinted_set` | other |  | — | `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a |
 | `Parser.reported_binding_clash` | other |  | — | A call refused because two parameters bind one type variable to two types (@PLN165 |
 | `Parser.positionless_loops` | other |  | — | The `{id}#index` variables of loops that walk values WITHOUT positions — a generator, |
@@ -297,8 +314,8 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.pending_default_src` | other |  | — | @PLN116 `x?` — a synthetic default-value SOURCE for the postfix operator, used |
 | `Parser.slot_nulled` | other |  | — | @PLN219 `walk-or-write` — per function and link, the out-of-line fields of the node the |
 | `Parser.slot_bound_depth` | other |  | — | @PLN219 `walk-or-write` — per function and link, the loop depth of its last fresh `&` |
-| `Parser.slot_links` | other |  | — | `@FR-B-Ref-Write` for a link to an OUT-OF-LINE field (loft#2433): per function and link |
-| `Parser.slot_vars` | other |  | — | Pass 2: a field link's slot local and the field's known type, per function and link. |
+| `Parser.slot_links` | other |  | `El.slot_links` | `@FR-B-Ref-Write` for a link to an OUT-OF-LINE field (loft#2433): per function and link |
+| `Parser.slot_vars` | other |  | `Vars.slot_vars` | Pass 2: a field link's slot local and the field's known type, per function and link. |
 | `Parser.ncc_default_end` | other |  | — | loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion |
 | `Parser.last_place_discharge` | other |  | — | The last null-check built by [`Parser::build_null_coalesce_default`] came from the |
 | `Parser.pass2_bodies` | other |  | — | loft#1023 — definitions whose BODY has been parsed in the current second pass. |
@@ -321,13 +338,16 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Parser.length_local_read` | other |  | — | Set when an index read was trusted through a length local: the assignment it stands in |
 | `Parser.last_field_read_site` | other |  | — | Plan-07 phase 4h — site of the most recently parsed field |
 | `Parser.advisory_checked` | other |  | — | @PLAN12 Phase 6.7 — dedupe set for the per-invocation advisory |
+| `Parser.advisory_feed` | other |  | — | @C167 — the advisory feed this parse is held against, when its caller supplies one |
 
 ## `Function` (per function; the elaborator's `Vars`)
 
 | field | lives | saves | port | note / Rust doc |
 |---|---|---|---|---|
 | `Function.capture_builds` | function |  | — | The closure-build facts the scope pass's free emitter decided on, kept for the static |
+| `Function.adopter_released` | function |  | — | The literal buffers the scope pass's free emitter left without an exit free because an |
 | `Function.pass2_rebuilt` | function |  | — | loft#1466 — the locals whose borrow list pass 2 has already rebuilt. |
+| `Function.untyped_binds` | function |  | — | @C168 — the locals a `=` bound on pass 1 to a value whose type that pass could not |
 | `Function.pass1_untyped_bind` | function |  | — | The undeclared locals whose latest PASS-1 bind had no type yet (a call to a function |
 | `Function.nullable_text_buffers` | function |  | — | loft#1616 — the `text?` locals `text_return` promoted to a hidden `&text` work buffer. |
 | `Function.join_owners` | function |  | — | loft#1721 — a `??` temp (`__ncc_N`) mapped to the stores its DEFAULT arm may deliver. |
@@ -337,6 +357,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Function.file` | function |  | `El.file` |  |
 | `Function.unique` | function |  | `Vars.unique` | Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`). |
 | `Function.loop_binds` | function |  | `Vars.loop_binds` | Per-name counters for [`Function::loop_binding`] — how many `for` loops in this |
+| `Function.subject_sites` | function |  | `El.subject_sites` | The number pass 1 gave each match SITE's subject temp (`_match_subj_N`), keyed by the |
 | `Function.mv_field_origin` | function |  | — | loft#1160 — the field access each variant-payload BINDING in this function was |
 | `Function.tuphold_origin` | function |  | — | The tuple member each `_tuphold_N` in this function was projected from — its base |
 | `Function.text_payload_views` | function |  | — | The `match`/`is` payload bindings of a `text` field whose writes the parser MIRRORS |
@@ -359,7 +380,7 @@ Mirrored: `Parser` scoped 12 of 72, pass 4 of 31, other 5 of 191; `Function` 13 
 | `Function.work_ref_p2` | function |  | `Vars.work_ref_p2` | loft#848 — the PASS-2-ONLY `__ref` sequence, the reference twin of |
 | `Function.work_vdb` | function |  | `Vars.work_vdb` |  |
 | `Function.work_kvb` | function |  | — | loft#703 — separate counter for the work-ref a KEYED collection literal in value |
-| `Function.work_fmt` | function |  | — | @PLN124 — separate counter for the accumulator a format string BUILDS when |
+| `Function.work_fmt` | function |  | `Vars.work_fmt` | @PLN124 — separate counter for the accumulator a format string BUILDS when |
 | `Function.work_texts` | function |  | `Vars.work_texts` |  |
 | `Function.work_refs` | function |  | `Vars.work_refs` |  |
 | `Function.work_buffer_refs` | function |  | — | `@FR-R-WorkBuffer` — the subset of `work_refs` a caller mints for a callee's WORK |

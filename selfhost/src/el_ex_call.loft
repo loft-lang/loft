@@ -29,6 +29,8 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
+use el_ex_name;
+use binds;
 
 // Does `n` read a variable whose template type names placeholder `h`?
 pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
@@ -765,11 +767,6 @@ pub fn writes_carried(e: el::El, bound: ir::TypeT) -> boolean {
     return false;
   }
   plain_enum = match b { TyEnum { n: _, is_ref } => !is_ref, _ => false };
-  // (A one-byte or four-byte integer element has a write of its own — not carried.)
-  odd_int = match b { TyInteger { spec } => el_types::narrow_width(spec) == 1 || el_types::int4(spec), _ => false };
-  if odd_int {
-    return false;
-  }
   el_ex_object::scalar_type(b) || b is TyText || plain_enum || (b is TyReference && struct_ref(e, b) >= 0) || b is TyVector
 }
 
@@ -846,6 +843,14 @@ pub fn primitive_setter(e: el::El, t: ir::TypeT, at: ir::Node, src: ir::Node) ->
     TyInteger { spec } => {
       if el_types::narrow_width(spec) == 2 || el_types::uint4(spec) {
         return el_ex_pattern::elem_write(e, t, at, src);
+      }
+      // (`narrow_elm_write`: a one-byte element stores `val - min`, a four-byte signed one its
+      // two's complement.)
+      if el_types::narrow_width(spec) == 1 {
+        return el_ir::cl(e, "OpSetByte", [at, zero, ir::NdInt { n: spec.min }, src]);
+      }
+      if el_types::int4(spec) {
+        return el_ir::cl(e, "OpSetInt4", [at, zero, src]);
       }
       el_ir::cl(e, "OpSetInt", [at, zero, src])
     },
@@ -1490,6 +1495,16 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   if bufs {
     g2 = given;
     t2 = types;
+    // (`process_call_args` converts the given arguments before `add_defaults` mints the
+    // buffers: a text value's work text is numbered ahead of them.)
+    for a in def.attributes {
+      if a#index < len(given) && !(a.hidden) {
+        tvl = el_ex_match::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
+        if tvl != null {
+          g2[a#index] = tvl!;
+        }
+      }
+    }
     for a in def.attributes {
       if a#index >= len(given) {
         // Minted on both passes, as `add_defaults` mints it, so the buffers number alike.
@@ -2171,7 +2186,7 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       },
       Ident { name } => {
         if radix_for(name) == null {
-          f.width = el_ex_assign::name_expression(e, vars, name, "", false).code;
+          f.width = el_ex_name::name_expression(e, vars, name, "", false).code;
           i += 1;
         }
       },
@@ -2510,6 +2525,18 @@ pub fn amp_operand(e: el::El, n: integer) -> integer {
   }
 }
 
+// An identity comparison's side is a PLACE (`AmpIdentity::place`): a variable, a struct field
+// or a vector element — a pointer field (`a.next`, read as `OpGetDbRef(a, …)`) included.
+fn identity_place(e: el::El, n: ir::Node) -> boolean {
+  if place_root(e, n) >= 0 {
+    return true;
+  }
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetDbRef" && len(args) > 0 && place_root(e, args[0]!) >= 0,
+    _ => false
+  }
+}
+
 // `Parser::identity_compare` (`@FR-E-Eq`, @C91): `&a == &b` asks whether two places are ONE
 // record — `OpEqRef` / `OpNeRef` of the two handles as they are.  Both sides must be a place
 // (a variable or a projection) of one heap type; anything else is refused by name.
@@ -2520,9 +2547,12 @@ pub fn identity_compare(e: el::El, vars: el_vars::Vars, op: text, l: integer, r:
   if e.first_pass {
     return ex(code, ir::TyBoolean);
   }
-  places = place_root(e, a.code) >= 0 && place_root(e, b.code) >= 0;
-  at = el_types::base(a.tp);
-  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, el_types::base(b.tp)) {
+  places = identity_place(e, a.code) && identity_place(e, b.code);
+  // (`@FR-B-Ref-Uniform`: a link side, `c = &a`, is the record it names — its handle compared
+  // as it is.)
+  at = el_types::base(match a.tp { TyRefVar { inner } => inner, _ => a.tp });
+  bt = el_types::base(match b.tp { TyRefVar { inner } => inner, _ => b.tp });
+  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, bt) {
     el::refuse(e, "an identity comparison of something other than two places of one heap type");
     return ex(ir::NdNull, ir::TyBoolean);
   }
@@ -3126,10 +3156,21 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
+  first_new = len(vars.vars);
   d = match e.p.nodes[r] {
     SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: [], elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
     _ => el_ex_assign::expression(e, vars, r)
   };
+  // (The first pass builds a literal default's value into a `_vec_N` whose code it leaves out;
+  // `build_null_coalesce_default_inner` decides that buffer's flags on this pass all the same.)
+  if e.first_pass && el_types::base(x.tp) is TyVector && el_ex_place::vec_lit_len(e, r) > 0 {
+    for lv in vars.vars {
+      if lv#index >= first_new && starts_with(lv.name, "_vec_") {
+        register_default_literal(e, vars, el_ir::v_block([ir::NdVar { n: lv#index }], el_vars::tp(vars, lv#index), "Vector"), if x.code is NdVar { x.tp } else { el_types::base(x.tp) }, borrows: callee_result_borrows(e, x.code));
+        break;
+      }
+    }
+  }
   // `build_null_coalesce_default` reads the default against the subject's type: an untyped
   // `[]` is the subject's empty vector, built there.
   if el_ex_pattern::is_empty_literal(d.code) && el_types::base(x.tp) is TyVector {
@@ -3150,6 +3191,12 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     // `__ncc_N`: the literal's buffer is minted here on the first pass too, its code unused.)
     lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []);
     d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
+    // (`build_null_coalesce_default_inner` decides the literal's flags on the first pass too, on
+    // that pass's subject type — the flags are cumulative: a subject that borrows nothing yet
+    // leaves the buffer never freed, and the second pass then keeps the backing's free.)
+    if e.first_pass && !fresh_native_call(e, x.code) {
+      register_default_literal(e, vars, lit, if x.code is NdVar { x.tp } else { el_types::base(x.tp) }, borrows: callee_result_borrows(e, x.code));
+    }
   }
   // A keyed subject's `[]` is that collection, empty, in a `__kvb_N` of its own (`parse_vector`'s
   // keyed arm against the subject's type): nulled at the head, given its store.
@@ -3188,6 +3235,30 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
 // block — the result a view of the holder where a loft function answered the record
 // (`owned_record_subject`).  A default of another record type, or a call answering no buffer of
 // its own, is refused by name.
+// `owned_record_subject` → `every_tail_is_an_owned_call`: every value the subject can answer is
+// a loft function's (or a fn-ref call's) result — a value branch or a block whose every tail is
+// one — so the record it answers is fresh, and the holder owns it.
+fn every_tail_is_an_owned_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => binds::is_loft_defined(el::def(e, def_nr)),
+    NdCallRef { var: _ } => true,
+    NdIf { cond: _, t, f } => every_tail_is_an_owned_call(e, t) && every_tail_is_an_owned_call(e, f),
+    NdBlock { block } => len(block[0].operators) > 0 && every_tail_is_an_owned_call(e, block[0].operators[-1]!),
+    _ => false
+  }
+}
+
+// `build_null_coalesce_default_inner`'s holder of a record or a struct-enum subject: never freed
+// unless it owns the record (`owned_record_subject`), then freed — the mark cleared, as the flags
+// are cumulative across passes.
+fn holder_free(e: el::El, vars: el_vars::Vars, held: integer, subject: ir::Node) {
+  if every_tail_is_an_owned_call(e, subject) {
+    vars.vars[held].skip_free = false;
+  } else {
+    el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
+  }
+}
+
 pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
@@ -3202,7 +3273,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // A record a loft function answers is a fresh one the holder owns: the result views the
   // holder (`owned_record_subject`).
-  owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), NdCallRef { var: _ } => true, _ => false };
+  owned = every_tail_is_an_owned_call(e, x.code);
   // A call default answers a record in its own buffer; beside a held subject that arm owns it
   // (`join-arm-owner`: the buffer bound to the call, then answered).
   dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };
@@ -3247,7 +3318,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
-  vars.vars[held].skip_free = true;
+  holder_free(e, vars, held, x.code);
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
     // A view of what the subject borrows is answered as the "ncc" block it becomes, so a
@@ -3328,7 +3399,7 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if root >= 0 && !(slot is NdNull) {
     pt = el_types::with_deps(el_types::without_deps(lhs), [root]);
     ph = el_vars::create_unique(vars, "_ncc", pt);
-    vars.vars[ph].skip_free = true;
+    el_vars::set_skip_free(vars, ph, "build_null_coalesce_default_inner");
     el_vars::register_work_ref(vars, ph);
     if e.first_pass {
       return ex(ir::NdNull, pt);
@@ -3357,7 +3428,7 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   held = el_vars::create_unique(vars, "_ncc", el_types::without_deps(lhs));
-  vars.vars[held].skip_free = true;
+  holder_free(e, vars, held, x.code);
   el_vars::register_work_ref(vars, held);
   rt = el_types::with_deps(el_types::without_deps(lhs), [held]);
   if e.first_pass {
@@ -3398,27 +3469,27 @@ pub fn view_borrows(e: el::El, vars: el_vars::Vars, x: Ex) -> vector<integer> {
   []
 }
 
-// The buffer of a default literal built against a field's view (`vector_value` with
-// `borrows`): a work ref of its own type, holding no store.
-pub fn borrowed_literal_buffer(vars: el_vars::Vars, d: ir::Node) {
-  match el_ir::unspan(d) {
-    NdBlock { block } => {
-      if block[0].name != "Vector" || len(block[0].operators) == 0 {
-        return;
-      }
-      match el_ir::unspan(block[0].operators[-1]!) {
-        NdVar { n: w } => {
-          el_vars::register_work_ref(vars, w);
-          vars.vars[w].skip_free = true;
-        },
-        _ => {}
-      }
-    },
-    _ => {}
+// `Parser::inline_slot_word`: an `OpGetField(record, position, …)` read — a slot word of a
+// record, as a vector literal's buffer is bound to its backing's field.
+fn inline_slot_word(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) >= 2,
+    _ => false
   }
 }
 
-pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
+// A loft call's first-pass answer borrows what its callee declared by then, which this port's
+// first pass leaves off the call (`vector_buffer_call`): a callee of the program had its own first
+// pass only — its answer borrows the buffer where that pass renamed a local or a call's answer
+// onto it (`Bind`, `Rename`) — and a library's is complete, its declared result read as it stands.
+pub fn callee_result_borrows(e: el::El, code: ir::Node) -> boolean {
+  match el_ir::unspan(code) {
+    NdCall { def_nr: cd } => buffered_loft_call(e, code) && if el::def(e, cd).source == el::MAIN_SOURCE { e.p1_bind.contains(cd) } else { len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0 },
+    _ => false
+  }
+}
+
+pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT, borrows: boolean = false) {
   match el_ir::unspan(d) {
     NdBlock { block } => {
       if block[0].name != "Vector" || len(block[0].operators) == 0 {
@@ -3427,11 +3498,29 @@ pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT
       match el_ir::unspan(block[0].operators[-1]!) {
         NdVar { n: w } => {
           el_vars::register_work_ref(vars, w);
+          // (`backed`: the literal's buffer is set from an inline slot word — a view of a
+          // backing record's vector field; `backing`: the buffer's first borrow, read before the
+          // borrows are dropped.)
+          backed = false;
+          for op in block[0].operators {
+            match el_ir::unspan(op) {
+              NdSet { var: sv, inner: sval } => if sv == w && inline_slot_word(e, sval) { backed = true; },
+              _ => {}
+            }
+          }
+          wds = el_types::deps(el_vars::tp(vars, w));
+          bk = if el_vars::tp(vars, w) is TyVector && len(wds) > 0 { wds[0] } else { -1 };
           el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
-          if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
-            vars.vars[w].skip_free = true;
-          } else {
-            el_vars::mark_inline(vars, w);
+          if lhs is TyVector && len(el_types::deps(lhs)) == 0 && !borrows {
+            el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
+          } else if backed {
+            el_vars::mark_inline(vars, w, "build_null_coalesce_default_inner");
+            // loft#1322 (`(O-Borrow)`: one owner, one free) — `_vec_N` and its backing `__vdb_N`
+            // name ONE store; the view's free is the one that runs, so the backing goes quiet —
+            // only where the view is freed at all (the flags are cumulative across passes).
+            if !vars.vars[w].skip_free && bk >= 0 && bk < len(vars.vars) {
+              el_vars::set_skip_free(vars, bk, "build_null_coalesce_default_inner");
+            }
           }
         },
         _ => {}

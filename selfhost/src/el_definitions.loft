@@ -20,6 +20,7 @@ use el_schema;
 use el_cell;
 use el_trace;
 use el_ex_deliver;
+use el_ex_tuple;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -749,6 +750,72 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
 // `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
 // own, and on the second pass converted to the field's type (`convert`).  A plain scalar or a
 // literal text that names no slot is carried; anything else is refused by name.
+// `leading_null_guards`: the parameters the body's entry statements null-guard, up to the first
+// statement that is no guard (line markers skipped).
+fn leading_null_guards(e: el::El, body: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match el_ir::unspan(body) {
+    NdBlock { block } => {
+      for st in block[0].operators {
+        g = null_guard_param(e, st);
+        if g >= 0 {
+          out += [g];
+        } else if !(el_ir::unspan(st) is NdLine) && !(el_ir::unspan(st) is NdNull) {
+          return out;
+        }
+      }
+    },
+    _ => {}
+  }
+  out
+}
+
+// `null_guard_param`: `if p == null { … return … }` (either side, `p` maybe through an `OpConv…`,
+// `null` a literal or an `…FromNull`) — the parameter `p`, or -1.
+fn null_guard_param(e: el::El, st: ir::Node) -> integer {
+  match el_ir::unspan(st) {
+    NdIf { cond, t, f: _ } => {
+      if !el_ex_call::has_return(t) {
+        return -1;
+      }
+      match el_ir::unspan(cond) {
+        NdCall { def_nr, args } => {
+          if len(args) != 2 || !starts_with(el::def(e, def_nr).name, "OpEq") {
+            return -1;
+          }
+          a0 = guard_var(e, args[0]!);
+          if a0 >= 0 && null_literal(e, args[1]!) {
+            return a0;
+          }
+          a1 = guard_var(e, args[1]!);
+          if a1 >= 0 && null_literal(e, args[0]!) {
+            return a1;
+          }
+          -1
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+fn guard_var(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdVar { n: gv } => gv,
+    NdCall { def_nr, args } => if len(args) == 1 && starts_with(el::def(e, def_nr).name, "OpConv") { match el_ir::unspan(args[0]!) { NdVar { n: gv2 } => gv2, _ => -1 } } else { -1 },
+    _ => -1
+  }
+}
+
+fn null_literal(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && ends_with(el::def(e, def_nr).name, "FromNull"),
+    _ => false
+  }
+}
+
 fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
   x = el_ex_assign::expression(e, vars, init);
@@ -1277,10 +1344,12 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   for pn in params {
     match e.p.nodes[pn] {
-      SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if pcap != null || tp == null {
-          kind = if pcap != null { "a capability" } else { "no type" };
-          el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
+      SParam { name: an, amp, fixed, tp, init, cap: _ } => {
+        // (A capability on a parameter — `count: integer = 1 spawn.count#default` — is checked
+        // at each call (`@FR-Cap-Set`: the argument is the default or a granted lock) and
+        // leaves the parameter itself as it is: nothing of it reaches the image.)
+        if tp == null {
+          el::refuse(e, "a parameter with a default, a capability or no type: no type");
           return "";
         }
         t = el_types::parse_type(e, tp ?? 0);
@@ -1434,6 +1503,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   if e.first_pass {
     // (Read against no declared result, so the body's own answer shows.)
     el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
+    // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
+    e.b.data.definitions[e.context].returned_const = ret_const;
   } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
     // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
     // hint's, so its body is parsed against the bare result the first pass met.
@@ -1444,16 +1515,19 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       if e.first_pass {
         v = el_vars::add_variable(vars, a.name, a.typedef);
         el_vars::become_argument(vars, v);
+        // (`mark_declared_parameters`: a parameter the signature declares is named by the user,
+        // whether or not the body mentions it — a function's and a lambda's alike, loft#2614.)
+        el_vars::mark_user_named(vars, v, "mark_declared_parameters");
 
         if vars.vars[v].uses > 0 {
           el_vars::in_use(vars, v, false);
         }
         if a.constant {
-          el_vars::set_value_const(vars, v);
+          el_vars::set_value_const(vars, v, "parse_function");
         }
       } else {
         if a.constant {
-          el_vars::set_value_const(vars, a#index);
+          el_vars::set_value_const(vars, a#index, "parse_function");
         }
         // `Parser::change_var_type` re-types each parameter where the second pass enters the
         // body: a `vector<T>` one has `vector<T>` and `main_vector<T>` defined there (the
@@ -1467,7 +1541,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
               pb = el_types::base(pm);
               // (A vector member is carried: read through the parameter, or copied into the
               // `__tp_<name>` a write promotes.)
-              if pb is TyReference || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
+              // (A record member is carried too, `@FR-F-ParamTuple`: the shadow, seeded with a
+              // copy or, where the body only reads, the parameter itself.  A struct-enum member
+              // is not yet.)
+              if pb is TyEnum && el_types::struct_enum_def(pb) >= 0 {
                 el::refuse(e, "a tuple parameter with a heap member");
               }
             }
@@ -1537,6 +1614,27 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    // `@FR-F-ParamTuple`: on pass 2 a record-carrying tuple shadow's copy seed is built before
+    // the body (`tuple_whole_bind_copy`), its `__ref_p2_N` numbered first, as Rust's is — and
+    // minted even where the body only reads and the seed is the plain alias.
+    if !e.first_pass {
+      for tsh in vars.promoted_shadows {
+        tpp = vars.promoted_params[tsh#index] ?? -1;
+        match el_vars::tp(vars, tpp) {
+          TyTuple { elems: tpe } => {
+            if len([for tm in tpe if (el_types::base(tm) is TyReference) { tm }]) > 0 {
+              tpc = el_ex_tuple::tuple_whole_bind_copy(e, vars, tpp, tpe);
+              if tpc != null {
+                vars.tp_seed_shadows += [tsh];
+                vars.tp_seed_codes += [tpc!.code];
+                vars.tp_seed_types += [tpc!.tp];
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
     if e.first_pass {
       for lm in vars.loop_made {
@@ -1576,6 +1674,17 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
     }
+    // `infer_function_null_safe` (@PLN46 W3): a function whose every parameter is null-guarded
+    // at its entry (`if p == null { return … }`) is `#null_safe` without saying so.
+    if !e.first_pass && !el::def(e, e.context).null_safe {
+      nps = [for nx in vars.vars if nx.argument { nx#index }];
+      if len(nps) > 0 {
+        ng = leading_null_guards(e, code);
+        if len([for np in nps if !ng.contains(np) { np }]) == 0 {
+          e.b.data.definitions[e.context].null_safe = true;
+        }
+      }
+    }
     // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose
     // whole body is one vector literal of constants, answering a plain vector through its
     // buffer, gets a constant twin `__const_<name>` with its result — what a read of a call of
@@ -1604,7 +1713,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         hv = el_vars::var(vars, ha.name);
         match ha.typedef {
           TyTuple { elems: hpe } => {
-            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
+            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector || el_types::base(hm) is TyReference) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
               el_vars::promote_tuple_param(vars, hv);
             }
           },

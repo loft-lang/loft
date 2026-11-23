@@ -31,6 +31,14 @@ pub struct Capture {
   pub tp: ir::TypeT
 }
 
+// `closure_shared_vectors`: a closure record's attribute that shares a captured VECTOR (its
+// attribute wears the element's `Reference` spelling), with the vector's type.
+pub struct SharedVec {
+  pub rec: integer,
+  pub name: text,
+  pub tp: ir::TypeT
+}
+
 // A work ref the first pass made a parameter (the return buffer renamed onto it), by function
 // and name, with the site that minted it: the second pass steps over its name at any other site
 // (`Function::argument_of_another_site`, loft#848).
@@ -109,6 +117,10 @@ pub struct El {
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
   pub unbacked: vector<integer>,
+  // The program's functions whose first pass renamed a local or a call's answer onto the return
+  // buffer (`classify_ret_promotion`'s `Bind` or `Rename`): a caller's first pass reads their answer as a
+  // borrow of the buffer it hands them.
+  pub p1_bind: vector<integer>,
   // `Variable::created_in_loop` of each function's first-pass variables, `context * 65536 + nr`.
   pub loop_made: vector<integer>,
   // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
@@ -150,6 +162,7 @@ pub struct El {
   // The lambda being read: the enclosing function's locals it captures, its closure record and
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
+  pub shared_vecs: vector<SharedVec>,
   pub closure_rec: integer,
   pub closure_var: integer,
   pub step_over: vector<StepOver>,
@@ -226,6 +239,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_at: [],
     refused_in: [],
     unbacked: [],
+    p1_bind: [],
     cast_decls: [],
     decl_line: 0,
     trace_vars: [],
@@ -241,6 +255,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     bodies2: [],
     stale: [],
     captures: [],
+    shared_vecs: [],
     closure_rec: -1,
     closure_var: -1,
     step_over: [],

@@ -603,8 +603,8 @@ fn promote_one(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node, v: in
   e.b.data.definitions[d].attributes += [a];
   el_vars::become_argument(vars, v);
   w = el_vars::rebind_witness(vars, v);
-  vars.vars[db].skip_free = true;
-  el_vars::mark_inline(vars, db);
+  el_vars::set_skip_free(vars, db, "promote_one");
+  el_vars::mark_inline(vars, db, "promote_one");
   is_null = el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]);
   free = el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: w }]);
   clear = el_ir::cl(e, "t_6vector_clear", [ir::NdVar { n: v }]);
@@ -878,6 +878,7 @@ fn promote_refs_in(e: el::El, d: integer, fresh: vector<integer>) -> integer {
     a.work_buffer = true;
     e.b.data.definitions[d].attributes += [a];
     el_vars::become_argument(vars, r);
+    el_vars::retire_work_buffer_ref(vars, r);
     match el_ir::unspan(code) {
       NdBlock { block } => {
         bl = block[0];
@@ -1480,6 +1481,7 @@ fn promote_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node
   a.work_buffer = true;
   e.b.data.definitions[d].attributes += [a];
   el_vars::become_argument(vars, buf);
+  el_vars::retire_work_buffer_ref(vars, buf);
   w = el_vars::rebind_witness(vars, buf);
   rows = el_ex_base::vector_rows(e, elem, 0, true);
   if rows == null {
@@ -1487,6 +1489,11 @@ fn promote_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node
   }
   rw = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: rw.main_def, dep: [] });
+  // (`vector_db_init` on a rebound parameter: its fresh backing is freed by the parameter's own
+  // `OpFreeRefIfDistinct`, never by the scope pass, and nulled as an inline ref — the mint is
+  // conditional.)
+  el_vars::set_skip_free(vars, db, "vector_db_init");
+  el_vars::mark_inline(vars, db, "vector_db_init");
   el_vars::depend(vars, buf, db);
   b = ir::NdVar { n: buf };
   mint = ir::NdInsert { items: [

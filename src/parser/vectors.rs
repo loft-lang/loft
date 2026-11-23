@@ -1952,6 +1952,10 @@ or build a local and use that."
             }
         }
 
+        // loft#2614 — a lambda's declared parameters are the user's, as a function's are
+        // (`parse_function`): named before the hidden `__closure` parameter exists, so an
+        // unread `_x` still lists in `stack_trace()` and `__closure` does not.
+        self.vars.mark_declared_parameters(&self.data, d_nr);
         // The codegen (line 40-46) reads definition attributes to assign argument positions.
         let outer_closure_param = self.closure_param;
         if !self.first_pass {
@@ -2383,6 +2387,8 @@ or build a local and use that."
             }
         }
 
+        // loft#2614 — the declared parameters are the user's (`parse_lambda_body` above).
+        self.vars.mark_declared_parameters(&self.data, d_nr);
         // Mirror `parse_lambda` (the `fn(){}` form): on the second pass, add the
         // `__closure` attribute + set `closure_param` so the body reads captured
         // outer variables from the closure record.  Without this the short `|x|`

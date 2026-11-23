@@ -25,6 +25,7 @@ use el_ex_place;
 use el_ex_call;
 use el_ex_match;
 use el_ex_pattern;
+use el_ex_name;
 
 pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, n: integer) -> vector<ir::Node>? {
   def = el::def(e, d);
@@ -48,8 +49,11 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     dep: vector<integer> = if r is NdVar { [v] } else { [] };
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: dep });
     if len(dep) == 0 {
-      el_vars::mark_inline(vars, elm);
+      el_vars::mark_inline(vars, elm, "unique_elm_var");
     }
+    // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
+    // owning record frees — its own free suppressed.)
+    el_vars::set_skip_free(vars, elm, "parse_vector_inner");
   }
   // `parse_vector`'s own-buffer arm (loft#2397, @FR-E-Asgn-Compound): a record-element literal
   // whose items read the destination under another name — a local viewing the record — is built
@@ -502,7 +506,7 @@ pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Nod
   }
   tmp = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ft), []));
   el_vars::set_defined(vars, tmp);
-  vars.vars[tmp].skip_free = true;
+  el_vars::set_skip_free(vars, tmp, "fn_ref_slot_dnr");
   el_ir::v_block([el_ir::v_set(tmp, val), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: tmp }])], ir::TyVoid, "fn_number_write")
 }
 
@@ -674,7 +678,7 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
       ops += [el_ir::replace_subtree(op, ir::NdVar { n: w }, old)];
     }
   }
-  vars.vars[w].skip_free = true;
+  el_vars::set_skip_free(vars, w, "emit_fn_ref_field_write");
   // (The temporary is typed as the lambda's own function type — the closure block's, which
   // lists a text answer's hidden `&text` buffer — not as the field's.)
   nw = fn_number_write(e, vars, r, ir::NdInt { n: pos }, ir::NdInt { n: ld }, bl.result[0] ?? ft);
@@ -886,7 +890,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
     qd = if qn != "" { el::def_nr(e, qn) } else { -1 };
     if qd >= 0 && el_ex_place::qualified_variant(e, qn, name) != "" && (el::def(e, qd).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: qd, is_ref: true, dep: [] } {
       // (Read through the member access, the value carries its position as any member's does.)
-      qv = el_ex_assign::global_name(e, vars, -1, name);
+      qv = el_ex_name::global_name(e, vars, -1, name);
       if e.first_pass || qv.code is NdNull {
         return qv;
       }
@@ -917,7 +921,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       if e.first_pass || el_types::is_unknown(cr.tp) {
         return cr;
       }
-      vars.vars[fw].skip_free = true;
+      el_vars::set_skip_free(vars, fw, "parse_part_inner");
       // (The read bound for the call borrows nothing: the temporary lives for the call alone.)
       return ex(el_ir::v_block([el_ir::v_set(fw, el_ex_null::block_typed(read.code, el_types::with_deps(read.tp, []))), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
     }
@@ -940,7 +944,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       if e.first_pass || el_types::is_unknown(cr.tp) {
         return cr;
       }
-      vars.vars[fw].skip_free = true;
+      el_vars::set_skip_free(vars, fw, "parse_part_inner");
       // (A split field's closure half is its child record, read where it lies.)
       half = if fn_field_split(e, hd, name) { el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) + 4 }, ir::NdInt { n: 0 }])]) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
       read = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) }]), half], ft, "fn_ref_field_read");
@@ -1186,7 +1190,7 @@ pub fn chain_hold(e: el::El, vars: el_vars::Vars, x: Ex, more: boolean) -> Ex {
     }
   }
   w = el_vars::work_ref(vars, x.tp);
-  el_vars::mark_inline(vars, w);
+  el_vars::mark_inline(vars, w, "parse_part_inner");
   kt = el::def(e, d).known_type;
   if projection && kt != el::NO_TYPE {
     tp = ir::TyReference { n: d, dep: if more { [w] } else { [] } };
@@ -1242,7 +1246,7 @@ pub fn call_member_view(e: el::El, vars: el_vars::Vars, proj: ir::Node, d: integ
             return null;
           }
           holder = el_vars::work_ref(vars, call_tp);
-          el_vars::mark_inline(vars, holder);
+          el_vars::mark_inline(vars, holder, "call_member_view");
           tp = ir::TyReference { n: d, dep: [holder] };
           na = [ir::NdVar { n: holder }] + pargs[1..];
           return ex(el_ir::v_block([el_ir::v_set(holder, pargs[0]), ir::NdCall { def_nr: pd, args: na }], tp, "inline ref view"), tp);
@@ -1371,10 +1375,14 @@ pub fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
       return -1;
     }
     v = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
-    el_vars::mark_user_named(vars, v);
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
     return v;
   }
-  el_vars::mark_user_named(vars, v);
+  // (Only where the variable IS the name written — a match binding's `_mv_n_1`, a rebound
+  // capture's `n#1` stay the compiler's.)
+  if el_vars::name_of(vars, v) == name {
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
+  }
   el_vars::in_use(vars, v, true);
   if !e.first_pass {
     el_vars::set_defined(vars, v);
@@ -1738,13 +1746,24 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if name == "" && f != null && (e.p.nodes[f!] is SIndex || e.p.nodes[f!] is SCall) {
     ix = el_ex_assign::expression(e, vars, f!);
     if el_types::base(ix.tp) is TyFunction {
-      iw = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ix.tp), []));
+      // (`owns_closure`: a closure factory's answer names a slot of the callee's frame — a
+      // `CalleeFrame` dep — and the temporary is its sole owner: it keeps that dep and is freed
+      // at scope exit.  A borrowed one owns nothing.)
+      ideps = el_types::deps(ix.tp);
+      owns = len([for idp in ideps if idp >= el_ex_assign::CALLEE_FRAME && idp != el_types::MARKER { idp }]) > 0;
+      it = el_types::with_deps(el_types::base(ix.tp), if owns { ideps } else { [] });
+      iw = el_vars::create_unique(vars, "__fn_ref_tmp", it);
+      if !e.first_pass {
+        el_vars::set_var_type(vars, iw, it);
+      }
       el_vars::set_defined(vars, iw);
       icr = call_ref(e, vars, iw, args);
       if e.first_pass || el_types::is_unknown(icr.tp) {
         return icr;
       }
-      vars.vars[iw].skip_free = true;
+      if !owns {
+        el_vars::set_skip_free(vars, iw, "parse_part_inner");
+      }
       return ex(el_ir::v_block([el_ir::v_set(iw, ix.code), icr.code], icr.tp, "fn_call_tmp"), icr.tp);
     }
   }
@@ -1999,8 +2018,8 @@ pub fn keyed_field_remove(e: el::El, vars: el_vars::Vars, coll: ir::Node, db_tp:
   // The record is a borrow of the collection: never freed as a store of its own.  It is the
   // record the key names, so the dense type the place resolved to (its `?` is the miss's).
   found = el_vars::work_ref(vars, el_types::base(f_type));
-  el_vars::mark_inline(vars, found);
-  vars.vars[found].skip_free = true;
+  el_vars::mark_inline(vars, found, "keyed_group_remove");
+  el_vars::set_skip_free(vars, found, "keyed_group_remove");
   ops = [el_ir::v_set(found, get_rec)];
   for m in members {
     if m.off != site!.off {
@@ -2276,37 +2295,66 @@ pub fn statement(e: el::El, vars: el_vars::Vars, se: integer, orelse: integer?) 
 // guard reading that.  A statement that writes no place is refused by name (Rust reports it).
 pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: integer) -> ir::Node {
   arm = el_ex_assign::parse_block(e, vars, orelse, "else", ir::TyVoid).code;
-  steps = match code { NdInsert { items } => items, _ => [code] };
+  // (`flatten_inserts`: a nested `Insert` — a compound store's `__place` binding in front of an
+  // append's own steps — is the same statement, its steps read at this level.)
+  steps: vector<ir::Node> = [];
+  flatten_inserts(code, steps);
   // `store_shape`: the one place every write names, and the narrow write's range.
   target = ir::NdNull;
   has_target = false;
   write_steps: vector<integer> = [];
   write_args: vector<integer> = [];
-  // An APPEND is a store too (`is_append_op`): its target is the collection it claims in,
-  // bound in `_store_target_N` before the claim.  That form is not carried yet.
+  // An APPEND is a store too (`is_append_op`, loft#2549): its target is the collection it claims
+  // in, argument 0 of the claim, the push or the filing.  The field writes into the claimed
+  // element (`_elm = OpNewRecord(…)`, then `OpSet…(_elm, …)`) follow from the claim — through a
+  // null collection it answers a null element, whose writes skip (`@FR-H-WriteNull`) — so they
+  // are not a second target.
+  elements: vector<integer> = [];
   for st in steps {
-    if append_step(e, st) {
-      el::refuse(e, "a store `else` on an append");
-      return code;
-    }
-  }
-  for st in steps {
+    op = -1;
+    args: vector<ir::Node> = [];
     match el_ir::unspan(st) {
-      NdCall { def_nr, args } => {
-        arg = write_target_arg(el::def(e, def_nr).name);
-        if arg >= 0 && arg < len(args) {
-          t = el_ir::unspan(args[arg]!);
-          if has_target && t != target {
-            el::refuse(e, "a store `else` over writes to two places");
-            return code;
-          }
-          target = t;
-          has_target = true;
-          write_steps += [st#index];
-          write_args += [arg];
+      NdCall { def_nr, args: ca } => {
+        op = def_nr;
+        args = ca;
+      },
+      NdSet { var, inner } => {
+        match el_ir::unspan(inner) {
+          NdCall { def_nr: sd, args: sa } => {
+            if append_op(e, sd) {
+              elements += [var];
+              op = sd;
+              args = sa;
+            }
+          },
+          _ => {}
         }
       },
       _ => {}
+    }
+    if op < 0 {
+      continue;
+    }
+    arg = 0;
+    if !append_op(e, op) {
+      arg = write_target_arg(el::def(e, op).name);
+      if arg >= 0 && arg < len(args) {
+        ea = match el_ir::unspan(args[arg]!) { NdVar { n } => n, _ => -1 };
+        if ea >= 0 && len([for x in elements if x == ea { x }]) > 0 {
+          continue;
+        }
+      }
+    }
+    if arg >= 0 && arg < len(args) {
+      t = el_ir::unspan(args[arg]!);
+      if has_target && t != target {
+        el::refuse(e, "a store `else` over writes to two places");
+        return code;
+      }
+      target = t;
+      has_target = true;
+      write_steps += [st#index];
+      write_args += [arg];
     }
   }
   narrow_at = -1;
@@ -2335,7 +2383,17 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
     }
 
   }
+  // `parse_store_else` runs on the first pass too, and mints its temps there: the second pass
+  // takes `_store_target_N` back by name, with the type the first pass's target gave it
+  // (`Function::unique`).
+  wt = -1;
+  if has_target {
+    wt = store_target(e, vars, target);
+  }
   if e.first_pass {
+    if narrow_at >= 0 {
+      el_vars::set_defined(vars, el_vars::create_unique(vars, "store_value", ir::TyOptional { inner: ir::TyInteger { spec: wide_spec() } }));
+    }
     return code;
   }
   // A COMPOUND write to a vector element holds the element's place first (`__place_N`), read
@@ -2356,14 +2414,7 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
   pre_ops: vector<vector<ir::Node>> = [];
   absent = ir::NdNull;
   if has_target {
-    tp = match target { NdVar { n } => el_vars::tp(vars, n), NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid };
-    wt = el_vars::create_unique(vars, "store_target", tp);
-    el_vars::set_defined(vars, wt);
-    vars.vars[wt].skip_free = true;
-    src = borrow_source(target);
-    if src >= 0 {
-      el_vars::set_var_type(vars, wt, el_types::with_deps(tp, [src]));
-    }
+    tp = store_target_type(e, vars, target);
     for w in write_steps {
       steps[w] = with_arg(steps[w]!, write_args[w#index]!, ir::NdVar { n: wt });
     }
@@ -2405,6 +2456,32 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
     out += [el_ir::v_if(failed, arm, ir::NdNull)];
   }
   ir::NdInsert { items: out }
+}
+
+// The store's place, bound once (`parse_store_else`): `_store_target_N` typed as what the target
+// answers (`store_target_type`), a view of what it names — never freed by this frame — borrowing
+// the variable the place is read out of (`depending`).  On the second pass the name is the first
+// pass's variable, whose type it keeps.
+fn store_target(e: el::El, vars: el_vars::Vars, target: ir::Node) -> integer {
+  wt = el_vars::create_unique(vars, "store_target", store_target_type(e, vars, target));
+  el_vars::set_defined(vars, wt);
+  el_vars::set_skip_free(vars, wt, "parse_store_else");
+  src = borrow_source(target);
+  if src >= 0 {
+    el_vars::depend(vars, wt, src);
+  }
+  wt
+}
+
+// `store_target_type`: what the store's target answers — a place reached through a discharge
+// (`k[5]?.f`) is the block answering the element or the fallback (loft#2570).
+fn store_target_type(e: el::El, vars: el_vars::Vars, target: ir::Node) -> ir::TypeT {
+  match target {
+    NdVar { n } => el_vars::tp(vars, n),
+    NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid,
+    NdBlock { block } => if len(block) > 0 { block[0].result[0] ?? ir::TyVoid } else { ir::TyVoid },
+    _ => ir::TyVoid
+  }
 }
 
 // `write_target_arg`: which argument of a write op names the place it writes, or -1.
@@ -2453,10 +2530,12 @@ pub fn borrow_source(n: ir::Node) -> integer {
   match at { NdVar { n: v } => v, _ => -1 }
 }
 
-// A step with its write op's argument `i` replaced.
+// A step with its write op's argument `i` replaced (`step_call_args`: a call, or the call a
+// `Set` binds — an append's claim, `_elm = OpNewRecord(…)`).
 pub fn with_arg(st: ir::Node, i: integer, by: ir::Node) -> ir::Node {
   match st {
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_arg(inner, i, by) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: with_arg(inner, i, by) },
     NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { by } else { a } }] },
     _ => st
   }
@@ -3326,7 +3405,7 @@ pub fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
 }
 
 pub fn scalar_stored_size(e: el::El, t: ir::TypeT) -> integer {
-  d = el_ex_assign::elm_def(e, t);
+  d = el_ex_name::elm_def(e, t);
   kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
   if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size }
 }
@@ -3609,15 +3688,21 @@ fn open_types(e: el::El, types: vector<ir::TypeT>) -> boolean {
 }
 
 
-// `Parser::is_append_op` over one step: a claim in, a push onto or a filing into a collection,
-// called directly or bound (`_elm = OpNewRecord(…)`).
-fn append_step(e: el::El, st: ir::Node) -> boolean {
-  match el_ir::unspan(st) {
-    NdSet { var: _, inner } => append_step(e, inner),
-    NdCall { def_nr, args: _ } => {
-      nm = el::def(e, def_nr).name;
-      nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "n_keyed_entry_ints" || nm == "n_keyed_entry_text"
+// `Parser::is_append_op`: is operator `nr` an append's step — a claim in, a push onto or a filing
+// into the collection its argument 0 names (loft#2549)?
+fn append_op(e: el::El, nr: integer) -> boolean {
+  nm = el::def(e, nr).name;
+  nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "n_keyed_entry_ints" || nm == "n_keyed_entry_text"
+}
+
+// `flatten_inserts`: the steps of a statement, every nested `Insert` spliced in where it stands.
+fn flatten_inserts(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdInsert { items } => {
+      for s in items {
+        flatten_inserts(s, out);
+      }
     },
-    _ => false
+    _ => { out += [n]; }
   }
 }

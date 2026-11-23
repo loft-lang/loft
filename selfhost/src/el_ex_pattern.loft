@@ -141,6 +141,8 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element beside the group is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[h] is PName {
       va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
@@ -259,7 +261,7 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     mv = el_vars::create_unique(vars, "mv_{nm}", vt);
     el_vars::set_defined(vars, mv);
     if !(el_types::base(ft) is TyText) {
-      vars.vars[mv].skip_free = true;
+      el_vars::set_skip_free(vars, mv, "bind_alternation_captures");
     }
     binds += [el_ir::v_set(mv, acc)];
     names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
@@ -433,7 +435,7 @@ pub fn single_alt(e: el::El, vars: el_vars::Vars, g: integer, sed: integer, elm:
     mv = el_vars::create_unique(vars, "mv_{nm}", vt);
     el_vars::set_defined(vars, mv);
     if !(el_types::base(ft) is TyText) {
-      vars.vars[mv].skip_free = true;
+      el_vars::set_skip_free(vars, mv, "parse_slice_alternation_element");
     }
     binds += [el_ir::v_set(mv, acc)];
     names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
@@ -491,6 +493,8 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element around the run is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[h] is PName {
       va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
@@ -605,6 +609,8 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element around the run is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[t] is PName {
       va = slice_variant(e, vars, t, sed, slice_elem(e, elm, at), names);
@@ -1083,7 +1089,11 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               if mv < 0 {
                 mv = el_vars::create_unique(vars, "mv_{bname}", ft);
                 el_vars::set_defined(vars, mv);
-                vars.vars[mv].skip_free = true;
+                // (`bind_match_field_capture`: a text payload is its capture's own — Rust records
+                // it as a text payload view — and any other capture views the subject's record.)
+                if !(el_types::base(ft) is TyText) {
+                  el_vars::set_skip_free(vars, mv, "bind_match_field_capture");
+                }
                 r.aliases += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
                 el_vars::set_name(vars, bname, mv);
               }
@@ -1582,7 +1592,7 @@ pub struct RangeWalk {
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
 // the index made before the loop's variable, a non-literal end hoisted into `_range_end_N`, the
 // index started one below `lo`; the "Iter range" block steps it, leaves at `hi`, and answers it.
-pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> RangeWalk? {
+pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev: boolean = false) -> RangeWalk? {
   lo_n: integer? = null;
   hi_n: integer? = null;
   incl = false;
@@ -1650,6 +1660,29 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> 
   }
   idx = loop_index(vars, id);
   i = ir::NdVar { n: idx };
+  // `rev(r)` (`want_reverse`): the same bounds and guard, walked from the end down.
+  if rev {
+    rls: vector<ir::Node> = [];
+    rcounter = el_ir::cl(e, "OpConvIntFromNull", []);
+    rnext: vector<ir::Node> = [];
+    if incl {
+      // `rev(a..=b)`: `_next_N` starts at `b`, is tested, yielded, then steps down.
+      rnx = el_vars::create_unique(vars, "next", int_t);
+      rn_v = ir::NdVar { n: rnx };
+      rnext = [el_ir::v_set(rnx, hi_node)];
+      rls += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [rn_v, lo_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
+      rls += [el_ir::v_set(idx, rn_v), el_ir::v_set(rnx, el_ir::cl(e, "OpMinInt", [rn_v, ir::NdInt { n: 1 }]))];
+    } else {
+      // `rev(a..b)`: the counter starts AT `b` and steps before the test, so the first value is
+      // `b - 1` and no "not started yet" state is needed.
+      rcounter = hi_node;
+      rls += [el_ir::v_set(idx, el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]))];
+      rls += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, lo_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
+    }
+    rls += [i];
+    rend = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
+    return RangeWalk { lo: lc, end_var: rend, prelude: prelude, steps: rls, counter: rcounter, next_init: rnext, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! };
+  }
   // `plain_init`: only an `i32` literal start (`Value::Int`) seeds the counter at `lo - 1`; a
   // 64-bit literal takes the `next` counter, as a computed start does.
   plain = lc != null && lc! >= 0 && lo_node is NdInt;
@@ -1819,37 +1852,25 @@ pub fn object_ops(e: el::El, vars: el_vars::Vars, d: integer, values: vector<ir:
   ObjectOps { ops: ops, w: w }
 }
 
-// `rev(lo..hi)` with constant bounds, `lo` zero or more and `hi` exclusive (`parse_in_range_body`
-// with `reverse_iterator`): the index started at `hi`, each step one below, the walk ending under
-// `lo`.  Any other reversed range is refused by name.
+// `rev(r)` over a range (`parse_in_range_body` with `reverse_iterator`): the bounds and their
+// null guard as a forward walk has them (`range_walk`), walked from the end down — `rev(a..b)`
+// steps the index before its test, `rev(a..=b)` runs a `_next_N` counter from `b`.
 pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer) -> Ex {
-  lo = -1;
-  hi = -1;
-  match e.p.nodes[source] {
-    SRange { lo: l, hi: h, inclusive } => {
-      if !inclusive && l != null && h != null {
-        lc = el_convert::const_int(e, el_ex_assign::expression(e, vars, l!).code);
-        hc = el_convert::const_int(e, el_ex_assign::expression(e, vars, h!).code);
-        if lc != null && hc != null && lc! >= 0 {
-          lo = lc!;
-          hi = hc!;
-        }
-      }
-    },
-    _ => {}
+  rwo = range_walk(e, vars, h.id, source, rev: true);
+  if h.id == "_" && rwo != null {
+    el_vars::add_variable(vars, "_#index", ir::TyInteger { spec: i32_spec() });
   }
-  if lo < 0 {
-    el::refuse(e, "a reversed range that is inclusive, open or not constant");
+  if rwo == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  rw = rwo!;
   int_t = ir::TyInteger { spec: i32_spec() };
-  idx = loop_index(vars, h.id);
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   vars.reversed += [lv];
   fc = loop_filter(e, vars, h.filter);
-  facts = el_ex_call::assume_range(vars, lo, -1, lv);
+  facts = el_ex_call::assume_range(vars, rw.lo, rw.end_var, lv);
   b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
   forget_facts(vars, facts);
   cnt = el_vars::pop_loop(vars);
@@ -1857,18 +1878,14 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  i = ir::NdVar { n: idx };
-  walk = el_ir::v_block([
-    el_ir::v_set(idx, el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }])),
-    el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: lo }]), ir::NdBreak { n: 0 }, ir::NdNull),
-    i
-  ], int_t, "Iter range");
-  steps: vector<ir::Node> = [el_ir::v_set(lv, walk)];
+  starts = range_init(rw);
+  init = if len(starts) == 1 { starts[0] } else { ir::NdInsert { items: starts } };
+  steps: vector<ir::Node> = [el_ir::v_set(lv, el_ir::v_block(rw.steps, int_t, "Iter range"))];
   if fc != null {
     steps += [fc!];
   }
   steps += [b.code];
-  el_ex_null::counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(idx, ir::NdInt { n: hi }), el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding unless `named`.
@@ -1995,10 +2012,9 @@ pub fn push_args(e: el::El, vars: el_vars::Vars, t: ir::TypeT, w: ir::Node, x: i
 // `at_close`: the definitions are made at the literal's `]` although the element is declared —
 // a `vector<T>?` local, whose declared type is no vector hint to the literal.
 pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false, typed: boolean = false) -> Ex {
-  if el_vars::rebind_must_mint(vars, v) {
-    el::refuse(e, "a vector literal rebinding a local a closure shares");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+  // (A local a closure shares — `rebind_must_mint` — takes a fresh store, as any literal
+  // rebinding a local that has one does (`vector_build`'s late store): the closure keeps the
+  // store it was built with.)
   vector_build(e, vars, v, n, declared, at_close: at_close, typed: typed).x
 }
 
@@ -2022,10 +2038,16 @@ pub fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean 
   if e.first_pass && vars.recv_literal == n && match e.p.nodes[n] { SVecLit { items: ri } => len(ri) > 0, _ => false } {
     pre = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
   }
-  if vars.recv_literal == n {
+  is_recv = vars.recv_literal == n;
+  if is_recv {
     vars.recv_literal = -1;
   }
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+  // (`parse_single`'s receiver rename: the literal a bind's chain starts with is read through a
+  // receiver of its own, an inline ref — its null init mints no store.)
+  if is_recv {
+    el_vars::mark_inline(vars, v, "parse_single");
+  }
   vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem), elm_made: pre)
 }
 
@@ -2067,6 +2089,26 @@ pub fn variant_literal(e: el::El, n: integer) -> boolean {
       d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
     },
     _ => false
+  }
+}
+
+// The element temps of a nested vector literal, minted on the first pass as `parse_item` mints
+// them while it reads the items (`unique_elm_var`, each borrowing the element it is built into):
+// the second pass's build finds them by name.  An empty nested `[]` mints none.
+fn mint_nested_elms(e: el::El, vars: el_vars::Vars, outer: integer, n: integer) {
+  if el_ex_place::vec_lit_len(e, n) <= 0 {
+    return;
+  }
+  inner = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [outer] });
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        if e.p.nodes[it] is SVecLit {
+          mint_nested_elms(e, vars, inner, it);
+        }
+      }
+    },
+    _ => {}
   }
 }
 
@@ -2167,7 +2209,9 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               // so the variables number as Rust's do — a call through a function value names
               // its temporary by that number.
               if len(items) > 0 {
-                el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                // (`is_field`: a reference into the field's store, never freed itself.)
+                fpe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                el_vars::set_skip_free(vars, fpe, "parse_vector_inner");
                 // (A literal that fills the field names its vector's row on this pass, ahead
                 // of the struct that holds it; an empty one names nothing.)
                 match at {
@@ -2249,7 +2293,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // append alike.
   elm = -1;
   if len(items) > 0 {
-    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } }) };
+    // (`unique_elm_var`: the element borrows its container — `depend(elm, vec)` — a value
+    // literal's `_vec_N` as a local destination.)
+    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] }) };
     // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
     // one record made through it, what `child_allocs` counts.
     if e.first_pass && !value {
@@ -2333,6 +2379,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // A nested vector literal is built into its element (`parse_item` with `elm`) — an empty
       // one too (`[[1], []]`): its element made and zeroed, nothing appended.
       nested += [it];
+      if e.first_pass && elm >= 0 {
+        mint_nested_elms(e, vars, elm, it);
+      }
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
     } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
       // A record item is read INTO its element (`parse_item`): a local it starts with borrows
@@ -3001,9 +3050,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     xs = [];
   }
   // `unique_elm_var`: the element temp is a reference to the definition of the element the
-  // context gives the literal (`type_def_nr(parent_tp.content())`), definition 0 without one.
+  // context gives the literal (`type_def_nr(parent_tp.content())`), definition 0 without one —
+  // still borrowing the literal's vector (`depend(elm, vec)`).
   if value && elm >= 0 && len(recs) == 0 && n == vars.lit_hint_node {
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: type_def_of(e, vars.lit_hint), dep: [] });
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: type_def_of(e, vars.lit_hint), dep: if v >= 0 { [v] } else { [] } });
   }
   // An element made through the vector (`elm = OpNewRecord(v, …)`) borrows it — the bind's
   // `depend_all`; a bind's element was typed so when it was made.
@@ -3102,12 +3152,12 @@ pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
 
 // An arm answering the untyped `[]`, built as an empty vector of `like`'s element; typed as
 // `as_tp`, or as the literal it now answers where that is void.
-pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT) -> Ex {
+pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true) -> Ex {
   vt = el_types::without_deps(el_types::base(like));
   if e.first_pass {
     return ex(arm.code, vt);
   }
-  lit = empty_literal_to(e, vars, vt);
+  lit = empty_literal_to(e, vars, vt, elm: elm);
   lt = if as_tp is TyVoid { match el_ir::unspan(lit) { NdBlock { block } => block[0].result[0] ?? vt, _ => vt } } else { as_tp };
   ex(el_ex_null::retail(arm.code, lit, lt) ?? lit, lt)
 }
@@ -3132,11 +3182,14 @@ fn holds_vector_literal(e: el::El, n: integer) -> boolean {
 
 // The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a
 // store of its own (`Vector`), its `_vec_N` minted here as the conversion mints it.
-pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = []) -> ir::Node {
+pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = [], elm: boolean = true) -> ir::Node {
   inner = match t { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
-  // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`).
-  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`);
+  // `empty_vector_value`, the `[]` then arm built from its `else`, mints none.
+  if elm {
+    el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  }
   // The first pass makes the buffer only; its store is minted on the second, in that pass's
   // order.
   if e.first_pass {
@@ -3167,8 +3220,8 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false, slot: integer = 0) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   if rebind {
-    vars.vars[db].skip_free = true;
-    el_vars::mark_inline(vars, db);
+    el_vars::set_skip_free(vars, db, "vector_db_init");
+    el_vars::mark_inline(vars, db, "vector_db_init");
   }
   el_vars::depend(vars, v, db);
   [
@@ -3194,6 +3247,63 @@ pub fn fit_armed(e: el::El, se: integer, code: ir::Node) -> text {
       _ => ""
     },
     _ => ""
+  }
+}
+
+// Is statement `st` an `if` (`fit_armed`'s candidate lives until the next statement, which must
+// open with `if`)?
+pub fn next_is_if(e: el::El, st: integer) -> boolean {
+  match e.p.nodes[st] {
+    SStmt { e: x } => x != null && e.p.nodes[x!] is SIf,
+    _ => false
+  }
+}
+
+// `fit_armed`: the read of the place a narrow compound step at `se` stores into — the first
+// operand of the composed value its range guard checks (`OpRangeDefault(composed, lo, hi, d)`),
+// where the guard's default is a value (a slot keeping a code for its own failure needs no
+// fusion) — or null.
+pub fn fit_read_of(e: el::El, se: integer, code: ir::Node) -> ir::Node? {
+  compound = match e.p.nodes[se] { SAssign { op } => op != "=", _ => false };
+  if !compound {
+    return null;
+  }
+  g = range_guard_call(e, code);
+  if g == null {
+    return null;
+  }
+  match g! {
+    NdCall { args } => {
+      if args[3] == ir::NdLong { n: -9223372036854775807 - 1 } {
+        return null;
+      }
+      match el_ir::unspan(args[0]!) {
+        NdCall { args: ca } => if len(ca) > 0 { ca[0] } else { null },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
+// The `OpRangeDefault(v, lo, hi, d)` call inside `n`, or null.
+fn range_guard_call(e: el::El, n: ir::Node) -> ir::Node? {
+  match el_ir::unspan(n) {
+    NdSet { inner } => range_guard_call(e, inner),
+    NdInsert { items } => if len(items) == 1 { range_guard_call(e, items[0]!) } else { null },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpRangeDefault" && len(args) == 4 {
+        return el_ir::unspan(n);
+      }
+      for a in args {
+        g = range_guard_call(e, a);
+        if g != null {
+          return g;
+        }
+      }
+      null
+    },
+    _ => null
   }
 }
 

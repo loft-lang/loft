@@ -798,6 +798,114 @@ pub fn ctable(b: ir::Bundle) -> text {
 // `templates`: a generic's body too — gate E compares functions only, but an instance is the
 // template's body with its types substituted, so a differing instance is read off the two
 // templates (`LOFT_DEFS_TEMPLATES=1` in `defs` and `elab`).
+// `LOFT_REPORT_STATE=1`: what the image says about how each function behaves beyond its code —
+// its stored contract (purity, what its result promises, the 32-bit regime, its closure's
+// captures), each parameter's (a `const` read at every call, a default), each variable's flags
+// the later passes read (the scope pass, both emitters, the lints) and its `inline_refs` — one
+// `[state]` line each, for every function from `from`.
+// The `defs` tool prints it for Rust's image and the elaborator for its own, so
+// `elab_probe.py one` sets the two side by side; it is no part of the gate's report.
+pub fn state_report(b: ir::Bundle, from: integer) -> text {
+  r = "";
+  for d in b.data.definitions {
+    if d#index < from || (d.def_type != 1 && d.def_type != 2) || d.code[0] == null {
+      continue;
+    }
+    // The function's contract as stored: what callers and the later passes may assume.
+    df = " purity={d.purity}";
+    if d.returned_not_null { df += " returned_not_null"; }
+    if d.returned_const { df += " returned_const"; }
+    if d.null_safe { df += " null_safe"; }
+    if d.width32 { df += " width32"; }
+    if d.no_prefill != "" { df += " no_prefill={d.no_prefill}"; }
+    if d.closure_record >= 0 && d.closure_record < len(b.data.definitions) { df += " closure_record={b.data.definitions[d.closure_record].name}"; }
+    for mc in d.mutated_captures { df += " mutated_capture={mc.name}"; }
+    for sb in d.scalars_to_box { df += " box_scalar={sb.name}"; }
+    r += "[state] fn={d.name} def{df}\n";
+    for a in d.attributes {
+      af = "";
+      if a.value_const { af += " value_const"; }
+      if a.init { af += " init"; }
+      if match a.value[0] ?? ir::NdNull { NdNull => false, _ => true } { af += " default"; }
+      if a.links != "" { af += " links={a.links}"; }
+      if af != "" {
+        r += "[state] fn={d.name} param={a.name}{af}\n";
+      }
+    }
+    f = d.variables;
+    for v in f.variables {
+      fl = "";
+      if v.argument { fl += " argument"; }
+      if v.stack_allocated { fl += " stack_allocated"; }
+      if v.skip_free { fl += " skip_free"; }
+      if v.captured { fl += " captured"; }
+      if v.caller_hidden_buf { fl += " caller_hidden_buf"; }
+      if v.view_elided { fl += " view_elided"; }
+      if v.lazy_buffer { fl += " lazy_buffer"; }
+      if v.deferred_first_bind { fl += " deferred_first_bind"; }
+      if v.linked_narrow { fl += " linked_narrow"; }
+      if v.store_text_link { fl += " store_text_link"; }
+      if v.user_named { fl += " user_named"; }
+      if v.user_appended { fl += " user_appended"; }
+      if v.copy_bound { fl += " copy_bound"; }
+      if v.buffer_witnessed { fl += " buffer_witnessed"; }
+      if v.value_const { fl += " value_const"; }
+      if v.owner_witness >= 0 && v.owner_witness < len(f.variables) { fl += " owner_witness={f.variables[v.owner_witness].name}"; }
+      if v.rebind_orig >= 0 && v.rebind_orig < len(f.variables) { fl += " rebind_orig={f.variables[v.rebind_orig].name}"; }
+      // What it borrows — its type's deps, by name — which decides what the scope pass frees.
+      // (In variable order: the set is the fact, the order a join met its arms in is not.)
+      vd = type_deps(v.type_def[0] ?? ir::TyVoid);
+      if len(vd) > 0 {
+        dn = "";
+        for dv in f.variables {
+          if vd.contains(dv#index) {
+            dn += if dn == "" { dv.name } else { ",{dv.name}" };
+          }
+        }
+        for x in vd {
+          if x < 0 || x >= len(f.variables) {
+            dn += if dn == "" { "#{x}" } else { ",#{x}" };
+          }
+        }
+        fl += " deps={dn}";
+      }
+      if fl != "" {
+        r += "[state] fn={d.name} var={v.name}{fl}\n";
+      }
+    }
+    // (In variable order: the set is a fact, the order it was met in is not.)
+    if len(f.inline_refs) > 0 {
+      names = "";
+      for iv in f.variables {
+        if f.inline_refs.contains(iv#index) {
+          names += " {iv.name}";
+        }
+      }
+      r += "[state] fn={d.name} inline_refs{names}\n";
+    }
+  }
+  r
+}
+
+// The deps a type names at its top: a collection's, a record's, a text's, through a `?` or a link.
+fn type_deps(t: ir::TypeT) -> vector<integer> {
+  match t {
+    TyOptional { inner } => type_deps(inner),
+    TyRefVar { inner } => type_deps(inner),
+    TyText { dep } => dep,
+    TyEnum { dep } => dep,
+    TyReference { dep } => dep,
+    TyVector { dep } => dep,
+    TySorted { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyHash { dep } => dep,
+    TyFunction { dep } => dep,
+    TyTrie { dep } => dep,
+    _ => []
+  }
+}
+
 pub fn defs_report(b: ir::Bundle, from: integer, templates: boolean = false) -> text {
   r = "";
   for d in b.data.definitions {

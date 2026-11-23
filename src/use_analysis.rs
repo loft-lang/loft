@@ -3074,9 +3074,17 @@ impl<'a> Ownership<'a> {
                 }
                 visited.push(*v);
                 if let Some(rhss) = defs.rhs.get(v) {
+                    // `(B-View)` — a projection reached through a block's tail views the local
+                    // that tail names, as the direct arm above says of `OpGetField(Var(b), …)`,
+                    // when the local's definitions view nothing deeper: the inline container
+                    // `__ref_p2_N` of `f(x).inner` holds the call's store.  Answered `None`, the
+                    // projection classified `Owned`, so a local bound from `if c { f(x).inner }
+                    // else { V }` and then from a call was never mixed, took no witness, and
+                    // freed the container's store a second time (loft#2608).
                     rhss.iter()
                         .rev()
                         .find_map(|r| self.borrow_base_guarded(r, func, defs, visited))
+                        .or(Some(*v))
                 } else if func.is_argument(*v) && func.tp(*v).heap_dep().is_some() {
                     Some(*v) // a borrowed heap param IS its own base (the caller's arg)
                 } else {

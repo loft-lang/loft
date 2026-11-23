@@ -8114,7 +8114,13 @@ impl Parser {
         let reads_record = self.init_reads_record;
         let site = DefaultSite::Field {
             reads_record,
-            struct_typed: matches!(a_type.base(), Type::Reference(_, _)),
+            // A struct enum's variant literal builds at the VARIANT's offsets as a nested
+            // struct's does at its own (`@FR-F-Default-Field`): `d: Node = NdInt { n: 7 }`
+            // replayed in place wrote its tag and `n` over the record's first fields.
+            struct_typed: matches!(
+                a_type.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ),
         };
         let dflt_fn = format!("__dflt_{}_{a_name}", self.data.def(d_nr).name());
         // The checked narrowing `convert` gives a nullable narrow field is pass 2's alone, so
@@ -10294,7 +10300,7 @@ pub(crate) enum DefaultSite {
     /// `Var(0)` is also the first work-ref the struct's empty table hands out.
     Field {
         reads_record: bool,
-        /// The field's declared type is a struct, so a default that BUILDS rather than
+        /// The field's declared type is a struct or a struct enum, so a default that BUILDS rather than
         /// calls or names is a nested struct literal — and its field writes carry the
         /// NESTED struct's offsets, which `object_init`'s `Var(0)` rewrite then applies
         /// to the record (loft#701).  Read from the declared TYPE, not from the IR:

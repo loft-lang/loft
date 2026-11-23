@@ -31,6 +31,7 @@ use el_ex_vector;
 use el_compare;
 use el_ex_copy;
 use el_ex_deliver;
+use el_ex_name;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // `@FR-B-Ref-Uniform`: a link to a scalar place is read as the value it names (`p ?? 0`
@@ -83,7 +84,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         // borrow of the holder, nor of the block typed as it.)
         lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
-        vars.vars[held].skip_free = true;
+        el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
         h = ir::NdVar { n: held };
         test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [h]), h, d.code);
         return ex(el_ir::v_block([el_ir::v_set(held, if e.first_pass { x.code } else { nullable_arith(e, x.code, true) }), test], lhs, "ncc"), lhs);
@@ -131,14 +132,13 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     };
     // (So is a vector field of a keyed lookup's record, `h[2].tags ?? []`.)
     if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field || keyed_field_read(e, x.code)) {
-      // The default's buffer borrows the record too: a work ref nulled at the head.
-      if !e.first_pass {
-        el_ex_call::borrowed_literal_buffer(vars, d.code);
-      }
       held = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[held].skip_free = true;
+      el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, held);
       if e.first_pass {
+        // (The default's arm is asked on both passes, its flags cumulative, as
+        // `build_null_coalesce_default_inner` asks it.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs);
         return ex(ir::NdNull, lhs);
       }
       h = ir::NdVar { n: held };
@@ -147,7 +147,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
       // (loft#2567: the default builds a store of its own for every subject; its `_vec_N` is
       // the registered buffer a call subject's is, declared in the statement.)
-      el_ex_call::register_default_literal(vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
+      el_ex_call::register_default_literal(e, vars, d.code, lhs);
       return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
@@ -166,36 +166,49 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     }
     if !(x.code is NdVar) {
       held = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[held].skip_free = true;
+      el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
       ht = el_types::with_deps(el_types::without_deps(lhs), [held]);
       // (A loft call whose result borrows nothing — not even the buffer it was handed — is a
       // fresh store as a native's is: `owned_vector` with no deps, the holder nulled before the
       // statement and the default's buffer a work ref.)
       fresh = native || len(el_types::deps(lhs)) == 0;
       if e.first_pass {
-        // A native call's default: its buffer is a work ref from this pass on.
-        if fresh {
-          el_ex_call::borrowed_literal_buffer(vars, d.code);
-        }
+        // (The default's arm is asked on both passes, its flags cumulative.)
+        // (`build_null_coalesce_default_inner` is handed the subject's type as read — on this pass
+        // a call's answer borrows what its callee's first pass declared, `callee_result_borrows`.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs, borrows: el_ex_call::callee_result_borrows(e, x.code));
         return ex(ir::NdNull, ht);
+      }
+      // `@PLN102` (`build_null_coalesce`): an OWNED vector subject — every borrow one of this
+      // frame's caller-minted buffers, or none — is the value the `??` block must free: the
+      // holder is no never-freed hand-off but an inline ref (nulled before the statement, not
+      // allocated), which the scope pass frees.  The pass that sees the subject decides.
+      owned_vector = len([for od in el_types::deps(lhs) if od < 0 || od >= len(vars.vars) || !vars.vars[od].caller_hidden_buf { od }]) == 0;
+      if owned_vector {
+        vars.vars[held].skip_free = false;
+        el_vars::mark_inline(vars, held, "build_null_coalesce_default_inner");
       }
       if fresh {
         el_vars::register_work_ref(vars, held);
-        el_vars::mark_inline(vars, held);
+        // (`build_null_coalesce_default_inner` marks the holder an inline ref for an OWNED vector
+        // subject only — above; a native result borrowing a store of another stays nulled at the
+        // head.)
         el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
-        el_ex_call::register_default_literal(vars, d.code, el_types::without_deps(lhs));
+        // (The default's arm is chosen on the subject's type as read — a native result that
+        // borrows takes the backed arm — as `build_null_coalesce_default_inner` is handed it.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs);
         h = ir::NdVar { n: held };
         present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
         return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
       }
       // Typed as this pass's subject, peeled: the borrow its call's buffer gives it.
       el_vars::set_var_type(vars, held, lhs);
-      el_ex_call::register_default_literal(vars, d.code, ht);
+      el_ex_call::register_default_literal(e, vars, d.code, lhs);
       h = ir::NdVar { n: held };
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
     }
-    el_ex_call::register_default_literal(vars, d.code, x.tp);
+    el_ex_call::register_default_literal(e, vars, d.code, x.tp);
     vt = el_types::without_deps(lhs);
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
@@ -212,11 +225,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       kheld = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[kheld].skip_free = true;
+      el_vars::set_skip_free(vars, kheld, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, kheld);
       // (found.md row 8: the holder VIEWS the place, an inline ref — its null init mints no
       // store.)
-      el_vars::mark_inline(vars, kheld);
+      el_vars::mark_inline(vars, kheld, "build_null_coalesce_default_inner");
       // (On the first pass too the holder is bound — Rust builds the block on both — so a
       // consumer that asks whether the value runs a bind, a `for`'s source hold, sees it.)
       if e.first_pass {
@@ -619,6 +632,11 @@ pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, 
 // `x#index` of a loop variable: the loop's own counter (the `x#index` local its `for` made).
 // The other attributes (`#first`, `#remove`, `#break`, a file's `#read`…) are refused by name.
 pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?, tp: integer?) -> Ex {
+  // (A `name#attr` read is a mention of `name`, loft#1834's `mark_user_named`.)
+  mv = el_vars::var(vars, var);
+  if mv >= 0 && el_vars::name_of(vars, mv) == var {
+    el_vars::mark_user_named(vars, mv, "parse_var_inner");
+  }
   fv = el_vars::var(vars, var);
   if fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
     if attr == "read" && tp != null {
@@ -785,7 +803,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         // A struct-enum VARIANT (`(n as Bin?)?`) defaults to that variant, its fields at their
         // defaults (`build_default`'s enum arm at the variant), held as a record `??` holds it.
         if rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE {
-          return coalesce_with(e, vars, x, el_ex_assign::unit_variant(e, vars, el::def(e, rd).parent, rd));
+          return coalesce_with(e, vars, x, el_ex_name::unit_variant(e, vars, el::def(e, rd).parent, rd));
         }
       },
       _ => {}
@@ -848,7 +866,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         }
       }
       if first >= 0 {
-        return el_ex_call::enum_coalesce(e, vars, x, el_ex_assign::unit_variant(e, vars, sen, first));
+        return el_ex_call::enum_coalesce(e, vars, x, el_ex_name::unit_variant(e, vars, sen, first));
       }
     }
     if !el_convert::plain_scalar(b) {
@@ -1340,8 +1358,8 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
     }
-    // Two vectors of one element type compare by content too, with the vector's own row
-    // (`vector_of`); two element types are compared pair by pair (`mixed_vector_eq`) — refused.
+    // Two vectors of one element layout compare by content too, with the vector's own row
+    // (`vector_of`); two layouts are compared pair by pair (`mixed_vector_eq`).
     av = match a.tp { TyRefVar { inner } => inner, _ => a.tp };
     bv = match b.tp { TyRefVar { inner } => inner, _ => b.tp };
     // `content_eq_type`'s keyed arm: two keyed collections of one type by their records, at
@@ -1370,9 +1388,18 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
           if el_types::is_unknown(ea) || el_types::is_unknown(eb) {
             return ex(ir::NdNull, ir::TyBoolean);
           }
-          if !el_types::is_equal(e, ea, eb) || el_types::elem_name(e, ea) != el_types::elem_name(e, eb) {
-            el::refuse(e, "a comparison of vectors of two element types");
-            return ex(ir::NdNull, ir::TyBoolean);
+          if !same_element_layout(e, ea, eb) {
+            // `@FR-E-Eq`, loft#2062: two vectors of different element types compare pair by pair
+            // (`mixed_vector_eq`).  The first pass mints nothing for it.
+            if e.first_pass {
+              return ex(ir::NdNull, ir::TyBoolean);
+            }
+            mv = mixed_vector_eq(e, vars, op, a, b, ea, eb);
+            if mv == null {
+              el::refuse(e, "a comparison of vectors of two element types");
+              return ex(ir::NdNull, ir::TyBoolean);
+            }
+            return ex(mv!, ir::TyBoolean);
           }
           if e.first_pass {
             return ex(ir::NdNull, ir::TyBoolean);
@@ -1409,6 +1436,78 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
 // `call_op_as`'s first question: two tuples compare element by element (`tuple_compare`),
 // BEFORE the candidates — which would match `OpEqRef` for two stored tuples and answer whether
 // they are one record.  Then the builtin candidates (`call_op`).
+// `Parser::mixed_vector_eq` (`@FR-E-Eq`, loft#2062): `a == b` over two vectors of different
+// element types — equal lengths, then each pair compared with its own `==`, stopping at the
+// first that differs.  An operand that is a local is read in place; any other is bound once
+// (`_veq_a_N` / `_veq_b_N`); each pair is bound to a view of its element (`_veq_x_N`,
+// `_veq_y_N`), read at its own width.  Null for pairs this port does not compare: elements that
+// are no plain numbers (a nested vector), or that would need an `as` (Rust's error).
+fn mixed_vector_eq(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex, ea: ir::TypeT, eb: ir::TypeT) -> ir::Node? {
+  if !plain_number(ea) || !plain_number(eb) || elem_size(ea) < 0 || elem_size(eb) < 0 {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  lhs = match el_ir::unspan(a.code) { NdVar { n } => n, _ => -1 };
+  if lhs < 0 {
+    lhs = el_vars::create_unique(vars, "veq_a", a.tp);
+    el_vars::set_defined(vars, lhs);
+    ops += [el_ir::v_set(lhs, a.code)];
+  }
+  rhs = match el_ir::unspan(b.code) { NdVar { n } => n, _ => -1 };
+  if rhs < 0 {
+    rhs = el_vars::create_unique(vars, "veq_b", b.tp);
+    el_vars::set_defined(vars, rhs);
+    ops += [el_ir::v_set(rhs, b.code)];
+  }
+  res = el_vars::create_unique(vars, "veq_r", ir::TyBoolean);
+  el_vars::set_defined(vars, res);
+  idx = el_vars::create_unique(vars, "veq_i", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, idx);
+  len_a = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }]);
+  ops += [el_ir::v_set(res, el_ir::cl(e, "OpEqInt", [len_a, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: rhs }])]))];
+  ops += [el_ir::v_set(idx, ir::NdInt { n: 0 })];
+  read_a = elem_read(e, ea, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: lhs }, ir::NdInt { n: elem_size(ea) }, ir::NdVar { n: idx }]));
+  read_b = elem_read(e, eb, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: rhs }, ir::NdInt { n: elem_size(eb) }, ir::NdVar { n: idx }]));
+  pa = el_vars::create_unique(vars, "veq_x", ea);
+  el_vars::set_defined(vars, pa);
+  el_vars::set_skip_free(vars, pa, "mixed_vector_eq");
+  pb = el_vars::create_unique(vars, "veq_y", eb);
+  el_vars::set_defined(vars, pb);
+  el_vars::set_skip_free(vars, pb, "mixed_vector_eq");
+  pair = call_op(e, vars, "==", [ir::NdVar { n: pa }, ir::NdVar { n: pb }], [ea, eb]);
+  more = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: idx }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }])]);
+  go_on = el_ir::v_if(ir::NdVar { n: res }, more, ir::NdBoolean { b: false });
+  step: vector<ir::Node> = [
+    el_ir::v_if(go_on, ir::NdNull, ir::NdBreak { n: 0 }),
+    el_ir::v_set(pa, read_a),
+    el_ir::v_set(pb, read_b),
+    el_ir::v_set(res, pair.code),
+    el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }]))
+  ];
+  ops += [el_ir::v_loop(step, "vector content ==")];
+  ops += [if op == "!=" { el_ir::cl(e, "OpNot", [ir::NdVar { n: res }]) } else { ir::NdVar { n: res } }];
+  el_ir::v_block(ops, ir::TyBoolean, "vector content ==")
+}
+
+// `same_element_layout`: do two vector element types share one stored layout, so the content
+// comparison can walk both by one schema?  `is_equal` says yes for `i32` against `integer` — it
+// ignores the width — so the stored size is asked too, at every nesting level.
+fn same_element_layout(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match el_types::base(a) {
+    TyVector { inner: x } => match el_types::base(b) {
+      TyVector { inner: y } => same_element_layout(e, x, y),
+      _ => false
+    },
+    _ => el_types::is_equal(e, a, b) && elem_size(a) == elem_size(b)
+  }
+}
+
+// `elements_compare_soundly`'s numbers: every integer width, `float` and `single` meet by the
+// listed widenings (`@FR-C-Int`, `@FR-C-Num`).
+fn plain_number(t: ir::TypeT) -> boolean {
+  el_types::base(t) is TyInteger || el_types::base(t) is TyFloat || el_types::base(t) is TySingle
+}
+
 fn compare_or_call(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
   for t in types {
     if el_types::is_unknown(t) {
@@ -1473,7 +1572,10 @@ pub fn has_operator_method(e: el::El, d: integer) -> boolean {
 // null, arms of different types and a value without an `else` are refused by name.
 pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?, expected: ir::TypeT) -> Ex {
   vars.capture_ok = true;
+  // (`fit_in_condition`: a `!local` here may take an armed fit temp; the body's may not.)
+  vars.fit_cond = len(vars.fit_read) > 0;
   c = el_ex_assign::expression(e, vars, cond);
+  vars.fit_cond = false;
   vars.capture_ok = false;
   bindings = vars.is_bindings;
   aliases = vars.is_aliases;
@@ -1652,7 +1754,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
     // Built after the `else`, the arm takes the `else`'s type (`true_type = false_type`).
-    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp);
+    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false);
   } else if el_ex_pattern::syntax_tail_empty(e, other!) && el_types::base(t.tp) is TyVector {
     f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid);
   }
@@ -1978,7 +2080,7 @@ pub fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT
       buf = hidden_ref_arg(vars, args);
       if buf < 0 {
         buf = el_vars::work_ref_p2(vars, el_types::without_deps(el_types::base(tp)));
-        el_vars::mark_inline(vars, buf);
+        el_vars::mark_inline(vars, buf, "materialise_owned_call");
       }
       el_ir::v_block([el_ir::v_set(buf, arm), ir::NdVar { n: buf }], tp, "join-arm-owner")
     },
@@ -2605,6 +2707,12 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         },
         _ => {}
       }
+    }
+    // A fn-ref LOCAL is returned as it is, its closure record with it.  (A lambda built in the
+    // `return` itself is not carried: a closure answering a text names its block after its
+    // capture, and a call answering it borrows `[32772]`.)
+    if result is TyFunction && v.tp is TyFunction && el_ir::unspan(v.code) is NdVar {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
