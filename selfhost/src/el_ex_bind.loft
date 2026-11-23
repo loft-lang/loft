@@ -36,6 +36,7 @@ use el_ex_assign;
 use el_ex_closure;
 use el_ex_tuple;
 use el_ex_name;
+use el_ex_into;
 
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
 // field read off a record local that owns its store.
@@ -604,12 +605,12 @@ pub fn param_rebuild_attempt(e: el::El, vars: el_vars::Vars, v: integer, n: inte
   el_vars::mark_built(vars, v);
   vars.rebuild_attempt = true;
   vars.own_buffer_hit = false;
-  list = el_ex_place::object_fields(e, vars, v, struct_literal_def(e, n), fields);
+  list = el_ex_into::object_fields(e, vars, v, struct_literal_def(e, n), fields);
   vars.rebuild_attempt = false;
   vars.own_buffer_hit = false;
   vars.vars[v].argument = true;
   el_vars::unmark_built(vars, v);
-  el_ex_place::abandon_work_refs(vars, ref_mark, p2_mark);
+  el_ex_into::abandon_work_refs(vars, ref_mark, p2_mark);
   list != null
 }
 

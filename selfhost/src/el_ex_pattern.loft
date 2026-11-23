@@ -30,6 +30,7 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_vector;
 use el_ex_deliver;
+use el_ex_into;
 
 // `parse_multi_element_alternation` over a vector (no cursor): the branches of the group, a `?`
 // adding the empty one, each a sequence of variants with their captures.  Whole slice, a branch's
@@ -2340,9 +2341,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     // written through the fresh form of `emit_nullable_slot_write` — each as it is read, so
     // its work-refs are numbered with its own buffers.
     if tsyn >= 0 {
-      pay = el_ex_place::nullable_payload(e, tsyn);
-      if el_ex_place::literal_of(e, it, pay) {
-        nb = el_ex_place::nullable_some_literal(e, vars, tsyn, it);
+      pay = el_ex_into::nullable_payload(e, tsyn);
+      if el_ex_into::literal_of(e, it, pay) {
+        nb = el_ex_into::nullable_some_literal(e, vars, tsyn, it);
         if nb == null {
           return refused_build();
         }
@@ -2354,7 +2355,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       if tx.tp is TyNull {
         xs += [ex(ir::NdInsert { items: [] }, declared)];
       } else if struct_ref(e, el_types::base(tx.tp)) == pay {
-        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { ir::NdInsert { items: el_ex_place::nullable_slot_write(e, vars, tsyn, ir::NdVar { n: elm }, tx.code, fresh: true) } }, declared)];
+        xs += [ex(if e.first_pass { ir::NdInsert { items: [] } } else { ir::NdInsert { items: el_ex_into::nullable_slot_write(e, vars, tsyn, ir::NdVar { n: elm }, tx.code, fresh: true) } }, declared)];
       } else {
         if !el_types::is_unknown(tx.tp) {
           el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
@@ -2807,7 +2808,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         if pid < 0 {
           pid = variant_literal_def(e, it);
         }
-        pfl = el_ex_place::object_fields(e, vars, elm, pid, pfields);
+        pfl = el_ex_into::object_fields(e, vars, elm, pid, pfields);
         if pfl == null {
           return refused_build();
         }
@@ -2856,7 +2857,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           fl = [for k in pa..pa + (pre_n[it#index] ?? 0) { pre_ops[k]! }];
         }
       } else {
-        fl = el_ex_place::object_fields(e, vars, elm, id, fields);
+        fl = el_ex_into::object_fields(e, vars, elm, id, fields);
       }
       if fl == null {
         return refused_build();

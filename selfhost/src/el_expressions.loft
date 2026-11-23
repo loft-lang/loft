@@ -31,6 +31,7 @@ use el_ex_vector;
 use el_ex_copy;
 use el_ex_deliver;
 use el_ex_tuple;
+use el_ex_into;
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
 // `rewrite_tail_tuple_with_work_ref`: the tail of a function answering a boxed tuple, built
@@ -1804,7 +1805,7 @@ pub fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
     // borrows it too.
     if tail is NdIf {
       ps: vector<integer> = [];
-      if el_ex_place::branch_params(vars, tail, ps) || len(ps) > 0 {
+      if el_ex_into::branch_params(vars, tail, ps) || len(ps) > 0 {
         d = e.context;
         ret = el::def(e, d).returned[0];
         dep = el_types::deps(ret);
