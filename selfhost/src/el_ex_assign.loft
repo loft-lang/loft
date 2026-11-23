@@ -850,7 +850,24 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
       // (A bare link local keeps its link type: `+=` on a `&text` itself records nothing, as
       // Rust's `f_type.base()` does not see through the link; a member or an element reached
       // through it is its referent's place — below.)
-      AppendPlace { root: v, tp: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid } }
+      if v < 0 && member == "" && e.closure_var >= 0 {
+        // (A capture the lambda appends to is a field of its closure record on the second pass:
+        // `lhs_root_var` of the lowered target is `__closure`.)
+        for c in e.captures {
+          if c.name == name {
+            return AppendPlace { root: e.closure_var, tp: c.tp };
+          }
+        }
+      }
+      // (A STORE-kind text link local — `t = &o.b`, into a field or an element — writes the text
+      // in that store through itself, so `+=` into it is the program's own append; a link to a
+      // variable writes that variable, and a `&text` parameter stays a link: both record
+      // nothing here.)
+      lt = if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid };
+      if v >= 0 && !vars.vars[v].argument && vars.store_links.contains(v) {
+        lt = match lt { TyRefVar { inner: lti } => lti, _ => lt };
+      }
+      AppendPlace { root: v, tp: lt }
     },
     SMember { e: inner, name, call } => {
       if call || inner == null {
