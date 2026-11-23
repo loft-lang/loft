@@ -750,6 +750,72 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
 // `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
 // own, and on the second pass converted to the field's type (`convert`).  A plain scalar or a
 // literal text that names no slot is carried; anything else is refused by name.
+// `leading_null_guards`: the parameters the body's entry statements null-guard, up to the first
+// statement that is no guard (line markers skipped).
+fn leading_null_guards(e: el::El, body: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match el_ir::unspan(body) {
+    NdBlock { block } => {
+      for st in block[0].operators {
+        g = null_guard_param(e, st);
+        if g >= 0 {
+          out += [g];
+        } else if !(el_ir::unspan(st) is NdLine) && !(el_ir::unspan(st) is NdNull) {
+          return out;
+        }
+      }
+    },
+    _ => {}
+  }
+  out
+}
+
+// `null_guard_param`: `if p == null { … return … }` (either side, `p` maybe through an `OpConv…`,
+// `null` a literal or an `…FromNull`) — the parameter `p`, or -1.
+fn null_guard_param(e: el::El, st: ir::Node) -> integer {
+  match el_ir::unspan(st) {
+    NdIf { cond, t, f: _ } => {
+      if !el_ex_call::has_return(t) {
+        return -1;
+      }
+      match el_ir::unspan(cond) {
+        NdCall { def_nr, args } => {
+          if len(args) != 2 || !starts_with(el::def(e, def_nr).name, "OpEq") {
+            return -1;
+          }
+          a0 = guard_var(e, args[0]!);
+          if a0 >= 0 && null_literal(e, args[1]!) {
+            return a0;
+          }
+          a1 = guard_var(e, args[1]!);
+          if a1 >= 0 && null_literal(e, args[0]!) {
+            return a1;
+          }
+          -1
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+fn guard_var(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdVar { n: gv } => gv,
+    NdCall { def_nr, args } => if len(args) == 1 && starts_with(el::def(e, def_nr).name, "OpConv") { match el_ir::unspan(args[0]!) { NdVar { n: gv2 } => gv2, _ => -1 } } else { -1 },
+    _ => -1
+  }
+}
+
+fn null_literal(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && ends_with(el::def(e, def_nr).name, "FromNull"),
+    _ => false
+  }
+}
+
 fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
   x = el_ex_assign::expression(e, vars, init);
@@ -1607,6 +1673,17 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     e.b.data.definitions[e.context].code = [code];
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
+    }
+    // `infer_function_null_safe` (@PLN46 W3): a function whose every parameter is null-guarded
+    // at its entry (`if p == null { return … }`) is `#null_safe` without saying so.
+    if !e.first_pass && !el::def(e, e.context).null_safe {
+      nps = [for nx in vars.vars if nx.argument { nx#index }];
+      if len(nps) > 0 {
+        ng = leading_null_guards(e, code);
+        if len([for np in nps if !ng.contains(np) { np }]) == 0 {
+          e.b.data.definitions[e.context].null_safe = true;
+        }
+      }
     }
     // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose
     // whole body is one vector literal of constants, answering a plain vector through its
