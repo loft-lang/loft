@@ -57,7 +57,20 @@ impl DebugDriver {
     /// Handle one NDJSON request line: the messages to emit (response first, then any
     /// events) and whether the client asked to disconnect.  The one dispatch chokepoint.
     pub fn drive(&mut self, line: &str) -> (Vec<String>, bool) {
-        handle(&mut self.session, line)
+        // A fault the session does not catch itself ends the run, said, and leaves the server
+        // answering: with the panic hook silenced, an uncaught one ended the process with
+        // exit 101 and no word.
+        let session = &mut self.session;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(session, line))) {
+            Ok(answer) => answer,
+            Err(payload) => {
+                let msg = crate::repl::panic_message(&payload);
+                (
+                    vec![event("terminated", &format!("\"error\":{}", esc(&msg)))],
+                    false,
+                )
+            }
+        }
     }
 
     /// Set a **function-scoped** breakpoint at `func`'s entry — the engine capability the
@@ -122,7 +135,7 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
     let req = text(&parsed, "req").unwrap_or("");
     let mut out = Vec::new();
     match req {
-        "launch" => match session.load_program(text(&parsed, "file").unwrap_or("")) {
+        "launch" => match launch(session, &parsed) {
             Ok(Ok(())) => out.push(resp_ok(id, "")),
             Ok(Err(diags)) => out.push(resp_err(id, &diags_msg(&diags))),
             Err(e) => out.push(resp_err(id, &format!("cannot read file: {e}"))),
@@ -515,6 +528,16 @@ fn num(p: &Parsed, key: &str) -> Option<i64> {
     // also accepts a `Number` (truncated) for backward compatibility.
     field(p, key).and_then(Parsed::as_i64)
 }
+/// `launch`: load the request's `file`, with the program's own functions compiled when it asks
+/// `"native": true` (`@PLN206 P7`).
+fn launch(
+    session: &mut ReplSession,
+    parsed: &Parsed,
+) -> std::io::Result<Result<(), Vec<crate::diagnostics::DiagEntry>>> {
+    session.set_native_program(bp_bool(parsed, "native").unwrap_or(false));
+    session.load_program(text(parsed, "file").unwrap_or(""))
+}
+
 fn bp_bool(p: &Parsed, key: &str) -> Option<bool> {
     match field(p, key) {
         Some(Parsed::Bool(b)) => Some(*b),

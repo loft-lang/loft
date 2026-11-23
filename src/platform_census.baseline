@@ -19,6 +19,7 @@
 2 tests/lazy_sql_source.rs
 1 tests/lib_git.rs
 1 tests/lib_process.rs
+1 tests/lib_rustc_free.rs
 2 tests/n3_use_native.rs
 3 tests/native.rs
 11 tests/native_source_key.rs

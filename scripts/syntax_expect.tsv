@@ -142,6 +142,8 @@ ct-yield	*	s=4
 ct-parallel	*	-
 cn-field	*	s=1
 cn-field-text	*	o=abc
+cn-field-child	*	s=1
+cn-field-child-absent	*	s=-1
 cn-vector	*	s=3
 cn-tuple	*	s=1
 cn-format	*	o=1

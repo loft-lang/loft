@@ -33,6 +33,27 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 
 ### New
 
+**Libraries run compiled, with no Rust toolchain.**  A library a program `use`s is compiled
+through C the first time it runs, and later runs pick the build up; the interpreter calls into
+it, working on the same data, with the same answers.  A release ships these builds for the
+published libraries, so `loft install` gives a machine with no C compiler the compiled library
+too; a library with no build for your loft runs interpreted.  `loft build-native <package>`
+compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
+included.  `LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs.
+**No library is built through rustc any more**: `LOFT_LIB_BACKEND=rust` is gone, a machine with
+no C compiler and no shipped build runs the library interpreted, and `loft build-native` builds
+only the C form — a library's own native code is C (a `[c] shim`).  A hand-written Rust
+`[library] native` cdylib still loads where cargo builds it, but its library is not compiled.  Under `loft debug` the libraries run compiled
+too: a library function with a breakpoint in it, or one you step into, runs in the interpreter so
+the debugger can stop there, and the functions it calls stay compiled.  Pausing a program while a
+compiled library function runs moves that function into the interpreter at the top of its
+current loop, with its variables as they were, and stops there.  `loft debug --native` (in an
+editor, `"native": true` in the launch configuration) compiles your program's own functions too,
+`main` aside, so you debug the program as it runs compiled.
+
+**`store_memory()` reports your program's stores, the same on every backend.**  It no longer
+counts the interpreter's own value stack and constant store.
+
 **Tree code in Rust's shape.**  A `&Tree?` parameter takes a field of a tree as its argument
 and writes that field: `take_min(t.right)` with `slot = &slot.left` to walk down and
 `slot = slot.right` to unlink a node is the helper a Rust programmer writes with
@@ -81,6 +102,16 @@ because the wrapper reports the same version.  The compiler's path is now part o
 key.
 
 ### Bug fixes
+
+**`loft debug` runs a program that imports a library with `use lib::*;` when the library takes
+a tuple.**  The session stopped before the program ran, with an internal assertion about an
+"import alias"; over `--rpc` the server ended without a word.  It runs now, and a fault the
+debugger cannot handle is reported instead of ending the session silently.
+
+**`exp` answers the same in every library build.**  `exp(v)` was computed as `E` raised to the
+power `v`, which can land a unit or two in the last place away from e^v, and a library built
+natively could round it differently from the same code interpreted.  It is now the exponential
+itself, on every backend.
 
 **A loop over a `&vector` parameter visits every element.**  A `for` over a `&vector<T?>`
 parameter stopped at the first `null` element, so `[1, null, 3]` was walked as `[1]`, with no

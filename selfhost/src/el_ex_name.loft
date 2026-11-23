@@ -36,6 +36,7 @@ use el_ex_assign;
 use el_ex_closure;
 use el_ex_tuple;
 use el_ex_bind;
+use el_ex_into;
 
 // `type_name(T)` of a plain declared struct; anything else is refused by name.
 pub fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
@@ -562,7 +563,7 @@ pub fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) ->
     return ex(if a < 0 { ir::NdNull } else { el::def(e, en).attributes[a]!.value[0] }, ret);
   }
   w = el_vars::work_ref(vars, ret);
-  body = el_ex_place::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
+  body = el_ex_into::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
   if body == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }

@@ -159,6 +159,8 @@ ct-yield	control	G-Yield	once	1	int	for n in gen(<ARGS: c h i j vi r nr fnv>) { 
 ct-parallel	control	C-Arms	once	1	int	parallel { add2(<S>, j); add2(i, j); }
 cn-field	construct	E-Record	once	1	int	p2 = P { k: <S>, t: "a" }; s = p2.k;
 cn-field-text	construct	E-Record	once	1	text	p2 = P { k: 1, t: <S> }; o = p2.t;
+cn-field-child	construct	E-Record	once	1	int	nd = mkhd(); nd.root.left = Nd { key: <S> }; s = nd.root.left.key ?? -1;
+cn-field-child-absent	construct	E-Record	once	1	int	nd = Hd { root: null }; nd.root.left = Nd { key: <S> }; s = nd.root.left.key ?? -1;
 cn-vector	construct	Col-Cons	once	1	int	q = [i, <S>, j]; s = len(q);
 cn-tuple	construct	T-Cons	once	1	int	tp = (j, <S>); s = tp.1;
 cn-format	construct	F-Interp	once	1	int	o = "{ <S> }";

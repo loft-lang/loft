@@ -192,7 +192,7 @@ static uint16_t loft_ffi_clone_store(uint16_t from) {
     d->lazy = s->lazy;
     d->defined = s->defined;
     d->no_park = s->no_park;
-    d->known = s->known;
+    d->known = s->known; /* LOFT_RAW_KNOWN: the store as it is in memory */
     return ns;
 }
 

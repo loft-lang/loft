@@ -823,13 +823,16 @@ pub fn pow(self: f64, v2: f64) -> f64? {
 /// Raises E (2.71828…) to the power v. Use for exponential growth models.
 
 pub fn exp(self: single) -> single {
-  OpPowSingle(E as single, self)
+  OpMathFuncSingle(10, self)
 }
 #pure
 
 /// Double-precision exp (e^v).
+// The exponential routine, not `pow(E, v)`: a power of the rounded E is a different function,
+// up to several units in the last place away, and a C compiler may rewrite one into the
+// other — so the backends would answer apart (loft#1799 is the same for `log`).
 pub fn exp(self: f64) -> f64 {
-  OpPowFloat(E, self)
+  OpMathFuncFloat(10, self)
 }
 #pure
 /// Natural logarithm (base E). Use for growth rates and information entropy.

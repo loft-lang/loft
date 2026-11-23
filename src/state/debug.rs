@@ -137,6 +137,77 @@ impl State {
     # Panics
     When unknown operators are encountered in the byte-code.
     */
+    /// `@PLN206 P7a` — the compiled routine a static call to library index `call` runs
+    /// interpreted instead, when the debugger wants it: a step into is under way, or a
+    /// breakpoint is in the routine or in a routine it can reach (`p7-design.md`).  A generator
+    /// is not routed: its static call answers a handle the interpreter's coroutine creation
+    /// would have to make.
+    pub(crate) fn debug_route(&mut self, call: u16) -> Option<u32> {
+        let handle = self.data_ptr.clone();
+        let data = handle.get()?;
+        let dbg = self.debug.as_deref_mut()?;
+        let routing = dbg.routing.get_or_insert_with(|| {
+            let mut by_index = std::collections::HashMap::new();
+            for d in 0..data.definitions() {
+                let def = data.def(d);
+                if def.native().starts_with("loft_shared_")
+                    && !matches!(def.returned().base(), crate::data::Type::Iterator(..))
+                    && (d as usize) < self.fn_positions.len()
+                    && self.fn_positions[d as usize] != u32::MAX
+                    && let Some(&i) = self.library_names.get(def.native())
+                {
+                    by_index.insert(i, d);
+                }
+            }
+            crate::debugger::Routing {
+                by_index,
+                wanted_key: (usize::MAX, 0),
+                wanted: std::collections::HashSet::new(),
+            }
+        });
+        let d = *routing.by_index.get(&call)?;
+        if dbg.stepping_into {
+            return Some(d);
+        }
+        let key = dbg.breakpoint_key();
+        if key.0 == 0 {
+            return None;
+        }
+        let offsets: Vec<u32> = dbg.breakpoint_offsets().collect();
+        let routing = dbg.routing.as_mut()?;
+        if routing.wanted_key != key {
+            // Each breakpoint's routine: the one whose code starts last at or before it.
+            let mut holding = std::collections::HashSet::new();
+            for pc in offsets {
+                let mut best: Option<(u32, u32)> = None;
+                for (f, &start) in self.fn_positions.iter().enumerate() {
+                    if start != u32::MAX && start <= pc && best.is_none_or(|(s, _)| start > s) {
+                        best = Some((start, f as u32));
+                    }
+                }
+                if let Some((_, f)) = best {
+                    holding.insert(f);
+                }
+            }
+            let routines: Vec<u32> = routing.by_index.values().copied().collect();
+            routing.wanted = routines
+                .into_iter()
+                .filter(|&r| {
+                    holding.contains(&r)
+                        || crate::opt::names::reachable_functions(data, &[r])
+                            .iter()
+                            .any(|f| holding.contains(f))
+                })
+                .collect();
+            routing.wanted_key = key;
+        }
+        routing.wanted.contains(&d).then_some(d)
+    }
+
+    /// Print the bytecode of function `d_nr` to stdout.
+    ///
+    /// # Panics
+    /// When the dump cannot be written or is not UTF-8.
     pub fn print_code(&mut self, d_nr: u32, data: &Data) {
         let mut buf = Vec::new();
         self.dump_code(&mut buf, d_nr, data, true).unwrap();
@@ -1287,7 +1358,7 @@ impl State {
         // (allocated at pc=…)]` lines around each opcode.
         let mut alloc_pcs: HashMap<u16, (u32, String)> = HashMap::new();
         let mut prev_free: Vec<bool> = if config.trace_alloc_free {
-            self.database.allocations.iter().map(|s| s.free).collect()
+            self.database.allocations.iter().map(|s| !s.live).collect()
         } else {
             Vec::new()
         };
@@ -1353,7 +1424,7 @@ impl State {
                         .database
                         .allocations
                         .get(usize::from(n))
-                        .is_some_and(|s| !s.free);
+                        .is_some_and(|s| s.live);
                     if live && holder_depth == Some(prev_depth) {
                         let in_fn = if cur_d_nr == u32::MAX {
                             "?"
@@ -1401,7 +1472,7 @@ impl State {
                         continue;
                     }
                     let was_free = prev_free.get(s_nr).copied().unwrap_or(true);
-                    if was_free && !s.free {
+                    if was_free && s.live {
                         let in_fn = if cur_d_nr == u32::MAX {
                             "?"
                         } else {
@@ -1429,7 +1500,7 @@ impl State {
                             log.flush()?;
                         }
                         alloc_pcs.insert(s_nr as u16, (code, op_name.clone()));
-                    } else if !was_free && s.free {
+                    } else if !was_free && !s.live {
                         let origin = alloc_pcs
                             .get(&(s_nr as u16))
                             .map_or_else(|| "<unknown>".to_string(), |(p, n)| format!("{n}@{p}"));
@@ -1460,7 +1531,7 @@ impl State {
                         }
                     }
                     if let Some(slot) = prev_free.get_mut(s_nr) {
-                        *slot = s.free;
+                        *slot = !s.live;
                     }
                 }
             }
@@ -1499,17 +1570,17 @@ impl State {
                 );
                 // Free the stack store. Mark constant stores (pre-built by
                 // build_const_vectors) as free — they are program-lifetime.
-                self.database.allocations[0].free = true;
+                self.database.allocations[0].live = false;
                 let const_store = crate::database::CONST_STORE as usize;
                 if const_store < self.database.allocations.len() {
-                    self.database.allocations[const_store].free = true;
+                    self.database.allocations[const_store].live = false;
                 }
                 // Mark all stores referenced by const_refs as free.
                 for cr in &self.const_refs {
                     if cr.store_nr != u16::MAX
                         && (cr.store_nr as usize) < self.database.allocations.len()
                     {
-                        self.database.allocations[cr.store_nr as usize].free = true;
+                        self.database.allocations[cr.store_nr as usize].live = false;
                     }
                 }
                 for (s_nr, s) in self.database.allocations.iter().enumerate() {
@@ -1519,7 +1590,7 @@ impl State {
                     if s.is_locked() {
                         continue;
                     }
-                    if !s.free {
+                    if s.live {
                         if let Some((p, n)) = alloc_pcs.get(&(s_nr as u16)) {
                             panic!(
                                 "Database {s_nr} not correctly freed (allocated by \
@@ -1991,7 +2062,7 @@ impl State {
                     return format!("ref({},{},{})", val.store_nr, val.rec, val.pos);
                 }
                 let store = &self.database.allocations[val.store_nr as usize];
-                if store.free {
+                if !store.live {
                     return format!("ref({},{},{})=<freed>", val.store_nr, val.rec, val.pos);
                 }
                 // Guard: record must be within the store buffer.
@@ -2018,7 +2089,7 @@ impl State {
                 };
                 // Guard: don't access freed stores (OpFreeRef may have already run).
                 if (val.store_nr as usize) < self.database.allocations.len()
-                    && self.database.allocations[val.store_nr as usize].free
+                    && !self.database.allocations[val.store_nr as usize].live
                 {
                     return format!("ref({},{},{})=<freed>", val.store_nr, val.rec, val.pos);
                 }

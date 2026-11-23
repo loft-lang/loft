@@ -620,9 +620,9 @@ number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(thread
 slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
 `init` in slice order.  On a POSIX or Windows host (not `-DLOFT_NO_POSIX` or WASI) a site whose worker answers a scalar, a text, nothing, or a struct or struct-enum record
 runs on threads (`loft_par_run`, plan 203 C4): each worker from a copy of the caller's store
-table, a record row copied after the join into the caller's result store with the claims it
-owns (`loft_par_adopt`), as native's queue copies it.  `LOFT_TRACE_PAR_WORKERS` reports the
-workers each loop ran.
+table.  After the join, a record row's store is taken into the caller's table and every stored
+reference the row reaches is renumbered (`loft_par_move_rows`), as the interpreter adopts a
+worker's stores (STORE_MODEL D46).  `LOFT_TRACE_PAR_WORKERS` reports the workers each loop ran.
 
 **Linked groups.**  A record type several collections of one struct share (`@FR-Col-Group`)
 enters every member (`loft_group_finish`); an element write through the vector member hands
@@ -644,6 +644,80 @@ the Rust writer does (`detect_ref_tail_capture`).
 prints `FAIL <name>` and exits 1 when any test failed.  A test annotated `@EXPECT_FAIL` passes
 only by failing with one of its messages — the annotations are read by the same parser
 `loft --tests` uses (`test_runner::parse_annotations`).
+
+## A library as a hosted unit
+
+A `use`d library runs under the interpreter as a **hosted unit** — the default: its functions compiled through
+this writer into a shared library that works on the interpreter's own stores, with no rustc
+(@PLN206; design in `plans/206-one-store-model/p3-p4-design.md` and `p5-design.md`).  A store
+is one `#[repr(C)]` layout on both sides (`Store` begins with `loft_store_t`), so the unit reads
+and writes the records the interpreter holds; a store's birth and death go through the
+interpreter (`HostTable::hosted`), and the unit reads the store table in place
+(`host_abi::TableView`).
+
+- **Built** by `loft build-native <package>` (it reports `backend: c`, `loft_exe_id`,
+  `host_abi`, `cc`, and each public function it leaves interpreted as `interpreted: <name>\t<why>`),
+  or by the first run that adopts the library.  A release ships each published library's unit
+  for each platform (`scripts/release-lib-artifacts.sh`, P6), which `loft install` fetches, so a
+  machine with no C compiler runs it compiled.  With no C compiler and no unit, the library
+  interprets.  No rustc takes part: a library never resolves to a rustc-built artifact
+  (`tests/lib_rustc_free.rs`).  A `[c] shim` package needs a C compiler for its shim on any
+  backend; a `[native] component` is a C library the unit calls.  A function that calls a
+  Rust-only native (a hand-written `[library] native` cdylib) is not carried, and its library
+  interprets with that cdylib loaded.  The unit lands in the package's `native-auto/` under a
+  name that carries the loft binary, the library's sources and the build switches; any program
+  run by that loft adopts it, whichever built it, and the directory keeps the newest eight.
+- **Generated from the library alone** (`native_artifact::parse_library_alone`, the program
+  `use <name>;`), so the unit is the same text wherever it is built: its sources are named from
+  the package's parent directory (`Cx::source_name`), its constants built with it.  Its types
+  are that program's numbers; where one crosses into a shared store — a store's root type
+  (`known`) and a root record's tag — it is translated by key (`lib_ids`) through
+  `loft_tp_out` / `loft_tp_in`, which the runtime reaches only by `LOFT_KNOWN` /
+  `LOFT_SET_KNOWN` (a raw one is marked `LOFT_RAW_KNOWN`).
+- **An open unit** (`Cx::open`): its exports are called by an interpreter the writer never
+  sees, so it takes no whole-program rewrite that changes a signature (value records), and a
+  text field rewritten keeps the text it replaced until its store dies
+  (`@FR-H-TextReplace` is admitted by facts about every caller).
+- **A `[c] shim` is one image**: the unit links the shim's shared library the parse built
+  (the one the interpreter opened), never a copy from its archive.  A run with no compiler
+  finds a built shim by its sources key (`c_shim::source_key`, the `.src` beside it).
+- **What crosses the bridge** (`hosted::bridge`, one `loft_shared_<name>` per export over
+  `LibArg`):
+  - in: scalars, texts, records and vectors, a tuple of scalars (one slot per leaf), a `&`
+    argument (its slot, read and written back in the interpreter's `DbRef` layout:
+    `loft_slot_ref`), and a function value — tagged `LOFT_HOST_FN`, since it names the
+    program's function, and called back in the interpreter (`HostTable::call_ref`, one
+    `loft_up<n>` per signature);
+  - out: a scalar, a text (its bytes, which the dispatcher copies into the caller's
+    destination), a record or a vector (the caller's buffer), a tuple of scalars, a generator
+    of scalars, texts or references (its frame handed to the interpreter's coroutine table,
+    `HostedTable::gen_adopt`, and stepped through the unit's `loft_shared_gen_next`).
+  - Each text work slot of a call is a buffer of its own.  A unit parks no store across calls
+    (`loft_no_park`): no program end drains a unit's parks.
+  - A function value carries the interpreter's function number (`loft_fhost`, by key at
+    `loft_shared_init`); a dispatcher finds the unit's own by it (`loft_funit`) and calls any
+    other back.  A `par` loop or `parallel` block runs on the calling thread.  Relative paths
+    and `source_dir()` are the program's (`HostedTable::source_dir`).
+  - Not carried: an iterator argument (the interpreter's frame is not the unit's to drive), a
+    tuple with a text or a record inside.  Such a function interprets, answering the same.
+    A library the writer declines whole interprets too.
+- **Coverage**: `scripts/hosted_coverage.py` builds each package and holds what stays
+  interpreted to a baseline that only shrinks (`scripts/hosted_coverage.baseline`; the guard
+  `tests/hosted_coverage.rs`, the nightly `lib-main-health.yml`).  Library CI's **Hosted C**
+  step builds each package's unit and runs its tests adopted with no compiler
+  (`library-ci-reusable.yml`).
+
+| Switch / tool | What it does |
+|---|---|
+| `LOFT_HOSTED_VERIFY=1` | each call into a compiled library artifact also runs interpreted, on a copy of the world taken before it; the stores (bytes, then value, then root type) and the answer must agree.  Reports the unit's reach and the calls compared.  Compares each function's first 64 calls, then its 128th, 256th, …; `=all` compares every call.  A call reaching state outside the stores (a C function, a file, the clock) is made once and counted |
+| `LOFT_HOSTED_VERIFY_CONTROL=1` | the verify's control: the call interpreted on both sides, so a difference is the copy's |
+| `LOFT_HOSTED_PLANT=1` | builds a unit whose first record call writes one stray byte: the verify must name that call |
+| `LOFT_POISON_CLAIM=1` | a unit fills a claim's unwritten bytes as the interpreter does, which the verify compares by |
+| `LOFT_STORE_DUMP=<file>` | every store's bytes as it is freed and at exit, on either runtime (`scripts/store_diff.py`) |
+| `LOFT_NO_HANDOVER=1` | builds a unit without its loop-head safepoints: a debugger pause waits for the compiled routine to return (a bisect step; the safepoints cost about 4% on a one-operation loop) |
+| `LOFT_TRACE_HANDOVER=1` | says each time the interpreter took a paused compiled routine over or refused it, and why (a local it holds that the unit does not offer, a loop it keeps no head for); under `loft debug --native`, how many of the program's functions its unit carries |
+| `LOFT_C_TRACE_SITES=1` | an emitted unit records every statement's line, so `LOFT_ALLOC_TRACE` names each store by the line that made it |
+| `scripts/hosted_suite.py` | a library's tests interpreted and adopted under the verify; `--prebuilt` with no compiler |
 
 ## Adding a construct
 
@@ -820,34 +894,33 @@ refused and not carried: a `#native` function (above).
 
 The capabilities the interpreter's runtime has and the C runtime does not, each with what it
 is for (**R**eliability, **E**fficiency, **O**bservability), what C already has in its
-place, and the proposed verdict: **port** it to C, **covered** (the C equivalent named, and one
-falsifying cell owed that shows it catches what the original catches), or **drop** (loft does
-not need it, with the reason).  A verdict stays *proposed* until its check is done; the rustc
-path is not removed while a **port** row is open.  The store rows are also numbered in
+place, and the verdict: **port** it to C, **covered** (the C equivalent named, with the check
+that shows it catches what the original catches), or **drop** (loft does
+not need it, with the reason).  Every row has its verdict; no **port** is open.  The store rows are also numbered in
 [STORE_MODEL.md](STORE_MODEL.md).
 
-| Capability (interpreter switch) | For | C has | Proposed verdict | Check owed |
+| Capability (interpreter switch) | For | C has | Verdict | Check |
 |---|---|---|---|---|
 | use-after-free generations (`LOFT_UAF`, `LOFT_UAF_GEN`) | R | `LOFT_STRICT_STORES` (`-DLOFT_STRICT_STORES`, the driver's build under the variable): no freed slot made again, an access through a freed store named at `loft_store_of` together with the free that killed it (the frame and line each slot was freed at — the interpreter's `strict_note_free`, a C unit having no pc), a store live at exit named, either one exit 1 — the interpreter's ground truth rather than the generation stamps (those ride its operand stack, which a C unit does not have) | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed`; `scripts/c_sweep.py --strict-stores` over the corpus against the interpreter under the same switch |
 | the re-free census (`LOFT_DOUBLE_FREE`) | R | `-DLOFT_DOUBLE_FREE` (the driver's build under the variable): each re-free of an already-free slot classified by whether its site is the first free's, and each FREED slot made again through a reference that still named it (`loft_database`'s adoption — where a stale reference re-initialises a slot another store may hold), each line naming both sites; the counts at exit | **ported** | `tests/c_emit.rs` `a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_sites` |
-| frame-slot verification (`LOFT_VERIFY_STACK`) | R | the C stack; the MemorySanitizer lane | covered | an uninitialised-slot cell MSan flags on C |
+| frame-slot verification (`LOFT_VERIFY_STACK`) | R | a unit has no frame slots: a named local is a C variable initialised where it is declared, and a temporary read before it is written is a compiler warning | **covered** | `scripts/c_lint_census.py`: the corpus built `-Wall -Wextra`, every warning — an uninitialised read included — held at zero |
 | keyed fast-path verifier (`LOFT_KEYED_VERIFY`) | R | `-DLOFT_KEYED_VERIFY` (the driver's build under the variable): each keyed fast path the C has — the index's exact descent, the typed hash lookups, the one-probe entry and insert — checked against its general form, a disagreement stops the run naming both answers; the interpreter-only fast paths (pre-resolved comparison, decorated sort, inline key-order walk) have no C twin to check | **ported** | `tests/c_emit.rs` `a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong` (corrupted descent and typed lookup) and the hash differential built with it (corrupted insert bucket and duplicate); `scripts/c_sweep.py --keyed-verify` |
 | key-list verifier (`LOFT_KEY_LIST_VERIFY`) | R | the emitter writes each type's keys as a constant table (`static const loft_key loft_keys<N>[]`) | **drop** (decided): the cached list it re-derives (`@FR-R-KeyList`) does not exist in a C unit | — |
 | prefill elision verifier (`LOFT_PREFILL_VERIFY`) | R | `LOFT_POISON_CLAIM` | covered | the field_append cells under `LOFT_POISON_CLAIM` (they pass on C) |
 | the copy check (`LOFT_COPY_CHECK`) | R | `-DLOFT_COPY_CHECK` (the driver's build under the variable): after every deep copy — a bind's, `OpCopyRecord`'s, `OpReplaceKeyed`'s — each nested collection's length compared with its source's, a difference named by its field path, warn and continue | **ported** | `tests/c_emit.rs` `a_copy_check_c_build_names_a_copy_that_lost_elements`; `scripts/c_sweep.py --copy-check` |
 | the live rebuild's world check (`LOFT_CHECK_WORLD`) | R | — a step of the `loft` driver, not of the runtime: it refuses a build the running world cannot be converted into before any code is generated, for every backend | **covered** (by the driver) — it exists for live rebuild, whose C form is the live-reload row's | — |
-| zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | always zeroes today (D17) | covered once D17 lands: `LOFT_POISON_CLAIM` is the falsifier | D17's sweep |
+| zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | no claim zeroes, on either runtime (D17, closed in [STORE_MODEL-history.md](STORE_MODEL-history.md)) | **covered** | `LOFT_POISON_CLAIM`, the falsifier the verify compares by |
 | schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | the type table is a static array the emitter writes (`static const loft_tdesc loft_types[…]`) | **drop** (decided): the start-up replay it guards does not exist in a C unit | — |
 | the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **ported** (D19c): the runner hands its test ceiling to every compiled child, both writers | `tests/store_memory_limit.rs` `the_default_ceiling_reaches_a_compiled_test` |
-| store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | — | **port** when a C defect needs it; drop otherwise | — |
+| store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | `LOFT_STRICT_STORES` (the free that killed a store), `LOFT_LEAK_SITES` (the site that made a kept one) | **drop** (decided): no C defect of P3–P7 needed it; the two named answer what a watch was read for | — |
 | leak sites (`LOFT_LEAK_SITES`) | O | `-DLOFT_LEAK_SITES` (the driver's build under the variable): each store remembers the function, file and line it was made at (`loft_note_site`, the frames kept), and the leak report groups the stores left by site and type, most first — a file and line where the interpreter names a pc | **ported** | `tests/c_emit.rs` `a_leak_site_c_build_names_where_a_kept_store_was_made` |
-| store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (proposed): the allocation trace and the leak report, sites included, answer what these were read for | — |
+| store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (decided): the allocation trace and the leak report, sites included, answer what these were read for | — |
 | allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
 | the live debugger (`loft debug`, `--rpc`) | O | the C debug tier's `#line` markers: the loft file and line of every C line in the binary's debug information, for gdb, lldb, a profiler and a backtrace (`emit_program_with_source_lines`, DEBUG.md § A C build in gdb or lldb) | **covered** (owner, decided): the full debugger is the interpreter's, for development, as live editing is; a bug only the C build shows is debugged on its binary by loft line | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table` |
 | live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip`) | E | — the C engine host answers `flip false` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4) | — |
 | the live build swap and background rebuild (`swap_world`, `swap_start`, `rebuild_*`, the channel's `rebuild` / `swap`) | E | carried on POSIX hosts (`loft_engine.h`), every incarnation a C build | **carried** (owner, asked for) — `tests/engine_host_kernel.rs` `s5_c_*`, the listener, connector and local roles | — |
-| the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | `c_profile` | covered for time; open for heap by line | `make profile-corpus` on C |
-| wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | covered by @PLN203 | @PLN203's browser lane |
-| the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | covered | the perf portal's `cship` column |
-| native rewrites the C writer does not apply yet | E | the C writer's own `R-` rules | open — `make rewrite-census` on both writers names the gap | the census, per rule |
+| the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | time: any native profiler (perf, Instruments) through the debug tier's loft lines; `bench/portal/c_profile.py` per routine (Linux).  Heap by line: the interpreter's `LOFT_ALLOC_SITES`, whose allocations the C build matches event for event or by a named C-only rewrite (`scripts/c_alloc_diff.py`); a C build's own kept stores by site (`LOFT_LEAK_SITES`) | **covered** | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table`; `c_alloc_diff.py --self-test` |
+| wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | **covered** by @PLN203 | @PLN203's browser lane |
+| the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | **covered** | `bench/stats.py --lanes c,cship`, the perf portal's `cship` column |
+| native rewrites the C writer does not apply | E | the C writer's own `R-` rules | **drop** (decided, owner): a rewrite only the rustc writer applies is removed with it, not ported ([plans/225 rewrite-audit](plans/225-retire-rustc-writer/rewrite-audit.md)) | — |
 | mmap-backed stores (`@FR-S-Mapped`) | E | `loft_mapped.h`: `loft_st_open_mapped`, growth and the cut with the file, unmapped on release (POSIX, Windows) | **ported** (D23) | `tests/c_emit.rs` `a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes` |

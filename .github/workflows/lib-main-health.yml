@@ -210,6 +210,27 @@ jobs:
             printf "$summary"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $fail
+      # Every library runs compiled (@PLN206 coverage): each package built as a hosted C unit
+      # (`loft build-native` on the C backend) names the public functions it leaves interpreted,
+      # and `scripts/hosted_coverage.py` holds them to `scripts/hosted_coverage.baseline`, which
+      # only shrinks.  Red when a library's main leaves a new function interpreted, or when one
+      # the baseline lists now runs compiled (write it down: `--update`, in loft).
+      - name: Every library runs compiled
+        if: always()
+        run: |
+          set -o pipefail
+          pkgs=$(for t in lib/*/loft.toml lib/loft.toml; do [ -f "$t" ] && dirname "$t"; done)
+          python3 loft-src/scripts/hosted_coverage.py --lib lib $pkgs 2>&1 | tee "$RUNNER_TEMP/coverage.log" && exit 0
+          status=$?
+          {
+            echo "### ${{ matrix.repo }} — functions left interpreted, against the baseline"
+            echo
+            echo '```'
+            grep -E '^(    now|[a-z_0-9]+: not measured)' "$RUNNER_TEMP/coverage.log" | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

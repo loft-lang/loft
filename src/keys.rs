@@ -5182,3 +5182,40 @@ pub fn kept_element_copy() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
 }
+
+/// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does
+/// (what `LOFT_HOSTED_VERIFY` compares by)?
+#[must_use]
+pub fn poison_claim() -> bool {
+    std::env::var_os("LOFT_POISON_CLAIM").is_some()
+}
+
+/// Is `LOFT_C_TRACE_SITES` set: does an emitted C unit record every statement's line as its
+/// frame's site, so `LOFT_ALLOC_TRACE` names each store by the line that made it, as the
+/// interpreter does (`scripts/store_diff.py`, `scripts/c_alloc_diff.py` pair stores by it)?
+/// Without it a line is recorded only before a statement that calls a frame.
+#[must_use]
+pub fn c_trace_sites() -> bool {
+    std::env::var_os("LOFT_C_TRACE_SITES").is_some()
+}
+
+/// Is `LOFT_HOSTED_VERIFY` set: is each call into a compiled library artifact run compiled and
+/// interpreted and compared (`state::hosted_verify`)?
+#[must_use]
+pub fn hosted_verify() -> bool {
+    std::env::var_os("LOFT_HOSTED_VERIFY").is_some()
+}
+
+/// Is `LOFT_HOSTED_PLANT` set: is a hosted unit built with the verify's planted write?
+#[must_use]
+pub fn hosted_planted() -> bool {
+    std::env::var_os("LOFT_HOSTED_PLANT").is_some()
+}
+
+/// Is `LOFT_NO_HANDOVER` set: is a hosted unit built without its loop-head safepoints
+/// (`@PLN206 P7`), so a pause waits for the routine to return?  A bisect step, and the
+/// measure of what the safepoints cost.
+#[must_use]
+pub fn no_handover() -> bool {
+    std::env::var("LOFT_NO_HANDOVER").is_ok_and(|v| v != "0")
+}

@@ -459,14 +459,6 @@ pub struct Stores {
     /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's
     /// wrapper before a converting load ([`Stores::upgrade_routine`]).
     pub(crate) upgrade_routines: upgrade::Routines,
-    /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
-    /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
-    /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
-    /// frame holds the store only orphans it, and the last frame's release frees it
-    /// ([`Stores::release_frame_hold`]).  A whole rebind that would re-mint the store in
-    /// place takes a fresh one instead ([`Stores::detach_if_frame_held`]), so the frame keeps
-    /// the value it was handed.  Runtime-only: `clone` starts it empty.
-    pub(crate) frame_held: Vec<(u16, u32, bool)>,
     /// loft#2273 — the closure-copy share count, and NOTHING else: see `closure_share.rs`
     /// before touching it.  Runtime-only: `clone` starts it empty.
     closure_shares: closure_share::ClosureShares,
@@ -527,6 +519,8 @@ pub struct Stores {
     /// bridge pushes nothing (the record IS the result).  Transient — lives only
     /// across the two adjacent `OpStaticCall`s.
     pub bridge_text_dest: Option<crate::keys::DbRef>,
+    /// `@PLN206 P4` — the table as a hosted C unit reads it (`host_abi::TableView`).
+    pub hosted_view: crate::host_abi::TableView,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -811,7 +805,6 @@ impl Clone for Stores {
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
-            frame_held: Vec::new(),
             closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -823,6 +816,7 @@ impl Clone for Stores {
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -965,7 +959,7 @@ impl WorkerStores {
         // Worker output slots are writable (free=true→false handled by
         // the worker's first claim).  Mark non-free so debug invariants
         // don't think this is a freed slot.
-        store.free = false;
+        store.live = true;
         self.stores.allocations.push(store);
         if store_nr >= self.stores.max {
             self.stores.max = store_nr + 1;
@@ -1021,7 +1015,7 @@ impl WorkerStores {
             .enumerate()
             .skip(parent_store_count as usize)
         {
-            if slot.free {
+            if !slot.live {
                 continue;
             }
             let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
@@ -1141,6 +1135,29 @@ impl Stores {
         })
     }
 
+    /// `@PLN206 P4d` — a whole second world for `LOFT_HOSTED_VERIFY`: the schema
+    /// ([`Clone`]), a writable copy of every store, and the table's bookkeeping a call reads —
+    /// the free-slot bitmap, the store counter, the constants — so a call run on the copy makes
+    /// the stores the same call makes on `self`.  `None` with a file-backed store live, which no
+    /// copy can stand for (as [`snapshot_heap`](Self::snapshot_heap) refuses).
+    #[must_use]
+    pub fn world_copy(&self) -> Option<Stores> {
+        if self.allocations.iter().any(Store::is_file_backed) {
+            return None;
+        }
+        let mut w = self.clone();
+        w.allocations = self.allocations.iter().map(Store::exact_copy).collect();
+        w.free_bits.clone_from(&self.free_bits);
+        w.stores_allocated = self.stores_allocated;
+        w.peak = self.peak;
+        w.records_created = self.records_created;
+        w.const_refs.clone_from(&self.const_refs);
+        w.const_texts.clone_from(&self.const_texts);
+        w.evacuated.clone_from(&self.evacuated);
+        w.alloc_pc = self.alloc_pc;
+        Some(w)
+    }
+
     /// @PLN63 RX1 — restore a [`snapshot_heap`](Self::snapshot_heap): replace the live
     /// allocations with fresh writable copies of the snapshot's bytes (the old ones drop +
     /// free), so the heap is byte-identical to when the snapshot was taken.  The snapshot is
@@ -1180,7 +1197,7 @@ impl Stores {
         }
         assert!(
             (dest_store as usize) < self.allocations.len()
-                && !self.allocations[dest_store as usize].free,
+                && self.allocations[dest_store as usize].live,
             "materialize: destination store #{dest_store} is not live"
         );
         // Byte size of the record, then the word count a record needs: one
@@ -1243,7 +1260,7 @@ impl Stores {
         // `validate()` call on an adopted store (the bundle writer's
         // first push) died on "Using a freed store" (the @P317
         // bitmap-vs-flag dual invariant, F3 in the sweep catalog).
-        store.free = false;
+        store.live = true;
         // Inline the free-slot scan rather than calling allocation.rs's
         // private `find_free_slot` — keeping mod.rs from depending on
         // that private helper avoids cross-file plumbing for one
@@ -1324,7 +1341,7 @@ impl Stores {
             .enumerate()
             .skip(parent_store_count as usize)
         {
-            if slot.free {
+            if !slot.live {
                 continue;
             }
             let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
@@ -1433,7 +1450,7 @@ mod worker_output_slot_tests {
         assert_eq!(taken.capacity_words(), cap);
         // Sentinel left behind has tiny capacity (Store::new_freed_sentinel = 4 words)
         // and is marked free.
-        assert!(ws.stores.allocations[pos].free);
+        assert!(!ws.stores.allocations[pos].live);
     }
 
     #[test]
@@ -1445,7 +1462,7 @@ mod worker_output_slot_tests {
         let store = donor.take_slot(slot.store_nr);
         let nr = parent.adopt_store(store);
         assert!((nr as usize) < parent.allocations.len() || (nr as usize) == initial_len);
-        assert!(!parent.allocations[nr as usize].free);
+        assert!(parent.allocations[nr as usize].live);
     }
 
     #[test]
@@ -1496,7 +1513,7 @@ mod worker_output_slot_tests {
         let s0 = ws.add_output_slot(8);
         let _s1 = ws.add_output_slot(16);
         // Mark s0 as freed.
-        ws.stores.allocations[s0.store_nr as usize].free = true;
+        ws.stores.allocations[s0.store_nr as usize].live = false;
         let owned = ws.take_all_owned(0);
         assert_eq!(owned.len(), 1, "freed slot skipped");
         assert_eq!(owned[0].0, 1);
@@ -1609,7 +1626,6 @@ impl Stores {
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),
-            frame_held: Vec::new(),
             closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -1621,6 +1637,7 @@ impl Stores {
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -3032,7 +3049,7 @@ impl Stores {
                 crate::vector::pre_alloc_vector(db, reached, elem_size, &mut self.allocations);
                 if trace_enabled() {
                     eprintln!(
-                        "[clear] reset store={} cap={}",
+                        "[clear] reset store={} size={elem_size} cap={}",
                         db.store_nr,
                         crate::vector::reached_capacity(db, elem_size, &self.allocations)
                     );

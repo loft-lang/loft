@@ -1324,6 +1324,7 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        self.expand_safepoints();
         self.body = self.expand_epilogues();
         let statements = self.statement_count();
         out.push_str(&self.body);
@@ -1384,6 +1385,100 @@ impl<'a> FnWriter<'a> {
         //   recursive frame finds its slot empty and takes nothing
         crate::rewrite_census::fired("R-WorkPark", n);
         out
+    }
+
+    /// `@PLN206 P7` — each loop head's marker as the hand-over it stands for: when the debugger
+    /// asks for a pause and this routine is the one the interpreter called
+    /// (`loft_pause_asked`), every declared local is offered by name (`loft_ho_put`), and when
+    /// the interpreter takes the routine over (`loft_ho_commit`) the routine returns at once,
+    /// none of its own releases run: the interpreter's frame holds what it held.  Written once
+    /// the locals are declared, so a local the body left undeclared is not named.
+    fn expand_safepoints(&mut self) {
+        if !self.body.contains("/*LOFT_SAFEPOINT:") {
+            return;
+        }
+        // The puts, per safepoint: a sticky sum's checked value depends on the flags in force there.
+        let declared: Vec<u16> = (0..self.shapes.len() as u16)
+            .filter(|&vv| {
+                let v = vv as usize;
+                !(self.apr_holds(vv)
+                    || self.undeclared.contains(&vv)
+                    || self.store_links[v]
+                    || self.links[v]
+                    || self.vr_ptr[v]
+                    || matches!(self.vars.tp(vv).base(), crate::data::Type::RefVar(_)))
+            })
+            .collect();
+        let puts_for = |w: &Self, flags: &std::collections::HashMap<u16, String>| -> String {
+            let mut puts = String::new();
+            for &vv in &declared {
+                let v = vv as usize;
+                let name = c_string(w.vars.name(vv));
+                let var = match flags.get(&vv) {
+                    Some(f) => format!("({f} ? LOFT_NULL : {})", w.var(vv)),
+                    None => w.var(vv),
+                };
+                let none = "loft_ho_nostr(), loft_ref_null()";
+                let put = match w.shapes[v] {
+                    CType::Int | CType::Int32 | CType::Char => {
+                        format!("loft_ho_put({name}, 0, (loft_word) {var}, {none});")
+                    }
+                    CType::Float => format!(
+                        "{{ double b0 = {var}; int64_t b; memcpy(&b, &b0, 8); loft_ho_put({name}, 1, b, {none}); }}"
+                    ),
+                    CType::Single => format!(
+                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put({name}, 5, (loft_word) b, {none}); }}"
+                    ),
+                    CType::Bool | CType::Enum => {
+                        format!("loft_ho_put({name}, 4, (loft_word) {var}, {none});")
+                    }
+                    CType::Text if w.params[v] || w.borrowed[v] => {
+                        format!("loft_ho_put({name}, 2, 0, {var}, loft_ref_null());")
+                    }
+                    CType::Text => {
+                        format!("loft_ho_put({name}, 2, 0, loft_view(&{var}), loft_ref_null());")
+                    }
+                    CType::Ref => format!("loft_ho_put({name}, 3, 0, loft_ho_nostr(), {var});"),
+                    _ => continue,
+                };
+                puts.push_str(&put);
+                puts.push(' ');
+            }
+            puts
+        };
+        let key = c_string(&crate::lib_ids::fn_key(self.cx.data, self.d));
+        let ret = if self.ret == CType::Void {
+            "return;".to_string()
+        } else {
+            format!(
+                "{{ {} loft_hr = {}; return loft_hr; }}",
+                held(self.ret),
+                self.cx.initial(self.ret)
+            )
+        };
+        let mut out = String::with_capacity(self.body.len());
+        let mut left = self.body.as_str();
+        while let Some(at) = left.find("/*LOFT_SAFEPOINT:") {
+            out.push_str(&left[..at]);
+            let tail = &left[at + "/*LOFT_SAFEPOINT:".len()..];
+            let end = tail.find("*/").unwrap_or(0);
+            let (scope, flag_list) = tail[..end].split_once(':').unwrap_or((&tail[..end], ""));
+            let flags: std::collections::HashMap<u16, String> = flag_list
+                .split(',')
+                .filter_map(|p| {
+                    let (v, f) = p.split_once('=')?;
+                    Some((v.parse().ok()?, f.to_string()))
+                })
+                .collect();
+            let puts = puts_for(self, &flags);
+            let _ = write!(
+                out,
+                "/*LOFT_SP*/ if (LOFT_UNLIKELY(loft_pause_asked())) {{ {puts}if (loft_ho_commit({key}, {scope}u)) {ret} }} /*LOFT_PS*/"
+            );
+            left = &tail[end + 2..];
+        }
+        out.push_str(left);
+        self.body = out;
     }
 
     /// `v`'s C spelling.  A link holds its source's ADDRESS, so every use dereferences it and
@@ -2012,14 +2107,20 @@ impl<'a> FnWriter<'a> {
                 .and_then(|p| self.push_head(&p))
                 .map(|(h, _)| E::new(format!("((int64_t) {h}.len)"), K::Int)));
         }
-        // A group's reservation is capacity, observably nothing; the header's mint grows the
-        // record itself, and a reservation made beside it would claim a record it does not hold.
-        if name == "OpPreAllocVector" {
-            return Ok(args
-                .first()
-                .and_then(|v| crate::opt::writes::vector_path(data, v))
-                .and_then(|p| self.push_head(&p))
-                .map(|_| E::new("((void) 0)", K::Void)));
+        // `@FR-Col-Capacity`: a known count is reserved exactly, as the bytecode does it, through
+        // the header held for the path (`loft_ph_prealloc`), so its mints fill the record the
+        // reservation claimed instead of growing one of their own.
+        if name == "OpPreAllocVector"
+            && let [v, count, size] = args
+            && let Some((h, _)) =
+                crate::opt::writes::vector_path(data, v).and_then(|p| self.push_head(&p))
+        {
+            let count = Self::literal(count, "count")?;
+            let size = Self::literal(size, "element size")?;
+            return Ok(Some(E::new(
+                format!("loft_ph_prealloc(&{h}, {count}, {size})"),
+                K::Void,
+            )));
         }
         if let Some(fp) = crate::opt::writes::fused_push(data, name, args)
             && let Some((h, size, based)) = self.push_head_based(&fp.path)
@@ -2622,11 +2723,22 @@ impl<'a> FnWriter<'a> {
             let path = crate::opt::writes::vector_path(data, v)?;
             by_path(w, &path)
         };
+        // `@FR-Col-Capacity`: the reservation is exact through the window too, as the bytecode
+        // and the push header (`loft_ph_prealloc`) make it — it claims only while the vector has
+        // no record, so a window over one tests and goes on.
         if name == "OpPreAllocVector" {
-            return Ok(args
-                .first()
-                .and_then(|v| window_of(self, v))
-                .map(|_| E::new("((void) 0)", K::Void)));
+            let Some((w, pv, _)) = args.first().and_then(|v| window_of(self, v)) else {
+                return Ok(None);
+            };
+            let [_, count, size] = args else {
+                return Err("OpPreAllocVector without its count and size".into());
+            };
+            let count = Self::literal(count, "count")?;
+            let size = Self::literal(size, "element size")?;
+            return Ok(Some(E::new(
+                format!("loft_win_prealloc(&{w}, {pv}, {count}, {size})"),
+                K::Void,
+            )));
         }
         if matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord")
             && let Some(t) =
@@ -3364,42 +3476,10 @@ impl<'a> FnWriter<'a> {
     /// vector wrapper — a mint that empties the vector and releases what its elements owned, so
     /// the clear is that work done twice.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes it.
     fn clear_before_mint(&self, ops: &[Value], i: usize) -> bool {
-        let data = self.cx.data;
-        let named = |v: &Value, n: &str| -> Option<Vec<Value>> {
-            match v.unspan() {
-                Value::Call(d, a)
-                    if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
-                {
-                    Some(a.clone())
-                }
-                _ => None,
-            }
-        };
-        let Some(args) = ops.get(i).and_then(|o| named(o, "OpClearVector")) else {
-            return false;
-        };
-        let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
-            return false;
-        };
-        if self.ap_views.contains(x)
-            || std::env::var("LOFT_NO_PROLOGUE_CLEAR_DROP").is_ok_and(|v| v != "0")
-        {
-            return false;
-        }
-        let Some(next) = ops[i + 1..]
-            .iter()
-            .find(|o| !matches!(o.unspan(), Value::Line(_)))
-        else {
-            return false;
-        };
-        let Some(m) = named(next, "OpDatabase") else {
-            return false;
-        };
-        match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
-            (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => u16::try_from(*tp)
-                .is_ok_and(|tp| self.cx.stores.is_vector_wrapper(tp) && !self.lr_kept(*x)),
-            _ => false,
-        }
+        // The shared clause, then what the C alone knows of `x`: a value held apart, or a loop
+        // record the port keeps.
+        crate::opt::writes::clear_before_mint(self.cx.data, self.cx.stores, ops, i)
+            .is_some_and(|x| !self.ap_views.contains(&x) && !self.lr_kept(x))
     }
 
     /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
@@ -4683,12 +4763,19 @@ impl<'a> FnWriter<'a> {
     fn note_site(&mut self, v: &Value, ind: usize) {
         if let Value::Line(n) = v.unspan() {
             self.cur_line = *n;
+            if self.cx.trace_sites && *n != 0 {
+                self.line(ind, &format!("loft_frame_site({n});"));
+            }
             // A debugger's line table (`Cx::source_lines`): the statements that follow are this
             // loft line's.  A directive starts its own line; `statement_count` passes over it.
             if self.cx.source_lines && *n != 0 && *n != self.marked_line {
                 self.marked_line = *n;
                 if self.marked_file.is_empty() {
-                    self.marked_file = c_string(&self.cx.data.def(self.d).position().file);
+                    self.marked_file = c_string(
+                        &self
+                            .cx
+                            .source_name(&self.cx.data.def(self.d).position().file),
+                    );
                 }
             }
         } else if self.cur_line != 0
@@ -4716,7 +4803,7 @@ impl<'a> FnWriter<'a> {
         } else {
             self.cur_line
         };
-        format!("{}, {line}", c_string(&pos.file))
+        format!("{}, {line}", c_string(&self.cx.source_name(&pos.file)))
     }
 
     /// Write `inner` with `pos` as the site its faults report at (`Self::site`).
@@ -4728,7 +4815,8 @@ impl<'a> FnWriter<'a> {
         let saved = if pos.line == 0 {
             self.span_site.clone()
         } else {
-            self.span_site.replace((c_string(&pos.file), pos.line))
+            self.span_site
+                .replace((c_string(&self.cx.source_name(&pos.file)), pos.line))
         };
         let r = inner(self);
         self.span_site = saved;
@@ -5740,6 +5828,29 @@ impl<'a> FnWriter<'a> {
         } else {
             let sums = self.open_sticky_sums(b, ind);
             self.line(ind, "for (;;) {");
+            // `@PLN206 P7` — the loop's head, where a hosted unit's routine can hand itself over
+            // to the debugging interpreter (`expand_safepoints`).  Not where a round leaves
+            // state of its own in flight: a write window, a held file cursor, a sticky sum.
+            // A sticky sum is offered as its checked value, its flag read (`flag ? null : sum`).
+            if self.cx.open
+                && !crate::keys::no_handover()
+                && self.windows.is_empty()
+                && self.ap_loop_windows.is_empty()
+                && self.text_windows.is_empty()
+                && self.file_holds.is_empty()
+                && !self.in_range_copy
+            {
+                let flags: Vec<String> = self
+                    .sticky
+                    .iter()
+                    .chain(sums.iter())
+                    .map(|(v, f)| format!("{v}={f}"))
+                    .collect();
+                self.line(
+                    ind + 1,
+                    &format!("/*LOFT_SAFEPOINT:{}:{}*/", b.scope, flags.join(",")),
+                );
+            }
             self.block_stmt(b, ind + 1)?;
             self.line(ind, &format!("cont_{l}:;"));
             self.line(ind, "}");
@@ -6810,7 +6921,7 @@ impl<'a> FnWriter<'a> {
                     self.line(
                         ind,
                         &format!(
-                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
+                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind(loft_types, {bytes}, {r}, &{name}))) {{ \
                              loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
                              if ({keep}) loft_free_ref({r}); }}"
                         ),
@@ -7189,12 +7300,20 @@ impl<'a> FnWriter<'a> {
         // one the bytecode writer and the store records read: a compiler temporary reset to
         // null has released or handed over its store already (`DisplacedFree::None`), so a
         // free here could only release that store a second time (`@FR-H-FreeTwice`).  @PLN220.
+        let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
         if !crate::keys::c_own_displaced_free()
-            && crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).free
-                == crate::bind_lowering::DisplacedFree::None
+            && rb.free == crate::bind_lowering::DisplacedFree::None
         {
             return Ok(false);
         }
+        // Every displaced store, `DisplacedFree::Pre` included, is released AFTER the value is
+        // built and only when the value names another store.  A Pre free ahead of the value
+        // released a lifted temporary that viewed the store an earlier lift of the same
+        // statement had just been rebuilt in (store numbers are reused), so the call that read
+        // that lift read a freed store: the self-hosted front end built by this backend ran out
+        // of memory in a deep copy over it (`base(tp(vars, n))`, el_expressions.loft).  The
+        // allocation ORDER then differs from the bytecode's where it frees first, which
+        // `scripts/c_alloc_diff.py` reports and nothing observes (STORE_MODEL.md D38).
         let old = self.temp(CType::Ref);
         self.line(ind, &format!("{old} = {name};"));
         self.assign(x, name, CType::Ref, ind)?;

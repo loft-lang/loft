@@ -336,6 +336,10 @@ pub struct Vars {
   // Compiler temporaries the port reads through a syntax name of its own making
   // (`place_through_discharge`'s `__place_N`): no mention of them is a user's.
   pub compiler_named: vector<integer> = [],
+  // A `__place_N` holding an element reached through an effectful index whose COLLECTION field
+  // is written (`k[bump()].mpts += […]`): Rust's F2 hoist writes that field through
+  // `OpGetField(place, off, tp)`, the port through the place itself.
+  pub field_places: vector<integer> = [],
   // `@FR-F-ParamTuple`'s copy seeds, built at the start of pass 2 (`tuple_param_seeds`): the
   // shadow of each, and its copy's code and type.
   pub tp_seed_shadows: vector<integer> = [],

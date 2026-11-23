@@ -7,6 +7,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+**Producer removed (2026-11-23, @PLN206 P6).**  `prebuild-native.yml` and `loft build-native`'s
+Rust-cdylib branch are gone: a library's compiled form is its hosted C unit, which each loft
+release builds for every published library and lists in its registry row.  The consumer
+(`fetch_prebuilt`) still loads a hand-written cdylib a version names.
+
 **MERGED TO MAIN (2026-06-13 — PR [#370](https://github.com/loft-lang/loft/pull/370) →
 `9f43e769`).** Phases 1–6 + 4b are on the release branch. The whole in-loft pipeline is done:
 produce (`loft build-native` — hand-written AND auto-compiled libs, resolved from the handed

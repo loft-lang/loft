@@ -142,23 +142,117 @@ const PARK_MAX_WORDS: i32 = 16;
 const PARK_PREV: u32 = 4;
 const PARK_NEXT: u32 = 8;
 
-/// `@FR-H-Park` — the parked free blocks of one store: one doubly linked list per exact
-/// size, and the set of their starts, which is what tells a parked block from a tree node
-/// or a lazily freed one (claimed data can spell a free header; the set cannot lie).
-#[derive(Clone, Default)]
-struct Parked {
-    heads: [u32; PARK_MAX_WORDS as usize + 1],
-    set: Claims,
-    count: u32,
+/// `@PLN206 P3` — a list of record numbers in the C runtime's shape (`uint32_t *placed, nplaced,
+/// placed_cap`, `#[repr(C)]`), its words in the system allocator's memory as `Claims`'.  What
+/// `Store::placed` holds.
+#[repr(C)]
+struct U32List {
+    items: *mut u32,
+    n: u32,
+    cap: u32,
 }
 
-impl Parked {
-    fn clear(&mut self) {
-        self.heads = [0; PARK_MAX_WORDS as usize + 1];
-        self.set.clear();
-        self.count = 0;
+impl Default for U32List {
+    fn default() -> Self {
+        U32List {
+            items: std::ptr::null_mut(),
+            n: 0,
+            cap: 0,
+        }
     }
 }
+
+impl Clone for U32List {
+    fn clone(&self) -> Self {
+        let mut c = U32List::default();
+        for &r in self.as_slice() {
+            c.push(r);
+        }
+        c
+    }
+}
+
+impl Drop for U32List {
+    fn drop(&mut self) {
+        if !self.items.is_null() {
+            // SAFETY: `items` is the block `push` allocated for `cap` numbers.
+            unsafe { A.dealloc(self.items.cast(), U32List::layout(self.cap)) };
+        }
+    }
+}
+
+// SAFETY: the list owns its block outright, as a `Vec<u32>` would.
+unsafe impl Send for U32List {}
+unsafe impl Sync for U32List {}
+
+impl U32List {
+    fn layout(n: u32) -> Layout {
+        Layout::array::<u32>(n as usize).expect("record list layout")
+    }
+
+    fn as_slice(&self) -> &[u32] {
+        if self.n == 0 {
+            &[]
+        } else {
+            // SAFETY: `items` holds `n` initialised numbers.
+            unsafe { std::slice::from_raw_parts(self.items, self.n as usize) }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    fn clear(&mut self) {
+        self.n = 0;
+    }
+
+    fn push(&mut self, r: u32) {
+        if self.n == self.cap {
+            let cap = if self.cap == 0 { 4 } else { self.cap * 2 };
+            // SAFETY: `items` is null, or the block allocated for `self.cap` numbers.
+            #[expect(
+                clippy::cast_ptr_alignment,
+                reason = "the block is allocated with u32's alignment (`U32List::layout`)"
+            )]
+            let nb = unsafe {
+                if self.items.is_null() {
+                    A.alloc(U32List::layout(cap))
+                } else {
+                    A.realloc(
+                        self.items.cast(),
+                        U32List::layout(self.cap),
+                        cap as usize * 4,
+                    )
+                }
+            }
+            .cast::<u32>();
+            if nb.is_null() {
+                std::alloc::handle_alloc_error(U32List::layout(cap));
+            }
+            self.items = nb;
+            self.cap = cap;
+        }
+        // SAFETY: `n < cap` after the growth above.
+        unsafe { *self.items.add(self.n as usize) = r };
+        self.n += 1;
+    }
+
+    /// Keep the numbers `keep` answers true for, in order.
+    fn retain(&mut self, mut keep: impl FnMut(&u32) -> bool) {
+        let mut w = 0;
+        for k in 0..self.n as usize {
+            // SAFETY: `k < n`; `w <= k`.
+            let r = unsafe { *self.items.add(k) };
+            if keep(&r) {
+                unsafe { *self.items.add(w) = r };
+                w += 1;
+            }
+        }
+        self.n = w as u32;
+    }
+}
+
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -315,16 +409,111 @@ fn tombstones_enabled() -> bool {
 /// build reads from the set and a walk to answer it would scale with the
 /// arena, not with the records in it.  Nothing iterates the set, so the
 /// representation owes no order.
-#[derive(Clone, Default)]
+/// `@PLN206 P3` — the C runtime's `loft_bits`, field for field (`#[repr(C)]`): the words live
+/// in the system allocator's memory (`A`, as the store's buffer), which on a POSIX host is
+/// `malloc`, `realloc` and `free` — the calls the C runtime makes — so a C body working on this
+/// store keeps the set as the interpreter does.
+#[repr(C)]
 struct Claims {
-    bits: Vec<u64>,
+    bits: *mut u64,
+    nwords: u32,
     live: u32,
+    cap: u32,
 }
 
+impl Default for Claims {
+    fn default() -> Self {
+        Claims {
+            bits: std::ptr::null_mut(),
+            nwords: 0,
+            live: 0,
+            cap: 0,
+        }
+    }
+}
+
+impl Clone for Claims {
+    fn clone(&self) -> Self {
+        let mut c = Claims::default();
+        if self.nwords > 0 {
+            c.reserve(self.nwords);
+            // SAFETY: both hold at least `nwords` words; the two allocations are distinct.
+            unsafe { std::ptr::copy_nonoverlapping(self.bits, c.bits, self.nwords as usize) };
+            c.nwords = self.nwords;
+        }
+        c.live = self.live;
+        c
+    }
+}
+
+impl Drop for Claims {
+    fn drop(&mut self) {
+        if !self.bits.is_null() {
+            // SAFETY: `bits` is the block `reserve` allocated for `cap` words.
+            unsafe { A.dealloc(self.bits.cast(), Claims::layout(self.cap)) };
+        }
+    }
+}
+
+// SAFETY: the set owns its block outright, as a `Vec<u64>` would.
+unsafe impl Send for Claims {}
+unsafe impl Sync for Claims {}
+
 impl Claims {
+    /// The words in use, as a slice.
+    #[inline]
+    fn words(&self) -> &[u64] {
+        if self.nwords == 0 {
+            &[]
+        } else {
+            // SAFETY: `bits` holds `nwords` initialised words.
+            unsafe { std::slice::from_raw_parts(self.bits, self.nwords as usize) }
+        }
+    }
+
+    #[inline]
+    fn words_mut(&mut self) -> &mut [u64] {
+        if self.nwords == 0 {
+            &mut []
+        } else {
+            // SAFETY: `bits` holds `nwords` initialised words, owned by this set.
+            unsafe { std::slice::from_raw_parts_mut(self.bits, self.nwords as usize) }
+        }
+    }
+
+    fn layout(words: u32) -> Layout {
+        Layout::array::<u64>(words as usize).expect("bit-set layout")
+    }
+
+    /// Room for `n` words, grown as `loft_bits_insert` grows it: to twice the room, or to `n`.
+    fn reserve(&mut self, n: u32) {
+        if n <= self.cap {
+            return;
+        }
+        let cap = if self.cap * 2 > n { self.cap * 2 } else { n };
+        // SAFETY: `bits` is null, or the block allocated for `self.cap` words.
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "the block is allocated with u64's alignment (`Claims::layout`)"
+        )]
+        let nb = unsafe {
+            if self.bits.is_null() {
+                A.alloc(Claims::layout(cap))
+            } else {
+                A.realloc(self.bits.cast(), Claims::layout(self.cap), cap as usize * 8)
+            }
+        }
+        .cast::<u64>();
+        if nb.is_null() {
+            std::alloc::handle_alloc_error(Claims::layout(cap));
+        }
+        self.bits = nb;
+        self.cap = cap;
+    }
+
     #[inline]
     fn contains(&self, pos: u32) -> bool {
-        self.bits
+        self.words()
             .get((pos >> 6) as usize)
             .is_some_and(|w| (w >> (pos & 63)) & 1 == 1)
     }
@@ -332,11 +521,21 @@ impl Claims {
     /// Mark `pos` claimed; `true` when it was not already.
     #[inline]
     fn insert(&mut self, pos: u32) -> bool {
-        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
-        if word >= self.bits.len() {
-            self.bits.resize(word + 1, 0);
+        let (word, mask) = (pos >> 6, 1u64 << (pos & 63));
+        if word >= self.nwords {
+            let n = word + 1;
+            self.reserve(n);
+            // SAFETY: `reserve` made room for `n` words; the new ones are zeroed.
+            unsafe {
+                std::ptr::write_bytes(
+                    self.bits.add(self.nwords as usize),
+                    0,
+                    (n - self.nwords) as usize,
+                );
+            }
+            self.nwords = n;
         }
-        let w = &mut self.bits[word];
+        let w = &mut self.words_mut()[word as usize];
         let new = *w & mask == 0;
         *w |= mask;
         self.live += u32::from(new);
@@ -346,15 +545,16 @@ impl Claims {
     /// The highest claimed position below `end`, if any: one masked word for an adjacent
     /// block, and a backward scan over empty words across free space.
     fn prev_start(&self, end: u32) -> Option<u32> {
-        if end == 0 || self.bits.is_empty() {
+        let bits = self.words();
+        if end == 0 || bits.is_empty() {
             return None;
         }
         let last = end - 1;
-        let mut w = ((last >> 6) as usize).min(self.bits.len() - 1);
+        let mut w = ((last >> 6) as usize).min(bits.len() - 1);
         let mut word = if w == (last >> 6) as usize {
-            self.bits[w] & (u64::MAX >> (63 - (last & 63)))
+            bits[w] & (u64::MAX >> (63 - (last & 63)))
         } else {
-            self.bits[w]
+            bits[w]
         };
         loop {
             if word != 0 {
@@ -364,7 +564,7 @@ impl Claims {
                 return None;
             }
             w -= 1;
-            word = self.bits[w];
+            word = bits[w];
         }
     }
 
@@ -372,7 +572,7 @@ impl Claims {
     #[inline]
     fn remove(&mut self, pos: u32) -> bool {
         let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
-        match self.bits.get_mut(word) {
+        match self.words_mut().get_mut(word) {
             Some(w) if *w & mask != 0 => {
                 *w &= !mask;
                 self.live -= 1;
@@ -384,19 +584,19 @@ impl Claims {
 
     /// Forget every claim, keeping the allocation for the store's next layout.
     ///
-    /// The WIDTH resets with the claims.  `Vec::clear` keeps the capacity, so the next
-    /// occupant re-grows into the same allocation without inheriting the previous one's
+    /// The WIDTH resets with the claims, as `loft_bits_clear` resets it: the room stays, so the
+    /// next occupant re-grows into the same allocation without inheriting the previous one's
     /// width.  Carrying the width across occupants is what makes reusing a slot cost
     /// O(the widest that slot has ever been) instead of O(what it now holds): the set is
     /// indexed by record POSITION and only ever grows, so a slot that once held a large
     /// collection charged every later occupant for it (loft#1507).
     ///
     /// This is a cost change, not a semantic one.  `contains` and `remove` read a missing
-    /// word and a zero word alike (`Vec::get` answers `None`), and `insert` re-grows on
-    /// demand — so after a clear the width again describes the highest position claimed,
-    /// which is what this type's own description promises.
+    /// word and a zero word alike, and `insert` re-grows on demand — so after a clear the
+    /// width again describes the highest position claimed, which is what this type's own
+    /// description promises.
     fn clear(&mut self) {
-        self.bits.clear();
+        self.nwords = 0;
         self.live = 0;
     }
 
@@ -406,7 +606,7 @@ impl Claims {
 
     /// Every marked position, ascending.
     fn positions(&self) -> impl Iterator<Item = u32> + '_ {
-        self.bits.iter().enumerate().flat_map(|(w, &bits)| {
+        self.words().iter().enumerate().flat_map(|(w, &bits)| {
             (0..64u32)
                 .filter(move |b| (bits >> b) & 1 == 1)
                 .map(move |b| (w as u32) * 64 + b)
@@ -416,14 +616,15 @@ impl Claims {
     /// The lowest member at or after `from` — a word of 64 positions per step, so a walk
     /// over the members skips everything between them.
     fn next_at_or_after(&self, from: u32) -> Option<u32> {
+        let words = self.words();
         let mut word = (from >> 6) as usize;
-        let mut bits = self.bits.get(word)? & (!0u64 << (from & 63));
+        let mut bits = words.get(word)? & (!0u64 << (from & 63));
         loop {
             if bits != 0 {
                 return Some(((word as u32) << 6) | bits.trailing_zeros());
             }
             word += 1;
-            bits = *self.bits.get(word)?;
+            bits = *words.get(word)?;
         }
     }
 
@@ -432,60 +633,40 @@ impl Claims {
     }
 }
 
-// A low-level heap store: the several flags (free / read_only /
+// A low-level heap store: the several flags (live / read_only /
 // free_protected / borrowed) are independent state bits on the same
 // allocation, not a bundle that should become an enum.
+/// `@PLN206 P3` — the fields up to `hgen` are the C runtime's `loft_store_t`, in its order and
+/// with its types (`#[repr(C)]`), so both allocators read and write one store with one meaning;
+/// `tests/store_layout.rs` compares every offset with the C struct's.  The fields after `hgen`
+/// are the interpreter's alone.
+#[repr(C)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Store {
+    /// `@PLN206 P3` — the store's words: the C runtime's `buf`.
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
-    claims: Claims,
-    /// `@FR-H-Removed` — the records a stored reference has named ([`Store::note_referenced`]).  Only
-    /// ever set: with no back references, nothing can tell when the last reference went.
-    referenced: Claims,
-    /// `@FR-H-Removed` — the positions of removed records a stored reference had named.
-    /// Each keeps its header word as a one-word block that no claim reuses, so a reference
-    /// still naming it reads null ([`Store::is_removed`]) instead of whatever came next.
-    removed: Claims,
-    /// `@FR-H-DropOnce` — the root record's value was released by its `OpDrop`
-    /// (`Stores::drop_leave`); cleared when the root position is claimed again.
-    pub(crate) released_root: bool,
-    /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
-    /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
-    /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
-    pub(crate) stack_buffer: bool,
     size: u32,
-    #[cfg(feature = "mmap")]
-    file: Option<MmapStorage>,
-    /// Every byte of the buffer is written — zeroed at creation and on growth, or copied
-    /// from an image.  An ordinary store fills nothing (`@FR-H-Claim`): a claim promises
-    /// no value and loft never reads a byte it did not write, so its buffer holds whatever
-    /// the allocator handed out.  A store whose raw bytes leave the process as they are — an
-    /// image, a placement arena, a resume image — is created DEFINED instead
-    /// ([`Store::new_defined`]), so no byte it never wrote reaches a file or a peer, and
-    /// reading it whole is not a read of uninitialised memory.  [`Store::raw_bytes`] asks
-    /// for it (@C154).
-    pub(crate) defined: bool,
-    /// @PLN126 — the word past the highest block ever claimed, carried forward by
-    /// [`Store::claim_block`]: a monotone UPPER bound on [`StoreUsage::live_end_words`]
-    /// that never costs a chain walk.  The lazy sweep's trigger reads it
-    /// ([`Store::sweep_due`]).  `0` means "not established yet".
-    claimed_end: u32,
-    pub(crate) free: bool,
-    /// HARD lock: when `true`, the store is immutable.  All `addr_mut`,
-    /// `claim`, and `delete` calls panic.  Set by CONST_STORE init
-    /// (`compile.rs`), the JSON null sentinel (`native.rs`), and worker
-    /// store borrows (`clone_locked` / `borrow_locked_for_light_worker`).
-    /// Cleared via `unlock()`.
-    pub read_only: bool,
-    /// Is the `read_only` above the AUTHOR's lock (`d#lock = true`) rather than an
-    /// internal one?  `read_only` is one flag for three different things — the const
-    /// store, a worker borrow, and the user's `#lock` — and only the last is a mistake
-    /// the author can make and fix.  Set exactly where the user route sets the lock
-    /// (`Stores::lock_store`, the one call `n_set_store_lock` makes on both backends)
-    /// and cleared by `unlock()` with it, so a refusal can name the author's fault
-    /// instead of asserting an internal invariant at them (loft#1405).
-    pub user_locked: bool,
+    /// The slot holds a store in use; `false` once it is freed (the C runtime's `live`).
+    pub(crate) live: bool,
+    /// P259 — type-id of the loft type whose root record lives at
+    /// `(rec=1, pos=8)` of this store.  `u16::MAX` when unknown
+    /// (raw stores not allocated through `database_named`).
+    /// Read by `Stores::free_named` to gate the cascade-free walk on
+    /// closure records (type name starts with `__closure_`) —
+    /// see commit 4 of the P259 fix.
+    ///
+    /// WRITE it through [`Store::set_known_type`], which moves the store's bytes to
+    /// the new type in the memory-ceiling accounting.  Assigning the field directly
+    /// still compiles and stays sound — the ceiling itself counts bytes, not types —
+    /// but it leaves those bytes filed under the previous type in the
+    /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
+    /// is the one place they have to be right.
+    pub known_type: u16,
+    /// Plan-57 Phase C: const/global stores are PINNED — `free_named` never
+    /// frees them (they live for the whole program).  Replaced the Stores
+    /// ref-count (deleted) as the only per-store free gate.
+    pub pinned: bool,
     /// SOFT lock: when `true`, only `delete` is illegal — `addr_mut`
     /// and `claim` are still allowed.  Set by the fn-call deep-copy
     /// bracket (`Stores::lock_store(&r)` from
@@ -504,6 +685,50 @@ pub struct Store {
     /// the outer copy's source-free would free the caller's own argument.  Depth
     /// makes the brackets nest: protection lifts when the LAST one closes.
     pub free_protect_depth: u32,
+    /// HARD lock: when `true`, the store is immutable.  All `addr_mut`,
+    /// `claim`, and `delete` calls panic.  Set by CONST_STORE init
+    /// (`compile.rs`), the JSON null sentinel (`native.rs`), and worker
+    /// store borrows (`clone_locked` / `borrow_locked_for_light_worker`).
+    /// Cleared via `unlock()`.
+    pub read_only: bool,
+    /// Which allocation this slot is, on `Stores`' monotonic counter.
+    ///
+    /// Slot NUMBERS are reused, so `store_nr` alone cannot answer *"is this the same store I
+    /// saw earlier?"* — and two questions in the fn-ref return path need exactly that: whether
+    /// a returned store was minted DURING a call (`State::release_fnref_bufs`, loft#1185), and
+    /// whether a remembered handle still names what it named when it was remembered. The
+    /// counter never repeats within a run, so a comparison against a snapshot answers both.
+    ///
+    /// Stamped where the slot goes live, beside `created_at`, which records WHERE rather than
+    /// WHEN.
+    pub alloc_serial: u64,
+    claims: Claims,
+    /// `@FR-H-Removed` — the records a stored reference has named ([`Store::note_referenced`]).  Only
+    /// ever set: with no back references, nothing can tell when the last reference went.
+    referenced: Claims,
+    /// `@FR-H-Removed` — the positions of removed records a stored reference had named.
+    /// Each keeps its header word as a one-word block that no claim reuses, so a reference
+    /// still naming it reads null ([`Store::is_removed`]) instead of whatever came next.
+    removed: Claims,
+    /// The start of every untracked free block the lazy phase holds: what confirms a
+    /// backward merge (a footer alone can be spelled by claimed data) and what tells a
+    /// consumer the block it takes was dead.  Empty outside the phase.
+    lazy_free: Claims,
+    /// `@FR-H-Park` — the starts of the parked blocks: what tells a parked block from a tree
+    /// node or a lazily freed one (claimed data can spell a free header; the set cannot lie).
+    parked_set: Claims,
+    /// `@FR-H-DropOnce` — the root record's value was released by its `OpDrop`
+    /// (`Stores::drop_leave`); cleared when the root position is claimed again.
+    pub(crate) released_root: bool,
+    /// `@FR-H-Park` — the head of the parked list of each exact size.  Empty when `no_park`.
+    parked_heads: [u32; PARK_MAX_WORDS as usize + 1],
+    /// `@FR-H-Park` — the blocks parked now.
+    parked_count: u32,
+    /// @PLN126 — the word past the highest block ever claimed, carried forward by
+    /// [`Store::claim_block`]: a monotone UPPER bound on [`StoreUsage::live_end_words`]
+    /// that never costs a chain walk.  The lazy sweep's trigger reads it
+    /// ([`Store::sweep_due`]).  `0` means "not established yet".
+    claimed_end: u32,
     /// Root of the LLRB free-space tree (0 = empty).
     /// Populated lazily: `open()` calls `fl_rebuild()`; `new()` starts empty
     /// and the tree fills as blocks are freed.
@@ -517,11 +742,9 @@ pub struct Store {
     /// saves is the delete, split-insert and rebalance of the one node most claims and many
     /// deletes touch.
     wild: u32,
-    /// Whether this store keeps a wilderness (`LOFT_NO_WILDERNESS`), read at construction.
-    wilderness: bool,
-    /// Whether a best-fit claim whose remainder is at least the request carves the taken
-    /// node IN PLACE (`@FR-H-Carve`, `LOFT_NO_CARVE_IN_PLACE`), read at construction.
-    carve: bool,
+    /// The words the lazy phase holds untracked right now: added at a lazy delete, taken
+    /// off where a claim, a resize, a merge or a growth step consumes such a block.
+    dead_words: u32,
     /// P6: set by `delete` whenever a free block is produced; cleared by
     /// `coalesce_free`.  `claim` runs the lazy coalescing sweep only when
     /// this is set (something was freed since the last sweep), so an
@@ -536,28 +759,69 @@ pub struct Store {
     /// A fresh or reset store starts the phase again; a store bound to a file never
     /// enters it.
     lazy: bool,
-    /// The words the lazy phase holds untracked right now: added at a lazy delete, taken
-    /// off where a claim, a resize, a merge or a growth step consumes such a block.
-    dead_words: u32,
-    /// The start of every untracked free block the lazy phase holds: what confirms a
-    /// backward merge (a footer alone can be spelled by claimed data) and what tells a
-    /// consumer the block it takes was dead.  Empty outside the phase.
-    lazy_free: Claims,
-    /// `@FR-H-Park` — whether this store parks small freed blocks: a heap store with
-    /// `LOFT_NO_PARK` unset; a store bound to a file never does, as it never enters the
-    /// lazy phase.
-    /// A test's switch: every growth MOVES the buffer and scribbles the block it leaves, as
-    /// `LOFT_POISON=1` makes every store do — so a test can rely on the move it is about.
-    move_on_grow: bool,
-    park: bool,
-    /// `@FR-H-Park` — the parked blocks, by exact size.  Empty when `park` is off.
-    parked: Parked,
+    /// Every byte of the buffer is written — zeroed at creation and on growth, or copied
+    /// from an image.  An ordinary store fills nothing (`@FR-H-Claim`): a claim promises
+    /// no value and loft never reads a byte it did not write, so its buffer holds whatever
+    /// the allocator handed out.  A store whose raw bytes leave the process as they are — an
+    /// image, a placement arena, a resume image — is created DEFINED instead
+    /// ([`Store::new_defined`]), so no byte it never wrote reaches a file or a peer, and
+    /// reading it whole is not a read of uninitialised memory.  [`Store::raw_bytes`] asks
+    /// for it (@C154).
+    pub(crate) defined: bool,
+    /// `@FR-H-Park` — this store parks no small freed block: a store bound to a file, or any
+    /// store under `LOFT_NO_PARK` (the C runtime's `no_park`).
+    no_park: bool,
     /// `@FR-H-RootExtent` — the live records `OpPlaceRecord` put in this store that are NOT
     /// elements of its root collection (`Stores::place_record_prefilled`): an `R-ExitVector`
     /// wrapper claimed in a one-field return buffer's store is one.  While any is live the
     /// root's extent is not the store's extent, so the store is neither reset by a clear
     /// nor exchanged with another (loft#2157).  [`Self::delete`] drops each as it goes.
-    placed_foreign: Vec<u32>,
+    placed: U32List,
+    /// `@FR-G-Arg-Rebind` — the live generator frames that name this store as an argument.
+    /// A free while one does only orphans the store ([`Store::orphaned`]); the last frame's
+    /// release frees it (`Stores::release_frame_hold`).  Runtime-only: a copy starts at 0.
+    pub frame_holds: u32,
+    /// `@FR-G-Arg-Rebind` — the owner let go of this store while a frame held it.
+    pub orphaned: bool,
+    /// The C runtime's mapped length (`loft_mapped.h`).  The interpreter's own file-backed store
+    /// keeps its mapping in `file` and leaves this 0: a hosted C call is never made on one
+    /// (`p3-p4-design.md`, failure path 5).
+    mapped: usize,
+    /// The C runtime's open mapped file.  0 here, as `mapped`.
+    map_file: isize,
+    /// The C runtime's closure-copy share count (`loft_copy_closure`), at its offset.  Not the
+    /// interpreter's count, which `closure_share.rs` keeps beside the table: this stays 0, and a
+    /// hosted call is never made on a closure's store (`p3-p4-design.md`, failure path 5).
+    c_share_count: u32,
+    /// The C runtime's table-handle generation (`@FR-R-TableHandle`, `loft_h_reshaped`).  The
+    /// interpreter caches no table handle and leaves it 0.
+    hgen: u64,
+    /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
+    /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
+    /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
+    pub(crate) stack_buffer: bool,
+    /// A store an interpreter state makes for itself — its value stack and its constant store
+    /// (STORE_MODEL D26): how the interpreter executes, not a store of the program, so
+    /// `store_memory()` leaves it out and a compiled program, which has neither, reports the same.
+    pub(crate) runtime_own: bool,
+    #[cfg(feature = "mmap")]
+    file: Option<MmapStorage>,
+    /// Is the `read_only` above the AUTHOR's lock (`d#lock = true`) rather than an
+    /// internal one?  `read_only` is one flag for three different things — the const
+    /// store, a worker borrow, and the user's `#lock` — and only the last is a mistake
+    /// the author can make and fix.  Set exactly where the user route sets the lock
+    /// (`Stores::lock_store`, the one call `n_set_store_lock` makes on both backends)
+    /// and cleared by `unlock()` with it, so a refusal can name the author's fault
+    /// instead of asserting an internal invariant at them (loft#1405).
+    pub user_locked: bool,
+    /// Whether this store keeps a wilderness (`LOFT_NO_WILDERNESS`), read at construction.
+    wilderness: bool,
+    /// Whether a best-fit claim whose remainder is at least the request carves the taken
+    /// node IN PLACE (`@FR-H-Carve`, `LOFT_NO_CARVE_IN_PLACE`), read at construction.
+    carve: bool,
+    /// A test's switch: every growth MOVES the buffer and scribbles the block it leaves, as
+    /// `LOFT_POISON=1` makes every store do — so a test can rely on the move it is about.
+    move_on_grow: bool,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -587,17 +851,11 @@ pub struct Store {
     ///
     /// `u16::MAX` until the slot goes live.
     pub store_nr: u16,
-    /// Which allocation this slot is, on `Stores`' monotonic counter.
-    ///
-    /// Slot NUMBERS are reused, so `store_nr` alone cannot answer *"is this the same store I
-    /// saw earlier?"* — and two questions in the fn-ref return path need exactly that: whether
-    /// a returned store was minted DURING a call (`State::release_fnref_bufs`, loft#1185), and
-    /// whether a remembered handle still names what it named when it was remembered. The
-    /// counter never repeats within a run, so a comparison against a snapshot answers both.
-    ///
-    /// Stamped where the slot goes live, beside `created_at`, which records WHERE rather than
-    /// WHEN.
-    pub alloc_serial: u64,
+    /// `LOFT_ALLOC_TRACE`: the `par` worker that made the store (0 the main thread), so every
+    /// event on it carries one name — `<worker>.<serial>` — whichever thread writes it, an
+    /// adopted worker store's free on the main thread included (`Store::trace_name`).
+    #[cfg(feature = "op-census")]
+    pub trace_worker: u32,
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
@@ -607,10 +865,6 @@ pub struct Store {
     /// Bytecode position of the last significant operation on this store
     /// (OpCopyRecord, OpFreeRef skip, ref_count change, etc.).
     pub last_op_at: u32,
-    /// Plan-57 Phase C: const/global stores are PINNED — `free_named` never
-    /// frees them (they live for the whole program).  Replaced the Stores
-    /// ref-count (deleted) as the only per-store free gate.
-    pub pinned: bool,
     /// Plan-22 02d-vii follow-up — identifier of the call site that
     /// most recently locked this store.  Empty when the store is
     /// unlocked or was locked without an origin (legacy callers).
@@ -618,20 +872,6 @@ pub struct Store {
     /// so a "Write to read-only store" failure points directly at the
     /// locker rather than requiring `LOFT_LOG=locks` to re-trace.
     pub lock_origin: std::borrow::Cow<'static, str>,
-    /// P259 — type-id of the loft type whose root record lives at
-    /// `(rec=1, pos=8)` of this store.  `u16::MAX` when unknown
-    /// (raw stores not allocated through `database_named`).
-    /// Read by `Stores::free_named` to gate the cascade-free walk on
-    /// closure records (type name starts with `__closure_`) —
-    /// see commit 4 of the P259 fix.
-    ///
-    /// WRITE it through [`Store::set_known_type`], which moves the store's bytes to
-    /// the new type in the memory-ceiling accounting.  Assigning the field directly
-    /// still compiles and stays sound — the ceiling itself counts bytes, not types —
-    /// but it leaves those bytes filed under the previous type in the
-    /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
-    /// is the one place they have to be right.
-    pub known_type: u16,
     /// @C148 — what `record#errors` reads: the errors of the `Type.parse(…)` call that built this
     /// store's root — the text read or the `JsonValue` walk, one element per value that did
     /// not fit — empty for a store no parse built.  CONTENT, like
@@ -895,6 +1135,18 @@ fn discard_sink(len: usize) -> *mut u8 {
 }
 
 impl Store {
+    /// The store's name in `LOFT_ALLOC_TRACE`: its serial, prefixed with the `par` worker that
+    /// made it (`<worker>.<serial>`) — a worker numbers its stores on its own.
+    #[cfg(feature = "op-census")]
+    #[must_use]
+    pub fn trace_name(&self) -> String {
+        if self.trace_worker == 0 {
+            self.alloc_serial.to_string()
+        } else {
+            format!("{}.{}", self.trace_worker, self.alloc_serial)
+        }
+    }
+
     /// True when this store's memory IS a memory-mapped file ([`Store::open_mapped`]).
     #[must_use]
     pub fn is_file_backed(&self) -> bool {
@@ -1229,15 +1481,18 @@ impl Store {
             released_root: false,
             #[cfg(feature = "mmap")]
             file: None,
-            free: true,
+            live: false,
             read_only: false,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1249,16 +1504,24 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: park_enabled(),
+            no_park: !park_enabled(),
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined,
             generation: 0,
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1280,7 +1543,7 @@ impl Store {
     #[must_use]
     pub fn new_in_use(size: u32) -> Store {
         let mut store = Store::new(size);
-        store.free = false;
+        store.live = true;
         store
     }
 
@@ -1288,7 +1551,7 @@ impl Store {
     /// whose raw bytes become an image.
     pub fn new_in_use_defined(size: u32) -> Store {
         let mut store = Store::new_defined(size);
-        store.free = false;
+        store.live = true;
         store
     }
 
@@ -1297,7 +1560,7 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn set_park(&mut self, on: bool) {
         self.flush_parked();
-        self.park = on;
+        self.no_park = !on;
     }
 
     /// Do these leading bytes carry the store [`SIGNATURE`]?
@@ -1429,7 +1692,7 @@ impl Store {
             // before any `adopt_store` registration could clear the
             // flag) — unlike `Store::new`, whose blank store stays
             // `free` until the database layer registers it.
-            free: false,
+            live: true,
             read_only: false,
             user_locked: false,
             foreign: None,
@@ -1444,10 +1707,16 @@ impl Store {
             lazy: false,
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: false,
+            no_park: true,
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1455,12 +1724,17 @@ impl Store {
             tag: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1534,15 +1808,18 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
-            free: false,
+            live: true,
             read_only: false,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1556,16 +1833,24 @@ impl Store {
             lazy: false,
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: false,
+            no_park: true,
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: true,
             generation: 0,
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1658,15 +1943,18 @@ impl Store {
             released_root: false,
             #[cfg(feature = "mmap")]
             file: None,
-            free: false,
+            live: true,
             read_only: false,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1678,16 +1966,24 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: park_enabled(),
+            no_park: !park_enabled(),
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: true,
             generation: 0,
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1740,8 +2036,8 @@ impl Store {
         self.needs_coalesce = false;
         self.lazy_free.clear();
         // `@FR-H-Park` — the whole store is one free block again: nothing is parked.
-        self.parked.clear();
-        self.placed_foreign.clear();
+        self.clear_parked();
+        self.placed.clear();
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -1801,7 +2097,7 @@ impl Store {
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!(
             "C {} {} {pos}",
-            self.alloc_serial,
+            self.trace_name(),
             self.read::<i32>(pos, 0)
         ));
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
@@ -1869,7 +2165,7 @@ impl Store {
             self.lazy_free.clear();
         }
         // `@FR-H-Park` — a block parked at exactly this size is the claim: one list pop.
-        if self.parked.count != 0
+        if self.parked_count != 0
             && let Some(pos) = self.pop_parked(size)
         {
             return self.finish_claim(pos);
@@ -1901,7 +2197,7 @@ impl Store {
         // `@FR-H-Park` — before the store sweeps or grows, the parked blocks are freed
         // through the tree, merging with their neighbours, and the tree is asked again: the
         // store grows no sooner than it would have without the lists.
-        if self.parked.count != 0 {
+        if self.parked_count != 0 {
             self.flush_parked();
             if let Some(result) = self.claim_best_fit(size) {
                 #[cfg(debug_assertions)]
@@ -1948,7 +2244,7 @@ impl Store {
                 break;
             }
             let nh = self.read::<i32>(next, 0);
-            if nh >= 0 || self.parked.set.contains(next) {
+            if nh >= 0 || self.parked_set.contains(next) {
                 break;
             }
             self.forget_free(next);
@@ -2004,19 +2300,19 @@ impl Store {
     /// so every walk of the store reads it as free, pushed on the list for its exact size.
     fn park_block(&mut self, rec: u32, words: i32) {
         debug_assert!(
-            !self.parked.set.contains(rec),
+            !self.parked_set.contains(rec),
             "block {rec} ({words} words) parked twice (loft#2031)"
         );
         self.set_free_header(rec, words);
-        let head = self.parked.heads[words as usize];
+        let head = self.parked_heads[words as usize];
         self.write_block_meta::<u32>(rec, PARK_PREV, 0);
         self.write_block_meta::<u32>(rec, PARK_NEXT, head);
         if head != 0 {
             self.write_block_meta::<u32>(head, PARK_PREV, rec);
         }
-        self.parked.heads[words as usize] = rec;
-        self.parked.set.insert(rec);
-        self.parked.count += 1;
+        self.parked_heads[words as usize] = rec;
+        self.parked_set.insert(rec);
+        self.parked_count += 1;
     }
 
     /// `@FR-H-Park` — take the parked block at `rec` off its list; it stays a free block.
@@ -2024,31 +2320,31 @@ impl Store {
         let prev = self.read::<u32>(rec, PARK_PREV);
         let next = self.read::<u32>(rec, PARK_NEXT);
         if prev == 0 {
-            self.parked.heads[self.fl_size(rec) as usize] = next;
+            self.parked_heads[self.fl_size(rec) as usize] = next;
         } else {
             self.write_block_meta::<u32>(prev, PARK_NEXT, next);
         }
         if next != 0 {
             self.write_block_meta::<u32>(next, PARK_PREV, prev);
         }
-        self.parked.set.remove(rec);
-        self.parked.count -= 1;
+        self.parked_set.remove(rec);
+        self.parked_count -= 1;
     }
 
     /// `@FR-H-Park` — claim a block parked at exactly `size` words, if one is.
     #[inline]
     fn pop_parked(&mut self, size: u32) -> Option<u32> {
-        let rec = *self.parked.heads.get(size as usize)?;
+        let rec = *self.parked_heads.get(size as usize)?;
         if rec == 0 {
             return None;
         }
         let next = self.read::<u32>(rec, PARK_NEXT);
-        self.parked.heads[size as usize] = next;
+        self.parked_heads[size as usize] = next;
         if next != 0 {
             self.write_block_meta::<u32>(next, PARK_PREV, 0);
         }
-        self.parked.set.remove(rec);
-        self.parked.count -= 1;
+        self.parked_set.remove(rec);
+        self.parked_count -= 1;
         self.write(rec, 0, size as i32);
         self.claims.insert(rec);
         if let Some(log) = self.recording.as_mut() {
@@ -2064,10 +2360,10 @@ impl Store {
         for words in MIN_FREE_TREE..=PARK_MAX_WORDS {
             // The count falls with every pop, so the bound is read once: a list longer
             // than every parked block together is a cycle (loft#2031).
-            let bound = self.parked.count + 1;
+            let bound = self.parked_count + 1;
             let mut steps = 0u32;
             loop {
-                let rec = self.parked.heads[words as usize];
+                let rec = self.parked_heads[words as usize];
                 if rec == 0 {
                     break;
                 }
@@ -2098,7 +2394,7 @@ impl Store {
 
     /// `@FR-H-Park` — whether the free footer before `rec` names a parked block.
     fn parked_predecessor(&self, rec: u32) -> bool {
-        if self.parked.count == 0 || self.claimed_block_ends_at(rec) {
+        if self.parked_count == 0 || self.claimed_block_ends_at(rec) {
             return false;
         }
         let f = self.read::<i32>(rec - 1, 4);
@@ -2106,7 +2402,7 @@ impl Store {
             return false;
         };
         rec.checked_sub(words as u32).is_some_and(|prev| {
-            prev >= PRIMARY && self.parked.set.contains(prev) && self.read::<i32>(prev, 0) == f
+            prev >= PRIMARY && self.parked_set.contains(prev) && self.read::<i32>(prev, 0) == f
         })
     }
 
@@ -2320,7 +2616,7 @@ impl Store {
     fn claim_scan(&mut self, size: u32) -> u32 {
         // `@FR-H-Park` — `claim` flushes the lists before it gets here, so the scan's indexes
         // (`@FR-H-ScanIndex`) hold every free block: no parked one is left for the walk to meet.
-        debug_assert_eq!(self.parked.count, 0, "a claim scanned past parked blocks");
+        debug_assert_eq!(self.parked_count, 0, "a claim scanned past parked blocks");
         let req_size = size as i32;
         let (mut pos, last, claim) = self
             .indexed_scan(req_size)
@@ -2427,7 +2723,7 @@ impl Store {
                 #[cfg(feature = "op-census")]
                 crate::store_census::alloc_event(format_args!(
                     "R {} {rec} {} {rec}",
-                    self.alloc_serial,
+                    self.trace_name(),
                     self.read::<i32>(rec, 0)
                 ));
                 return rec;
@@ -2447,7 +2743,7 @@ impl Store {
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!(
             "R {} {rec} {} {new}",
-            self.alloc_serial,
+            self.trace_name(),
             self.read::<i32>(new, 0)
         ));
         new
@@ -2643,13 +2939,13 @@ impl Store {
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("D {} {rec}", self.alloc_serial));
+        crate::store_census::alloc_event(format_args!("D {} {rec}", self.trace_name()));
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
         self.valid(rec, 4);
-        if !self.placed_foreign.is_empty() {
-            self.placed_foreign.retain(|&r| r != rec);
+        if !self.placed.is_empty() {
+            self.placed.retain(|&r| r != rec);
         }
         // `@FR-H-Removed` — a record a stored reference named keeps its position: every
         // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
@@ -2677,7 +2973,7 @@ impl Store {
         // nothing, for the next claim of that size to pop.  Not a block that ends the store
         // (it joins the wilderness), and not while the edit journal records: its undo
         // restores a freed block by position, and replays each claim by `claim_at`.
-        if self.park
+        if !self.no_park
             && (MIN_FREE_TREE..=PARK_MAX_WORDS).contains(&words)
             && self.recording.is_none()
             && rec + words as u32 != self.size
@@ -2707,7 +3003,7 @@ impl Store {
         while (rec + claim as u32) < self.size {
             let next_pos = rec + claim as u32;
             let next_header = self.read::<i32>(next_pos, 0);
-            if next_header >= 0 || self.parked.set.contains(next_pos) {
+            if next_header >= 0 || self.parked_set.contains(next_pos) {
                 break;
             }
             // Remove the about-to-be-absorbed block from the tree before merging.
@@ -2825,7 +3121,7 @@ impl Store {
     /// @PLN16.J — begin buffering structural changes for the debugger's edit journal.
     /// No-op on a locked / freed store (those are never edit targets).
     pub(crate) fn start_recording(&mut self) {
-        if !self.free && !self.read_only {
+        if self.live && !self.read_only {
             self.recording = Some(Vec::new());
         }
     }
@@ -2841,7 +3137,7 @@ impl Store {
         if !cfg!(debug_assertions) {
             return;
         }
-        assert!(!self.free, "Using a freed store");
+        assert!(self.live, "Using a freed store");
         let mut pos = PRIMARY;
         let mut alloc = 0;
         while pos < self.size {
@@ -2941,7 +3237,7 @@ impl Store {
             capacity_words: self.size,
             ..StoreUsage::default()
         };
-        if self.free || self.size <= PRIMARY {
+        if !self.live || self.size <= PRIMARY {
             return u;
         }
         let mut pos = PRIMARY;
@@ -2956,7 +3252,7 @@ impl Store {
             let sz = claim.unsigned_abs();
             if claim < 0 {
                 u.free_words += sz;
-                let parked = self.parked.count != 0 && self.parked.set.contains(pos);
+                let parked = self.parked_count != 0 && self.parked_set.contains(pos);
                 if prev_was_free && (run_parked || parked) {
                     // `@FR-H-Park` — a parked block's merge is deferred, not missed: the flush
                     // frees it forward over every free block that follows, so the run is the
@@ -3316,7 +3612,7 @@ impl Store {
     /// deep-copy bracket) guards the slot against a FREE, so it refuses only the side the
     /// exchange then frees: `released` is that side.
     pub(crate) fn content_swappable(&self, released: bool) -> bool {
-        !self.free
+        self.live
             && !self.read_only
             && !self.user_locked
             && !self.borrowed
@@ -3327,18 +3623,25 @@ impl Store {
             && self.foreign.is_none()
             && self.recording.is_none()
             && self.tag == 0
-            && self.placed_foreign.is_empty()
+            && self.placed.is_empty()
     }
 
     /// `@FR-H-RootExtent` — record `rec` was placed here from outside the root collection.
+    /// `@FR-H-Park` — forget every parked block.
+    fn clear_parked(&mut self) {
+        self.parked_heads = [0; PARK_MAX_WORDS as usize + 1];
+        self.parked_set.clear();
+        self.parked_count = 0;
+    }
+
     pub(crate) fn note_placed_foreign(&mut self, rec: u32) {
-        self.placed_foreign.push(rec);
+        self.placed.push(rec);
     }
 
     /// `@FR-H-RootExtent` — does every live record of this store belong to its root
     /// collection, as far as placement can tell?  A clear may reset the store only then.
     pub(crate) fn root_owns_extent(&self) -> bool {
-        self.placed_foreign.is_empty()
+        self.placed.is_empty()
     }
 
     /// Does this store hold exactly one live record, its root at record 1 — the shape a
@@ -3369,13 +3672,15 @@ impl Store {
         std::mem::swap(&mut a.lazy, &mut b.lazy);
         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
-        std::mem::swap(&mut a.placed_foreign, &mut b.placed_foreign);
+        std::mem::swap(&mut a.placed, &mut b.placed);
         // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
         // lists and the set move with it (loft#2031: left behind, a store's set named live
         // records of the content it received, a delete parked one of them twice, and the
         // flush walked a list whose links were that record's bytes — for ever).
-        std::mem::swap(&mut a.park, &mut b.park);
-        std::mem::swap(&mut a.parked, &mut b.parked);
+        std::mem::swap(&mut a.no_park, &mut b.no_park);
+        std::mem::swap(&mut a.parked_set, &mut b.parked_set);
+        std::mem::swap(&mut a.parked_heads, &mut b.parked_heads);
+        std::mem::swap(&mut a.parked_count, &mut b.parked_count);
         std::mem::swap(&mut a.known_type, &mut b.known_type);
         std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
         std::mem::swap(&mut a.parse_type, &mut b.parse_type);
@@ -3393,7 +3698,7 @@ impl Store {
     /// has to ask this rather than read a value back.
     #[must_use]
     pub fn is_free(&self) -> bool {
-        self.free
+        !self.live
     }
 
     /// Return whether this store is a borrowed view of another store's buffer.
@@ -3476,7 +3781,7 @@ impl Store {
             released_root: self.released_root,
             #[cfg(feature = "mmap")]
             file: None,
-            free: self.free,
+            live: self.live,
             read_only: true,
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
@@ -3493,10 +3798,16 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: false,
+            no_park: true,
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3504,12 +3815,17 @@ impl Store {
             tag: self.tag,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3525,6 +3841,25 @@ impl Store {
     /// store resumes *execution* and will `claim`/`delete`, unlike a worker borrow which never
     /// allocates.  The caller guarantees `!self.is_file_backed()`; the copy is heap-owned
     /// (`file = None`, `borrowed = false`) so `Drop` deallocates it correctly.
+    /// `@PLN206 P4d` — [`snapshot_copy`](Self::snapshot_copy) that keeps the store's locks: a
+    /// copy that stands in for this store in a second world (`Stores::world_copy`), where the
+    /// constant store is read-only as it is here.
+    #[must_use]
+    pub(crate) fn exact_copy(&self) -> Store {
+        let mut c = self.snapshot_copy();
+        c.read_only = self.read_only;
+        c.user_locked = self.user_locked;
+        c.lock_origin.clone_from(&self.lock_origin);
+        // What steers the next claim and free: the lazy sweep fires on `claimed_end`, so a
+        // copy that restarted it would sweep where the store itself does not, and place a
+        // record elsewhere (`LOFT_HOSTED_VERIFY`'s twin, @PLN206 P5).
+        c.claimed_end = self.claimed_end;
+        c.frame_holds = self.frame_holds;
+        c.c_share_count = self.c_share_count;
+        c.hgen = self.hgen;
+        c
+    }
+
     #[must_use]
     pub(crate) fn snapshot_copy(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("snapshot layout");
@@ -3546,7 +3881,7 @@ impl Store {
             released_root: self.released_root,
             #[cfg(feature = "mmap")]
             file: None,
-            free: self.free,
+            live: self.live,
             read_only: false,
             user_locked: false,
             // @PLN174 — a checkpoint of a foreign store keeps serving its span (shared).
@@ -3554,8 +3889,11 @@ impl Store {
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
             stack_buffer: self.stack_buffer,
+            runtime_own: self.runtime_own,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
+            #[cfg(feature = "op-census")]
+            trace_worker: self.trace_worker,
             created_at: self.created_at,
             freed_at: self.freed_at,
             last_op_at: self.last_op_at,
@@ -3567,16 +3905,24 @@ impl Store {
             lazy: self.lazy,
             dead_words: self.dead_words,
             lazy_free: self.lazy_free.clone(),
-            park: self.park,
+            no_park: self.no_park,
             move_on_grow: self.move_on_grow,
-            parked: self.parked.clone(),
-            placed_foreign: self.placed_foreign.clone(),
+            parked_set: self.parked_set.clone(),
+            parked_heads: self.parked_heads,
+            parked_count: self.parked_count,
+            placed: self.placed.clone(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
             recording: None,
             tag: self.tag,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3602,7 +3948,7 @@ impl Store {
             size: self.size,
             #[cfg(feature = "mmap")]
             file: None,
-            free: false,
+            live: true,
             read_only: true,
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
@@ -3620,10 +3966,16 @@ impl Store {
             lazy: lazy_free_enabled(),
             dead_words: 0,
             lazy_free: Claims::default(),
-            park: false,
+            no_park: true,
             move_on_grow: false,
-            parked: Parked::default(),
-            placed_foreign: Vec::new(),
+            parked_set: Claims::default(),
+            parked_heads: [0; PARK_MAX_WORDS as usize + 1],
+            parked_count: 0,
+            placed: U32List::default(),
+            mapped: 0,
+            map_file: 0,
+            c_share_count: 0,
+            hgen: 0,
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3631,12 +3983,17 @@ impl Store {
             tag: self.tag,
             borrowed: true,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3649,7 +4006,7 @@ impl Store {
     /// Tiny allocation, no data — just a placeholder so the worker's slot indices align.
     pub fn new_freed_sentinel() -> Store {
         let mut s = Store::new(4);
-        s.free = true;
+        s.live = false;
         s
     }
 
@@ -3978,7 +4335,7 @@ impl Store {
     fn fl_remove(&mut self, rec: u32) {
         // `@FR-H-Park` — a parked block leaves its list: the exact-position claim, an
         // in-place resize and the growth step take it like any free block.
-        if self.parked.count != 0 && self.parked.set.contains(rec) {
+        if self.parked_count != 0 && self.parked_set.contains(rec) {
             self.unpark(rec);
             return;
         }
@@ -4065,7 +4422,7 @@ impl Store {
         self.lazy_free.clear();
         self.dead_words = 0;
         // `@FR-H-Park` — and the parked blocks: each is a free block the walk tracks.
-        self.parked.clear();
+        self.clear_parked();
         let mut pos = PRIMARY;
         while pos < self.size {
             let header = self.read::<i32>(pos, 0);
@@ -5999,6 +6356,16 @@ pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
     }
 }
 
+/// `@PLN206 P3` — the length of the interpreter's own fields after the shared prefix: what a
+/// hosted C unit is built with (`-DLOFT_HOST_STORE_TAIL`), so its `loft_store_t` is a `Store`
+/// and `loft_stores[nr]` is `allocations[nr]` (`src/store/layout.rs` checks both sizes).
+pub const HOST_STORE_TAIL: usize =
+    std::mem::size_of::<Store>() - std::mem::offset_of!(Store, stack_buffer);
+
+pub(crate) mod dump;
+#[cfg(test)]
+mod layout;
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -6362,22 +6729,22 @@ mod tests {
         for pos in [1u32, 64, 4096, 65_536] {
             claims.insert(pos);
         }
-        let wide = claims.bits.len();
+        let wide = claims.nwords;
         assert!(
             wide > 1024,
             "the set grew to describe position 65536: {wide} words"
         );
 
         claims.clear();
-        assert_eq!(claims.bits.len(), 0, "a cleared set describes no position");
+        assert_eq!(claims.nwords, 0, "a cleared set describes no position");
         assert!(
-            claims.bits.capacity() >= wide,
+            claims.cap >= wide,
             "and it keeps the allocation for the slot's next occupant"
         );
 
         // The next occupant pays for what IT holds, not for what the slot once held.
         claims.insert(1);
-        assert_eq!(claims.bits.len(), 1, "one low claim needs one word");
+        assert_eq!(claims.nwords, 1, "one low claim needs one word");
     }
 
     /// The control for the guard above: resetting the width changes no answer the set gives.
@@ -6395,7 +6762,7 @@ mod tests {
                 set.insert(pos);
             }
         }
-        zeroed.bits.fill(0); // what `clear` used to do
+        zeroed.words_mut().fill(0); // what `clear` used to do
         zeroed.live = 0;
         cleared.clear(); // what it does now
 
@@ -6442,7 +6809,7 @@ mod tests {
     #[should_panic(expected = "is not aligned for")]
     fn addr_refuses_a_misaligned_field() {
         let mut store = Store::new(8);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(4);
         let _ = store.addr::<i64>(rec, 4);
     }
@@ -6454,7 +6821,7 @@ mod tests {
     #[test]
     fn read_and_write_claim_no_alignment() {
         let mut store = Store::new(8);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(4);
         store.write::<i64>(rec, 4, -0x0123_4567_89ab_cdef);
         assert_eq!(store.read::<i64>(rec, 4), -0x0123_4567_89ab_cdef);
@@ -6478,7 +6845,7 @@ mod tests {
     #[test]
     fn free_protection_permits_a_delete() {
         let mut store = Store::new(4);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(2);
         store.set_free_protected("call_bracket(test)");
         assert!(store.is_free_protected(), "the marker is set");
@@ -6509,7 +6876,7 @@ mod tests {
     #[should_panic(expected = "claims size 0")]
     fn a_record_claiming_size_zero_is_refused_not_wrapped() {
         let mut store = Store::new(8);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(3);
         store.write::<i32>(rec, 0, 0); // the corruption the report observed
         store.zero_fill(rec);
@@ -6521,7 +6888,7 @@ mod tests {
     #[test]
     fn a_well_formed_record_still_zero_fills_its_payload() {
         let mut store = Store::new(8);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(3);
         store.set_i32_raw(rec, 4, 0x7f7f_7f7f);
         store.zero_fill(rec);
@@ -6540,7 +6907,7 @@ mod tests {
     #[should_panic(expected = "Delete on locked store")]
     fn read_only_still_refuses_a_delete() {
         let mut store = Store::new(4);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(2);
         store.read_only = true;
         store.delete(rec);
@@ -6602,7 +6969,7 @@ mod tests {
     #[test]
     fn store_grows_without_overflow() {
         let mut store = Store::new(4);
-        store.free = false; // mark as in-use so validate() does not reject it
+        store.live = true; // mark as in-use so validate() does not reject it
         for _ in 0..200 {
             store.claim(1);
         }
@@ -6692,7 +7059,7 @@ mod tests {
 
     fn fake_footer_cell(lazy: bool) {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         store.lazy = lazy;
         let a = store.claim(5);
         let b = store.claim(5);
@@ -6732,9 +7099,9 @@ mod tests {
     /// The three tests below are its cells, one per predecessor kind.
     fn merge_store(lazy: bool, park: bool) -> Store {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         store.lazy = lazy;
-        store.park = park;
+        store.no_park = !(park);
         store
     }
 
@@ -6772,7 +7139,7 @@ mod tests {
             let b = s.claim(30);
             let _c = s.claim(5);
             s.delete(a);
-            assert!(s.parked.set.contains(a), "{at}: the 4-word block parked");
+            assert!(s.parked_set.contains(a), "{at}: the 4-word block parked");
             s.delete(b);
             apart(&s, a, 4, b, 30, at);
             check_parked(&s);
@@ -6863,8 +7230,8 @@ mod tests {
     fn a_lazy_delete_merges_backward_into_a_lazy_predecessor() {
         // Sixteen words: the three blocks fill the store, so no tail can take the claim.
         let mut store = Store::new(16);
-        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-        store.free = false;
+        store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+        store.live = true;
         let a = store.claim(5);
         let b = store.claim(5);
         let _c = store.claim(5);
@@ -6888,9 +7255,9 @@ mod tests {
     fn one_word_frees_still_fall_to_the_lazy_sweep() {
         // The exact allocator's sweep (`@FR-H-FreeFooter`), not the lazy phase's.
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         store.lazy = false;
-        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
+        store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
         let _a = store.claim(4);
         let b = store.claim(1);
         let c = store.claim(4);
@@ -6916,8 +7283,8 @@ mod tests {
     #[test]
     fn a_lazy_delete_is_untracked_and_the_claim_takes_the_tail() {
         let mut store = Store::new(64);
-        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-        store.free = false;
+        store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+        store.live = true;
         assert!(store.lazy, "a fresh store starts the lazy phase");
         let _a = store.claim(5);
         let b = store.claim(5);
@@ -6974,7 +7341,7 @@ mod tests {
             "word one heads the sender's whole free space"
         );
         let mut receiver = Store::new(1024);
-        receiver.free = false;
+        receiver.live = true;
         assert!(receiver.capacity_words() < sender.capacity_words());
         let r = receiver.claim(3);
         receiver.set_u32_raw(r, 4, 77);
@@ -6996,7 +7363,7 @@ mod tests {
     #[test]
     fn below_the_floor_a_lazy_store_grows_rather_than_sweeps() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let recs: Vec<u32> = (0..10).map(|_| store.claim(5)).collect();
         for r in &recs[..8] {
             store.delete(*r);
@@ -7019,8 +7386,8 @@ mod tests {
     fn at_the_growth_bound_one_sweep_ends_the_phase() {
         let size = 4 * super::LAZY_FLOOR_WORDS;
         let mut store = Store::new(size);
-        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-        store.free = false;
+        store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+        store.live = true;
         // Fill three quarters of the store in 16-word blocks, then free every one of
         // them but the last (the survivor keeps the run off the wilderness): the dead
         // words pass the floor.
@@ -7062,7 +7429,7 @@ mod tests {
     #[test]
     fn a_lazy_free_block_beside_a_tree_is_claimed_at_its_position() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         store.wilderness = false; // the tail is a tree node, so the tree is not empty
         let a = store.claim(5);
         let _b = store.claim(5);
@@ -7084,7 +7451,7 @@ mod tests {
     #[test]
     fn a_large_block_is_tracked_at_its_delete_even_in_the_phase() {
         let mut store = Store::new(512);
-        store.free = false;
+        store.live = true;
         let big = store.claim(100);
         let _after = store.claim(5);
         store.delete(big);
@@ -7105,9 +7472,9 @@ mod tests {
         for (lazy, park) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut store = Store::new(160);
             assert!(!store.defined, "first store is not filled");
-            store.free = false;
+            store.live = true;
             store.lazy = lazy;
-            store.park = park;
+            store.no_park = !(park);
             // Sizes on each path: 5 parks (2..=16), 40 is lazy-small (<= 64), 80 is exact.
             let first = store.claim(5);
             let second = store.claim(5);
@@ -7143,8 +7510,8 @@ mod tests {
     #[test]
     fn coalesce_free_merges_adjacent_and_reuses_space() {
         let mut store = Store::new(64);
-        store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-        store.free = false;
+        store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+        store.live = true;
         store.lazy = false; // the exact allocator's merge, not the lazy phase
         let _a = store.claim(5);
         let b = store.claim(5);
@@ -7183,7 +7550,7 @@ mod tests {
     #[test]
     fn high_water_mark_ends_at_the_last_claimed_block() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -7211,7 +7578,7 @@ mod tests {
     #[test]
     fn an_incomplete_walk_leaves_a_live_record_above_the_mark() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let _a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -7242,12 +7609,12 @@ mod tests {
         let mut store = Store::new(64);
         store.wilderness = wilderness;
         store.init();
-        store.free = false;
+        store.live = true;
         // The seeded side-by-side tests pin the EXACT allocator's layout across its
         // switches; the lazy phase folds a freed tail block into the wilderness only, and a
         // parked block is merged at a flush, not at its delete (`@FR-H-Park`).
         store.lazy = false;
-        store.park = false;
+        store.no_park = true;
         store
     }
 
@@ -7614,7 +7981,7 @@ mod tests {
     fn check_parked(store: &Store) {
         let mut seen = 0u32;
         for words in super::MIN_FREE_TREE..=super::PARK_MAX_WORDS {
-            let (mut prev, mut rec) = (0u32, store.parked.heads[words as usize]);
+            let (mut prev, mut rec) = (0u32, store.parked_heads[words as usize]);
             while rec != 0 {
                 assert_eq!(
                     store.read::<i32>(rec, 0),
@@ -7626,7 +7993,7 @@ mod tests {
                     -words,
                     "footer"
                 );
-                assert!(store.parked.set.contains(rec) && !store.claims.contains(rec));
+                assert!(store.parked_set.contains(rec) && !store.claims.contains(rec));
                 assert!(!store.fl_contains_node(store.free_root, rec) && rec != store.wild);
                 assert_eq!(
                     store.read::<u32>(rec, super::PARK_PREV),
@@ -7637,16 +8004,16 @@ mod tests {
                 seen += 1;
             }
         }
-        assert_eq!(seen, store.parked.count);
-        assert_eq!(seen as usize, store.parked.set.len());
+        assert_eq!(seen, store.parked_count);
+        assert_eq!(seen as usize, store.parked_set.len());
     }
 
     fn parking_store() -> Store {
         let mut store = Store::new(256);
         store.init();
-        store.free = false;
+        store.live = true;
         store.lazy = false;
-        store.park = true;
+        store.no_park = false;
         store
     }
 
@@ -7659,14 +8026,14 @@ mod tests {
         let b = store.claim(3);
         let c = store.claim(5);
         store.delete(b);
-        assert!(store.parked.set.contains(b) && store.read::<i32>(b, 0) == -3);
+        assert!(store.parked_set.contains(b) && store.read::<i32>(b, 0) == -3);
         store.delete(a);
         // `a`'s exact delete stops at the parked `b`: two free blocks, one in the tree.
         assert_eq!(store.read::<i32>(a, 0), -20);
         assert!(store.fl_tree_contains(a));
         check_parked(&store);
         assert_eq!(store.claim(3), b);
-        assert!(store.claims.contains(b) && store.parked.count == 0);
+        assert!(store.claims.contains(b) && store.parked_count == 0);
         assert!(store.claims.contains(c));
     }
 
@@ -7685,27 +8052,27 @@ mod tests {
         a.delete(a2);
         let b1 = b.claim(3);
         let b2 = b.claim(6);
-        assert!(a.parked.set.contains(a2) && a.parked.count == 1 && b.parked.count == 0);
+        assert!(a.parked_set.contains(a2) && a.parked_count == 1 && b.parked_count == 0);
         Store::swap_contents(&mut a, &mut b);
         // The memory with the parked block is `b`'s now, and so are its lists.
         assert!(
-            b.parked.set.contains(a2) && b.parked.count == 1,
+            b.parked_set.contains(a2) && b.parked_count == 1,
             "the lists moved with the memory"
         );
         assert!(
-            a.parked.count == 0 && a.parked.set.is_empty(),
+            a.parked_count == 0 && a.parked_set.is_empty(),
             "the giver parks nothing it does not hold"
         );
         check_parked(&a);
         check_parked(&b);
         // A claim of the parked size in `b` pops it; `a` grows its own memory instead.
         assert_eq!(b.claim(3), a2);
-        assert!(b.claims.contains(a2) && b.parked.count == 0);
+        assert!(b.claims.contains(a2) && b.parked_count == 0);
         // `a` now holds the other memory: its records are live, and a delete of the
         // 3-word one parks it once, on an empty list.
         assert!(a.claims.contains(b1) && a.claims.contains(b2));
         a.delete(b1);
-        assert!(a.parked.set.contains(b1) && a.parked.count == 1);
+        assert!(a.parked_set.contains(b1) && a.parked_count == 1);
         check_parked(&a);
         assert_eq!(a.claim(3), b1);
         // The records that moved stay reachable where they are.
@@ -7725,9 +8092,9 @@ mod tests {
             store.delete(rec);
         }
         check_parked(&store);
-        assert_eq!(store.parked.count, 3);
+        assert_eq!(store.parked_count, 3);
         store.flush_parked();
-        assert_eq!(store.parked.count, 0);
+        assert_eq!(store.parked_count, 0);
         assert_eq!(store.read::<i32>(a, 0), -15, "a, b and c merged");
         assert!(store.fl_tree_contains(a));
         assert!(store.claims.contains(d));
@@ -7755,7 +8122,7 @@ mod tests {
         for &rec in &recs[1..5] {
             store.delete(rec);
         }
-        assert_eq!(store.parked.count, 4);
+        assert_eq!(store.parked_count, 4);
         let before = store.usage();
         assert_eq!(
             before.mergeable_free_pairs, 0,
@@ -7854,8 +8221,8 @@ mod tests {
                 state % n
             };
             let mut store = Store::new(64);
-            store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-            store.free = false;
+            store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+            store.live = true;
             let mut live: Vec<u32> = Vec::new();
             for step in 0..800 {
                 let op = next(10);
@@ -7905,7 +8272,7 @@ mod tests {
         // A claimed tail on a store filled to its last word: nothing is free, and growth
         // appends.
         let mut full = Store::new(64);
-        full.free = false;
+        full.live = true;
         let whole = full.claim(full.size - super::PRIMARY);
         assert_eq!((full.wild, full.free_root), (0, 0), "nothing is free");
         // The record's last payload word still spells the old free block's footer (a claim
@@ -7936,7 +8303,7 @@ mod tests {
     #[test]
     fn shrink_to_the_mark_keeps_every_record() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -7989,7 +8356,7 @@ mod tests {
     #[test]
     fn shrink_to_above_the_mark_leaves_a_usable_free_tail() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let _a = store.claim(5);
         let b = store.claim(5);
         store.delete(b);
@@ -8026,7 +8393,7 @@ mod tests {
     #[test]
     fn shrink_to_refuses_anything_that_would_cut_or_grow() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let _a = store.claim(5);
         let b = store.claim(5);
         store.write::<i64>(b, 8, 0x2222);
@@ -8070,8 +8437,8 @@ mod tests {
         // arithmetic below is what this test still owns.
         fn fragmented() -> (Store, Vec<u32>) {
             let mut store = Store::new(256);
-            store.park = false; // this pins its own rule; `@FR-H-Park` defers small merges
-            store.free = false;
+            store.no_park = true; // this pins its own rule; `@FR-H-Park` defers small merges
+            store.live = true;
             store.lazy = false; // the exact allocator's merge, not the lazy phase
             let recs: Vec<u32> = (0..21).map(|_| store.claim(5)).collect();
             for i in (0..18).step_by(3) {
@@ -8134,7 +8501,7 @@ mod tests {
     #[test]
     fn reclaim_tail_reports_zero_when_there_is_no_tail() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         while store.len() == 64 {
             store.claim(5); // fill until the next claim would grow it
         }
@@ -8156,7 +8523,7 @@ mod tests {
     #[should_panic(expected = "high-water mark")]
     fn a_mark_past_capacity_is_caught() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let a = store.claim(5);
         store.write::<i32>(a + 5, 0, 100); // claimed, and 100 > 64 - 6
         let _ = store.usage();
@@ -8167,7 +8534,7 @@ mod tests {
     #[should_panic(expected = "store offset overflow")]
     fn resize_store_exceeds_max_panics() {
         let mut store = Store::new(4);
-        store.free = false;
+        store.live = true;
         store.resize_store(MAX_STORE_WORDS + 1);
     }
 
@@ -8185,7 +8552,7 @@ mod tests {
     #[test]
     fn borrow_locked_reads_original_data() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(4);
         store.write::<i32>(rec, 0, 42);
         let borrow = unsafe { store.borrow_locked_for_light_worker() };
@@ -8206,7 +8573,7 @@ mod tests {
     #[should_panic(expected = "Write to read-only store")]
     fn borrow_locked_write_panics() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let rec = store.claim(4);
         let mut borrow = unsafe { store.borrow_locked_for_light_worker() };
         // This must panic because the borrow is locked.
@@ -8217,7 +8584,7 @@ mod tests {
     #[test]
     fn freed_sentinel_is_free() {
         let sentinel = Store::new_freed_sentinel();
-        assert!(sentinel.free);
+        assert!(!sentinel.live);
     }
 
     /// `@FR-H-Claim` — growing a record in place into the adjacent free block keeps the bytes
@@ -8227,7 +8594,7 @@ mod tests {
     #[test]
     fn resize_in_place_keeps_its_own_bytes() {
         let mut store = Store::new(256);
-        store.free = false;
+        store.live = true;
         let a = store.claim(4); // 4-word record
         let b = store.claim(16); // adjacent 16-word record
         store.write::<u32>(a, 8, 0x0012_3456);
@@ -8256,7 +8623,7 @@ mod tests {
     #[test]
     fn a_tail_record_grows_where_it_is() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let head = store.claim(3);
         let rec = store.claim(8);
         store.write::<u32>(rec, 8, 0xABCD_1234);

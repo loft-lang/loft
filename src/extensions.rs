@@ -280,6 +280,8 @@ struct SharedSig {
     /// attribution instrument to check the retbuf-vs-return orphan (@PLN118 arc F).
     hidden_dest: Option<usize>,
     ret: Option<ArgT>,
+    /// The function the bridge is for: what `LOFT_HOSTED_VERIFY` runs interpreted beside it.
+    d_nr: u32,
     /// @PLN199 — a returned tuple of scalars: its leaves, in element order, one `ret[i]` each
     /// (`ret` is then `None`).  Empty for any other return.
     ret_leaves: Vec<ArgT>,
@@ -473,6 +475,7 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
         text_workbuf,
         hidden_dest,
         ret,
+        d_nr,
         ret_leaves,
     })
 }
@@ -1421,10 +1424,59 @@ fn shared_store_dispatch_raw(
         usize,
         *mut LibArg,
     ) = unsafe { std::mem::transmute(bridge_ptr) };
-    unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
+    let text_dest_of_call = if matches!(sig.ret, Some(ArgT::Text)) {
+        stores.bridge_text_dest
+    } else {
+        None
+    };
+    // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
+    let host = if crate::state::hosted_verify_enabled() {
+        host_state()
+    } else {
+        std::ptr::null_mut()
+    };
+    // `@PLN206 P4` — the table a hosted unit reads (`TableView`), as it stands at the call.
+    unsafe {
+        (*stores_ptr).hosted_view = crate::host_abi::TableView::of(&mut *stores_ptr);
+    }
+    if host.is_null() {
+        unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
+    } else {
+        unsafe { (*host).verify_compiled_call(sig.d_nr, bridge, args, ret_ptr, popped) };
+    }
     let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
+    // `@PLN206 P7` — the routine handed itself over to the interpreter (`State::accept_handover`):
+    // it answers nothing, and the static call continues as the interpreter's frame.
+    let state = host_state();
+    if !state.is_null() && unsafe { (*state).pending_handover.is_some() } {
+        crate::call_frames::leave_shared_bridge(outer_bridge);
+        return;
+    }
+    // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
+    // leaves the destination to the dispatcher, which writes them into it here, before the unit
+    // runs again.
+    // The destination is this call's own, read before the call: a nested call made while it ran
+    // (an interpreted body, the verify's twin) sets and takes the shared field for itself.
+    if let Some(dest) = text_dest_of_call
+        && !ret.text_ptr.is_null()
+        && stores.bridge_text_dest == Some(dest)
+    {
+        stores.bridge_text_dest = None;
+    }
+    if let Some(dest) = text_dest_of_call
+        && !ret.text_ptr.is_null()
+        && ret.text_len > 0
+    {
+        let text = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(ret.text_ptr, ret.text_len))
+        };
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos)
+            .push_str(text);
+    }
 
     // @PLN118 arc F — non-perturbing attribution of the shared-return orphan.
     // For a struct/vector return the caller pre-allocates a retbuf and forwards
@@ -1443,7 +1495,7 @@ fn shared_store_dispatch_raw(
         let rb = popped[hd].dbref;
         let rf = ret.dbref;
         let rb_free = (rb.store_nr as usize) < stores.allocations.len()
-            && stores.allocations[rb.store_nr as usize].free;
+            && !stores.allocations[rb.store_nr as usize].live;
         eprintln!(
             "[shared-ret] lib_idx={lib_idx} retbuf=({},{},{}) return=({},{},{}) \
              same={} retbuf_freed={}",

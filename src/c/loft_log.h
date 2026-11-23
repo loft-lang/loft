@@ -534,7 +534,59 @@ static int loft_log_locked_write(void) {
  * five named and a count of the rest — as one warning the test runner reads as the verdict.
  * A `LOFT_STRICT_STORES` build (loft_rt.h) reports the same list as never freed, counts it with
  * the uses after free, and exits 1 when either happened (`NATIVE_STRICT_STORE_TAIL`). */
+/* `@PLN206 P4c` — `LOFT_STORE_DUMP=<file>` (built with `-DLOFT_STORE_DUMP`, beside
+ * `LOFT_ALLOC_TRACE`, whose store names it writes): every store's final content — written as it
+ * is freed (`loft_free_ref`), and for one still live, at the end — in the interpreter's format
+ * (`src/store/dump.rs`).  `-DLOFT_STORE_DUMP_PLANT` flips one byte of the first block written:
+ * the positive control `scripts/store_diff.py --plant` must report. */
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+static FILE *loft_dump_file(void) {
+    static FILE *f = 0;
+    static int opened = 0;
+    if (!opened) {
+        const char *path = getenv("LOFT_STORE_DUMP");
+        opened = 1;
+        if (path && *path) f = fopen(path, "w");
+    }
+    return f;
+}
+static void loft_store_dump_one(loft_store_t *s) {
+    static int planted = 0;
+    FILE *f = loft_dump_file();
+    if (!f || s->serial == 0) return;
+    fprintf(f, "S %s %u %u %u\n", loft_trace_name(s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
+            (unsigned) (s - loft_stores));
+    for (uint32_t w = 0; w < s->claims.nwords; w++) {
+        for (uint32_t b = 0; b < 64; b++) {
+            if (!loft_bit64_test(s->claims.bits[w], b)) continue;
+            uint32_t rec = w * 64 + b;
+            int32_t words = loft_st_i32(s, rec, 0);
+            uint32_t n = words < 1 ? 1u : (uint32_t) words, end = rec + n;
+            if (end > s->size) end = s->size;
+            fprintf(f, "R %u %u ", (unsigned) rec, (unsigned) n);
+            for (uint32_t k = rec * 8; k < end * 8; k++) {
+                uint8_t byte = s->buf[k];
+#ifdef LOFT_STORE_DUMP_PLANT
+                if (!planted && k == rec * 8 + 8) { byte ^= 0x5A; planted = 1; }
+#endif
+                fprintf(f, "%02x", byte);
+            }
+            fputc('\n', f);
+        }
+    }
+    (void) planted;
+}
+static void loft_store_dump(void) {
+    for (uint32_t nr = 0; nr < loft_nstores; nr++)
+        if (loft_stores[nr].live) loft_store_dump_one(&loft_stores[nr]);
+    if (loft_dump_file()) fflush(loft_dump_file());
+}
+#endif
+
 static void loft_leak_report(void) {
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+    loft_store_dump();
+#endif
     loft_parks_drain();
     uint32_t *kt, *count, nk = 0, i, j, total = 0;
     loft_text out = { 0, 0, 0 };
@@ -555,8 +607,8 @@ static void loft_leak_report(void) {
     for (i = 0; i < loft_nstores; i++) {
         const loft_store_t *s = &loft_stores[i];
         if (!s->live || s->pinned || s->read_only) continue;
-        for (j = 0; j < nk && kt[j] != s->known; j++) {}
-        if (j == nk) { kt[nk] = s->known; count[nk] = 0; nk++; }
+        for (j = 0; j < nk && kt[j] != s->known; j++) {} /* LOFT_RAW_KNOWN: the store as it is in memory */
+        if (j == nk) { kt[nk] = s->known; count[nk] = 0; nk++; } /* LOFT_RAW_KNOWN: the store as it is in memory */
         count[j]++;
     }
     /* Ordered by type number (the Rust map's key), then most-leaked first, stably. */
@@ -632,7 +684,7 @@ static void loft_leak_report(void) {
             for (j = 0; j < ng; j++) {
                 const loft_store_t *t = &loft_stores[who[j]];
                 const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
-                if (t->known == s->known && (a == 0) == (b == 0) &&
+                if (t->known == s->known && (a == 0) == (b == 0) && /* LOFT_RAW_KNOWN: the store as it is in memory */
                     (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line
                                 && a->cfn == b->cfn && a->cline == b->cline)))
                     break;
@@ -649,7 +701,7 @@ static void loft_leak_report(void) {
             const loft_store_t *s = &loft_stores[who[i]];
             const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
             fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()", (unsigned) many[i],
-                    s->known < loft_ntn ? loft_tn[s->known] : "?", (unsigned) s->known,
+                    LOFT_KNOWN(*s) < loft_ntn ? loft_tn[LOFT_KNOWN(*s)] : "?", (unsigned) LOFT_KNOWN(*s),
                     a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");
             if (a && a->cfn) fprintf(stderr, " called from fn %s() line %u", a->cfn, (unsigned) a->cline);
             fputc('\n', stderr);

@@ -661,3 +661,227 @@ fn rpc_repl_eval_error_line_is_input_relative() {
         "error on the input's line 1, not the wrapper line: {out}"
     );
 }
+
+/// A debug session over a program that `use`s a library with a tuple parameter
+/// (`tests/lib/hostedlib`'s `spread`) runs and stops inside the library.  A tuple type is
+/// registered globally; the binding `add_def` left under the library's own source was a
+/// cross-source alias nothing records, so the session's rollback check failed at `run`
+/// ("a rollback dropped the import alias `__tuple<integer,float,boolean>`").  And a fault
+/// a request does not catch is said as a `terminated` event, the server still answering:
+/// it ended the process with exit 101 and no word.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with `tuple_def` keeping the binding under
+///   the requesting source (`src/data.rs`).  CHANNEL: the stop event.  WITNESS: "a rollback
+///   dropped the import alias".
+#[test]
+fn rpc_debugs_a_program_using_a_library_with_a_tuple_parameter() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_root = std::env::temp_dir().join(format!("loft_rpc_tuplelib_{}", std::process::id()));
+    let pkg = lib_root.join("hostedlib");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    for f in ["loft.toml", "src/hostedlib.loft"] {
+        let text = fa::read_to_string(root.join("tests/lib/hostedlib").join(f)).expect("read");
+        fa::write(pkg.join(f), text).expect("write");
+    }
+    let prog = tmp_program(
+        "tuplelib",
+        "use hostedlib::*;\nfn main() {\n  b = bag_new(\"x\", 5);\n  w = b.weight();\n  println(\"w {w} {spread((3, 0.5, true), 4)}\");\n}\n",
+    );
+    let lib_file = pkg.join("src/hostedlib.loft");
+    let line = fa::read_to_string(&lib_file)
+        .expect("read library")
+        .lines()
+        .position(|l| l.starts_with("pub fn weight"))
+        .expect("weight")
+        + 2;
+    let requests = [
+        format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
+        format!(
+            r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":{line}}}]}}"#,
+            json_path(&lib_file)
+        ),
+        r#"{"id":3,"req":"run"}"#.to_string(),
+        r#"{"id":4,"req":"continue"}"#.to_string(),
+        r#"{"id":5,"req":"disconnect"}"#.to_string(),
+    ];
+    let input = Cursor::new(requests.join("\n").into_bytes());
+    let mut out: Vec<u8> = Vec::new();
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
+    let out = String::from_utf8(out).expect("utf8");
+    let _ = fa::remove_dir_all(&lib_root);
+    assert!(
+        out.contains(r#""event":"stopped""#) && out.contains("Bag_weight"),
+        "stops inside the library: {out}"
+    );
+    assert!(out.contains("w 10 6"), "runs to the end: {out}");
+}
+
+/// `@PLN206 P7a` — a debug session runs its libraries compiled, and a routine the debugger
+/// wants runs interpreted while the routines it calls stay compiled.  `main` calls `twice`,
+/// which calls `weigh`, which calls `helper`: all compiled (a hosted C unit).  A breakpoint in
+/// `weigh` stops there, its parameter read through the routed frame (`n` = 4), `twice` beneath
+/// it — `twice` is wanted because it can reach the breakpoint, its call of `weigh` being a
+/// direct C call the debugger would not see.  `helper` stays compiled: five bridge calls, four
+/// from inside the interpreted `weigh` and `main`'s one.  By hand: weigh(4) = 2 * (1 + 2 + 3 +
+/// 4) = 20, twice = 40, helper(40) = 41.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with `debug_route` asking only whether a
+///   routine holds a breakpoint, not whether it can reach one (`src/state/debug.rs`), the run
+///   finishes without stopping.  CHANNEL: the stop event.  WITNESS: "stops inside the library".
+#[test]
+fn rpc_stops_in_a_compiled_library_and_its_callees_stay_compiled() {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let (lib_root, lib_file, prog) = plain_library("p7a");
+    let requests = [
+        format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
+        format!(
+            r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":6}}]}}"#,
+            json_path(&lib_file)
+        ),
+        r#"{"id":3,"req":"run"}"#.to_string(),
+        r#"{"id":4,"req":"eval","expr":"n"}"#.to_string(),
+        r#"{"id":5,"req":"stackTrace"}"#.to_string(),
+        r#"{"id":6,"req":"continue"}"#.to_string(),
+        r#"{"id":7,"req":"disconnect"}"#.to_string(),
+    ];
+    use std::sync::atomic::Ordering;
+    let before = loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
+    let input = Cursor::new(requests.join("\n").into_bytes());
+    let mut out: Vec<u8> = Vec::new();
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
+    let hits = loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed) - before;
+    let out = String::from_utf8(out).expect("utf8");
+    let _ = fa::remove_dir_all(&lib_root);
+    assert!(
+        out.contains(r#""event":"stopped""#) && out.contains(r#""function":"weigh""#),
+        "stops inside the library: {out}"
+    );
+    assert!(
+        out.contains(r#"{"id":4,"ok":true,"value":4}"#),
+        "the parameter: {out}"
+    );
+    assert!(
+        out.contains(r#""function":"twice""#),
+        "twice beneath it: {out}"
+    );
+    assert!(out.contains("a 40 41"), "the answers: {out}");
+    assert!(
+        hits >= 5,
+        "helper runs compiled: {hits} bridge call(s)\n{out}"
+    );
+}
+
+/// The library and program of the `@PLN206 P7a` tests: `main` → `twice` → `weigh` → `helper`,
+/// every library function compiled.  Answers the library root, its source and the program.
+fn plain_library(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let lib_root = std::env::temp_dir().join(format!("loft_rpc_{tag}_{}", std::process::id()));
+    let pkg = lib_root.join("plain");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"plain\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/plain.loft\"\n",
+    )
+    .expect("manifest");
+    let lib_file = pkg.join("src/plain.loft");
+    fa::write(
+        &lib_file,
+        "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn weigh(n: integer) -> integer {\n  w = 0;\n  for i in 0..n { w += helper(i) * 2; }\n  w\n}\n\npub fn twice(n: integer) -> integer {\n  t = weigh(n);\n  t * 2\n}\n",
+    )
+    .expect("library");
+    let prog = tmp_program(
+        tag,
+        "use plain;\nfn main() {\n  a = plain::twice(4);\n  b = plain::helper(40);\n  println(\"a {a} {b}\");\n}\n",
+    );
+    (lib_root, lib_file, prog)
+}
+
+/// `@PLN206 P7a` — a step into a compiled routine enters it interpreted, and lands on its
+/// first line: from `main:3`, into `twice` at line 12, into `weigh` at line 6, over to line 7
+/// — the stops the debugger makes with every library interpreted.  A step into stopped at the
+/// callee's prologue, before any line of its own, and named the line the code before it held
+/// (`twice` at line 8, `weigh`'s last line).
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with a step into not routing a compiled
+///   routine (`Debugger::stepping_into` never set, `src/state/mod.rs`), the step from `main:3`
+///   runs `twice` compiled.  CHANNEL: the stop events.  WITNESS: no stop in `twice`.
+#[test]
+fn rpc_steps_into_compiled_routines_as_into_interpreted_ones() {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let (lib_root, _, prog) = plain_library("p7a_step");
+    let requests = [
+        format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
+        format!(
+            r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":3}}]}}"#,
+            json_path(&prog)
+        ),
+        r#"{"id":3,"req":"run"}"#.to_string(),
+        r#"{"id":4,"req":"stepIn"}"#.to_string(),
+        r#"{"id":5,"req":"stepIn"}"#.to_string(),
+        r#"{"id":6,"req":"stepOver"}"#.to_string(),
+        r#"{"id":7,"req":"continue"}"#.to_string(),
+        r#"{"id":8,"req":"disconnect"}"#.to_string(),
+    ];
+    let input = Cursor::new(requests.join("\n").into_bytes());
+    let mut out: Vec<u8> = Vec::new();
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
+    let out = String::from_utf8(out).expect("utf8");
+    let _ = fa::remove_dir_all(&lib_root);
+    let stops: Vec<(String, String)> = out
+        .lines()
+        .filter(|l| l.contains(r#""event":"stopped""#))
+        .map(|l| {
+            let f = l
+                .split(r#""function":""#)
+                .nth(1)
+                .and_then(|r| r.split('"').next());
+            let n = l
+                .rsplit(r#""line":"#)
+                .next()
+                .and_then(|r| r.split('}').next());
+            (f.unwrap_or("?").to_string(), n.unwrap_or("?").to_string())
+        })
+        .collect();
+    let want: Vec<(String, String)> = [
+        ("main", "3"),
+        ("twice", "12"),
+        ("weigh", "6"),
+        ("weigh", "7"),
+    ]
+    .iter()
+    .map(|(f, n)| ((*f).to_string(), (*n).to_string()))
+    .collect();
+    assert_eq!(stops, want, "{out}");
+    assert!(out.contains("a 40 41"), "the answers: {out}");
+}

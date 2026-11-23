@@ -755,7 +755,7 @@ impl State {
             // error: a free of a REUSED store re-tagged by a different `OpDatabase`
             // owner (the wrong-store / cross-owner free this gate exists to catch).
             assert!(
-                st.free || st.tag == 0 || st.tag == tag,
+                !st.live || st.tag == 0 || st.tag == tag,
                 "store-tag mismatch on free: store #{} has tag {} but OpFreeRefTag expected {}",
                 db.store_nr,
                 st.tag,
@@ -941,7 +941,36 @@ impl State {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;
         }
+        // `@FR-H-KeepRoom` — a store whose root is the `main_vector<T>` wrapper minted again:
+        // the room its vector reached, read before the mint drops it.
+        let room = if fresh {
+            None
+        } else {
+            self.database.wrapper_room(&db, db_tp)
+        };
         let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh, prefill);
+        if let Some((field, reached, elem_size)) = room {
+            let v = DbRef {
+                store_nr: r.store_nr,
+                rec: r.rec,
+                pos: field,
+            };
+            crate::vector::pre_alloc_vector(&v, reached, elem_size, &mut self.database.allocations);
+            // The mint is the buffer's clear (the prologue clause drops the clear itself), so
+            // `LOFT_TRACE_CLEAR` reports it as the clear's reset: the position it read and the
+            // capacity it kept.
+            if crate::env_once!(std::env::var("LOFT_TRACE_CLEAR").is_ok()) {
+                eprintln!(
+                    "[clear] store={} rec=1 pos={field} kt={db_tp} (a mint keeping the room)",
+                    r.store_nr
+                );
+                eprintln!(
+                    "[clear] reset store={} size={elem_size} cap={}",
+                    r.store_nr,
+                    crate::vector::reached_capacity(&v, elem_size, &self.database.allocations)
+                );
+            }
+        }
         if crate::keys::trace_db() {
             eprintln!("[db]   -> var={var} now #{}", r.store_nr);
         }
@@ -1829,7 +1858,7 @@ impl State {
         // freed it, and the copy site.  Gated on LOFT_UAF; capped to avoid flood.
         if crate::keys::uaf_any_enabled()
             && (data.store_nr as usize) < self.database.allocations.len()
-            && self.database.allocations[data.store_nr as usize].free
+            && !self.database.allocations[data.store_nr as usize].live
         {
             thread_local! {
                 static REPORTED: std::cell::RefCell<std::collections::HashSet<u16>> =
@@ -1865,7 +1894,7 @@ impl State {
         if crate::keys::uaf_reuse_enabled()
             && data.rec != 0
             && (data.store_nr as usize) < self.database.allocations.len()
-            && !self.database.allocations[data.store_nr as usize].free
+            && self.database.allocations[data.store_nr as usize].live
         {
             let mut problems = 0u32;
             self.database
@@ -2034,12 +2063,63 @@ impl State {
         // and leave it alone.  Measured without this: `fn fwd(f, v) -> P { r = f(v); r }` over
         // a capture-returning lambda frees the CALLER'S capture on the first call and reads
         // freed bytes on every one after (`plans/150-fnref-return-ownership`).
+        // Whether this copy is an exchange site (`ReBind::exchange`, no `OpDatabase` before it)
+        // is what the bytecode says, before a borrowed answer clears the flag below: that
+        // clearing decides whether the source may be given up, not whether the destination
+        // still needs a store or a reset.
+        let exchange_site = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
         let raw_tp = match self.take_fnref_borrowed_return() {
             Some(b) if b.store_nr == src.store_nr && !crate::keys::no_fnref_borrowed_return() => {
                 raw_tp & !crate::keys::COPY_FREE_SOURCE
             }
             _ => raw_tp,
         };
+        // STORE_MODEL D43 — `ReBind::exchange`: no `OpDatabase` reset the destination, which
+        // still holds `v`'s old value.  A given-up answer is exchanged into it as it stands,
+        // `v`'s old tree leaving with the released slot (`@FR-H-SwapRebind`); refused, the store
+        // is reset here as `OpDatabase` would reset it, and the copy lands in it.  A destination
+        // holding its root alone is the copy's ordinary case.
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        // An exchange whose variable the statement before released (a free the scope pass put
+        // there, which resets the slot) has no store to exchange into: the copy makes a fresh
+        // one first, as the `OpDatabase` an ordinary copy is preceded by does.
+        let mut dst = dst;
+        if exchange_site
+            && (dst.store_nr == u16::MAX
+                || (dst.store_nr as usize) >= self.database.allocations.len()
+                || !self.database.allocations[dst.store_nr as usize].live)
+        {
+            *self.mut_var::<DbRef>(pos) = DbRef::NULL;
+            let code_pos = self.code_pos;
+            self.alloc_record_at(pos, tp, code_pos);
+            dst = self.get_var::<DbRef>(pos);
+        }
+        if exchange_site
+            && dst.store_nr != u16::MAX
+            && (dst.rec, dst.pos) == (1, 8)
+            && (dst.store_nr as usize) < self.database.allocations.len()
+            && self.database.allocations[dst.store_nr as usize].live
+            && !self.database.allocations[dst.store_nr as usize].holds_only_root()
+        {
+            if src.store_nr == dst.store_nr {
+                return;
+            }
+            // A borrowed answer (a capture the call handed back) is copied, never taken.
+            if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+                && self.database.try_swap_rebind(&src, &dst, tp)
+            {
+                // The released slot holds `v`'s old tree, freed as the C runtime's
+                // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
+                if self.database.spare_store == Some(src.store_nr) {
+                    self.database.spare_store = None;
+                    self.database.free(&src);
+                }
+                return;
+            }
+            let code_pos = self.code_pos;
+            let size = self.database.enum_parent_size(tp);
+            self.alloc_record_into(&dst, tp, size, code_pos, false, true);
+        }
         self.do_copy_record(src, dst, raw_tp);
     }
 
@@ -2163,7 +2243,7 @@ impl State {
             // Sentinel guard: the `allocations[..]` prechecks below index by store_nr.
             && src.store_nr != u16::MAX
             && !self.database.is_stack_store(src.store_nr)
-            && !self.database.allocations[src.store_nr as usize].free
+            && self.database.allocations[src.store_nr as usize].live
             && !self.database.allocations[src.store_nr as usize].read_only
             && !self.database.allocations[src.store_nr as usize].is_free_protected()
         {

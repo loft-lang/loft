@@ -37,6 +37,7 @@ use el_ex_closure;
 use el_ex_tuple;
 use el_ex_name;
 use el_ex_bind;
+use el_ex_into;
 
 // `Deps::callee_frame1`'s tag: a dep naming a slot of the callee's frame, not the caller's.
 pub CALLEE_FRAME = 32768;
@@ -412,8 +413,8 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
   discharged = false;
   // `convert`'s tagged arm (`@FR-L-Null-Tag`): a `__nullable<S>` tail of a `-> S?` body is read
   // through its tag, absence the reference null sentinel.
-  if context == "return from block" && len(l) > 0 && is_nullable_wrapper(e, t) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(t)) {
-    rx = el_ex_place::read_through_tag(e, vars, ex(l[-1] ?? ir::NdNull, t));
+  if context == "return from block" && len(l) > 0 && is_nullable_wrapper(e, t) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(t)) {
+    rx = el_ex_into::read_through_tag(e, vars, ex(l[-1] ?? ir::NdNull, t));
     if rx == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -459,7 +460,7 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
   // each arm is copied through its own temp and the function answers a fresh record.
   if !e.first_pass && context == "return from block" && len(l) > 0 && (el_types::base(result) is TyReference || el_types::struct_enum_def(result) >= 0) && el::def(e, e.context).def_type != el::DT_GENERIC {
     ps: vector<integer> = [];
-    if el_ex_place::branch_params(vars, l[-1], ps) && len(ps) > 1 {
+    if el_ex_into::branch_params(vars, l[-1], ps) && len(ps) > 1 {
       tmp = el_vars::create_unique(vars, "__ret_join", result);
       el_vars::set_defined(vars, tmp);
       l = l[..-1] + [el_ir::v_set(tmp, l[-1]), ir::NdVar { n: tmp }];
@@ -1009,7 +1010,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     kown = match e.p.nodes[match e.p.nodes[target] { SMember { e: kbe0 } => kbe0 ?? -1, _ => -1 }] { SName { name: kbn0 } => kbn0, _ => "" };
     // (An item that reads the owner — `c.h += [C { v: c.h[9]?.v … }]` — is built apart and
     // filled in, `OpFillKeyed`: not this road.)
-    if kfo >= 0 && kown != "" && !el_ex_place::syntax_names(e, rhs!, kown) {
+    if kfo >= 0 && kown != "" && !el_ex_into::syntax_names(e, rhs!, kown) {
       kfrv = match e.p.nodes[match e.p.nodes[target] { SMember { e: kbe } => kbe ?? -1, _ => -1 }] { SName { name: kbn } => el_vars::var(vars, kbn), _ => -1 };
       kfd = struct_ref(e, el_types::base(el_vars::tp(vars, kfrv)));
       // (`child_allocs`: each append with items makes a record through the owner — counted on
@@ -1325,7 +1326,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     orig = if e.first_pass { -1 } else { el_vars::rebind_witness(vars, v) };
     vars.vars[v].argument = false;
     vars.bind_declares = declaring;
-    o = el_ex_place::object_into(e, vars, v, rhs!);
+    o = el_ex_into::object_into(e, vars, v, rhs!);
     vars.bind_declares = false;
     vars.vars[v].argument = true;
     el_vars::unmark_built(vars, v);
@@ -1784,7 +1785,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       break;
     }
   }
-  if rcv >= 0 && rcv != rhs! && e.p.nodes[rcv] is SStructLit && el_ex_place::syntax_names(e, rcv, el_vars::name_of(vars, v)) {
+  if rcv >= 0 && rcv != rhs! && e.p.nodes[rcv] is SStructLit && el_ex_into::syntax_names(e, rcv, el_vars::name_of(vars, v)) {
     el::refuse(e, "a struct literal receiving a call, bound to a local it reads");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1808,7 +1809,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     // Built in place in the local (`parse_object`): the statement is the build itself, with
     // no `Set` around it.
     vars.bind_declares = declaring;
-    o = el_ex_place::object_into(e, vars, v, rhs!);
+    o = el_ex_into::object_into(e, vars, v, rhs!);
     vars.bind_declares = false;
     // (`@FR-B-Scope`: the literal was built into the ended binding's variable before the split,
     // as Rust's value is parsed before it; the build is renamed onto the new binding.)
@@ -1909,7 +1910,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
   // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.
   if op == "=" && is_nullable_wrapper(e, x.tp) && !(match e.p.nodes[rhs!] { SUnary { op: uo } => uo == "&", _ => false }) {
-    rx = el_ex_place::read_through_tag(e, vars, x);
+    rx = el_ex_into::read_through_tag(e, vars, x);
     if rx == null {
       return ex(ir::NdNull, ir::TyVoid);
     }

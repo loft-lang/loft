@@ -1313,3 +1313,45 @@ pub(crate) fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
             .all(|a| !a.constant && value(&a.typedef))
         && (matches!(def.returned(), Type::Void) || value(def.returned()))
 }
+
+/// `@FR-H-KeepRoom`'s prologue clause, the part every backend shares: statement `i` of `ops`
+/// clears a vector buffer `x` (`OpClearVector(x)`) and the next statement, line markers aside,
+/// mints `x` again as a vector wrapper — a mint that empties the vector and releases what its
+/// elements owned, so the clear is that work done twice and is not written.  A backend adds
+/// what it alone knows about `x` (the C: a value held apart, a kept loop record).
+/// `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes it.
+#[must_use]
+pub(crate) fn clear_before_mint(
+    data: &Data,
+    stores: &Stores,
+    ops: &[Value],
+    i: usize,
+) -> Option<u16> {
+    let named = |v: &Value, n: &str| -> Option<Vec<Value>> {
+        match v.unspan() {
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
+            {
+                Some(a.clone())
+            }
+            _ => None,
+        }
+    };
+    if crate::env_once!(std::env::var("LOFT_NO_PROLOGUE_CLEAR_DROP").is_ok_and(|v| v != "0")) {
+        return None;
+    }
+    let args = ops.get(i).and_then(|o| named(o, "OpClearVector"))?;
+    let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
+        return None;
+    };
+    let next = ops[i + 1..]
+        .iter()
+        .find(|o| !matches!(o.unspan(), Value::Line(_)))?;
+    let m = named(next, "OpDatabase")?;
+    match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
+        (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => u16::try_from(*tp)
+            .is_ok_and(|tp| stores.is_vector_wrapper(tp))
+            .then_some(*x),
+        _ => None,
+    }
+}

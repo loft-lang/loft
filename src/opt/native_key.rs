@@ -237,26 +237,6 @@ pub(crate) fn type_layout_fingerprint(stores: &Stores) -> u64 {
     h.finish()
 }
 
-/// @PLN199 C1 — the numbers the artifact's code gives the functions it can reach.  Generated
-/// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
-/// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
-/// a program that numbers those functions the same way.  A library's functions are numbered
-/// before the script's, so editing the script does not change this.
-pub(crate) fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let roots: Vec<u32> = export_set.iter().copied().collect();
-    let mut reach: Vec<u32> = crate::opt::names::reachable_functions(data, &roots)
-        .into_iter()
-        .collect();
-    reach.sort_unstable();
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for d in reach {
-        d.hash(&mut h);
-        data.def(d).name().hash(&mut h);
-    }
-    h.finish()
-}
-
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source
 /// under `pkg_dirs` (build/artifact dirs skipped, files visited in sorted order for a
 /// stable digest).  Used to detect "did this library's source change since the last

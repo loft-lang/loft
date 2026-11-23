@@ -772,7 +772,7 @@ impl Stores {
         if data.store_nr != to.store_nr
             && (data.store_nr as usize) < self.allocations.len()
             && !self.is_stack_store(data.store_nr)
-            && !self.allocations[data.store_nr as usize].free
+            && self.allocations[data.store_nr as usize].live
             && !self.allocations[data.store_nr as usize].read_only
             && !self.allocations[data.store_nr as usize].is_free_protected()
         {
@@ -871,7 +871,7 @@ impl Stores {
         // number so a stale reference can never reach a new store, and a run
         // that frees and re-mints more than 65535 cannot be checked that way.
         if slot >= self.store_limit {
-            let live = self.allocations.iter().filter(|s| !s.free).count();
+            let live = self.allocations.iter().filter(|s| s.live).count();
             let reuse_off = self.disable_slot_reuse || crate::keys::no_slot_reuse();
             let limit = self.store_limit;
             assert!(
@@ -937,20 +937,32 @@ impl Stores {
         // The slot + rc + type + name pinpoint the victim far faster than the
         // bare message did during the @P311/@P313/@P317 store-ownership hunts.
         assert!(
-            store.free,
+            !store.live,
             "Allocating a used store #{slot} (known_type={}, requested by={})",
             store.known_type,
             if name.is_empty() { "<anon>" } else { name },
         );
-        store.free = false;
+        store.live = true;
         store.pinned = false;
         // The monotonic stamp: `stores_allocated` was bumped for THIS allocation just above,
         // so the slot carries a value no other live slot has and no reuse of this one repeats.
         // `State::release_fnref_bufs` compares it against a per-call snapshot to tell a store
         // the callee MINTED from one that was already there (loft#1185).
         store.alloc_serial = serial;
+        // A slot made again holds no type until the mint names one (`set_known_type`), as the C
+        // runtime's `loft_store_make` resets `known`: the previous occupant's type, left behind,
+        // was read by a free (`free_named`'s closure test) and by the memory breakdown as the new
+        // store's (STORE_MODEL D48).
+        store.set_known_type(u16::MAX);
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("N {serial} {}", store.capacity_words()));
+        {
+            store.trace_worker = crate::store_census::worker();
+            crate::store_census::alloc_event(format_args!(
+                "N {} {}",
+                store.trace_name(),
+                store.capacity_words()
+            ));
+        }
         // @PLN154 phase 3 — the slot's own number, stamped where the slot goes live so a
         // record relocation can name the store it happened in.
         store.store_nr = slot;
@@ -988,7 +1000,7 @@ impl Stores {
         // below read it, so it is taken only when one of them is armed.
         let mode = crate::keys::stores_mode();
         let active = if mode.is_some() {
-            self.allocations.iter().filter(|s| !s.free).count()
+            self.allocations.iter().filter(|s| s.live).count()
         } else {
             0
         };
@@ -1059,26 +1071,26 @@ impl Stores {
             || db.rec == 0
             || (al as usize) >= self.allocations.len()
             || self.is_stack_store(al)
-            || self.allocations[al as usize].free
+            || !self.allocations[al as usize].live
         {
             return false;
         }
-        if let Some(e) = self.frame_held.iter_mut().find(|e| e.0 == al) {
-            e.1 += 1;
-        } else {
-            self.frame_held.push((al, 1, false));
-        }
+        self.allocations[al as usize].frame_holds += 1;
         true
     }
 
     /// `@FR-G-Arg-Rebind` — a frame gives back the hold [`Self::hold_for_frame`] took.  The
     /// last hold on a store its caller has already released frees it.
     pub fn release_frame_hold(&mut self, db: &DbRef) {
-        let Some(i) = self.frame_held.iter().position(|e| e.0 == db.store_nr) else {
+        let Some(st) = self.allocations.get_mut(db.store_nr as usize) else {
             return;
         };
-        self.frame_held[i].1 -= 1;
-        if self.frame_held[i].1 == 0 && self.frame_held.swap_remove(i).2 {
+        if st.frame_holds == 0 {
+            return;
+        }
+        st.frame_holds -= 1;
+        if st.frame_holds == 0 && st.orphaned {
+            st.orphaned = false;
             self.free_named(db, "");
         }
     }
@@ -1087,18 +1099,20 @@ impl Stores {
     #[must_use]
     #[inline]
     pub fn is_frame_held(&self, store_nr: u16) -> bool {
-        !self.frame_held.is_empty() && self.frame_held.iter().any(|e| e.0 == store_nr)
+        self.allocations
+            .get(store_nr as usize)
+            .is_some_and(|st| st.frame_holds != 0)
     }
 
     /// `free_named`'s half of `@FR-G-Arg-Rebind`: a store a frame still holds is orphaned
     /// rather than freed.  Answers whether it was.
     fn orphan_if_frame_held(&mut self, store_nr: u16) -> bool {
-        match self.frame_held.iter_mut().find(|e| e.0 == store_nr) {
-            Some(e) => {
-                e.2 = true;
+        match self.allocations.get_mut(store_nr as usize) {
+            Some(st) if st.frame_holds != 0 => {
+                st.orphaned = true;
                 true
             }
-            None => false,
+            _ => false,
         }
     }
 
@@ -1106,7 +1120,7 @@ impl Stores {
     /// holds would clear the value the frame reads, so the store is handed to the frames
     /// (orphaned) and the caller answers `true` and mints into a FRESH store.
     pub fn detach_if_frame_held(&mut self, db: &DbRef) -> bool {
-        !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr)
+        self.orphan_if_frame_held(db.store_nr)
     }
 
     /// `@FR-H-SwapIn` — the deep copy of a store's ROOT record into the root of another
@@ -1223,7 +1237,7 @@ impl Stores {
                 None => false,
             }
         } else if known == 0 {
-            let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
+            let safe = self.tree_moves_whole(tp, &mut Vec::new());
             if self.swap_safe_types.len() <= tp as usize {
                 self.swap_safe_types.resize(tp as usize + 1, 0);
             }
@@ -1324,6 +1338,40 @@ impl Stores {
             Parts::Struct(fs) if fs.len() == 1 => Some(i32::from(fs[0].position)),
             _ => None,
         }
+    }
+
+    /// `@FR-H-KeepRoom` — `db` names the root of a live store minted as the vector wrapper
+    /// `tp`, about to be minted again: the position of its vector's handle, the elements that
+    /// vector's record has room for, and the element size — what the mint re-establishes, as
+    /// the C runtime's `loft_database_room` does.  `None` for any other store, a vector with no
+    /// record, or an element of no size.
+    pub(crate) fn wrapper_room(&self, db: &DbRef, tp: u16) -> Option<(u32, u32, u32)> {
+        if db.rec != 1
+            || (db.store_nr as usize) >= self.allocations.len()
+            || !self.allocations[db.store_nr as usize].live
+            || self.allocations[db.store_nr as usize].known_type != tp
+        {
+            return None;
+        }
+        let field = u32::try_from(self.wrapper_field_pos(tp)?).ok()? + 8;
+        let elem = self.content(self.field_type(tp, 0));
+        let elem_size = u32::from(self.size(elem));
+        if elem == u16::MAX || elem_size == 0 {
+            return None;
+        }
+        let v = DbRef {
+            store_nr: db.store_nr,
+            rec: 1,
+            pos: field,
+        };
+        let reached = crate::vector::reached_capacity(&v, elem_size, &self.allocations);
+        // `LOFT_NO_RESET_CAPACITY=1` gives the start room instead, as the clear's reset does.
+        let reached = if reached != 0 && !crate::keys::reset_capacity_enabled() {
+            crate::vector::grown_elems(1, elem_size)
+        } else {
+            reached
+        };
+        (reached != 0).then_some((field, reached, elem_size))
     }
 
     /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
@@ -1439,6 +1487,53 @@ impl Stores {
             rec: 1,
             pos: 8,
         })
+    }
+
+    /// `@FR-H-SwapIn` — may a root record of type `tp` move to another slot with its store's
+    /// whole content?  Yes unless its tree holds a stored reference, which names a slot: the
+    /// keyed collections, arrays and child records keep their own pointers as record numbers
+    /// inside the store, so they move with it (the reasoning of `(H-SwapKeyed)`); their
+    /// ELEMENT trees are asked the same.  The C runtime's `swap_safe` answers the same walk.
+    fn tree_moves_whole(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
+        use crate::database::Parts;
+        if walking.contains(&tp) {
+            return true;
+        }
+        let Some(t) = self.types.get(tp as usize) else {
+            return false;
+        };
+        walking.push(tp);
+        let ok = match &t.parts {
+            Parts::Enum(values) => values.iter().all(|(v, _)| {
+                !matches!(
+                    self.types.get(*v as usize).map(|t| &t.parts),
+                    Some(Parts::EnumValue(..))
+                ) || self.tree_moves_whole(*v, walking)
+            }),
+            Parts::Base
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::ShortRaw(..)
+            | Parts::IntRaw(..) => true,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
+                .iter()
+                .all(|f| self.tree_moves_whole(f.content, walking)),
+            Parts::Vector(e)
+            | Parts::Array(e)
+            | Parts::Sorted(e, _)
+            | Parts::Ordered(e, _)
+            | Parts::Hash(e, _)
+            | Parts::Index(e, _)
+            | Parts::Radix(e, _)
+            | Parts::Trie(e, _)
+            | Parts::ChildRec(e) => self.tree_moves_whole(*e, walking),
+            // A reference names a record in another store, which a whole move would leave
+            // pointing at the store it left (`(H-SwapIn)`).
+            Parts::DbRef => false,
+        };
+        walking.pop();
+        ok
     }
 
     /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its
@@ -1812,7 +1907,7 @@ impl Stores {
         }
         // `@FR-G-Arg-Rebind` — a store a live generator frame names is released when the
         // frame is done with it too: this free only orphans it.
-        if !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr) {
+        if self.orphan_if_frame_held(db.store_nr) {
             return;
         }
         // loft#2273 — a store a closure COPY shares with its source record is released by the
@@ -1832,7 +1927,7 @@ impl Stores {
         // allocation trace alone cannot tell that apart from an ordinary reuse.
         if crate::keys::trace_db() {
             let was_free =
-                (al as usize) < self.allocations.len() && self.allocations[al as usize].free;
+                (al as usize) < self.allocations.len() && !self.allocations[al as usize].live;
             // `pc` is the freeing op's position, the `@abs` column of `loft introspect`: the
             // interpreter's frees carry no name, so it is what tells two frees apart.
             eprintln!(
@@ -1948,7 +2043,7 @@ impl Stores {
         }
         // @PLN130 F8 — remember WHERE a store died, so a later access through a stale
         // reference can name the free that killed it rather than only the corpse.
-        let already_free = self.allocations[al as usize].free;
+        let already_free = !self.allocations[al as usize].live;
         // The double-free audit needs the same record, so it is armed by either instrument.
         if (crate::keys::strict_stores() || crate::keys::double_free_audit()) && !already_free {
             crate::keys::strict_note_free(al, self.alloc_pc, name);
@@ -1975,7 +2070,7 @@ impl Stores {
             crate::keys::note_double_free(same_site);
         }
         let store = &mut self.allocations[al as usize];
-        if store.free {
+        if !store.live {
             // `@FR-H-FreeTwice` — a re-free is a compiler defect: the run fails at it, naming
             // both frees, unless `LOFT_DOUBLE_FREE` asks for the census above instead or
             // `LOFT_ALLOW_REFREE` lets it pass.  A
@@ -2006,7 +2101,7 @@ impl Stores {
         // store releases that store and nothing it points at.
         match crate::keys::stores_mode() {
             Some("log") => {
-                let active = self.allocations.iter().filter(|s| !s.free).count();
+                let active = self.allocations.iter().filter(|s| s.live).count();
                 let label = if name.is_empty() { "" } else { name };
                 crate::loft_eprintln!(
                     "[store] - free   #{al} {label:>12} | active={:<4} max={}",
@@ -2034,6 +2129,8 @@ impl Stores {
         }
         // S36: clear the lock before marking free.
         let store = &mut self.allocations[al as usize];
+        // `@PLN206 P4c` — the store's final content, for `scripts/store_diff.py`.
+        crate::store::dump::on_free(store);
         store.unlock();
         // LOFT_POISON=1 (@PLN54 S3) or LOFT_LOG=poison_free: overwrite the
         // freed buffer with a recognisable pattern so subsequent stale-DbRef
@@ -2093,11 +2190,11 @@ impl Stores {
         if store.is_file_backed() && !store.read_only {
             store.reclaim_tail();
         }
-        store.free = true;
+        store.live = false;
         store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("F {}", store.alloc_serial));
+        crate::store_census::alloc_event(format_args!("F {}", store.trace_name()));
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {
@@ -2230,7 +2327,7 @@ impl Stores {
     pub fn raise_floor(&mut self, floor: u16) {
         while (self.allocations.len() as u16) < floor {
             let mut placeholder = Store::new(2);
-            placeholder.free = false; // in-use marker; bytes are never read
+            placeholder.live = true; // in-use marker; bytes are never read
             self.allocations.push(placeholder);
         }
         // Clearing every free bit makes `find_free_slot` return `max`; setting `max =
@@ -2261,7 +2358,7 @@ impl Stores {
         }
         for slot in floor..top {
             let si = slot as usize;
-            if build.allocations[si].free {
+            if !build.allocations[si].live {
                 continue; // a transient the constructor claimed then freed
             }
             let moved = std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
@@ -2327,7 +2424,7 @@ impl Stores {
             if self.spare_store == Some(s_nr as u16) {
                 continue;
             }
-            if !s.free {
+            if s.live {
                 let tn = self
                     .types
                     .get(s.known_type as usize)
@@ -2412,10 +2509,10 @@ impl Stores {
     /// null rather than whatever the store holds there next.
     pub fn clear(&mut self, db: &DbRef) -> Vec<u32> {
         let slot = db.store_nr;
-        let kept = if self.allocations[slot as usize].free {
-            Vec::new()
-        } else {
+        let kept = if self.allocations[slot as usize].live {
             self.allocations[slot as usize].kept_positions()
+        } else {
+            Vec::new()
         };
         // Clear any stale lock before reinitialising — OpDatabase may
         // reinitialise a store that was previously locked by a const
@@ -2439,11 +2536,11 @@ impl Stores {
         // `File`s among them release their handles; an adopted FREED store released them at
         // its free.
         #[cfg(not(host_fs))]
-        if !self.allocations[slot as usize].free {
+        if self.allocations[slot as usize].live {
             self.release_file_leases(db);
         }
         self.reinit_reused_slot(slot as usize);
-        self.allocations[slot as usize].free = false;
+        self.allocations[slot as usize].live = true;
         self.clear_free_bit(slot);
         // free_named's top-slot trim may have dropped `max` BELOW this slot
         // (the stale frame ref outlives the watermark).  Restore it, or
@@ -2580,7 +2677,7 @@ impl Stores {
         // store here is an unambiguous use-after-free rather than a maybe-reused slot.
         // Available in release builds too: the debug-only print below never ran in the
         // release binary the probes use, which is why a live UAF read as ordinary data.
-        if crate::keys::strict_stores() && s.free {
+        if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
                 r.store_nr,
                 r.rec,
@@ -2595,7 +2692,7 @@ impl Stores {
             );
         }
         #[cfg(debug_assertions)]
-        if s.free && !crate::keys::strict_stores() {
+        if !s.live && !crate::keys::strict_stores() {
             crate::loft_eprintln!(
                 "[store] ACCESS FREED store #{} rec={} pos={} — data will be garbage",
                 r.store_nr,
@@ -2893,7 +2990,7 @@ impl Stores {
                 return source != coll;
             }
             let store = &mut self.allocations[scratch.store_nr as usize];
-            if store.free
+            if !store.live
                 || !store.is_claimed_record(scratch.rec)
                 || !crate::vector::is_scratch_header(store, scratch)
                 || store.get_u32_raw(scratch.rec, scratch.pos + 4) as u16 != coll.store_nr
@@ -2974,7 +3071,7 @@ impl Stores {
             return;
         }
         let store = &self.allocations[scratch.store_nr as usize];
-        if store.free {
+        if !store.live {
             return;
         }
         // The record must still BE this scratch's header before a single one of its
@@ -3043,7 +3140,7 @@ impl Stores {
     pub fn store_mut(&mut self, r: &DbRef) -> &mut Store {
         // @PLN130 F8 — see `store`. A write through a dead reference is the worse half:
         // with slot reuse it lands in whatever now owns the memory.
-        if crate::keys::strict_stores() && self.allocations[r.store_nr as usize].free {
+        if crate::keys::strict_stores() && !self.allocations[r.store_nr as usize].live {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
                 r.store_nr,
@@ -3059,7 +3156,7 @@ impl Stores {
             );
         }
         #[cfg(debug_assertions)]
-        if self.allocations[r.store_nr as usize].free && !crate::keys::strict_stores() {
+        if !self.allocations[r.store_nr as usize].live && !crate::keys::strict_stores() {
             crate::loft_eprintln!(
                 "[store] WRITE TO FREED store #{} rec={} pos={} — corruption",
                 r.store_nr,
@@ -3079,7 +3176,7 @@ impl Stores {
     pub fn lock_store(&mut self, r: &DbRef) {
         if r.rec != 0 && (r.store_nr as usize) < self.allocations.len() {
             debug_assert!(
-                !self.allocations[r.store_nr as usize].free,
+                self.allocations[r.store_nr as usize].live,
                 "Locking a freed store (store_nr={}, rec={})",
                 r.store_nr, r.rec
             );
@@ -3245,10 +3342,10 @@ impl Stores {
             .allocations
             .iter()
             .map(|s| {
-                if s.free {
-                    Store::new_freed_sentinel()
-                } else {
+                if s.live {
                     unsafe { s.borrow_locked_for_light_worker() }
+                } else {
+                    Store::new_freed_sentinel()
                 }
             })
             .collect();
@@ -3261,7 +3358,7 @@ impl Stores {
         // Build free_bits: main-thread freed slots + all pool slots.
         let mut free_bits: Vec<u64> = Vec::new();
         for (i, s) in allocations.iter().enumerate() {
-            if s.free {
+            if !s.live {
                 let word = i / 64;
                 let bit = i % 64;
                 while free_bits.len() <= word {
@@ -3293,7 +3390,6 @@ impl Stores {
             evacuated: Vec::new(),
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
-            frame_held: Vec::new(),
             closure_shares: super::closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -3301,6 +3397,7 @@ impl Stores {
             peak: (self.allocations.len() + scratch_stores) as u16,
             free_bits,
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),
@@ -4742,7 +4839,7 @@ impl Stores {
             let s = &self.allocations[rec.store_nr as usize];
             // The store was minted FOR this buffer: a buffer `(R-Place)` claimed inside a host's
             // store is never that store's root at `1@8`, and its known type is the host's.
-            if s.free
+            if !s.live
                 || s.pinned
                 || s.read_only
                 || s.is_file_backed()
@@ -4915,7 +5012,7 @@ impl Stores {
                         let rec_ok = self.store(rec).valid(rec.rec, rec.pos);
                         let (sfree, skt) = {
                             let a = &self.allocations[rec.store_nr as usize];
-                            (a.free, a.known_type)
+                            (!a.live, a.known_type)
                         };
                         thread_local! {
                             static RPT: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
@@ -5161,7 +5258,7 @@ impl Stores {
         };
         let path = std::path::Path::new(&resolved);
         let idx = slot as usize;
-        if idx >= self.allocations.len() || self.allocations[idx].free {
+        if idx >= self.allocations.len() || !self.allocations[idx].live {
             return false;
         }
         let tp = self.allocations[idx].known_type;
@@ -5301,7 +5398,7 @@ impl Stores {
         // Preserve the slot's bookkeeping across the swap.
         let preserved = {
             let s = &self.allocations[slot_idx];
-            (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
+            (s.known_type, !s.live, s.created_at, s.last_op_at, s.pinned)
         };
 
         // A file that is not a whole image — cut short, or another format — is refused
@@ -5315,7 +5412,7 @@ impl Stores {
         };
 
         new_store.set_known_type(preserved.0);
-        new_store.free = preserved.1;
+        new_store.live = !(preserved.1);
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
@@ -6545,7 +6642,7 @@ impl Stores {
         }
         let (tp, before_words, root_words) = {
             let s = &self.allocations[idx];
-            if s.free {
+            if !s.live {
                 return Err("store is free");
             }
             if s.read_only || s.is_borrowed() {
@@ -6649,7 +6746,7 @@ impl Stores {
         // The slot's bookkeeping is the slot's, not the buffer's.
         let s = &self.allocations[idx];
         rebuilt.set_known_type(tp);
-        rebuilt.free = s.free;
+        rebuilt.live = s.live;
         rebuilt.set_created_at(s.created_at);
         rebuilt.last_op_at = s.last_op_at;
         rebuilt.pinned = s.pinned;
@@ -6672,14 +6769,14 @@ impl Stores {
         // Preserve the slot's bookkeeping across the swap (mirrors load_path).
         let preserved = {
             let s = &self.allocations[slot_idx];
-            (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
+            (s.known_type, !s.live, s.created_at, s.last_op_at, s.pinned)
         };
         let mut new_store = match crate::store::Store::from_bytes(bytes) {
             Some(s) => s,
             None => return false,
         };
         new_store.set_known_type(preserved.0);
-        new_store.free = preserved.1;
+        new_store.live = !(preserved.1);
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
@@ -6700,7 +6797,7 @@ impl Stores {
             return false;
         }
         let s = &self.allocations[slot as usize];
-        let preserved = (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned);
+        let preserved = (s.known_type, !s.live, s.created_at, s.last_op_at, s.pinned);
         let mut new_store = match crate::store::Store::from_bytes_checked(bytes) {
             Ok(s) => s,
             Err(why) => {
@@ -6709,7 +6806,7 @@ impl Stores {
             }
         };
         new_store.set_known_type(preserved.0);
-        new_store.free = preserved.1;
+        new_store.live = !(preserved.1);
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;

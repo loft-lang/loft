@@ -1,0 +1,10 @@
+[package]
+name    = "hostedshim"
+version = "0.1.0"
+loft    = ">=0.8"
+
+[library]
+entry   = "src/hostedshim.loft"
+
+[c]
+shim = "c/hostedshim.c"

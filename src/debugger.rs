@@ -14,7 +14,7 @@
 //! per-op cost is one `Option::is_some` branch — there is already a per-op
 //! `crash_report` store in that loop, so this is in the noise.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// The four @PLN16 F step verbs, driving
 /// [`State::debug_step`](crate::state::State::debug_step).
@@ -238,6 +238,24 @@ pub struct Debugger {
     /// not profiling. A field of its own would have cost every program a branch to
     /// buy a facility almost no run uses.
     pub prof: Option<Box<crate::profiler::Profiler>>,
+    /// `@PLN206 P7a` — the compiled routines this session can run interpreted, and which the
+    /// debugger wants that way now (`State::debug_route`).
+    pub routing: Option<Routing>,
+    /// `@PLN206 P7a` — a step into is under way: the next compiled routine called is entered
+    /// interpreted, so the step can stop inside it.
+    pub stepping_into: bool,
+}
+
+/// `@PLN206 P7a` — routing a compiled routine's call to its bytecode while debugging.
+#[derive(Debug, Default)]
+pub struct Routing {
+    /// Each compiled routine by the library index its static calls name.
+    pub by_index: HashMap<u16, u32>,
+    /// The breakpoint set `wanted` was computed for (`Debugger::breakpoint_key`).
+    pub wanted_key: (usize, u64),
+    /// The compiled routines a breakpoint is in, or that can reach one through their callees:
+    /// inside a compiled routine a call to another is a direct C call the debugger never sees.
+    pub wanted: HashSet<u32>,
 }
 
 /// @PLN16 B1 — collect the **static** call targets in an IR body into `out`.
@@ -401,6 +419,20 @@ impl Debugger {
     /// Register a bytecode offset as a breakpoint.
     pub fn add_offset(&mut self, offset: u32) {
         self.breakpoints.insert(offset);
+    }
+
+    /// The breakpoint set as a key: what a cache computed from it is valid for.
+    #[must_use]
+    pub fn breakpoint_key(&self) -> (usize, u64) {
+        (
+            self.breakpoints.len(),
+            self.breakpoints.iter().map(|&p| u64::from(p)).sum(),
+        )
+    }
+
+    /// The registered breakpoint offsets.
+    pub fn breakpoint_offsets(&self) -> impl Iterator<Item = u32> + '_ {
+        self.breakpoints.iter().copied()
     }
 
     /// Whether `offset` is a registered breakpoint.

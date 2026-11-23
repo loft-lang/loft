@@ -273,6 +273,11 @@ directory's — a package whose directory differs landed under a name no `use` c
 5. Register in ~/.loft/lib/<package>/loft.toml
 ```
 
+A library's **compiled** form is not built here: it is its hosted C unit, which each loft
+release builds for every published library and lists in its registry row, and which a run
+builds itself where a C compiler is (C_BACKEND.md § A library as a hosted unit).  The
+`[native]` steps above are a Rust native part's, which leaves with the rustc writer (@PLN225).
+
 ### What `loft my_program.loft` does (enhanced)
 
 ```
