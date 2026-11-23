@@ -1260,6 +1260,7 @@
 17_consumer_moros_dryopea	-	c	R-Invariant	16
 17_consumer_moros_dryopea	-	c	R-Invariant/hoist	16
 17_consumer_moros_dryopea	-	c	R-KeyedEntry/subscript	3
+17_consumer_moros_dryopea	-	c	R-LiftReuse	3
 17_consumer_moros_dryopea	-	c	R-LiteralAppend	1
 17_consumer_moros_dryopea	-	c	R-LoopSlot	55
 17_consumer_moros_dryopea	-	c	R-Mint	48
@@ -1328,6 +1329,7 @@
 17_consumer_moros_dryopea	-	rust	R-KeyedEntry/subscript	3
 17_consumer_moros_dryopea	-	rust	R-Leaf	170
 17_consumer_moros_dryopea	-	rust	R-LeafChain	82
+17_consumer_moros_dryopea	-	rust	R-LiftReuse	3
 17_consumer_moros_dryopea	-	rust	R-LitDiv	91
 17_consumer_moros_dryopea	-	rust	R-LiteralAppend	1
 17_consumer_moros_dryopea	-	rust	R-LoopSlot	55
@@ -2435,6 +2437,7 @@ drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant	29
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant/hoist	29
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-KeyedEntry	2
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LazySplit	3
+drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiftReuse	103
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiteralWalk	2
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopBuffer	9
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopRecord	3
@@ -2533,6 +2536,7 @@ drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-KeyedEntry	2
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LazySplit	1
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Leaf	334
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LeafChain	213
+drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiftReuse	103
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LitDiv	54
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LitHoist	1
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiteralWalk	2
@@ -2776,7 +2780,7 @@ glb	ca791ae33	c	R-Base/guard	1
 glb	ca791ae33	c	R-BoundedNest/kernel	1
 glb	ca791ae33	c	R-BufferReturn	11
 glb	ca791ae33	c	R-BufferReturn/bind	7
-glb	ca791ae33	c	R-CSplit	2
+glb	ca791ae33	c	R-CSplit	1
 glb	ca791ae33	c	R-CTail	3
 glb	ca791ae33	c	R-CompleteWrite	52
 glb	ca791ae33	c	R-Counter	245
@@ -2803,6 +2807,7 @@ glb	ca791ae33	c	R-InlineLeaf	11
 glb	ca791ae33	c	R-Inputs	1
 glb	ca791ae33	c	R-Invariant	6
 glb	ca791ae33	c	R-Invariant/hoist	6
+glb	ca791ae33	c	R-LiftReuse	103
 glb	ca791ae33	c	R-LiteralWalk	2
 glb	ca791ae33	c	R-LoopSlot	35
 glb	ca791ae33	c	R-NoLocks	1
@@ -2819,7 +2824,7 @@ glb	ca791ae33	c	R-RecPtr	19
 glb	ca791ae33	c	R-RecPtr/held	13
 glb	ca791ae33	c	R-RecPtr/param	6
 glb	ca791ae33	c	R-RecPtr/text	4
-glb	ca791ae33	c	R-RefParam	126
+glb	ca791ae33	c	R-RefParam	125
 glb	ca791ae33	c	R-RepeatRun	16
 glb	ca791ae33	c	R-RetAdopt	5
 glb	ca791ae33	c	R-Reuse	7
@@ -2864,6 +2869,7 @@ glb	ca791ae33	rust	R-Inputs	9
 glb	ca791ae33	rust	R-Invariant	34
 glb	ca791ae33	rust	R-Leaf	193
 glb	ca791ae33	rust	R-LeafChain	61
+glb	ca791ae33	rust	R-LiftReuse	103
 glb	ca791ae33	rust	R-LitDiv	2
 glb	ca791ae33	rust	R-LiteralWalk	2
 glb	ca791ae33	rust	R-LoopSlot	35
@@ -2926,6 +2932,7 @@ graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Inputs	39
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant	17
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant/hoist	17
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-KeyedEntry	2
+graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiftReuse	103
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiteralWalk	2
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopBuffer	3
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopRecord	1
@@ -3016,6 +3023,7 @@ graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Invariant	115
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-KeyedEntry	2
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Leaf	269
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LeafChain	143
+graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiftReuse	103
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LitDiv	48
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiteralWalk	2
 graphics	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LoopBuffer	3
@@ -3347,6 +3355,7 @@ hex_draw	ecc2b2e31	c	R-InlineLeaf	223
 hex_draw	ecc2b2e31	c	R-Inputs	57
 hex_draw	ecc2b2e31	c	R-Invariant	13
 hex_draw	ecc2b2e31	c	R-Invariant/hoist	13
+hex_draw	ecc2b2e31	c	R-LiftReuse	1
 hex_draw	ecc2b2e31	c	R-LoopBuffer	43
 hex_draw	ecc2b2e31	c	R-LoopSlot	408
 hex_draw	ecc2b2e31	c	R-Mint	18
@@ -3430,6 +3439,7 @@ hex_draw	ecc2b2e31	rust	R-Inputs	1524
 hex_draw	ecc2b2e31	rust	R-Invariant	322
 hex_draw	ecc2b2e31	rust	R-Leaf	365
 hex_draw	ecc2b2e31	rust	R-LeafChain	483
+hex_draw	ecc2b2e31	rust	R-LiftReuse	1
 hex_draw	ecc2b2e31	rust	R-LitDiv	218
 hex_draw	ecc2b2e31	rust	R-LoopBuffer	43
 hex_draw	ecc2b2e31	rust	R-LoopSlot	408
@@ -5192,6 +5202,7 @@ mesh3d	ca791ae33	c	R-InlineLeaf	23
 mesh3d	ca791ae33	c	R-Inputs	2
 mesh3d	ca791ae33	c	R-Invariant	10
 mesh3d	ca791ae33	c	R-Invariant/hoist	10
+mesh3d	ca791ae33	c	R-LiftReuse	103
 mesh3d	ca791ae33	c	R-LiteralWalk	2
 mesh3d	ca791ae33	c	R-LoopSlot	20
 mesh3d	ca791ae33	c	R-NoLocks	1
@@ -5253,6 +5264,7 @@ mesh3d	ca791ae33	rust	R-Inputs	2
 mesh3d	ca791ae33	rust	R-Invariant	34
 mesh3d	ca791ae33	rust	R-Leaf	186
 mesh3d	ca791ae33	rust	R-LeafChain	57
+mesh3d	ca791ae33	rust	R-LiftReuse	103
 mesh3d	ca791ae33	rust	R-LitDiv	1
 mesh3d	ca791ae33	rust	R-LiteralWalk	2
 mesh3d	ca791ae33	rust	R-LoopSlot	20
@@ -5804,6 +5816,7 @@ stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Inputs	54
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant	24
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant/hoist	24
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-KeyedEntry	2
+stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiftReuse	106
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiteralWalk	2
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopBuffer	5
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopRecord	1
@@ -5890,6 +5903,7 @@ stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Invariant	221
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-KeyedEntry	2
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Leaf	454
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LeafChain	355
+stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiftReuse	106
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LitDiv	105
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiteralWalk	2
 stage	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LoopBuffer	5
@@ -5968,6 +5982,7 @@ text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Inputs	13
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant	10
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Invariant/hoist	10
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-KeyedEntry	2
+text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiftReuse	103
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LiteralWalk	2
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopBuffer	3
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-LoopRecord	1
@@ -6049,6 +6064,7 @@ text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Invariant	137
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-KeyedEntry	2
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-Leaf	288
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LeafChain	160
+text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiftReuse	103
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LitDiv	64
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LiteralWalk	2
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	rust	R-LoopBuffer	3
