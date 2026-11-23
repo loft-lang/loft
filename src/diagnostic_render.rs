@@ -22,7 +22,6 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::Mutex;
 
 use crate::diagnostics::{DiagEntry, Diagnostics, Level};
 
@@ -35,13 +34,14 @@ pub trait SourceLoader {
 }
 
 /// File-system-backed `SourceLoader`.  Reads each file once on first
-/// access; caches the per-line vector in an internal `Mutex<HashMap>`.
+/// access; caches the per-line vector in an internal `RefCell<HashMap>`: an instance is made and used
+/// by one thread, so it takes no lock (LOCKS.md).
 /// Marginal memory: ~50 KB per loft file kept resident.  At ~3 files
 /// loaded in practice (user file + 2-3 default/*.loft) the total is
 /// well under 1 MB.
 #[derive(Default)]
 pub struct FileSourceLoader {
-    cache: Mutex<HashMap<String, Option<Vec<String>>>>,
+    cache: std::cell::RefCell<HashMap<String, Option<Vec<String>>>>,
 }
 
 impl FileSourceLoader {
@@ -56,7 +56,7 @@ impl SourceLoader for FileSourceLoader {
         if line_1based == 0 || file.is_empty() {
             return None;
         }
-        let mut cache = self.cache.lock().ok()?;
+        let mut cache = self.cache.borrow_mut();
         let entry = cache.entry(file.to_string()).or_insert_with(|| {
             crate::file_access::read_to_string(file)
                 .ok()

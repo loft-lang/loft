@@ -178,7 +178,8 @@ fn the_exits_hand_the_root_store_over() {
 /// switch puts one copy per call back.
 #[test]
 fn the_censuses_drop() {
-    for mode in ["--interpret"] {
+    {
+        let mode = "--interpret";
         let on = store_mints(mode, "r9", &[]);
         let off = store_mints(mode, "r9", OFF);
         assert_eq!((on, off), (2000, 4000), "{mode}: r9 mints (on, off)");

@@ -36,87 +36,87 @@ typedef struct {
 } loft_rlayout;
 
 /* `Store::set_str`: a text record of `n` bytes in `s`, its number answered. */
-static uint32_t loft_rstr_n(loft_store_t *s, const char *t, size_t n) {
-    uint32_t srec = loft_st_claim(s, (uint32_t) ((n + 15) / 8));
-    loft_set_u32(s, srec, 4, (uint32_t) n);
-    if (n) memcpy(loft_at(s, srec, 8), t, n);
+static uint32_t loft_rstr_n(loft_cx *cx, loft_store_t *s, const char *t, size_t n) {
+    uint32_t srec = loft_st_claim(cx, s, (uint32_t) ((n + 15) / 8));
+    loft_set_u32(cx, s, srec, 4, (uint32_t) n);
+    if (n) memcpy(loft_at(cx, s, srec, 8), t, n);
     return srec;
 }
 
-static uint32_t loft_rstr(loft_store_t *s, const char *t) {
-    return loft_rstr_n(s, t, strlen(t));
+static uint32_t loft_rstr(loft_cx *cx, loft_store_t *s, const char *t) {
+    return loft_rstr_n(cx, s, t, strlen(t));
 }
 
 /* A width-neutral number of the reflection records, at the build's width: 4 bytes under the
  * 32-bit regime (`LOFT_STD_INT4`, null INT32_MIN; `LOFT_STD_SINGLE`), 8 outside it. */
-static void loft_rint(loft_store_t *s, uint32_t rec, uint32_t at, int64_t v) {
+static void loft_rint(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t at, int64_t v) {
 #ifdef LOFT_STD_INT4
     int32_t x = v < INT32_MIN || v > INT32_MAX ? INT32_MIN : (int32_t) v;
-    memcpy(loft_at(s, rec, at), &x, 4);
+    memcpy(loft_at(cx, s, rec, at), &x, 4);
 #else
-    memcpy(loft_at(s, rec, at), &v, 8);
+    memcpy(loft_at(cx, s, rec, at), &v, 8);
 #endif
 }
 
-static void loft_rflt(loft_store_t *s, uint32_t rec, uint32_t at, double v) {
+static void loft_rflt(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t at, double v) {
 #ifdef LOFT_STD_SINGLE
     float x = (float) v;
-    memcpy(loft_at(s, rec, at), &x, 4);
+    memcpy(loft_at(cx, s, rec, at), &x, 4);
 #else
-    memcpy(loft_at(s, rec, at), &v, 8);
+    memcpy(loft_at(cx, s, rec, at), &v, 8);
 #endif
 }
 
 /* A vector of `n` elements of `bytes`, claimed whole, its length written and its handle at
  * `(rec, at)`; the vector's record answered. */
-static uint32_t loft_rvec(loft_store_t *s, uint32_t rec, uint32_t at, uint32_t n, uint32_t bytes) {
+static uint32_t loft_rvec(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t at, uint32_t n, uint32_t bytes) {
     uint32_t words = (n * bytes + 15) / 8 + 1;
-    uint32_t v = loft_claim(s, words);
-    loft_set_u32(s, v, 4, n);
-    loft_set_u32(s, rec, at, v);
+    uint32_t v = loft_claim(cx, s, words);
+    loft_set_u32(cx, s, v, 4, n);
+    loft_set_u32(cx, s, rec, at, v);
     return v;
 }
 
-static loft_ref loft_reflect_build(const loft_rlayout *L, const loft_rtype *t, const char *name) {
-    loft_ref out = loft_ref_null();
-    loft_database(&out, ((L->ti_bytes + 7) / 8) * 8);
-    loft_store_t *s = loft_store_of(out);
+static loft_ref loft_reflect_build(loft_cx *cx, const loft_rlayout *L, const loft_rtype *t, const char *name) {
+    loft_ref out = loft_ref_null(cx);
+    loft_database(cx, &out, ((L->ti_bytes + 7) / 8) * 8);
+    loft_store_t *s = loft_store_of(cx, out);
     uint32_t r = out.rec, p = out.pos;
-    loft_set_u32(s, r, 4, L->ti_tp);
-    loft_set_u32(s, r, p + L->ti_name, loft_rstr(s, name));
-    *loft_at(s, r, p + L->ti_kind) = t->kind;
-    loft_rint(s, r, p + L->ti_size, t->size);
-    loft_set_u32(s, r, p + L->ti_fields, 0);
-    loft_set_u32(s, r, p + L->ti_variants, 0);
-    loft_set_u32(s, r, p + L->ti_keys, 0);
-    *loft_at(s, r, p + L->ti_collection) = t->collection;
-    loft_set_u32(s, r, p + L->ti_element, loft_rstr(s, t->element));
+    loft_set_u32(cx, s, r, 4, L->ti_tp);
+    loft_set_u32(cx, s, r, p + L->ti_name, loft_rstr(cx, s, name));
+    *loft_at(cx, s, r, p + L->ti_kind) = t->kind;
+    loft_rint(cx, s, r, p + L->ti_size, t->size);
+    loft_set_u32(cx, s, r, p + L->ti_fields, 0);
+    loft_set_u32(cx, s, r, p + L->ti_variants, 0);
+    loft_set_u32(cx, s, r, p + L->ti_keys, 0);
+    *loft_at(cx, s, r, p + L->ti_collection) = t->collection;
+    loft_set_u32(cx, s, r, p + L->ti_element, loft_rstr(cx, s, t->element));
     if (t->nf >= 0) {
-        uint32_t v = loft_rvec(s, r, p + L->ti_fields, (uint32_t) t->nf, L->fi_bytes);
+        uint32_t v = loft_rvec(cx, s, r, p + L->ti_fields, (uint32_t) t->nf, L->fi_bytes);
         for (int i = 0; i < t->nf; i++) {
             uint32_t at = 8 + (uint32_t) i * L->fi_bytes;
-            loft_set_u32(s, v, at + L->fi_name, loft_rstr(s, t->f[i].name));
-            loft_set_u32(s, v, at + L->fi_type, loft_rstr(s, t->f[i].type_name));
-            loft_rint(s, v, at + L->fi_pos, t->f[i].pos);
-            *loft_at(s, v, at + L->fi_kind) = t->f[i].kind;
-            *loft_at(s, v, at + L->fi_null) = t->f[i].nullable;
+            loft_set_u32(cx, s, v, at + L->fi_name, loft_rstr(cx, s, t->f[i].name));
+            loft_set_u32(cx, s, v, at + L->fi_type, loft_rstr(cx, s, t->f[i].type_name));
+            loft_rint(cx, s, v, at + L->fi_pos, t->f[i].pos);
+            *loft_at(cx, s, v, at + L->fi_kind) = t->f[i].kind;
+            *loft_at(cx, s, v, at + L->fi_null) = t->f[i].nullable;
         }
     }
     if (t->nv >= 0) {
-        uint32_t v = loft_rvec(s, r, p + L->ti_variants, (uint32_t) t->nv, L->vi_bytes);
+        uint32_t v = loft_rvec(cx, s, r, p + L->ti_variants, (uint32_t) t->nv, L->vi_bytes);
         for (int i = 0; i < t->nv; i++) {
             uint32_t at = 8 + (uint32_t) i * L->vi_bytes;
-            loft_set_u32(s, v, at + L->vi_name, loft_rstr(s, t->v[i]));
-            loft_rint(s, v, at + L->vi_tag, i + 1);
+            loft_set_u32(cx, s, v, at + L->vi_name, loft_rstr(cx, s, t->v[i]));
+            loft_rint(cx, s, v, at + L->vi_tag, i + 1);
         }
     }
     if (t->nk >= 0) {
-        uint32_t v = loft_rvec(s, r, p + L->ti_keys, (uint32_t) t->nk, L->ki_bytes);
+        uint32_t v = loft_rvec(cx, s, r, p + L->ti_keys, (uint32_t) t->nk, L->ki_bytes);
         for (int i = 0; i < t->nk; i++) {
             uint32_t at = 8 + (uint32_t) i * L->ki_bytes;
-            loft_set_u32(s, v, at + L->ki_name, loft_rstr(s, t->k[i].name));
-            loft_rint(s, v, at + L->ki_pos, t->k[i].pos);
-            *loft_at(s, v, at + L->ki_asc) = t->k[i].asc;
+            loft_set_u32(cx, s, v, at + L->ki_name, loft_rstr(cx, s, t->k[i].name));
+            loft_rint(cx, s, v, at + L->ki_pos, t->k[i].pos);
+            *loft_at(cx, s, v, at + L->ki_asc) = t->k[i].asc;
         }
     }
     return out;
@@ -125,25 +125,25 @@ static loft_ref loft_reflect_build(const loft_rlayout *L, const loft_rtype *t, c
 /* `reflect_field_at`: the ValueInfo of the scalar that begins at `position` of the `kt` record
  * at `base` in `value`'s store — `OtherKind` (14) when no data field begins there or there is
  * no record to read; `is_null` when the scalar there holds loft's null. */
-static loft_ref loft_reflect_field_at(const loft_rlayout *L, const loft_rtype *T, uint32_t nt, loft_ref value,
+static loft_ref loft_reflect_field_at(loft_cx *cx, const loft_rlayout *L, const loft_rtype *T, uint32_t nt, loft_ref value,
                                       uint32_t base, uint16_t kt, int64_t position) {
     const loft_rdata *e = 0;
     if (kt < nt && position >= 0 && position <= 0xFFFF)
         for (int i = 0; i < T[kt].nd; i++)
             if (T[kt].d[i].pos == (uint16_t) position) { e = &T[kt].d[i]; break; }
     uint8_t kind = e && value.rec != 0 ? e->kind : 14;
-    loft_ref out = loft_ref_null();
-    loft_database(&out, ((L->vf_bytes + 7) / 8) * 8);
-    loft_store_t *s = loft_store_of(out);
-    loft_set_u32(s, out.rec, 4, L->vf_tp);
-    *loft_at(s, out.rec, out.pos + L->vf_kind) = kind;
-    loft_rint(s, out.rec, out.pos + L->vf_i, 0);
-    loft_rflt(s, out.rec, out.pos + L->vf_f, 0.0);
-    loft_set_u32(s, out.rec, out.pos + L->vf_t, 0);
+    loft_ref out = loft_ref_null(cx);
+    loft_database(cx, &out, ((L->vf_bytes + 7) / 8) * 8);
+    loft_store_t *s = loft_store_of(cx, out);
+    loft_set_u32(cx, s, out.rec, 4, L->vf_tp);
+    *loft_at(cx, s, out.rec, out.pos + L->vf_kind) = kind;
+    loft_rint(cx, s, out.rec, out.pos + L->vf_i, 0);
+    loft_rflt(cx, s, out.rec, out.pos + L->vf_f, 0.0);
+    loft_set_u32(cx, s, out.rec, out.pos + L->vf_t, 0);
     int is_null = 0;
     if (kind != 14) {
-        loft_store_t *vs = loft_store_of(value);
-        const uint8_t *a = loft_at(vs, value.rec, base + e->pos);
+        loft_store_t *vs = loft_store_of(cx, value);
+        const uint8_t *a = loft_at(cx, vs, value.rec, base + e->pos);
         int64_t iv = 0;
         double fv = 0.0;
         loft_text tv = { 0, 0, 0 };
@@ -157,9 +157,9 @@ static loft_ref loft_reflect_field_at(const loft_rlayout *L, const loft_rtype *T
         case 7: {
             uint32_t r;
             memcpy(&r, a, 4);
-            loft_str t = loft_store_str(vs, r);
-            is_null = loft_str_is_null(t);
-            if (!is_null && r != 0) { tv = loft_text_own(t); has_t = 1; }
+            loft_str t = loft_store_str(cx, vs, r);
+            is_null = loft_str_is_null(cx, t);
+            if (!is_null && r != 0) { tv = loft_text_own(cx, t); has_t = 1; }
             break;
         }
         case 8:
@@ -184,38 +184,38 @@ static loft_ref loft_reflect_field_at(const loft_rlayout *L, const loft_rtype *T
         default: break;
         }
         if (!is_null) {
-            loft_rint(s, out.rec, out.pos + L->vf_i, iv);
-            loft_rflt(s, out.rec, out.pos + L->vf_f, fv);
-            if (has_t) loft_set_u32(s, out.rec, out.pos + L->vf_t, loft_rstr_n(s, tv.p ? tv.p : "", tv.len));
+            loft_rint(cx, s, out.rec, out.pos + L->vf_i, iv);
+            loft_rflt(cx, s, out.rec, out.pos + L->vf_f, fv);
+            if (has_t) loft_set_u32(cx, s, out.rec, out.pos + L->vf_t, loft_rstr_n(cx, s, tv.p ? tv.p : "", tv.len));
         }
-        loft_text_free(&tv);
+        loft_text_free(cx, &tv);
     }
-    *loft_at(s, out.rec, out.pos + L->vf_null) = (uint8_t) is_null;
+    *loft_at(cx, s, out.rec, out.pos + L->vf_null) = (uint8_t) is_null;
     return out;
 }
 
 /* `reflect_field_path_into`: each step but the last descends into an inline record. */
-static loft_ref loft_reflect_field_path_at(const loft_rlayout *L, const loft_rtype *T, uint32_t nt, loft_ref value,
+static loft_ref loft_reflect_field_path_at(loft_cx *cx, const loft_rlayout *L, const loft_rtype *T, uint32_t nt, loft_ref value,
                                            loft_ref path, uint16_t kt) {
-    int64_t n = loft_vec_len(path);
-    if (n == 0) return loft_reflect_field_at(L, T, nt, value, value.pos, kt, -1);
-    loft_store_t *ps = loft_store_of(path);
-    uint32_t inner = loft_collection_rec(ps, path.rec, path.pos);
+    int64_t n = loft_vec_len(cx, path);
+    if (n == 0) return loft_reflect_field_at(cx, L, T, nt, value, value.pos, kt, -1);
+    loft_store_t *ps = loft_store_of(cx, path);
+    uint32_t inner = loft_collection_rec(cx, ps, path.rec, path.pos);
     uint16_t cur = kt;
     uint32_t pos = value.pos;
     for (int64_t i = 0; i + 1 < n; i++) {
         int64_t step;
-        memcpy(&step, loft_at(ps, inner, 8 + (uint32_t) i * 8), 8);
+        memcpy(&step, loft_at(cx, ps, inner, 8 + (uint32_t) i * 8), 8);
         const loft_rdata *e = 0;
         if (cur < nt && step >= 0 && step <= 0xFFFF)
             for (int j = 0; j < T[cur].nd; j++)
                 if (T[cur].d[j].pos == (uint16_t) step) { e = &T[cur].d[j]; break; }
-        if (!e || !e->inline_rec) return loft_reflect_field_at(L, T, nt, value, pos, cur, -1);
+        if (!e || !e->inline_rec) return loft_reflect_field_at(cx, L, T, nt, value, pos, cur, -1);
         pos += e->pos;
         cur = e->content;
     }
     int64_t last;
-    memcpy(&last, loft_at(ps, inner, 8 + (uint32_t) (n - 1) * 8), 8);
-    return loft_reflect_field_at(L, T, nt, value, pos, cur, last);
+    memcpy(&last, loft_at(cx, ps, inner, 8 + (uint32_t) (n - 1) * 8), 8);
+    return loft_reflect_field_at(cx, L, T, nt, value, pos, cur, last);
 }
 #endif

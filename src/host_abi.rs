@@ -183,6 +183,60 @@ pub struct HostedTable {
         entries: *const HandoverEntry,
         n: u32,
     ) -> u32,
+    /// `@PLN226` — the unit's store context for `stores` ([`HostedContexts`]): the one made
+    /// before, or a new one from `make`, which `end` ends when the `Stores` drops.  Appended
+    /// last, so a library built against the fields above reads them where they were.
+    pub cx_of: unsafe extern "C" fn(
+        stores: *mut Stores,
+        unit: *const std::ffi::c_void,
+        make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+        end: unsafe extern "C" fn(*mut std::ffi::c_void),
+    ) -> *mut std::ffi::c_void,
+}
+
+/// `@FR-C-Boundary` — the store contexts hosted C units keep for one `Stores`, one per unit it called
+/// into: what a unit's code keeps of the calling thread's own (its frames, its fault jump, its
+/// scratch; `src/c/loft_cx.h`), made by the unit at the first call and ended by it when this
+/// `Stores` drops.  A `par` worker's `Stores` is its own, so its calls into a unit work in a
+/// context of their own (formal/concurrency.md `C-Par`), as its stores are.
+#[derive(Default)]
+pub struct HostedContexts(Vec<HostedContext>);
+
+struct HostedContext {
+    unit: *const std::ffi::c_void,
+    cx: *mut std::ffi::c_void,
+    end: unsafe extern "C" fn(*mut std::ffi::c_void),
+}
+
+// SAFETY: a context is used only by the thread whose `Stores` holds it, as `TableView` is.
+unsafe impl Send for HostedContexts {}
+unsafe impl Sync for HostedContexts {}
+
+impl HostedContexts {
+    /// Unit `unit`'s context: the one it has, or a new one from `make`.
+    pub fn of(
+        &mut self,
+        unit: *const std::ffi::c_void,
+        make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+        end: unsafe extern "C" fn(*mut std::ffi::c_void),
+    ) -> *mut std::ffi::c_void {
+        if let Some(c) = self.0.iter().find(|c| c.unit == unit) {
+            return c.cx;
+        }
+        // SAFETY: the unit's own constructor, which answers a context it owns.
+        let cx = unsafe { make() };
+        self.0.push(HostedContext { unit, cx, end });
+        cx
+    }
+}
+
+impl Drop for HostedContexts {
+    fn drop(&mut self) {
+        for c in self.0.drain(..) {
+            // SAFETY: the unit's own end, for the context its `make` answered.
+            unsafe { (c.end)(c.cx) };
+        }
+    }
 }
 
 /// `@PLN206 P7` — one local a unit's routine offers at a hand-over (`loft_ho_entry`): kind 0

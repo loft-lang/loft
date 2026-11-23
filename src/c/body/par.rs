@@ -38,7 +38,7 @@ impl FnWriter<'_> {
     ) -> Result<Option<E>, String> {
         let get = |s: &mut Self, f: &str, k: K| -> Result<Option<E>, String> {
             let i = s.expr(&args[0], ind)?;
-            Ok(Some(E::new(format!("{f}({})", as_int(i)?), k)))
+            Ok(Some(E::new(format!("{f}(cx, {})", as_int(i)?), k)))
         };
         match (name, args) {
             (
@@ -68,8 +68,11 @@ impl FnWriter<'_> {
             ("n_parallel_buf_get_text", [i]) => {
                 let i = self.expr(i, ind)?;
                 let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_free(&{t});"));
-                self.line(ind, &format!("{t} = loft_par_get_text({});", as_int(i)?));
+                self.line(ind, &format!("loft_text_free(cx, &{t});"));
+                self.line(
+                    ind,
+                    &format!("{t} = loft_par_get_text(cx, {});", as_int(i)?),
+                );
                 Ok(Some(self.held(t, CType::Text)))
             }
             ("n_parallel_buf_get_narrow", [_, _, _]) => {
@@ -78,7 +81,7 @@ impl FnWriter<'_> {
                     .map_err(|_| "a narrow read without three operands".to_string())?;
                 Ok(Some(E::new(
                     format!(
-                        "loft_par_get_narrow({}, {}, {})",
+                        "loft_par_get_narrow(cx, {}, {}, {})",
                         as_int(i)?,
                         as_int(n)?,
                         as_int(s)?
@@ -93,11 +96,11 @@ impl FnWriter<'_> {
                 | "n_parallel_buf_drop_fn",
                 [],
             ) => Ok(Some(E::new(
-                "(loft_par_drop(0), (void) LOFT_TRACE_MARK(\"Q\"))",
+                "(loft_par_drop(cx, 0), (void) LOFT_TRACE_MARK(\"Q\"))",
                 K::Void,
             ))),
             ("n_parallel_buf_drop_ref", []) => Ok(Some(E::new(
-                "(loft_par_drop(1), (void) LOFT_TRACE_MARK(\"Q\"))",
+                "(loft_par_drop(cx, 1), (void) LOFT_TRACE_MARK(\"Q\"))",
                 K::Void,
             ))),
             _ => Ok(None),
@@ -158,20 +161,20 @@ impl FnWriter<'_> {
         let result_shape = cx
             .ctype(def.returned())
             .ok_or("a par worker whose result has no C shape")?;
-        let call = format!("{}({})", c_name(cx.data, d), call_args.join(", "));
+        let call = format!("{}({})", c_name(cx.data, d), crate::c::cx_args(&call_args));
         let dense = (name != "n_parallel_discard")
             .then(|| dense_rows(result_shape))
             .flatten();
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             _ if let Some((c, _)) = dense => format!("loft_b[loft_i] = ({c}) {call};"),
-            CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
+            CType::Int32 => format!("loft_b[loft_i].i = loft_w64(cx, {call});"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
             // A result is ADOPTED when the worker made its store (`n_parallel_buf_drop_ref`
             // frees only those); a pass-through of the element names the source's.
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
-                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}"
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_b[loft_i].r = {call}; \
+                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}"
             ),
             CType::Fn => format!("loft_b[loft_i].fn = {call};"),
             CType::Void => format!("{call};"),
@@ -236,7 +239,7 @@ impl FnWriter<'_> {
             );
         }
         let n = self.temp(CType::Int);
-        self.line(ind, &format!("{n} = loft_vec_len({input});"));
+        self.line(ind, &format!("{n} = loft_vec_len(cx, {input});"));
         self.line(ind, "{");
         let (row_c, push) = dense.unwrap_or(("loft_par_slot", "loft_par_push"));
         self.line(
@@ -246,7 +249,7 @@ impl FnWriter<'_> {
                 if name == "n_parallel_discard" {
                     "0".to_string()
                 } else {
-                    format!("{push}({n})")
+                    format!("{push}(cx, {n})")
                 }
             ),
         );
@@ -257,31 +260,31 @@ impl FnWriter<'_> {
         );
         self.line(
             ind + 2,
-            &format!("loft_ref loft_e = loft_vec_get({input}, {esz}, loft_i);"),
+            &format!("loft_ref loft_e = loft_vec_get(cx, {input}, {esz}, loft_i);"),
         );
         self.line(ind + 2, "(void) loft_e;");
         for w in &buffers {
             self.line(ind + 2, &format!("loft_text {w} = {{ 0, 0, 0 }};"));
         }
         for b in &vec_buffers {
-            self.line(ind + 2, &format!("loft_ref {b} = loft_ref_null();"));
-            self.line(ind + 2, &format!("loft_database(&{b}, 8);"));
+            self.line(ind + 2, &format!("loft_ref {b} = loft_ref_null(cx);"));
+            self.line(ind + 2, &format!("loft_database(cx, &{b}, 8);"));
         }
         self.line(ind + 2, &store);
         for w in &buffers {
-            self.line(ind + 2, &format!("loft_text_free(&{w});"));
+            self.line(ind + 2, &format!("loft_text_free(cx, &{w});"));
         }
         // The buffer made for a vector answer predates the call's snapshot, so the answer it
         // holds reads as pre-existing: it is the row's own store when the answer is in it, and
         // nobody's otherwise (native's `cr_fnref_buf`).  A discarded answer leaves it nobody's.
         for b in &vec_buffers {
             if name == "n_parallel_discard" {
-                self.line(ind + 2, &format!("loft_free_ref({b});"));
+                self.line(ind + 2, &format!("loft_free_ref(cx, {b});"));
             } else {
                 self.line(
                     ind + 2,
                     &format!(
-                        "if (loft_b[loft_i].r.store_nr == {b}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref({b});"
+                        "if (loft_b[loft_i].r.store_nr == {b}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref(cx, {b});"
                     ),
                 );
             }
@@ -306,12 +309,12 @@ impl FnWriter<'_> {
     /// caller had stays) — as a dropped call's temporary is released.  `(void) call` leaked them.
     fn par_discard(&self, call: &str, shape: CType) -> String {
         match shape {
-            CType::Text => format!("{{ loft_text loft_t = {call}; loft_text_free(&loft_t); }}"),
+            CType::Text => format!("{{ loft_text loft_t = {call}; loft_text_free(cx, &loft_t); }}"),
             CType::Tuple(id) => {
                 let mut texts = Vec::new();
                 self.tuple_text_leaves("loft_t", id, &mut texts);
                 let frees = texts.iter().fold(String::new(), |mut f, t| {
-                    let _ = write!(f, " loft_text_free(&{t});");
+                    let _ = write!(f, " loft_text_free(cx, &{t});");
                     f
                 });
                 format!(
@@ -320,8 +323,8 @@ impl FnWriter<'_> {
                 )
             }
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; \
-                 if (loft_fnref_minted(loft_r, loft_s, loft_ref_null())) loft_free_ref(loft_r); }}"
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_ref loft_r = {call}; \
+                 if (loft_fnref_minted(cx, loft_r, loft_s, loft_ref_null(cx))) loft_free_ref(cx, loft_r); }}"
             ),
             _ => format!("(void) {call};"),
         }
@@ -355,19 +358,19 @@ impl FnWriter<'_> {
         cx.par_sites.set(id + 1);
         let fields: Vec<String> = (0..extra.len()).map(|i| format!("loft_c->x{i}")).collect();
         let WorkerCall { args, .. } = Self::worker_call(cx, d, esz, &fields)?;
-        let call = format!("{}({})", c_name(cx.data, d), args.join(", "));
+        let call = format!("{}({})", c_name(cx.data, d), crate::c::cx_args(&args));
         let dense = (name != "n_parallel_discard")
             .then(|| dense_rows(result_shape))
             .flatten();
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             _ if let Some((c, _)) = dense => format!("loft_b[loft_i] = ({c}) {call};"),
-            CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
+            CType::Int32 => format!("loft_b[loft_i].i = loft_w64(cx, {call});"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
             // As the in-order route: the row's own store is ADOPTED when the worker made it.
             CType::Ref => format!(
-                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
-                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}"
+                "{{ uint64_t loft_s = cx->stores_allocated; loft_b[loft_i].r = {call}; \
+                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}"
             ),
             _ => format!("{call};"),
         };
@@ -378,27 +381,27 @@ impl FnWriter<'_> {
         }
         let _ = writeln!(
             decl,
-            "}} loft_parctx{id};\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi);"
+            "}} loft_parctx{id};\nstatic void loft_parbody{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi);"
         );
         if record.is_some() {
             let _ = writeln!(
                 decl,
-                "static void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);"
+                "static void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);"
             );
         }
         cx.gen_decls.borrow_mut().push_str(&decl);
         let mut body = format!(
-            "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    \
+            "\nstatic void loft_parbody{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    \
              loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    {row_c} *loft_b = loft_c->b;\n    \
              (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
-             loft_ref loft_e = loft_vec_get(loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n"
+             loft_ref loft_e = loft_vec_get(cx, loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n"
         );
         for w in buffers {
             let _ = writeln!(body, "        loft_text {w} = {{ 0, 0, 0 }};");
         }
         let _ = writeln!(body, "        {store}");
         for w in buffers {
-            let _ = writeln!(body, "        loft_text_free(&{w});");
+            let _ = writeln!(body, "        loft_text_free(cx, &{w});");
         }
         body.push_str("    }\n}\n");
         // STORE_MODEL D46: a record result moves with its store into the caller's table, as the
@@ -411,12 +414,12 @@ impl FnWriter<'_> {
         let t = self.expr(threads, ind)?;
         let t = as_int(t)?;
         let n = self.temp(CType::Int);
-        self.line(ind, &format!("{n} = loft_vec_len({input});"));
+        self.line(ind, &format!("{n} = loft_vec_len(cx, {input});"));
         self.line(ind, "{");
         let slots = if name == "n_parallel_discard" {
             "0".to_string()
         } else {
-            format!("{push}({n})")
+            format!("{push}(cx, {n})")
         };
         let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}");
         for x in extra {
@@ -427,12 +430,14 @@ impl FnWriter<'_> {
         if record.is_some() {
             self.line(
                 ind + 1,
-                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});"),
+                &format!(
+                    "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});"
+                ),
             );
         } else {
             self.line(
                 ind + 1,
-                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0);"),
+                &format!("loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, 0);"),
             );
         }
         self.line(ind, "}");
@@ -474,7 +479,7 @@ impl FnWriter<'_> {
         self.line(ind, "{");
         self.line(
             ind + 1,
-            &format!("uint64_t loft_n = (uint64_t) loft_vec_len({input});"),
+            &format!("uint64_t loft_n = (uint64_t) loft_vec_len(cx, {input});"),
         );
         self.line(
             ind + 1,
@@ -499,10 +504,10 @@ impl FnWriter<'_> {
         self.line(
             ind + 4,
             &format!(
-                "loft_p = {f}(loft_p, loft_i64_bits(loft_par_arg(loft_vec_get({input}, 8, (int64_t) loft_i), 8)));"
+                "loft_p = {f}(cx, loft_p, loft_i64_bits(cx, loft_par_arg(cx, loft_vec_get(cx, {input}, 8, (int64_t) loft_i), 8)));"
             ),
         );
-        self.line(ind + 3, &format!("{r} = {f}({r}, loft_p);"));
+        self.line(ind + 3, &format!("{r} = {f}(cx, {r}, loft_p);"));
         self.line(ind + 2, "}");
         self.line(ind + 1, "}");
         self.line(ind, "}");
@@ -540,7 +545,7 @@ impl FnWriter<'_> {
                         vec_buffers.push(b);
                     }
                     Type::Reference(..) | Type::Enum(_, true, _) => {
-                        call_args.push("loft_ref_null()".into());
+                        call_args.push("loft_ref_null(cx)".into());
                     }
                     _ => return Err("a par worker with a hidden parameter of another kind".into()),
                 }
@@ -551,18 +556,18 @@ impl FnWriter<'_> {
                     .ctype(&a.typedef)
                     .ok_or("a par worker over rows of no C shape")?;
                 // A primitive row goes by its stored bits (`read_primitive_at`).
-                let bits = format!("loft_par_arg(loft_e, {esz})");
+                let bits = format!("loft_par_arg(cx, loft_e, {esz})");
                 call_args.push(match c {
                     CType::Ref => "loft_e".into(),
-                    CType::Text => "loft_get_text(loft_e, 0)".into(),
-                    CType::Int => format!("loft_i64_bits({bits})"),
-                    CType::Int32 => format!("loft_n32(loft_i64_bits({bits}))"),
-                    CType::Float => format!("loft_f64({bits})"),
-                    CType::Single => format!("loft_f32((uint32_t) {bits})"),
+                    CType::Text => "loft_get_text(cx, loft_e, 0)".into(),
+                    CType::Int => format!("loft_i64_bits(cx, {bits})"),
+                    CType::Int32 => format!("loft_n32(cx, loft_i64_bits(cx, {bits}))"),
+                    CType::Float => format!("loft_f64(cx, {bits})"),
+                    CType::Single => format!("loft_f32(cx, (uint32_t) {bits})"),
                     CType::Char => format!("(uint32_t) {bits}"),
                     CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
                     // A function row is its definition number.
-                    CType::Fn => format!("loft_fn_of((int64_t) (uint32_t) {bits})"),
+                    CType::Fn => format!("loft_fn_of(cx, (int64_t) (uint32_t) {bits})"),
                     CType::Tuple(_) => {
                         let x = stored_value(cx, "loft_e", a.typedef.base())
                             .ok_or("a par worker over rows of tuples holding references")?;
@@ -616,18 +621,18 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
                     "OpGetShort" => "loft_get_short",
                     _ => "loft_get_short_raw",
                 };
-                format!("{f}({at}, 0, INT64_C({}))", n.min)
+                format!("{f}(cx, {at}, 0, INT64_C({}))", n.min)
             }
-            None => format!("loft_get_int({at}, 0)"),
+            None => format!("loft_get_int(cx, {at}, 0)"),
         },
-        Type::Float => format!("loft_get_float({at}, 0)"),
-        Type::Single => format!("loft_get_single({at}, 0)"),
-        Type::Boolean => format!("loft_get_bool({at}, 0)"),
-        Type::Character => format!("loft_get_char({at}, 0)"),
-        Type::Enum(_, false, _) => format!("loft_get_enum({at}, 0)"),
+        Type::Float => format!("loft_get_float(cx, {at}, 0)"),
+        Type::Single => format!("loft_get_single(cx, {at}, 0)"),
+        Type::Boolean => format!("loft_get_bool(cx, {at}, 0)"),
+        Type::Character => format!("loft_get_char(cx, {at}, 0)"),
+        Type::Enum(_, false, _) => format!("loft_get_enum(cx, {at}, 0)"),
         // A tuple parameter's text is the caller's — the callee copies one it writes — so the
         // row lends the stored bytes.
-        Type::Text(_) => format!("loft_text_lend(loft_get_text({at}, 0))"),
+        Type::Text(_) => format!("loft_text_lend(cx, loft_get_text(cx, {at}, 0))"),
         Type::Tuple(elems) => {
             let offsets = crate::data::stored_tuple_offsets(cx.data, cx.stores, elems)?;
             let CType::Tuple(id) = cx.ctype(tp)? else {
@@ -636,7 +641,7 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
             let members = elems
                 .iter()
                 .zip(&offsets)
-                .map(|(e, o)| stored_value(cx, &format!("loft_field({at}, {o})"), e.base()))
+                .map(|(e, o)| stored_value(cx, &format!("loft_field(cx, {at}, {o})"), e.base()))
                 .collect::<Option<Vec<_>>>()?;
             format!("((loft_tup{id}) {{ {} }})", members.join(", "))
         }
@@ -649,7 +654,7 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
 /// (`loft_par_move_rows`), as the interpreter's `adopt_worker_excess` + `rebase_walk_record`.
 fn par_move_fn(id: u32, kt: u16) -> String {
     format!(
-        "\nstatic void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    \
-                 loft_par_move_rows(loft_types, loft_ntypes, {kt}, ((loft_parctx{id} *) loft_vc)->b, loft_lo, loft_hi, loft_pn);\n}}\n"
+        "\nstatic void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    \
+                 loft_par_move_rows(cx, loft_types, loft_ntypes, {kt}, ((loft_parctx{id} *) loft_vc)->b, loft_lo, loft_hi, loft_pn);\n}}\n"
     )
 }

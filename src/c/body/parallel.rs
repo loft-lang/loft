@@ -136,7 +136,7 @@ impl FnWriter<'_> {
         );
         self.line(
             ind + 1,
-            &format!("loft_parallel_run({}, loft_pf, loft_pv);", fns.len()),
+            &format!("loft_parallel_run(cx, {}, loft_pf, loft_pv);", fns.len()),
         );
         self.line(ind, "}");
         Ok(())
@@ -202,8 +202,16 @@ impl FnWriter<'_> {
         let mut decls = String::new();
         let mut bodies = String::new();
         for a in &self.arm_fns {
-            let _ = writeln!(decls, "static void {}(void *const *loft_pv);", a.name);
-            let _ = writeln!(bodies, "\nstatic void {}(void *const *loft_pv) {{", a.name);
+            let _ = writeln!(
+                decls,
+                "static void {}(loft_cx *cx, void *const *loft_pv);",
+                a.name
+            );
+            let _ = writeln!(
+                bodies,
+                "\nstatic void {}(loft_cx *cx, void *const *loft_pv) {{",
+                a.name
+            );
             bodies.push_str(prologue);
             for (name, at, decl) in &a.copies {
                 if let Some(d) = decl {

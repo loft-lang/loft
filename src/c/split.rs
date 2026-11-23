@@ -62,10 +62,11 @@ pub(crate) fn above_define() -> Option<String> {
     Some(format!("#define LOFT_C_SPLIT_ABOVE {n}\n"))
 }
 
-/// The budget the split runs under, or `None` when it is off: a shipped unit (unless
-/// `LOFT_C_SPLIT_SHIP` asks for it), or a switch.
-pub(crate) fn budget() -> Option<usize> {
-    if (super::functions_whole() && !split_shipped())
+/// The budget the split runs under, or `None` when it is off: a unit that keeps its functions
+/// whole (`Cx::whole`, a shipped artefact — unless `LOFT_C_SPLIT_SHIP` asks for its parts), or
+/// a switch.
+pub(crate) fn budget(whole: bool) -> Option<usize> {
+    if (whole && !split_shipped())
         || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0"))
     {
         return None;
@@ -508,13 +509,14 @@ fn label_of(bare_line: &str) -> Option<&str> {
 /// The body as a chain of parts, and its size in runtime-call sites, which the unit compares
 /// with `LOFT_C_SPLIT_ABOVE` (loft_cc.h) to pick the parts or the whole body.
 pub(crate) fn split(
+    whole: bool,
     storage: &str,
     ret: &str,
     name: &str,
     params: &str,
     body: &str,
 ) -> Option<(String, usize)> {
-    let parts = split_at(budget()?, storage, ret, name, params, body)?;
+    let parts = split_at(budget(whole)?, storage, ret, name, params, body)?;
     Some((parts, body_sites(body)))
 }
 
@@ -1042,13 +1044,13 @@ mod tests {
 
     #[test]
     fn a_static_slot_moves_out_under_the_functions_name() {
-        let slot = "    static LOFT_TLS loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
-                    loft_text v2_w = loft_wpark_take(&loft_wp7_1);\n";
+        let slot = "    static loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
+                    loft_text v2_w = loft_wpark_take(cx, &loft_wp7_1);\n";
         let out = split(&body(slot, &read("v2_w.len"))).expect("split");
-        let moved = "static LOFT_TLS loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
+        let moved = "static loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
         assert!(out.starts_with(moved), "{out}");
         assert!(
-            out.contains("loft_fr->v2_w = loft_wpark_take(&n_f__fr__loft_wp7_1);"),
+            out.contains("loft_fr->v2_w = loft_wpark_take(cx, &n_f__fr__loft_wp7_1);"),
             "{out}"
         );
     }

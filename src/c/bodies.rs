@@ -243,7 +243,7 @@ pub fn emit_bodies(
         });
     }
     // A carried body never reports: the runner's reports live in its `State`.
-    for call in ["loft_panic(", "loft_assert(", "loft_fault_"] {
+    for call in ["loft_panic(cx, ", "loft_assert(cx, ", "loft_fault_"] {
         if fragment.contains(call) {
             return Err(super::Refusal {
                 function: "the compiled standard-library bodies".to_string(),
@@ -268,7 +268,7 @@ fn needs_types(args: &[Slot], ret: Slot) -> bool {
 /// another library, a body that works on records does not answer and the loft body runs.
 /// `file` is not compared: the runner's rows do not carry it.
 const TYPES_OK: &str = "
-static int loft_body_types_ok(void) {
+static int loft_body_types_ok(loft_cx *cx) {
     static uint32_t seen = 0;
     static int ok = 0;
     if (!loft_crt_types) return 0;
@@ -307,12 +307,12 @@ static int loft_body_types_ok(void) {
 fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
     let size: i64 = args.iter().map(|s| s.bytes()).sum();
     let mut e = format!(
-        "\nstatic int64_t loft_body_e{k}(int64_t stk, int64_t sp, loft_text *dest) {{\n    \
+        "\nstatic int64_t loft_body_e{k}(loft_cx *cx, int64_t stk, int64_t sp, loft_text *dest) {{\n    \
          int64_t base = sp - {size};\n    \
          if (base < 0) return -1;\n"
     );
     if needs_types(args, ret) {
-        e.push_str("    if (!loft_body_types_ok()) return -1;\n");
+        e.push_str("    if (!loft_body_types_ok(cx)) return -1;\n");
     }
     if ret == Slot::Text {
         // The plain form's destination: the first work buffer's cell.
@@ -327,8 +327,8 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
             Some(at) => {
                 let _ = writeln!(
                     e,
-                    "    if (plain) {{\n        uint32_t q[3]; memcpy(q, loft_crt_slot_at(stk, base + {at}), sizeof q);\n        \
-                     dest = (loft_text *) loft_place(loft_crt_ref(q[0], q[1], q[2]), 0);\n        \
+                    "    if (plain) {{\n        uint32_t q[3]; memcpy(q, loft_crt_slot_at(cx, stk, base + {at}), sizeof q);\n        \
+                     dest = (loft_text *) loft_place(cx, loft_crt_ref(cx, q[0], q[1], q[2]), 0);\n        \
                      if (!dest) return -1;\n    }}"
                 );
             }
@@ -346,14 +346,14 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
         } else if *s == Slot::Ref {
             let _ = writeln!(
                 e,
-                "    uint32_t q{i}[3]; memcpy(q{i}, loft_crt_slot_at(stk, base + {off}), sizeof q{i});\n    \
-                 loft_ref a{i} = loft_crt_ref(q{i}[0], q{i}[1], q{i}[2]);"
+                "    uint32_t q{i}[3]; memcpy(q{i}, loft_crt_slot_at(cx, stk, base + {off}), sizeof q{i});\n    \
+                 loft_ref a{i} = loft_crt_ref(cx, q{i}[0], q{i}[1], q{i}[2]);"
             );
             call.push(format!("a{i}"));
         } else {
             let _ = writeln!(
                 e,
-                "    {} a{i}; memcpy(&a{i}, loft_crt_slot_at(stk, base + {off}), sizeof a{i});",
+                "    {} a{i}; memcpy(&a{i}, loft_crt_slot_at(cx, stk, base + {off}), sizeof a{i});",
                 s.c()
             );
             call.push(format!("a{i}"));
@@ -361,32 +361,32 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
         off += s.bytes();
     }
     if ret == Slot::Text {
-        let _ = writeln!(e, "    loft_text r = {body}({});", call.join(", "));
+        let _ = writeln!(e, "    loft_text r = {body}({});", super::cx_args(&call));
         e.push_str(
-            "    if (r.len > 0) loft_text_concat(dest, loft_view(&r));\n    loft_text_free(&r);\n",
+            "    if (r.len > 0) loft_text_concat(cx, dest, loft_view(cx, &r));\n    loft_text_free(cx, &r);\n",
         );
         for (i, s) in args.iter().enumerate() {
             if *s == Slot::Work {
-                let _ = writeln!(e, "    loft_text_free(&a{i});");
+                let _ = writeln!(e, "    loft_text_free(cx, &a{i});");
             }
         }
         e.push_str(
-            "    if (!plain) return base;\n    loft_str v = loft_view(dest);\n    \
-             memcpy(loft_crt_slot_at(stk, base), &v, sizeof v);\n    return base + 16;\n}\n",
+            "    if (!plain) return base;\n    loft_str v = loft_view(cx, dest);\n    \
+             memcpy(loft_crt_slot_at(cx, stk, base), &v, sizeof v);\n    return base + 16;\n}\n",
         );
         return e;
     }
-    let _ = writeln!(e, "    {} r = {body}({});", ret.c(), call.join(", "));
+    let _ = writeln!(e, "    {} r = {body}({});", ret.c(), super::cx_args(&call));
     if ret == Slot::Ref {
         e.push_str(
             "    uint32_t q[4] = { r.store_nr, r.rec, r.pos, 0 };\n    \
-             memcpy(loft_crt_slot_at(stk, base), q, sizeof q);\n    return base + 16;\n}\n",
+             memcpy(loft_crt_slot_at(cx, stk, base), q, sizeof q);\n    return base + 16;\n}\n",
         );
         return e;
     }
     let _ = writeln!(
         e,
-        "    memcpy(loft_crt_slot_at(stk, base), &r, sizeof r);\n    return base + {};\n}}",
+        "    memcpy(loft_crt_slot_at(cx, stk, base), &r, sizeof r);\n    return base + {};\n}}",
         ret.bytes()
     );
     e
@@ -397,7 +397,7 @@ fn lookup(names: &[String]) -> String {
     let mut t = String::from(
         "\n/* A text argument's slot is 16 bytes, as the bytecode lays it out; a view must fit it. */\n\
          typedef char loft_body_text_fits[sizeof(loft_str) <= 16 ? 1 : -1];\n\
-         typedef int64_t (*loft_body_fn)(int64_t, int64_t, loft_text *);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
+         typedef int64_t (*loft_body_fn)(loft_cx *, int64_t, int64_t, loft_text *);\nstatic const struct { const char *name; loft_body_fn fn; } loft_body_table[] = {\n",
     );
     for (k, n) in names.iter().enumerate() {
         let _ = writeln!(t, "    {{ \"{n}\", loft_body_e{k} }},");
@@ -409,8 +409,10 @@ fn lookup(names: &[String]) -> String {
         t,
         "}};\nstatic const int64_t loft_body_count = {};\n\n\
          int64_t loft_body_find(const char *name, int64_t len) {{\n    \
-         static int off = -1;\n    \
-         if (off < 0) {{\n        const char *e = getenv(\"LOFT_NO_COMPILED_BODIES\");\n        off = e && *e && strcmp(e, \"0\") != 0;\n    }}\n    \
+         static int seen = -1;\n    \
+         int off;\n    \
+         LOFT_PUB_GET(seen, off);\n    \
+         if (off < 0) {{\n        const char *e = getenv(\"LOFT_NO_COMPILED_BODIES\");\n        off = e && *e && strcmp(e, \"0\") != 0;\n        LOFT_PUB_SET(seen, off);\n    }}\n    \
          if (off) return -1;\n    \
          static const char shared[] = \"loft_shared_\";\n    \
          if (len >= (int64_t) sizeof shared - 1 && memcmp(name, shared, sizeof shared - 1) == 0) {{\n        \
@@ -421,12 +423,13 @@ fn lookup(names: &[String]) -> String {
          return -1;\n}}\n\n\
          int64_t loft_body_call(int64_t entry, int64_t stk, int64_t sp) {{\n    \
          if (entry < 0 || entry >= loft_body_count || !loft_body_table[entry].fn) return -1;\n    \
-         return loft_body_table[entry].fn(stk, sp, 0);\n}}\n\n\
+         return loft_body_table[entry].fn(&loft_main_cx, stk, sp, 0);\n}}\n\n\
          int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, int64_t r, int64_t p) {{\n    \
+         loft_cx *cx = &loft_main_cx;\n    \
          if (entry < 0 || entry >= loft_body_count || !loft_body_table[entry].fn) return -1;\n    \
-         loft_text *dest = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);\n    \
+         loft_text *dest = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);\n    \
          if (!dest) return -1;\n    \
-         return loft_body_table[entry].fn(stk, sp, dest);\n}}\n",
+         return loft_body_table[entry].fn(cx, stk, sp, dest);\n}}\n",
         names.len()
     );
     t

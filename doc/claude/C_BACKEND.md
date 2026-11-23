@@ -214,12 +214,18 @@ Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the 
 overflow is undefined).  The runtime and the generator write these macros and never a raw
 builtin or attribute.
 
-The unit's floor is C11, for one feature: `_Thread_local`, which the threads that run `par`
-workers and `parallel` arms keep their runtime state in (`LOFT_TLS`).  The threads themselves
-are the host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and
-the runtime uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit
-compiled as C99, which has no thread-local storage, runs on one thread: `par` rows and
-`parallel` arms in order.
+No state is a thread-local (@PLN226).  What a thread of the program keeps of its own — its
+store table, frames, fault and test jumps, held texts, text pool and scratch — is its **store
+context**, `struct loft_cx` (`loft_cx.h`), which every runtime function and every emitted
+function takes first as `cx`, as the rustc writer passes its `Stores`.  The main thread's is
+`loft_main_cx`; a `par` worker's or `parallel` arm's is made by the thread that starts it
+(`loft_par_job_init`: its table a copy of the caller's, the caller's stores read-only in it),
+and `loft_cx_end` releases what it holds when the worker ends.  A hosted unit keeps one per
+interpreter `Stores` that calls it (`HostedTable::cx_of`), a component (`libloft_net`) one of its
+own per caller context (`loft_cx_make_v1`, handed to each symbol first).  The threads are the
+host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and the runtime
+uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit builds as C99 too
+and runs `par` on threads.
 
 The OS beyond ISO C — a monotonic clock, a path's kind and size, directories, truncate, fsync — is
 POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO_POSIX` builds
@@ -741,6 +747,14 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
    `sanitizer`.
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
+
+**Port, never reinvent (owner).**  The C carries loft's design, not a new one: a counter, a
+cache, a fallback or a gate the C needs is the one the interpreter (or the rustc writer's
+runtime) already has, ported.  A mechanism made up for the C is, in almost every case, a
+regression.  Where loft's own design is the flaw — a thread-local, a reference count — the
+cure is that design's fix on every backend, never a C variant of it: thread-locals and
+reference counts hide bugs and are almost never needed (@PLN226: per-thread state is a field
+of the `Stores` a worker is handed).
 
 **Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
 a keyed lookup that misses on a bound collection fetches that one key through the paged

@@ -1159,7 +1159,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         return 0;
     }
     // The analysis memos are about one program, and this pass is the first to ask them.
-    crate::opt::begin_program();
+    crate::opt::begin_program(data);
     let mut leaves: HashMap<u32, Leaf> = HashMap::new();
     for d in 0..data.definitions() {
         if data.def(d).def_type != DefType::Function {

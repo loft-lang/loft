@@ -67,7 +67,7 @@ impl Cx<'_> {
             .collect();
         let _ = writeln!(
             out,
-            "static const uint32_t loft_ur_{name}[][2] = {{ {} }};\nstatic uint8_t loft_uc_{name}(uint32_t c) {{ return loft_in_ranges(c, loft_ur_{name}, {}); }}",
+            "static const uint32_t loft_ur_{name}[][2] = {{ {} }};\nstatic uint8_t loft_uc_{name}(loft_cx *cx, uint32_t c) {{ return loft_in_ranges(cx, c, loft_ur_{name}, {}); }}",
             list.join(", "),
             ranges.len()
         );
@@ -93,7 +93,7 @@ impl Cx<'_> {
         }
         let _ = writeln!(
             out,
-            "static const loft_umap loft_um_{name}[] = {{ {} }};\nstatic loft_text loft_text_{name}(loft_str s) {{ return loft_text_case(s, loft_um_{name}, {}, {}); }}",
+            "static const loft_umap loft_um_{name}[] = {{ {} }};\nstatic loft_text loft_text_{name}(loft_cx *cx, loft_str s) {{ return loft_text_case(cx, s, loft_um_{name}, {}, {}); }}",
             rows.join(", "),
             rows.len(),
             i32::from(!upper)

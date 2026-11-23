@@ -194,6 +194,8 @@ struct NativeSig {
     /// `Definition::native_answer_tp` — what a heap answer pinned to an argument's store is
     /// copied out with (loft#2227).
     answer_tp: u16,
+    /// `@PLN226` — the component the bridge belongs to, whose context it takes first.
+    cx: Option<crate::c_libs::CxFns>,
 }
 
 /// Side table: library index → (the generated bridge, signature), resolved ONCE by
@@ -362,6 +364,7 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
         params,
         ret,
         answer_tp: def.native_answer_tp,
+        cx: crate::c_libs::get_bridge_cx(def.native()),
     })
 }
 
@@ -1707,6 +1710,7 @@ mod dispatch_cache_tests {
 fn call_bridge(
     stores: &mut crate::database::Stores,
     bridge_ptr: *const (),
+    cx: Option<crate::c_libs::CxFns>,
     ls: LoftStore,
     args: &[loft_ffi::LoftValue],
 ) -> loft_ffi::LoftValue {
@@ -1722,6 +1726,30 @@ fn call_bridge(
     let _guard = StoresGuard;
 
     let mut ret = LoftValue::VOID;
+    // `@PLN226` — a component's bridge takes this `Stores`' context of that component first.
+    if let Some(c) = cx {
+        let ccx = stores
+            .hosted_cx
+            .of(c.make as *const std::ffi::c_void, c.make, c.end);
+        // SAFETY: a bridge the component registered through `loft_register_bridges_cx_v1`.
+        let bridge: unsafe extern "C" fn(
+            *mut std::ffi::c_void,
+            LoftStore,
+            *const LoftValue,
+            usize,
+            *mut LoftValue,
+        ) = unsafe { std::mem::transmute(bridge_ptr) };
+        unsafe {
+            bridge(
+                ccx,
+                ls,
+                args.as_ptr(),
+                args.len(),
+                std::ptr::from_mut(&mut ret),
+            )
+        };
+        return ret;
+    }
     // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the
     // cdylib; the local `LoftStore` mirror is `#[repr(C)]`-identical to
     // `loft_ffi::LoftStore`, so the ABI matches.
@@ -1826,7 +1854,7 @@ fn dispatch_via_bridge(
     if pinned_answer {
         claim_log_begin(store_nr);
     }
-    let ret = call_bridge(stores, bridge_ptr, ls, args);
+    let ret = call_bridge(stores, bridge_ptr, sig.cx, ls, args);
     let claimed = if pinned_answer {
         claim_log_end()
     } else {

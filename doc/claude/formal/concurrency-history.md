@@ -5,8 +5,23 @@
 > of `par`; this file is its TIMELINE — every place the code was measured not to do it, when,
 > what it cost, and what closed it.
 
-OPEN: **0** (D-conc-1 and D-conc-2 opened and closed 2026-10-07).  The chapter read *"a rules
+OPEN: **0** (D-conc-1 and D-conc-2 opened and closed 2026-10-07, D-conc-3 on 2026-11-23).  The chapter read *"a rules
 doc — adds no code deviation"* until the formal-rule walk of 2026-10-07 measured both.
+
+### D-conc-3 — OPENED AND CLOSED (2026-11-23, @PLN226): lazily set values of the C runtime written without an atomic or a lock
+
+`C-Publish` was written with four sites named against it; an audit for the shape — a static a
+function sets the first time it is asked — found about twenty: the symbol a library call resolves
+on its first call (emitted, for loft-ffi libraries and lazy or bound `#c` symbols), the fault log,
+the store dump and the allocation trace opened on first use, `loft_had_fatal`, the halt claim's
+fallback outside gcc, clang and MSVC, the allocation trace's worker numbers, the refused-path and
+replay-key lists, the production log's discard count, the engine's flags and datagram count, the
+signal handlers' install and the process-group table, Winsock's start, the Windows clock
+frequency and the engine's sleep timer.  Every thread wrote the same value or set the same flag,
+so no answer was seen to change, but each was a data race in ISO C.  Closed by the published-data
+primitives in `loft_cc.h` (`LOFT_PUB_*`, `loft_pub_lock`): the compiler's atomics under
+`LOFT_GNU`, one program-wide lock otherwise (strict C99 and C11 included); the sleep timer became
+a field of the thread's context (`C-Own`).
 
 ### D-conc-2 — OPENED AND CLOSED (2026-10-07, loft#1918): a worker writing its input through a view compiled and halted at run time
 

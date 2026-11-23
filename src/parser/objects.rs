@@ -7784,6 +7784,7 @@ impl Parser {
             ops.push(self.copy_ref(&Value::Var(dest), &base, &ret));
             if !self.first_pass {
                 crate::copy_manifest::record(
+                    &self.data,
                     self.context,
                     dest,
                     kt,

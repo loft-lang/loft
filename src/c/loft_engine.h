@@ -30,7 +30,7 @@
 typedef struct { int64_t cid, kind, status; loft_text payload; } loft_eh_event;
 typedef struct { loft_eh_event *v; size_t head, n, cap; } loft_eh_queue;
 
-static void loft_eh_push(loft_eh_queue *q, int64_t cid, int64_t kind, int64_t status, const char *p, size_t n) {
+static void loft_eh_push(loft_cx *cx, loft_eh_queue *q, int64_t cid, int64_t kind, int64_t status, const char *p, size_t n) {
     if (q->head > 0 && q->head == q->n) q->head = q->n = 0;
     if (q->n == q->cap) {
         if (q->head > 0) {
@@ -50,18 +50,18 @@ static void loft_eh_push(loft_eh_queue *q, int64_t cid, int64_t kind, int64_t st
     e->status = status;
     e->payload.p = 0;
     e->payload.len = e->payload.cap = 0;
-    loft_push(&e->payload, p, n);
+    loft_push(cx, &e->payload, p, n);
 }
 
 /* Pop the head into `last` (its old payload freed): 0 when the queue is empty. */
-static int loft_eh_pop(loft_eh_queue *q, loft_eh_event *last) {
+static int loft_eh_pop(loft_cx *cx, loft_eh_queue *q, loft_eh_event *last) {
     if (q->head >= q->n) return 0;
     free(last->payload.p);
     *last = q->v[q->head++];
     return 1;
 }
 
-static void loft_eh_queue_free(loft_eh_queue *q) {
+static void loft_eh_queue_free(loft_cx *cx, loft_eh_queue *q) {
     for (size_t i = q->head; i < q->n; i++) free(q->v[i].payload.p);
     free(q->v);
     q->v = 0;
@@ -75,7 +75,7 @@ static int64_t *loft_eh_sync_id = 0;
 static uint8_t *loft_eh_sync_keyed = 0;
 static size_t loft_eh_nsync = 0;
 
-static void loft_eh_sync_declare(int64_t id, uint8_t keyed) {
+static void loft_eh_sync_declare(loft_cx *cx, int64_t id, uint8_t keyed) {
     for (size_t i = 0; i < loft_eh_nsync; i++) {
         if (loft_eh_sync_id[i] == id) {
             loft_eh_sync_keyed[i] = keyed;
@@ -90,7 +90,7 @@ static void loft_eh_sync_declare(int64_t id, uint8_t keyed) {
 }
 
 /* `str::parse::<i64>` over `p[0..n]`: 0 when it is not a whole decimal integer. */
-static int loft_eh_int(const char *p, size_t n, int64_t *v) {
+static int loft_eh_int(loft_cx *cx, const char *p, size_t n, int64_t *v) {
     if (n == 0 || n > 20) return 0;
     size_t i = 0;
     int neg = 0;
@@ -112,29 +112,29 @@ static int loft_eh_int(const char *p, size_t n, int64_t *v) {
 }
 
 /* The leading `<digits>:` of a wire message, or -1 when unframed. */
-static int64_t loft_eh_msg_id(const char *p, size_t n) {
+static int64_t loft_eh_msg_id(loft_cx *cx, const char *p, size_t n) {
     const char *c = (const char *) memchr(p, ':', n);
     int64_t id;
-    return c && loft_eh_int(p, (size_t) (c - p), &id) ? id : -1;
+    return c && loft_eh_int(cx, p, (size_t) (c - p), &id) ? id : -1;
 }
 
 /* -1 when `id` is undeclared, else whether it is keyed. */
-static int loft_eh_sync_kind(int64_t id) {
+static int loft_eh_sync_kind(loft_cx *cx, int64_t id) {
     for (size_t i = 0; i < loft_eh_nsync; i++)
         if (loft_eh_sync_id[i] == id) return loft_eh_sync_keyed[i];
     return -1;
 }
 
-static int loft_eh_is_sync(const char *p, size_t n) {
-    int64_t id = loft_eh_msg_id(p, n);
-    return id >= 0 && loft_eh_sync_kind(id) >= 0;
+static int loft_eh_is_sync(loft_cx *cx, const char *p, size_t n) {
+    int64_t id = loft_eh_msg_id(cx, p, n);
+    return id >= 0 && loft_eh_sync_kind(cx, id) >= 0;
 }
 
 /* One conflation slot: the newest sync message from one peer for one (msg_id, key). */
 typedef struct { int64_t msg_id, seq; loft_text key, payload; int dirty; } loft_eh_slot;
 typedef struct { loft_eh_slot *v; size_t n; } loft_eh_slots;
 
-static void loft_eh_slots_free(loft_eh_slots *s) {
+static void loft_eh_slots_free(loft_cx *cx, loft_eh_slots *s) {
     for (size_t i = 0; i < s->n; i++) {
         free(s->v[i].key.p);
         free(s->v[i].payload.p);
@@ -146,11 +146,11 @@ static void loft_eh_slots_free(loft_eh_slots *s) {
 
 /* The slot for this payload's (msg_id, key) — the key is a keyed kind's first comma field —
  * made when new; 0 past the slot cap (sync is loss-tolerant: over-cap drops). */
-static loft_eh_slot *loft_eh_slot_for(loft_eh_slots *s, const char *p, size_t n) {
-    int64_t id = loft_eh_msg_id(p, n);
+static loft_eh_slot *loft_eh_slot_for(loft_cx *cx, loft_eh_slots *s, const char *p, size_t n) {
+    int64_t id = loft_eh_msg_id(cx, p, n);
     const char *key = "";
     size_t klen = 0;
-    if (id >= 0 && loft_eh_sync_kind(id) == 1) {
+    if (id >= 0 && loft_eh_sync_kind(cx, id) == 1) {
         const char *c = (const char *) memchr(p, ':', n);
         key = c + 1;
         const char *comma = (const char *) memchr(key, ',', n - (size_t) (key - p));
@@ -166,43 +166,43 @@ static loft_eh_slot *loft_eh_slot_for(loft_eh_slots *s, const char *p, size_t n)
     memset(slot, 0, sizeof *slot);
     slot->msg_id = id;
     slot->seq = -1;
-    loft_push(&slot->key, key, klen);
+    loft_push(cx, &slot->key, key, klen);
     return slot;
 }
 
 /* A sync message over an ordered carrier: arrival order is the seq. */
-static void loft_eh_conflate_ws(loft_eh_slots *s, const char *p, size_t n) {
-    loft_eh_slot *slot = loft_eh_slot_for(s, p, n);
+static void loft_eh_conflate_ws(loft_cx *cx, loft_eh_slots *s, const char *p, size_t n) {
+    loft_eh_slot *slot = loft_eh_slot_for(cx, s, p, n);
     if (!slot) return;
     slot->seq += 1;
     slot->payload.len = 0;
-    loft_push(&slot->payload, p, n);
+    loft_push(cx, &slot->payload, p, n);
     slot->dirty = 1;
 }
 
 /* A seq-stamped sync message: a higher seq overwrites, a stale one is dropped. */
-static void loft_eh_conflate(loft_eh_slots *s, int64_t seq, const char *p, size_t n) {
-    loft_eh_slot *slot = loft_eh_slot_for(s, p, n);
+static void loft_eh_conflate(loft_cx *cx, loft_eh_slots *s, int64_t seq, const char *p, size_t n) {
+    loft_eh_slot *slot = loft_eh_slot_for(cx, s, p, n);
     if (!slot || seq <= slot->seq) return;
     slot->seq = seq;
     slot->payload.len = 0;
-    loft_push(&slot->payload, p, n);
+    loft_push(cx, &slot->payload, p, n);
     slot->dirty = 1;
 }
 
 /* `S:<seq>:<payload>`: 1 and its parts when `p` is one. */
-static int loft_eh_seq_frame(const char *p, size_t n, int64_t *seq, const char **body, size_t *blen) {
+static int loft_eh_seq_frame(loft_cx *cx, const char *p, size_t n, int64_t *seq, const char **body, size_t *blen) {
     if (n < 2 || p[0] != 'S' || p[1] != ':') return 0;
     const char *c = (const char *) memchr(p + 2, ':', n - 2);
-    if (!c || !loft_eh_int(p + 2, (size_t) (c - p - 2), seq)) return 0;
+    if (!c || !loft_eh_int(cx, p + 2, (size_t) (c - p - 2), seq)) return 0;
     *body = c + 1;
     *blen = n - (size_t) (c + 1 - p);
     return 1;
 }
 
-static loft_text loft_eh_copy(const loft_text *t) {
+static loft_text loft_eh_copy(loft_cx *cx, const loft_text *t) {
     loft_text out = { 0, 0, 0 };
-    loft_push(&out, t->p, t->len);
+    loft_push(cx, &out, t->p, t->len);
     return out;
 }
 
@@ -227,7 +227,7 @@ static pthread_mutex_t loft_eh_done_lock = PTHREAD_MUTEX_INITIALIZER;
 #define LOFT_EH_UNLOCK() ((void) 0)
 #endif
 
-static void loft_eh_park(int64_t id, int64_t status, const char *body, size_t n) {
+static void loft_eh_park(loft_cx *cx, int64_t id, int64_t status, const char *body, size_t n) {
     LOFT_EH_LOCK();
     loft_eh_dones = (loft_eh_done *) realloc(loft_eh_dones, (loft_eh_ndone + 1) * sizeof *loft_eh_dones);
     if (!loft_eh_dones) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -236,14 +236,14 @@ static void loft_eh_park(int64_t id, int64_t status, const char *body, size_t n)
     d->status = status;
     d->body.p = 0;
     d->body.len = d->body.cap = 0;
-    loft_push(&d->body, body, n);
+    loft_push(cx, &d->body, body, n);
     LOFT_EH_UNLOCK();
 }
 
-static void loft_eh_drain_http(loft_eh_queue *q) {
+static void loft_eh_drain_http(loft_cx *cx, loft_eh_queue *q) {
     LOFT_EH_LOCK();
     for (size_t i = 0; i < loft_eh_ndone; i++) {
-        loft_eh_push(q, loft_eh_dones[i].id, 3, loft_eh_dones[i].status, loft_eh_dones[i].body.p,
+        loft_eh_push(cx, q, loft_eh_dones[i].id, 3, loft_eh_dones[i].status, loft_eh_dones[i].body.p,
                      loft_eh_dones[i].body.len);
         free(loft_eh_dones[i].body.p);
     }
@@ -255,14 +255,14 @@ static void loft_eh_drain_http(loft_eh_queue *q) {
 /* ── Socket mechanics ── */
 
 /* Every byte of `p`, or 0. */
-static int loft_eh_write_all(int fd, const char *p, size_t n) {
+static int loft_eh_write_all(loft_cx *cx, int fd, const char *p, size_t n) {
     while (n > 0) {
 #if defined(MSG_NOSIGNAL)
-        long w = loft_sock_send(fd, p, n, MSG_NOSIGNAL);
+        long w = loft_sock_send(cx, fd, p, n, MSG_NOSIGNAL);
 #else
-        long w = loft_sock_send(fd, p, n, 0);
+        long w = loft_sock_send(cx, fd, p, n, 0);
 #endif
-        if (w < 0 && loft_sock_interrupted()) continue;
+        if (w < 0 && loft_sock_interrupted(cx)) continue;
         if (w <= 0) return 0;
         p += w;
         n -= (size_t) w;
@@ -273,17 +273,16 @@ static int loft_eh_write_all(int fd, const char *p, size_t n) {
 /* `MESSAGE_BUDGET`: how long one message may take to arrive once its first bytes are here — the
  * upgrade request's head, and a frame.  The socket's read timeout bounds ONE read, and the pump
  * serves every peer from one thread: a peer that sends a byte per read would hold it for as long
- * as it liked.  `loft_eh_by` is when the message being read must be whole; 0 outside one. */
+ * as it liked.  `cx->eh_by` is when the message being read must be whole; 0 outside one. */
 #define LOFT_EH_MESSAGE_US 5000000
-static LOFT_TLS loft_word loft_eh_by;
 
 /* Exactly `n` bytes, within the socket's read timeout and the message's budget, or 0. */
-static int loft_eh_read_exact(int fd, void *buf, size_t n) {
+static int loft_eh_read_exact(loft_cx *cx, int fd, void *buf, size_t n) {
     uint8_t *p = (uint8_t *) buf;
     while (n > 0) {
-        if (loft_eh_by && loft_now_us() > loft_eh_by) return 0;
-        long r = loft_sock_recv(fd, p, n, 0);
-        if (r < 0 && loft_sock_interrupted()) continue;
+        if (cx->eh_by && loft_now_us(cx) > cx->eh_by) return 0;
+        long r = loft_sock_recv(cx, fd, p, n, 0);
+        if (r < 0 && loft_sock_interrupted(cx)) continue;
         if (r <= 0) return 0;
         p += r;
         n -= (size_t) r;
@@ -293,15 +292,15 @@ static int loft_eh_read_exact(int fd, void *buf, size_t n) {
 
 /* Read an HTTP head to its blank line, a byte at a time (no over-read past it); 0 on a closed or
  * silent socket, or a head past 16 KiB. */
-static int loft_eh_read_head(int fd, loft_text *head) {
-    loft_word by = loft_now_us() + LOFT_EH_MESSAGE_US;
+static int loft_eh_read_head(loft_cx *cx, int fd, loft_text *head) {
+    loft_word by = loft_now_us(cx) + LOFT_EH_MESSAGE_US;
     while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
         char b;
-        if (loft_now_us() > by) return 0;
-        long r = loft_sock_recv(fd, &b, 1, 0);
-        if (r < 0 && loft_sock_interrupted()) continue;
+        if (loft_now_us(cx) > by) return 0;
+        long r = loft_sock_recv(cx, fd, &b, 1, 0);
+        if (r < 0 && loft_sock_interrupted(cx)) continue;
         if (r != 1) return 0;
-        loft_push(head, &b, 1);
+        loft_push(cx, head, &b, 1);
         if (head->len > 16 * 1024) return 0;
     }
     return 1;
@@ -310,7 +309,7 @@ static int loft_eh_read_head(int fd, loft_text *head) {
 /* `ws_handshake::foreign_origin`: an `Origin` that is anything but `http://` on a loopback name,
  * at any port.  Any site a browser on this machine has open connects from loopback, and names
  * itself here. */
-static int loft_eh_foreign_origin(const char *v, size_t n) {
+static int loft_eh_foreign_origin(loft_cx *cx, const char *v, size_t n) {
     static const char *const names[] = { "127.0.0.1", "localhost", "[::1]" };
     if (n < 7 || memcmp(v, "http://", 7) != 0) return 1;
     v += 7;
@@ -330,21 +329,21 @@ static int loft_eh_foreign_origin(const char *v, size_t n) {
  * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection;
  * `*foreign_page` says whether the request came from a page of another site, which a game takes
  * as a peer and the debug control channel does not: `control_only` drops it unanswered. */
-static int loft_eh_ws_upgrade(int fd, const char *cookie, int control_only, int *foreign_page) {
-    loft_sock_blocking(fd, 1);
-    loft_sock_timeout(fd, 500);
+static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int control_only, int *foreign_page) {
+    loft_sock_blocking(cx, fd, 1);
+    loft_sock_timeout(cx, fd, 500);
     loft_text head = { 0, 0, 0 };
     const char *v;
     size_t vn;
-    int ok = loft_eh_read_head(fd, &head);
-    int upgrade = ok && loft_http_header(&head, "upgrade", &v, &vn) && vn == 9 && strncasecmp(v, "websocket", 9) == 0;
+    int ok = loft_eh_read_head(cx, fd, &head);
+    int upgrade = ok && loft_http_header(cx, &head, "upgrade", &v, &vn) && vn == 9 && strncasecmp(v, "websocket", 9) == 0;
     char accept[29];
-    if (upgrade && loft_http_header(&head, "sec-websocket-key", &v, &vn)) {
-        loft_ws_accept_key(v, vn, accept);
+    if (upgrade && loft_http_header(cx, &head, "sec-websocket-key", &v, &vn)) {
+        loft_ws_accept_key(cx, v, vn, accept);
     } else {
         upgrade = 0;
     }
-    *foreign_page = ok && loft_http_header(&head, "origin", &v, &vn) && loft_eh_foreign_origin(v, vn);
+    *foreign_page = ok && loft_http_header(cx, &head, "origin", &v, &vn) && loft_eh_foreign_origin(cx, v, vn);
     free(head.p);
     if (!upgrade || (control_only && *foreign_page)) return 0;
     char resp[512];
@@ -352,14 +351,14 @@ static int loft_eh_ws_upgrade(int fd, const char *cookie, int control_only, int 
                      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                      "Sec-WebSocket-Accept: %s\r\n%s%s%s\r\n",
                      accept, *cookie ? "X-Loft-UDP: " : "", cookie, *cookie ? "\r\n" : "");
-    if (!loft_eh_write_all(fd, resp, (size_t) n)) return 0;
-    loft_sock_timeout(fd, 20);
+    if (!loft_eh_write_all(cx, fd, resp, (size_t) n)) return 0;
+    loft_sock_timeout(cx, fd, 20);
     return 1;
 }
 
 /* Write one frame: `mask` for a client's (RFC 6455 requires it; the key only defeats broken
  * proxies, so it is derived from the length). */
-static int loft_eh_write_frame(int fd, uint8_t opcode, const char *p, size_t n, int mask) {
+static int loft_eh_write_frame(loft_cx *cx, int fd, uint8_t opcode, const char *p, size_t n, int mask) {
     uint8_t hdr[14];
     size_t h = 0;
     hdr[h++] = (uint8_t) (0x80 | opcode);
@@ -380,41 +379,41 @@ static int loft_eh_write_frame(int fd, uint8_t opcode, const char *p, size_t n, 
         uint8_t key[4] = { (uint8_t) (k >> 24), (uint8_t) (k >> 16), (uint8_t) (k >> 8), (uint8_t) k };
         memcpy(hdr + h, key, 4);
         h += 4;
-        loft_push(&frame, (const char *) hdr, h);
+        loft_push(cx, &frame, (const char *) hdr, h);
         for (size_t i = 0; i < n; i++) {
             char c = (char) (p[i] ^ key[i % 4]);
-            loft_push(&frame, &c, 1);
+            loft_push(cx, &frame, &c, 1);
         }
     } else {
-        loft_push(&frame, (const char *) hdr, h);
-        loft_push(&frame, p, n);
+        loft_push(cx, &frame, (const char *) hdr, h);
+        loft_push(cx, &frame, p, n);
     }
-    int ok = loft_eh_write_all(fd, frame.p, frame.len);
+    int ok = loft_eh_write_all(cx, fd, frame.p, frame.len);
     free(frame.p);
     return ok;
 }
 
 /* One frame if pending: peek first (idle costs a syscall), then the in-flight frame within the
  * short read timeout.  0 none, 1 a text frame (into `out`), 2 closed. */
-static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client);
+static int loft_eh_read_frame_in(loft_cx *cx, int fd, loft_text *out, int from_client);
 
 /* `from_client`: the frame comes from a client of ours, and must be masked. */
-static int loft_eh_read_frame(int fd, loft_text *out, int from_client) {
+static int loft_eh_read_frame(loft_cx *cx, int fd, loft_text *out, int from_client) {
     uint8_t hdr[2];
-    long peeked = loft_sock_peek(fd, hdr, 2);
+    long peeked = loft_sock_peek(cx, fd, hdr, 2);
     if (peeked == 0 || peeked == -2) return 2;
     if (peeked < 0) return 0;
     if (peeked < 2) return 0;
-    loft_eh_by = loft_now_us() + LOFT_EH_MESSAGE_US;
-    int answer = loft_eh_read_frame_in(fd, out, from_client);
-    loft_eh_by = 0;
+    cx->eh_by = loft_now_us(cx) + LOFT_EH_MESSAGE_US;
+    int answer = loft_eh_read_frame_in(cx, fd, out, from_client);
+    cx->eh_by = 0;
     return answer;
 }
 
-/* The frame whose first two bytes are waiting, read within `loft_eh_by`. */
-static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client) {
+/* The frame whose first two bytes are waiting, read within `cx->eh_by`. */
+static int loft_eh_read_frame_in(loft_cx *cx, int fd, loft_text *out, int from_client) {
     uint8_t hdr[2];
-    if (!loft_eh_read_exact(fd, hdr, 2)) return 2;
+    if (!loft_eh_read_exact(cx, fd, hdr, 2)) return 2;
     uint8_t opcode = hdr[0] & 0x0F;
     int masked = (hdr[1] & 0x80) != 0;
     /* A client's frame is masked or the connection ends (RFC 6455 § 5.1). */
@@ -422,20 +421,20 @@ static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client) {
     uint64_t len = hdr[1] & 0x7F;
     if (len == 126) {
         uint8_t b[2];
-        if (!loft_eh_read_exact(fd, b, 2)) return 2;
+        if (!loft_eh_read_exact(cx, fd, b, 2)) return 2;
         len = (uint64_t) b[0] << 8 | b[1];
     } else if (len == 127) {
         uint8_t b[8];
-        if (!loft_eh_read_exact(fd, b, 8)) return 2;
+        if (!loft_eh_read_exact(cx, fd, b, 8)) return 2;
         len = 0;
         for (int i = 0; i < 8; i++) len = len << 8 | b[i];
     }
     if (len > 16 * 1024 * 1024) return 2;
     uint8_t mask[4] = { 0, 0, 0, 0 };
-    if (masked && !loft_eh_read_exact(fd, mask, 4)) return 2;
+    if (masked && !loft_eh_read_exact(cx, fd, mask, 4)) return 2;
     char *payload = (char *) malloc(len ? (size_t) len : 1);
     if (!payload) { fputs("loft: out of memory\n", stderr); abort(); }
-    if (len && !loft_eh_read_exact(fd, payload, (size_t) len)) {
+    if (len && !loft_eh_read_exact(cx, fd, payload, (size_t) len)) {
         free(payload);
         return 2;
     }
@@ -443,12 +442,12 @@ static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client) {
         for (uint64_t i = 0; i < len; i++) payload[i] ^= (char) mask[i % 4];
     int answer = 0;
     if (opcode == 0x1) {
-        loft_push_lossy(out, payload, (size_t) len);
+        loft_push_lossy(cx, out, payload, (size_t) len);
         answer = 1;
     } else if (opcode == 0x8) {
         answer = 2;
     } else if (opcode == 0x9) {
-        loft_eh_write_frame(fd, 0xA, payload, (size_t) len, 0);
+        loft_eh_write_frame(cx, fd, 0xA, payload, (size_t) len, 0);
     }
     free(payload);
     return answer;
@@ -464,34 +463,34 @@ static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client) {
  * SO_REUSEPORT, so a swap's new build binds while the old one serves.  Windows has no shared
  * port (`platform::bind_tcp_handover` binds plainly there): its listener is exclusive, as the
  * runtime's other listeners are.  -1 on failure. */
-static int loft_eh_bind(int64_t port, int type) {
-    int fd = loft_sock_open(AF_INET, type, 0);
+static int loft_eh_bind(loft_cx *cx, int64_t port, int type) {
+    int fd = loft_sock_open(cx, AF_INET, type, 0);
     if (fd < 0) return -1;
-    loft_sock_cloexec(fd);
+    loft_sock_cloexec(cx, fd);
 #if defined(_WIN32)
-    if (type == SOCK_STREAM) loft_sock_listener_addr(fd);
+    if (type == SOCK_STREAM) loft_sock_listener_addr(cx, fd);
 #else
-    if (type == SOCK_STREAM) loft_sock_flag(fd, SOL_SOCKET, SO_REUSEADDR, 1);
+    if (type == SOCK_STREAM) loft_sock_flag(cx, fd, SOL_SOCKET, SO_REUSEADDR, 1);
 #if defined(SO_REUSEPORT)
-    loft_sock_flag(fd, SOL_SOCKET, SO_REUSEPORT, 1);
+    loft_sock_flag(cx, fd, SOL_SOCKET, SO_REUSEPORT, 1);
 #endif
 #endif
-    if (type == SOCK_DGRAM) loft_sock_udp_quiet(fd);
+    if (type == SOCK_DGRAM) loft_sock_udp_quiet(cx, fd);
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
     a.sin_port = htons((uint16_t) port);
-    int bound = type == SOCK_STREAM ? loft_sock_bind_listen(fd, (struct sockaddr *) &a, sizeof a, 128)
-                                    : loft_sock_bind(fd, (struct sockaddr *) &a, sizeof a);
+    int bound = type == SOCK_STREAM ? loft_sock_bind_listen(cx, fd, (struct sockaddr *) &a, sizeof a, 128)
+                                    : loft_sock_bind(cx, fd, (struct sockaddr *) &a, sizeof a);
     if (bound != 0) {
-        loft_sock_close(fd);
+        loft_sock_close(cx, fd);
         return -1;
     }
-    loft_sock_blocking(fd, 0);
+    loft_sock_blocking(cx, fd, 0);
     return fd;
 }
 
-static int loft_eh_same_addr(const struct sockaddr_storage *a, socklen_t al, const struct sockaddr_storage *b,
+static int loft_eh_same_addr(loft_cx *cx, const struct sockaddr_storage *a, socklen_t al, const struct sockaddr_storage *b,
                              socklen_t bl) {
     return al == bl && memcmp(a, b, al) == 0;
 }
@@ -506,7 +505,7 @@ BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
 #endif
 #endif
 
-static void loft_eh_cookie(size_t cid, char out[17]) {
+static void loft_eh_cookie(loft_cx *cx, size_t cid, char out[17]) {
     uint64_t x = 0;
 #if defined(_WIN32)
     if (!SystemFunction036(&x, (ULONG) sizeof x)) x = 0;
@@ -520,7 +519,7 @@ static void loft_eh_cookie(size_t cid, char out[17]) {
     }
     uint64_t pid = (uint64_t) getpid();
 #endif
-    x ^= (uint64_t) loft_now_us() * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ pid;
+    x ^= (uint64_t) loft_now_us(cx) * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ pid;
     x ^= x >> 31;
     snprintf(out, 17, "%016llx", (unsigned long long) x);
 }
@@ -552,16 +551,16 @@ static struct {
     int64_t start, tick, last_tick;
 } loft_ehk;
 
-static int64_t loft_ehk_now(void) { return loft_now_us() - loft_ehk.start; }
+static int64_t loft_ehk_now(loft_cx *cx) { return loft_now_us(cx) - loft_ehk.start; }
 
-static void loft_eh_conn_reset(loft_eh_conn *c) {
+static void loft_eh_conn_reset(loft_cx *cx, loft_eh_conn *c) {
     c->fd = -1;
     c->cookie[0] = 0;
     c->bound = 0;
     c->alen = 0;
     c->last_seen = 0;
     c->out_seq = 0;
-    loft_eh_slots_free(&c->slots);
+    loft_eh_slots_free(cx, &c->slots);
     /* A debug client's name and a relay route belong to the slot, not the connection: the
      * Rust kernel's maps keep them across a reconnect. */
 }
@@ -582,18 +581,21 @@ static struct {
     size_t nctl;
 } loft_ehc;
 
-static int64_t loft_ehc_now(void) { return loft_now_us() - loft_ehc.start; }
+static int64_t loft_ehc_now(loft_cx *cx) { return loft_now_us(cx) - loft_ehc.start; }
 
 /* ── The debug control channel: `D!:` frames from a loopback peer, gated on LOFT_DEBUG_CONTROL=1.
  * With no live tier (a compiled C build has none) a flip refuses, a breakpoint is queued and
  * acknowledged, and eval / resume / reload are queued without a reply — what an unbooted live
  * tier answers. ── */
 
-static int loft_eh_debug_on(void) {
-    static int on = -1;
+static int loft_eh_debug_on(loft_cx *cx) {
+    static int seen = -1;
+    int on;
+    LOFT_PUB_GET(seen, on);
     if (on < 0) {
         const char *v = getenv("LOFT_DEBUG_CONTROL");
         on = v && strcmp(v, "1") == 0;
+        LOFT_PUB_SET(seen, on);
     }
     return on;
 }
@@ -601,117 +603,120 @@ static int loft_eh_debug_on(void) {
 static int loft_eh_quit = 0;
 
 /* `{:?}` of a text, as the Rust kernel quotes an unknown command. */
-static void loft_eh_debug_quote(loft_text *o, const char *p, size_t n) {
-    loft_push(o, "\"", 1);
+static void loft_eh_debug_quote(loft_cx *cx, loft_text *o, const char *p, size_t n) {
+    loft_push(cx, o, "\"", 1);
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char) p[i];
         char esc[16];
-        if (c == '"' || c == '\\') { esc[0] = '\\'; esc[1] = (char) c; loft_push(o, esc, 2); }
-        else if (c == '\n') loft_push(o, "\\n", 2);
-        else if (c == '\r') loft_push(o, "\\r", 2);
-        else if (c == '\t') loft_push(o, "\\t", 2);
-        else if (c == 0) loft_push(o, "\\0", 2);
-        else if (c < 0x20 || c == 0x7F) { snprintf(esc, sizeof esc, "\\u{%x}", c); loft_push_cstr(o, esc); }
-        else loft_push(o, (const char *) &p[i], 1);
+        if (c == '"' || c == '\\') { esc[0] = '\\'; esc[1] = (char) c; loft_push(cx, o, esc, 2); }
+        else if (c == '\n') loft_push(cx, o, "\\n", 2);
+        else if (c == '\r') loft_push(cx, o, "\\r", 2);
+        else if (c == '\t') loft_push(cx, o, "\\t", 2);
+        else if (c == 0) loft_push(cx, o, "\\0", 2);
+        else if (c < 0x20 || c == 0x7F) { snprintf(esc, sizeof esc, "\\u{%x}", c); loft_push_cstr(cx, o, esc); }
+        else loft_push(cx, o, (const char *) &p[i], 1);
     }
-    loft_push(o, "\"", 1);
+    loft_push(cx, o, "\"", 1);
 }
 
-static uint8_t loft_rebuild_start(void);
-static int64_t loft_rebuild_status(void);
-static loft_text loft_kernel_rebuild_artifact(void);
-static const char *loft_rebuild_failure(void);
-static uint8_t loft_swap_start(loft_str artifact);
+static uint8_t loft_rebuild_start(loft_cx *cx);
+static int64_t loft_rebuild_status(loft_cx *cx);
+static loft_text loft_kernel_rebuild_artifact(loft_cx *cx);
+static const char *loft_rebuild_failure(loft_cx *cx);
+static uint8_t loft_swap_start(loft_cx *cx, loft_str artifact);
 
 /* `debug_cmd_dispatch`, the command core both roles share: 1 and the immediate reply in `r`, or 0
  * for a command whose answer would come from the pause loop. */
-static int loft_eh_debug_dispatch(const char *cmd, size_t n, loft_text *r) {
+static int loft_eh_debug_dispatch(loft_cx *cx, const char *cmd, size_t n, loft_text *r) {
     const char *sp = (const char *) memchr(cmd, ' ', n);
     size_t vl = sp ? (size_t) (sp - cmd) : n;
     const char *arg = sp ? sp + 1 : cmd + n;
     size_t an = n - (size_t) (arg - cmd);
 #define LOFT_VERB(s) (vl == sizeof s - 1 && memcmp(cmd, s, vl) == 0)
     if (LOFT_VERB("bp") && an > 0) {
-        loft_push_cstr(r, "D:ok bp ");
-        loft_push(r, arg, an);
+        loft_push_cstr(cx, r, "D:ok bp ");
+        loft_push(cx, r, arg, an);
     } else if (LOFT_VERB("flip")) {
-        loft_push_cstr(r, "D:flip false");
+        loft_push_cstr(cx, r, "D:flip false");
     } else if ((LOFT_VERB("eval") && an > 0) || LOFT_VERB("resume") || LOFT_VERB("reload")) {
         return 0;
     } else if (LOFT_VERB("apply")) {
-        loft_push_cstr(r, "D:apply queued");
+        loft_push_cstr(cx, r, "D:apply queued");
     } else if (LOFT_VERB("rebuild")) {
-        loft_push_cstr(r, loft_rebuild_start() ? "D:rebuild started" : "D:rebuild refused");
+        loft_push_cstr(cx, r, loft_rebuild_start(cx) ? "D:rebuild started" : "D:rebuild refused");
     } else if (LOFT_VERB("rebuild?")) {
         /* A failed build says why, so the editor shows it beside the build it refused. */
         char b[640];
-        int64_t st = loft_rebuild_status();
-        if (st == 3) snprintf(b, sizeof b, "D:rebuild 3 %s", loft_rebuild_failure());
+        int64_t st = loft_rebuild_status(cx);
+        if (st == 3) snprintf(b, sizeof b, "D:rebuild 3 %s", loft_rebuild_failure(cx));
         else snprintf(b, sizeof b, "D:rebuild %lld", (long long) st);
-        loft_push_cstr(r, b);
+        loft_push_cstr(cx, r, b);
     } else if (LOFT_VERB("swap")) {
         loft_text target = { 0, 0, 0 };
-        if (an == 0 || (an == 4 && memcmp(arg, "auto", 4) == 0)) target = loft_kernel_rebuild_artifact();
-        else loft_push(&target, arg, an);
-        uint8_t ok = loft_swap_start(loft_view(&target));
-        loft_text_free(&target);
-        loft_push_cstr(r, ok ? "D:swap true" : "D:swap false");
+        if (an == 0 || (an == 4 && memcmp(arg, "auto", 4) == 0)) target = loft_kernel_rebuild_artifact(cx);
+        else loft_push(cx, &target, arg, an);
+        uint8_t ok = loft_swap_start(cx, loft_view(cx, &target));
+        loft_text_free(cx, &target);
+        loft_push_cstr(cx, r, ok ? "D:swap true" : "D:swap false");
     } else if (LOFT_VERB("quit")) {
         fputs("loft-debug: quit via the control channel\n", stderr);
         loft_eh_quit = 1;
-        loft_push_cstr(r, "D:quitting");
+        loft_push_cstr(cx, r, "D:quitting");
     } else {
-        loft_push_cstr(r, "D:err unknown command ");
-        loft_eh_debug_quote(r, cmd, n);
+        loft_push_cstr(cx, r, "D:err unknown command ");
+        loft_eh_debug_quote(cx, r, cmd, n);
     }
 #undef LOFT_VERB
     return 1;
 }
 
-static void loft_eh_trim(const char **p, size_t *n) {
+static void loft_eh_trim(loft_cx *cx, const char **p, size_t *n) {
     while (*n && isspace((unsigned char) **p)) { (*p)++; (*n)--; }
     while (*n && isspace((unsigned char) (*p)[*n - 1])) (*n)--;
 }
 
 #if defined(LOFT_SOCKETS)
-static void loft_ehk_disconnect(size_t cid);
+static void loft_ehk_disconnect(loft_cx *cx, size_t cid);
 
 /* Every socket either role still holds, closed when the program exits — as the Rust kernel's
  * sockets close when its state drops.  A socket the process leaves open is closed by the OS, and
  * Windows closes it with a reset, which discards whatever the peer had not read yet: a seat's
  * last message before `client_stop` never reached its listener.  A plain close sends it, then
  * the FIN. */
-static void loft_eh_close_fd(int *fd) {
-    if (*fd >= 0) loft_sock_close(*fd);
+static void loft_eh_close_fd(loft_cx *cx, int *fd) {
+    if (*fd >= 0) loft_sock_close(cx, *fd);
     *fd = -1;
 }
 
 /* Only a role that is up: the other's descriptors are still the static's zeros, and 0 is stdin. */
 static void loft_eh_close_all(void) {
+    /* An `atexit` handler: called on the main thread as the process ends. */
+    loft_cx *cx = &loft_main_cx;
     if (loft_ehk.up) {
-        loft_eh_close_fd(&loft_ehk.listener);
-        loft_eh_close_fd(&loft_ehk.udp);
-        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(&loft_ehk.conns[i].fd);
+        loft_eh_close_fd(cx, &loft_ehk.listener);
+        loft_eh_close_fd(cx, &loft_ehk.udp);
+        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(cx, &loft_ehk.conns[i].fd);
     }
     if (loft_ehc.up) {
-        loft_eh_close_fd(&loft_ehc.conn);
-        loft_eh_close_fd(&loft_ehc.udp);
-        loft_eh_close_fd(&loft_ehc.ctl);
-        for (size_t i = 0; i < loft_ehc.nctl; i++) loft_eh_close_fd(&loft_ehc.ctl_conns[i]);
+        loft_eh_close_fd(cx, &loft_ehc.conn);
+        loft_eh_close_fd(cx, &loft_ehc.udp);
+        loft_eh_close_fd(cx, &loft_ehc.ctl);
+        for (size_t i = 0; i < loft_ehc.nctl; i++) loft_eh_close_fd(cx, &loft_ehc.ctl_conns[i]);
     }
 }
 
-static void loft_eh_close_at_exit(void) {
+static void loft_eh_close_at_exit(loft_cx *cx) {
     static int armed = 0;
-    if (armed) return;
-    armed = 1;
+    int was;
+    LOFT_PUB_SWAP(armed, 1, was);
+    if (was) return;
     atexit(loft_eh_close_all);
 }
 
 /* `deliver`: a sync-class message rides a seq-stamped datagram when the client's UDP path is
  * bound; everything else, and every client without one, gets a WS frame.  A failed WS write
  * disconnects the client. */
-static int loft_ehk_deliver(size_t cid, const char *msg, size_t n, int sync) {
+static int loft_ehk_deliver(loft_cx *cx, size_t cid, const char *msg, size_t n, int sync) {
     if (cid >= loft_ehk.nconns) return 0;
     loft_eh_conn *c = &loft_ehk.conns[cid];
     if (sync && c->bound && loft_ehk.udp >= 0) {
@@ -719,8 +724,8 @@ static int loft_ehk_deliver(size_t cid, const char *msg, size_t n, int sync) {
         loft_text d = { 0, 0, 0 };
         char seq[32];
         snprintf(seq, sizeof seq, "S:%lld:", (long long) c->out_seq);
-        loft_push_cstr(&d, seq);
-        loft_push(&d, msg, n);
+        loft_push_cstr(cx, &d, seq);
+        loft_push(cx, &d, msg, n);
         int ok = 0;
         if (d.len > LOFT_EH_UDP_MAX) {
             if (!loft_ehk.warned_oversize) {
@@ -731,29 +736,29 @@ static int loft_ehk_deliver(size_t cid, const char *msg, size_t n, int sync) {
                         d.len, LOFT_EH_UDP_MAX);
             }
         } else {
-            ok = loft_sock_sendto(loft_ehk.udp, d.p, d.len, (struct sockaddr *) &c->addr, c->alen) >= 0;
+            ok = loft_sock_sendto(cx, loft_ehk.udp, d.p, d.len, (struct sockaddr *) &c->addr, c->alen) >= 0;
         }
         free(d.p);
         return ok;
     }
     if (c->fd < 0) return 0;
-    if (!loft_eh_write_frame(c->fd, 0x1, msg, n, 0)) {
-        loft_ehk_disconnect(cid);
+    if (!loft_eh_write_frame(cx, c->fd, 0x1, msg, n, 0)) {
+        loft_ehk_disconnect(cx, cid);
         return 0;
     }
     return 1;
 }
 
-static void loft_ehk_disconnect(size_t cid) {
-    loft_sock_close(loft_ehk.conns[cid].fd);
-    loft_eh_conn_reset(&loft_ehk.conns[cid]);
-    loft_eh_push(&loft_ehk.events, (int64_t) cid, 2, 0, "", 0);
+static void loft_ehk_disconnect(loft_cx *cx, size_t cid) {
+    loft_sock_close(cx, loft_ehk.conns[cid].fd);
+    loft_eh_conn_reset(cx, &loft_ehk.conns[cid]);
+    loft_eh_push(cx, &loft_ehk.events, (int64_t) cid, 2, 0, "", 0);
 }
 
-static int loft_eh_loopback(int fd) {
+static int loft_eh_loopback(loft_cx *cx, int fd) {
     struct sockaddr_storage a;
     socklen_t al = sizeof a;
-    if (loft_sock_name(fd, 1, (struct sockaddr *) &a, &al) != 0) return 0;
+    if (loft_sock_name(cx, fd, 1, (struct sockaddr *) &a, &al) != 0) return 0;
     if (a.ss_family == AF_INET) return (ntohl(((struct sockaddr_in *) &a)->sin_addr.s_addr) >> 24) == 127;
     if (a.ss_family == AF_INET6) {
         const struct in6_addr *x = &((struct sockaddr_in6 *) &a)->sin6_addr;
@@ -765,41 +770,41 @@ static int loft_eh_loopback(int fd) {
 /* `handle_debug_control`: a debug client registering its name (`iam`), relaying a reply
  * (`reply`), an agent forwarding to a named client (`@name:cmd`), or a command for this
  * process. */
-static void loft_ehk_debug(size_t cid, const char *cmd, size_t n) {
-    if (!loft_eh_debug_on()) return;
-    loft_eh_trim(&cmd, &n);
+static void loft_ehk_debug(loft_cx *cx, size_t cid, const char *cmd, size_t n) {
+    if (!loft_eh_debug_on(cx)) return;
+    loft_eh_trim(cx, &cmd, &n);
     loft_eh_conn *c = &loft_ehk.conns[cid];
     loft_text r = { 0, 0, 0 };
     if (n >= 4 && memcmp(cmd, "iam ", 4) == 0) {
         const char *name = cmd + 4;
         size_t nn = n - 4;
-        loft_eh_trim(&name, &nn);
+        loft_eh_trim(cx, &name, &nn);
         free(c->debug_name);
         c->debug_name = (char *) malloc(nn + 1);
         if (!c->debug_name) { fputs("loft: out of memory\n", stderr); abort(); }
         memcpy(c->debug_name, name, nn);
         c->debug_name[nn] = 0;
-        loft_push_cstr(&r, "D:registered ");
-        loft_push(&r, name, nn);
-        loft_ehk_deliver(cid, r.p, r.len, 0);
+        loft_push_cstr(cx, &r, "D:registered ");
+        loft_push(cx, &r, name, nn);
+        loft_ehk_deliver(cx, cid, r.p, r.len, 0);
         free(r.p);
         return;
     }
     if (n >= 6 && memcmp(cmd, "reply ", 6) == 0) {
         const char *msg = cmd + 6;
         size_t mn = n - 6;
-        loft_eh_trim(&msg, &mn);
-        if (c->relay_to >= 0) loft_ehk_deliver((size_t) c->relay_to, msg, mn, 0);
+        loft_eh_trim(cx, &msg, &mn);
+        if (c->relay_to >= 0) loft_ehk_deliver(cx, (size_t) c->relay_to, msg, mn, 0);
         return;
     }
-    if (c->fd < 0 || !loft_eh_loopback(c->fd) || c->foreign_page) return;
+    if (c->fd < 0 || !loft_eh_loopback(cx, c->fd) || c->foreign_page) return;
     if (n > 1 && cmd[0] == '@' && memchr(cmd, ':', n)) {
         const char *colon = (const char *) memchr(cmd, ':', n);
         const char *name = cmd + 1;
         size_t nn = (size_t) (colon - name);
         const char *inner = colon + 1;
         size_t in = n - (size_t) (inner - cmd);
-        loft_eh_trim(&inner, &in);
+        loft_eh_trim(cx, &inner, &in);
         size_t target = loft_ehk.nconns;
         for (size_t i = 0; i < loft_ehk.nconns; i++)
             if (loft_ehk.conns[i].debug_name && strlen(loft_ehk.conns[i].debug_name) == nn &&
@@ -808,21 +813,21 @@ static void loft_ehk_debug(size_t cid, const char *cmd, size_t n) {
         if (target < loft_ehk.nconns) {
             loft_ehk.conns[target].relay_to = (int64_t) cid;
             loft_text framed = { 0, 0, 0 };
-            loft_push_cstr(&framed, "D!:");
-            loft_push(&framed, inner, in);
+            loft_push_cstr(cx, &framed, "D!:");
+            loft_push(cx, &framed, inner, in);
             int sent = loft_ehk.conns[target].fd >= 0 &&
-                       loft_eh_write_frame(loft_ehk.conns[target].fd, 1, framed.p, framed.len, 0);
+                       loft_eh_write_frame(cx, loft_ehk.conns[target].fd, 1, framed.p, framed.len, 0);
             free(framed.p);
-            loft_push_cstr(&r, sent ? "D:relayed " : "D:unreachable ");
+            loft_push_cstr(cx, &r, sent ? "D:relayed " : "D:unreachable ");
         } else {
-            loft_push_cstr(&r, "D:err no debug client ");
+            loft_push_cstr(cx, &r, "D:err no debug client ");
         }
-        loft_push(&r, name, nn);
-        loft_ehk_deliver(cid, r.p, r.len, 0);
+        loft_push(cx, &r, name, nn);
+        loft_ehk_deliver(cx, cid, r.p, r.len, 0);
         free(r.p);
         return;
     }
-    if (loft_eh_debug_dispatch(cmd, n, &r)) loft_ehk_deliver(cid, r.p, r.len, 0);
+    if (loft_eh_debug_dispatch(cx, cmd, n, &r)) loft_ehk_deliver(cx, cid, r.p, r.len, 0);
     free(r.p);
     if (loft_eh_quit) {
         fflush(0);
@@ -832,16 +837,16 @@ static void loft_ehk_debug(size_t cid, const char *cmd, size_t n) {
 
 /* Every pending datagram into the conflation slots; bind and refresh UDP paths; expire silent
  * ones.  Datagram arrivals are not loop work: they conflate, and the tick reads the newest. */
-static void loft_ehk_pump_udp(void) {
+static void loft_ehk_pump_udp(loft_cx *cx) {
     if (loft_ehk.udp < 0) return;
-    int64_t now = loft_ehk_now();
+    int64_t now = loft_ehk_now(cx);
     char buf[2048];
     for (;;) {
         struct sockaddr_storage from;
         socklen_t fl = sizeof from;
-        long len = loft_sock_recvfrom(loft_ehk.udp, buf, sizeof buf, (struct sockaddr *) &from, &fl);
+        long len = loft_sock_recvfrom(cx, loft_ehk.udp, buf, sizeof buf, (struct sockaddr *) &from, &fl);
         if (len < 0) break;
-        if (!loft_utf8_valid((const unsigned char *) buf, (size_t) len)) continue;
+        if (!loft_utf8_valid(cx, (const unsigned char *) buf, (size_t) len)) continue;
         if (len >= 2 && buf[0] == 'H' && buf[1] == ':') {
             const char *cookie = buf + 2;
             size_t cn = (size_t) len - 2;
@@ -855,7 +860,7 @@ static void loft_ehk_pump_udp(void) {
                         c->last_seen = now;
                         char ack[32];
                         int an = snprintf(ack, sizeof ack, "A:%zu", i);
-                        loft_sock_sendto(loft_ehk.udp, ack, (size_t) an, (struct sockaddr *) &from, fl);
+                        loft_sock_sendto(cx, loft_ehk.udp, ack, (size_t) an, (struct sockaddr *) &from, fl);
                     }
                     break;
                 }
@@ -864,14 +869,14 @@ static void loft_ehk_pump_udp(void) {
         }
         size_t cid = loft_ehk.nconns;
         for (size_t i = 0; i < loft_ehk.nconns && cid == loft_ehk.nconns; i++)
-            if (loft_ehk.conns[i].bound && loft_eh_same_addr(&loft_ehk.conns[i].addr, loft_ehk.conns[i].alen, &from, fl))
+            if (loft_ehk.conns[i].bound && loft_eh_same_addr(cx, &loft_ehk.conns[i].addr, loft_ehk.conns[i].alen, &from, fl))
                 cid = i;
         if (cid == loft_ehk.nconns) continue;
         loft_ehk.conns[cid].last_seen = now;
         int64_t seq;
         const char *body;
         size_t bl;
-        if (loft_eh_seq_frame(buf, (size_t) len, &seq, &body, &bl)) loft_eh_conflate(&loft_ehk.conns[cid].slots, seq, body, bl);
+        if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) loft_eh_conflate(cx, &loft_ehk.conns[cid].slots, seq, body, bl);
     }
     for (size_t i = 0; i < loft_ehk.nconns; i++)
         if (loft_ehk.conns[i].bound && now - loft_ehk.conns[i].last_seen > LOFT_EH_UDP_TIMEOUT_US) loft_ehk.conns[i].bound = 0;
@@ -880,30 +885,30 @@ static void loft_ehk_pump_udp(void) {
 
 /* ── The listener natives ── */
 
-static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
+static uint8_t loft_kernel_listen(loft_cx *cx, int64_t port, int64_t tick_us) {
 #if defined(LOFT_SOCKETS)
-    int fd = loft_eh_bind(port, SOCK_STREAM);
+    int fd = loft_eh_bind(cx, port, SOCK_STREAM);
     if (fd < 0) return 0;
-    int udp = loft_eh_bind(port, SOCK_DGRAM);
+    int udp = loft_eh_bind(cx, port, SOCK_DGRAM);
     if (udp < 0) {
-        int why = loft_sock_error();
+        int why = loft_sock_error(cx);
         fprintf(stderr, "engine_host: UDP bind on %lld failed (%s (os error %d)); state-sync rides WS\n", (long long) port,
                 strerror(why), why);
     }
     if (loft_ehk.up) {
-        if (loft_ehk.listener >= 0) loft_sock_close(loft_ehk.listener);
-        if (loft_ehk.udp >= 0) loft_sock_close(loft_ehk.udp);
+        if (loft_ehk.listener >= 0) loft_sock_close(cx, loft_ehk.listener);
+        if (loft_ehk.udp >= 0) loft_sock_close(cx, loft_ehk.udp);
         for (size_t i = 0; i < loft_ehk.nconns; i++) {
-            if (loft_ehk.conns[i].fd >= 0) loft_sock_close(loft_ehk.conns[i].fd);
-            loft_eh_conn_reset(&loft_ehk.conns[i]);
+            if (loft_ehk.conns[i].fd >= 0) loft_sock_close(cx, loft_ehk.conns[i].fd);
+            loft_eh_conn_reset(cx, &loft_ehk.conns[i]);
             free(loft_ehk.conns[i].debug_name);
         }
-        loft_eh_queue_free(&loft_ehk.events);
+        loft_eh_queue_free(cx, &loft_ehk.events);
     }
     free(loft_ehk.conns);
     loft_ehk.conns = 0;
     loft_ehk.nconns = 0;
-    loft_eh_close_at_exit();
+    loft_eh_close_at_exit(cx);
     loft_ehk.up = 1;
     loft_ehk.alive = 1;
     loft_ehk.listener = fd;
@@ -916,7 +921,7 @@ static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
     loft_ehk.last.status = 0;
     loft_ehk.sync_cid = loft_ehk.sync_seq = -1;
     loft_ehk.sync_payload.len = 0;
-    loft_ehk.start = loft_now_us();
+    loft_ehk.start = loft_now_us(cx);
     loft_ehk.tick = tick_us > 1 ? tick_us : 1;
     loft_ehk.last_tick = 0;
     const char *ready = getenv("LOFT_SWAP_READY");
@@ -933,22 +938,22 @@ static uint8_t loft_kernel_listen(int64_t port, int64_t tick_us) {
 #endif
 }
 
-static int64_t loft_kernel_pump(void) {
+static int64_t loft_kernel_pump(loft_cx *cx) {
     if (!loft_ehk.up) return 0;
-    loft_eh_drain_http(&loft_ehk.events);
+    loft_eh_drain_http(cx, &loft_ehk.events);
     int64_t added = 0;
 #if defined(LOFT_SOCKETS)
     for (;;) {
-        int fd = loft_sock_accept(loft_ehk.listener);
+        int fd = loft_sock_accept(cx, loft_ehk.listener);
         if (fd < 0) break;
-        loft_sock_cloexec(fd);
+        loft_sock_cloexec(cx, fd);
         size_t cid = 0;
         while (cid < loft_ehk.nconns && loft_ehk.conns[cid].fd >= 0) cid++;
         char cookie[17] = { 0 };
-        if (loft_ehk.udp >= 0) loft_eh_cookie(cid, cookie);
+        if (loft_ehk.udp >= 0) loft_eh_cookie(cx, cid, cookie);
         int foreign_page = 0;
-        if (!loft_eh_ws_upgrade(fd, cookie, 0, &foreign_page)) {
-            loft_sock_close(fd);
+        if (!loft_eh_ws_upgrade(cx, fd, cookie, 0, &foreign_page)) {
+            loft_sock_close(cx, fd);
             continue;
         }
         if (cid == loft_ehk.nconns) {
@@ -958,71 +963,71 @@ static int64_t loft_kernel_pump(void) {
             loft_ehk.conns[cid].relay_to = -1;
             loft_ehk.nconns++;
         }
-        loft_eh_conn_reset(&loft_ehk.conns[cid]);
+        loft_eh_conn_reset(cx, &loft_ehk.conns[cid]);
         loft_ehk.conns[cid].fd = fd;
         loft_ehk.conns[cid].foreign_page = foreign_page;
         memcpy(loft_ehk.conns[cid].cookie, cookie, sizeof cookie);
-        loft_eh_push(&loft_ehk.events, (int64_t) cid, 0, 0, "", 0);
+        loft_eh_push(cx, &loft_ehk.events, (int64_t) cid, 0, 0, "", 0);
         added++;
     }
     for (size_t cid = 0; cid < loft_ehk.nconns; cid++) {
         while (loft_ehk.conns[cid].fd >= 0) {
             loft_text msg = { 0, 0, 0 };
-            int got = loft_eh_read_frame(loft_ehk.conns[cid].fd, &msg, 1);
+            int got = loft_eh_read_frame(cx, loft_ehk.conns[cid].fd, &msg, 1);
             if (got == 0) {
                 free(msg.p);
                 break;
             }
             if (got == 2) {
                 free(msg.p);
-                loft_ehk_disconnect(cid);
+                loft_ehk_disconnect(cx, cid);
                 added++;
                 break;
             }
             if (msg.len >= 3 && memcmp(msg.p, "D!:", 3) == 0) {
-                loft_ehk_debug(cid, msg.p + 3, msg.len - 3);
-            } else if (loft_eh_is_sync(msg.p, msg.len)) {
-                loft_eh_conflate_ws(&loft_ehk.conns[cid].slots, msg.p, msg.len);
+                loft_ehk_debug(cx, cid, msg.p + 3, msg.len - 3);
+            } else if (loft_eh_is_sync(cx, msg.p, msg.len)) {
+                loft_eh_conflate_ws(cx, &loft_ehk.conns[cid].slots, msg.p, msg.len);
             } else {
-                loft_eh_push(&loft_ehk.events, (int64_t) cid, 1, 0, msg.p, msg.len);
+                loft_eh_push(cx, &loft_ehk.events, (int64_t) cid, 1, 0, msg.p, msg.len);
                 added++;
             }
             free(msg.p);
         }
     }
-    loft_ehk_pump_udp();
+    loft_ehk_pump_udp(cx);
 #endif
     return added;
 }
 
-static uint8_t loft_kernel_next_event(void) {
-    return loft_ehk.up && loft_eh_pop(&loft_ehk.events, &loft_ehk.last);
+static uint8_t loft_kernel_next_event(loft_cx *cx) {
+    return loft_ehk.up && loft_eh_pop(cx, &loft_ehk.events, &loft_ehk.last);
 }
-static int64_t loft_kernel_event_cid(void) { return loft_ehk.up ? loft_ehk.last.cid : -1; }
-static int64_t loft_kernel_event_kind(void) { return loft_ehk.up ? loft_ehk.last.kind : -1; }
-static int64_t loft_kernel_event_status(void) { return loft_ehk.up ? loft_ehk.last.status : 0; }
-static loft_text loft_kernel_event_payload(void) {
+static int64_t loft_kernel_event_cid(loft_cx *cx) { return loft_ehk.up ? loft_ehk.last.cid : -1; }
+static int64_t loft_kernel_event_kind(loft_cx *cx) { return loft_ehk.up ? loft_ehk.last.kind : -1; }
+static int64_t loft_kernel_event_status(loft_cx *cx) { return loft_ehk.up ? loft_ehk.last.status : 0; }
+static loft_text loft_kernel_event_payload(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    if (loft_ehk.up) t = loft_eh_copy(&loft_ehk.last.payload);
+    if (loft_ehk.up) t = loft_eh_copy(cx, &loft_ehk.last.payload);
     return t;
 }
 
 /* Drift-free: a due tick advances the grid by one interval (never to `now`), so missed time is
  * caught up tick by tick; the first tick anchors the grid. */
-static uint8_t loft_eh_tick_due(int64_t now, int64_t tick, int64_t *last) {
+static uint8_t loft_eh_tick_due(loft_cx *cx, int64_t now, int64_t tick, int64_t *last) {
     if (now - *last < tick) return 0;
     *last = *last == 0 ? now : *last + tick;
     return 1;
 }
 
-static uint8_t loft_kernel_tick_due(void) {
-    return loft_ehk.up && loft_eh_tick_due(loft_ehk_now(), loft_ehk.tick, &loft_ehk.last_tick);
+static uint8_t loft_kernel_tick_due(loft_cx *cx) {
+    return loft_ehk.up && loft_eh_tick_due(cx, loft_ehk_now(cx), loft_ehk.tick, &loft_ehk.last_tick);
 }
 
-static uint8_t loft_kernel_send(int64_t cid, loft_str msg) {
+static uint8_t loft_kernel_send(loft_cx *cx, int64_t cid, loft_str msg) {
 #if defined(LOFT_SOCKETS)
     if (!loft_ehk.up || cid < 0) return 0;
-    return (uint8_t) loft_ehk_deliver((size_t) cid, msg.p, msg.len, loft_eh_is_sync(msg.p, msg.len));
+    return (uint8_t) loft_ehk_deliver(cx, (size_t) cid, msg.p, msg.len, loft_eh_is_sync(cx, msg.p, msg.len));
 #else
     (void) cid;
     (void) msg;
@@ -1030,13 +1035,13 @@ static uint8_t loft_kernel_send(int64_t cid, loft_str msg) {
 #endif
 }
 
-static int64_t loft_kernel_broadcast(loft_str msg) {
+static int64_t loft_kernel_broadcast(loft_cx *cx, loft_str msg) {
     int64_t sent = 0;
 #if defined(LOFT_SOCKETS)
     if (!loft_ehk.up) return 0;
-    int sync = loft_eh_is_sync(msg.p, msg.len);
+    int sync = loft_eh_is_sync(cx, msg.p, msg.len);
     for (size_t cid = 0; cid < loft_ehk.nconns; cid++)
-        if (loft_ehk.conns[cid].fd >= 0 && loft_ehk_deliver(cid, msg.p, msg.len, sync)) sent++;
+        if (loft_ehk.conns[cid].fd >= 0 && loft_ehk_deliver(cx, cid, msg.p, msg.len, sync)) sent++;
 #else
     (void) msg;
 #endif
@@ -1046,18 +1051,18 @@ static int64_t loft_kernel_broadcast(loft_str msg) {
 /* Sleep `us`.  Windows' `Sleep` counts whole milliseconds on a ~15.6 ms clock, which would round
  * a tick's sub-frame wait to a frame or to a spin; a high-resolution waitable timer (Windows 10
  * 1803+, what `std::thread::sleep` uses) keeps it, and `Sleep` rounded UP is the fallback. */
-static void loft_eh_sleep_us(int64_t us) {
+static void loft_eh_sleep_us(loft_cx *cx, int64_t us) {
     if (us <= 0) return;
 #if defined(_WIN32)
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
-    static HANDLE timer = 0;
-    static int tried = 0;
-    if (!tried) {
-        tried = 1;
-        timer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    /* The thread's own timer (`@FR-C-Own`): one timer two threads waited on would wake one. */
+    if (!cx->eh_sleep_tried) {
+        cx->eh_sleep_tried = 1;
+        cx->eh_sleep_timer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     }
+    HANDLE timer = (HANDLE) cx->eh_sleep_timer;
     LARGE_INTEGER due;
     due.QuadPart = -(LONGLONG) us * 10;
     if (timer && SetWaitableTimer(timer, &due, 0, 0, 0, FALSE)) {
@@ -1072,51 +1077,51 @@ static void loft_eh_sleep_us(int64_t us) {
 }
 
 /* Sleep up to `max_us`, never past the next tick boundary. */
-static int64_t loft_eh_idle_for(int64_t max_us, int64_t now, int64_t tick, int64_t last) {
+static int64_t loft_eh_idle_for(loft_cx *cx, int64_t max_us, int64_t now, int64_t tick, int64_t last) {
     int64_t until = last == 0 ? tick : (last + tick - now > 0 ? last + tick - now : 0);
     if (until < 1) until = 1;
     return max_us < 0 ? 0 : max_us > until ? until : max_us;
 }
 
-static void loft_kernel_idle(int64_t max_us) {
-    loft_eh_sleep_us(loft_ehk.up ? loft_eh_idle_for(max_us, loft_ehk_now(), loft_ehk.tick, loft_ehk.last_tick)
+static void loft_kernel_idle(loft_cx *cx, int64_t max_us) {
+    loft_eh_sleep_us(cx, loft_ehk.up ? loft_eh_idle_for(cx, max_us, loft_ehk_now(cx), loft_ehk.tick, loft_ehk.last_tick)
                                  : (max_us > 0 ? max_us : 0));
 }
 
-static int64_t loft_kernel_clients(void) {
+static int64_t loft_kernel_clients(loft_cx *cx) {
     int64_t n = 0;
     for (size_t i = 0; i < loft_ehk.nconns; i++) n += loft_ehk.conns[i].fd >= 0;
     return n;
 }
-static uint8_t loft_kernel_alive(void) { return loft_ehk.up && loft_ehk.alive; }
-static void loft_kernel_stop(void) {
+static uint8_t loft_kernel_alive(loft_cx *cx) { return loft_ehk.up && loft_ehk.alive; }
+static void loft_kernel_stop(loft_cx *cx) {
     if (loft_ehk.up) loft_ehk.alive = 0;
 }
-static void loft_kernel_frame(void) {}
+static void loft_kernel_frame(loft_cx *cx) {}
 
 /* `post`: a local event (`cid -1`) on the active role's queue, the connector's first. */
-static uint8_t loft_kernel_post(loft_str msg) {
+static uint8_t loft_kernel_post(loft_cx *cx, loft_str msg) {
     if (loft_ehc.up) {
-        loft_eh_push(&loft_ehc.events, -1, 1, 0, msg.p, msg.len);
+        loft_eh_push(cx, &loft_ehc.events, -1, 1, 0, msg.p, msg.len);
         return 1;
     }
     if (loft_ehk.up) {
-        loft_eh_push(&loft_ehk.events, -1, 1, 0, msg.p, msg.len);
+        loft_eh_push(cx, &loft_ehk.events, -1, 1, 0, msg.p, msg.len);
         return 1;
     }
     return 0;
 }
 
-static uint8_t loft_kernel_udp_bound(int64_t cid) {
+static uint8_t loft_kernel_udp_bound(loft_cx *cx, int64_t cid) {
     return loft_ehk.up && cid >= 0 && (size_t) cid < loft_ehk.nconns && loft_ehk.conns[cid].bound;
 }
-static void loft_kernel_sync_class(int64_t id) { loft_eh_sync_declare(id, 0); }
-static void loft_kernel_sync_class_keyed(int64_t id) { loft_eh_sync_declare(id, 1); }
+static void loft_kernel_sync_class(loft_cx *cx, int64_t id) { loft_eh_sync_declare(cx, id, 0); }
+static void loft_kernel_sync_class_keyed(loft_cx *cx, int64_t id) { loft_eh_sync_declare(cx, id, 1); }
 
 /* `deliver_keyframe`: a sync sample promoted to must-deliver rides the reliable channel, stamped
  * in the datagram seq space for a bound peer (`S:<seq>:` — it conflates there), plain for one
  * that is not. */
-static uint8_t loft_kernel_keyframe(int64_t cid, loft_str msg) {
+static uint8_t loft_kernel_keyframe(loft_cx *cx, int64_t cid, loft_str msg) {
 #if defined(LOFT_SOCKETS)
     if (!loft_ehk.up || cid < 0 || (size_t) cid >= loft_ehk.nconns) return 0;
     loft_eh_conn *c = &loft_ehk.conns[cid];
@@ -1125,13 +1130,13 @@ static uint8_t loft_kernel_keyframe(int64_t cid, loft_str msg) {
         c->out_seq += 1;
         char seq[32];
         snprintf(seq, sizeof seq, "S:%lld:", (long long) c->out_seq);
-        loft_push_cstr(&wire, seq);
+        loft_push_cstr(cx, &wire, seq);
     }
-    loft_push(&wire, msg.p, msg.len);
+    loft_push(cx, &wire, msg.p, msg.len);
     uint8_t ok = 0;
     if (c->fd >= 0) {
-        ok = (uint8_t) loft_eh_write_frame(c->fd, 0x1, wire.p, wire.len, 0);
-        if (!ok) loft_ehk_disconnect((size_t) cid);
+        ok = (uint8_t) loft_eh_write_frame(cx, c->fd, 0x1, wire.p, wire.len, 0);
+        if (!ok) loft_ehk_disconnect(cx, (size_t) cid);
     }
     free(wire.p);
     return ok;
@@ -1143,7 +1148,7 @@ static uint8_t loft_kernel_keyframe(int64_t cid, loft_str msg) {
 }
 
 /* The next dirty slot, newest state from one client, into the sync getters. */
-static uint8_t loft_kernel_sync_next(void) {
+static uint8_t loft_kernel_sync_next(loft_cx *cx) {
     if (!loft_ehk.up) return 0;
     for (size_t cid = 0; cid < loft_ehk.nconns; cid++) {
         loft_eh_slots *s = &loft_ehk.conns[cid].slots;
@@ -1153,17 +1158,17 @@ static uint8_t loft_kernel_sync_next(void) {
             loft_ehk.sync_cid = (int64_t) cid;
             loft_ehk.sync_seq = s->v[i].seq;
             loft_ehk.sync_payload.len = 0;
-            loft_push(&loft_ehk.sync_payload, s->v[i].payload.p, s->v[i].payload.len);
+            loft_push(cx, &loft_ehk.sync_payload, s->v[i].payload.p, s->v[i].payload.len);
             return 1;
         }
     }
     return 0;
 }
-static int64_t loft_kernel_sync_cid(void) { return loft_ehk.up ? loft_ehk.sync_cid : -1; }
-static int64_t loft_kernel_sync_seq(void) { return loft_ehk.up ? loft_ehk.sync_seq : -1; }
-static loft_text loft_kernel_sync_payload(void) {
+static int64_t loft_kernel_sync_cid(loft_cx *cx) { return loft_ehk.up ? loft_ehk.sync_cid : -1; }
+static int64_t loft_kernel_sync_seq(loft_cx *cx) { return loft_ehk.up ? loft_ehk.sync_seq : -1; }
+static loft_text loft_kernel_sync_payload(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    if (loft_ehk.up) t = loft_eh_copy(&loft_ehk.sync_payload);
+    if (loft_ehk.up) t = loft_eh_copy(cx, &loft_ehk.sync_payload);
     return t;
 }
 
@@ -1172,38 +1177,38 @@ static loft_text loft_kernel_sync_payload(void) {
 #if defined(LOFT_SOCKETS)
 /* The client's loopback debug-control listener, announced on stdout; -1 unless
  * LOFT_DEBUG_CONTROL=1. */
-static int loft_ehc_ctl_listener(void) {
-    if (!loft_eh_debug_on()) return -1;
-    int fd = loft_sock_open(AF_INET, SOCK_STREAM, 0);
+static int loft_ehc_ctl_listener(loft_cx *cx) {
+    if (!loft_eh_debug_on(cx)) return -1;
+    int fd = loft_sock_open(cx, AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
-    loft_sock_cloexec(fd);
+    loft_sock_cloexec(cx, fd);
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t al = sizeof a;
-    if (loft_sock_bind_listen(fd, (struct sockaddr *) &a, sizeof a, 128) != 0 ||
-        loft_sock_name(fd, 0, (struct sockaddr *) &a, &al) != 0) {
-        loft_sock_close(fd);
+    if (loft_sock_bind_listen(cx, fd, (struct sockaddr *) &a, sizeof a, 128) != 0 ||
+        loft_sock_name(cx, fd, 0, (struct sockaddr *) &a, &al) != 0) {
+        loft_sock_close(cx, fd);
         return -1;
     }
-    loft_sock_blocking(fd, 0);
+    loft_sock_blocking(cx, fd, 0);
     printf("engine_host: debug control on 127.0.0.1:%u\n", (unsigned) ntohs(a.sin_port));
     fflush(stdout);
     return fd;
 }
 
 /* Accept and serve the client's control connections through the shared command core. */
-static void loft_ehc_pump_ctl(void) {
+static void loft_ehc_pump_ctl(loft_cx *cx) {
     if (loft_ehc.ctl < 0) return;
     for (;;) {
-        int fd = loft_sock_accept(loft_ehc.ctl);
+        int fd = loft_sock_accept(cx, loft_ehc.ctl);
         if (fd < 0) break;
-        loft_sock_cloexec(fd);
+        loft_sock_cloexec(cx, fd);
         /* This endpoint is the control channel alone: another site's page is not served. */
         int foreign_page = 0;
-        if (!loft_eh_ws_upgrade(fd, "", 1, &foreign_page)) {
-            loft_sock_close(fd);
+        if (!loft_eh_ws_upgrade(cx, fd, "", 1, &foreign_page)) {
+            loft_sock_close(cx, fd);
             continue;
         }
         size_t i = 0;
@@ -1218,23 +1223,23 @@ static void loft_ehc_pump_ctl(void) {
     for (size_t i = 0; i < loft_ehc.nctl; i++) {
         while (loft_ehc.ctl_conns[i] >= 0) {
             loft_text msg = { 0, 0, 0 };
-            int got = loft_eh_read_frame(loft_ehc.ctl_conns[i], &msg, 1);
+            int got = loft_eh_read_frame(cx, loft_ehc.ctl_conns[i], &msg, 1);
             if (got == 0) {
                 free(msg.p);
                 break;
             }
             if (got == 2) {
                 free(msg.p);
-                loft_sock_close(loft_ehc.ctl_conns[i]);
+                loft_sock_close(cx, loft_ehc.ctl_conns[i]);
                 loft_ehc.ctl_conns[i] = -1;
                 break;
             }
             if (msg.len >= 3 && memcmp(msg.p, "D!:", 3) == 0) {
                 const char *cmd = msg.p + 3;
                 size_t n = msg.len - 3;
-                loft_eh_trim(&cmd, &n);
+                loft_eh_trim(cx, &cmd, &n);
                 loft_text r = { 0, 0, 0 };
-                if (loft_eh_debug_dispatch(cmd, n, &r)) loft_eh_write_frame(loft_ehc.ctl_conns[i], 1, r.p, r.len, 0);
+                if (loft_eh_debug_dispatch(cx, cmd, n, &r)) loft_eh_write_frame(cx, loft_ehc.ctl_conns[i], 1, r.p, r.len, 0);
                 free(r.p);
                 if (loft_eh_quit) {
                     fflush(0);
@@ -1247,23 +1252,23 @@ static void loft_ehc_pump_ctl(void) {
 }
 #endif
 
-static void loft_ehc_reset(int64_t tick_us) {
+static void loft_ehc_reset(loft_cx *cx, int64_t tick_us) {
 #if defined(LOFT_SOCKETS)
     if (loft_ehc.up) {
-        if (loft_ehc.conn >= 0) loft_sock_close(loft_ehc.conn);
-        if (loft_ehc.udp >= 0) loft_sock_close(loft_ehc.udp);
-        if (loft_ehc.ctl >= 0) loft_sock_close(loft_ehc.ctl);
+        if (loft_ehc.conn >= 0) loft_sock_close(cx, loft_ehc.conn);
+        if (loft_ehc.udp >= 0) loft_sock_close(cx, loft_ehc.udp);
+        if (loft_ehc.ctl >= 0) loft_sock_close(cx, loft_ehc.ctl);
         for (size_t i = 0; i < loft_ehc.nctl; i++)
-            if (loft_ehc.ctl_conns[i] >= 0) loft_sock_close(loft_ehc.ctl_conns[i]);
+            if (loft_ehc.ctl_conns[i] >= 0) loft_sock_close(cx, loft_ehc.ctl_conns[i]);
     }
 #endif
     free(loft_ehc.ctl_conns);
     loft_ehc.ctl_conns = 0;
     loft_ehc.nctl = 0;
-    loft_eh_queue_free(&loft_ehc.events);
-    loft_eh_slots_free(&loft_ehc.slots);
+    loft_eh_queue_free(cx, &loft_ehc.events);
+    loft_eh_slots_free(cx, &loft_ehc.slots);
 #if defined(LOFT_SOCKETS)
-    loft_eh_close_at_exit();
+    loft_eh_close_at_exit(cx);
 #endif
     loft_ehc.up = 1;
     loft_ehc.alive = 1;
@@ -1280,12 +1285,12 @@ static void loft_ehc_reset(int64_t tick_us) {
     loft_ehc.last.payload.len = loft_ehc.last.payload.cap = 0;
     loft_ehc.last.cid = loft_ehc.last.kind = -1;
     loft_ehc.last.status = 0;
-    loft_ehc.start = loft_now_us();
+    loft_ehc.start = loft_now_us(cx);
     loft_ehc.tick = tick_us > 1 ? tick_us : 1;
     loft_ehc.last_tick = 0;
 }
 
-static void loft_eh_touch_ready(const char *what, int say) {
+static void loft_eh_touch_ready(loft_cx *cx, const char *what, int say) {
     const char *ready = getenv("LOFT_SWAP_READY");
     if (!ready) return;
     FILE *f = fopen(ready, "wb");
@@ -1295,24 +1300,24 @@ static void loft_eh_touch_ready(const char *what, int say) {
 
 /* `kernel_local`: the client kernel with no transport — ticks, the swap step and the debug
  * endpoint without a server. */
-static uint8_t loft_kernel_local(int64_t tick_us) {
-    loft_ehc_reset(tick_us);
+static uint8_t loft_kernel_local(loft_cx *cx, int64_t tick_us) {
+    loft_ehc_reset(cx, tick_us);
 #if defined(LOFT_SOCKETS)
-    loft_ehc.ctl = loft_ehc_ctl_listener();
+    loft_ehc.ctl = loft_ehc_ctl_listener(cx);
 #endif
-    loft_eh_touch_ready("connected", 0);
+    loft_eh_touch_ready(cx, "connected", 0);
     return 1;
 }
 
 /* `kernel_connect`: dial (retried across a swap's gap, five seconds), upgrade with the RFC's
  * sample key (anti-cache, not auth), take the `X-Loft-UDP` cookie, prepare the UDP socket.  A
  * kind-0 event marks the connect, as the listener's does. */
-static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us) {
+static uint8_t loft_kernel_connect(loft_cx *cx, loft_str host, int64_t port, int64_t tick_us) {
 #if defined(LOFT_SOCKETS)
-    char *h = loft_cstr_own(host), ps[16];
+    char *h = loft_cstr_own(cx, host), ps[16];
     snprintf(ps, sizeof ps, "%u", (unsigned) (uint16_t) port);
     struct addrinfo hints, *res = 0;
-    loft_sock_ready();
+    loft_sock_ready(cx);
     memset(&hints, 0, sizeof hints);
     hints.ai_socktype = SOCK_STREAM;
     if (getaddrinfo(h, ps, &hints, &res) != 0 || !res) {
@@ -1324,23 +1329,23 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     memcpy(&addr, res->ai_addr, res->ai_addrlen);
     int family = res->ai_family;
     freeaddrinfo(res);
-    int64_t deadline = loft_now_us() + 5000000;
+    int64_t deadline = loft_now_us(cx) + 5000000;
     int fd = -1;
     for (;;) {
-        fd = loft_sock_open(family, SOCK_STREAM, 0);
+        fd = loft_sock_open(cx, family, SOCK_STREAM, 0);
         if (fd >= 0) {
-            loft_sock_cloexec(fd);
-            if (loft_sock_connect_within(fd, (struct sockaddr *) &addr, al, 3000)) break;
-            loft_sock_close(fd);
+            loft_sock_cloexec(cx, fd);
+            if (loft_sock_connect_within(cx, fd, (struct sockaddr *) &addr, al, 3000)) break;
+            loft_sock_close(cx, fd);
             fd = -1;
         }
-        if (loft_now_us() >= deadline) {
+        if (loft_now_us(cx) >= deadline) {
             free(h);
             return 0;
         }
-        loft_eh_sleep_us(100000);
+        loft_eh_sleep_us(cx, 100000);
     }
-    loft_sock_timeout(fd, 5000);
+    loft_sock_timeout(cx, fd, 5000);
     char req[1024];
     int n = snprintf(req, sizeof req,
                      "GET /ws HTTP/1.1\r\nHost: %s:%u\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -1348,43 +1353,43 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
                      h, (unsigned) (uint16_t) port);
     free(h);
     loft_text head = { 0, 0, 0 };
-    if (n <= 0 || (size_t) n >= sizeof req || !loft_eh_write_all(fd, req, (size_t) n) || !loft_eh_read_head(fd, &head)) {
+    if (n <= 0 || (size_t) n >= sizeof req || !loft_eh_write_all(cx, fd, req, (size_t) n) || !loft_eh_read_head(cx, fd, &head)) {
         free(head.p);
-        loft_sock_close(fd);
+        loft_sock_close(cx, fd);
         return 0;
     }
-    loft_push(&head, "", 1);
+    loft_push(cx, &head, "", 1);
     if (!strstr(head.p, " 101 ")) {
         free(head.p);
-        loft_sock_close(fd);
+        loft_sock_close(cx, fd);
         return 0;
     }
     head.len--;
     const char *v;
     size_t vn;
     char cookie[64] = { 0 };
-    if (loft_http_header(&head, "x-loft-udp", &v, &vn) && vn < sizeof cookie) memcpy(cookie, v, vn);
+    if (loft_http_header(cx, &head, "x-loft-udp", &v, &vn) && vn < sizeof cookie) memcpy(cookie, v, vn);
     free(head.p);
-    loft_sock_timeout(fd, 20);
-    loft_ehc_reset(tick_us);
+    loft_sock_timeout(cx, fd, 20);
+    loft_ehc_reset(cx, tick_us);
     loft_ehc.conn = fd;
     memcpy(loft_ehc.cookie, cookie, sizeof cookie);
     if (cookie[0]) {
-        int u = loft_sock_open(family, SOCK_DGRAM, 0);
+        int u = loft_sock_open(cx, family, SOCK_DGRAM, 0);
         if (u >= 0) {
-            loft_sock_cloexec(u);
-            loft_sock_udp_quiet(u);
-            if (loft_sock_connect_to(u, (struct sockaddr *) &addr, al) == 0) {
-                loft_sock_blocking(u, 0);
+            loft_sock_cloexec(cx, u);
+            loft_sock_udp_quiet(cx, u);
+            if (loft_sock_connect_to(cx, u, (struct sockaddr *) &addr, al) == 0) {
+                loft_sock_blocking(cx, u, 0);
                 loft_ehc.udp = u;
             } else {
-                loft_sock_close(u);
+                loft_sock_close(cx, u);
             }
         }
     }
-    loft_eh_push(&loft_ehc.events, 0, 0, 0, "", 0);
-    loft_ehc.ctl = loft_ehc_ctl_listener();
-    loft_eh_touch_ready("connected", 1);
+    loft_eh_push(cx, &loft_ehc.events, 0, 0, 0, "", 0);
+    loft_ehc.ctl = loft_ehc_ctl_listener(cx);
+    loft_eh_touch_ready(cx, "connected", 1);
     return 1;
 #else
     (void) host;
@@ -1394,82 +1399,87 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
 #endif
 }
 
-static void loft_ehc_lost(void) {
+static void loft_ehc_lost(loft_cx *cx) {
     loft_ehc.alive = 0;
     loft_ehc.udp_bound = 0;
-    loft_eh_push(&loft_ehc.events, 0, 2, 0, "", 0);
+    loft_eh_push(cx, &loft_ehc.events, 0, 2, 0, "", 0);
 }
 
 /* `pump_client`: the control endpoint, HTTP completions, the server's WS frames (an `S:`-framed
  * keyframe or a plain sync-class frame conflates, the rest queues), its datagrams (the ack, the
  * sync traffic — `LOFT_UDP_DROP_NTH=N` drops every Nth, for measurement), then the hello and
  * keepalive cadences. */
-static int64_t loft_kernel_client_pump(void) {
+static int64_t loft_kernel_client_pump(loft_cx *cx) {
     if (!loft_ehc.up) return 0;
     int64_t added = 0;
 #if defined(LOFT_SOCKETS)
-    loft_ehc_pump_ctl();
+    loft_ehc_pump_ctl(cx);
 #endif
-    loft_eh_drain_http(&loft_ehc.events);
+    loft_eh_drain_http(cx, &loft_ehc.events);
 #if defined(LOFT_SOCKETS)
     while (loft_ehc.alive && loft_ehc.conn >= 0) {
         loft_text msg = { 0, 0, 0 };
-        int got = loft_eh_read_frame(loft_ehc.conn, &msg, 0);
+        int got = loft_eh_read_frame(cx, loft_ehc.conn, &msg, 0);
         if (got == 0) {
             free(msg.p);
             break;
         }
         if (got == 2) {
             free(msg.p);
-            loft_ehc_lost();
+            loft_ehc_lost(cx);
             added++;
             break;
         }
         int64_t seq;
         const char *body;
         size_t bl;
-        if (loft_eh_seq_frame(msg.p, msg.len, &seq, &body, &bl)) {
-            loft_eh_conflate(&loft_ehc.slots, seq, body, bl);
-        } else if (loft_eh_is_sync(msg.p, msg.len)) {
-            loft_eh_conflate_ws(&loft_ehc.slots, msg.p, msg.len);
+        if (loft_eh_seq_frame(cx, msg.p, msg.len, &seq, &body, &bl)) {
+            loft_eh_conflate(cx, &loft_ehc.slots, seq, body, bl);
+        } else if (loft_eh_is_sync(cx, msg.p, msg.len)) {
+            loft_eh_conflate_ws(cx, &loft_ehc.slots, msg.p, msg.len);
         } else {
-            loft_eh_push(&loft_ehc.events, 0, 1, 0, msg.p, msg.len);
+            loft_eh_push(cx, &loft_ehc.events, 0, 1, 0, msg.p, msg.len);
             added++;
         }
         free(msg.p);
     }
     if (loft_ehc.udp >= 0) {
-        static int64_t drop_nth = -1;
+        static int64_t drop_seen = -1;
         static uint64_t received = 0;
+        int64_t drop_nth;
+        LOFT_PUB_GET(drop_seen, drop_nth);
         if (drop_nth < 0) {
             const char *v = getenv("LOFT_UDP_DROP_NTH");
             int64_t d = 0;
-            drop_nth = v && loft_eh_int(v, strlen(v), &d) && d > 0 ? d : 0;
+            drop_nth = v && loft_eh_int(cx, v, strlen(v), &d) && d > 0 ? d : 0;
+            LOFT_PUB_SET(drop_seen, drop_nth);
         }
         char buf[2048];
         for (;;) {
-            long len = loft_sock_recv(loft_ehc.udp, buf, sizeof buf, 0);
+            long len = loft_sock_recv(cx, loft_ehc.udp, buf, sizeof buf, 0);
             if (len < 0) break;
-            if (!loft_utf8_valid((const unsigned char *) buf, (size_t) len)) continue;
+            if (!loft_utf8_valid(cx, (const unsigned char *) buf, (size_t) len)) continue;
             int64_t seq;
             const char *body;
             size_t bl;
             if (len >= 2 && buf[0] == 'A' && buf[1] == ':') {
                 loft_ehc.udp_bound = 1;
-            } else if (loft_eh_seq_frame(buf, (size_t) len, &seq, &body, &bl)) {
-                if (drop_nth > 0 && ++received % (uint64_t) drop_nth == 0) continue;
-                loft_eh_conflate(&loft_ehc.slots, seq, body, bl);
+            } else if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) {
+                uint64_t nth = 0;
+                if (drop_nth > 0) LOFT_PUB_ADD(received, 1u, nth);
+                if (drop_nth > 0 && nth % (uint64_t) drop_nth == 0) continue;
+                loft_eh_conflate(cx, &loft_ehc.slots, seq, body, bl);
             }
         }
-        int64_t now = loft_ehc_now();
+        int64_t now = loft_ehc_now(cx);
         if (!loft_ehc.udp_bound && loft_ehc.cookie[0] && now - loft_ehc.last_hello > LOFT_EH_HELLO_US) {
             char hello[80];
             int hn = snprintf(hello, sizeof hello, "H:%s", loft_ehc.cookie);
-            loft_sock_send(loft_ehc.udp, hello, (size_t) hn, 0);
+            loft_sock_send(cx, loft_ehc.udp, hello, (size_t) hn, 0);
             loft_ehc.last_hello = now;
         }
         if (loft_ehc.udp_bound && now - loft_ehc.last_keepalive > LOFT_EH_KEEPALIVE_US) {
-            loft_sock_send(loft_ehc.udp, "K:", 2, 0);
+            loft_sock_send(cx, loft_ehc.udp, "K:", 2, 0);
             loft_ehc.last_keepalive = now;
         }
     }
@@ -1477,49 +1487,49 @@ static int64_t loft_kernel_client_pump(void) {
     return added;
 }
 
-static uint8_t loft_kernel_client_alive(void) { return loft_ehc.up && loft_ehc.alive; }
-static void loft_kernel_client_stop(void) {
+static uint8_t loft_kernel_client_alive(loft_cx *cx) { return loft_ehc.up && loft_ehc.alive; }
+static void loft_kernel_client_stop(loft_cx *cx) {
     if (loft_ehc.up) loft_ehc.alive = 0;
 }
-static uint8_t loft_kernel_client_next_event(void) {
-    return loft_ehc.up && loft_eh_pop(&loft_ehc.events, &loft_ehc.last);
+static uint8_t loft_kernel_client_next_event(loft_cx *cx) {
+    return loft_ehc.up && loft_eh_pop(cx, &loft_ehc.events, &loft_ehc.last);
 }
-static int64_t loft_kernel_client_event_kind(void) { return loft_ehc.up ? loft_ehc.last.kind : -1; }
-static int64_t loft_kernel_client_event_cid(void) { return loft_ehc.up ? loft_ehc.last.cid : -1; }
-static int64_t loft_kernel_client_event_status(void) { return loft_ehc.up ? loft_ehc.last.status : 0; }
-static loft_text loft_kernel_client_event_payload(void) {
+static int64_t loft_kernel_client_event_kind(loft_cx *cx) { return loft_ehc.up ? loft_ehc.last.kind : -1; }
+static int64_t loft_kernel_client_event_cid(loft_cx *cx) { return loft_ehc.up ? loft_ehc.last.cid : -1; }
+static int64_t loft_kernel_client_event_status(loft_cx *cx) { return loft_ehc.up ? loft_ehc.last.status : 0; }
+static loft_text loft_kernel_client_event_payload(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    if (loft_ehc.up) t = loft_eh_copy(&loft_ehc.last.payload);
+    if (loft_ehc.up) t = loft_eh_copy(cx, &loft_ehc.last.payload);
     return t;
 }
-static uint8_t loft_kernel_client_tick_due(void) {
-    return loft_ehc.up && loft_eh_tick_due(loft_ehc_now(), loft_ehc.tick, &loft_ehc.last_tick);
+static uint8_t loft_kernel_client_tick_due(loft_cx *cx) {
+    return loft_ehc.up && loft_eh_tick_due(cx, loft_ehc_now(cx), loft_ehc.tick, &loft_ehc.last_tick);
 }
-static void loft_kernel_client_idle(int64_t max_us) {
-    loft_eh_sleep_us(loft_ehc.up ? loft_eh_idle_for(max_us, loft_ehc_now(), loft_ehc.tick, loft_ehc.last_tick)
+static void loft_kernel_client_idle(loft_cx *cx, int64_t max_us) {
+    loft_eh_sleep_us(cx, loft_ehc.up ? loft_eh_idle_for(cx, max_us, loft_ehc_now(cx), loft_ehc.tick, loft_ehc.last_tick)
                                  : (max_us > 0 ? max_us : 0));
 }
 
 /* `client_send`: one seq across both carriers for sync sends; a datagram once the path is acked,
  * else a masked WS frame.  A failed write loses the server. */
-static uint8_t loft_kernel_client_send(loft_str msg) {
+static uint8_t loft_kernel_client_send(loft_cx *cx, loft_str msg) {
     if (!loft_ehc.up || !loft_ehc.alive) return 0;
-    int sync = loft_eh_is_sync(msg.p, msg.len);
+    int sync = loft_eh_is_sync(cx, msg.p, msg.len);
     if (sync) loft_ehc.out_seq += 1;
 #if defined(LOFT_SOCKETS)
     if (sync && loft_ehc.udp_bound && loft_ehc.udp >= 0) {
         loft_text d = { 0, 0, 0 };
         char seq[32];
         snprintf(seq, sizeof seq, "S:%lld:", (long long) loft_ehc.out_seq);
-        loft_push_cstr(&d, seq);
-        loft_push(&d, msg.p, msg.len);
-        uint8_t ok = d.len <= LOFT_EH_UDP_MAX && loft_sock_send(loft_ehc.udp, d.p, d.len, 0) >= 0;
+        loft_push_cstr(cx, &d, seq);
+        loft_push(cx, &d, msg.p, msg.len);
+        uint8_t ok = d.len <= LOFT_EH_UDP_MAX && loft_sock_send(cx, loft_ehc.udp, d.p, d.len, 0) >= 0;
         free(d.p);
         return ok;
     }
     if (loft_ehc.conn < 0) return 0;
-    if (!loft_eh_write_frame(loft_ehc.conn, 0x1, msg.p, msg.len, 1)) {
-        loft_ehc_lost();
+    if (!loft_eh_write_frame(cx, loft_ehc.conn, 0x1, msg.p, msg.len, 1)) {
+        loft_ehc_lost(cx);
         return 0;
     }
     return 1;
@@ -1528,7 +1538,7 @@ static uint8_t loft_kernel_client_send(loft_str msg) {
 #endif
 }
 
-static uint8_t loft_kernel_client_sync_next(void) {
+static uint8_t loft_kernel_client_sync_next(loft_cx *cx) {
     if (!loft_ehc.up) return 0;
     for (size_t i = 0; i < loft_ehc.slots.n; i++) {
         loft_eh_slot *s = &loft_ehc.slots.v[i];
@@ -1536,25 +1546,25 @@ static uint8_t loft_kernel_client_sync_next(void) {
         s->dirty = 0;
         loft_ehc.sync_seq = s->seq;
         loft_ehc.sync_payload.len = 0;
-        loft_push(&loft_ehc.sync_payload, s->payload.p, s->payload.len);
+        loft_push(cx, &loft_ehc.sync_payload, s->payload.p, s->payload.len);
         return 1;
     }
     return 0;
 }
-static int64_t loft_kernel_client_sync_seq(void) { return loft_ehc.up ? loft_ehc.sync_seq : -1; }
-static loft_text loft_kernel_client_sync_payload(void) {
+static int64_t loft_kernel_client_sync_seq(loft_cx *cx) { return loft_ehc.up ? loft_ehc.sync_seq : -1; }
+static loft_text loft_kernel_client_sync_payload(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    if (loft_ehc.up) t = loft_eh_copy(&loft_ehc.sync_payload);
+    if (loft_ehc.up) t = loft_eh_copy(cx, &loft_ehc.sync_payload);
     return t;
 }
-static uint8_t loft_kernel_client_udp_bound(void) { return loft_ehc.up && loft_ehc.udp_bound; }
-static void loft_kernel_client_frame(void) {}
+static uint8_t loft_kernel_client_udp_bound(loft_cx *cx) { return loft_ehc.up && loft_ehc.udp_bound; }
+static void loft_kernel_client_frame(loft_cx *cx) {}
 
 /* `default_host`: LOFT_HOST, else loopback. */
-static loft_text loft_kernel_default_host(void) {
+static loft_text loft_kernel_default_host(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
     const char *h = getenv("LOFT_HOST");
-    loft_push_cstr(&t, h ? h : "127.0.0.1");
+    loft_push_cstr(cx, &t, h ? h : "127.0.0.1");
     return t;
 }
 
@@ -1569,7 +1579,7 @@ static loft_text loft_kernel_default_host(void) {
  * child while this build serves.  Processes are POSIX here; elsewhere every request refuses. */
 
 /* A world type's JSON render, for a world that shares its store (the snapshot then goes as JSON). */
-typedef void (*loft_swap_show_fn)(loft_text *s, loft_ref r);
+typedef void (*loft_swap_show_fn)(loft_cx *cx, loft_text *s, loft_ref r);
 
 #define LOFT_SW_IDLE 0
 #define LOFT_SW_REQUESTED 1
@@ -1589,7 +1599,7 @@ static struct {
     int64_t deadline;
 } loft_sw = { 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
 
-static char *loft_sw_join(const char *a, const char *b) {
+static char *loft_sw_join(loft_cx *cx, const char *a, const char *b) {
     size_t n = strlen(a), m = strlen(b);
     char *c = (char *) malloc(n + m + 1);
     if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -1598,7 +1608,7 @@ static char *loft_sw_join(const char *a, const char *b) {
     return c;
 }
 
-static char *loft_sw_dup(const char *p, size_t n) {
+static char *loft_sw_dup(loft_cx *cx, const char *p, size_t n) {
     char *c = (char *) malloc(n + 1);
     if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(c, p, n);
@@ -1606,7 +1616,7 @@ static char *loft_sw_dup(const char *p, size_t n) {
     return c;
 }
 
-static int loft_sw_write(const char *path, const char *p, size_t n) {
+static int loft_sw_write(loft_cx *cx, const char *path, const char *p, size_t n) {
     FILE *f = fopen(path, "wb");
     if (!f) return 0;
     int ok = fwrite(p, 1, n, f) == n;
@@ -1614,7 +1624,7 @@ static int loft_sw_write(const char *path, const char *p, size_t n) {
 }
 
 /* A whole file, malloc'd and NUL-terminated, or 0. */
-static char *loft_sw_read(const char *path, size_t *len) {
+static char *loft_sw_read(loft_cx *cx, const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     size_t cap = 4096, n = 0, got;
@@ -1634,22 +1644,22 @@ static char *loft_sw_read(const char *path, size_t *len) {
     return b;
 }
 
-static int loft_sw_exists(const char *path) {
+static int loft_sw_exists(loft_cx *cx, const char *path) {
     FILE *f = path && *path ? fopen(path, "rb") : 0;
     if (f) fclose(f);
     return f != 0;
 }
 
 /* `std::env::temp_dir`: TMPDIR, else /tmp. */
-static const char *loft_sw_tmp(void) {
+static const char *loft_sw_tmp(loft_cx *cx) {
     const char *t = getenv("TMPDIR");
     return t && *t ? t : "/tmp";
 }
 
 /* A snapshot and the layout sidecar a store image has beside it. */
-static void loft_sw_remove_snapshot(const char *snap) {
+static void loft_sw_remove_snapshot(loft_cx *cx, const char *snap) {
     if (!snap) return;
-    char *side = loft_sw_join(snap, ".dschema");
+    char *side = loft_sw_join(cx, snap, ".dschema");
     remove(snap);
     remove(side);
     free(side);
@@ -1657,8 +1667,8 @@ static void loft_sw_remove_snapshot(const char *snap) {
 
 /* `swap_world(w)`: register `w` as the snapshot root and, in a swap target, restore the previous
  * build's world into it in place; 1 when a restore happened. */
-static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_show_fn show) {
-    uint16_t kt = w.store_nr < loft_nstores ? LOFT_KNOWN(loft_stores[w.store_nr]) : 0xFFFF;
+static uint8_t loft_swap_world(loft_cx *cx, loft_ref w, const loft_sidecar *sc, loft_swap_show_fn show) {
+    uint16_t kt = w.store_nr < cx->nstores ? LOFT_KNOWN(cx->stores[w.store_nr]) : 0xFFFF;
     if (w.store_nr == 0xFFFF || kt == 0xFFFF) {
         fputs("loft-swap: swap_world got a record with no known type; swaps disabled\n", stderr);
         return 0;
@@ -1675,11 +1685,11 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
         loft_text t = { 0, 0, 0 };
         char slot[32];
         snprintf(slot, sizeof slot, "slot=%u\n", (unsigned) w.store_nr);
-        loft_push_cstr(&t, loft_sw.sc->before_slot);
-        loft_push_cstr(&t, slot);
-        loft_push_cstr(&t, loft_sw.sc->after_slot);
-        loft_sw.layout = loft_cstr_own(loft_view(&t));
-        loft_text_free(&t);
+        loft_push_cstr(cx, &t, loft_sw.sc->before_slot);
+        loft_push_cstr(cx, &t, slot);
+        loft_push_cstr(cx, &t, loft_sw.sc->after_slot);
+        loft_sw.layout = loft_cstr_own(cx, loft_view(cx, &t));
+        loft_text_free(cx, &t);
         /* An editor serving this game reads it to warn about a change the next build could not
          * carry the world across; the first line names this process. */
         const char *out = getenv("LOFT_WORLD_LAYOUT_OUT");
@@ -1691,10 +1701,10 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
 #else
             snprintf(head, sizeof head, "loft-world pid=0\n");
 #endif
-            loft_push_cstr(&o, head);
-            loft_push_cstr(&o, loft_sw.layout);
-            (void) loft_sw_write(out, o.p, o.len);
-            loft_text_free(&o);
+            loft_push_cstr(cx, &o, head);
+            loft_push_cstr(cx, &o, loft_sw.layout);
+            (void) loft_sw_write(cx, out, o.p, o.len);
+            loft_text_free(cx, &o);
         }
     }
     const char *snap = getenv("LOFT_RESUME");
@@ -1703,7 +1713,7 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
     if (sl > 6 && strcmp(snap + sl - 6, ".store") == 0) {
         /* A world handed over as a store image loads through the converter; a change it refuses
          * ends THIS build before it serves, which the old build reads as a failed swap. */
-        if (loft_sw.sc && loft_image_load(w, loft_lit(snap, sl), loft_sw.sc, 0)) {
+        if (loft_sw.sc && loft_image_load(cx, w, loft_lit(cx, snap, sl), loft_sw.sc, 0)) {
             fprintf(stderr, "loft-swap: world restored from %s\n", snap);
             return 1;
         }
@@ -1714,15 +1724,15 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
         LOFT_EXIT(1);
     }
     size_t n = 0;
-    char *json = loft_sw_read(snap, &n);
+    char *json = loft_sw_read(cx, snap, &n);
     if (!json) {
         fprintf(stderr, "loft-swap: LOFT_RESUME set but %s unreadable; starting fresh\n", snap);
         return 0;
     }
 #ifdef LOFT_UPGRADE
-    loft_ref parsed = loft_record_from_text(loft_up_ptypes(), loft_lit(json, n), kt);
+    loft_ref parsed = loft_record_from_text(cx, loft_up_ptypes(cx), loft_lit(cx, json, n), kt);
     free(json);
-    if (parsed.store_nr != 0xFFFF) loft_copy_record(loft_T, kt, parsed, w, 1);
+    if (parsed.store_nr != 0xFFFF) loft_copy_record(cx, loft_T, kt, parsed, w, 1);
     fprintf(stderr, "loft-swap: world restored from %s\n", snap);
     return 1;
 #else
@@ -1734,27 +1744,27 @@ static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_sho
 
 /* The forwarded `swap_world` a call site with no known world type reaches: no layout, so an image
  * handed over is refused rather than read raw. */
-static uint8_t loft_swap_world_untyped(loft_ref w) { return loft_swap_world(w, 0, 0); }
+static uint8_t loft_swap_world_untyped(loft_cx *cx, loft_ref w) { return loft_swap_world(cx, w, 0, 0); }
 
 /* `write_world_snapshot`: the world as a store image with its sidecar when it is the root of a
  * store of its own (`LOFT_NO_SWAP_IMAGE` sends it as JSON), else as JSON; the path, malloc'd. */
-static char *loft_sw_snapshot(const char *base) {
+static char *loft_sw_snapshot(loft_cx *cx, const char *base) {
     loft_ref w = loft_sw.w;
-    int own = w.store_nr < loft_nstores && LOFT_KNOWN(loft_stores[w.store_nr]) == loft_sw.tp;
+    int own = w.store_nr < cx->nstores && LOFT_KNOWN(cx->stores[w.store_nr]) == loft_sw.tp;
     if (own && !getenv("LOFT_NO_SWAP_IMAGE")) {
         if (loft_sw.sc) {
-            char *snap = loft_sw_join(base, ".snap.store");
-            if (loft_image_write(loft_T, loft_T_n, w, loft_lit(snap, strlen(snap)), loft_sw.sc)) return snap;
+            char *snap = loft_sw_join(cx, base, ".snap.store");
+            if (loft_image_write(cx, loft_T, loft_T_n, w, loft_lit(cx, snap, strlen(snap)), loft_sw.sc)) return snap;
             free(snap);
         }
         fputs("loft-swap: the world goes over as JSON (the store did not form an image)\n", stderr);
     }
     if (!loft_sw.show) return 0;
     loft_text t = { 0, 0, 0 };
-    loft_sw.show(&t, w);
-    char *snap = loft_sw_join(base, ".snap.json");
-    int ok = loft_sw_write(snap, t.p ? t.p : "", t.len);
-    loft_text_free(&t);
+    loft_sw.show(cx, &t, w);
+    char *snap = loft_sw_join(cx, base, ".snap.json");
+    int ok = loft_sw_write(cx, snap, t.p ? t.p : "", t.len);
+    loft_text_free(cx, &t);
     if (!ok) { free(snap); return 0; }
     return snap;
 }
@@ -1770,7 +1780,7 @@ static char *loft_sw_snapshot(const char *base) {
  * (0-terminated) taken from the environment, stdin from /dev/null, stdout and stderr into the
  * files named (or inherited), and in a session of its own when `detached` — a swap's new build is
  * a handover target, not part of this process tree.  Its pid, or -1 with `errno` set. */
-static long loft_sw_spawn(char *const argv[], const char *const *set, const char *const *unset, const char *out,
+static long loft_sw_spawn(loft_cx *cx, char *const argv[], const char *const *set, const char *const *unset, const char *out,
                           const char *err, int detached) {
     fflush(stdout);
     fflush(stderr);
@@ -1791,7 +1801,7 @@ static long loft_sw_spawn(char *const argv[], const char *const *set, const char
 }
 
 /* Is child `pid` still running?  When it has ended, `*status` says how (`ExitStatus`'s text). */
-static int loft_sw_alive(long pid, char *status, size_t cap) {
+static int loft_sw_alive(loft_cx *cx, long pid, char *status, size_t cap) {
     int st = 0;
     pid_t r = waitpid((pid_t) pid, &st, WNOHANG);
     if (r == 0) return 1;
@@ -1802,7 +1812,7 @@ static int loft_sw_alive(long pid, char *status, size_t cap) {
     return 0;
 }
 
-static void loft_sw_stop_tree(long pid) {
+static void loft_sw_stop_tree(loft_cx *cx, long pid) {
     (void) kill(-(pid_t) pid, SIGKILL);
     (void) kill((pid_t) pid, SIGKILL);
     (void) waitpid((pid_t) pid, 0, 0);
@@ -1812,9 +1822,9 @@ static void loft_sw_stop_tree(long pid) {
 
 /* `swap_start(artifact)`: request a swap to that binary; the run loop acts at the next frame
  * boundary. */
-static uint8_t loft_swap_start(loft_str artifact) {
-    char *a = loft_cstr_own(artifact);
-    if (!*a || !loft_sw_exists(a)) {
+static uint8_t loft_swap_start(loft_cx *cx, loft_str artifact) {
+    char *a = loft_cstr_own(cx, artifact);
+    if (!*a || !loft_sw_exists(cx, a)) {
         fprintf(stderr, "loft-swap: no such artifact `%s` \xe2\x80\x94 swap refused\n", a);
         free(a);
         return 0;
@@ -1836,7 +1846,7 @@ static uint8_t loft_swap_start(loft_str artifact) {
 #endif
 }
 
-static void loft_sw_reset(void) {
+static void loft_sw_reset(loft_cx *cx) {
     free(loft_sw.ready);
     free(loft_sw.snap);
     loft_sw.ready = loft_sw.snap = 0;
@@ -1846,12 +1856,12 @@ static void loft_sw_reset(void) {
 
 /* The listener kernel dropped at a handover: its listener, UDP socket and every connection
  * closed, so seats reconnect into the new process. */
-static void loft_sw_drop_kernel(void) {
+static void loft_sw_drop_kernel(loft_cx *cx) {
 #if defined(LOFT_SOCKETS)
     if (loft_ehk.up) {
-        loft_eh_close_fd(&loft_ehk.listener);
-        loft_eh_close_fd(&loft_ehk.udp);
-        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(&loft_ehk.conns[i].fd);
+        loft_eh_close_fd(cx, &loft_ehk.listener);
+        loft_eh_close_fd(cx, &loft_ehk.udp);
+        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(cx, &loft_ehk.conns[i].fd);
     }
 #endif
     loft_ehk.alive = 0;
@@ -1860,7 +1870,7 @@ static void loft_sw_drop_kernel(void) {
 
 /* The swap step the run loop drives each turn: 0 serve normally, 1 FROZEN (mechanics only, meaning
  * waits), 2 handed over (the loop returns; this process retires).  Every failure rolls back to 0. */
-static int64_t loft_kernel_swap_step(void) {
+static int64_t loft_kernel_swap_step(loft_cx *cx) {
     switch (loft_sw.phase) {
     case LOFT_SW_IDLE: return 0;
     case LOFT_SW_DONE: return 2;
@@ -1868,64 +1878,64 @@ static int64_t loft_kernel_swap_step(void) {
     case LOFT_SW_REQUESTED: {
         if (!loft_sw.registered) {
             fputs("loft-swap: rolled back (no swap_world registered)\n", stderr);
-            loft_sw_reset();
+            loft_sw_reset(cx);
             return 0;
         }
         /* The frame boundary: meaning is frozen from here on, so this snapshot is THE world
          * state the new build resumes. */
         char base[1024];
-        snprintf(base, sizeof base, "%s/loft_swap_%ld", loft_sw_tmp(), (long) getpid());
-        loft_sw.ready = loft_sw_join(base, ".ready");
+        snprintf(base, sizeof base, "%s/loft_swap_%ld", loft_sw_tmp(cx), (long) getpid());
+        loft_sw.ready = loft_sw_join(cx, base, ".ready");
         remove(loft_sw.ready);
-        loft_sw.snap = loft_sw_snapshot(base);
+        loft_sw.snap = loft_sw_snapshot(cx, base);
         if (!loft_sw.snap) {
             fputs("loft-swap: rolled back (cannot write snapshot)\n", stderr);
-            loft_sw_reset();
+            loft_sw_reset(cx);
             return 0;
         }
         char *argv[] = { loft_sw.artifact, 0 };
         const char *set[] = { "LOFT_RESUME", loft_sw.snap, "LOFT_SWAP_READY", loft_sw.ready, 0 };
         /* Dispatch reset: the new build has the edits compiled. */
         const char *unset[] = { "LOFT_FLIP_FNS", 0 };
-        long pid = loft_sw_spawn(argv, set, unset, 0, 0, 1);
+        long pid = loft_sw_spawn(cx, argv, set, unset, 0, 0, 1);
         if (pid < 0) {
             fprintf(stderr, "loft-swap: rolled back (cannot spawn %s: %s)\n", loft_sw.artifact, strerror(errno));
-            loft_sw_remove_snapshot(loft_sw.snap);
-            loft_sw_reset();
+            loft_sw_remove_snapshot(cx, loft_sw.snap);
+            loft_sw_reset(cx);
             return 0;
         }
         fprintf(stderr, "loft-swap: booting %s (meaning frozen)\n", loft_sw.artifact);
         loft_sw.pid = pid;
-        loft_sw.deadline = loft_now_us() + 15000000;
+        loft_sw.deadline = loft_now_us(cx) + 15000000;
         loft_sw.phase = LOFT_SW_WAITING;
         return 1;
     }
     case LOFT_SW_WAITING: {
         char status[64];
-        if (loft_sw_exists(loft_sw.ready)) {
+        if (loft_sw_exists(cx, loft_sw.ready)) {
             fputs("loft-swap: handing over \xe2\x80\x94 this build retires\n", stderr);
-            loft_sw_remove_snapshot(loft_sw.snap);
+            loft_sw_remove_snapshot(cx, loft_sw.snap);
             remove(loft_sw.ready);
             free(loft_sw.ready);
             free(loft_sw.snap);
             loft_sw.ready = loft_sw.snap = 0;
             loft_sw.phase = LOFT_SW_DONE;
-            loft_sw_drop_kernel();
+            loft_sw_drop_kernel(cx);
             return 2;
         }
-        if (!loft_sw_alive(loft_sw.pid, status, sizeof status)) {
+        if (!loft_sw_alive(cx, loft_sw.pid, status, sizeof status)) {
             fprintf(stderr, "loft-swap: rolled back (new build exited %s before serving)\n", status);
-            loft_sw_remove_snapshot(loft_sw.snap);
+            loft_sw_remove_snapshot(cx, loft_sw.snap);
             remove(loft_sw.ready);
-            loft_sw_reset();
+            loft_sw_reset(cx);
             return 0;
         }
-        if (loft_now_us() > loft_sw.deadline) {
+        if (loft_now_us(cx) > loft_sw.deadline) {
             fputs("loft-swap: rolled back (new build never became ready)\n", stderr);
-            loft_sw_stop_tree(loft_sw.pid);
-            loft_sw_remove_snapshot(loft_sw.snap);
+            loft_sw_stop_tree(cx, loft_sw.pid);
+            loft_sw_remove_snapshot(cx, loft_sw.snap);
             remove(loft_sw.ready);
-            loft_sw_reset();
+            loft_sw_reset(cx);
             return 0;
         }
         return 1;
@@ -1936,7 +1946,7 @@ static int64_t loft_kernel_swap_step(void) {
 }
 
 /* Did THIS process hand its world to a new build? */
-static uint8_t loft_swap_retired(void) { return loft_sw.phase == LOFT_SW_DONE; }
+static uint8_t loft_swap_retired(loft_cx *cx) { return loft_sw.phase == LOFT_SW_DONE; }
 
 /* ── The background rebuild (src/live_rebuild.rs): 0 idle, 1 building, 2 ready, 3 failed ── */
 static struct {
@@ -1952,23 +1962,23 @@ static struct {
 #ifdef LOFT_SW_CAN
 /* `spawn_build`: one background `--check --native-c` build of `src` through the driver, its output
  * in files (a failed compile prints more than a pipe holds); 0 with `why` set. */
-static int loft_rb_spawn(const char *driver, const char *src, char *why, size_t cap) {
+static int loft_rb_spawn(loft_cx *cx, const char *driver, const char *src, char *why, size_t cap) {
     size_t n = 0;
-    char *snapshot = loft_sw_read(src, &n);
+    char *snapshot = loft_sw_read(cx, src, &n);
     if (!snapshot) {
         snprintf(why, cap, "cannot read %s: %s", src, strerror(errno));
         return 0;
     }
     loft_rb.seq++;
     char base[1024];
-    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", loft_sw_tmp(), (long) getpid(), loft_rb.seq);
+    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", loft_sw_tmp(cx), (long) getpid(), loft_rb.seq);
     free(loft_rb.out);
     free(loft_rb.err);
-    loft_rb.out = loft_sw_join(base, ".out");
-    loft_rb.err = loft_sw_join(base, ".err");
+    loft_rb.out = loft_sw_join(cx, base, ".out");
+    loft_rb.err = loft_sw_join(cx, base, ".err");
     /* The argument list: the driver, its flags, a `--lib` per LOFT_LIVE_LIBS entry, the source. */
     const char *libs = getenv("LOFT_LIVE_LIBS");
-    char *libcopy = libs ? loft_sw_join(libs, "") : 0;
+    char *libcopy = libs ? loft_sw_join(cx, libs, "") : 0;
     size_t nlib = 0;
     for (const char *q = libcopy; q && *q; q++) nlib += *q == ':';
     char **argv = (char **) calloc(8 + 2 * (nlib + 1), sizeof *argv);
@@ -1990,8 +2000,8 @@ static int loft_rb_spawn(const char *driver, const char *src, char *why, size_t 
      * take over fails the build here, never the swap. */
     char *world = 0;
     if (loft_sw.layout) {
-        world = loft_sw_join(base, ".world.dschema");
-        if (!loft_sw_write(world, loft_sw.layout, strlen(loft_sw.layout))) {
+        world = loft_sw_join(cx, base, ".world.dschema");
+        if (!loft_sw_write(cx, world, loft_sw.layout, strlen(loft_sw.layout))) {
             snprintf(why, cap, "%s", strerror(errno));
             free(world);
             free(argv);
@@ -2003,7 +2013,7 @@ static int loft_rb_spawn(const char *driver, const char *src, char *why, size_t 
     const char *set[] = { "LOFT_CHECK_ARTIFACT", "1", world ? "LOFT_CHECK_WORLD" : 0, world, 0 };
     /* A build legitimately takes minutes: never under the run watchdog. */
     const char *unset[] = { "LOFT_TIMEOUT", 0 };
-    long pid = loft_sw_spawn(argv, set, unset, loft_rb.out, loft_rb.err, 0);
+    long pid = loft_sw_spawn(cx, argv, set, unset, loft_rb.out, loft_rb.err, 0);
     free(world);
     free(argv);
     free(libcopy);
@@ -2023,7 +2033,7 @@ static int loft_rb_spawn(const char *driver, const char *src, char *why, size_t 
 
 /* `rebuild_start`: start a background rebuild of the program this binary serves; 1 building
  * (idempotent while one runs), 0 when the host lacks the live env or the spawn failed. */
-static uint8_t loft_rebuild_start(void) {
+static uint8_t loft_rebuild_start(loft_cx *cx) {
     const char *driver = getenv("LOFT_LIVE_DRIVER"), *src = getenv("LOFT_LIVE_SRC");
     if (!driver || !src) {
         fputs("loft-live: rebuild needs LOFT_LIVE_DRIVER/LOFT_LIVE_SRC (run through the loft driver)\n", stderr);
@@ -2032,7 +2042,7 @@ static uint8_t loft_rebuild_start(void) {
 #ifdef LOFT_SW_CAN
     if (loft_rb.state == 1) return 1;
     char why[1200];
-    if (loft_rb_spawn(driver, src, why, sizeof why)) {
+    if (loft_rb_spawn(cx, driver, src, why, sizeof why)) {
         fprintf(stderr, "loft-live: rebuild started (%s)\n", src);
         return 1;
     }
@@ -2047,15 +2057,15 @@ static uint8_t loft_rebuild_start(void) {
 
 /* `rebuild_status`: completion with a source that changed mid-build requeues (status stays 1), so
  * a ready artifact always corresponds to the source as of the call. */
-static int64_t loft_rebuild_status(void) {
+static int64_t loft_rebuild_status(loft_cx *cx) {
 #ifdef LOFT_SW_CAN
     if (loft_rb.state != 1) return loft_rb.state;
     char status[64];
-    if (loft_sw_alive(loft_rb.pid, status, sizeof status)) return 1;
+    if (loft_sw_alive(cx, loft_rb.pid, status, sizeof status)) return 1;
     const char *src = getenv("LOFT_LIVE_SRC");
     if (!src) src = "";
     size_t n = 0;
-    char *now = loft_sw_read(src, &n);
+    char *now = loft_sw_read(cx, src, &n);
     int stale = !now || n != loft_rb.snap_len || memcmp(now, loft_rb.snapshot, n) != 0;
     free(now);
     if (stale) {
@@ -2063,7 +2073,7 @@ static int64_t loft_rebuild_status(void) {
         fputs("loft-live: rebuild stale (source changed during build) \xe2\x80\x94 requeued\n", stderr);
         const char *driver = getenv("LOFT_LIVE_DRIVER");
         char why[1200];
-        if (!driver || !loft_rb_spawn(driver, src, why, sizeof why)) {
+        if (!driver || !loft_rb_spawn(cx, driver, src, why, sizeof why)) {
             fprintf(stderr, "loft-live: requeue failed \xe2\x80\x94 %s\n", driver ? why : "no driver");
             loft_rb.state = 3;
             return 3;
@@ -2072,7 +2082,7 @@ static int64_t loft_rebuild_status(void) {
     }
     if (strcmp(status, "exit status: 0") != 0) {
         /* The last five lines of the build's errors, and the one that says why. */
-        char *err = loft_sw_read(loft_rb.err, 0);
+        char *err = loft_sw_read(cx, loft_rb.err, 0);
         const char *tail = err ? err : "";
         size_t len = strlen(tail);
         while (len && tail[len - 1] == '\n') len--;
@@ -2085,7 +2095,7 @@ static int64_t loft_rebuild_status(void) {
         for (const char *l = tail + start; l < tail + len;) {
             const char *e = memchr(l, '\n', (size_t) (tail + len - l));
             size_t ln = e ? (size_t) (e - l) : (size_t) (tail + len - l);
-            char *line = loft_sw_dup(l, ln);
+            char *line = loft_sw_dup(cx, l, ln);
             if (!pick && (strstr(line, "cannot take over the running world") || strstr(line, "error"))) { pick = l; pick_n = ln; }
             last = l;
             last_n = ln;
@@ -2102,8 +2112,8 @@ static int64_t loft_rebuild_status(void) {
         return 3;
     }
     /* The artifact rides the driver's ok line: "ok <src> <artifact>". */
-    char *out = loft_sw_read(loft_rb.out, 0);
-    char *prefix = loft_sw_join("ok ", src);
+    char *out = loft_sw_read(cx, loft_rb.out, 0);
+    char *prefix = loft_sw_join(cx, "ok ", src);
     char *artifact = 0;
     for (const char *l = out ? out : ""; *l;) {
         const char *e = strchr(l, '\n');
@@ -2113,13 +2123,13 @@ static int64_t loft_rebuild_status(void) {
             const char *a = l + pl + 1;
             size_t an = ln - pl - 1;
             while (an && isspace((unsigned char) a[an - 1])) an--;
-            artifact = loft_sw_dup(a, an);
+            artifact = loft_sw_dup(cx, a, an);
             break;
         }
         l = e ? e + 1 : l + ln;
     }
     free(prefix);
-    if (!artifact || !loft_sw_exists(artifact)) {
+    if (!artifact || !loft_sw_exists(cx, artifact)) {
         fprintf(stderr, "loft-live: rebuild succeeded but no artifact on the ok line (\"%s\")\n", out ? out : "");
         free(artifact);
         free(out);
@@ -2138,16 +2148,16 @@ static int64_t loft_rebuild_status(void) {
 }
 
 /* Why the last rebuild failed, in one line; "" when none has. */
-static const char *loft_rebuild_failure(void) { return loft_rb.failure; }
+static const char *loft_rebuild_failure(loft_cx *cx) { return loft_rb.failure; }
 
 /* The READY build's artifact; "" unless `rebuild_status() == 2`. */
-static loft_text loft_kernel_rebuild_artifact(void) {
+static loft_text loft_kernel_rebuild_artifact(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    if (loft_rb.state == 2 && loft_rb.artifact) loft_push_cstr(&t, loft_rb.artifact);
+    if (loft_rb.state == 2 && loft_rb.artifact) loft_push_cstr(cx, &t, loft_rb.artifact);
     return t;
 }
 /* `live_flip`: no live tier to flip a function into. */
-static uint8_t loft_live_flip(loft_str name, uint8_t on) {
+static uint8_t loft_live_flip(loft_cx *cx, loft_str name, uint8_t on) {
     (void) name;
     (void) on;
     return 0;
@@ -2156,11 +2166,12 @@ static uint8_t loft_live_flip(loft_str name, uint8_t on) {
 /* ── `http_fetch` ── */
 
 #if defined(LOFT_SOCKETS)
-typedef struct { int64_t id; char *method, *url, *body, *headers; } loft_eh_req;
+/* A request a worker thread serves; `cx` is the worker's own store context (@PLN226). */
+typedef struct { loft_cx cx; int64_t id; char *method, *url, *body, *headers; } loft_eh_req;
 
 /* One HTTP/1.1 exchange on `url` over the runtime's client (`loft_https.h`): the status and the
  * body, or -1 and why.  `hops` redirects are followed, as the Rust kernel's client follows them. */
-static int64_t loft_eh_http(const char *method, const char *url, const char *body, const char *headers,
+static int64_t loft_eh_http(loft_cx *cx, const char *method, const char *url, const char *body, const char *headers,
                             loft_text *out, int hops) {
     loft_text lines = { 0, 0, 0 };
     for (const char *l = headers; *l;) {
@@ -2170,56 +2181,59 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
         if (c) {
             const char *k = l, *v = c + 1;
             size_t kn = (size_t) (c - l), vn = n - kn - 1;
-            loft_eh_trim(&k, &kn);
-            loft_eh_trim(&v, &vn);
-            loft_push(&lines, k, kn);
-            loft_push_cstr(&lines, ": ");
-            loft_push(&lines, v, vn);
-            loft_push_cstr(&lines, "\r\n");
+            loft_eh_trim(cx, &k, &kn);
+            loft_eh_trim(cx, &v, &vn);
+            loft_push(cx, &lines, k, kn);
+            loft_push_cstr(cx, &lines, ": ");
+            loft_push(cx, &lines, v, vn);
+            loft_push_cstr(cx, &lines, "\r\n");
         }
         l += n + (e ? 1 : 0);
     }
-    loft_push(&lines, "", 1);
+    loft_push(cx, &lines, "", 1);
     loft_http h;
     char err[1024];
-    int ok = loft_http_open(&h, method, url, lines.p, body, hops, err, sizeof err);
+    int ok = loft_http_open(cx, &h, method, url, lines.p, body, hops, err, sizeof err);
     free(lines.p);
     if (!ok) {
-        loft_push_cstr(out, err);
+        loft_push_cstr(cx, out, err);
         return -1;
     }
     loft_text raw = { 0, 0, 0 };
     char buf[65536];
     long r;
-    while ((r = loft_http_read(&h, buf, sizeof buf)) > 0) loft_push(&raw, buf, (size_t) r);
+    while ((r = loft_http_read(cx, &h, buf, sizeof buf)) > 0) loft_push(cx, &raw, buf, (size_t) r);
     int64_t status = h.status;
-    loft_http_close(&h);
+    loft_http_close(cx, &h);
     /* A body that is not UTF-8 reads as empty, as the Rust client's `into_string` gives up. */
-    if (loft_utf8_valid((const unsigned char *) raw.p, raw.len)) loft_push(out, raw.p, raw.len);
+    if (loft_utf8_valid(cx, (const unsigned char *) raw.p, raw.len)) loft_push(cx, out, raw.p, raw.len);
     free(raw.p);
     return status;
 }
 
-static void loft_eh_http_run(loft_eh_req *q) {
+static void loft_eh_http_run(loft_cx *cx, loft_eh_req *q) {
     loft_text body = { 0, 0, 0 };
-    int64_t status = loft_eh_http(q->method, q->url, q->body, q->headers, &body, 5);
-    loft_eh_park(q->id, status, body.p, body.len);
+    int64_t status = loft_eh_http(cx, q->method, q->url, q->body, q->headers, &body, 5);
+    loft_eh_park(cx, q->id, status, body.p, body.len);
     free(body.p);
     free(q->method);
     free(q->url);
     free(q->body);
     free(q->headers);
+    loft_cx_end(cx);
     free(q);
 }
 
 #if defined(_WIN32)
 static DWORD WINAPI loft_eh_http_worker(LPVOID arg) {
-    loft_eh_http_run((loft_eh_req *) arg);
+    loft_eh_req *q = (loft_eh_req *) arg;
+    loft_eh_http_run(&q->cx, q);
     return 0;
 }
 #else
 static void *loft_eh_http_worker(void *arg) {
-    loft_eh_http_run((loft_eh_req *) arg);
+    loft_eh_req *q = (loft_eh_req *) arg;
+    loft_eh_http_run(&q->cx, q);
     return 0;
 }
 #endif
@@ -2227,16 +2241,18 @@ static void *loft_eh_http_worker(void *arg) {
 
 /* `http_fetch(method, url, body, headers) -> integer`: the request id at once; the completion a
  * kind-3 event (cid = the id, status = the HTTP status or negative, payload = the body). */
-static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str body, loft_str headers) {
+static int64_t loft_kernel_http_fetch(loft_cx *cx, loft_str method, loft_str url, loft_str body, loft_str headers) {
     int64_t id = loft_eh_http_next++;
 #if defined(LOFT_SOCKETS) && defined(LOFT_EH_THREADS)
     loft_eh_req *q = (loft_eh_req *) malloc(sizeof *q);
     if (!q) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* The worker's context, made before its thread starts: it reaches no store, only texts. */
+    loft_cx_fresh(&q->cx);
     q->id = id;
-    q->method = loft_cstr_own(method);
-    q->url = loft_cstr_own(url);
-    q->body = loft_cstr_own(body);
-    q->headers = loft_cstr_own(headers);
+    q->method = loft_cstr_own(cx, method);
+    q->url = loft_cstr_own(cx, url);
+    q->body = loft_cstr_own(cx, body);
+    q->headers = loft_cstr_own(cx, headers);
     /* Detached: the worker parks its completion and ends; nobody joins it. */
 #if defined(_WIN32)
     HANDLE t = CreateThread(0, 0, loft_eh_http_worker, q, 0, 0);
@@ -2252,7 +2268,7 @@ static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str bo
 #endif
     if (!started) {
         static const char why[] = "cannot start the request's worker thread";
-        loft_eh_park(id, -1, why, sizeof why - 1);
+        loft_eh_park(cx, id, -1, why, sizeof why - 1);
         free(q->method);
         free(q->url);
         free(q->body);
@@ -2265,7 +2281,7 @@ static int64_t loft_kernel_http_fetch(loft_str method, loft_str url, loft_str bo
     (void) body;
     (void) headers;
     static const char why[] = "http support not compiled in (this build has no threads)";
-    loft_eh_park(id, -2, why, sizeof why - 1);
+    loft_eh_park(cx, id, -2, why, sizeof why - 1);
 #endif
     return id;
 }

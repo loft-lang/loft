@@ -80,12 +80,12 @@ impl FnWriter<'_> {
                     ("OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable", 2) => {
                         let lhs = self.chain_bound(&args[0], l, counters)?;
                         let rhs = self.chain_bound(&args[1], l, counters)?;
-                        Some(format!("loft_gc_add({lhs}, {rhs}, &loft_gc_ok)"))
+                        Some(format!("loft_gc_add(cx, {lhs}, {rhs}, &loft_gc_ok)"))
                     }
                     ("OpMulInt" | "OpMulIntNullable", 2) => {
                         let lhs = self.chain_bound(&args[0], l, counters)?;
                         let rhs = self.chain_bound(&args[1], l, counters)?;
-                        Some(format!("loft_gc_mul({lhs}, {rhs}, &loft_gc_ok)"))
+                        Some(format!("loft_gc_mul(cx, {lhs}, {rhs}, &loft_gc_ok)"))
                     }
                     ("OpMinSingleInt", 1) => self.chain_bound(&args[0], l, counters),
                     ("OpGetInt", _) => {
@@ -254,7 +254,7 @@ impl FnWriter<'_> {
         let lo = match rc.next {
             Some(nx) => self.var(nx),
             None => format!(
-                "loft_gc_add({}, INT64_C(1), &loft_gc_ok)",
+                "loft_gc_add(cx, {}, INT64_C(1), &loft_gc_ok)",
                 self.var(rc.index)
             ),
         };
@@ -276,26 +276,26 @@ impl FnWriter<'_> {
         );
         self.line(
             ind + 1,
-            "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);",
+            "int64_t loft_gc_cb = loft_gc_add(cx, loft_gc_max(cx, loft_gc_abs(cx, loft_gc_lo, &loft_gc_ok), loft_gc_abs(cx, loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);",
         );
         for (k, v) in l.invariants.iter().enumerate() {
             let name = self.var(*v);
             self.line(
                 ind + 1,
-                &format!("int64_t loft_gc_v{k} = loft_gc_abs({name}, &loft_gc_ok);"),
+                &format!("int64_t loft_gc_v{k} = loft_gc_abs(cx, {name}, &loft_gc_ok);"),
             );
         }
         for (k, s) in l.scalars.iter().enumerate() {
             self.line(
                 ind + 1,
-                &format!("int64_t loft_gc_s{k} = loft_gc_abs({s}, &loft_gc_ok);"),
+                &format!("int64_t loft_gc_s{k} = loft_gc_abs(cx, {s}, &loft_gc_ok);"),
             );
         }
         for (k, (s, h)) in nested_bounds.iter().enumerate() {
             self.line(
                 ind + 1,
                 &format!(
-                    "int64_t loft_gc_nc{k} = loft_gc_add(loft_gc_max({s}, {h}), INT64_C(1), &loft_gc_ok);"
+                    "int64_t loft_gc_nc{k} = loft_gc_add(cx, loft_gc_max(cx, {s}, {h}), INT64_C(1), &loft_gc_ok);"
                 ),
             );
         }
@@ -373,7 +373,7 @@ impl FnWriter<'_> {
         let (plain, checked) = if args.len() == 1 {
             let a = self.one(name, args, ind)?;
             let a = as_int(a)?;
-            (format!("(-({a}))"), format!("loft_neg({a})"))
+            (format!("(-({a}))"), format!("loft_neg(cx, {a})"))
         } else {
             let (a, b) = self.two(name, args, ind)?;
             let (a, b) = (as_int(a)?, as_int(b)?);
@@ -384,7 +384,7 @@ impl FnWriter<'_> {
             } else {
                 ("*", "loft_mul")
             };
-            (format!("(({a}) {op} ({b}))"), format!("{f}({a}, {b})"))
+            (format!("(({a}) {op} ({b}))"), format!("{f}(cx, {a}, {b})"))
         };
         Ok(Some(E::new(
             match guard {

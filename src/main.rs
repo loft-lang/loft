@@ -10309,13 +10309,13 @@ fn main() {
         // A warm load replays the cold run's diagnostics, these lints' among them; running
         // them again reported each warning twice (loft#1858).
         if program_warm {
-            loft::copy_manifest::clear_materialised_views();
+            loft::copy_manifest::clear_materialised_views(&p.data);
         } else {
             let t = std::time::Instant::now();
             // @PLN130 F2 — the views the scope pass copied out of a container that changed
             // under them.  The copy keeps the program correct; this keeps it honest.
-            loft::copy_manifest::drain_materialised_views(&mut p.diagnostics);
-            loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
+            loft::copy_manifest::drain_materialised_views(&p.data, &mut p.diagnostics);
+            loft::copy_manifest::drain_written_back_views(&p.data, &mut p.diagnostics);
             loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             lints_ms = t.elapsed().as_secs_f64() * 1000.0;
         }

@@ -72,6 +72,7 @@ fn c_offsets() -> Option<String> {
         "loft_os.h",
         "loft_width.h",
         "loft_cc.h",
+        "loft_cx.h",
         "loft_text.h",
         "loft_store.h",
     ] {

@@ -44,13 +44,13 @@ impl Cx<'_> {
         for &tp in types.iter() {
             let _ = writeln!(
                 out,
-                "static const char *loft_dlv{tp}(loft_text *o, loft_ref r);"
+                "static const char *loft_dlv{tp}(loft_cx *cx, loft_text *o, loft_ref r);"
             );
         }
         for &tp in types.iter() {
             let _ = writeln!(
                 out,
-                "static const char *loft_dlv{tp}(loft_text *o, loft_ref r) {{"
+                "static const char *loft_dlv{tp}(loft_cx *cx, loft_text *o, loft_ref r) {{"
             );
             out.push_str(&self.deliver_body(tp));
             out.push_str("}\n");
@@ -66,19 +66,19 @@ impl Cx<'_> {
                 c_string(&format!("type {tp} not in descriptor"))
             );
         };
-        let raw = |n: u32| format!("    loft_dlv_raw(o, r, {n});\n    return 0;\n");
+        let raw = |n: u32| format!("    loft_dlv_raw(cx, o, r, {n});\n    return 0;\n");
         match &t.parts {
             // `BaseKind::from_type_id`: a long and an integer are 8 bytes, the rest their own.
             Parts::Base => match tp {
                 2 | 6 => raw(4),
                 4 => raw(1),
-                5 => "    loft_dlv_text(o, r);\n    return 0;\n".into(),
+                5 => "    loft_dlv_text(cx, o, r);\n    return 0;\n".into(),
                 _ => raw(8),
             },
             Parts::Byte(..) | Parts::Enum(_) => raw(1),
-            Parts::Short(..) => "    loft_dlv_short(o, r, 0, 1);\n    return 0;\n".into(),
+            Parts::Short(..) => "    loft_dlv_short(cx, o, r, 0, 1);\n    return 0;\n".into(),
             Parts::ShortRaw(start, _) => {
-                format!("    loft_dlv_short(o, r, {start}, 0);\n    return 0;\n")
+                format!("    loft_dlv_short(cx, o, r, {start}, 0);\n    return 0;\n")
             }
             Parts::Int(..) | Parts::IntRaw(..) => raw(4),
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
@@ -86,7 +86,7 @@ impl Cx<'_> {
                 for f in fields.iter().filter(|f| Self::is_data(f)) {
                     let _ = writeln!(
                         s,
-                        "    if ((e = loft_dlv{}(o, loft_field(r, {}))) != 0) return e;",
+                        "    if ((e = loft_dlv{}(cx, o, loft_field(cx, r, {}))) != 0) return e;",
                         f.content, f.position
                     );
                 }
@@ -94,11 +94,11 @@ impl Cx<'_> {
                 s
             }
             Parts::Vector(e) => format!(
-                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {} * i, 0 }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
+                "    uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {} * i, 0 }};\n        const char *e = loft_dlv{e}(cx, o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
                 stores.size(*e)
             ),
             Parts::Array(e) => format!(
-                "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8, 0 }};\n        const char *e = loft_dlv{e}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n"
+                "    uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(cx, loft_store_of(cx, r), v, 8 + 4 * i), 8, 0 }};\n        const char *e = loft_dlv{e}(cx, o, x);\n        if (e) return e;\n    }}\n    return 0;\n"
             ),
             _ => format!(
                 "    (void) o; (void) r;\n    return {};\n",

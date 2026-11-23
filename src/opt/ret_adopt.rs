@@ -396,9 +396,6 @@ fn call_pair_covers(
 /// `return` of the buffer follows such a mint in its own block.  A recursive chain answers no
 /// past two levels.
 fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
-    thread_local! {
-        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    }
     let def = data.def(f);
     let Some(rb) = def
         .hidden_return_buffer_attr()
@@ -406,12 +403,12 @@ fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
     else {
         return false;
     };
-    if DEPTH.with(std::cell::Cell::get) >= 2 {
+    if data.buffer_complete_depth.with(|d| *d) >= 2 {
         return false;
     }
-    DEPTH.with(|d| d.set(d.get() + 1));
+    data.buffer_complete_depth.with(|d| *d += 1);
     let complete = complete_writes(data, stores, f).db_vars.contains(&rb);
-    DEPTH.with(|d| d.set(d.get() - 1));
+    data.buffer_complete_depth.with(|d| *d -= 1);
     if !complete {
         return false;
     }

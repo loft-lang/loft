@@ -5227,7 +5227,12 @@ use a separate collection or add after the loop"
             if self.lexer.peek_token(";") {
                 // Nothing is left for the copy census to find, so tell it here (@PLN163).
                 if !self.first_pass {
-                    crate::copy_manifest::note_self_bind(self.context, *lhs, self.lexer.pos().line);
+                    crate::copy_manifest::note_self_bind(
+                        &self.data,
+                        self.context,
+                        *lhs,
+                        self.lexer.pos().line,
+                    );
                 }
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
@@ -7165,6 +7170,7 @@ use a separate collection or add after the loop"
                     );
                     // @PLN130 — parser-emitted materialisation; see `ParserMaterialise`.
                     crate::copy_manifest::record(
+                        &self.data,
                         self.context,
                         w,
                         kt,
@@ -13149,6 +13155,7 @@ use a separate collection or add after the loop"
         // copies are these executes two record copies and `--report-copies` still answers
         // `none`. Being emitted into the IR is not the same as producing a user-facing row.
         crate::copy_manifest::record(
+            &self.data,
             self.context,
             w,
             kt,

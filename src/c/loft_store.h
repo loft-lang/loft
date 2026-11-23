@@ -105,36 +105,36 @@ typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; }
  * 32-bit shifts and no call.  The 64-bit build writes the plain shift. */
 #if defined(LOFT_WIDTH32)
 /* Bit `n` (0..63) alone. */
-LOFT_HOT_INLINE uint64_t loft_bit64(uint32_t n) {
+LOFT_HOT_INLINE uint64_t loft_bit64(loft_cx *cx, uint32_t n) {
     return n < 32 ? (uint64_t) ((uint32_t) 1 << n) : (uint64_t) ((uint32_t) 1 << (n - 32)) << 32;
 }
 /* Is bit `n` (0..63) of `w` set? */
-LOFT_HOT_INLINE int loft_bit64_test(uint64_t w, uint32_t n) {
+LOFT_HOT_INLINE int loft_bit64_test(loft_cx *cx, uint64_t w, uint32_t n) {
     return n < 32 ? (int) (((uint32_t) w >> n) & 1u) : (int) (((uint32_t) (w >> 32) >> (n - 32)) & 1u);
 }
 /* The bits from `n` (0..63) up. */
-LOFT_HOT_INLINE uint64_t loft_bits64_from(uint32_t n) {
+LOFT_HOT_INLINE uint64_t loft_bits64_from(loft_cx *cx, uint32_t n) {
     return n < 32 ? (((uint64_t) 0xFFFFFFFFu << 32) | (uint64_t) (0xFFFFFFFFu << n))
                   : ((uint64_t) (0xFFFFFFFFu << (n - 32)) << 32);
 }
 /* The bits up to and with `n` (0..63). */
-LOFT_HOT_INLINE uint64_t loft_bits64_through(uint32_t n) {
+LOFT_HOT_INLINE uint64_t loft_bits64_through(loft_cx *cx, uint32_t n) {
     return n < 32 ? (uint64_t) (0xFFFFFFFFu >> (31 - n))
                   : (((uint64_t) (0xFFFFFFFFu >> (63 - n)) << 32) | (uint64_t) 0xFFFFFFFFu);
 }
 #else
-LOFT_HOT_INLINE uint64_t loft_bit64(uint32_t n) { return (uint64_t) 1 << n; }
-LOFT_HOT_INLINE int loft_bit64_test(uint64_t w, uint32_t n) { return (int) ((w >> n) & 1u); }
-LOFT_HOT_INLINE uint64_t loft_bits64_from(uint32_t n) { return ~(uint64_t) 0 << n; }
-LOFT_HOT_INLINE uint64_t loft_bits64_through(uint32_t n) { return UINT64_MAX >> (63 - n); }
+LOFT_HOT_INLINE uint64_t loft_bit64(loft_cx *cx, uint32_t n) { return (uint64_t) 1 << n; }
+LOFT_HOT_INLINE int loft_bit64_test(loft_cx *cx, uint64_t w, uint32_t n) { return (int) ((w >> n) & 1u); }
+LOFT_HOT_INLINE uint64_t loft_bits64_from(loft_cx *cx, uint32_t n) { return ~(uint64_t) 0 << n; }
+LOFT_HOT_INLINE uint64_t loft_bits64_through(loft_cx *cx, uint32_t n) { return UINT64_MAX >> (63 - n); }
 #endif
 
-LOFT_HOT_INLINE int loft_bits_contains(const loft_bits *b, uint32_t pos) {
+LOFT_HOT_INLINE int loft_bits_contains(loft_cx *cx, const loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
-    return w < b->nwords && loft_bit64_test(b->bits[w], pos & 63);
+    return w < b->nwords && loft_bit64_test(cx, b->bits[w], pos & 63);
 }
 
-static int loft_bits_insert(loft_bits *b, uint32_t pos) {
+static int loft_bits_insert(loft_cx *cx, loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
     if (w >= b->nwords) {
         uint32_t n = w + 1;
@@ -148,16 +148,16 @@ static int loft_bits_insert(loft_bits *b, uint32_t pos) {
         memset(b->bits + b->nwords, 0, (size_t) (n - b->nwords) * 8);
         b->nwords = n;
     }
-    uint64_t mask = loft_bit64(pos & 63);
+    uint64_t mask = loft_bit64(cx, pos & 63);
     int fresh = (b->bits[w] & mask) == 0;
     b->bits[w] |= mask;
     b->live += (uint32_t) fresh;
     return fresh;
 }
 
-static int loft_bits_remove(loft_bits *b, uint32_t pos) {
+static int loft_bits_remove(loft_cx *cx, loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
-    uint64_t mask = loft_bit64(pos & 63);
+    uint64_t mask = loft_bit64(cx, pos & 63);
     if (w < b->nwords && (b->bits[w] & mask)) {
         b->bits[w] &= ~mask;
         b->live--;
@@ -166,19 +166,19 @@ static int loft_bits_remove(loft_bits *b, uint32_t pos) {
     return 0;
 }
 
-static void loft_bits_clear(loft_bits *b) {
+static void loft_bits_clear(loft_cx *cx, loft_bits *b) {
     b->nwords = 0;
     b->live = 0;
 }
 
-static int loft_lz64(uint64_t x) {
+static int loft_lz64(loft_cx *cx, uint64_t x) {
     int n = 0;
     if (!x) return 64;
     while (!(x & ((uint64_t) 1 << 63))) { x <<= 1; n++; }
     return n;
 }
 
-static int loft_tz64(uint64_t x) {
+static int loft_tz64(loft_cx *cx, uint64_t x) {
     int n = 0;
     if (!x) return 64;
     while (!(x & 1u)) { x >>= 1; n++; }
@@ -186,15 +186,15 @@ static int loft_tz64(uint64_t x) {
 }
 
 /* The highest set position below `end`, or 0 with *found = 0. */
-static uint32_t loft_bits_prev_start(const loft_bits *b, uint32_t end, int *found) {
+static uint32_t loft_bits_prev_start(loft_cx *cx, const loft_bits *b, uint32_t end, int *found) {
     *found = 0;
     if (end == 0 || b->nwords == 0) return 0;
     uint32_t last = end - 1;
     uint32_t w = last >> 6;
     if (w > b->nwords - 1) w = b->nwords - 1;
-    uint64_t word = w == (last >> 6) ? b->bits[w] & loft_bits64_through(last & 63) : b->bits[w];
+    uint64_t word = w == (last >> 6) ? b->bits[w] & loft_bits64_through(cx, last & 63) : b->bits[w];
     for (;;) {
-        if (word) { *found = 1; return w * 64 + 63 - (uint32_t) loft_lz64(word); }
+        if (word) { *found = 1; return w * 64 + 63 - (uint32_t) loft_lz64(cx, word); }
         if (w == 0) return 0;
         w--;
         word = b->bits[w];
@@ -202,13 +202,13 @@ static uint32_t loft_bits_prev_start(const loft_bits *b, uint32_t end, int *foun
 }
 
 /* The lowest set position at or after `from`, or 0 with *found = 0. */
-static uint32_t loft_bits_next_at_or_after(const loft_bits *b, uint32_t from, int *found) {
+static uint32_t loft_bits_next_at_or_after(loft_cx *cx, const loft_bits *b, uint32_t from, int *found) {
     uint32_t w = from >> 6;
     *found = 0;
     if (w >= b->nwords) return 0;
-    uint64_t bits = b->bits[w] & loft_bits64_from(from & 63);
+    uint64_t bits = b->bits[w] & loft_bits64_from(cx, from & 63);
     for (;;) {
-        if (bits) { *found = 1; return (w << 6) | (uint32_t) loft_tz64(bits); }
+        if (bits) { *found = 1; return (w << 6) | (uint32_t) loft_tz64(cx, bits); }
         w++;
         if (w >= b->nwords) return 0;
         bits = b->bits[w];
@@ -246,7 +246,7 @@ typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos
  * a Rust `bool`.  The fields after `hgen` are this runtime's alone.  (`known`: the type of the
  * store's root record, 0xFFFF for none; `protect`: the calls in flight that hold this store as
  * an argument.) */
-typedef struct {
+typedef struct loft_store_t {
     uint8_t *buf;
     uint32_t size;
     uint8_t live;
@@ -296,7 +296,7 @@ typedef struct {
     /* `@PLN206 P3` — a HOSTED unit works on the interpreter's store table: each entry is an
      * interpreter `Store`, whose own fields follow the shared prefix in these bytes, which this
      * runtime never reads or writes.  The host passes their length (`store::HOST_STORE_TAIL`),
-     * so `loft_stores[nr]` is the interpreter's `allocations[nr]`. */
+     * so `cx->stores[nr]` is the interpreter's `allocations[nr]`. */
 #if defined(LOFT_FOREIGN) || defined(LOFT_ALLOC_TRACE)
 #error "a hosted unit keeps no store field of its own: build it without LOFT_FOREIGN and LOFT_ALLOC_TRACE"
 #endif
@@ -326,48 +326,37 @@ static uint16_t *loft_tp_host;   /* the unit's type number -> the interpreter's 
 static uint32_t loft_tp_host_n;
 static uint16_t *loft_tp_unit;   /* the interpreter's -> the unit's */
 static uint32_t loft_tp_unit_n;
-static inline uint16_t loft_tp_out(uint16_t t) {
+static inline uint16_t loft_tp_out(loft_cx *cx, uint16_t t) {
     if (!loft_tp_host || t == 0xFFFF) return t;
     return t < loft_tp_host_n ? loft_tp_host[t] : 0xFFFF;
 }
-static inline uint16_t loft_tp_in(uint16_t t) {
+static inline uint16_t loft_tp_in(loft_cx *cx, uint16_t t) {
     if (!loft_tp_unit || t == 0xFFFF) return t;
     return t < loft_tp_unit_n ? loft_tp_unit[t] : 0xFFFF;
 }
 #else
-#define loft_tp_out(t) (t)
-#define loft_tp_in(t) (t)
+#define loft_tp_out(cx, t) (t)
+#define loft_tp_in(cx, t) (t)
 #endif
-#define LOFT_KNOWN(st) loft_tp_in((st).known)
-#define LOFT_SET_KNOWN(st, tp) ((st).known = loft_tp_out(tp))
+#define LOFT_KNOWN(st) loft_tp_in(cx, (st).known)
+#define LOFT_SET_KNOWN(st, tp) ((st).known = loft_tp_out(cx, tp))
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-static LOFT_TLS loft_store_t *loft_stores = 0;
-static LOFT_TLS uint32_t loft_nstores = 0;
-static LOFT_TLS uint64_t loft_stores_allocated = 0;
-/* `loft_store_make`'s hint: every slot of `loft_hint_table` under `loft_hint` is live, so the
+/* `loft_store_make`'s hint: every slot of `cx->hint_table` under `cx->hint` is live, so the
  * search for the lowest free slot starts there — the same slot the search from 0 finds, without
  * walking the live ones each time.  A slot freed lowers it (`loft_store_freed`); a table other
  * than the one it was taken on (a `par` worker's, a reallocation) reads it as 0. */
-static LOFT_TLS const loft_store_t *loft_hint_table = 0;
-static LOFT_TLS uint32_t loft_hint = 0;
 
-static inline void loft_store_freed(uint32_t nr) {
-    if (loft_hint_table == loft_stores && nr < loft_hint) loft_hint = nr;
+static inline void loft_store_freed(loft_cx *cx, uint32_t nr) {
+    if (cx->hint_table == cx->stores && nr < cx->hint) cx->hint = nr;
 }
 
 /* `@FR-R-TableHandle`: store `s` takes a table generation no store has had.  Every path that
  * changes a table's claim, size, slot width, entry kind, seed or entry directory calls it, and so
  * does every path that replaces a store's content: a handle then sees the change at its next use. */
-static LOFT_TLS uint64_t loft_hgen_next = 0;
-static inline void loft_h_reshaped(loft_store_t *s) { s->hgen = ++loft_hgen_next; }
+static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++cx->hgen_next; }
 
 /* ── The heap ceiling (store_budget.rs) ──────────────────────────────────────────────────
- * `loft_heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
+ * `cx->heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
  * `loft_heap_limit` (0: none, the default).  Every site that sizes a store's buffer calls
  * `loft_heap_moved` with the buffer's old and new word counts BEFORE it allocates, so a growth
  * that would cross the ceiling stops the run with the store as it was, and the report names the
@@ -376,10 +365,9 @@ static inline void loft_h_reshaped(loft_store_t *s) { s->hgen = ++loft_hgen_next
 static const char *const *loft_tn = 0;
 static uint32_t loft_ntn = 0;
 /* Each thread counts its own stores' bytes; the limit is the program's. */
-static LOFT_TLS uint64_t loft_heap_total = 0;
 static uint64_t loft_heap_limit = 0;
 
-static void loft_heap_human(char *out, uint64_t b) {
+static void loft_heap_human(loft_cx *cx, char *out, uint64_t b) {
     if (b >= ((uint64_t) 1 << 30)) sprintf(out, "%.1f GiB", (double) b / (double) ((uint64_t) 1 << 30));
     else if (b >= ((uint64_t) 1 << 20)) sprintf(out, "%.1f MiB", (double) b / (double) ((uint64_t) 1 << 20));
     else if (b >= ((uint64_t) 1 << 10)) sprintf(out, "%.1f KiB", (double) b / (double) ((uint64_t) 1 << 10));
@@ -388,7 +376,7 @@ static void loft_heap_human(char *out, uint64_t b) {
 
 /* `parse_limit`: `2G`, `512M`, `4k`, a bare number of bytes, an optional `B`; 0 when the text is
  * no size, with `*ok` cleared. */
-static uint64_t loft_heap_parse_limit(const char *t, int *ok) {
+static uint64_t loft_heap_parse_limit(loft_cx *cx, const char *t, int *ok) {
     size_t n = strlen(t);
     uint64_t scale = 1, v = 0;
     *ok = 0;
@@ -411,31 +399,31 @@ static uint64_t loft_heap_parse_limit(const char *t, int *ok) {
 
 /* `apply_env_limit_if_set`: an ordinary run is capped only when the variable is set; a typo is
  * reported and leaves the run uncapped, as the interpreter's default for an ordinary run. */
-static void loft_heap_read_limit(void) {
+static void loft_heap_read_limit(loft_cx *cx) {
     const char *v = getenv("LOFT_MEMORY_LIMIT");
     int ok = 0;
     if (!v) return;
-    loft_heap_limit = loft_heap_parse_limit(v, &ok);
+    loft_heap_limit = loft_heap_parse_limit(cx, v, &ok);
     if (!ok) {
         fprintf(stderr, "loft: LOFT_MEMORY_LIMIT='%s' is not a size (try 2G, 512M or 0) — keeping the default 0 B\n", v);
         loft_heap_limit = 0;
     }
 }
 
-static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t new_words) {
+static void loft_heap_moved(loft_cx *cx, const loft_store_t *s, uint32_t old_words, uint32_t new_words) {
     uint64_t old_b = (uint64_t) old_words * 8, new_b = (uint64_t) new_words * 8;
     if (new_b <= old_b) {
         uint64_t freed = old_b - new_b;
-        loft_heap_total = loft_heap_total > freed ? loft_heap_total - freed : 0;
+        cx->heap_total = cx->heap_total > freed ? cx->heap_total - freed : 0;
         return;
     }
-    if (loft_heap_limit && loft_heap_total + (new_b - old_b) > loft_heap_limit) {
+    if (loft_heap_limit && cx->heap_total + (new_b - old_b) > loft_heap_limit) {
         char used[32], cap[32], from[32], to[32];
         uint16_t kt = LOFT_KNOWN(*s);
-        loft_heap_human(used, loft_heap_total);
-        loft_heap_human(cap, loft_heap_limit);
-        loft_heap_human(from, old_b);
-        loft_heap_human(to, new_b);
+        loft_heap_human(cx, used, cx->heap_total);
+        loft_heap_human(cx, cap, loft_heap_limit);
+        loft_heap_human(cx, from, old_b);
+        loft_heap_human(cx, to, new_b);
         fflush(stdout);
         fprintf(stderr, "loft: store memory limit reached — %s in use, limit %s\n\n  the growth that crossed it\n", used, cap);
         if (kt != 0xFFFF && kt < loft_ntn)
@@ -445,7 +433,7 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
         fputs("\n  Raise or remove the limit with LOFT_MEMORY_LIMIT=<size|0>, e.g. 8G.\n", stderr);
         LOFT_EXIT(101);
     }
-    loft_heap_total += new_b - old_b;
+    cx->heap_total += new_b - old_b;
 }
 
 #ifdef LOFT_ALLOC_TRACE
@@ -455,55 +443,54 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
 #ifndef LOFT_ALLOC_TRACE_ENV
 #define LOFT_ALLOC_TRACE_ENV "LOFT_ALLOC_TRACE"
 #endif
-static FILE *loft_trace_file(void) {
+static FILE *loft_trace_file(loft_cx *cx) {
     static FILE *f = 0;
-    static int opened = 0;
-    if (!opened) {
+    static int once = 0;
+    /* `@FR-C-Publish`: opened once, by the first thread that traces (`loft_once_begin`). */
+    if (loft_once_begin(&once)) {
         const char *p = getenv(LOFT_ALLOC_TRACE_ENV);
-        opened = 1;
         if (p && *p) f = fopen(p, "w");
         if (f) setvbuf(f, 0, _IONBF, 0);
+        loft_once_end(&once);
     }
     return f;
 }
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
-static void (*loft_trace_site_hook)(FILE *f);
+static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);
 /* A `par` worker's name (`loft_par_job_run`; 0 on the main thread): a worker's table is a copy
  * of its caller's, so its stores' serials repeat another thread's.  A store records the worker
  * that made it (`trace_worker`), and the trace names it `<worker>.<serial>` as the
  * interpreter's does — one name per store however threads interleave, and after its adoption
  * into the caller's table. */
-static LOFT_TLS uint32_t loft_trace_worker = 0;
 /* One event, written whole (its line formatted first). */
-static void loft_trace_emit(FILE *f, const char *line) {
-    if (loft_trace_site_hook) loft_trace_site_hook(f);
+static void loft_trace_emit(loft_cx *cx, FILE *f, const char *line) {
+    if (loft_trace_site_hook) loft_trace_site_hook(cx, f);
     fputs(line, f);
 }
 /* A store's name in the trace: its serial, prefixed with the worker that made it
  * (`Store::trace_name`).  One buffer per thread, read before the next call. */
-static const char *loft_trace_name(const loft_store_t *s) {
-    static LOFT_TLS char loft_tn_[48];
+static const char *loft_trace_name(loft_cx *cx, const loft_store_t *s) {
     if (s->trace_worker)
-        snprintf(loft_tn_, sizeof loft_tn_, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
+        snprintf(cx->trace_name_buf, sizeof cx->trace_name_buf, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
     else
-        snprintf(loft_tn_, sizeof loft_tn_, "%llu", (unsigned long long) s->serial);
-    return loft_tn_;
+        snprintf(cx->trace_name_buf, sizeof cx->trace_name_buf, "%llu", (unsigned long long) s->serial);
+    return cx->trace_name_buf;
 }
 /* A `par` region's bounds (`P`, `Q`), marked where the loop's queue starts and its buffer is
  * dropped, as the interpreter marks them (`store_census::par_mark`); usable in an expression. */
-static int loft_trace_mark(const char *m) {
-    FILE *f = loft_trace_file();
+static int loft_trace_mark(loft_cx *cx, const char *m) {
+    FILE *f = loft_trace_file(cx);
     if (f) fprintf(f, "%s\n", m);
     return 0;
 }
-#define LOFT_TRACE_MARK(m) loft_trace_mark(m)
+#define LOFT_TRACE_MARK(m) loft_trace_mark(cx, m)
 #define LOFT_TRACE(...)                                                                     \
     do {                                                                                    \
-        FILE *loft_tf_ = loft_trace_file();                                                 \
+        FILE *loft_tf_ = loft_trace_file(cx);                                                 \
         if (loft_tf_) {                                                                     \
             char loft_tb_[192];                                                             \
             snprintf(loft_tb_, sizeof loft_tb_, __VA_ARGS__);                               \
-            loft_trace_emit(loft_tf_, loft_tb_);                                            \
+            loft_trace_emit(cx, loft_tf_, loft_tb_);                                            \
         }                                                                                   \
     } while (0)
 #else
@@ -511,272 +498,272 @@ static int loft_trace_mark(const char *m) {
 #define LOFT_TRACE_MARK(m) 0
 #endif
 
-static int32_t loft_st_i32(const loft_store_t *s, uint32_t rec, uint32_t fld) {
+static int32_t loft_st_i32(loft_cx *cx, const loft_store_t *s, uint32_t rec, uint32_t fld) {
     int32_t v;
     memcpy(&v, s->buf + (size_t) rec * 8 + fld, 4);
     return v;
 }
 
-static uint32_t loft_st_u32(const loft_store_t *s, uint32_t rec, uint32_t fld) {
+static uint32_t loft_st_u32(loft_cx *cx, const loft_store_t *s, uint32_t rec, uint32_t fld) {
     uint32_t v;
     memcpy(&v, s->buf + (size_t) rec * 8 + fld, 4);
     return v;
 }
 
-static void loft_st_set_i32(loft_store_t *s, uint32_t rec, uint32_t fld, int32_t v) {
+static void loft_st_set_i32(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t fld, int32_t v) {
     memcpy(s->buf + (size_t) rec * 8 + fld, &v, 4);
 }
 
-static void loft_st_set_u32(loft_store_t *s, uint32_t rec, uint32_t fld, uint32_t v) {
+static void loft_st_set_u32(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t fld, uint32_t v) {
     memcpy(s->buf + (size_t) rec * 8 + fld, &v, 4);
 }
 
-static void loft_set_free_header(loft_store_t *s, uint32_t pos, int32_t words) {
-    loft_st_set_i32(s, pos, 0, -words);
-    loft_st_set_i32(s, pos + (uint32_t) words - 1, 4, -words);
+static void loft_set_free_header(loft_cx *cx, loft_store_t *s, uint32_t pos, int32_t words) {
+    loft_st_set_i32(cx, s, pos, 0, -words);
+    loft_st_set_i32(cx, s, pos + (uint32_t) words - 1, 4, -words);
 }
 
 /* ---- the LLRB free-space tree ---- */
 
-static int32_t loft_fl_size(const loft_store_t *s, uint32_t p) { return -loft_st_i32(s, p, 0); }
-static uint32_t loft_fl_left(const loft_store_t *s, uint32_t p) { return loft_st_u32(s, p, LOFT_FL_LEFT); }
-static uint32_t loft_fl_right(const loft_store_t *s, uint32_t p) { return loft_st_u32(s, p, LOFT_FL_RIGHT) & LOFT_FL_RIGHT_MASK; }
-static int loft_fl_red(const loft_store_t *s, uint32_t p) { return (loft_st_u32(s, p, LOFT_FL_RIGHT) & LOFT_FL_RED_BIT) != 0; }
-static void loft_fl_set_left(loft_store_t *s, uint32_t p, uint32_t v) { loft_st_set_u32(s, p, LOFT_FL_LEFT, v); }
+static int32_t loft_fl_size(loft_cx *cx, const loft_store_t *s, uint32_t p) { return -loft_st_i32(cx, s, p, 0); }
+static uint32_t loft_fl_left(loft_cx *cx, const loft_store_t *s, uint32_t p) { return loft_st_u32(cx, s, p, LOFT_FL_LEFT); }
+static uint32_t loft_fl_right(loft_cx *cx, const loft_store_t *s, uint32_t p) { return loft_st_u32(cx, s, p, LOFT_FL_RIGHT) & LOFT_FL_RIGHT_MASK; }
+static int loft_fl_red(loft_cx *cx, const loft_store_t *s, uint32_t p) { return (loft_st_u32(cx, s, p, LOFT_FL_RIGHT) & LOFT_FL_RED_BIT) != 0; }
+static void loft_fl_set_left(loft_cx *cx, loft_store_t *s, uint32_t p, uint32_t v) { loft_st_set_u32(cx, s, p, LOFT_FL_LEFT, v); }
 
-static void loft_fl_set_right(loft_store_t *s, uint32_t p, uint32_t v) {
-    uint32_t red = loft_st_u32(s, p, LOFT_FL_RIGHT) & LOFT_FL_RED_BIT;
-    loft_st_set_u32(s, p, LOFT_FL_RIGHT, v | red);
+static void loft_fl_set_right(loft_cx *cx, loft_store_t *s, uint32_t p, uint32_t v) {
+    uint32_t red = loft_st_u32(cx, s, p, LOFT_FL_RIGHT) & LOFT_FL_RED_BIT;
+    loft_st_set_u32(cx, s, p, LOFT_FL_RIGHT, v | red);
 }
 
-static void loft_fl_set_red(loft_store_t *s, uint32_t p, int v) {
-    uint32_t right = loft_st_u32(s, p, LOFT_FL_RIGHT) & LOFT_FL_RIGHT_MASK;
-    loft_st_set_u32(s, p, LOFT_FL_RIGHT, right | (v ? LOFT_FL_RED_BIT : 0));
+static void loft_fl_set_red(loft_cx *cx, loft_store_t *s, uint32_t p, int v) {
+    uint32_t right = loft_st_u32(cx, s, p, LOFT_FL_RIGHT) & LOFT_FL_RIGHT_MASK;
+    loft_st_set_u32(cx, s, p, LOFT_FL_RIGHT, right | (v ? LOFT_FL_RED_BIT : 0));
 }
 
 /* (size, position) order: -1, 0, 1. */
-static int loft_fl_cmp(const loft_store_t *s, uint32_t a, uint32_t b) {
-    int32_t sa = loft_fl_size(s, a), sb = loft_fl_size(s, b);
+static int loft_fl_cmp(loft_cx *cx, const loft_store_t *s, uint32_t a, uint32_t b) {
+    int32_t sa = loft_fl_size(cx, s, a), sb = loft_fl_size(cx, s, b);
     if (sa != sb) return sa < sb ? -1 : 1;
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-static uint32_t loft_fl_rotate_left(loft_store_t *s, uint32_t h) {
-    uint32_t x = loft_fl_right(s, h);
-    uint32_t x_left = loft_fl_left(s, x);
-    loft_fl_set_right(s, h, x_left);
-    loft_fl_set_left(s, x, h);
-    int h_red = loft_fl_red(s, h);
-    loft_fl_set_red(s, x, h_red);
-    loft_fl_set_red(s, h, 1);
+static uint32_t loft_fl_rotate_left(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    uint32_t x = loft_fl_right(cx, s, h);
+    uint32_t x_left = loft_fl_left(cx, s, x);
+    loft_fl_set_right(cx, s, h, x_left);
+    loft_fl_set_left(cx, s, x, h);
+    int h_red = loft_fl_red(cx, s, h);
+    loft_fl_set_red(cx, s, x, h_red);
+    loft_fl_set_red(cx, s, h, 1);
     return x;
 }
 
-static uint32_t loft_fl_rotate_right(loft_store_t *s, uint32_t h) {
-    uint32_t x = loft_fl_left(s, h);
-    uint32_t x_right = loft_fl_right(s, x);
-    loft_fl_set_left(s, h, x_right);
-    loft_fl_set_right(s, x, h);
-    int h_red = loft_fl_red(s, h);
-    loft_fl_set_red(s, x, h_red);
-    loft_fl_set_red(s, h, 1);
+static uint32_t loft_fl_rotate_right(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    uint32_t x = loft_fl_left(cx, s, h);
+    uint32_t x_right = loft_fl_right(cx, s, x);
+    loft_fl_set_left(cx, s, h, x_right);
+    loft_fl_set_right(cx, s, x, h);
+    int h_red = loft_fl_red(cx, s, h);
+    loft_fl_set_red(cx, s, x, h_red);
+    loft_fl_set_red(cx, s, h, 1);
     return x;
 }
 
-static void loft_fl_flip_colors(loft_store_t *s, uint32_t h) {
-    int h_red = loft_fl_red(s, h);
-    loft_fl_set_red(s, h, !h_red);
-    uint32_t l = loft_fl_left(s, h);
-    if (l) loft_fl_set_red(s, l, !loft_fl_red(s, l));
-    uint32_t r = loft_fl_right(s, h);
-    if (r) loft_fl_set_red(s, r, !loft_fl_red(s, r));
+static void loft_fl_flip_colors(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    int h_red = loft_fl_red(cx, s, h);
+    loft_fl_set_red(cx, s, h, !h_red);
+    uint32_t l = loft_fl_left(cx, s, h);
+    if (l) loft_fl_set_red(cx, s, l, !loft_fl_red(cx, s, l));
+    uint32_t r = loft_fl_right(cx, s, h);
+    if (r) loft_fl_set_red(cx, s, r, !loft_fl_red(cx, s, r));
 }
 
-static uint32_t loft_fl_balance(loft_store_t *s, uint32_t h) {
-    uint32_t r = loft_fl_right(s, h);
-    if (r && loft_fl_red(s, r)) h = loft_fl_rotate_left(s, h);
-    uint32_t l = loft_fl_left(s, h);
-    uint32_t ll = l ? loft_fl_left(s, l) : 0;
-    if (l && loft_fl_red(s, l) && ll && loft_fl_red(s, ll)) h = loft_fl_rotate_right(s, h);
-    uint32_t l2 = loft_fl_left(s, h);
-    uint32_t r2 = loft_fl_right(s, h);
-    if (l2 && loft_fl_red(s, l2) && r2 && loft_fl_red(s, r2)) loft_fl_flip_colors(s, h);
+static uint32_t loft_fl_balance(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    uint32_t r = loft_fl_right(cx, s, h);
+    if (r && loft_fl_red(cx, s, r)) h = loft_fl_rotate_left(cx, s, h);
+    uint32_t l = loft_fl_left(cx, s, h);
+    uint32_t ll = l ? loft_fl_left(cx, s, l) : 0;
+    if (l && loft_fl_red(cx, s, l) && ll && loft_fl_red(cx, s, ll)) h = loft_fl_rotate_right(cx, s, h);
+    uint32_t l2 = loft_fl_left(cx, s, h);
+    uint32_t r2 = loft_fl_right(cx, s, h);
+    if (l2 && loft_fl_red(cx, s, l2) && r2 && loft_fl_red(cx, s, r2)) loft_fl_flip_colors(cx, s, h);
     return h;
 }
 
-static uint32_t loft_fl_insert_node(loft_store_t *s, uint32_t h, uint32_t rec) {
+static uint32_t loft_fl_insert_node(loft_cx *cx, loft_store_t *s, uint32_t h, uint32_t rec) {
     if (h == 0) {
-        loft_fl_set_left(s, rec, 0);
-        loft_st_set_u32(s, rec, LOFT_FL_RIGHT, LOFT_FL_RED_BIT);
+        loft_fl_set_left(cx, s, rec, 0);
+        loft_st_set_u32(cx, s, rec, LOFT_FL_RIGHT, LOFT_FL_RED_BIT);
         return rec;
     }
-    if (loft_fl_cmp(s, rec, h) < 0) {
-        uint32_t l = loft_fl_left(s, h);
-        uint32_t nl = loft_fl_insert_node(s, l, rec);
-        loft_fl_set_left(s, h, nl);
+    if (loft_fl_cmp(cx, s, rec, h) < 0) {
+        uint32_t l = loft_fl_left(cx, s, h);
+        uint32_t nl = loft_fl_insert_node(cx, s, l, rec);
+        loft_fl_set_left(cx, s, h, nl);
     } else {
-        uint32_t r = loft_fl_right(s, h);
-        uint32_t nr = loft_fl_insert_node(s, r, rec);
-        loft_fl_set_right(s, h, nr);
+        uint32_t r = loft_fl_right(cx, s, h);
+        uint32_t nr = loft_fl_insert_node(cx, s, r, rec);
+        loft_fl_set_right(cx, s, h, nr);
     }
-    return loft_fl_balance(s, h);
+    return loft_fl_balance(cx, s, h);
 }
 
-static void loft_fl_insert(loft_store_t *s, uint32_t rec) {
-    if (loft_fl_size(s, rec) < LOFT_MIN_FREE_TREE) return;
-    if (LOFT_WILDERNESS && rec + (uint32_t) loft_fl_size(s, rec) == s->size) {
+static void loft_fl_insert(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    if (loft_fl_size(cx, s, rec) < LOFT_MIN_FREE_TREE) return;
+    if (LOFT_WILDERNESS && rec + (uint32_t) loft_fl_size(cx, s, rec) == s->size) {
         s->wild = rec;
         return;
     }
-    s->free_root = loft_fl_insert_node(s, s->free_root, rec);
-    loft_fl_set_red(s, s->free_root, 0);
+    s->free_root = loft_fl_insert_node(cx, s, s->free_root, rec);
+    loft_fl_set_red(cx, s, s->free_root, 0);
 }
 
-static uint32_t loft_fl_min_node(const loft_store_t *s, uint32_t h) {
+static uint32_t loft_fl_min_node(loft_cx *cx, const loft_store_t *s, uint32_t h) {
     if (h == 0) return 0;
     for (;;) {
-        uint32_t l = loft_fl_left(s, h);
+        uint32_t l = loft_fl_left(cx, s, h);
         if (l == 0) return h;
         h = l;
     }
 }
 
-static uint32_t loft_fl_move_red_left(loft_store_t *s, uint32_t h) {
-    loft_fl_flip_colors(s, h);
-    uint32_t r = loft_fl_right(s, h);
-    uint32_t rl = r ? loft_fl_left(s, r) : 0;
-    if (rl && loft_fl_red(s, rl)) {
-        uint32_t nr = loft_fl_rotate_right(s, r);
-        loft_fl_set_right(s, h, nr);
-        h = loft_fl_rotate_left(s, h);
-        loft_fl_flip_colors(s, h);
+static uint32_t loft_fl_move_red_left(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    loft_fl_flip_colors(cx, s, h);
+    uint32_t r = loft_fl_right(cx, s, h);
+    uint32_t rl = r ? loft_fl_left(cx, s, r) : 0;
+    if (rl && loft_fl_red(cx, s, rl)) {
+        uint32_t nr = loft_fl_rotate_right(cx, s, r);
+        loft_fl_set_right(cx, s, h, nr);
+        h = loft_fl_rotate_left(cx, s, h);
+        loft_fl_flip_colors(cx, s, h);
     }
     return h;
 }
 
-static uint32_t loft_fl_move_red_right(loft_store_t *s, uint32_t h) {
-    loft_fl_flip_colors(s, h);
-    uint32_t l = loft_fl_left(s, h);
-    uint32_t ll = l ? loft_fl_left(s, l) : 0;
-    if (ll && loft_fl_red(s, ll)) {
-        h = loft_fl_rotate_right(s, h);
-        loft_fl_flip_colors(s, h);
+static uint32_t loft_fl_move_red_right(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    loft_fl_flip_colors(cx, s, h);
+    uint32_t l = loft_fl_left(cx, s, h);
+    uint32_t ll = l ? loft_fl_left(cx, s, l) : 0;
+    if (ll && loft_fl_red(cx, s, ll)) {
+        h = loft_fl_rotate_right(cx, s, h);
+        loft_fl_flip_colors(cx, s, h);
     }
     return h;
 }
 
-static uint32_t loft_fl_delete_min_node(loft_store_t *s, uint32_t h) {
-    if (loft_fl_left(s, h) == 0) return 0;
-    uint32_t l = loft_fl_left(s, h);
-    uint32_t ll = loft_fl_left(s, l);
+static uint32_t loft_fl_delete_min_node(loft_cx *cx, loft_store_t *s, uint32_t h) {
+    if (loft_fl_left(cx, s, h) == 0) return 0;
+    uint32_t l = loft_fl_left(cx, s, h);
+    uint32_t ll = loft_fl_left(cx, s, l);
     uint32_t cur = h;
-    if (!loft_fl_red(s, l) && (ll == 0 || !loft_fl_red(s, ll))) cur = loft_fl_move_red_left(s, cur);
-    uint32_t left = loft_fl_left(s, cur);
-    uint32_t nl = loft_fl_delete_min_node(s, left);
-    loft_fl_set_left(s, cur, nl);
-    return loft_fl_balance(s, cur);
+    if (!loft_fl_red(cx, s, l) && (ll == 0 || !loft_fl_red(cx, s, ll))) cur = loft_fl_move_red_left(cx, s, cur);
+    uint32_t left = loft_fl_left(cx, s, cur);
+    uint32_t nl = loft_fl_delete_min_node(cx, s, left);
+    loft_fl_set_left(cx, s, cur, nl);
+    return loft_fl_balance(cx, s, cur);
 }
 
-static uint32_t loft_fl_delete_node(loft_store_t *s, uint32_t h, uint32_t target) {
+static uint32_t loft_fl_delete_node(loft_cx *cx, loft_store_t *s, uint32_t h, uint32_t target) {
     if (h == 0) return 0;
-    int32_t tsz = loft_fl_size(s, target), hsz = loft_fl_size(s, h);
+    int32_t tsz = loft_fl_size(cx, s, target), hsz = loft_fl_size(cx, s, h);
     if (tsz < hsz || (tsz == hsz && target < h)) {
-        uint32_t l = loft_fl_left(s, h);
-        uint32_t ll = l ? loft_fl_left(s, l) : 0;
-        if (l && !loft_fl_red(s, l) && (ll == 0 || !loft_fl_red(s, ll))) h = loft_fl_move_red_left(s, h);
-        uint32_t left = loft_fl_left(s, h);
-        uint32_t nl = loft_fl_delete_node(s, left, target);
-        loft_fl_set_left(s, h, nl);
+        uint32_t l = loft_fl_left(cx, s, h);
+        uint32_t ll = l ? loft_fl_left(cx, s, l) : 0;
+        if (l && !loft_fl_red(cx, s, l) && (ll == 0 || !loft_fl_red(cx, s, ll))) h = loft_fl_move_red_left(cx, s, h);
+        uint32_t left = loft_fl_left(cx, s, h);
+        uint32_t nl = loft_fl_delete_node(cx, s, left, target);
+        loft_fl_set_left(cx, s, h, nl);
     } else {
-        if (loft_fl_left(s, h) && loft_fl_red(s, loft_fl_left(s, h))) h = loft_fl_rotate_right(s, h);
-        if (h == target && loft_fl_right(s, h) == 0) return 0;
-        uint32_t r = loft_fl_right(s, h);
-        uint32_t rl = r ? loft_fl_left(s, r) : 0;
-        if (r && !loft_fl_red(s, r) && (rl == 0 || !loft_fl_red(s, rl))) h = loft_fl_move_red_right(s, h);
+        if (loft_fl_left(cx, s, h) && loft_fl_red(cx, s, loft_fl_left(cx, s, h))) h = loft_fl_rotate_right(cx, s, h);
+        if (h == target && loft_fl_right(cx, s, h) == 0) return 0;
+        uint32_t r = loft_fl_right(cx, s, h);
+        uint32_t rl = r ? loft_fl_left(cx, s, r) : 0;
+        if (r && !loft_fl_red(cx, s, r) && (rl == 0 || !loft_fl_red(cx, s, rl))) h = loft_fl_move_red_right(cx, s, h);
         if (h == target) {
-            uint32_t right = loft_fl_right(s, h);
-            if (right == 0) return loft_fl_left(s, h);
-            uint32_t succ = loft_fl_min_node(s, right);
-            uint32_t h_left = loft_fl_left(s, h);
-            int h_red = loft_fl_red(s, h);
-            uint32_t nr = loft_fl_delete_min_node(s, right);
-            loft_fl_set_left(s, succ, h_left);
-            loft_fl_set_right(s, succ, nr);
-            loft_fl_set_red(s, succ, h_red);
+            uint32_t right = loft_fl_right(cx, s, h);
+            if (right == 0) return loft_fl_left(cx, s, h);
+            uint32_t succ = loft_fl_min_node(cx, s, right);
+            uint32_t h_left = loft_fl_left(cx, s, h);
+            int h_red = loft_fl_red(cx, s, h);
+            uint32_t nr = loft_fl_delete_min_node(cx, s, right);
+            loft_fl_set_left(cx, s, succ, h_left);
+            loft_fl_set_right(cx, s, succ, nr);
+            loft_fl_set_red(cx, s, succ, h_red);
             h = succ;
         } else {
-            uint32_t right = loft_fl_right(s, h);
-            uint32_t nr = loft_fl_delete_node(s, right, target);
-            loft_fl_set_right(s, h, nr);
+            uint32_t right = loft_fl_right(cx, s, h);
+            uint32_t nr = loft_fl_delete_node(cx, s, right, target);
+            loft_fl_set_right(cx, s, h, nr);
         }
     }
-    return loft_fl_balance(s, h);
+    return loft_fl_balance(cx, s, h);
 }
 
-static int loft_fl_tree_contains(const loft_store_t *s, uint32_t target) {
+static int loft_fl_tree_contains(loft_cx *cx, const loft_store_t *s, uint32_t target) {
     if (target == 0) return 0;
     if (target == s->wild) return 1;
     uint32_t h = s->free_root;
     while (h) {
-        int c = loft_fl_cmp(s, target, h);
+        int c = loft_fl_cmp(cx, s, target, h);
         if (c == 0) return 1;
-        h = c < 0 ? loft_fl_left(s, h) : loft_fl_right(s, h);
+        h = c < 0 ? loft_fl_left(cx, s, h) : loft_fl_right(cx, s, h);
     }
     return 0;
 }
 
 /* ---- the parked lists (`@FR-H-Park`) ---- */
 
-static void loft_park_block(loft_store_t *s, uint32_t rec, int32_t words) {
-    loft_set_free_header(s, rec, words);
+static void loft_park_block(loft_cx *cx, loft_store_t *s, uint32_t rec, int32_t words) {
+    loft_set_free_header(cx, s, rec, words);
     uint32_t head = s->parked_heads[words];
-    loft_st_set_u32(s, rec, LOFT_PARK_PREV, 0);
-    loft_st_set_u32(s, rec, LOFT_PARK_NEXT, head);
-    if (head) loft_st_set_u32(s, head, LOFT_PARK_PREV, rec);
+    loft_st_set_u32(cx, s, rec, LOFT_PARK_PREV, 0);
+    loft_st_set_u32(cx, s, rec, LOFT_PARK_NEXT, head);
+    if (head) loft_st_set_u32(cx, s, head, LOFT_PARK_PREV, rec);
     s->parked_heads[words] = rec;
-    loft_bits_insert(&s->parked_set, rec);
+    loft_bits_insert(cx, &s->parked_set, rec);
     s->parked_count++;
 }
 
-static void loft_unpark(loft_store_t *s, uint32_t rec) {
-    uint32_t prev = loft_st_u32(s, rec, LOFT_PARK_PREV);
-    uint32_t next = loft_st_u32(s, rec, LOFT_PARK_NEXT);
-    if (prev == 0) s->parked_heads[loft_fl_size(s, rec)] = next;
-    else loft_st_set_u32(s, prev, LOFT_PARK_NEXT, next);
-    if (next) loft_st_set_u32(s, next, LOFT_PARK_PREV, prev);
-    loft_bits_remove(&s->parked_set, rec);
+static void loft_unpark(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    uint32_t prev = loft_st_u32(cx, s, rec, LOFT_PARK_PREV);
+    uint32_t next = loft_st_u32(cx, s, rec, LOFT_PARK_NEXT);
+    if (prev == 0) s->parked_heads[loft_fl_size(cx, s, rec)] = next;
+    else loft_st_set_u32(cx, s, prev, LOFT_PARK_NEXT, next);
+    if (next) loft_st_set_u32(cx, s, next, LOFT_PARK_PREV, prev);
+    loft_bits_remove(cx, &s->parked_set, rec);
     s->parked_count--;
 }
 
-static uint32_t loft_pop_parked(loft_store_t *s, uint32_t size) {
+static uint32_t loft_pop_parked(loft_cx *cx, loft_store_t *s, uint32_t size) {
     if (size > LOFT_PARK_MAX_WORDS) return 0;
     uint32_t rec = s->parked_heads[size];
     if (rec == 0) return 0;
-    uint32_t next = loft_st_u32(s, rec, LOFT_PARK_NEXT);
+    uint32_t next = loft_st_u32(cx, s, rec, LOFT_PARK_NEXT);
     s->parked_heads[size] = next;
-    if (next) loft_st_set_u32(s, next, LOFT_PARK_PREV, 0);
-    loft_bits_remove(&s->parked_set, rec);
+    if (next) loft_st_set_u32(cx, s, next, LOFT_PARK_PREV, 0);
+    loft_bits_remove(cx, &s->parked_set, rec);
     s->parked_count--;
-    loft_st_set_i32(s, rec, 0, (int32_t) size);
-    loft_bits_insert(&s->claims, rec);
+    loft_st_set_i32(cx, s, rec, 0, (int32_t) size);
+    loft_bits_insert(cx, &s->claims, rec);
     return rec;
 }
 
-static void loft_parked_clear(loft_store_t *s) {
+static void loft_parked_clear(loft_cx *cx, loft_store_t *s) {
     memset(s->parked_heads, 0, sizeof s->parked_heads);
-    loft_bits_clear(&s->parked_set);
+    loft_bits_clear(cx, &s->parked_set);
     s->parked_count = 0;
 }
 
 /* ---- the free-tree removal and the frees ---- */
 
-static void loft_fl_remove(loft_store_t *s, uint32_t rec) {
-    if (s->parked_count && loft_bits_contains(&s->parked_set, rec)) {
-        loft_unpark(s, rec);
+static void loft_fl_remove(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    if (s->parked_count && loft_bits_contains(cx, &s->parked_set, rec)) {
+        loft_unpark(cx, s, rec);
         return;
     }
-    if (s->lazy && loft_bits_remove(&s->lazy_free, rec)) {
-        uint32_t w = (uint32_t) loft_fl_size(s, rec);
+    if (s->lazy && loft_bits_remove(cx, &s->lazy_free, rec)) {
+        uint32_t w = (uint32_t) loft_fl_size(cx, s, rec);
         s->dead_words = s->dead_words > w ? s->dead_words - w : 0;
         return;
     }
@@ -784,49 +771,49 @@ static void loft_fl_remove(loft_store_t *s, uint32_t rec) {
         s->wild = 0;
         return;
     }
-    if (s->free_root == 0 || loft_fl_size(s, rec) < LOFT_MIN_FREE_TREE) return;
-    s->free_root = loft_fl_delete_node(s, s->free_root, rec);
-    if (s->free_root) loft_fl_set_red(s, s->free_root, 0);
+    if (s->free_root == 0 || loft_fl_size(cx, s, rec) < LOFT_MIN_FREE_TREE) return;
+    s->free_root = loft_fl_delete_node(cx, s, s->free_root, rec);
+    if (s->free_root) loft_fl_set_red(cx, s, s->free_root, 0);
 }
 
-static void loft_forget_free(loft_store_t *s, uint32_t pos) {
-    if (loft_bits_remove(&s->lazy_free, pos)) {
-        int32_t w = -loft_st_i32(s, pos, 0);
+static void loft_forget_free(loft_cx *cx, loft_store_t *s, uint32_t pos) {
+    if (loft_bits_remove(cx, &s->lazy_free, pos)) {
+        int32_t w = -loft_st_i32(cx, s, pos, 0);
         uint32_t uw = w > 0 ? (uint32_t) w : 0;
         s->dead_words = s->dead_words > uw ? s->dead_words - uw : 0;
     } else {
-        loft_fl_remove(s, pos);
+        loft_fl_remove(cx, s, pos);
     }
 }
 
-static int loft_claimed_block_ends_at(const loft_store_t *s, uint32_t end) {
+static int loft_claimed_block_ends_at(loft_cx *cx, const loft_store_t *s, uint32_t end) {
     int found;
-    uint32_t p = loft_bits_prev_start(&s->claims, end, &found);
+    uint32_t p = loft_bits_prev_start(cx, &s->claims, end, &found);
     if (!found) return 0;
-    int32_t words = loft_st_i32(s, p, 0);
+    int32_t words = loft_st_i32(cx, s, p, 0);
     return words > 0 && p + (uint32_t) words == end;
 }
 
-static int loft_parked_predecessor(const loft_store_t *s, uint32_t rec) {
-    if (s->parked_count == 0 || loft_claimed_block_ends_at(s, rec)) return 0;
-    int32_t f = loft_st_i32(s, rec - 1, 4);
+static int loft_parked_predecessor(loft_cx *cx, const loft_store_t *s, uint32_t rec) {
+    if (s->parked_count == 0 || loft_claimed_block_ends_at(cx, s, rec)) return 0;
+    int32_t f = loft_st_i32(cx, s, rec - 1, 4);
     if (f == INT32_MIN) return 0;
     uint32_t words = (uint32_t) -f;
     if (words > rec) return 0;
     uint32_t prev = rec - words;
-    return prev >= LOFT_ST_PRIMARY && loft_bits_contains(&s->parked_set, prev) && loft_st_i32(s, prev, 0) == f;
+    return prev >= LOFT_ST_PRIMARY && loft_bits_contains(cx, &s->parked_set, prev) && loft_st_i32(cx, s, prev, 0) == f;
 }
 
 /* A confirmed free predecessor (`free_predecessor`): *prev and *words, or 0. */
-static int loft_free_predecessor(const loft_store_t *s, uint32_t rec, uint32_t *prev, int32_t *words) {
-    if (rec <= LOFT_ST_PRIMARY || loft_claimed_block_ends_at(s, rec)) return 0;
-    int32_t f = loft_st_i32(s, rec - 1, 4);
+static int loft_free_predecessor(loft_cx *cx, const loft_store_t *s, uint32_t rec, uint32_t *prev, int32_t *words) {
+    if (rec <= LOFT_ST_PRIMARY || loft_claimed_block_ends_at(cx, s, rec)) return 0;
+    int32_t f = loft_st_i32(cx, s, rec - 1, 4);
     if (f >= 0 || f == INT32_MIN) return 0;
     int32_t w = -f;
     if ((uint32_t) w > rec) return 0;
     uint32_t p = rec - (uint32_t) w;
     if (p < LOFT_ST_PRIMARY || w < LOFT_MIN_FREE_TREE) return 0;
-    if (loft_st_i32(s, p, 0) == f && loft_fl_tree_contains(s, p)) {
+    if (loft_st_i32(cx, s, p, 0) == f && loft_fl_tree_contains(cx, s, p)) {
         *prev = p;
         *words = w;
         return 1;
@@ -834,113 +821,113 @@ static int loft_free_predecessor(const loft_store_t *s, uint32_t rec, uint32_t *
     return 0;
 }
 
-static void loft_free_exact(loft_store_t *s, uint32_t rec, int32_t claim) {
+static void loft_free_exact(loft_cx *cx, loft_store_t *s, uint32_t rec, int32_t claim) {
     while (rec + (uint32_t) claim < s->size) {
         uint32_t next_pos = rec + (uint32_t) claim;
-        int32_t next_header = loft_st_i32(s, next_pos, 0);
-        if (next_header >= 0 || loft_bits_contains(&s->parked_set, next_pos)) break;
-        loft_fl_remove(s, next_pos);
+        int32_t next_header = loft_st_i32(cx, s, next_pos, 0);
+        if (next_header >= 0 || loft_bits_contains(cx, &s->parked_set, next_pos)) break;
+        loft_fl_remove(cx, s, next_pos);
         claim -= next_header;
     }
     uint32_t prev;
     int32_t words;
     if (!LOFT_FOOTERS) {
         s->needs_coalesce = 1;
-    } else if (loft_free_predecessor(s, rec, &prev, &words)) {
-        loft_fl_remove(s, prev);
+    } else if (loft_free_predecessor(cx, s, rec, &prev, &words)) {
+        loft_fl_remove(cx, s, prev);
         claim += words;
         rec = prev;
-    } else if (rec > LOFT_ST_PRIMARY && !loft_claimed_block_ends_at(s, rec)
-               && loft_st_i32(s, rec - 1, 4) < 0 && !loft_parked_predecessor(s, rec)) {
+    } else if (rec > LOFT_ST_PRIMARY && !loft_claimed_block_ends_at(cx, s, rec)
+               && loft_st_i32(cx, s, rec - 1, 4) < 0 && !loft_parked_predecessor(cx, s, rec)) {
         s->needs_coalesce = 1;
     }
-    loft_set_free_header(s, rec, claim);
-    loft_fl_insert(s, rec);
+    loft_set_free_header(cx, s, rec, claim);
+    loft_fl_insert(cx, s, rec);
 }
 
-static void loft_flush_parked(loft_store_t *s) {
+static void loft_flush_parked(loft_cx *cx, loft_store_t *s) {
     for (int32_t words = LOFT_MIN_FREE_TREE; words <= LOFT_PARK_MAX_WORDS; words++) {
         for (;;) {
             uint32_t rec = s->parked_heads[words];
             if (rec == 0) break;
-            loft_unpark(s, rec);
-            loft_free_exact(s, rec, words);
+            loft_unpark(cx, s, rec);
+            loft_free_exact(cx, s, rec, words);
         }
     }
 }
 
-static void loft_fl_rebuild(loft_store_t *s) {
+static void loft_fl_rebuild(loft_cx *cx, loft_store_t *s) {
     s->free_root = 0;
     s->wild = 0;
-    loft_bits_clear(&s->lazy_free);
+    loft_bits_clear(cx, &s->lazy_free);
     s->dead_words = 0;
-    loft_parked_clear(s);
+    loft_parked_clear(cx, s);
     uint32_t pos = LOFT_ST_PRIMARY;
     while (pos < s->size) {
-        int32_t header = loft_st_i32(s, pos, 0);
+        int32_t header = loft_st_i32(cx, s, pos, 0);
         int32_t bs = header < 0 ? -header : header;
         if (bs == 0) break;
         if (header < 0) {
-            loft_st_set_i32(s, pos + (uint32_t) bs - 1, 4, header);
-            if (-header >= LOFT_MIN_FREE_TREE) loft_fl_insert(s, pos);
+            loft_st_set_i32(cx, s, pos + (uint32_t) bs - 1, 4, header);
+            if (-header >= LOFT_MIN_FREE_TREE) loft_fl_insert(cx, s, pos);
         }
         pos += (uint32_t) bs;
     }
 }
 
-static void loft_coalesce_free(loft_store_t *s) {
+static void loft_coalesce_free(loft_cx *cx, loft_store_t *s) {
     uint32_t pos = LOFT_ST_PRIMARY;
     while (pos < s->size) {
-        int32_t header = loft_st_i32(s, pos, 0);
+        int32_t header = loft_st_i32(cx, s, pos, 0);
         int32_t bs = header < 0 ? -header : header;
         if (header < 0) {
             uint32_t next = pos + (uint32_t) bs;
             while (next < s->size) {
-                int32_t nh = loft_st_i32(s, next, 0);
+                int32_t nh = loft_st_i32(cx, s, next, 0);
                 if (nh >= 0) break;
                 bs += -nh;
                 next = pos + (uint32_t) bs;
             }
-            loft_set_free_header(s, pos, bs);
+            loft_set_free_header(cx, s, pos, bs);
         }
         pos += (uint32_t) bs;
     }
-    loft_fl_rebuild(s);
+    loft_fl_rebuild(cx, s);
     s->needs_coalesce = 0;
 }
 
-static void loft_lazy_delete(loft_store_t *s, uint32_t rec) {
+static void loft_lazy_delete(loft_cx *cx, loft_store_t *s, uint32_t rec) {
     uint32_t start = rec;
-    int32_t words = loft_st_i32(s, rec, 0);
-    loft_bits_remove(&s->claims, rec);
+    int32_t words = loft_st_i32(cx, s, rec, 0);
+    loft_bits_remove(cx, &s->claims, rec);
     for (;;) {
         uint32_t next = start + (uint32_t) words;
         if (next >= s->size) break;
-        int32_t nh = loft_st_i32(s, next, 0);
-        if (nh >= 0 || loft_bits_contains(&s->parked_set, next)) break;
-        loft_forget_free(s, next);
+        int32_t nh = loft_st_i32(cx, s, next, 0);
+        if (nh >= 0 || loft_bits_contains(cx, &s->parked_set, next)) break;
+        loft_forget_free(cx, s, next);
         words -= nh;
     }
-    if (start > LOFT_ST_PRIMARY && !loft_claimed_block_ends_at(s, start)) {
-        int32_t f = loft_st_i32(s, start - 1, 4);
+    if (start > LOFT_ST_PRIMARY && !loft_claimed_block_ends_at(cx, s, start)) {
+        int32_t f = loft_st_i32(cx, s, start - 1, 4);
         if (f < 0 && f != INT32_MIN) {
             int32_t pw = -f;
             if ((uint32_t) pw <= start) {
                 uint32_t prev = start - (uint32_t) pw;
-                if (prev >= LOFT_ST_PRIMARY && loft_st_i32(s, prev, 0) == f
-                    && (loft_bits_contains(&s->lazy_free, prev) || loft_fl_tree_contains(s, prev))) {
-                    loft_forget_free(s, prev);
+                if (prev >= LOFT_ST_PRIMARY && loft_st_i32(cx, s, prev, 0) == f
+                    && (loft_bits_contains(cx, &s->lazy_free, prev) || loft_fl_tree_contains(cx, s, prev))) {
+                    loft_forget_free(cx, s, prev);
                     start = prev;
                     words += pw;
                 }
             }
         }
     }
-    loft_set_free_header(s, start, words);
+    loft_set_free_header(cx, s, start, words);
     if (start + (uint32_t) words == s->size) {
-        loft_fl_insert(s, start);
+        loft_fl_insert(cx, s, start);
     } else {
-        loft_bits_insert(&s->lazy_free, start);
+        loft_bits_insert(cx, &s->lazy_free, start);
         uint32_t sum = s->dead_words + (uint32_t) words;
         s->dead_words = sum < s->dead_words ? UINT32_MAX : sum;
         s->needs_coalesce = 1;
@@ -952,11 +939,11 @@ static void loft_lazy_delete(loft_store_t *s, uint32_t rec) {
 /* A store bound to a file (loft_mapped.h, which sets it when it binds one): the file and its
  * mapping resized to `words` words, `buf` and `size` following; 0 when the OS refused, the
  * store then as it was.  Null in a unit that binds no file, where no store is mapped. */
-static int (*loft_map_resize_hook)(loft_store_t *s, uint32_t words);
+static int (*loft_map_resize_hook)(loft_cx *cx, loft_store_t *s, uint32_t words);
 /* Its release: unmapped and closed, the store left with no buffer (`loft_st_close_mapped`). */
-static void (*loft_map_release_hook)(loft_store_t *s);
+static void (*loft_map_release_hook)(loft_cx *cx, loft_store_t *s);
 
-static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
+static void loft_resize_store(loft_cx *cx, loft_store_t *s, uint32_t to_size) {
     if (to_size <= s->size) return;
     if (to_size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     uint64_t inc64 = (uint64_t) s->size * 7;
@@ -967,10 +954,10 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     /* `Store::resize_store`: a mapped store grows its file, which reads zero past the old end,
      * and is not counted against the heap ceiling — its bytes are the file's. */
     if (s->mapped) {
-        if (!loft_map_resize_hook(s, size)) { fputs("loft: a store bound to a file could not grow\n", stderr); abort(); }
+        if (!loft_map_resize_hook(cx, s, size)) { fputs("loft: a store bound to a file could not grow\n", stderr); abort(); }
         return;
     }
-    loft_heap_moved(s, s->size, size);
+    loft_heap_moved(cx, s, s->size, size);
 #ifdef LOFT_POISON
     /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
      * is kept, never handed back — an address taken into the store before the growth then reads
@@ -994,7 +981,7 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
  * 0xDEADBEEF, whole words only — a record id, a handle or a length read out of a claim nothing
  * wrote is then loud.  Compiled only into a poison build. */
 #ifdef LOFT_POISON_CLAIM
-static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+static void loft_st_poison_range(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
     const uint32_t v = 0xDEADBEEFu;
     for (uint32_t i = 0; i < len / 4; i++) memcpy(s->buf + (size_t) rec * 8 + pos + 4 * i, &v, 4);
 }
@@ -1003,128 +990,128 @@ static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, ui
 /* `@C154`: bytes a caller is about to write, in a record of `s`, take no fill.  A DEFINED store
  * (its bytes leave the process) is written whole, so it zeroes them; a poison build fills them
  * with poison, so a reader of a byte nobody wrote is loud (c_sweep's `claim-unwritten`). */
-static void loft_st_fresh(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+static void loft_st_fresh(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
 #ifdef LOFT_POISON_CLAIM
-    if (!s->defined) { loft_st_poison_range(s, rec, pos, len); return; }
+    if (!s->defined) { loft_st_poison_range(cx, s, rec, pos, len); return; }
 #endif
     if (s->defined) memset(s->buf + (size_t) rec * 8 + pos, 0, len);
 }
 
 /* `Store::claim_block`: the record takes EXACTLY `size` words and the rest of the block, however
  * small, is a free block behind it (`@FR-H-Exact`). */
-static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
+static uint32_t loft_claim_block(loft_cx *cx, loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
-    int32_t bs = -loft_st_i32(s, pos, 0);
+    int32_t bs = -loft_st_i32(cx, s, pos, 0);
     if (bs > req) {
-        loft_st_set_i32(s, pos, 0, req);
+        loft_st_set_i32(cx, s, pos, 0, req);
         uint32_t nf = pos + size;
-        loft_set_free_header(s, nf, bs - req);
-        loft_fl_insert(s, nf);
+        loft_set_free_header(cx, s, nf, bs - req);
+        loft_fl_insert(cx, s, nf);
     } else {
-        loft_st_set_i32(s, pos, 0, bs);
+        loft_st_set_i32(cx, s, pos, 0, bs);
     }
-    loft_bits_insert(&s->claims, pos);
-    uint32_t end = pos + (uint32_t) loft_st_i32(s, pos, 0);
+    loft_bits_insert(cx, &s->claims, pos);
+    uint32_t end = pos + (uint32_t) loft_st_i32(cx, s, pos, 0);
     if (end > s->claimed_end) s->claimed_end = end;
     return pos;
 }
 
-static uint32_t loft_carve_in_place(loft_store_t *s, uint32_t node, uint32_t parent, uint32_t size, int32_t rest) {
-    uint32_t left = loft_fl_left(s, node);
-    uint32_t right = loft_st_u32(s, node, LOFT_FL_RIGHT);
-    loft_st_set_i32(s, node, 0, (int32_t) size);
+static uint32_t loft_carve_in_place(loft_cx *cx, loft_store_t *s, uint32_t node, uint32_t parent, uint32_t size, int32_t rest) {
+    uint32_t left = loft_fl_left(cx, s, node);
+    uint32_t right = loft_st_u32(cx, s, node, LOFT_FL_RIGHT);
+    loft_st_set_i32(cx, s, node, 0, (int32_t) size);
     uint32_t rem = node + size;
-    loft_set_free_header(s, rem, rest);
-    loft_st_set_u32(s, rem, LOFT_FL_LEFT, left);
-    loft_st_set_u32(s, rem, LOFT_FL_RIGHT, right);
+    loft_set_free_header(cx, s, rem, rest);
+    loft_st_set_u32(cx, s, rem, LOFT_FL_LEFT, left);
+    loft_st_set_u32(cx, s, rem, LOFT_FL_RIGHT, right);
     if (parent == 0) s->free_root = rem;
-    else if (loft_fl_left(s, parent) == node) loft_fl_set_left(s, parent, rem);
-    else loft_fl_set_right(s, parent, rem);
-    loft_bits_insert(&s->claims, node);
+    else if (loft_fl_left(cx, s, parent) == node) loft_fl_set_left(cx, s, parent, rem);
+    else loft_fl_set_right(cx, s, parent, rem);
+    loft_bits_insert(cx, &s->claims, node);
     if (rem > s->claimed_end) s->claimed_end = rem;
     return node;
 }
 
 /* `claim_best_fit`: the position, or 0 when no tracked block fits. */
-static uint32_t loft_claim_best_fit(loft_store_t *s, uint32_t size) {
+static uint32_t loft_claim_best_fit(loft_cx *cx, loft_store_t *s, uint32_t size) {
     int32_t req = (int32_t) size;
     uint32_t h = s->free_root, parent = 0, found = 0, found_parent = 0;
     while (h) {
         uint32_t next;
-        if (loft_fl_size(s, h) < req) {
-            next = loft_fl_right(s, h);
+        if (loft_fl_size(cx, s, h) < req) {
+            next = loft_fl_right(cx, s, h);
         } else {
             found = h;
             found_parent = parent;
-            next = loft_fl_left(s, h);
+            next = loft_fl_left(cx, s, h);
         }
         parent = h;
         h = next;
     }
     uint32_t wild = s->wild;
-    if (wild && loft_fl_size(s, wild) >= req && (found == 0 || loft_fl_size(s, wild) < loft_fl_size(s, found))) {
+    if (wild && loft_fl_size(cx, s, wild) >= req && (found == 0 || loft_fl_size(cx, s, wild) < loft_fl_size(cx, s, found))) {
         s->wild = 0;
-        return loft_claim_block(s, wild, size);
+        return loft_claim_block(cx, s, wild, size);
     }
     if (found == 0) return 0;
-    int32_t rest = loft_fl_size(s, found) - req;
-    if (LOFT_CARVES && rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(s, found, found_parent, size, rest);
-    s->free_root = loft_fl_delete_node(s, s->free_root, found);
-    if (s->free_root) loft_fl_set_red(s, s->free_root, 0);
-    return loft_claim_block(s, found, size);
+    int32_t rest = loft_fl_size(cx, s, found) - req;
+    if (LOFT_CARVES && rest >= req && rest >= LOFT_MIN_FREE_TREE) return loft_carve_in_place(cx, s, found, found_parent, size, rest);
+    s->free_root = loft_fl_delete_node(cx, s, s->free_root, found);
+    if (s->free_root) loft_fl_set_red(cx, s, s->free_root, 0);
+    return loft_claim_block(cx, s, found, size);
 }
 
-static uint32_t loft_bump_wild(loft_store_t *s, uint32_t size) {
+static uint32_t loft_bump_wild(loft_cx *cx, loft_store_t *s, uint32_t size) {
     uint32_t pos = s->wild;
     if (pos == 0 || s->free_root != 0 || !LOFT_WILD_BUMPS) return 0;
     int32_t req = (int32_t) size;
-    int32_t block = loft_fl_size(s, pos);
+    int32_t block = loft_fl_size(cx, s, pos);
     if (block - req < LOFT_MIN_FREE_TREE) return 0;
-    loft_st_set_i32(s, pos, 0, req);
+    loft_st_set_i32(cx, s, pos, 0, req);
     uint32_t rest = pos + size;
-    loft_set_free_header(s, rest, block - req);
+    loft_set_free_header(cx, s, rest, block - req);
     s->wild = rest;
-    loft_bits_insert(&s->claims, pos);
+    loft_bits_insert(cx, &s->claims, pos);
     if (rest > s->claimed_end) s->claimed_end = rest;
     return pos;
 }
 
 /* `indexed_scan`: 1 with (*pos, *last, *claim) when it answers, 0 when the walk must. */
-static int loft_indexed_scan(const loft_store_t *s, int32_t req, uint32_t *pos, uint32_t *last, int32_t *claim) {
+static int loft_indexed_scan(loft_cx *cx, const loft_store_t *s, int32_t req, uint32_t *pos, uint32_t *last, int32_t *claim) {
     if (req < LOFT_MIN_FREE_TREE || s->size <= LOFT_ST_PRIMARY) return 0;
     int found;
-    uint32_t p = loft_bits_next_at_or_after(&s->lazy_free, LOFT_ST_PRIMARY, &found);
+    uint32_t p = loft_bits_next_at_or_after(cx, &s->lazy_free, LOFT_ST_PRIMARY, &found);
     while (found) {
         if (p >= s->size) break;
-        int32_t h = loft_st_i32(s, p, 0);
+        int32_t h = loft_st_i32(cx, s, p, 0);
         if (h >= 0) return 0;
         if (-h >= req) { *pos = p; *last = p; *claim = h; return 1; }
-        p = loft_bits_next_at_or_after(&s->lazy_free, p + 1, &found);
+        p = loft_bits_next_at_or_after(cx, &s->lazy_free, p + 1, &found);
     }
-    if (loft_claimed_block_ends_at(s, s->size)) { *pos = s->size; *last = s->size; *claim = 1; return 1; }
-    int32_t f = loft_st_i32(s, s->size - 1, 4);
+    if (loft_claimed_block_ends_at(cx, s, s->size)) { *pos = s->size; *last = s->size; *claim = 1; return 1; }
+    int32_t f = loft_st_i32(cx, s, s->size - 1, 4);
     if (f >= 0) { *pos = s->size; *last = s->size; *claim = 1; return 1; }
     if (f == INT32_MIN || (uint32_t) -f > s->size) return 0;
     uint32_t prev = s->size - (uint32_t) -f;
-    if (prev >= LOFT_ST_PRIMARY && loft_st_i32(s, prev, 0) == f
-        && (loft_bits_contains(&s->lazy_free, prev) || loft_fl_tree_contains(s, prev))) {
+    if (prev >= LOFT_ST_PRIMARY && loft_st_i32(cx, s, prev, 0) == f
+        && (loft_bits_contains(cx, &s->lazy_free, prev) || loft_fl_tree_contains(cx, s, prev))) {
         *pos = s->size; *last = prev; *claim = f;
         return 1;
     }
     return 0;
 }
 
-static void loft_walk_scan(const loft_store_t *s, int32_t req, uint32_t *pos_out, uint32_t *last_out, int32_t *claim_out) {
+static void loft_walk_scan(loft_cx *cx, const loft_store_t *s, int32_t req, uint32_t *pos_out, uint32_t *last_out, int32_t *claim_out) {
     uint32_t pos = LOFT_ST_PRIMARY, last = pos;
-    int32_t claim = loft_st_i32(s, pos, 0);
+    int32_t claim = loft_st_i32(cx, s, pos, 0);
     while (pos < s->size && (claim >= 0 || -claim < req)) {
         last = pos;
         pos += (uint32_t) (claim < 0 ? -claim : claim);
         if (pos >= s->size) break;
-        claim = loft_st_i32(s, pos, 0);
+        claim = loft_st_i32(cx, s, pos, 0);
         if (claim == 0) {
             fprintf(stderr, "loft: block chain is malformed at word %u of %u (a block owning no words); allocating past it and leaking the remainder\n", pos, s->size);
-            claim = loft_st_i32(s, last, 0);
+            claim = loft_st_i32(cx, s, last, 0);
             pos = s->size;
             break;
         }
@@ -1134,7 +1121,7 @@ static void loft_walk_scan(const loft_store_t *s, int32_t req, uint32_t *pos_out
     *claim_out = claim;
 }
 
-static uint32_t loft_claim_grow(loft_store_t *s, uint32_t size, uint32_t last, int32_t last_claim) {
+static uint32_t loft_claim_grow(loft_cx *cx, loft_store_t *s, uint32_t size, uint32_t last, int32_t last_claim) {
     uint32_t cur = s->size;
     /* `Store::claim_grow`'s checked add: a growth past the 32-bit word count stops the run, as the
      * interpreter does, rather than wrapping to a smaller store that the claim then overruns. */
@@ -1145,94 +1132,94 @@ static uint32_t loft_claim_grow(loft_store_t *s, uint32_t size, uint32_t last, i
         abort();
     }
     uint32_t new_size = last_claim < 0 ? (uint32_t) ((int32_t) s->size + (int32_t) size + last_claim) : s->size + size;
-    loft_resize_store(s, new_size);
+    loft_resize_store(cx, s, new_size);
     int32_t increase = (int32_t) (s->size - cur);
     if (last_claim < 0) {
-        loft_set_free_header(s, last, -(last_claim - increase));
+        loft_set_free_header(cx, s, last, -(last_claim - increase));
         return last;
     }
-    loft_set_free_header(s, cur, increase);
+    loft_set_free_header(cx, s, cur, increase);
     return cur;
 }
 
-static uint32_t loft_claim_scan(loft_store_t *s, uint32_t size) {
+static uint32_t loft_claim_scan(loft_cx *cx, loft_store_t *s, uint32_t size) {
     int32_t req = (int32_t) size;
     uint32_t pos, last;
     int32_t claim;
-    if (!loft_indexed_scan(s, req, &pos, &last, &claim)) loft_walk_scan(s, req, &pos, &last, &claim);
+    if (!loft_indexed_scan(cx, s, req, &pos, &last, &claim)) loft_walk_scan(cx, s, req, &pos, &last, &claim);
     if (pos >= s->size) {
-        if (claim < 0) loft_fl_remove(s, last);
-        pos = loft_claim_grow(s, size, last, claim);
+        if (claim < 0) loft_fl_remove(cx, s, last);
+        pos = loft_claim_grow(cx, s, size, last, claim);
     }
     if (pos == s->wild) {
         s->wild = 0;
-    } else if (pos < s->size && loft_bits_remove(&s->lazy_free, pos)) {
-        int32_t w = -loft_st_i32(s, pos, 0);
+    } else if (pos < s->size && loft_bits_remove(cx, &s->lazy_free, pos)) {
+        int32_t w = -loft_st_i32(cx, s, pos, 0);
         uint32_t uw = w > 0 ? (uint32_t) w : 0;
         s->dead_words = s->dead_words > uw ? s->dead_words - uw : 0;
     }
-    return loft_claim_block(s, pos, size);
+    return loft_claim_block(cx, s, pos, size);
 }
 
-static int loft_sweep_due(const loft_store_t *s) {
+static int loft_sweep_due(loft_cx *cx, const loft_store_t *s) {
     return s->dead_words >= LOFT_LAZY_FLOOR_WORDS && (uint64_t) s->dead_words * 5 >= (uint64_t) s->claimed_end;
 }
 
-static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
+static uint32_t loft_st_claim_inner(loft_cx *cx, loft_store_t *s, uint32_t size) {
     if (size < 1) { fputs("loft: Incomplete record\n", stderr); abort(); }
-    if (s->lazy && loft_sweep_due(s)) {
-        loft_coalesce_free(s);
+    if (s->lazy && loft_sweep_due(cx, s)) {
+        loft_coalesce_free(cx, s);
         s->lazy = 0;
         s->dead_words = 0;
-        loft_bits_clear(&s->lazy_free);
+        loft_bits_clear(cx, &s->lazy_free);
     }
     if (s->parked_count) {
-        uint32_t pos = loft_pop_parked(s, size);
+        uint32_t pos = loft_pop_parked(cx, s, size);
         if (pos) return pos;
     }
     {
-        uint32_t pos = loft_bump_wild(s, size);
+        uint32_t pos = loft_bump_wild(cx, s, size);
         if (pos) return pos;
     }
     {
-        uint32_t r = loft_claim_best_fit(s, size);
+        uint32_t r = loft_claim_best_fit(cx, s, size);
         if (r) return r;
     }
     if (s->parked_count) {
-        loft_flush_parked(s);
-        uint32_t r = loft_claim_best_fit(s, size);
+        loft_flush_parked(cx, s);
+        uint32_t r = loft_claim_best_fit(cx, s, size);
         if (r) return r;
     }
     if (s->needs_coalesce && !s->lazy) {
-        loft_coalesce_free(s);
-        uint32_t r = loft_claim_best_fit(s, size);
+        loft_coalesce_free(cx, s);
+        uint32_t r = loft_claim_best_fit(cx, s, size);
         if (r) return r;
     }
-    return loft_claim_scan(s, size);
+    return loft_claim_scan(cx, s, size);
 }
 
 /* `@FR-H-WriteLocked`: a write that reached a locked store (loft_rt.h).  The allocator compiled
  * on its own (without `loft_cc.h`, as its c_emit harness compiles it) has no locks. */
 #ifdef LOFT_CC_H
-static int loft_locked_write_on(uint8_t kind);
+static int loft_locked_write_on(loft_cx *cx, uint8_t kind);
 /* True when the write is to be DISCARDED (a production run, `@C80`); a development run stops
  * inside `loft_locked_write`, and a test fails there.  An operation refuses at its ENTRY, before
  * any of its store steps, so a discarded one changes nothing (`@FR-H-WriteLocked-Whole`). */
-#define LOFT_WRITE_REFUSED(s) (LOFT_UNLIKELY((s)->read_only) && loft_locked_write_on((s)->read_only))
+#define LOFT_WRITE_REFUSED(s) (LOFT_UNLIKELY((s)->read_only) && loft_locked_write_on(cx, (s)->read_only))
 #else
 #define LOFT_WRITE_REFUSED(s) ((void) (s), 0)
 #endif
 
-static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size);
+static uint32_t loft_st_claim_inner(loft_cx *cx, loft_store_t *s, uint32_t size);
 
 /* `Store::claim_discarded`: a claim or a resize a production run discarded answers a FRESH
  * record of the size asked for, its payload zeroed, and the store stays locked; the record the
  * program held is unchanged. */
-static uint32_t loft_st_claim_discarded(loft_store_t *s, uint32_t size) {
+static uint32_t loft_st_claim_discarded(loft_cx *cx, loft_store_t *s, uint32_t size) {
     uint8_t kind = s->read_only;
     s->read_only = 0;
-    uint32_t pos = loft_st_claim_inner(s, size ? size : 1);
-    int32_t words = loft_st_i32(s, pos, 0);
+    uint32_t pos = loft_st_claim_inner(cx, s, size ? size : 1);
+    int32_t words = loft_st_i32(cx, s, pos, 0);
     if (words > 1) memset(s->buf + (size_t) pos * 8 + 8, 0, (size_t) (words - 1) * 8);
     s->read_only = kind;
     return pos;
@@ -1240,60 +1227,60 @@ static uint32_t loft_st_claim_discarded(loft_store_t *s, uint32_t size) {
 
 /* `Store::claim`: a record of `size` words, its header written; the payload holds whatever the
  * block held (`@FR-H-Claim`). */
-static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
-    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
-    uint32_t pos = loft_st_claim_inner(s, size);
+static uint32_t loft_st_claim(loft_cx *cx, loft_store_t *s, uint32_t size) {
+    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(cx, s, size);
+    uint32_t pos = loft_st_claim_inner(cx, s, size);
     if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
-    LOFT_TRACE("C %s %d %u\n", loft_trace_name(s), loft_st_i32(s, pos, 0), pos);
+    LOFT_TRACE("C %s %d %u\n", loft_trace_name(cx, s), loft_st_i32(cx, s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
-    loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
+    loft_st_poison_range(cx, s, pos, 4, (uint32_t) loft_st_i32(cx, s, pos, 0) * 8 - 4);
 #endif
     return pos;
 }
 
 /* ---- deletes ---- */
 
-static void loft_st_delete(loft_store_t *s, uint32_t rec);
+static void loft_st_delete(loft_cx *cx, loft_store_t *s, uint32_t rec);
 
-static void loft_entomb(loft_store_t *s, uint32_t rec) {
-    int32_t words = loft_st_i32(s, rec, 0);
-    loft_bits_remove(&s->claims, rec);
-    loft_bits_insert(&s->removed, rec);
-    loft_st_set_i32(s, rec, 4, 0);
+static void loft_entomb(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    int32_t words = loft_st_i32(cx, s, rec, 0);
+    loft_bits_remove(cx, &s->claims, rec);
+    loft_bits_insert(cx, &s->removed, rec);
+    loft_st_set_i32(cx, s, rec, 4, 0);
     if (words > 1) {
-        loft_st_set_i32(s, rec, 0, 1);
-        loft_st_set_i32(s, rec + 1, 0, words - 1);
-        loft_bits_insert(&s->claims, rec + 1);
-        loft_st_delete(s, rec + 1);
+        loft_st_set_i32(cx, s, rec, 0, 1);
+        loft_st_set_i32(cx, s, rec + 1, 0, words - 1);
+        loft_bits_insert(cx, &s->claims, rec + 1);
+        loft_st_delete(cx, s, rec + 1);
     }
 }
 
 /* `Store::delete`. */
-static void loft_st_delete(loft_store_t *s, uint32_t rec) {
+static void loft_st_delete(loft_cx *cx, loft_store_t *s, uint32_t rec) {
     /* `read_only` is immutability: nothing in a locked store changes, deletes included
      * (`Store::delete`). */
     if (LOFT_WRITE_REFUSED(s)) return;
-    LOFT_TRACE("D %s %u\n", loft_trace_name(s), rec);
+    LOFT_TRACE("D %s %u\n", loft_trace_name(cx, s), rec);
     for (uint32_t i = 0; i < s->nplaced;) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
         else i++;
     }
-    if (loft_bits_remove(&s->referenced, rec) && LOFT_TOMBSTONES) {
-        loft_entomb(s, rec);
+    if (loft_bits_remove(cx, &s->referenced, rec) && LOFT_TOMBSTONES) {
+        loft_entomb(cx, s, rec);
         return;
     }
-    int32_t words = loft_st_i32(s, rec, 0);
+    int32_t words = loft_st_i32(cx, s, rec, 0);
     if (LOFT_PARKS && !s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
-        loft_bits_remove(&s->claims, rec);
-        loft_park_block(s, rec, words);
+        loft_bits_remove(cx, &s->claims, rec);
+        loft_park_block(cx, s, rec, words);
         return;
     }
     if (s->lazy && words <= LOFT_LAZY_MAX_WORDS) {
-        loft_lazy_delete(s, rec);
+        loft_lazy_delete(cx, s, rec);
         return;
     }
-    loft_bits_remove(&s->claims, rec);
-    loft_free_exact(s, rec, words);
+    loft_bits_remove(cx, &s->claims, rec);
+    loft_free_exact(cx, s, rec, words);
 }
 
 /* ---- resize ---- */
@@ -1301,100 +1288,100 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
 /* `Store::grow_tail_for` (`@FR-H-TailGrow`): a record nothing claimed follows, outgrowing the
  * free room behind it, grows the store and then grows in place — it is never moved past its own
  * old block, which a buffer doubling at the tail would leave as a hole at every step. */
-static void loft_grow_tail_for(loft_store_t *s, uint32_t rec, uint32_t next, int32_t claim, int32_t req) {
+static void loft_grow_tail_for(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t next, int32_t claim, int32_t req) {
     int32_t room = 0;
     if (next < s->size) {
-        int32_t h = loft_st_i32(s, next, 0);
+        int32_t h = loft_st_i32(cx, s, next, 0);
         if (h >= 0 || next + (uint32_t) -h != s->size) return;
         room = -h;
     }
     if (claim + room >= req) return;
-    if (room > 0) loft_fl_remove(s, next);
+    if (room > 0) loft_fl_remove(cx, s, next);
     uint32_t end = rec + (uint32_t) req;
-    loft_resize_store(s, end);
-    loft_set_free_header(s, next, (int32_t) (s->size - next));
-    loft_fl_insert(s, next);
+    loft_resize_store(cx, s, end);
+    loft_set_free_header(cx, s, next, (int32_t) (s->size - next));
+    loft_fl_insert(cx, s, next);
     /* The move this replaces raised the claimed high-water mark at least this far. */
     if (end > s->claimed_end) s->claimed_end = end;
 }
 
-static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t size) {
+static uint32_t loft_st_resize_inner(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t size) {
     /* A record is at most INT32_MAX words (its header is a signed word count): a larger
      * request read as a negative one, and "already large enough". */
     if (size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     int32_t req = (int32_t) size;
-    int32_t claim = loft_st_i32(s, rec, 0);
+    int32_t claim = loft_st_i32(cx, s, rec, 0);
     if (claim >= req) return rec;
     uint32_t next = rec + (uint32_t) claim;
-    loft_grow_tail_for(s, rec, next, claim, req);
+    loft_grow_tail_for(cx, s, rec, next, claim, req);
     if (next < s->size) {
-        int32_t next_size = loft_st_i32(s, next, 0);
+        int32_t next_size = loft_st_i32(cx, s, next, 0);
         if (next_size < 0 && claim - next_size >= req) {
             /* Grown in place to EXACTLY `size`, the rest of the free block left free behind it
              * (`@FR-H-Exact`; a growing vector's spare room is in `size`, `@FR-Col-Capacity`). */
-            loft_fl_remove(s, next);
+            loft_fl_remove(cx, s, next);
             if (claim - next_size > req) {
                 uint32_t new_next = rec + (uint32_t) req;
                 uint32_t new_free = (uint32_t) -next_size + next - new_next;
-                loft_st_set_i32(s, rec, 0, req);
-                loft_set_free_header(s, new_next, (int32_t) new_free);
-                loft_fl_insert(s, new_next);
+                loft_st_set_i32(cx, s, rec, 0, req);
+                loft_set_free_header(cx, s, new_next, (int32_t) new_free);
+                loft_fl_insert(cx, s, new_next);
             } else {
-                loft_st_set_i32(s, rec, 0, claim - next_size);
+                loft_st_set_i32(cx, s, rec, 0, claim - next_size);
             }
 #ifdef LOFT_POISON_CLAIM
             /* The absorbed region promises nothing, as a claim's payload does not. */
-            loft_st_poison_range(s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(s, rec, 0) - claim) * 8);
+            loft_st_poison_range(cx, s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(cx, s, rec, 0) - claim) * 8);
 #endif
-            LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, rec, 0), rec);
+            LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(cx, s), rec, loft_st_i32(cx, s, rec, 0), rec);
             return rec;
         }
     }
-    uint32_t nw = loft_st_claim(s, size);
+    uint32_t nw = loft_st_claim(cx, s, size);
     memcpy(s->buf + (size_t) nw * 8 + 4, s->buf + (size_t) rec * 8 + 4, (size_t) claim * 8 - 4);
-    loft_st_delete(s, rec);
-    LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, nw, 0), nw);
+    loft_st_delete(cx, s, rec);
+    LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(cx, s), rec, loft_st_i32(cx, s, nw, 0), nw);
     return nw;
 }
 
 /* `Store::resize`: `rec` grown to `size` words, in place when the next block allows, else
  * moved (the new position answered). */
-static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
-    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
-    uint32_t nw = loft_st_resize_inner(s, rec, size);
+static uint32_t loft_st_resize(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t size) {
+    if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(cx, s, size);
+    uint32_t nw = loft_st_resize_inner(cx, s, rec, size);
     return nw;
 }
 
 /* ---- the store ---- */
 
 /* `Store::init`: one free block spanning the store, which is its wilderness. */
-static void loft_st_init(loft_store_t *s) {
-    loft_h_reshaped(s);
+static void loft_st_init(loft_cx *cx, loft_store_t *s) {
+    loft_h_reshaped(cx, s);
     uint32_t sig = LOFT_ST_SIGNATURE, one = 1;
     s->read_only = 0;
     memcpy(s->buf, &sig, 4);
     memcpy(s->buf + 4, &one, 4);
-    loft_set_free_header(s, LOFT_ST_PRIMARY, (int32_t) s->size - 1);
+    loft_set_free_header(cx, s, LOFT_ST_PRIMARY, (int32_t) s->size - 1);
     s->free_root = 0;
     s->wild = 0;
-    loft_bits_clear(&s->claims);
-    loft_bits_clear(&s->referenced);
-    loft_bits_clear(&s->removed);
+    loft_bits_clear(cx, &s->claims);
+    loft_bits_clear(cx, &s->referenced);
+    loft_bits_clear(cx, &s->removed);
     s->released_root = 0;
     s->lazy = LOFT_LAZY_START;
     s->dead_words = 0;
-    loft_bits_clear(&s->lazy_free);
-    loft_parked_clear(s);
+    loft_bits_clear(cx, &s->lazy_free);
+    loft_parked_clear(cx, s);
     s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
     /* The whole store is one free block ending at its end: the wilderness.  Without one
      * nothing tracks it, as `Store::init` leaves it. */
-    if (LOFT_WILDERNESS) loft_fl_insert(s, LOFT_ST_PRIMARY);
+    if (LOFT_WILDERNESS) loft_fl_insert(cx, s, LOFT_ST_PRIMARY);
 }
 
 /* `Store::note_placed_foreign` (`@FR-H-RootExtent`). */
-static void loft_st_note_placed(loft_store_t *s, uint32_t rec) {
+static void loft_st_note_placed(loft_cx *cx, loft_store_t *s, uint32_t rec) {
     if (s->nplaced == s->placed_cap) {
         s->placed_cap = s->placed_cap ? s->placed_cap * 2 : 4;
         s->placed = (uint32_t *) realloc(s->placed, (size_t) s->placed_cap * 4);
@@ -1404,21 +1391,21 @@ static void loft_st_note_placed(loft_store_t *s, uint32_t rec) {
 }
 
 #ifdef LOFT_FOREIGN
-static int loft_st_is_foreign(const loft_store_t *s) { return s->foreign.span.owner != 0; }
+static int loft_st_is_foreign(loft_cx *cx, const loft_store_t *s) { return s->foreign.span.owner != 0; }
 
 /* `Store::foreign_addr`: field `byte` of the foreign record — the header below 8, the foreign
  * bytes past it. */
-static uint8_t *loft_foreign_at(loft_store_t *s, uint32_t byte) {
+static uint8_t *loft_foreign_at(loft_cx *cx, loft_store_t *s, uint32_t byte) {
     if (byte < 8) return s->foreign.header + byte;
     return (uint8_t *) (uintptr_t) (s->foreign.span.base + (byte - 8));
 }
 
 /* `Store::foreign_span`: elements [lo, hi) of the foreign bytes, clamped, the owner shared; a
  * span with no owner when the store serves none. */
-static loft_fspan loft_st_foreign_span(loft_store_t *s, uint32_t lo, uint32_t hi) {
+static loft_fspan loft_st_foreign_span(loft_cx *cx, loft_store_t *s, uint32_t lo, uint32_t hi) {
     loft_fspan sp;
     memset(&sp, 0, sizeof sp);
-    if (!loft_st_is_foreign(s)) return sp;
+    if (!loft_st_is_foreign(cx, s)) return sp;
     const loft_fspan *f = &s->foreign.span;
     if (lo > f->len) lo = f->len;
     if (hi < lo) hi = lo;
@@ -1434,11 +1421,11 @@ static loft_fspan loft_st_foreign_span(loft_store_t *s, uint32_t lo, uint32_t hi
 /* `Store::make_foreign`: the slot at (rec, pos) names `LOFT_FOREIGN_REC`, the header presents
  * the span's elements, and the span (its owner reference taken) is the store's.  A record the
  * slot named before goes back to the free tree. */
-static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, loft_fspan span) {
-    if (loft_st_is_foreign(s) || s->read_only) { fputs("loft: make_foreign on a store that is already foreign or locked\n", stderr); abort(); }
-    uint32_t old = loft_st_u32(s, rec, pos);
-    if (old != 0) loft_st_delete(s, old);
-    loft_st_set_u32(s, rec, pos, LOFT_FOREIGN_REC);
+static void loft_st_make_foreign(loft_cx *cx, loft_store_t *s, uint32_t rec, uint32_t pos, loft_fspan span) {
+    if (loft_st_is_foreign(cx, s) || s->read_only) { fputs("loft: make_foreign on a store that is already foreign or locked\n", stderr); abort(); }
+    uint32_t old = loft_st_u32(cx, s, rec, pos);
+    if (old != 0) loft_st_delete(cx, s, old);
+    loft_st_set_u32(cx, s, rec, pos, LOFT_FOREIGN_REC);
     uint64_t bytes = (uint64_t) span.len * span.elem;
     uint64_t w = (bytes + 7) / 8 + 1;
     uint32_t words = w > UINT32_MAX ? UINT32_MAX : (uint32_t) w;
@@ -1452,12 +1439,12 @@ static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, lo
 
 /* `Store::release_foreign`: the store stops serving the bytes, its slot names the empty vector
  * again, and the owner goes with the last span over it. */
-static void loft_st_release_foreign(loft_store_t *s) {
-    if (!loft_st_is_foreign(s)) return;
+static void loft_st_release_foreign(loft_cx *cx, loft_store_t *s) {
+    if (!loft_st_is_foreign(cx, s)) return;
     loft_fowner *o = s->foreign.span.owner;
     s->foreign.span.owner = 0;
     s->read_only = 0;
-    loft_st_set_u32(s, s->foreign.slot_rec, s->foreign.slot_pos, 0);
+    loft_st_set_u32(cx, s, s->foreign.slot_rec, s->foreign.slot_pos, 0);
     if (--o->refs == 0) {
         if (o->release) o->release(o->bytes, o->n);
         free(o);
@@ -1466,13 +1453,13 @@ static void loft_st_release_foreign(loft_store_t *s) {
 #endif
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */
-LOFT_HOT_INLINE void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
-    if (rec >= LOFT_ST_PRIMARY && rec < s->size && !loft_bits_contains(&s->referenced, rec))
-        loft_bits_insert(&s->referenced, rec);
+LOFT_HOT_INLINE void loft_st_note_referenced(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    if (rec >= LOFT_ST_PRIMARY && rec < s->size && !loft_bits_contains(cx, &s->referenced, rec))
+        loft_bits_insert(cx, &s->referenced, rec);
 }
 
-LOFT_HOT_INLINE int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
-    return loft_bits_contains(&s->removed, rec);
+LOFT_HOT_INLINE int loft_st_is_removed(loft_cx *cx, const loft_store_t *s, uint32_t rec) {
+    return loft_bits_contains(cx, &s->removed, rec);
 }
 
 /* `StoreUsage`: a store's space, from a walk of its block chain. */
@@ -1485,7 +1472,7 @@ typedef struct {
 /* `Store::usage`: a negative header is a free block of `-size` words, a positive one a claimed
  * record; a run of free blocks holding a parked one is the one block its flush leaves
  * (`@FR-H-Park`), and a removed record's header word is held space, not a record. */
-static loft_usage loft_st_usage(const loft_store_t *s) {
+static loft_usage loft_st_usage(loft_cx *cx, const loft_store_t *s) {
     loft_usage u;
     memset(&u, 0, sizeof u);
     u.capacity_words = s->size;
@@ -1493,12 +1480,12 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
     uint32_t pos = LOFT_ST_PRIMARY, run_words = 0;
     int prev_was_free = 0, run_parked = 0;
     while (pos < s->size) {
-        int32_t claim = loft_st_i32(s, pos, 0);
+        int32_t claim = loft_st_i32(cx, s, pos, 0);
         if (claim == 0) break;
         uint32_t sz = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
         if (claim < 0) {
             u.free_words += sz;
-            int parked = s->parked_count != 0 && loft_bits_contains(&s->parked_set, pos);
+            int parked = s->parked_count != 0 && loft_bits_contains(cx, &s->parked_set, pos);
             if (prev_was_free && (run_parked || parked)) {
                 run_words += sz;
                 run_parked = 1;
@@ -1512,7 +1499,7 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
             prev_was_free = 1;
         } else {
             u.claimed_words += sz;
-            u.claimed_count += !loft_st_is_removed(s, pos);
+            u.claimed_count += !loft_st_is_removed(cx, s, pos);
             prev_was_free = 0;
         }
         pos += sz;
@@ -1526,10 +1513,10 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
  * nor the floor — two words, or `LOFT_MIN_BOUND_WORDS` for a store bound to a file, whose file
  * is cut with it — and the free space left above it re-tiled as one block ending the store, the
  * free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
-static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
+static int loft_st_shrink_to(loft_cx *cx, loft_store_t *s, uint32_t words) {
     if (s->read_only) return 0;
-    loft_flush_parked(s);
-    loft_usage u = loft_st_usage(s);
+    loft_flush_parked(cx, s);
+    loft_usage u = loft_st_usage(cx, s);
     if (!u.walk_complete) return 0;
     uint32_t mark = u.live_end_words;
     if (words < mark) return 0;
@@ -1537,74 +1524,74 @@ static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (words < floor) words = floor;
     if (words >= s->size) return 0;
     if (s->mapped) {
-        if (!loft_map_resize_hook(s, words)) return 0;
+        if (!loft_map_resize_hook(cx, s, words)) return 0;
     } else {
-        loft_heap_moved(s, s->size, words);
+        loft_heap_moved(cx, s, s->size, words);
         uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
         s->buf = b;
         s->size = words;
     }
     uint32_t tail = mark > LOFT_ST_PRIMARY ? mark : LOFT_ST_PRIMARY;
-    if (tail < s->size) loft_set_free_header(s, tail, (int32_t) (s->size - tail));
-    loft_fl_rebuild(s);
+    if (tail < s->size) loft_set_free_header(cx, s, tail, (int32_t) (s->size - tail));
+    loft_fl_rebuild(cx, s);
     return 1;
 }
 
 /* `Store::reclaim_tail`: parked blocks flushed and the free blocks merged, lazy frees off for
  * good, and the tail given back down to the live end plus an eighth of slack (`slack_target`);
  * the words it shrank by. */
-static uint32_t loft_st_reclaim_tail(loft_store_t *s) {
-    loft_flush_parked(s);
-    if (s->needs_coalesce) loft_coalesce_free(s);
+static uint32_t loft_st_reclaim_tail(loft_cx *cx, loft_store_t *s) {
+    loft_flush_parked(cx, s);
+    if (s->needs_coalesce) loft_coalesce_free(cx, s);
     s->lazy = 0;
     s->dead_words = 0;
-    loft_bits_clear(&s->lazy_free);
+    loft_bits_clear(cx, &s->lazy_free);
     uint32_t before = s->size;
-    uint32_t mark = loft_st_usage(s).live_end_words;
+    uint32_t mark = loft_st_usage(cx, s).live_end_words;
     uint32_t target = mark + mark / 8 < mark ? UINT32_MAX : mark + mark / 8;
-    return loft_st_shrink_to(s, target) ? before - s->size : 0;
+    return loft_st_shrink_to(cx, s, target) ? before - s->size : 0;
 }
 
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks
  * that cover it (an image's tombstones are placed this way). */
-static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {
+static uint32_t loft_st_claim_at(loft_cx *cx, loft_store_t *s, uint32_t pos, uint32_t size) {
     if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
     uint32_t base = LOFT_ST_PRIMARY;
     for (;;) {
-        int32_t h = loft_st_i32(s, base, 0);
+        int32_t h = loft_st_i32(cx, s, base, 0);
         uint32_t bsz = (uint32_t) (h < 0 ? -h : h);
         if (base >= s->size || bsz == 0) { fputs("loft: claim_at past the store's end\n", stderr); abort(); }
         if (pos < base + bsz) break;
         base += bsz;
     }
-    int32_t header = loft_st_i32(s, base, 0);
+    int32_t header = loft_st_i32(cx, s, base, 0);
     if (header >= 0) { fputs("loft: claim_at on a claimed block\n", stderr); abort(); }
-    loft_fl_remove(s, base);
+    loft_fl_remove(cx, s, base);
     uint32_t bend = base + (uint32_t) -header;
     while (bend < pos + size) {
-        int32_t nx = bend < s->size ? loft_st_i32(s, bend, 0) : 0;
+        int32_t nx = bend < s->size ? loft_st_i32(cx, s, bend, 0) : 0;
         if (nx >= 0) { fputs("loft: claim_at runs into a claimed block\n", stderr); abort(); }
-        loft_fl_remove(s, bend);
+        loft_fl_remove(cx, s, bend);
         bend += (uint32_t) -nx;
     }
     if (base < pos) {
-        loft_set_free_header(s, base, (int32_t) (pos - base));
-        loft_fl_insert(s, base);
+        loft_set_free_header(cx, s, base, (int32_t) (pos - base));
+        loft_fl_insert(cx, s, base);
     }
-    loft_st_set_i32(s, pos, 0, (int32_t) size);
-    loft_bits_insert(&s->claims, pos);
+    loft_st_set_i32(cx, s, pos, 0, (int32_t) size);
+    loft_bits_insert(cx, &s->claims, pos);
     uint32_t tail = pos + size;
     if (tail < bend) {
-        loft_set_free_header(s, tail, (int32_t) (bend - tail));
-        loft_fl_insert(s, tail);
+        loft_set_free_header(cx, s, tail, (int32_t) (bend - tail));
+        loft_fl_insert(cx, s, tail);
     }
     return pos;
 }
 
 /* `Store::kept_positions`: the referenced and removed positions, ascending, in a fresh array
  * (*n of them; 0 and no array when there are none). */
-static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
+static uint32_t *loft_st_kept_positions(loft_cx *cx, const loft_store_t *s, uint32_t *n) {
     *n = LOFT_TOMBSTONES ? s->referenced.live + s->removed.live : 0;
     if (*n == 0) return 0;
     uint32_t *out = (uint32_t *) malloc(*n * sizeof *out), k = 0;
@@ -1612,7 +1599,7 @@ static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
     uint32_t words = s->referenced.nwords > s->removed.nwords ? s->referenced.nwords : s->removed.nwords;
     for (uint32_t w = 0; w < words; w++) {
         uint64_t bits = (w < s->referenced.nwords ? s->referenced.bits[w] : 0) | (w < s->removed.nwords ? s->removed.bits[w] : 0);
-        for (uint32_t b = 0; b < 64; b++) if (loft_bit64_test(bits, b)) out[k++] = w * 64 + b;
+        for (uint32_t b = 0; b < 64; b++) if (loft_bit64_test(cx, bits, b)) out[k++] = w * 64 + b;
     }
     *n = k;
     return out;
@@ -1620,39 +1607,39 @@ static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
 
 /* `Store::entomb_kept`: after a reset, each kept position past the root becomes a tombstone
  * again, so a stored reference to it still reads null (`@FR-H-Removed`). */
-static void loft_st_entomb_kept(loft_store_t *s, const uint32_t *kept, uint32_t n) {
+static void loft_st_entomb_kept(loft_cx *cx, loft_store_t *s, const uint32_t *kept, uint32_t n) {
     uint32_t root_end = LOFT_ST_PRIMARY;
-    if (loft_bits_contains(&s->claims, LOFT_ST_PRIMARY)) {
-        int32_t h = loft_st_i32(s, LOFT_ST_PRIMARY, 0);
+    if (loft_bits_contains(cx, &s->claims, LOFT_ST_PRIMARY)) {
+        int32_t h = loft_st_i32(cx, s, LOFT_ST_PRIMARY, 0);
         root_end = LOFT_ST_PRIMARY + (uint32_t) (h < 0 ? -h : h);
     }
     for (uint32_t i = 0; i < n; i++) {
         uint32_t pos = kept[i];
         if (pos < root_end || pos >= s->size) continue;
-        loft_st_claim_at(s, pos, 1);
-        loft_bits_remove(&s->claims, pos);
-        loft_bits_insert(&s->removed, pos);
-        loft_st_set_i32(s, pos, 4, 0);
+        loft_st_claim_at(cx, s, pos, 1);
+        loft_bits_remove(cx, &s->claims, pos);
+        loft_bits_insert(cx, &s->removed, pos);
+        loft_st_set_i32(cx, s, pos, 4, 0);
     }
 }
 
 /* `Store::holds_only_root`. */
-static int loft_st_holds_only_root(const loft_store_t *s) {
-    return s->claims.live == 1 && loft_bits_contains(&s->claims, LOFT_ST_PRIMARY);
+static int loft_st_holds_only_root(loft_cx *cx, const loft_store_t *s) {
+    return s->claims.live == 1 && loft_bits_contains(cx, &s->claims, LOFT_ST_PRIMARY);
 }
 
 /* `Store::claims_rebuild` with `fl_rebuild` before it (`resync_allocator`): the allocator's
  * state read back off the store's own words, as for an image adopted whole. */
-static void loft_st_resync(loft_store_t *s) {
-    loft_h_reshaped(s);
-    loft_fl_rebuild(s);
-    loft_bits_clear(&s->claims);
+static void loft_st_resync(loft_cx *cx, loft_store_t *s) {
+    loft_h_reshaped(cx, s);
+    loft_fl_rebuild(cx, s);
+    loft_bits_clear(cx, &s->claims);
     uint32_t pos = LOFT_ST_PRIMARY;
     while (pos < s->size) {
-        int32_t h = loft_st_i32(s, pos, 0);
+        int32_t h = loft_st_i32(cx, s, pos, 0);
         uint32_t bs = (uint32_t) (h < 0 ? -h : h);
         if (bs == 0) break;
-        if (h > 0 && !loft_bits_contains(&s->removed, pos)) loft_bits_insert(&s->claims, pos);
+        if (h > 0 && !loft_bits_contains(cx, &s->removed, pos)) loft_bits_insert(cx, &s->claims, pos);
         pos += bs;
     }
 }

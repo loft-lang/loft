@@ -10857,6 +10857,7 @@ impl Parser {
         // @PLN130 — parser-emitted materialisation: `return f.field` must publish an OWNED
         // record, not a view into a frame-local. See `ParserMaterialise`.
         crate::copy_manifest::record(
+            &self.data,
             self.context,
             w,
             kt,

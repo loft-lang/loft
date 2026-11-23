@@ -529,6 +529,7 @@ impl State {
     /// AT the offending free, naming the victim and the future read it would
     /// corrupt.  (Same-frame victims only warn: their "future read" may sit on
     /// a branch this activation never reaches.)
+    #[expect(clippy::too_many_lines, reason = "one scan with its report")]
     pub fn uaf_scan_freed(&mut self, data: &Data) {
         let freed = std::mem::take(&mut self.database.uaf_freed_this_op);
         // cluster-462 tool-gap #1: stamp each freed slot with the pc that freed
@@ -536,7 +537,13 @@ impl State {
         // premature-free op (the operand-stack stale ref the frame scan misses).
         let free_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
         for &slot in &freed {
-            crate::keys::uaf_record_free(slot, self.code_pos, free_d_nr, u16::MAX);
+            crate::keys::uaf_record_free(
+                &mut self.database.checks,
+                slot,
+                self.code_pos,
+                free_d_nr,
+                u16::MAX,
+            );
         }
         // Opcode bytes for the load + free families.  All are < 255 (single
         // byte); bail quietly if that ever changes rather than misdecode.

@@ -22,7 +22,6 @@
 //! bargain rustc makes with `.clone()`.
 
 use crate::use_analysis::verdicts_for;
-use std::cell::RefCell;
 
 /// Which emitter wrote the copy — named so an uncovered site points straight at the code
 /// that produced it rather than at a line number alone.
@@ -105,12 +104,6 @@ pub struct CopySite {
     pub origin: Origin,
 }
 
-thread_local! {
-    /// Emitted-copy sites for the current compilation. A `Vec` (not a set): two emitters
-    /// legitimately write two copies for one binding, and collapsing them would hide one.
-    static SITES: RefCell<Vec<CopySite>> = const { RefCell::new(Vec::new()) };
-}
-
 /// One view the scope pass copied out of its container: the row its sentence is built from —
 /// `(binding, container, function)`, deduped on all three — and the statement that disturbed
 /// the container, which is where the advice points.
@@ -120,7 +113,14 @@ struct ViewNote {
     line: u32,
 }
 
-thread_local! {
+/// `@PLN226` — the copy manifest of ONE compilation, kept in its `Data` (`Data::copies`) rather
+/// than in thread-locals that outlived it: the copies emitted, the views copied or written back,
+/// the binds the parser erased or the elision deleted, the census's move verdicts.
+#[derive(Default)]
+pub(crate) struct Manifest {
+    /// Emitted-copy sites for the current compilation. A `Vec` (not a set): two emitters
+    /// legitimately write two copies for one binding, and collapsing them would hide one.
+    sites: Vec<CopySite>,
     /// @PLN130 F2/F4/F8 — bindings whose alias was taken away because the container they view
     /// changed under them. Recorded by `scopes`, handed to the author's diagnostics by
     /// [`drain_materialised_views`].
@@ -128,19 +128,40 @@ thread_local! {
     /// The function name is part of the key, not decoration. Entries dedupe on it, and without
     /// it `c` copied out of `bx` reported ONCE for a whole program — every other site with the
     /// same two names went silent, which is the one thing this diagnostic may not do.
-    static MATERIALISED: RefCell<Vec<ViewNote>> = const { RefCell::new(Vec::new()) };
+    materialised: Vec<ViewNote>,
+    /// Recorded by the scope pass's view walk (`ViewWalk::track_write_backs`), handed to the
+    /// author's diagnostics by [`drain_materialised_views`].
+    written_back: Vec<WriteBackNote>,
+    /// `x = x` statements the parser erased (#330), by function, variable and line: no IR is left
+    /// for the census to find, and the copy-lease rules judge the line all the same (@PLN163).
+    self_binds: std::collections::BTreeSet<(u32, u16, u32)>,
+    /// Whole-value binds `var = src` that the borrow elision deleted before the census ran
+    /// (`scopes::elide_borrows`), by function: `(function, destination, source)`.  The elision is
+    /// `(H-Elide)`'s optimisation, and `(H-Copy-Refuse)` reads a copy off the line that WRITES it —
+    /// so a copy the compiler later decides it can skip is judged all the same.
+    elided_copies: std::collections::BTreeSet<(u32, u16, u16)>,
+    /// @PLN163 P2b — the copies the copy census gave an `(H-Move)` verdict, by
+    /// `(function, destination variable)`.  Filled before code generation and never drained by
+    /// [`report`], so the interpreter's and the native generator's manifests are both checked
+    /// against it.
+    lease_sites: std::collections::HashSet<(u32, u16)>,
+    /// The functions whose RESULT the census judged: a `return` verdict, or a copy into one of
+    /// their return buffers.  A caller's copy of such a function's result is judged there.
+    lease_returns: std::collections::HashSet<u32>,
 }
 
 /// Record one materialised view at `file:line`, deduped on its row.
-fn note(row: (String, String, String), file: &str, line: u32) {
-    MATERIALISED.with(|m| {
-        let mut m = m.borrow_mut();
-        if !m.iter().any(|n| n.row == row) {
-            m.push(ViewNote {
-                row,
-                file: file.to_string(),
-                line,
-            });
+fn note(data: &crate::data::Data, row: (String, String, String), file: &str, line: u32) {
+    data.copies.with(|copies| {
+        let m = &mut copies.materialised;
+        {
+            if !m.iter().any(|n| n.row == row) {
+                m.push(ViewNote {
+                    row,
+                    file: file.to_string(),
+                    line,
+                });
+            }
         }
     });
 }
@@ -151,6 +172,7 @@ fn note(row: (String, String, String), file: &str, line: u32) {
 /// a write through `var` no longer reaches the container. Reported unconditionally: a silent
 /// copy is the one thing the model does not allow.
 pub fn note_materialised_view(
+    data: &crate::data::Data,
     var: &str,
     container: &str,
     function: &str,
@@ -158,6 +180,7 @@ pub fn note_materialised_view(
     at: (&str, u32),
 ) {
     note(
+        data,
         (
             with_via(var, via),
             container.to_string(),
@@ -195,8 +218,16 @@ fn peel_via(var: &str) -> (&str, String) {
 /// Separate message from [`note_materialised_view`]: the cause is different (a key write, not
 /// a removal) and so is the way out — re-insert with `coll[key] = value` rather than
 /// restructure the loop.
-pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str, at: (&str, u32)) {
+pub fn note_rekeyed_view(
+    data: &crate::data::Data,
+    var: &str,
+    coll: &str,
+    field: &str,
+    function: &str,
+    at: (&str, u32),
+) {
     note(
+        data,
         (
             format!("{var}\u{0}rekey\u{0}{field}"),
             coll.to_string(),
@@ -221,6 +252,7 @@ pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str, at:
 /// in two: a removal renumbers the elements after the one removed, a growth can move all of
 /// them at once, and a reader sent looking for the wrong statement pays for the difference.
 pub fn note_grown_view(
+    data: &crate::data::Data,
     var: &str,
     container: &str,
     function: &str,
@@ -228,6 +260,7 @@ pub fn note_grown_view(
     at: (&str, u32),
 ) {
     note(
+        data,
         (
             format!("{}\u{0}grow", with_via(var, via)),
             container.to_string(),
@@ -240,6 +273,7 @@ pub fn note_grown_view(
 
 /// `@FR-B-OutOfLine` — `var` views a child of `owner` that a write of a possible null releases.
 pub fn note_released_view(
+    data: &crate::data::Data,
     var: &str,
     owner: &str,
     function: &str,
@@ -247,6 +281,7 @@ pub fn note_released_view(
     at: (&str, u32),
 ) {
     note(
+        data,
         (
             format!("{}\u{0}release", with_via(var, via)),
             owner.to_string(),
@@ -258,6 +293,7 @@ pub fn note_released_view(
 }
 
 pub fn note_overwritten_view(
+    data: &crate::data::Data,
     var: &str,
     owner: &str,
     function: &str,
@@ -265,6 +301,7 @@ pub fn note_overwritten_view(
     at: (&str, u32),
 ) {
     note(
+        data,
         (
             format!("{}\u{0}overwrite", with_via(var, via)),
             owner.to_string(),
@@ -276,6 +313,7 @@ pub fn note_overwritten_view(
 }
 
 pub fn note_reassigned_view(
+    data: &crate::data::Data,
     var: &str,
     owner: &str,
     function: &str,
@@ -283,6 +321,7 @@ pub fn note_reassigned_view(
     at: (&str, u32),
 ) {
     note(
+        data,
         (
             format!("{}\u{0}reassign", with_via(var, via)),
             owner.to_string(),
@@ -306,16 +345,11 @@ struct WriteBackNote {
     line: u32,
 }
 
-thread_local! {
-    /// Recorded by the scope pass's view walk (`ViewWalk::track_write_backs`), handed to the
-    /// author's diagnostics by [`drain_materialised_views`].
-    static WRITTEN_BACK: RefCell<Vec<WriteBackNote>> = const { RefCell::new(Vec::new()) };
-}
-
 /// Note that `var`, a view of a place inside `container`, is written back into that place at
 /// `at` after line `written_at` wrote it: the write-back copies the place onto itself
 /// (`@FR-B-View` — a view re-reads its place; `@FR-B-Disturb` — an overwrite does not end it).
 pub fn note_written_back_view(
+    data: &crate::data::Data,
     var: &str,
     container: &str,
     function: &str,
@@ -324,17 +358,19 @@ pub fn note_written_back_view(
     at: (&str, u32),
 ) {
     let row = (var.to_string(), container.to_string(), function.to_string());
-    WRITTEN_BACK.with(|m| {
-        let mut m = m.borrow_mut();
-        if !m.iter().any(|n| n.row == row && n.line == at.1) {
-            m.push(WriteBackNote {
-                row,
-                type_name: view_type.0.to_string(),
-                is_enum: view_type.1,
-                written_at,
-                file: at.0.to_string(),
-                line: at.1,
-            });
+    data.copies.with(|copies| {
+        let m = &mut copies.written_back;
+        {
+            if !m.iter().any(|n| n.row == row && n.line == at.1) {
+                m.push(WriteBackNote {
+                    row,
+                    type_name: view_type.0.to_string(),
+                    is_enum: view_type.1,
+                    written_at,
+                    file: at.0.to_string(),
+                    line: at.1,
+                });
+            }
         }
     });
 }
@@ -347,8 +383,14 @@ pub fn note_written_back_view(
 /// author's to read, not its consumer's (loft#2364).  Not a gate — constraint 2 of @PLN130:
 /// where rustc errors on a use-after-move, loft copies and says so.  The copy keeps the
 /// program correct; this is what keeps it honest.
-pub fn drain_materialised_views(diags: &mut crate::diagnostics::Diagnostics) {
-    let rows = MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
+pub fn drain_materialised_views(
+    data: &crate::data::Data,
+    diags: &mut crate::diagnostics::Diagnostics,
+) {
+    let rows = data.copies.with(|copies| {
+        let m = &mut copies.materialised;
+        std::mem::take(&mut *m)
+    });
     drain_view_notes(rows, diags);
 }
 
@@ -358,8 +400,14 @@ pub fn drain_materialised_views(diags: &mut crate::diagnostics::Diagnostics) {
 /// Called on the program path and the test path alike: a library's CI is a test run, and this
 /// gates — ignoring it leaves the place holding the value the author meant to undo, and
 /// nothing says so (DIAGNOSTICS.md § Diagnostic tiers).
-pub fn drain_written_back_views(diags: &mut crate::diagnostics::Diagnostics) {
-    let backs = WRITTEN_BACK.with(|m| std::mem::take(&mut *m.borrow_mut()));
+pub fn drain_written_back_views(
+    data: &crate::data::Data,
+    diags: &mut crate::diagnostics::Diagnostics,
+) {
+    let backs = data.copies.with(|copies| {
+        let m = &mut copies.written_back;
+        std::mem::take(&mut *m)
+    });
     for WriteBackNote {
         row,
         type_name,
@@ -448,9 +496,15 @@ fn drain_view_notes(rows: Vec<ViewNote>, diags: &mut crate::diagnostics::Diagnos
 
 /// Forget the noted views unreported — a warm load replays the cold run's diagnostics, these
 /// among them, so a scope pass that noted them again would say each twice.
-pub fn clear_materialised_views() {
-    MATERIALISED.with(|m| m.borrow_mut().clear());
-    WRITTEN_BACK.with(|m| m.borrow_mut().clear());
+pub fn clear_materialised_views(data: &crate::data::Data) {
+    data.copies.with(|copies| {
+        let m = &mut copies.materialised;
+        m.clear()
+    });
+    data.copies.with(|copies| {
+        let m = &mut copies.written_back;
+        m.clear()
+    });
 }
 
 /// The sentence a row earns, by the cause its first field's suffix names.
@@ -513,36 +567,51 @@ fn view_sentence(row: &(String, String, String)) -> String {
 /// Call this from the branch that actually WRITES the copy — never from the function that
 /// decides whether to. `gen_set_first_ref_var_copy` returns early on a last-use move, and a
 /// site recorded before that branch would claim a copy that never existed.
-pub fn record(def_nr: u32, var: u16, type_nr: u16, origin: Origin) {
+pub fn record(data: &crate::data::Data, def_nr: u32, var: u16, type_nr: u16, origin: Origin) {
     // Gated at the RECORD, not just the report: with the guard off this is one cached bool
     // per emitted copy and nothing is accumulated, so compiling a large program does not
     // build a manifest nobody reads. (One cached env read — `OnceLock`.)
     if !crate::keys::copy_manifest_enabled() {
         return;
     }
-    SITES.with(|s| {
-        s.borrow_mut().push(CopySite {
-            def_nr,
-            var,
-            type_nr,
-            origin,
-        });
+    data.copies.with(|copies| {
+        let s = &mut copies.sites;
+        {
+            s.push(CopySite {
+                def_nr,
+                var,
+                type_nr,
+                origin,
+            });
+        }
     });
 }
 
 /// Every copy emitted so far this compilation.
 #[must_use]
-pub fn sites() -> Vec<CopySite> {
-    SITES.with(|s| s.borrow().clone())
+pub fn sites(data: &crate::data::Data) -> Vec<CopySite> {
+    data.copies.with(|copies| {
+        let s = &mut copies.sites;
+        s.clone()
+    })
 }
 
 /// Drop the emitted-copy manifest — between the two generators of one compilation
 /// ([`report`] calls it after each), so a generator is judged on the copies IT minted.  The
 /// census's verdicts stay: the second generator's copies are judged against them.
-pub fn clear() {
-    SITES.with(|s| s.borrow_mut().clear());
-    SELF_BINDS.with(|s| s.borrow_mut().clear());
-    ELIDED_COPIES.with(|s| s.borrow_mut().clear());
+pub fn clear(data: &crate::data::Data) {
+    data.copies.with(|copies| {
+        let s = &mut copies.sites;
+        s.clear()
+    });
+    data.copies.with(|copies| {
+        let s = &mut copies.self_binds;
+        s.clear()
+    });
+    data.copies.with(|copies| {
+        let s = &mut copies.elided_copies;
+        s.clear()
+    });
 }
 
 /// Forget EVERYTHING this module holds: a new compilation is about a new program.  Called by
@@ -556,10 +625,13 @@ pub fn clear() {
 /// every program a process compiled: a program was refused for a copy another program wrote
 /// (`lease_refuse::a_compilation_is_judged_on_its_own_lease_records`) — the same defect as
 /// `non_sentinel`'s uncleared memo (2026-09-25).
-pub fn begin_compilation() {
-    clear();
-    MATERIALISED.with(|s| s.borrow_mut().clear());
-    clear_lease();
+pub fn begin_compilation(data: &crate::data::Data) {
+    clear(data);
+    data.copies.with(|copies| {
+        let s = &mut copies.materialised;
+        s.clear()
+    });
+    clear_lease(data);
 }
 
 /// Whether the copy-lease rules read the erased and elided records below: the census reports
@@ -569,87 +641,80 @@ fn lease_records_wanted() -> bool {
     crate::keys::drop_copy_census_enabled() || crate::keys::lease_refuse_enabled()
 }
 
-thread_local! {
-    /// `x = x` statements the parser erased (#330), by function, variable and line: no IR is left
-    /// for the census to find, and the copy-lease rules judge the line all the same (@PLN163).
-    static SELF_BINDS: RefCell<std::collections::BTreeSet<(u32, u16, u32)>> =
-        const { RefCell::new(std::collections::BTreeSet::new()) };
-}
-
 /// Record that the parser erased `var = var` at `line` in `def_nr`.
-pub fn note_self_bind(def_nr: u32, var: u16, line: u32) {
+pub fn note_self_bind(data: &crate::data::Data, def_nr: u32, var: u16, line: u32) {
     if lease_records_wanted() {
-        SELF_BINDS.with(|s| s.borrow_mut().insert((def_nr, var, line)));
+        data.copies.with(|copies| {
+            let s = &mut copies.self_binds;
+            s.insert((def_nr, var, line))
+        });
     }
 }
 
 /// The erased `x = x` statements of `def_nr`, as `(var, line)`.
 #[must_use]
-pub fn self_binds(def_nr: u32) -> Vec<(u16, u32)> {
-    SELF_BINDS.with(|s| {
-        s.borrow()
-            .iter()
-            .filter(|(d, _, _)| *d == def_nr)
-            .map(|&(_, v, l)| (v, l))
-            .collect()
+pub fn self_binds(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u32)> {
+    data.copies.with(|copies| {
+        let s = &mut copies.self_binds;
+        {
+            s.iter()
+                .filter(|(d, _, _)| *d == def_nr)
+                .map(|&(_, v, l)| (v, l))
+                .collect()
+        }
     })
 }
 
-thread_local! {
-    /// Whole-value binds `var = src` that the borrow elision deleted before the census ran
-    /// (`scopes::elide_borrows`), by function: `(function, destination, source)`.  The elision is
-    /// `(H-Elide)`'s optimisation, and `(H-Copy-Refuse)` reads a copy off the line that WRITES it —
-    /// so a copy the compiler later decides it can skip is judged all the same.
-    static ELIDED_COPIES: RefCell<std::collections::BTreeSet<(u32, u16, u16)>> =
-        const { RefCell::new(std::collections::BTreeSet::new()) };
-}
-
 /// Record that the borrow elision deleted the copy `var = src` in `def_nr`.
-pub fn note_elided_copy(def_nr: u32, var: u16, src: u16) {
+pub fn note_elided_copy(data: &crate::data::Data, def_nr: u32, var: u16, src: u16) {
     if lease_records_wanted() {
-        ELIDED_COPIES.with(|s| s.borrow_mut().insert((def_nr, var, src)));
+        data.copies.with(|copies| {
+            let s = &mut copies.elided_copies;
+            s.insert((def_nr, var, src))
+        });
     }
 }
 
 /// The elided whole-value copies of `def_nr`, as `(destination, source)`.
 #[must_use]
-pub fn elided_copies(def_nr: u32) -> Vec<(u16, u16)> {
-    ELIDED_COPIES.with(|s| {
-        s.borrow()
-            .iter()
-            .filter(|(d, _, _)| *d == def_nr)
-            .map(|&(_, v, src)| (v, src))
-            .collect()
+pub fn elided_copies(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u16)> {
+    data.copies.with(|copies| {
+        let s = &mut copies.elided_copies;
+        {
+            s.iter()
+                .filter(|(d, _, _)| *d == def_nr)
+                .map(|&(_, v, src)| (v, src))
+                .collect()
+        }
     })
 }
 
-thread_local! {
-    /// @PLN163 P2b — the copies the copy census gave an `(H-Move)` verdict, by
-    /// `(function, destination variable)`.  Filled before code generation and never drained by
-    /// [`report`], so the interpreter's and the native generator's manifests are both checked
-    /// against it.
-    static LEASE_SITES: RefCell<std::collections::HashSet<(u32, u16)>> =
-        RefCell::new(std::collections::HashSet::new());
-    /// The functions whose RESULT the census judged: a `return` verdict, or a copy into one of
-    /// their return buffers.  A caller's copy of such a function's result is judged there.
-    static LEASE_RETURNS: RefCell<std::collections::HashSet<u32>> =
-        RefCell::new(std::collections::HashSet::new());
-}
-
 /// Note that the census gave the copy into `var` in function `def_nr` a lease verdict.
-pub fn note_lease_site(def_nr: u32, var: u16) {
-    LEASE_SITES.with(|s| s.borrow_mut().insert((def_nr, var)));
+pub fn note_lease_site(data: &crate::data::Data, def_nr: u32, var: u16) {
+    data.copies.with(|copies| {
+        let s = &mut copies.lease_sites;
+        s.insert((def_nr, var))
+    });
 }
 
 /// Note that the census judged what function `def_nr` returns.
-pub fn note_lease_return(def_nr: u32) {
-    LEASE_RETURNS.with(|s| s.borrow_mut().insert(def_nr));
+pub fn note_lease_return(data: &crate::data::Data, def_nr: u32) {
+    data.copies.with(|copies| {
+        let s = &mut copies.lease_returns;
+        s.insert(def_nr)
+    });
 }
 
 /// Forget the census's verdicts (before a new census, between compilations in one process).
-pub fn clear_lease() {
-    LEASE_SITES.with(|s| s.borrow_mut().clear());
-    LEASE_RETURNS.with(|s| s.borrow_mut().clear());
+pub fn clear_lease(data: &crate::data::Data) {
+    data.copies.with(|copies| {
+        let s = &mut copies.lease_sites;
+        s.clear()
+    });
+    data.copies.with(|copies| {
+        let s = &mut copies.lease_returns;
+        s.clear()
+    });
 }
 
 /// The emitted copies of a droppable that the copy census gave no lease verdict — the
@@ -668,7 +733,7 @@ pub fn clear_lease() {
 pub fn lease_uncovered(data: &crate::data::Data) -> (usize, Vec<CopySite>) {
     let mut total = 0;
     let mut out = Vec::new();
-    for site in sites() {
+    for site in sites(data) {
         if !type_releases(data, site.type_nr) {
             continue;
         }
@@ -681,9 +746,15 @@ pub fn lease_uncovered(data: &crate::data::Data) -> (usize, Vec<CopySite>) {
             continue;
         }
         total += 1;
-        let judged = LEASE_SITES.with(|s| s.borrow().contains(&(site.def_nr, site.var)))
-            || called_function(data, site.def_nr, site.var)
-                .is_some_and(|callee| LEASE_RETURNS.with(|r| r.borrow().contains(&callee)));
+        let judged = data.copies.with(|copies| {
+            let s = &mut copies.lease_sites;
+            s.contains(&(site.def_nr, site.var))
+        }) || called_function(data, site.def_nr, site.var).is_some_and(|callee| {
+            data.copies.with(|copies| {
+                let r = &mut copies.lease_returns;
+                r.contains(&callee)
+            })
+        });
         if !judged {
             out.push(site);
         }
@@ -735,7 +806,7 @@ fn called_function(data: &crate::data::Data, def_nr: u32, var: u16) -> Option<u3
 #[must_use]
 pub fn uncovered(data: &crate::data::Data) -> Vec<CopySite> {
     let mut out = Vec::new();
-    for site in sites() {
+    for site in sites(data) {
         let classified = verdicts_for(data, site.def_nr)
             .into_iter()
             .any(|r| r.var_nr == site.var);
@@ -757,7 +828,7 @@ pub fn uncovered(data: &crate::data::Data) -> Vec<CopySite> {
 /// happen in one process.
 pub fn report(data: &crate::data::Data) -> usize {
     if !crate::keys::copy_manifest_enabled() {
-        clear();
+        clear(data);
         return 0;
     }
     let bad = uncovered(data);
@@ -779,7 +850,7 @@ pub fn report(data: &crate::data::Data) -> usize {
             );
         }
     }
-    clear();
+    clear(data);
     if bad.is_empty() {
         return 0;
     }

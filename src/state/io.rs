@@ -790,7 +790,7 @@ impl State {
         }
         // @PLN199 D1 — a compiled library's generator lives in the host's native table.
         if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            super::release_native_text_yield(db);
+            self.release_native_text_yield(db);
             crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
             return;
         }
@@ -1749,14 +1749,14 @@ impl State {
         // source-record pops below are exactly where a stale `Vec3` sub-field surfaces.
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let raw_tp = self.code::<u16>();
         let to = self.get_stack::<DbRef>();
         let data = self.get_stack::<DbRef>();
         self.do_copy_record(data, to, raw_tp);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 
@@ -1860,11 +1860,12 @@ impl State {
             && (data.store_nr as usize) < self.database.allocations.len()
             && !self.database.allocations[data.store_nr as usize].live
         {
-            thread_local! {
-                static REPORTED: std::cell::RefCell<std::collections::HashSet<u16>> =
-                    std::cell::RefCell::new(std::collections::HashSet::new());
-            }
-            let first = REPORTED.with(|s| s.borrow_mut().insert(data.store_nr));
+            let first = self.database.run.first_report(
+                crate::database::RunReport::LeakNamed,
+                data.store_nr,
+                0,
+                0,
+            );
             if first {
                 let line_of = |ln: &std::collections::BTreeMap<u32, u32>, pc: u32| -> u32 {
                     ln.range(..=pc).next_back().map_or(0, |(_, &v)| v)
@@ -1872,7 +1873,7 @@ impl State {
                 let copy_line = line_of(&self.line_numbers, self.code_pos);
                 let copy_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                 let (free_pc, free_line, free_d_nr, free_op) =
-                    crate::keys::uaf_freed_pc(data.store_nr)
+                    crate::keys::uaf_freed_pc(&self.database.checks, data.store_nr)
                         .map_or((0, 0, u32::MAX, u16::MAX), |(pc, d, op)| {
                             (pc, line_of(&self.line_numbers, pc), d, op)
                         });
@@ -1900,11 +1901,12 @@ impl State {
             self.database
                 .validate_claims(&data, tp, "uaf-reuse-src", &mut problems);
             if problems > 0 {
-                thread_local! {
-                    static REPORTED_REUSE: std::cell::RefCell<std::collections::HashSet<u16>> =
-                        std::cell::RefCell::new(std::collections::HashSet::new());
-                }
-                let first = REPORTED_REUSE.with(|s| s.borrow_mut().insert(data.store_nr));
+                let first = self.database.run.first_report(
+                    crate::database::RunReport::ReuseNamed,
+                    data.store_nr,
+                    0,
+                    0,
+                );
                 if first {
                     let line = self
                         .line_numbers
@@ -2366,7 +2368,7 @@ impl State {
         // source record into a parent field; a stale source pop here is a copy-incomplete).
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
@@ -2374,7 +2376,7 @@ impl State {
         let data = self.get_stack::<DbRef>();
         self.database.record_finish(&data, &record, parent_tp, fld);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 

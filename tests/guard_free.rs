@@ -7,4 +7,4 @@
 //! `LOFT_NO_GUARD_FREE=1` restores the guard on every non-leaf frame.  The guard
 //! (`tests/scripts/158-guard-free.loft`) scores the rule on the leak channel; this pins
 //! what is emitted, in both tiers, and the C backend's form of the guard (the frame's
-//! `loft_nfnrefs` mark and its `loft_fnref_release`).
+//! `cx->nfnrefs` mark and its `loft_fnref_release`).
