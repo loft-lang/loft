@@ -273,8 +273,8 @@ impl Cx<'_> {
         );
         let _ = writeln!(
             out,
-            "static int64_t loft_fhost(int64_t d) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_funits[i] == d) return loft_fhosts[i];\n    return d;\n}}\n\
-             static int64_t loft_funit(int64_t h) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_fhosts[i] == h) return loft_funits[i];\n    return -1;\n}}\n\
+            "static loft_word loft_fhost(loft_word d) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_funits[i] == d) return loft_fhosts[i];\n    return d;\n}}\n\
+             static loft_word loft_funit(loft_word h) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_fhosts[i] == h) return loft_funits[i];\n    return -1;\n}}\n\
              typedef uint32_t (*loft_fn_id_fn)(const void *ids, const uint8_t *key, size_t len);\n\
              static void loft_map_fns(const unsigned char *loft_t, const void *loft_ids) {{\n    \
              loft_fn_id_fn id;\n    memcpy(&id, loft_t + LOFT_HT_FN_ID, sizeof id);\n    \

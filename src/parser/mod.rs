@@ -900,6 +900,9 @@ pub struct Parser {
     /// the resolution path, and one pin reported twice reads as two.
     #[cfg(feature = "registry")]
     pin_behind_reported: std::collections::HashSet<String>,
+    /// A parse governed by another program's entry (`Parser::govern_by`): that program
+    /// installed what it uses and said its notices, so this parse does neither.
+    governed: bool,
     /// Newest release per package as the CACHED index knows it, read at most once per run
     /// and only when a pin is actually in force (@PLN143 arc E).  `None` until asked.
     #[cfg(feature = "registry")]
@@ -2316,6 +2319,7 @@ impl Parser {
             auto_installed: std::collections::HashMap::new(),
             #[cfg(feature = "registry")]
             pin_behind_reported: std::collections::HashSet::new(),
+            governed: false,
             #[cfg(feature = "registry")]
             newest_releases: None,
             module_clash_reported: std::collections::HashSet::new(),

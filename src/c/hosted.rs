@@ -141,10 +141,12 @@ static void *loft_host_enter(void *stores) {
     loft_host_sync();
     if (!loft_hosted_ready) {
         loft_hosted_ready = 1;
-        /* The program's directory is the interpreter's: what `source_dir()` answers and a
-         * relative path resolves against. */
+        /* The program's directory is the interpreter's: what `source_dir()` answers, and what a
+         * relative path resolves against unless the program runs in its working directory. */
         size_t n = 0;
-        const unsigned char *d = loft_hosted->source_dir(stores, &n);
+        uint32_t relative = 1;
+        const unsigned char *d = loft_hosted->source_dir(stores, &n, &relative);
+        loft_program_relative = relative != 0;
         char *anchor = (char *) malloc(n + 1);
         if (anchor) {
             memcpy(anchor, d, n);

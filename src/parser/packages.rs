@@ -1075,7 +1075,8 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if file_exists(f) {
+        // A governed parse resolves what its program installed (`Parser::govern_by`).
+        if self.governed || file_exists(f) {
             return;
         }
         // Off-switches.
@@ -1187,6 +1188,7 @@ impl Parser {
     /// (a library parsed alone, `native_artifact::parse_library_alone`) would otherwise not.
     pub fn govern_by(&mut self, entry: &str) {
         self.program_scope = Some(crate::resolution_scope::resolution_scope(entry));
+        self.governed = true;
         if let Some(dir) = std::path::Path::new(entry).parent() {
             self.database.source_dir = dir.to_string_lossy().to_string();
         }
@@ -1225,7 +1227,8 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if std::env::var_os("LOFT_NO_UPGRADE_NOTICE").is_some()
+        if self.governed
+            || std::env::var_os("LOFT_NO_UPGRADE_NOTICE").is_some()
             || std::env::var_os("LOFT_OFFLINE").is_some()
         {
             return;

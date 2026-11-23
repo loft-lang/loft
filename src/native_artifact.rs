@@ -160,11 +160,7 @@ pub fn parse_library_alone(
     let name = manifest
         .as_ref()
         .and_then(|m| m.name.clone())
-        .or_else(|| {
-            pkg_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
+        .or_else(|| crate::file_access::file_name(&pkg_path))
         .ok_or_else(|| format!("{pkg_dir} is not a loft package (no [package] name)"))?;
     // What it declares it depends on is loaded with it, as in any program that loads it: a
     // `[c] shim` may include a dependency's header that no `use` of its loft names.

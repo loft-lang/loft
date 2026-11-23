@@ -1600,7 +1600,7 @@ typedef struct {
     uint32_t (*store_new)(void *stores);
     void (*store_free)(void *stores, uint32_t nr);
     uint32_t store_tail;
-    const unsigned char *(*source_dir)(void *stores, size_t *len);
+    const unsigned char *(*source_dir)(void *stores, size_t *len, uint32_t *relative);
 } loft_hosted_table;
 static const loft_hosted_table *loft_hosted = 0;
 static LOFT_TLS void *loft_host_stores = 0;
@@ -1951,8 +1951,8 @@ static loft_fn loft_fn_of(int64_t d) {
 /* `@PLN206` — a hosted unit's function values carry the interpreter's function numbers, as its
  * stores carry the interpreter's type numbers: the unit's function `d` as the interpreter
  * numbers it, and back (`-1`: none of the unit's, one the interpreter calls). */
-static int64_t loft_fhost(int64_t d);
-static int64_t loft_funit(int64_t h);
+static loft_word loft_fhost(loft_word d);
+static loft_word loft_funit(loft_word h);
 #endif
 
 /* `Stores::evacuated` (`@FR-H-RefHome`): the copy each record a stored reference named was
