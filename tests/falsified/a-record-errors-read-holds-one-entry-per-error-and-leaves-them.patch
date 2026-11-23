@@ -1,9 +1,9 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index d933776a3..3927b1f8d 100644
+index 246895df9..ad8ad2c3f 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -588,6 +588,11 @@ impl Stores {
-             .filter(|s| !s.free)
+@@ -874,6 +874,11 @@ impl Stores {
+             .filter(|s| s.live)
              .map(|s| s.parse_errors.clone())
              .unwrap_or_default();
 +        // SABOTAGE: an error is no longer one entry — each word is its own.

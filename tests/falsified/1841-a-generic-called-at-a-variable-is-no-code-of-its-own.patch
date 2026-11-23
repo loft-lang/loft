@@ -1,10 +1,10 @@
 diff --git a/src/compile.rs b/src/compile.rs
-index 46c0b437e..636423900 100644
+index 2ce240de7..d2e2425dd 100644
 --- a/src/compile.rs
 +++ b/src/compile.rs
-@@ -156,12 +156,7 @@ pub fn byte_code_from(
-         None
-     };
+@@ -227,12 +227,7 @@ pub fn byte_code_from(
+     let param_writes = crate::parser::param_writes_summary(data);
+     let own_memo = crate::use_analysis::ownership_memo_scope(data);
      for d_nr in start_d_nr..data.definitions() {
 -        // A placeholder instance stands for its template and is never code — on this backend
 -        // as on `--native` (@FR-G-Mono).
@@ -17,10 +17,10 @@ index 46c0b437e..636423900 100644
          }
          // loft#665 piece 3 — publish which definition is being generated, so an
 diff --git a/src/data.rs b/src/data.rs
-index 668a7df3c..f947d3dcb 100644
+index 53197e04d..c76ab99e4 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -10828,32 +10828,6 @@ impl Data {
+@@ -11987,32 +11987,6 @@ impl Data {
          }
      }
  
@@ -54,7 +54,7 @@ index 668a7df3c..f947d3dcb 100644
      /// variant of a generic enum, whose payload is typed by the template's variables — each
      /// instance has variants of its own.
 diff --git a/src/fnref.rs b/src/fnref.rs
-index 68222cba6..95bb4aa4d 100644
+index 35b6c9e41..39b60ef1b 100644
 --- a/src/fnref.rs
 +++ b/src/fnref.rs
 @@ -65,11 +65,7 @@ pub fn dispatch_arms(
@@ -71,10 +71,10 @@ index 68222cba6..95bb4aa4d 100644
          }
          // A closure-capturing lambda has a hidden `__closure` param as its last
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index 9717193f7..9f94191a7 100644
+index 902652a54..bcf106f1b 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -10317,10 +10317,7 @@ extern crate loft;"
+@@ -10337,10 +10337,7 @@ extern crate loft;"
              }
          }
          for dnr in from..till {
@@ -87,10 +87,10 @@ index 9717193f7..9f94191a7 100644
              }
              if let Some(r) = reachable
 diff --git a/src/parser/monomorph.rs b/src/parser/monomorph.rs
-index 840f615ac..87d28c68e 100644
+index a0195235a..9333aad9a 100644
 --- a/src/parser/monomorph.rs
 +++ b/src/parser/monomorph.rs
-@@ -587,17 +587,21 @@ impl Parser {
+@@ -602,17 +602,21 @@ impl Parser {
      /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
      /// at a real type is its own answer; one at a variable stands for its template.
      pub(super) fn placeholder_instance_template(&self, d: u32) -> u32 {
