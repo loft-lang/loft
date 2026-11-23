@@ -447,9 +447,17 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
   if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
     return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
   }
-  // A name declared below its use (a constant) is unknown on the first pass alone: untyped
-  // there, resolved — or refused — on the second.
+  // A name declared below its use (a constant, a function) is unknown on the first pass alone:
+  // untyped there, resolved — or refused — on the second.  (`parse_var_inner`'s unresolved arm:
+  // the first pass makes a variable of that name, user-named, the forward reference it most
+  // likely is — the second pass resolves the name past it, `name_expression`.)
   if e.first_pass && d < 0 {
+    // (Only a lower-case name, a function's spelling: a capitalised one the port cannot resolve
+    // is a constant or a type variable it does not carry, which Rust resolves.)
+    if !looks_like_a_type(name) && len(name) > 0 && name[0..1] == name[0..1].to_lowercase() {
+      uv = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
+      el_vars::mark_user_named(vars, uv, "parse_var_inner");
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el::refuse(e, "a name that is not a variable: {kind}");
@@ -466,6 +474,11 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     return global_name(e, vars, el::get_source(e, name), member);
   }
   v = el_vars::var(vars, name);
+  // (The first pass's variable for a name it could not resolve — a function or a constant
+  // declared further down — never bound and never typed: the second pass resolves the name.)
+  if v >= 0 && !e.first_pass && el_types::is_unknown(el_vars::tp(vars, v)) && !el_vars::was_defined(vars, v) && !vars.vars[v].argument && (el_ex_object::look(e, -1, name) >= 0 || el_ex_object::look(e, -1, "n_{name}") >= 0) {
+    v = -1;
+  }
   // A user's mention names the variable (loft#1834) — only where it IS the name written: a
   // user's `s` can resolve to the compiler's own `_mv_s_1`, which stays the compiler's.
   if v >= 0 && el_vars::name_of(vars, v) == name {
@@ -606,4 +619,14 @@ pub fn capture_target_placeholder(e: el::El, vars: el_vars::Vars, target: intege
     },
     _ => {}
   }
+}
+
+// `parse_var_inner`'s `looks_like_a_type`: a capitalised name with a lower-case letter and no
+// `_` (`Point`) is a type written before its declaration, never a variable.
+fn looks_like_a_type(name: text) -> boolean {
+  if len(name) == 0 {
+    return false;
+  }
+  first = name[0..1];
+  first != first.to_lowercase() && name != name.to_uppercase() && !name.contains("_")
 }
