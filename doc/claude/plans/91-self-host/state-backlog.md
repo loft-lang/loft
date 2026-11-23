@@ -44,7 +44,8 @@ routine and its port counterpart:
   it once the placeholder is gone.
 - R2: Rust's `collect_mutated_captures` (+ `walk_for_mutations`).  The port's per-capture
   `writes_a_name` is NOT its counterpart, so the port ports the fixed routine.
-- R3: Rust's append-through-a-capture mark (expressions.rs ~11065) and its port counterpart.
+- R3: Rust's loft#1840 mark (expressions.rs ~11065, `lhs_root_var` over the LOWERED place) and
+  its port counterpart (el_ex_assign `assignment_inner`, `append_place` over the SYNTAX): see § R3.
 - R4: Rust's `unregister_work_ref` and its two callers.  The port needs the counterpart (the
   porter carried it for `pick` in 71006afc3).
 
@@ -52,7 +53,7 @@ routine and its port counterpart:
 |---|---|---|---|
 | R1 | the pass-1 capture placeholder does not survive into pass 2's variable table (or is not made) | 446 items: `user_named` 417, `deps`/`user_appended` 29 | objects.rs `parse_var_inner`'s capture arm (~1261: `create_var` + `mark_user_named`) |
 | R2 | `collect_mutated_captures` lists only the lambda's captures, not every written name in its variable table | 42 items, 17 programs | its candidate list (1a-parser.md § Rust suspects); its readers already intersect with the captures |
-| R3 | `__closure`'s `user_appended` | 2 items | the append-through-a-capture mark (expressions.rs ~11065) |
+| R3 | NOT a Rust change (measured 11-23): Rust's mark is right.  The port's counterpart must root at the LOWERED place | 2 items | see § R3 below |
 | R4 | a work ref the one-buffer binding substitutes out is retired but stays declared | the lambda `__ref_1 skip_free` items (S3) | `unregister_work_ref` (variables/mod.rs ~4822); its callers control.rs ~12673, ~14115 |
 
 Order: R2 (smallest, readers unaffected), then R1 (the largest gain), then R3 and R4.  For each,
@@ -137,3 +138,19 @@ It is a retire like `unregister_work_ref`.  The decision leaves the comparison a
 needs no counterpart, since it makes no placeholder.  Prediction: the 446 items (`user_named`
 417, `deps` 20, `user_appended` 9) gone, nothing new, the IR identical, and the closure suite
 cells green on both backends.
+
+## R3, measured (11-23): a port item, not a Rust change
+
+`f = fn(tag: text, r: boolean) -> boolean { log += tag; r }` (E-And/a-decided-left-operand…,
+E-Or/a-true-left-operand…).  Rust's loft#1840 mark records the program's own `+=` on the
+variable its place is rooted at, `lhs_root_var(&to)` over the LOWERED place.
+- **Pass 1:** the root is the placeholder `log` (retired by R1).
+- **Pass 2:** the capture is read through the closure record, so the root is `__closure`, and
+  `[varflag] user_appended __closure … @ expressions.rs:11065` follows.
+
+That is Rust's rule applied consistently: the append lands in the closure record's content.
+The port's counterpart (el_ex_assign.loft ~903, `assignment_inner`) roots the mark at the
+variable the SYNTAX names (`append_place`).  It reaches `__closure` for some capture appends,
+which the porter carried, but not for this text append through a capture.  By the
+corresponding-routine ruling the port's mark roots at its lowered place, as Rust's does.  So
+this is the porter's, and nothing changes in Rust.
