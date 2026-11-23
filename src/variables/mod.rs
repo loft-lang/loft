@@ -6314,12 +6314,28 @@ impl Function {
     /// `user_named`, `user_appended`, `value_const` and its deps.  The image then carries no
     /// conclusion about a variable nothing uses (@PLN91 R1: the self-hosted front end makes no
     /// placeholder).
+    ///
+    /// Each cleared flag is traced as `-<flag>` (`LOFT_TRACE_VARFLAGS`), so the reasons the
+    /// contract compares are the rules behind the flags the image still carries: a reader
+    /// drops the set it recorded for that variable.
     pub fn retire_capture_placeholders(&mut self, code: &Value) {
         let mut retired: Vec<u16> = self.capture_placeholders.iter().copied().collect();
         retired.sort_unstable();
         for v in retired {
             if code.reads_var(v) {
                 continue;
+            }
+            if let Some(var) = self.variables.get(v as usize) {
+                let cleared = [
+                    ("-user_named", var.user_named),
+                    ("-user_appended", var.user_appended),
+                    ("-value_const", var.value_const),
+                ];
+                for (flag, was_set) in cleared {
+                    if was_set {
+                        self.trace_flag(flag, v);
+                    }
+                }
             }
             if let Some(var) = self.variables.get_mut(v as usize) {
                 var.user_named = false;
