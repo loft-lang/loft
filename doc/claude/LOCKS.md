@@ -58,7 +58,6 @@ handlers' install.
 | `USED` (`process_run.rs`) | replay counts (the C row's twin) | main, arms | see the C row | see the C row | — |
 | `KEPT` (`platform_process.rs`) | dropped children still running, for the orphan watcher | droppers, the watcher thread | a hand-off between threads | a channel to the watcher, which owns the list | none |
 | `PIPE` (`platform_process.rs`) | stdin of the watcher that kills owned process groups | whichever thread starts or ends a child | one watcher per process | — | — (program-wide by nature) |
-| `KEEPER` (`platform_process.rs`, Linux) | the sender to the spawner thread | spawning threads | **not needed**: `mpsc::Sender` is `Sync` | the sender without the `Mutex` | none |
 | `SAID` (`file_access`) | refused paths logged once per process | any thread resolving a path | de-duplication across threads | a set per context merged at the join | as the C row |
 | `BY_TYPE`, `NAMES`, `BY_SITE`, `PEAK_SNAPSHOT` (`store_budget.rs`) | live bytes per type and site for the ceiling's refusal | every allocating thread — locked on **every** add, release, grow and shrink while a ceiling is set, and test runs set one | the refusal names what holds the memory | a tally per `Stores` adopted at the join, or a walk of the live stores when the refusal is built; names from `Stores::types` | the breakdown may omit workers still running |
 | `LAZY_FETCH`, `LAZY_FETCH_REFUSAL` (`codegen_runtime.rs`) | lazy drivers of the rustc writer's programs | set by `init` before any thread | **not needed** | `OnceLock`, or gone with the writer (@PLN225) | none |
@@ -72,7 +71,6 @@ handlers' install.
 | `SHARED_LABELS` (`call_frames.rs`), `STUB_SYMBOLS` (`compile.rs`) | names a fault or a missing native reports | set at wiring; read on a fault | same | `State` tables | none |
 | `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | same; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
 | `NATIVE_REGISTRY`, `BRIDGE_REGISTRY`, `CX_BRIDGES`, `LOADED_LIBS`, `REFUSED_LIBS`, `LOAD_LOCK` (`c_libs.rs`) | what `dlopen` loaded and registered | loaders, wiring | a library is opened once per process | an append-only table published once per entry; `LOAD_LOCK` stays — an open must not run twice | — |
-| `LOADED_FROM`, `BOUND_C` (`native_bind.rs`) | what a shipped program bound at start | set once at `bind` | **not needed** | `OnceLock` | none |
 | `DEP_HEADERS` (`c_shim.rs`) | dependency headers per package for shim builds | one compile thread per program | a program's data in a process global | a `Data` field | none |
 | `PLACEMENT` (`lib_placement/dispatch.rs`) | placed-library workers; **held across the whole call** | main, workers, arms | the wire has one request slot per placed worker | a slot or a worker per caller context (`C-Boundary`) | a placed library's own global state becomes one per caller context; its calls run side by side |
 
@@ -94,8 +92,6 @@ All are off unless a `LOFT_*` switch arms them.
 | `SINK` (`fault_log.rs`), `SINK` (`native.rs` assert trace), `FILE` (`store/dump.rs`), `FILE` (`store_census.rs` alloc trace), `SINKS` (`bind_lowering.rs`), `FILE` (`state/codegen.rs`), `SINK` (`lexer.rs` tokens) | a trace or log file | any thread that writes a line | whole lines | one `write` per line to an `O_APPEND` file; or per context, flushed at the join | none with `O_APPEND`; with buffers, worker lines arrive later |
 | `PROGRAM_LINES` (`store_census.rs`) | the line table workers read | main writes, workers read at start | hands data to workers | the worker's context, filled before it starts | none |
 | `VERIFY` (`stack_verify.rs`), `TEXT_TL` (`state/text.rs`), `CALLS`, `SEEN` (`state/hosted_verify.rs`), `SITES` (`net_profile.rs`) | process-wide tallies and ledgers | main, workers | one verdict for all threads | per context, adopted at the join and printed by the main thread | findings grouped after the join |
-| `ARMED` (`ledger.rs`) | the armed program's ledger | the main thread | **not needed** | a `State` field | none |
-| `FileSourceLoader.cache` (`diagnostic_render.rs`) | source lines for a caret | one thread per instance | **not needed** | `RefCell` | none |
 | `Timing` (`platform.rs`) | build timing events | build threads | a shared summary | per build context | none |
 
 ## Engine, hosts and tooling
@@ -112,7 +108,7 @@ All are off unless a `LOFT_*` switch arms them.
 
 The locks marked **not needed**, and the hot ones, go first: `C_BINDINGS` (every `#c` call),
 `store_budget` (every allocation under a ceiling), the wiring tables (`NATIVE_SIGS` with its
-thread-local cache), `KEEPER`, `LOADED_FROM`/`BOUND_C`, `ARMED`, `FileSourceLoader`.  Then the
+thread-local cache).  Then the
 compile session that takes the `Data` memos (`PassCell`, `DefsMemo`) and the per-program
 globals of the compiler.  The logger and the tallies follow the per-thread-then-merged form once
 the order of their lines is agreed.  @PLN226 P4b carries them.

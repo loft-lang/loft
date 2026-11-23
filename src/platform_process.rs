@@ -1240,7 +1240,7 @@ mod os {
         use std::sync::mpsc;
         type Spawned = (Command, std::io::Result<Child>);
         type Job = (Command, mpsc::Sender<Spawned>);
-        static KEEPER: std::sync::OnceLock<Option<std::sync::Mutex<mpsc::Sender<Job>>>> =
+        static KEEPER: std::sync::OnceLock<Option<mpsc::Sender<Job>>> =
             std::sync::OnceLock::new();
         let keeper = KEEPER.get_or_init(|| {
             let (tx, rx) = mpsc::channel::<Job>();
@@ -1253,7 +1253,7 @@ mod os {
                     }
                 })
                 .ok()
-                .map(|_| std::sync::Mutex::new(tx))
+                .map(|_| tx)
         });
         let Some(keeper) = keeper else {
             return cmd.spawn();
@@ -1262,10 +1262,8 @@ mod os {
         // `Command` cannot be cloned.
         let moved = std::mem::replace(cmd, Command::new(""));
         let (back, answer) = mpsc::channel();
-        let sent = keeper
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .send((moved, back));
+        // `mpsc::Sender` is `Sync`: every spawning thread sends through the one sender.
+        let sent = keeper.send((moved, back));
         if let Err(mpsc::SendError((mut moved, _))) = sent {
             let child = moved.spawn();
             *cmd = moved;
