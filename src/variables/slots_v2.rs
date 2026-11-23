@@ -248,7 +248,8 @@ pub fn assign_slots_v2(
         .map(|i| u32::from(i.size))
         .max()
         .unwrap_or(0);
-    let mut by_slot: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut by_slot: std::collections::BTreeMap<u32, Vec<usize>> =
+        std::collections::BTreeMap::new();
     for (k, p) in pinned.iter().enumerate() {
         by_slot.entry(u32::from(p.slot)).or_default().push(k);
     }

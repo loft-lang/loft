@@ -6,6 +6,6 @@
 linux-debug	medium	667863
 linux-debug	stdlib	216289
 linux-debug	tiny	11592
-linux-release	medium	667863
-linux-release	stdlib	216289
-linux-release	tiny	11592
+linux-release	medium	665330
+linux-release	stdlib	220427
+linux-release	tiny	12788
