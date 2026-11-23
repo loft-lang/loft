@@ -39,8 +39,7 @@ it, working on the same data, with the same answers.  All you need is a C compil
 without one loft uses a library build the release shipped, as before, and otherwise runs the
 library interpreted.  `loft build-native <package>`
 compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
-included.  A function that returns a generator still runs interpreted, with the same result.
-`LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and
+included.`LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and
 `LOFT_LIB_BACKEND=rust` keeps the Rust build.
 
 **`store_memory()` reports your program's stores, the same on every backend.**  It no longer

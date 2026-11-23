@@ -687,10 +687,16 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
     program's function, and called back in the interpreter (`HostTable::call_ref`, one
     `loft_up<n>` per signature);
   - out: a scalar, a text (its bytes, which the dispatcher copies into the caller's
-    destination), a record or a vector (the caller's buffer), a tuple of scalars.
+    destination), a record or a vector (the caller's buffer), a tuple of scalars, a generator
+    of scalars, texts or references (its frame handed to the interpreter's coroutine table,
+    `HostedTable::gen_adopt`, and stepped through the unit's `loft_shared_gen_next`).
   - Each text work slot of a call is a buffer of its own.  A unit parks no store across calls
     (`loft_no_park`): no program end drains a unit's parks.
-  - Not carried: an iterator (the unit does not forward to the host's coroutine table), a
+  - A function value carries the interpreter's function number (`loft_fhost`, by key at
+    `loft_shared_init`); a dispatcher finds the unit's own by it (`loft_funit`) and calls any
+    other back.  A `par` loop or `parallel` block runs on the calling thread.  Relative paths
+    and `source_dir()` are the program's (`HostedTable::source_dir`).
+  - Not carried: an iterator argument (the interpreter's frame is not the unit's to drive), a
     tuple with a text or a record inside.  Such a function interprets, answering the same.
     A library the writer declines whole interprets too.
 - **Coverage**: `scripts/hosted_coverage.py` builds each package and holds what stays
