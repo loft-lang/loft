@@ -1982,8 +1982,10 @@ fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position
   if !e.first_pass {
     return -1;
   }
+  // (The first `n` NO source holds — a library's placeholders included, `A#1` of an imported
+  // header beside this one.)
   n = 1;
-  while el::source_nr(e, el::STD_SOURCE, "{spelling}#{n}") >= 0 || el::source_nr(e, el::MAIN_SOURCE, "{spelling}#{n}") >= 0 {
+  while placeholder_taken(e, "{spelling}#{n}") {
     n += 1;
   }
   h = el::add_def(e, "{spelling}#{n}", pos, el::DT_STRUCT);
@@ -1999,6 +2001,16 @@ fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position
     e.b.data.definitions[h].bounds += [bd];
   }
   h
+}
+
+// Does any source hold a definition of this name?
+fn placeholder_taken(e: el::El, name: text) -> boolean {
+  for d in e.b.data.definitions {
+    if d.name == name {
+      return true;
+    }
+  }
+  false
 }
 
 // `Parser::create_bound_method_stubs` for a header's bounded variable: each method an interface

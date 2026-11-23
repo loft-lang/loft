@@ -826,6 +826,21 @@ pub fn captured_names(e: el::El, vars: el_vars::Vars, n: integer, own: vector<te
 // it written through an index or a field (`seen[x] += 1`, `s.f = v`: the accessor chain's
 // root)?  Apart from `writes_a_name`, which decides the cells and asks the whole name only.
 fn writes_rooted(e: el::El, n: integer, name: text) -> boolean {
+  // (A store with an `else` writes its PLACE through `_store_target_N` (`parse_store_else`), a
+  // variable of its own the IR walk does not root at the capture: its target is no write of
+  // it — the value and the arm are still read.)
+  match e.p.nodes[n] {
+    SStmt { e: se, orelse } => {
+      if orelse != null && se != null && match e.p.nodes[se!] { SAssign { target: st } => !(e.p.nodes[st] is SName), _ => false } {
+        match e.p.nodes[se!] {
+          SAssign { e: sv } => { if sv != null && writes_rooted(e, sv!, name) { return true; } },
+          _ => {}
+        }
+        return writes_rooted(e, orelse!, name);
+      }
+    },
+    _ => {}
+  }
   target = match e.p.nodes[n] {
     SAssign { target: t } => t,
     _ => -1
