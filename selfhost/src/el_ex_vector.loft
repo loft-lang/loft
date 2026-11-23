@@ -28,6 +28,7 @@ use el_ex_null;
 use el_ex_pattern;
 use el_ex_object;
 use el_ex_deliver;
+use narrow;
 
 // `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
@@ -1454,6 +1455,11 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       }
       // A scalar local, nullable or narrow, is linked by its slot, typed by its declaration.
       if is_scalar(el_types::base(vt)) {
+        // (`set_linked_narrow`, @PLN167 decision 1: a `&` names this local, so a narrow one holds
+        // its field encoding from here on.)
+        if narrow::local_slot(vt) != null {
+          vars.vars[lv].linked_narrow = true;
+        }
         return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: vt });
       }
     }
