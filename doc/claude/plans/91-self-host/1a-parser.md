@@ -182,6 +182,11 @@ triaged, never just copied:
 
 ### The behaviour contract
 
+The gate compares with STRICT equality (owner): a flag no Rust reader sees is compared all the
+same — "that leads to far easier comparison of code.  If you dislike the rust implementation
+that one has to move first."  An inert difference is removed by changing RUST first (with its
+IR unchanged and its suite cells green on both backends), never by filtering the comparison.
+
 The port follows Rust's REASONING, not its in-memory data structures: unless Rust is clearly
 wrong, a conclusion is reached by the rule Rust reaches it by, because a port that gets the same
 answer another way diverges where the corpus does not look.  Rust's rules carry months of
