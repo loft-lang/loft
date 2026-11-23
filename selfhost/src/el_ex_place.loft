@@ -4697,8 +4697,10 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
       }
       // A plain struct: the function's answer copied into the field, the function handed a
       // `__ref_N` of the struct's type.
-      if starts_with(el::def(e, hd).name, "n___dflt_") && ft is TyReference {
-        rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, _ => 0 }).known_type;
+      // (A struct enum's hoisted variant with fields, `hint: Ty = TyInt { n: 4 }`, the same way,
+      // at the enum's known type — `@FR-F-Default-Field`, loft#2607.)
+      if starts_with(el::def(e, hd).name, "n___dflt_") && (ft is TyReference || match ft { TyEnum { is_ref } => is_ref, _ => false }) {
+        rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, TyEnum { n: red } => red, _ => 0 }).known_type;
         rw = el_vars::work_ref(vars, el_types::without_deps(ft));
         // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
         vars.vars[rw].caller_hidden_buf = true;
@@ -4788,6 +4790,28 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
   }
   // A field declaring its default takes it — a variant's `enum` field its ordinal, a `= value`
   // its value (`parse_stored_default`).
+  // `object_init`'s `variant_default_ref` / `rehome_variant_default`: a struct enum's
+  // unit-variant default is the `EnumUnitLit` block built in the struct's table; each
+  // construction re-homes its work ref to a FRESH one of this frame and copies the record into
+  // the field.  (Only the block's reads are re-homed: its type keeps the dep it was built with,
+  // as Rust's map over the nodes leaves it.)
+  if !e.first_pass {
+    match el_ir::unspan(at.value[0] ?? ir::NdNull) {
+      NdBlock { block: ub } => {
+        own = match el_ir::unspan(el_ir::last(ub[0].operators)) { NdVar { n: ov } => ov, _ => -1 };
+        if ub[0].name == "EnumUnitLit" && own >= 0 {
+          ued = el_types::struct_enum_def(el_types::base(ft));
+          if ued >= 0 {
+            fresh = el_vars::work_ref(vars, el_types::without_deps(ft));
+            moved = rehome_variant_default(at.value[0]!, own, fresh);
+            ukt = el::def(e, ued).known_type;
+            return [el_ir::cl(e, "OpCopyRecord", [moved, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: ukt }]), ir::NdInt { n: ukt }])];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   val = if !((at.value[0] ?? ir::NdNull) is NdNull) { at.value[0]! } else { el_ex_object::to_default(e, ft) };
   if base == 0 {
     return [el_ex_object::set_field(e, d, a, r, val)];
@@ -4969,4 +4993,20 @@ pub fn refuses_hooked_items(e: el::El, items: vector<integer>) -> boolean {
     }
   }
   false
+}
+
+// `Parser::rehome_variant_default`: a variant default's work ref `own` (an index of the
+// struct context's table) re-homed to `fresh`, a work ref of the construction — every `Var` read
+// and `Set` target of it (`map_nodes`), and nothing else: a block's result type keeps the dep it
+// was built with.
+fn rehome_variant_default(n: ir::Node, own: integer, fresh: integer) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for op in b.operators { rehome_variant_default(op, own, fresh) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: if var == own { fresh } else { var }, inner: rehome_variant_default(inner, own, fresh) },
+    _ => el_ex_base::rename_reads(n, own, fresh)
+  }
 }
