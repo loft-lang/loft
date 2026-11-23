@@ -990,7 +990,7 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
     let emit = |cache: &std::path::Path, tag: &str, env: &[(&str, &str)]| -> (String, bool) {
         let out_rs = root.join(format!("{tag}.rs"));
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native-rust")
+        cmd.arg("--native")
             .arg("--native-emit")
             .arg(&out_rs)
             .arg(&script)
@@ -1416,7 +1416,7 @@ fn a_manifest_takes_only_the_image_it_was_written_with() {
         let out = tmp.join(format!("loft_pair_{pid}_{tag}.rs"));
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.args(tier)
-            .args(["--native-rust", "--native-emit"])
+            .args(["--native", "--native-emit"])
             .arg(&out)
             .arg(&cells)
             .current_dir(workspace_root())

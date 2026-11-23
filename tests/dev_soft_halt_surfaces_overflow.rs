@@ -91,7 +91,7 @@ fn have_rustc() -> bool {
 fn backends() -> Vec<&'static str> {
     let mut v = vec!["--interpret"];
     if have_rustc() {
-        v.push("--native-rust");
+        v.push("--native");
     } else {
         println!("dev_soft_halt_surfaces_overflow: --native leg skipped (no rustc)");
     }

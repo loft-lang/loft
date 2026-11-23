@@ -158,7 +158,7 @@ fn emitted_hit_overloads(lane: &str) -> Vec<String> {
     let out = loft::platform::process::harness_command(loft_binary())
         .args([
             lane,
-            "--native-rust",
+            "--native",
             "--native-emit",
             out_rs.to_str().unwrap(),
             src.to_str().unwrap(),

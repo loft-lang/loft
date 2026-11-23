@@ -78,7 +78,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     ));
     let status = loft(
         &[
-            "--native-rust",
+            "--native",
             "--native-emit",
             out.to_str().unwrap(),
             cells().to_str().unwrap(),

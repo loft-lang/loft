@@ -55,7 +55,7 @@ fn census(dir: &Path) -> (Declines, Admissions) {
     fa::write(&program, PROGRAM).expect("write the probe");
     let (adm, dec, out) = (dir.join("adm.tsv"), dir.join("dec.tsv"), dir.join("out.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg("--lean")

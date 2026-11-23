@@ -37,7 +37,7 @@ fn loft() -> Command {
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(cells());
@@ -244,10 +244,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
     assert_eq!((i_on, i_off), (79, 130), "interpret mints (on, off)");
-    let (n_on, n_off) = (
-        store_mints("--native-rust", &[]),
-        store_mints("--native-rust", OFF),
-    );
+    let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"

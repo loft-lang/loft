@@ -62,7 +62,7 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
     ));
     let mut cmd = loft();
     cmd.arg("--ship")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells());

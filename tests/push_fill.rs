@@ -19,7 +19,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let out = std::env::temp_dir().join(format!("loft_push_fill_{}_{tag}.rs", std::process::id()));
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(&src)

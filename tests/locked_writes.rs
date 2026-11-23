@@ -128,7 +128,7 @@ fn production_discards_every_locked_write_interpreted() {
 
 #[test]
 fn production_discards_every_locked_write_native() {
-    production_discards_every_route("--native-rust");
+    production_discards_every_route("--native");
 }
 
 /// One write per program, since a development run stops at the first.  The three cells
@@ -235,7 +235,7 @@ fn development_halts_on_a_locked_write_interpreted() {
 
 #[test]
 fn development_halts_on_a_locked_write_native() {
-    development_halts_with_the_report("--native-rust");
+    development_halts_with_the_report("--native");
 }
 
 /// One cell per hoisted writer, each in the loop shape that reaches it on `--native`
@@ -305,7 +305,7 @@ fn production_discards_every_hoisted_write_interpreted() {
 
 #[test]
 fn production_discards_every_hoisted_write_native() {
-    production_discards_every_hoisted_write("--native-rust");
+    production_discards_every_hoisted_write("--native");
 }
 
 /// The cells above are only a guard of the hoisted writers while `--native` still emits
@@ -320,7 +320,7 @@ fn hoisted_loops_reach_the_writers_under_test() {
     fa::write(&script, HOISTED).expect("write script");
     let out = dir.join("hoisted.rs");
     let status = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg("--lean")
@@ -395,7 +395,7 @@ fn development_halts_in_a_windowed_loop_interpreted() {
 
 #[test]
 fn development_halts_in_a_windowed_loop_native() {
-    development_halts_in_a_windowed_loop("--native-rust");
+    development_halts_in_a_windowed_loop("--native");
 }
 
 /// The production log line gives the advice the store's lock calls for — the same advice the
@@ -446,5 +446,5 @@ fn production_logs_the_advice_its_lock_calls_for_interpreted() {
 
 #[test]
 fn production_logs_the_advice_its_lock_calls_for_native() {
-    production_logs_the_advice_its_lock_calls_for("--native-rust");
+    production_logs_the_advice_its_lock_calls_for("--native");
 }

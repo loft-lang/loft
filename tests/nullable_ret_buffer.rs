@@ -207,7 +207,7 @@ fn main() {
 
 #[test]
 fn forwarding_return_delivers_and_keeps_null() {
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = format!("forward_{}", backend.trim_start_matches('-'));
         let (out, err) = run(FORWARD, backend, true, &tag);
         assert!(
@@ -228,7 +228,7 @@ fn forwarding_return_delivers_and_keeps_null() {
 fn the_boundary_matrix_passes_on_both_backends() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/probes/938-nullable-collection-return-buffer.loft");
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
@@ -251,7 +251,7 @@ fn the_boundary_matrix_passes_on_both_backends() {
 fn native_optional_unify_compiles_correctly() {
     let script =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/pln133-optional-unify.loft");
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
@@ -435,7 +435,7 @@ fn a_nullable_function_is_flipped_to_the_interpreter_as_its_dense_twin_is() {
     let names: Vec<&str> = FLIPPED_CALLS.iter().map(|(n, _)| *n).collect();
     let run = |flip: bool| {
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native-rust")
+        cmd.arg("--native")
             .arg(&file)
             .env("LOFT_TIMEOUT", "300")
             .env("LOFT_NO_CACHE", "1");

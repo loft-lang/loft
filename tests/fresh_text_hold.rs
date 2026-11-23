@@ -59,7 +59,7 @@ fn a_fresh_elements_text_keeps_the_hold_and_a_shared_store_refuses_it() {
         let out = loft(
             &[
                 "--ship",
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 loft::platform::null_sink(),
             ],

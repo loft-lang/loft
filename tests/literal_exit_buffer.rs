@@ -222,7 +222,7 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     // vanish with the converted `Object`, so both shapes stay value records.
     let out = std::env::temp_dir().join("loft_literal_exit_chain.rs");
     let status = loft()
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
         .arg("--native-emit")
         .arg(&out)

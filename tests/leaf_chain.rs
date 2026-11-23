@@ -22,7 +22,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // The cells pin which FRAMES survive; `@FR-R-InlineLeaf` would replace the scalar leaves
     // (`lower_byte`) by their bodies, and then there is no function left to read a frame of.
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.args(args)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_INLINE_LEAF", "1");
@@ -43,7 +42,7 @@ fn emit(out: &Path, tier: &[&str], env: &[(&str, &str)]) -> String {
     let src = cells();
     let out_s = out.to_string_lossy();
     let mut args: Vec<&str> = tier.to_vec();
-    args.extend(["--native-rust", "--native-emit", &out_s, &src]);
+    args.extend(["--native", "--native-emit", &out_s, &src]);
     let res = loft(&args, env);
     assert!(
         fa::exists(out),
@@ -258,7 +257,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native-rust", "--ship"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -307,7 +306,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native-rust", "--ship"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -333,7 +332,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     )
     .expect("write the probe");
     let expected = "frame main\nframe t_1P_show\nframe t_1P_show\nframe t_1P_show\n9\n";
-    for mode in ["--interpret", "--native-rust"] {
+    for mode in ["--interpret", "--native"] {
         let res = loft(&[mode, &prog.to_string_lossy()], &[]);
         assert_eq!(
             String::from_utf8_lossy(&res.stdout),

@@ -102,7 +102,7 @@ mod rust_writer {
         let client_html = tmp.join("p98_relay_client.html");
         let built = loft::platform::process::harness_command(&loft)
             .args([
-                "--native-rust",
+                "--native",
                 "--html",
                 client_html.to_str().unwrap(),
                 "--path",

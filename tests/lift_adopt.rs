@@ -78,7 +78,7 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_FIRST_BIND", "1")];
 /// switch puts the copy's store at the lift back.
 #[test]
 fn the_lifted_cell_mints_as_the_named_control_does() {
-    for mode in ["--interpret", "--native-rust"] {
+    for mode in ["--interpret", "--native"] {
         let named = store_mints(mode, "c1", &[]);
         let lifted = store_mints(mode, "c2", &[]);
         assert_eq!(named, 2000, "{mode}: the named control's mints");

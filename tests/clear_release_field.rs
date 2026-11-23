@@ -85,5 +85,5 @@ fn a_vector_field_clear_names_its_element_type_on_the_interpreter() {
 
 #[test]
 fn a_vector_field_clear_names_its_element_type_on_native() {
-    check("--native-rust");
+    check("--native");
 }

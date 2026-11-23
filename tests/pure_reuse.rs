@@ -100,12 +100,7 @@ fn the_request_check_calls_its_parser_once() {
             want
         ));
         let (_, err, ok) = loft(
-            &[
-                "--native-rust",
-                "--native-emit",
-                &rs.to_string_lossy(),
-                &cells(),
-            ],
+            &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
             env,
         );
         assert!(ok, "{env:?}: emit failed:\n{err}");
@@ -176,7 +171,7 @@ fn a_check_and_a_use_call_the_total_function_once() {
         ));
         let (_, err, ok) = loft(
             &[
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 &rs.to_string_lossy(),
                 &script(SHARED),

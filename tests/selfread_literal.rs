@@ -36,7 +36,7 @@ fn cells() -> PathBuf {
 fn emit(src: &Path, out: &Path) -> String {
     let status =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--native-rust")
+            .arg("--native")
             .arg("--native-emit")
             .arg(out)
             .arg(src)

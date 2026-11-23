@@ -158,11 +158,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
 
     let html = dir.join("page_store.html");
     let built = loft::platform::process::harness_command(&loft)
-        .args([
-            "--native-rust",
-            "--html",
-            html.to_str().expect("utf-8 path"),
-        ])
+        .args(["--native", "--html", html.to_str().expect("utf-8 path")])
         .arg(&src)
         .current_dir(&dir)
         .output()
@@ -335,11 +331,7 @@ fn a_browser_page_converts_a_store_written_under_an_older_layout() {
 
     let html = dir.join("reader.html");
     let built = loft::platform::process::harness_command(&loft)
-        .args([
-            "--native-rust",
-            "--html",
-            html.to_str().expect("utf-8 path"),
-        ])
+        .args(["--native", "--html", html.to_str().expect("utf-8 path")])
         .arg(&reader)
         .current_dir(&dir)
         .output()

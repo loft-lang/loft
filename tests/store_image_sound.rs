@@ -502,13 +502,13 @@ fn a_hoisted_loop_reads_no_further_than_the_record_holds() {
     fa::write(dir.join("bad.store"), &changed).expect("an image");
     fa::write(dir.join("bad.store.dschema"), &sidecar).expect("a sidecar");
 
-    let (out, err) = loft(&dir, "--native-rust", "read.loft", "img.store", "");
+    let (out, err) = loft(&dir, "--native", "read.loft", "img.store", "");
     assert_eq!(
         out, "loaded true len 3 present 3 sum 60",
         "a sound image\n{err}"
     );
     // The record's own slack past element 3 is zero-filled, so it reads as present zeros.
-    let (out, err) = loft(&dir, "--native-rust", "read.loft", "bad.store", "");
+    let (out, err) = loft(&dir, "--native", "read.loft", "bad.store", "");
     assert_eq!(
         out,
         format!("loaded true len 1000000 present {held} sum 60"),

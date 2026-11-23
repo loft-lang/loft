@@ -2114,7 +2114,7 @@ fn b0_run_full(
 // @speed 1.5
 #[test]
 fn store_digest_b0_oracle_sees_loss_not_layout() {
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("b0_{tag}"));
         let run = |file: &str, order: &str, damage: &str, mode: &str, want: &str, seed| {
@@ -2524,7 +2524,7 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
         t[i + 1].to_string()
     };
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         for (kind, verdict) in kinds {
             let tag = backend.trim_start_matches('-');
             let dir = scratch(&format!("kinds_{kind}_{tag}"));
@@ -3497,7 +3497,7 @@ fn a_spatial_survives_the_rebuild_and_comes_out_in_morton_order() {
     let script = workspace_root().join("tests/scripts/136-persist-copy-morton-order.loft");
     let query = workspace_root().join("tests/scripts/136-persist-copy-box-query.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_spatial_{tag}"));
         let bound = dir.join("bound.store");
@@ -3613,7 +3613,7 @@ fn a_trie_survives_the_rebuild_and_comes_out_in_key_order() {
     let script = workspace_root().join("tests/scripts/134-persist-copy-key-order.loft");
     let query = workspace_root().join("tests/scripts/134-persist-copy-query.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_{tag}"));
         let bound = dir.join("bound.store");
@@ -3764,7 +3764,7 @@ fn store_load_keys_text_batches_what_the_loop_repeats() {
 
     run("--interpret", "write");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let batch = run(backend, "batch");
         let looped = run(backend, "loop");
 
@@ -3969,10 +3969,7 @@ fn layouts_updated(tag: &str) -> String {
 /// after it, so the mix is measured, not assumed.
 #[test]
 fn every_hash_layout_lives_beside_the_others_in_one_store() {
-    for (first, second) in [
-        ("--interpret", "--native-rust"),
-        ("--native-rust", "--interpret"),
-    ] {
+    for (first, second) in [("--interpret", "--native"), ("--native", "--interpret")] {
         for (wn, we) in HASH_LAYOUTS {
             for (un, ue) in HASH_LAYOUTS {
                 let cell = format!("{wn} written {first}, {un} update {second}");
@@ -4079,7 +4076,6 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the reader");
@@ -4097,7 +4093,6 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&nest)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the nested reader");

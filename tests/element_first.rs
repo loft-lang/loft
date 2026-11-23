@@ -43,7 +43,7 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> (String, HashMap<String
     // `--lean`: the CLOSED program, where the value records the view-exit pairs ride on run
     // (NATIVE.md § Optimisation tiers).
     cmd.arg("--lean")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)

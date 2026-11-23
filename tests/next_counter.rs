@@ -41,7 +41,7 @@ const EXPECTED: &[(&str, usize, usize)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)

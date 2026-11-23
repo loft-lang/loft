@@ -34,7 +34,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -87,7 +87,7 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg(&file)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_CACHE", "1")

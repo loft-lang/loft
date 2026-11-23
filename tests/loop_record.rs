@@ -59,7 +59,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         std::env::temp_dir().join(format!("loft_loop_record_{}_{tag}.rs", std::process::id()));
     let status = loft(
         &[
-            "--native-rust",
+            "--native",
             "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             out.to_str().unwrap(),

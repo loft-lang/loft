@@ -123,7 +123,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
     let out = loft(
         &[
             "--ship",
-            "--native-rust",
+            "--native",
             "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             loft::platform::null_sink(),
@@ -157,7 +157,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
     let off = loft(
         &[
             "--ship",
-            "--native-rust",
+            "--native",
             "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             loft::platform::null_sink(),

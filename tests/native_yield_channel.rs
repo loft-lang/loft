@@ -30,7 +30,7 @@ fn emit(tag: &str, src: &str) -> String {
     let rf = dir.join(format!("loft_1132_{tag}_{}.rs", std::process::id()));
     fa::write(&lf, src).expect("write probe");
     let st = loft::platform::process::harness_command(loft_bin())
-        .args(["--native-rust", "--native-emit", rf.to_str().expect("path")])
+        .args(["--native", "--native-emit", rf.to_str().expect("path")])
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .status()
@@ -243,7 +243,7 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
     )
     .expect("write probe");
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()
@@ -295,7 +295,7 @@ fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
     )
     .expect("write probe");
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()

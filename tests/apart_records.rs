@@ -58,7 +58,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     ));
     let out_s = out.to_str().unwrap().to_string();
     let status = loft(
-        &["--ship", "--native-rust", "--native-emit", &out_s, &cells()],
+        &["--ship", "--native", "--native-emit", &out_s, &cells()],
         env,
     );
     assert!(

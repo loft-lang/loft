@@ -60,12 +60,7 @@ fn body<'a>(src: &'a str, name: &str) -> &'a str {
 fn the_refillable_builders_mint_with_the_kept_store() {
     let rs = std::env::temp_dir().join(format!("loft_refill_{}.rs", std::process::id()));
     let (_, err, ok) = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &rs.to_string_lossy(),
-            &cells(),
-        ],
+        &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
         &[],
     );
     assert!(ok, "emit failed:\n{err}");
@@ -111,12 +106,7 @@ fn a_refilled_repeat_literal_is_overwritten_in_place() {
         .into_owned();
     let rs = std::env::temp_dir().join(format!("loft_refill_ip_{}.rs", std::process::id()));
     let (_, err, ok) = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &rs.to_string_lossy(),
-            &cells,
-        ],
+        &["--native", "--native-emit", &rs.to_string_lossy(), &cells],
         &[],
     );
     assert!(ok, "emit failed:\n{err}");

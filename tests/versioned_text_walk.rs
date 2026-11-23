@@ -63,7 +63,7 @@ fn a_walk_that_writes_only_the_result_borrows_and_one_that_writes_its_parameter_
         let out = loft(
             &[
                 "--ship",
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 loft::platform::null_sink(),
             ],

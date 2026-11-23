@@ -410,7 +410,7 @@ fn w1_1_html_export_produces_file() {
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
     let result = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--html")
         .arg(&out)
         .arg(&src)
@@ -1707,9 +1707,8 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
     let run = |bin: &std::path::Path, native: bool, require: bool| {
         let mut c = loft::platform::process::harness_command(bin);
-        c.env("LOFT_NATIVE_BACKEND", "rust");
         if native {
-            c.arg("--native-rust");
+            c.arg("--native");
         }
         c.arg(&prog)
             .env("PATH", &empty)

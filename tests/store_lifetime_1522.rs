@@ -75,7 +75,7 @@ fn rebind_keeps_the_buffers_store_interpret() {
 
 #[test]
 fn rebind_keeps_the_buffers_store_native() {
-    assert_no_violation("--native-rust", &[], "value");
+    assert_no_violation("--native", &[], "value");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn rebind_keeps_the_buffers_store_strict_interpret() {
 
 #[test]
 fn rebind_keeps_the_buffers_store_strict_native() {
-    assert_no_violation("--native-rust", &[("LOFT_STRICT_STORES", "1")], "strict");
+    assert_no_violation("--native", &[("LOFT_STRICT_STORES", "1")], "strict");
 }
 
 /// The control: with the pairing off the guard must FAIL, on both backends.
@@ -101,7 +101,7 @@ fn rebind_keeps_the_buffers_store_strict_native() {
 /// off it fails — the veto stays load-bearing.
 #[test]
 fn the_pairing_is_load_bearing() {
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let (ok, stdout, stderr) = run(
             backend,
             &[
