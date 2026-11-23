@@ -1182,11 +1182,14 @@ impl Parser {
     ) {
     }
 
-    /// Resolve every registry `use` by the scope of the program `entry` — its lock pins — as a
-    /// parse with another entry (a library parsed alone, `native_artifact::parse_library_alone`)
-    /// would otherwise not.
+    /// Resolve every `use` as the program `entry` does — by its lock pins and its root
+    /// project's path dependencies (`probe_root_path_dep`) — where a parse with another entry
+    /// (a library parsed alone, `native_artifact::parse_library_alone`) would otherwise not.
     pub fn govern_by(&mut self, entry: &str) {
         self.program_scope = Some(crate::resolution_scope::resolution_scope(entry));
+        if let Some(dir) = std::path::Path::new(entry).parent() {
+            self.database.source_dir = dir.to_string_lossy().to_string();
+        }
     }
 
     /// @PLN143 arc E — say once when the declaration in force has fallen behind.
