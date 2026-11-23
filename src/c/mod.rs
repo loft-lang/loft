@@ -2977,7 +2977,65 @@ fn unit_defines(
         "#define LOFT_MAX_CALL_DEPTH {}",
         crate::limits::MAX_CALL_DEPTH
     );
+    // A build with no call chain counts its depth only where calls can nest past the cap: a
+    // unit whose call graph has no cycle (and no call through a function value, whose target
+    // the graph does not show) nests no deeper than its distinct functions.
+    if may_recurse(data, reached) {
+        out.push_str("#define LOFT_DEPTH_COUNT 1\n");
+    }
     (out, parses, reflects)
+}
+
+/// Can a call chain of the unit nest without bound — a cycle in the call graph of `reached`,
+/// or a call through a function value anywhere in it?
+fn may_recurse(data: &Data, reached: &std::collections::HashSet<u32>) -> bool {
+    let mut edges: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for &d in reached {
+        let mut calls = Vec::new();
+        let dynamic = data.def(d).code.any_node(&mut |n| match n {
+            Value::CallRef(..) => true,
+            Value::Call(c, _) => {
+                if reached.contains(c) {
+                    calls.push(*c);
+                }
+                false
+            }
+            _ => false,
+        });
+        if dynamic {
+            return true;
+        }
+        edges.insert(d, calls);
+    }
+    // Depth-first, three colours: a call to a function still on the walk's path is a cycle.
+    let mut state: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
+    for &root in reached {
+        if state.contains_key(&root) {
+            continue;
+        }
+        let mut stack: Vec<(u32, usize)> = vec![(root, 0)];
+        state.insert(root, 1);
+        while let Some((d, i)) = stack.pop() {
+            let next = edges.get(&d).and_then(|c| c.get(i)).copied();
+            match next {
+                Some(c) => {
+                    stack.push((d, i + 1));
+                    match state.get(&c) {
+                        Some(1) => return true,
+                        Some(_) => {}
+                        None => {
+                            state.insert(c, 1);
+                            stack.push((c, 0));
+                        }
+                    }
+                }
+                None => {
+                    state.insert(d, 2);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads and for the paged loaders
