@@ -39,10 +39,12 @@ it, working on the same data, with the same answers.  A release ships these buil
 published libraries, so `loft install` gives a machine with no C compiler the compiled library
 too; a library with no build for your loft runs interpreted.  `loft build-native <package>`
 compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
-included.`LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and
-`LOFT_LIB_BACKEND=rust` keeps the Rust build.  Under `loft debug` the libraries run compiled too:
-a library function with a breakpoint in it, or one you step into, runs in the interpreter so the
-debugger can stop there, and the functions it calls stay compiled.
+included.  `LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs,
+and `LOFT_LIB_BACKEND=rust` keeps the Rust build.  Under `loft debug` the libraries run compiled
+too: a library function with a breakpoint in it, or one you step into, runs in the interpreter so
+the debugger can stop there, and the functions it calls stay compiled.  Pausing a program while a
+compiled library function runs moves that function into the interpreter at the top of its
+current loop, with its variables as they were, and stops there.
 
 **`store_memory()` reports your program's stores, the same on every backend.**  It no longer
 counts the interpreter's own value stack and constant store.

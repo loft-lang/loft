@@ -714,6 +714,8 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
 | `LOFT_HOSTED_PLANT=1` | builds a unit whose first record call writes one stray byte: the verify must name that call |
 | `LOFT_POISON_CLAIM=1` | a unit fills a claim's unwritten bytes as the interpreter does, which the verify compares by |
 | `LOFT_STORE_DUMP=<file>` | every store's bytes as it is freed and at exit, on either runtime (`scripts/store_diff.py`) |
+| `LOFT_NO_HANDOVER=1` | builds a unit without its loop-head safepoints: a debugger pause waits for the compiled routine to return (a bisect step; the safepoints cost about 4% on a one-operation loop) |
+| `LOFT_TRACE_HANDOVER=1` | says why the interpreter refused to take a paused compiled routine over (a local it holds that the unit does not offer, a loop it keeps no head for) |
 | `LOFT_C_TRACE_SITES=1` | an emitted unit records every statement's line, so `LOFT_ALLOC_TRACE` names each store by the line that made it |
 | `scripts/hosted_suite.py` | a library's tests interpreted and adopted under the verify; `--prebuilt` with no compiler |
 

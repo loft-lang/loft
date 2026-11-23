@@ -35,8 +35,9 @@ interpreter keeps for it (the verify's twin already runs that bytecode on the sa
    run does, with the same blocks (`native_adopt::scope_library`, the export set, `hosted_split`,
    `cached_or_build_shared_cdylib`, `probe_and_mark_exports`); a library that does not build
    interprets, as before.
-4. **The pause point** (P7b, P7c): the unit's statement sites (`loft_frame_site`), where the
-   unit's state and the interpreter's line table meet.
+4. **The pause point** (P7b, P7c): a loop head, named in both forms by the function's key and
+   the loop's scope number — the unit's `loft_ho_commit(key, scope)`, the interpreter's
+   `State::loop_sites[(def, scope)]` (recorded by `gen_loop` and `gen_rotated_loop`).
 
 ## Failure paths
 
@@ -46,8 +47,8 @@ interpreter keeps for it (the verify's twin already runs that bytecode on the sa
 - A routine the session interprets because its library did not build is debugged as before:
   routing is a no-op for a function that is not compiled.
 - A generator: a static call to a compiled generator answers a handle; routing it would need the
-  interpreter's coroutine creation, so a generator is not routed (its body is stepped as compiled
-  until P7c).
+  interpreter's coroutine creation, so a generator is not routed, and its body has no
+  safepoint: a pause waits for it to yield.
 - Mid-routine (P7c): a local the unit holds in a shape the hand-over cannot write (a tuple, a
   text borrowed from the unit's own memory) makes that site refuse; the routine runs on to the
   next site that can hand over, or to its return.
@@ -57,8 +58,8 @@ interpreter keeps for it (the verify's twin already runs that bytecode on the sa
 | Phase | What | Red when |
 |---|---|---|
 | **P7a** | the session adopts units; a call the debugger wants runs interpreted; its callees stay compiled | a breakpoint inside a compiled library function does not stop, a parameter reads wrong there, or a callee the routine makes does not run compiled |
-| **P7b** | a pause while a compiled routine runs stops at the unit's next statement site and shows where it is: the compiled frames with their lines, marked compiled | a pause during a long compiled loop does not stop, or names the wrong line |
-| **P7c** | the stopped routine continues in the interpreter: its locals written into the interpreter's frame by variable, its statement's bytecode position entered, its answer returned to its compiled caller | a routine continued this way answers differently from the same routine run whole, or leaks or double-frees a store |
+| **P7b** | a pause while a compiled routine runs reaches it at its next loop head, where it offers its locals and asks to be taken over | a pause during a long compiled loop does not stop, or stops elsewhere than in that routine |
+| **P7c** | the routine continues in the interpreter: its locals written into the interpreter's frame by name, the loop head's bytecode position entered, its answer returned to the caller as the call's | a routine continued this way answers differently from the same routine run whole, or leaks or double-frees a store |
 
 P7a is complete on its own: everything a plain run gets from the units, the debugger gets, and
 every stop the interpreter-only debugger made it still makes.  P7b and P7c are the "interrupt a
@@ -70,36 +71,46 @@ running C program" half.
   and wires their bridges; `State::debug_route` turns a static call the debugger wants into an
   ordinary call.  Guards in `tests/rpc.rs`: a breakpoint two compiled calls deep stops, reads its
   parameter, and the routine's callee runs compiled (bridge hits, `SHARED_DISPATCH_HITS`);
-  stepping into compiled routines makes the all-interpreted debugger's stops.  Found on the way
-  and fixed: a debug session failed on a library with a tuple parameter (`tuple_def`'s stale
-  binding); the RPC server died with no word on a fault a request did not catch; a step into
-  stopped at the callee's prologue and named the previous function's last line.
+  stepping into compiled routines makes the all-interpreted debugger's stops.
+- **P7b and P7c done.**  A pause during a long compiled loop stops in that routine, interpreted,
+  and the run continues to the answer the routine gives run whole: an integer sum, and a routine
+  holding a vector it grows and a text it appends to (`rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter`,
+  `rpc_a_handed_over_routine_keeps_its_vector_and_text`).  The safepoints cost about 4% on a
+  loop whose body is one multiply and modulo; `LOFT_NO_HANDOVER=1` builds without them (its own
+  unit key).
 
 ## P7b and P7c: the hand-over
 
 A C routine cannot pause in place — the debugger pauses by returning to its driver — so a pause
 while a compiled routine runs is a hand-over: the **outermost** compiled routine (the one the
-interpreter called) continues interpreted from its next safepoint, and the interpreter's own
+interpreter called) continues interpreted from its next loop head, and the interpreter's own
 pause then stops it there.  A routine it is in a call to finishes compiled: its frame is live
 under the call.
 
-The host side exists: a frame is laid out as `State::fn_call` lays it (arguments at the base,
-the return address after them), each local's slot at a pc is `State::frame_view`, and the eval
-stack's depth at a pc is `State::stack`.  What remains:
+1. **The safepoint** (`src/c/body.rs` `loop_core`, `expand_safepoints`).  At each plain loop
+   head of a hosted unit's function, `loft_pause_asked()`: the host's pause flag
+   (`debugger::INTERRUPT`, its address in `HostedTable::pause`) is set, no refusal is latched
+   for this bridge call (`loft_ho_off`), and this frame is the bridge's direct callee
+   (`LOFT_HDEPTH == loft_br_hdepth + 1`; a unit without `CALL_CHAIN` counts its depth in
+   `loft_hdepth`).  None is emitted where the loop has C-only state in flight — a write window,
+   a held file cursor, a range copy — nor in a function split into parts.
+2. **The offer.**  Each declared local the unit holds as a plain value is offered by name and
+   kind (`loft_ho_put`: integer, float, text, reference, boolean or enum, single); a sticky sum
+   is offered as its checked value.  `loft_ho_commit(key, scope)` asks the host
+   (`HostedTable::handover`).
+3. **The verdict** (`State::accept_handover`, `src/state/handover.rs`).  The routine must be the
+   one the static call entered (`bridge_call_d`), its loop must have a head in the interpreter's
+   code, and every local `frame_view` shows held at that pc must be among the offer in a shape
+   its slot takes; a store the routine holds that the frame does not refuses too (no one would
+   free it).  A refusal latches `loft_ho_off` for the rest of the bridge call, and
+   `LOFT_TRACE_HANDOVER=1` says why.
+4. **The unwind.**  On acceptance the routine returns at once, without its own releases (the
+   frame owns its stores now); the dispatcher answers nothing; `static_call` calls
+   `resume_handover`, which enters the routine's frame as `fn_call` does, at the loop head's pc,
+   with the eval stack at that pc's depth and each slot written.  The main loop carries on —
+   paused there.
 
-1. **Safepoints in the unit.**  At each loop head of a hosted function, `if` the host's pause
-   flag (`debugger::INTERRUPT`, its address in `HostedTable`) is set and this frame is the
-   bridge's direct callee (`loft_nframes` against the bridge's base), hand over.
-2. **The site's bytecode position.**  The unit and the interpreter compile one source from two
-   IRs; a site is named by its loop's source position, which the interpreter maps to the loop
-   head's pc in its own code for the function.
-3. **The locals.**  Each local the interpreter holds at that pc (`frame_view`), found among the
-   unit's by name, written into its slot: scalars and references bit for bit (one store model),
-   a text through the interpreter's `String`.  A site where a held local has no counterpart or a
-   shape the hand-over cannot write refuses, and the routine runs on to its next site.
-4. **The unwind.**  The routine returns to its bridge without its own end-of-routine releases
-   (the interpreter's frame owns its stores now); the dispatcher turns the static call into the
-   interpreter frame at the site, and the main loop carries on — paused there.
-
-Red when a routine handed over answers otherwise than the same routine run whole, or leaks or
-frees a store twice; `LOFT_HOSTED_VERIFY`'s comparison is the instrument.
+**Known refusals.**  A local only the interpreter keeps (a hoisted length such as `_len_14`)
+has no counterpart in the unit, so a loop that hoists one refuses; so does a loop the
+interpreter rotated with a seed (no head recorded).  A refused routine finishes compiled, and the
+pause stops at the next interpreted statement after it.

@@ -107,8 +107,8 @@ Remaining rough edges are tracked in
 
 Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md).
 
-**Libraries run compiled under the debugger**; a routine holding (or reaching) a breakpoint, or
-stepped into, runs interpreted, its callees compiled ([P7](plans/206-one-store-model/p7-design.md)).
+**Libraries run compiled under the debugger**; a routine holding (or reaching) a breakpoint, stepped
+into, or paused while it runs continues interpreted, its callees compiled ([P7](plans/206-one-store-model/p7-design.md)).
 
 ---
 
