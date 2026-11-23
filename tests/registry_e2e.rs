@@ -176,7 +176,10 @@ fn tmpdir(name: &str) -> PathBuf {
 /// in `/usr/bin` (Ubuntu's `rustup` package puts one there) answers `rustc --version` from any
 /// directory, so the `PATH` cut alone hid nothing on such a machine.
 fn without_rust_toolchain(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    // No compiler to build a library with: no rustc, and no C compiler for a hosted unit
+    // (a library is a C unit by default, `@PLN206`; `/usr/bin` holds `cc` on macOS).
     cmd.env("PATH", "/usr/bin:/bin")
+        .env("LOFT_CC", "/nonexistent/loft-test-cc")
         .env_remove("RUSTUP_TOOLCHAIN")
         .env_remove("RUSTUP_HOME")
 }

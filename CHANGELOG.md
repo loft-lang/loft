@@ -36,7 +36,8 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 **Libraries run compiled, with no Rust toolchain.**  A library a program `use`s is compiled
 through C the first time it runs, and later runs pick the build up; the interpreter calls into
 it, working on the same data, with the same answers.  All you need is a C compiler (`cc`):
-without one the library runs interpreted, and loft says so.  `loft build-native <package>`
+without one loft uses a library build the release shipped, as before, and otherwise runs the
+library interpreted.  `loft build-native <package>`
 compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
 included.  A function that returns a generator still runs interpreted, with the same result.
 `LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and

@@ -658,7 +658,9 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
 - **Built** by `loft build-native <package>` (it reports `backend: c`, `loft_exe_id`,
   `host_abi`, `cc`, and each public function it leaves interpreted as `interpreted: <name>\t<why>`),
   or by the first run that adopts the library.  With no C compiler and no unit built before, the
-  library interprets and the run says to install one.  A package whose native part is a Rust
+  library takes the rustc artifact — one a release shipped for this loft
+  (`scripts/release-lib-artifacts.sh` builds those until the units ship, P6), or one rustc
+  builds — and interprets otherwise.  A package whose native part is a Rust
   crate (`[native] crate`, no `[c] shim`) takes the rustc artifact
   (`keys::set_lib_rust_crate`); a `[native] component` is a C library the unit calls.  It lands in
   the package's `native-auto/` under a name that carries the loft binary, the library's sources

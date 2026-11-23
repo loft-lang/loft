@@ -10716,6 +10716,24 @@ fn main() {
                 );
             }
         }
+        // No C compiler to build a hosted unit with: the rustc artifact instead — one the
+        // release shipped for this loft, or built where rustc is — and interpreted otherwise,
+        // said as that route says it.
+        if let Err(e) = &built
+            && loft::c::hosted::selected()
+            && e.starts_with(loft::c::hosted::NO_COMPILER)
+        {
+            loft::keys::set_lib_rust_crate(true);
+            let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
+            built = loft::native_artifact::cached_or_build_shared_cdylib(
+                &p.data,
+                &p.database,
+                &export,
+                pkg_dir,
+                &pending_native,
+                &lib_context,
+            );
+        }
         match built {
             Ok(Some(so)) => {
                 // loft#831 — the build succeeding does not mean this process can

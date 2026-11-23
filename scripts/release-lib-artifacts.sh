@@ -80,8 +80,9 @@ identity="$("$loft" build-native --identity)" \
   || { echo "release-lib-artifacts: $loft cannot report its identity" >&2; exit 2; }
 exe_id="$(printf '%s\n' "$identity" | sed -n 's/^loft_exe_id: //p')"
 triple="$(printf '%s\n' "$identity" | sed -n 's/^triple: //p')"
+# The rustc artifacts: what a run with no C compiler adopts (@PLN206 P6 ships the C units).
 env_run() {
-  env LOFT_HOME="$home" HOME="$home" LOFT_NO_CACHE=1 LOFT_TIMEOUT=900 \
+  env LOFT_HOME="$home" HOME="$home" LOFT_NO_CACHE=1 LOFT_TIMEOUT=900 LOFT_LIB_BACKEND=rust \
     ${registry:+"LOFT_REGISTRY_URL=$registry"} "$@"
 }
 built=0 failed=0
