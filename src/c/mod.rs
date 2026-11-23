@@ -5053,7 +5053,13 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// its body otherwise.  Only where the parameter and the result are the 64-bit integers the
 /// table holds.
 fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String {
-    let [param] = params.split(", ").collect::<Vec<_>>()[..] else {
+    // The store context every emitted function takes first (@PLN226 P2a) is no parameter of the
+    // loft function: the one a classifier is of comes after it.
+    let [param] = params
+        .split(", ")
+        .filter(|q| *q != "loft_cx *cx")
+        .collect::<Vec<_>>()[..]
+    else {
         return body;
     };
     let Some(p) = param.strip_prefix("int64_t ") else {

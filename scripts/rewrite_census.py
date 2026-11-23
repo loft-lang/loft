@@ -166,6 +166,22 @@ def rust_writer_env():
     return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
 
 
+def warm_dependencies(loft, progs):
+    """Emit every program once, one at a time, before the parallel census, so what a run builds
+    on the way — the standard library's hosted C unit (@PLN225 R1), a library's unit — is built
+    and cached before anything is counted.  Counted cold, a program also counts the rewrites of
+    the unit its run built (a census of 109110 admissions where the warm one reads 108969, on
+    the same tree), and which program builds it first is a race between the workers."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ext, flags = WRITERS["c"]
+        for _name, _commit, cwd, argv in progs:
+            subprocess.run(
+                [loft, *flags(Path(tmp) / f"warm{ext}"), *argv],
+                cwd=cwd, capture_output=True, timeout=600,
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1", "LOFT_REWRITE_CENSUS": ""},
+            )
+
+
 def read_baseline():
     """`(program, writer) → (commit, {rule: count})`; a four-column row is the Rust writer's."""
     rows = {}
@@ -214,6 +230,7 @@ def main() -> int:
     # (`make after-fix` passes `target/probe/probe/loft`) names nothing.
     loft = os.path.abspath(os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft"))
     progs = [p for p in programs() if only is None or p[0] in only]
+    warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:
         done = list(pool.map(lambda pw: census(loft, *pw),
                              [(p, w) for p in progs for w in writers]))
