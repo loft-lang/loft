@@ -738,7 +738,7 @@ elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	13365	of	22815
+layer	elab-functions	agree	13367	of	22815
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -2454,6 +2454,7 @@ elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parame
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_h
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_idt
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_main
+elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_pick
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_loop_of_calls
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_returned_member_or_tuple
 elab-functions	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_write_through_a_member_stays_in_the_callee
@@ -8365,6 +8366,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argum
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::__tuple<vector<integer>,integer>
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_bound
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_either
+elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_first
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_literal
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_mint
@@ -14105,7 +14107,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12714	of	18444
+layer	elab-pass1	agree	12721	of	18446
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -14696,6 +14698,7 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_flipv
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_mk
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_pushv
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_ret
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_s2_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_show_e
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_via_param
@@ -15199,6 +15202,8 @@ elab-pass1	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-argu
 elab-pass1	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_through_closure2203
 elab-pass1	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_vec_link
 elab-pass1	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::t_5W2203_method2203
+elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_bump
+elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_c_alias
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_c_below
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_c_callee
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_c_compound
@@ -15208,7 +15213,9 @@ elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_c_text
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_g
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_h
+elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_idt
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_main
+elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_pick
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_loop_of_calls
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_returned_member_or_tuple
 elab-pass1	agree	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft::n_test_a_write_through_a_member_stays_in_the_callee
@@ -19631,6 +19638,7 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-b
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-borrowed-is-the-callers-copy.loft::n_om_pick
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-borrowed-is-the-callers-copy.loft::n_om_s
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_either
+elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_first
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_literal
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_main
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft::n_minted
@@ -20018,6 +20026,7 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tu
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_test_a_view_first_then_a_copy_leaves_the_member
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_test_a_write_through_the_view_reaches_the_member
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_test_copies_and_views_alternate_two_hundred_times
+elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_view_on_one_arm
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_view_then_copy
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft::n_write_through
 elab-pass1	agree	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-an-index-element-releases-through-its-witness.loft::n_absent_key
