@@ -3021,9 +3021,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     xs = [];
   }
   // `unique_elm_var`: the element temp is a reference to the definition of the element the
-  // context gives the literal (`type_def_nr(parent_tp.content())`), definition 0 without one.
+  // context gives the literal (`type_def_nr(parent_tp.content())`), definition 0 without one —
+  // still borrowing the literal's vector (`depend(elm, vec)`).
   if value && elm >= 0 && len(recs) == 0 && n == vars.lit_hint_node {
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: type_def_of(e, vars.lit_hint), dep: [] });
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: type_def_of(e, vars.lit_hint), dep: if v >= 0 { [v] } else { [] } });
   }
   // An element made through the vector (`elm = OpNewRecord(v, …)`) borrows it — the bind's
   // `depend_all`; a bind's element was typed so when it was made.
