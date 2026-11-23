@@ -1469,20 +1469,19 @@ impl Deps {
     /// @PLN104 — renumber FRAME-variable entries in place for a variable swap:
     /// every plain entry equal to `from` becomes `to`.  Skips the `u16::MAX`
     /// pointer/share markers (they name no frame var).  FRAME-space only: a
-    /// variable swap never relocates attribute indices, so applying this to an
-    /// attr-space list would corrupt it (debug-asserted).  Used by the text-return
-    /// retbuf renumber (`Type::renumber_frame_deps`).
+    /// variable renumber never relocates attribute indices, so an attr-space list is
+    /// left as it is — renumbering it would corrupt it.  A walk over a whole body
+    /// meets such lists (a function body's result type names its PARAMETERS), and
+    /// cannot tell them apart from frame lists itself.  Only a debug build carries the space
+    /// tag; a release build renumbers every list, which leaves an attr list as it was for a
+    /// LOCAL's renumber — a local numbers after the arguments, so no attribute index equals
+    /// it.  Used by the text-return retbuf renumber and `(R-LiftReuse)`, which renumbers
+    /// lifts, locals all (`Type::renumber_frame_deps`).
     pub fn renumber_frame(&mut self, from: u16, to: u16) {
-        // An EMPTY list has nothing to corrupt, whatever space it is tagged — a `&text`
-        // parameter's declared type carries the attribute tag into the variable table, and
-        // the retbuf renumber walks every variable's type (loft#1335).  `union` exempts the
-        // empty list for the same reason.
         #[cfg(debug_assertions)]
-        debug_assert!(
-            self.items.is_empty() || self.space != DepSpace::Attr,
-            "renumber_frame on attr-space deps ({:?})",
-            self.items
-        );
+        if self.space == DepSpace::Attr {
+            return;
+        }
         for e in &mut self.items {
             if *e != u16::MAX && *e == from {
                 *e = to;
