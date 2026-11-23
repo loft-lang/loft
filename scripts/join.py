@@ -410,6 +410,21 @@ def print_plan(plan, verbose=False):
 
     print(f"\n{todo} commit(s) to pick; `scripts/join.py apply` picks them "
           f"(plan: {plan_path().relative_to(ROOT) if plan_path().is_relative_to(ROOT) else plan_path()})")
+    survey_hook()
+
+
+def survey_hook():
+    """A checkout's own sources of work the join takes in besides branches: an executable
+    `.git/loft-join/survey-hook`, untracked and local to the checkout, run after every survey.
+    Its output is printed as it stands — what it found to take and the commands that take it —
+    so the join that a survey starts never forgets it.  Absent, nothing is printed."""
+    hook = git_dir() / "loft-join" / "survey-hook"
+    if not (hook.is_file() and os.access(hook, os.X_OK)):
+        return
+    r = subprocess.run([str(hook)], cwd=ROOT, capture_output=True, text=True, timeout=300)
+    out = (r.stdout + r.stderr).rstrip()
+    print("\n== local survey hook (.git/loft-join/survey-hook)" + ("" if r.returncode == 0 else f" — exit {r.returncode}"))
+    print(out or "   (nothing to report)")
 
 
 # ── apply ───────────────────────────────────────────────────────────────────────────────
