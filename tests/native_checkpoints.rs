@@ -49,7 +49,7 @@ fn default_emission_carries_no_checkpoint() {
     let src = write_src(&dir);
     let out = dir.join("off.rs");
     let o = loft()
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -82,7 +82,7 @@ fn count_mode_counts_the_loop_exactly() {
     fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
-        .arg("--native-rust")
+        .arg("--native")
         .arg(&src)
         .env("LOFT_NATIVE_CHECKPOINTS", "count")
         .output()
@@ -118,7 +118,7 @@ fn sites_name_the_loft_function_the_operator_was_written_in() {
     fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
-        .arg("--native-rust")
+        .arg("--native")
         .arg(&src)
         .env("LOFT_NATIVE_CHECKPOINTS", "count")
         .output()

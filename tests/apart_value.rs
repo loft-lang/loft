@@ -37,7 +37,6 @@ const REGIONS: &[&str] = &["n_cube", "n_e2", "n_e4", "n_first_over", "n_pp"];
 fn loft() -> Command {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_TIMEOUT", "300")
         .env("LOFT_NATIVE_NO_CACHE", "1")
         .env_remove("LOFT_NO_APART")
@@ -55,7 +54,7 @@ fn emitted(src: &Path, env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<Str
     let out = std::env::temp_dir().join(format!("loft_apart_value_{tag}.rs"));
     let mut cmd = loft();
     cmd.arg("--ship")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(src);
@@ -211,7 +210,7 @@ fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
     let mut cmd = loft();
     cmd.env_remove("LOFT_NO_APART_VECTOR")
         .arg(tier)
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(VECTOR_CELLS));
@@ -246,7 +245,7 @@ fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
 
 #[test]
 fn the_inline_buffers_are_where_the_cells_say() {
-    for tier in ["--native-rust", "--ship"] {
+    for tier in ["--native", "--ship"] {
         assert_eq!(
             inline_bodies(tier, &[], "on"),
             INLINE,
@@ -254,14 +253,14 @@ fn the_inline_buffers_are_where_the_cells_say() {
         );
     }
     assert!(
-        inline_bodies("--native-rust", &[("LOFT_NO_APART_VECTOR", "1")], "off").is_empty(),
+        inline_bodies("--native", &[("LOFT_NO_APART_VECTOR", "1")], "off").is_empty(),
         "LOFT_NO_APART_VECTOR=1 must hold no vector inline"
     );
 }
 
 #[test]
 fn the_vector_cells_hold_with_the_rule_off() {
-    for tier in ["--native-rust", "--ship"] {
+    for tier in ["--native", "--ship"] {
         let out = loft()
             .env("LOFT_NO_APART_VECTOR", "1")
             .arg(tier)
@@ -288,9 +287,7 @@ fn an_inline_buffer_reports_an_index_out_of_range_as_the_store_does() {
     .expect("write the probe");
     let run = |on: bool| {
         let mut cmd = loft();
-        cmd.arg("--native-rust")
-            .arg(&src)
-            .env("LOFT_DEV_SOFT_HALT", "1");
+        cmd.arg("--native").arg(&src).env("LOFT_DEV_SOFT_HALT", "1");
         if !on {
             cmd.env("LOFT_NO_APART_VECTOR", "1");
         }

@@ -289,7 +289,6 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     let err_path = test_tmp().join(format!("eh_s3_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1");
     if interpret {
@@ -588,7 +587,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s5_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_FLIP_FNS", "bump_events")
@@ -858,7 +856,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s5cb_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
     let child = cmd
@@ -1066,7 +1063,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1107,7 +1103,6 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s5c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
     ccmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_DEBUG_CONTROL", "1");
     ccmd.process_group(0);
@@ -1257,7 +1252,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1298,7 +1292,6 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s5cc_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5cc_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
     ccmd.env("LOFT_DEBUG_CONTROL", "1");
     ccmd.process_group(0);
     let client = ccmd
@@ -1453,7 +1446,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1497,7 +1489,6 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s7c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s7c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
     ccmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
         .env("LOFT_DISPATCH_DEBUG", "1");
@@ -1647,7 +1638,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s8_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     match mode {
         "interpreted" => {
@@ -1819,7 +1809,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s7_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_LIVE_RELOAD", "1")
@@ -2002,7 +1991,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s4_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
     let child = cmd
@@ -2213,7 +2201,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s2_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
@@ -2294,7 +2281,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
@@ -2362,7 +2348,6 @@ fn main() {
             std::env::temp_dir().join(format!("eh_local_{}_{interpret}.loft", std::process::id()));
         fa::write(&prog, fixture).unwrap();
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.env("LOFT_NATIVE_BACKEND", "rust");
         cmd.env("LOFT_OFFLINE", "1");
         if interpret {
             cmd.arg("--interpret");
@@ -2443,7 +2428,6 @@ fn main() {{
             ));
             fa::write(&prog, src).unwrap();
             let mut cmd = loft::platform::process::harness_command(loft_bin());
-            cmd.env("LOFT_NATIVE_BACKEND", "rust");
             cmd.env("LOFT_OFFLINE", "1");
             if interpret {
                 cmd.arg("--interpret");
@@ -2520,7 +2504,6 @@ fn main() {
     fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
         .arg("--lib")
@@ -2590,7 +2573,6 @@ fn main() {
     fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
         .arg("--native-c")
@@ -2660,7 +2642,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_LIVE_FLIP", "1")
@@ -2733,7 +2714,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_FLIP_FNS", "hit_me")
@@ -2824,7 +2804,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
         .process_group(0)

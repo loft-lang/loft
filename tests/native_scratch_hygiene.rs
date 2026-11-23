@@ -44,7 +44,7 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
     )
     .unwrap();
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--native-rust")
+        .arg("--native")
         .arg(&prog)
         // Both spellings: `make ci` exports `LOFT_TMPDIR` beside `TMPDIR`, and the runtime
         // reads its scratch through `platform::scratch_dir`, which prefers the former.

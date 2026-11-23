@@ -144,7 +144,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     let html = tmp.join("paged.html");
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",
@@ -333,7 +333,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     let html = tmp.join("paged_keys.html");
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",
@@ -576,7 +576,7 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
     let html = tmp.join(format!("{name}.html"));
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",

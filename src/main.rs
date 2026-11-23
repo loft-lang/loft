@@ -237,9 +237,8 @@ fn print_help() {
     // "run this file" and "poke at the language", so both are named up here
     // rather than left to be found ~60 lines down.
     println!("Getting started:");
-    println!("  loft hello.loft               run a program (compiles via rustc when available,");
-    println!("                                otherwise interprets — a downloaded release always");
-    println!("                                interprets, which is normal, not a fallback to fix)");
+    println!("  loft hello.loft               run a program (compiles through C when a C");
+    println!("                                compiler is available, otherwise interprets)");
     println!("  loft                          type loft and see results immediately");
     println!();
     println!("Options:");
@@ -297,7 +296,6 @@ fn print_help() {
         "  --dump                        compile to bytecode, dump to stderr, and exit (no execution)"
     );
     println!("  --native                      compile through C and the host's C compiler and run");
-    println!("                                (default); --native-rust takes the rustc writer");
     println!("  --ship                        build the program as it ships: only reachable");
     println!("                                functions, fully optimised, no live/debug tier,");
     println!("                                native libraries linked in (unless --dynamic or");
@@ -305,9 +303,7 @@ fn print_help() {
     println!("                                --native-android it builds that target the same");
     println!("                                way.  Every fault check stays");
     println!("  --static                      with a native build: link every native library INTO");
-    println!(
-        "                                the binary — one file that runs with no loft, rustc or"
-    );
+    println!("                                the binary — one file that runs with no loft or");
     println!(
         "                                library file beside it (a program may ask with `#link static`)"
     );
@@ -324,13 +320,9 @@ fn print_help() {
         "                                ~/.loft/lib/<package>-<version>/, where every program"
     );
     println!("                                built against that version finds them");
-    println!(
-        "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
-    );
-    println!(
-        "                                and preserve the generated .rs on disk; combine with"
-    );
-    println!("                                --ship for optimised + debug-info");
+    println!("  --native-debug                like --native but compile with debug information");
+    println!("                                that names the loft source; combine with --ship");
+    println!("                                for optimised + debug-info");
     println!("  --lean                        strip the live/debug tier — smallest binary, no");
     println!("                                live-flip/breakpoints");
     println!("  --dev-soft-halt               demote dev-mode runtime raises to log-and-continue");
@@ -338,26 +330,20 @@ fn print_help() {
     println!(
         "                                site in a single run instead of halting on the first"
     );
-    println!("  --native-emit [out.rs]        write generated Rust source and exit");
+    println!("  --native-emit [out.c]         write the generated C source and exit");
+    println!("                                (default: .loft/<script>.c beside the script)");
     println!("  --emit-image <out.store>      write the program's compiled IR image and exit");
     println!("  --emit-run-image <out.store>  write the program's bytecode image and exit");
     println!("  --emit-c-bodies <out.c>       write the compiled standard-library bodies the loft");
     println!("                                runner's C shim includes, and exit");
-    println!("                                (default: .loft/<script>.rs beside the script)");
-    println!("  --native-c                    like --native but through C and the host's C");
-    println!("                                compiler (LOFT_CC, CC, else cc); combines with");
-    println!("                                --ship, --native-debug, --native-emit");
-    println!("                                [out.c]; it is what --native means");
-    println!("  --native-rust                 like --native but through the Rust writer and");
-    println!("                                rustc (LOFT_NATIVE_BACKEND=rust too); with");
-    println!("                                --native-emit it writes the Rust");
+    println!("  --native-c                    the same as --native (the C compiler: LOFT_CC,");
+    println!("                                CC, else cc)");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
     println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
-    println!("                                backend; a *.so output builds just the library;");
-    println!("                                with --native-rust, through the rustc writer");
+    println!("                                backend; a *.so output builds just the library");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -9670,66 +9656,31 @@ fn main() {
             .unwrap_or("out.wasm")
             .to_string();
     }
-    // `--native-android` builds through the C backend unless the rustc writer is asked for
-    // (`--native-rust`, `LOFT_NATIVE_BACKEND=rust`), which stays beside it as the bisect path
-    // (doc/claude/plans/106-android-build-target/c-backend.md, A5).
-    if native_android.is_some() && !native_rust && !c_driver::rust_backend_selected() {
-        native_c = true;
-    }
-    // A page or a wasm module builds through the C by default, which needs a WASI clang; where
-    // none links and the C was not asked for by name, it takes the rustc writer, as it did
-    // before the C became the default — the C default never refuses what built before it
-    // (`contract:broken`, PR #2516).
-    if native_c
-        && !native_c_named
-        && (html_out.is_some() || native_wasm.is_some())
-        && !c_driver::wasm_toolchain_links()
-    {
-        native_c = false;
-    }
-    // `--native-rust` chooses the writer; alone it is `--native` through it, beside
-    // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which
-    // writer builds that.
-    if native_rust {
-        native_c = false;
-        if native_emit.is_none()
-            && html_out.is_none()
-            && native_wasm.is_none()
-            && native_android.is_none()
-        {
-            native_mode = true;
-            native_requested = true;
-        }
-    }
-    // `LOFT_NO_RUSTC=1`: nothing this run builds goes through rustc.  Decided here, before
-    // any cache or fast path, so a cached binary cannot answer for a run that would have
-    // compiled.  An explicit request for a rustc build is refused; a default run interprets,
-    // as it does on a machine without rustc.  Writing the Rust (`--native-emit`) runs no rustc.
-    let rustc_build = !native_c
-        && native_emit.is_none()
-        && (native_mode || html_out.is_some() || native_wasm.is_some() || native_android.is_some());
-    if rustc_build && loft::native_build::rustc_off() {
-        if native_requested
-            || html_out.is_some()
-            || native_wasm.is_some()
-            || native_android.is_some()
-        {
-            eprintln!(
-                "loft: rustc is off for this run (LOFT_NO_RUSTC=1), and this build goes \
-                 through it — build through the C backend instead (drop `--native-rust` and \
-                 LOFT_NATIVE_BACKEND=rust)"
-            );
-            std::process::exit(2);
-        }
-        native_mode = false;
+    // `@C170` — the C backend is the one compiled backend: the rustc writer is retired, and a run
+    // that asks for it by flag or by environment is refused with what to write instead.
+    if native_rust || c_driver::rust_backend_selected() {
+        eprintln!(
+            "loft: {} no longer exists: `--native` compiles through C{}",
+            if native_rust {
+                "--native-rust"
+            } else {
+                "LOFT_NATIVE_BACKEND=rust"
+            },
+            if native_rust {
+                "; drop the flag"
+            } else {
+                "; unset LOFT_NATIVE_BACKEND"
+            }
+        );
+        std::process::exit(2);
     }
     if let Some(ref mut p) = native_emit
         && p.is_empty()
         && !file_name.is_empty()
     {
-        *p = default_artifact_path(&file_name, "rs")
+        *p = default_artifact_path(&file_name, "c")
             .to_str()
-            .unwrap_or("out.rs")
+            .unwrap_or("out.c")
             .to_string();
     }
 

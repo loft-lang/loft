@@ -605,7 +605,7 @@ fn run_loft_snippet_on(backend: &str, name: &str, source: &str) -> (String, Stri
 /// `--native` is bounded by `LOFT_TIMEOUT` because rustc can hang.
 fn rendering_shared_by_both_backends(name: &str, source: &str) -> (String, String) {
     let (i_out, i_err, i_code) = run_loft_snippet_on("--interpret", name, source);
-    let (n_out, n_err, n_code) = run_loft_snippet_on("--native-rust", name, source);
+    let (n_out, n_err, n_code) = run_loft_snippet_on("--native", name, source);
     let _ = fa::remove_file(std::env::temp_dir().join(format!("loft_{name}.loft")));
     assert_eq!(
         i_err, n_err,

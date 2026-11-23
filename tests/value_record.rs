@@ -113,7 +113,7 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     // `--lean`: the CLOSED program — `(R-ValueRecord)` is a whole-program rewrite, and an open
     // build (one that ships the live tier) takes none (NATIVE.md § Optimisation tiers).
     cmd.arg("--lean")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)

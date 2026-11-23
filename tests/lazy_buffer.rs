@@ -60,12 +60,7 @@ fn cells() -> String {
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let src = cells();
     let res = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &out.to_string_lossy(),
-            &src,
-        ],
+        &["--native", "--native-emit", &out.to_string_lossy(), &src],
         env,
     );
     assert!(

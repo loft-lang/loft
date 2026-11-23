@@ -21,7 +21,7 @@ fn emit(tag: &str, lean: bool, env: &[(&str, &str)]) -> String {
     if lean {
         cmd.arg("--ship");
     }
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(&src)

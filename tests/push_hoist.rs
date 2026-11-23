@@ -48,7 +48,7 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)

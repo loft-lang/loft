@@ -6485,7 +6485,7 @@ fn show(d: D) -> text { "{d.n} {d.f} {d.t} {d.xs} {d.us} {d.bs} {d.ts} {len(d.hs
     let small = "struct R { a: integer, t: text }\nfn main() {\n  r = R { a: 1, t: \"one\" };\n  \
                  r#lock = true;\n  r.t = \"two\";\n  println(\"after {r.t}\");\n}\n";
     let loft = env!("CARGO_BIN_EXE_loft");
-    for backend in ["--interpret", "--native-rust", "--native-c"] {
+    for backend in ["--interpret", "--native"] {
         for production in [true, false] {
             let dir = scratch(&format!(
                 "locked{}{}",

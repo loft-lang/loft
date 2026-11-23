@@ -54,7 +54,7 @@ fn emitted_with(file: &str, flags: &[&str], env: &[(&str, &str)]) -> String {
     ));
     let mut cmd = loft();
     cmd.args(flags)
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));

@@ -145,7 +145,7 @@ fn run_rust_html_wasm_full(
     harness_rel: &str,
 ) -> Option<(String, String, bool)> {
     run_html_page(
-        "--native-rust",
+        "--native",
         name,
         source,
         lib_dirs,
@@ -1006,7 +1006,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
 
     let mut emit = loft::platform::process::harness_command(&loft_bin);
     emit.args([
-        "--native-rust",
+        "--native",
         "--native-emit",
         rs.to_str()?,
         "--path",
@@ -2464,7 +2464,7 @@ mod rust_writer {
                 .arg(&src)
                 .arg("--lib")
                 .arg(tmp.join("nobridge"))
-                .arg("--native-rust")
+                .arg("--native")
                 .arg("--html")
                 .arg(tmp.join(format!("{name}.html")))
                 .output()
@@ -2608,7 +2608,7 @@ mod rust_writer {
         );
 
         let build = loft::platform::process::harness_command(&loft_bin)
-            .arg("--native-rust")
+            .arg("--native")
             .arg("--native-wasm")
             .arg(&wasm)
             .arg("--lib")

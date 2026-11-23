@@ -71,12 +71,7 @@ fn body<'a>(src: &'a str, name: &str) -> &'a str {
 fn the_rebinds_that_hand_the_store_on() {
     let rs = std::env::temp_dir().join(format!("loft_rebind_buf_{}.rs", std::process::id()));
     let (_, err, ok) = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &rs.to_string_lossy(),
-            &cells(),
-        ],
+        &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
         &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
     );
     assert!(ok, "emit failed:\n{err}");

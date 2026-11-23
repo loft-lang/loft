@@ -56,12 +56,7 @@ fn cells() -> String {
 fn every_cell_rebinds_through_the_exchange() {
     let rs = std::env::temp_dir().join(format!("loft_swap_rebind_{}.rs", std::process::id()));
     let (_, err, ok) = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &rs.to_string_lossy(),
-            &cells(),
-        ],
+        &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
         &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
     );
     assert!(ok, "emit failed:\n{err}");

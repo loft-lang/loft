@@ -53,7 +53,7 @@ fn a_call_answering_its_work_text_is_borrowed_and_one_that_may_answer_a_paramete
         let out = loft(
             &[
                 "--ship",
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 loft::platform::null_sink(),
             ],

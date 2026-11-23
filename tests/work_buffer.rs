@@ -396,7 +396,7 @@ const FNREF_CELLS: &str =
 fn fnref_emit(env: &[(&str, &str)], tag: &str) -> String {
     let out = std::env::temp_dir().join(format!("loft_fnref_work_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(FNREF_CELLS))

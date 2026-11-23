@@ -5194,7 +5194,7 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     let pkg_dir = Path::new("tests/lib/native_scalar_pkg");
 
     // --native: the C-ABI exec path (the path @PLN26 phase 4's Windows arm extends).
-    let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--native-rust"])?;
+    let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--native"])?;
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -5311,7 +5311,7 @@ fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
             ),
         )?;
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .args(["--native-rust", "--check", "--lib"])
+            .args(["--native", "--check", "--lib"])
             .arg(&lib_dir)
             .arg(&program)
             .env("LOFT_CHECK_ARTIFACT", "1")
@@ -5393,7 +5393,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
     )?;
     let dist = root.join("dist");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--ship", "--native-rust", "--dynamic", "--lib"])
+        .args(["--ship", "--native", "--dynamic", "--lib"])
         .arg(&lib_dir)
         .arg("--out")
         .arg(&dist)
@@ -5709,7 +5709,7 @@ fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> s
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/lib/native_remap_pkg");
 
-    for backend in ["--native-rust", "--interpret"] {
+    for backend in ["--native", "--interpret"] {
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "remap", &[backend])?;
         let combined = format!(
             "{}{}",
@@ -5802,7 +5802,7 @@ fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/fixtures/libs/imaging");
     for stem in ["14-image", "15-regression"] {
-        for mode in ["--native-rust", "--interpret"] {
+        for mode in ["--native", "--interpret"] {
             let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, stem, &[mode])?;
             let combined = format!(
                 "{}{}",
@@ -6065,7 +6065,7 @@ fn main() {\n\
     let wasm = dir.join("w.wasm");
     let build = loft::platform::process::harness_command(loft)
         .env("LOFT_TIMEOUT", "900")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-wasm")
         .arg(&wasm)
         .arg("--lib")
@@ -6136,7 +6136,7 @@ fn main() {\n\
     let wasm = dir.join("two.wasm");
     let build = loft::platform::process::harness_command(loft)
         .env("LOFT_TIMEOUT", "900")
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-wasm")
         .arg(&wasm)
         .arg("--lib")

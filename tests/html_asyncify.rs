@@ -192,7 +192,7 @@ fn html_asyncify_program_resumes_to_completion() {
         return;
     }
     let root = repo_root();
-    let Some(html) = build_html("--native-rust") else {
+    let Some(html) = build_html("--native") else {
         return;
     };
     assert_resumes(&root, &html, None); // visible — requestAnimationFrame
