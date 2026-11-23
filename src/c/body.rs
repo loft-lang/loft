@@ -7188,24 +7188,14 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(false);
         }
-        // `DisplacedFree::Pre`: the value reads nothing the displaced store holds, so the store
-        // is released BEFORE the value is built, as the bytecode writer does — the new value's
-        // store then takes the freed one's place (@FR-O-NoDiverge).  Kept where it is the
-        // witness's store: the projection's container, the call's hidden buffer, or a promoted
-        // buffer's entry store.
-        if let crate::bind_lowering::DisplacedFree::Pre { witness } = rb.free {
-            let mut keep = vec![format!("{name}.store_nr != 0xFFFF")];
-            for w in witness.into_iter().chain(rb.entry_w) {
-                keep.push(format!("{name}.store_nr != {}.store_nr", self.var(w)));
-            }
-            self.line(
-                ind,
-                &format!("if ({}) loft_free_ref({name});", keep.join(" && ")),
-            );
-            self.assign(x, name, CType::Ref, ind)?;
-            self.flush(ind);
-            return Ok(true);
-        }
+        // Every displaced store, `DisplacedFree::Pre` included, is released AFTER the value is
+        // built and only when the value names another store.  A Pre free ahead of the value
+        // released a lifted temporary that viewed the store an earlier lift of the same
+        // statement had just been rebuilt in (store numbers are reused), so the call that read
+        // that lift read a freed store: the self-hosted front end built by this backend ran out
+        // of memory in a deep copy over it (`base(tp(vars, n))`, el_expressions.loft).  The
+        // allocation ORDER then differs from the bytecode's where it frees first, which
+        // `scripts/c_alloc_diff.py` reports and nothing observes (STORE_MODEL.md D38).
         let old = self.temp(CType::Ref);
         self.line(ind, &format!("{old} = {name};"));
         self.assign(x, name, CType::Ref, ind)?;

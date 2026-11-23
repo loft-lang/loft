@@ -93,6 +93,7 @@ fn at(events: &[String], line: &str) -> usize {
 ///   CHANNEL: the trace's event order.  WITNESS: `N 2 100` before `F 1`.
 ///   HOLDS: `3` and `6 p2` on either order.
 #[test]
+#[ignore = "D38's C half reopened (STORE_MODEL.md): the C frees a displaced store after the value is built, as before D38, until a lifted call answer that views its argument's store is copied first"]
 fn a_rebind_frees_the_displaced_store_before_the_value_is_built() {
     if !have_cc() {
         eprintln!("skipped: no cc on PATH");
