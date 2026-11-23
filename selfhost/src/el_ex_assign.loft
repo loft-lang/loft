@@ -733,6 +733,20 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
       // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
       tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
+      // `parse_vector`'s `vector_def`: an empty `[]` whose element the position expects registers
+      // that element's `vector<…>` and `main_vector<…>` where it stands, on the first pass, as a
+      // literal with items does (a match arm's `_ => []` under the function's `-> vector<E>`).
+      if e.first_pass && len(items) == 0 && !el_types::is_unknown(tail_elem) {
+        enm = el_types::elem_name(e, tail_elem);
+        if enm != "" && el::def_nr(e, "vector<{enm}>") < 0 {
+          etok = match e.p.nodes[n] { SVecLit { at } => at, _ => 0 };
+          eat = el_ex_base::closing_bracket(e, etok);
+          if eat == etok + 1 {
+            eat = etok - 1;
+          }
+          el_schema::make_vector_def(e, tail_elem, enm, el::pos_at(e, eat), true, narrow_early: false);
+        }
+      }
       if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n).x }
     },
     SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),

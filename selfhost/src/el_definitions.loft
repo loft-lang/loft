@@ -88,6 +88,11 @@ fn top_item(e: el::El, it: integer) {
     // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
     // fields — not carried; the other directives leave the code as it is.
     SDirective { at, name, arg } => {
+      // (`width_directive`: the file is under the regime — a fact of each of its functions,
+      // `body_width32`, recorded though its lowering is refused.)
+      if name == "width" && arg == "32" && e.source != el::STD_SOURCE && !e.width32_files.contains(e.file) {
+        e.width32_files += [e.file];
+      }
       if name == "width" && arg != "64" {
         el::refuse(e, "a `#width {arg}` file");
       }
@@ -1413,10 +1418,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           } else {
             param_default(e, init!, t!)
           };
-          if d == null {
-            return "";
+          // (A default refused — the refusal stands — still leaves the function registered,
+          // as Rust registers it: every definition after it keeps Rust's number.)
+          if d != null {
+            dv = d!;
           }
-          dv = d!;
         }
         arguments += [Argument { name: an, typedef: t!, constant: fixed, dflt: dv }];
       },
@@ -2290,5 +2296,19 @@ fn fact_put(e: el::El, tn: integer) -> text {
     },
     STyArg { tp } => if tp != null { fact_put(e, tp!) } else { "_" },
     _ => "_"
+  }
+}
+
+// `Data::body_width32`: each function from definition `from` on whose body is in a file under
+// the 32-bit regime (`width32_files`).  An instance keeps its template's position, so one minted
+// from a template in a 64-bit file is wide (`mark_wide_instance`).
+pub fn mark_width32(e: el::El, from: integer) {
+  if len(e.width32_files) == 0 {
+    return;
+  }
+  for wd in e.b.data.definitions {
+    if wd#index >= from && wd.def_type == el::DT_FUNCTION && wd.source != el::STD_SOURCE && e.width32_files.contains(wd.position.file) {
+      e.b.data.definitions[wd#index].width32 = true;
+    }
   }
 }
