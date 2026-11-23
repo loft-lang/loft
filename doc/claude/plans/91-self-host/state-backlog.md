@@ -51,8 +51,8 @@ routine and its port counterpart:
 
 | # | Rust change | removes | site |
 |---|---|---|---|
-| R1 | the pass-1 capture placeholder does not survive into pass 2's variable table (or is not made) | 446 items: `user_named` 417, `deps`/`user_appended` 29 | objects.rs `parse_var_inner`'s capture arm (~1261: `create_var` + `mark_user_named`) |
-| R2 | `collect_mutated_captures` lists only the lambda's captures, not every written name in its variable table | 42 items, 17 programs | its candidate list (1a-parser.md § Rust suspects); its readers already intersect with the captures |
+| R1 | LANDED 8a1672686 (11-23): the pass-1 capture placeholder retired after the lambda's pass 2 | 445 items gone (user_named 416, deps 20, user_appended 9), 0 new | objects.rs capture arm + Function::retire_capture_placeholders |
+| R2 | LANDED 11522b59e (11-23): collect_mutated_captures takes the parser's capture list | 42 items gone, 0 Rust-side new; 6 port-only `__ncc_1` until the port follows | vectors.rs collect_mutated_captures |
 | R3 | NOT a Rust change (measured 11-23): Rust's mark is right.  The port's counterpart must root at the LOWERED place | 2 items | see § R3 below |
 | R4 | NOT a Rust change (measured 11-23): the port carries Rust's mint-substitute-retire | the 6 lambda `__ref_1 skip_free` items | see § R4 below |
 
@@ -174,3 +174,15 @@ one-buffer binding substitutes it), so under the corresponding-routine ruling th
 it.  It mints the call's work ref, substitutes it by the buffer and retires it, at its
 counterparts of the Bind-substitute caller and of the capture-copy roads
 (`capture_tail_copy`/`capture_if_copy`).  No Rust change.
+
+## Where it stands (11-23, after R2 and R1)
+
+Measured on try 2a309d458 (71006afc3 + R2 + R1): 1402 of 2133 agree, 0 differ.  State 1363 of
+1402, **83 items** (from 568 at 7fe954324); reasons 1394 of 1402; contract 1391 of 1402.  Each
+landing was proven with:
+- 0 verdict changes;
+- a state diff of exactly the predicted items and 0 new on the Rust side;
+- the 58 closure suite cells unchanged on both backends (base binary against the changed one).
+
+Left for the port: R2's follow-up (6 items), R3 (2), R4 (6), and the porter's own groups
+(`__place_N` user_named, the keyed `??` holder, singles).
