@@ -133,13 +133,11 @@ fn plan(data: &Data, d: u32) -> Option<Plan> {
     let mut renames = Vec::new();
     for &(first, last, v) in &ranges {
         let tp = vars.tp(v);
-        let slots = match shared.iter().position(|(t, _)| t == tp) {
-            Some(i) => &mut shared[i].1,
-            None => {
-                shared.push((tp.clone(), Vec::new()));
-                &mut shared.last_mut().expect("just pushed").1
-            }
-        };
+        let i = shared.iter().position(|(t, _)| t == tp).unwrap_or_else(|| {
+            shared.push((tp.clone(), Vec::new()));
+            shared.len() - 1
+        });
+        let slots = &mut shared[i].1;
         if let Some(slot) = slots.iter_mut().find(|(_, end)| *end < first) {
             renames.push((v, slot.0));
             slot.1 = last;
