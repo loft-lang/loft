@@ -1,5 +1,7 @@
 # @PLN91 — a record-answering lambda that answers its capture: 1659's other five lambdas (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: O-Unknown 1659 agrees in every layer.  Kept as the record of the subject.
+
 **The subject:** what O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once needs beyond
 lambda-coalesce-over-a-capture.md to agree whole.  The porter carried the `??` lambda
 (wip/lambda-ncc-over-a-capture.patch).  That turns 1659 from refused into DIFF, because five

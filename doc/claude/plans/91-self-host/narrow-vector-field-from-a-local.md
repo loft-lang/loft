@@ -1,5 +1,7 @@
 # @PLN91 — a `vector<u8>` field written from a vector local (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: its refusal no longer occurs.  Kept as the record of the subject.
+
 **The family:** "a vector field of this element type written from a vector place: TyInteger"
 (10 sites; 3 programs held by it alone).  A struct literal fills a NARROW-integer vector field
 from a vector local.  The three sole sites all write a `vector<u8>` field; two of them also

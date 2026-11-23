@@ -1,5 +1,7 @@
 # @PLN91 — a store `else` on an append, `xs += [v] else { … }` (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: its refusal no longer occurs.  Kept as the record of the subject.
+
 **The family:** "a store `else` on an append" (4 sites, 2 programs held by it alone):
 ```
 H-Write-Else/2549-an-append-is-a-store-whose-place-is-its-collection.loft:30, :54   d.xs += [4] else { out += "X" };  ds[3].hs += [E { k: 6, v: 60 }] else { out += "A" };
