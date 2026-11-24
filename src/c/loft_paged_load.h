@@ -304,9 +304,9 @@ static int loft_pg_load_one(loft_cx *cx, loft_pg *r, const loft_tdesc *T, loft_r
 /* store_load_key / store_load_keys / store_load_key_text / store_load_keys_text: each key's
  * entry, through one reader; the count found.  `label` names the call in the loader stats — the
  * single text key's line names its key, as the interpreter's does — and 0 says nothing. */
-static int64_t loft_pg_load_keys(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
-                                 const char *refusal, uint16_t content, const loft_key *keys, int nk, int kind,
-                                 const loft_kv *kv, int64_t n, const char *label) {
+static int64_t loft_pg_load_keys_as(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
+                                    const char *refusal, uint16_t content, const loft_key *keys, int nk, int kind,
+                                    const loft_kv *kv, int64_t n, const char *label) {
     loft_pg r;
     int64_t loaded = 0;
     if (!loft_pg_begin(cx, &r, local, path, sc, refusal)) return 0;
@@ -322,6 +322,14 @@ static int64_t loft_pg_load_keys(loft_cx *cx, const loft_tdesc *T, loft_ref loca
     }
     loft_pg_close(cx, &r);
     return loaded;
+}
+
+/* store_load_key / store_load_key_text: one key, the text form saying its stats line. */
+static int64_t loft_pg_load_keys(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
+                                 const char *refusal, uint16_t content, const loft_key *keys, int nk, int kind,
+                                 const loft_kv *kv, int64_t n) {
+    const char *label = n == 1 && kv[0].kind == LOFT_KV_TEXT ? "store_load_key_text" : 0;
+    return loft_pg_load_keys_as(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n, label);
 }
 
 /* The keys of a `vector<integer>` or a `vector<text>` argument (Stores::int_vector, str_vector),
@@ -350,8 +358,8 @@ static int64_t loft_pg_load_key_list(loft_cx *cx, const loft_tdesc *T, loft_ref 
                                      loft_ref list, int text) {
     int64_t n;
     loft_kv *kv = loft_pg_key_list(cx, list, text, &n);
-    int64_t got = loft_pg_load_keys(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n,
-                                    text ? "store_load_keys_text" : "store_load_keys");
+    int64_t got = loft_pg_load_keys_as(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n,
+                                       text ? "store_load_keys_text" : "store_load_keys");
     free(kv);
     return got;
 }
