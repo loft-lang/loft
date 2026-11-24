@@ -2495,6 +2495,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       vars.enum_hint = keep_hint;
     }
   }
+  // (`unique_elm_var` over nested literals: the element temp is the nested vector's type,
+  // borrowing the destination — `vv = [[11, 22], [33]]` makes `_elm_1: vector<integer>["vv"]`.)
+  if e.first_pass && elm >= 0 && len(nested) > 0 && len(items) > 0 && nested[0]! == items[0]! && len(xs) > 0 && el_types::base(xs[0]!.tp) is TyVector && match el_vars::tp(vars, elm) { TyReference { n: en } => en == 0, _ => false } {
+    edeps = match el_vars::tp(vars, elm) { TyReference { dep } => dep, _ => [] };
+    el_vars::set_var_type(vars, elm, el_types::with_deps(el_types::without_deps(el_types::base(xs[0]!.tp)), edeps));
+  }
   mixed = len(recs) > 0 && len(recs) != len(xs);
   // Mixed with items that are no literal, each element is made in order: carried for a plain
   // struct's literals beside items of that struct (variants and nested literals are not).
