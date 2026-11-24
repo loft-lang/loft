@@ -189,6 +189,10 @@ struct NativeSig {
     answer_tp: u16,
     /// `@PLN226` — the component the bridge belongs to, whose context it takes first.
     cx: Option<crate::c_libs::CxFns>,
+    /// Per heap-typed parameter, in order: the type an argument in another store is copied
+    /// into the call's store with (a vector's element type, a record's own; `u16::MAX` when
+    /// none), and whether the parameter is not `const` (`Stores::bridge_args`).
+    heap: Vec<(u16, bool)>,
 }
 
 /// Library index → (the generated bridge, signature), resolved ONCE by `wire_native_fns`.
@@ -293,11 +297,22 @@ type SharedSlot = (FnPtr, std::sync::Arc<SharedSig>);
 /// Returns `None` if the signature contains types that can't be auto-marshalled
 /// (e.g. struct references, vectors).
 #[cfg(feature = "native-extensions")]
-fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
+fn compute_sig(
+    data: &crate::data::Data,
+    stores: &mut crate::database::Stores,
+    d_nr: u32,
+) -> Option<NativeSig> {
     use crate::data::Type;
     let def = data.def(d_nr);
     let mut params = Vec::new();
+    let mut heap = Vec::new();
     for attr in &def.attributes {
+        // What an argument of another store is copied in with (`Stores::bridge_args`).
+        let copy_tp = match attr.typedef.base() {
+            Type::Vector(elm, _) => data.vector_element_type(elm, stores).unwrap_or(u16::MAX),
+            Type::Reference(d, _) | Type::Enum(d, true, _) => data.def(*d).known_type(),
+            _ => u16::MAX,
+        };
         // Marshal classification is layout-based, and `Optional(τ)` shares τ's
         // sentinel layout (@PLN25) — classify the peeled type, here and for the
         // return below.  Without the peel, a `#native` fn declaring `integer?`
@@ -327,6 +342,9 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
             Type::Vector(_, _) => ArgT::Vec,
             _ => return None,
         };
+        if matches!(t, ArgT::Ref | ArgT::Vec) {
+            heap.push((copy_tp, !(attr.constant || attr.value_const)));
+        }
         params.push(t);
     }
     let ret = match def.returned.base() {
@@ -355,6 +373,7 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
         ret,
         answer_tp: def.native_answer_tp,
         cx: crate::c_libs::get_bridge_cx(def.native()),
+        heap,
     })
 }
 
@@ -641,7 +660,7 @@ pub fn wire_native_fns_for(
         };
 
         // Only wire if we can auto-marshal the signature.
-        let sig = match compute_sig(data, d_nr) {
+        let sig = match compute_sig(data, &mut state.database, d_nr) {
             Some(s) => s,
             None => continue,
         };
@@ -1747,7 +1766,8 @@ fn dispatch_via_bridge(
         .collect();
     // A call with no store argument and no store answer — every scalar/text native — has
     // nothing for `bridge_args` to pin, copy or mint, nor for `bridge_args_done` to undo.
-    let call = (!heap.is_empty() || returns_ref).then(|| stores.bridge_args(&heap, returns_ref));
+    let call = (!heap.is_empty() || returns_ref)
+        .then(|| stores.bridge_args(&heap, &sig.heap, returns_ref));
     let (store_nr, minted) = call.as_ref().map_or((0, false), |c| (c.store_nr, c.minted));
     let mut handed = call.as_ref().map_or([].iter(), |c| c.handed.iter());
     let mut args = ArgBuf::new(sig.params.len(), LoftValue::VOID);
@@ -2299,7 +2319,7 @@ pub mod native_call {
             args: &[(crate::keys::DbRef, bool)],
             returns_ref: bool,
         ) -> Self {
-            let args = stores.bridge_args(args, returns_ref);
+            let args = stores.bridge_args(args, &[], returns_ref);
             // loft#2227 — a heap answer pinned to an argument's store: log what the call
             // claims there, for [`Self::answer`].
             if returns_ref && !args.minted {

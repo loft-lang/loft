@@ -34,7 +34,7 @@ mod spans;
 pub mod sql_query;
 pub mod sql_source;
 mod structures;
-pub use structures::BridgeArgs;
+pub use structures::{BridgeArg, BridgeArgs};
 mod types;
 
 pub use allocation::{CLEAR_KEYED_VIEW, FILL_KEYED_SOURCE, timeline_summary};

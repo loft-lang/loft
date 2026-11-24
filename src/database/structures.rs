@@ -58,9 +58,56 @@ pub struct BridgeArgs {
     pub minted: bool,
     pub handed: Vec<DbRef>,
     copies: Vec<(DbRef, DbRef)>,
+    /// The arguments of OTHER stores copied into the call's store, with their copies
+    /// (`bridge_args`): written back after the call when the parameter is not `const`.
+    moved: Vec<(BridgeArg, DbRef)>,
     /// The call works in a writable COPY of the read-only store it pinned (`bridge_args`):
     /// freed whole by `bridge_args_done`, after the answer is copied out of it.
     cloned: bool,
+}
+
+/// One heap-typed argument of a library call ([`Stores::bridge_args`]), in declaration order.
+#[derive(Clone, Copy, Debug)]
+pub struct BridgeArg {
+    pub db: DbRef,
+    /// A vector (`tp` is its ELEMENT type) or a record (`tp` is its own type).
+    pub is_vec: bool,
+    /// The type it is copied with when it lies in another store than the call's;
+    /// `u16::MAX` when it is not known, and it is then handed as it is.
+    pub tp: u16,
+    /// The parameter is not `const`: the call may write through it, so a copy is written back.
+    pub writable: bool,
+}
+
+impl BridgeArg {
+    /// Each argument with the type it is copied in with and whether it may be written; an
+    /// argument past `types` (a caller that knows none) is handed as it is.
+    #[must_use]
+    pub fn typed(args: &[(DbRef, bool)], types: &[(u16, bool)]) -> Vec<Self> {
+        args.iter()
+            .enumerate()
+            .map(|(i, &(db, is_vec))| match types.get(i) {
+                Some(&(tp, writable)) => Self {
+                    db,
+                    is_vec,
+                    tp,
+                    writable,
+                },
+                None => Self::untyped(db, is_vec),
+            })
+            .collect()
+    }
+
+    /// An argument whose type the caller does not know: handed as it is when it is not foreign.
+    #[must_use]
+    pub fn untyped(db: DbRef, is_vec: bool) -> Self {
+        Self {
+            db,
+            is_vec,
+            tp: u16::MAX,
+            writable: false,
+        }
+    }
 }
 
 /// Why a field is being given its absent value — which decides what that value may COST.
@@ -2458,13 +2505,24 @@ impl Stores {
     /// sixteen gigabytes past the store), is COPIED into a record of THAT store for the
     /// call, in one block.  A foreign vector never pins: the next argument does, or a store
     /// is minted for the call — announced as the return store when the answer is a vector or
-    /// record, freed after the call when it is not.  `args` are the heap-typed arguments in
-    /// declaration order with whether each is a vector; `handed` is what the bridge is
+    /// record, freed after the call when it is not.  Every OTHER argument that lies in another
+    /// store than the pinned one is read through it just the same, so it is deep-copied into
+    /// that store for the call by its type (`@FR-Slice-Value`'s bridge clause), and written
+    /// back when its parameter is not `const` — two vectors from two stores otherwise read the
+    /// first twice.  `args` are the heap-typed arguments in
+    /// declaration order with whether each is a vector, `types` each one's copy type and whether
+    /// its parameter is not `const` (`BridgeArg::typed`); `handed` is what the bridge is
     /// given for each, and [`bridge_args_done`](Self::bridge_args_done) ends the call.  A
     /// `#rust` builtin and a `par` worker need none of this: they read through [`Store`]'s
     /// accessors, which serve the foreign record.
     #[must_use]
-    pub fn bridge_args(&mut self, args: &[(DbRef, bool)], returns_ref: bool) -> BridgeArgs {
+    pub fn bridge_args(
+        &mut self,
+        args: &[(DbRef, bool)],
+        types: &[(u16, bool)],
+        returns_ref: bool,
+    ) -> BridgeArgs {
+        let args = &BridgeArg::typed(args, types)[..];
         let foreign = |stores: &Self, db: &DbRef, is_vec: bool| {
             is_vec
                 && !db.is_null()
@@ -2473,9 +2531,18 @@ impl Stores {
         };
         let pin = args
             .iter()
-            .find(|(db, is_vec)| !foreign(self, db, *is_vec))
-            .map(|(db, _)| db.store_nr);
-        let any_foreign = args.iter().any(|(db, is_vec)| foreign(self, db, *is_vec));
+            .find(|a| !foreign(self, &a.db, a.is_vec))
+            .map(|a| a.db.store_nr);
+        let any_foreign = args.iter().any(|a| foreign(self, &a.db, a.is_vec));
+        // An argument the call reads through a store that is not its own: copied in below.
+        let elsewhere = |stores: &Self, a: &BridgeArg, nr: u16| {
+            a.tp != u16::MAX
+                && !a.db.is_null()
+                && a.db.rec != 0
+                && a.db.store_nr != nr
+                && !foreign(stores, &a.db, a.is_vec)
+        };
+        let copy_any = pin.is_some_and(|nr| args.iter().any(|a| elsewhere(self, a, nr)));
         let (mut store_nr, minted) = match pin {
             Some(nr) => (nr, false),
             None if returns_ref || any_foreign => (self.null().store_nr, true),
@@ -2487,7 +2554,7 @@ impl Stores {
         // call is handed a writable copy of the whole store instead, so every argument keeps
         // its record numbers; `own_bridge_answer` copies the answer out of it and
         // `bridge_args_done` frees it.
-        let cloned = returns_ref
+        let cloned = (returns_ref || copy_any)
             && pin.is_some()
             && self.allocations[store_nr as usize].is_locked()
             && !self.allocations[store_nr as usize].is_file_backed();
@@ -2498,7 +2565,9 @@ impl Stores {
         let pinned_from = pin.unwrap_or(u16::MAX);
         let mut handed = Vec::with_capacity(args.len());
         let mut copies = Vec::new();
-        for (db, is_vec) in args {
+        let mut moved = Vec::new();
+        for arg in args {
+            let (db, is_vec) = (&arg.db, &arg.is_vec);
             let span = if foreign(self, db, *is_vec) {
                 keys::store(db, &self.allocations).foreign_span(0, u32::MAX)
             } else {
@@ -2508,6 +2577,10 @@ impl Stores {
                 let mut db = *db;
                 if cloned && db.store_nr == pinned_from {
                     db.store_nr = store_nr;
+                } else if pin.is_some() && elsewhere(self, arg, pinned_from) {
+                    let copy = self.bridge_copy_in(arg, store_nr);
+                    moved.push((*arg, copy));
+                    db = copy;
                 }
                 handed.push(db);
                 continue;
@@ -2545,7 +2618,88 @@ impl Stores {
             minted,
             handed,
             copies,
+            moved,
             cloned,
+        }
+    }
+
+    /// A deep copy of `arg` in store `nr`, for a library call that reads it through that store
+    /// ([`Self::bridge_args`]): a vector in the one-word root a bridge's vector answer has
+    /// (`extensions::bridge_push_ref`), a record as `own_bridge_answer` copies one.
+    fn bridge_copy_in(&mut self, arg: &BridgeArg, nr: u16) -> DbRef {
+        let base = DbRef {
+            store_nr: nr,
+            rec: 0,
+            pos: 0,
+        };
+        if arg.is_vec {
+            let root = self.claim(&base, 1);
+            self.store_mut(&base).set_u32_raw(root.rec, 4, 0);
+            let to = DbRef {
+                store_nr: nr,
+                rec: root.rec,
+                pos: 4,
+            };
+            self.vector_add(&to, &arg.db, arg.tp);
+            to
+        } else {
+            let size = self.enum_parent_size(arg.tp);
+            let r = self.claim(&base, 1 + u32::from(size).div_ceil(8));
+            self.store_mut(&r).zero_fill(r.rec);
+            let to = DbRef {
+                store_nr: nr,
+                rec: r.rec,
+                pos: 8,
+            };
+            self.copy_block_cross_store(
+                arg.db.store_nr,
+                arg.db.rec,
+                arg.db.pos as isize,
+                nr,
+                to.rec,
+                8,
+                size as isize,
+            );
+            self.copy_claims(&arg.db, &to, arg.tp);
+            to
+        }
+    }
+
+    /// The end of a moved argument's copy: written back over the original when the parameter is
+    /// not `const` (what the call did to it, as it would have done in place), then released.
+    fn bridge_move_back(&mut self, arg: &BridgeArg, copy: &DbRef, release: bool) {
+        if arg.writable && !self.store(&arg.db).is_locked() {
+            if arg.is_vec {
+                self.vector_replace(&arg.db, copy, arg.tp);
+            } else {
+                let size = self.enum_parent_size(arg.tp);
+                self.remove_claims(&arg.db, arg.tp);
+                self.copy_block_cross_store(
+                    copy.store_nr,
+                    copy.rec,
+                    copy.pos as isize,
+                    arg.db.store_nr,
+                    arg.db.rec,
+                    arg.db.pos as isize,
+                    size as isize,
+                );
+                self.copy_claims(copy, &arg.db, arg.tp);
+            }
+        }
+        if !release {
+            return;
+        }
+        if arg.is_vec {
+            self.clear_vector_release(copy);
+            let store = self.store_mut(copy);
+            let rec = store.collection_rec(copy.rec, copy.pos);
+            if rec != 0 {
+                store.delete(rec);
+            }
+            store.delete(copy.rec);
+        } else {
+            self.remove_claims(copy, arg.tp);
+            self.store_mut(copy).delete(copy.rec);
         }
     }
 
@@ -2674,7 +2828,13 @@ impl Stores {
             rec: 0,
             pos: 0,
         };
-        if (args.minted && !returns_ref) || args.cloned {
+        // A moved argument's copy goes back first: the store it lives in may be freed below.
+        let whole = (args.minted && !returns_ref) || args.cloned;
+        let release = !whole && !self.store(&base).is_locked();
+        for (arg, copy) in &args.moved {
+            self.bridge_move_back(arg, copy, release);
+        }
+        if whole {
             self.free(&base);
         } else if !args.copies.is_empty() && !self.store(&base).is_locked() {
             let store = self.store_mut(&base);

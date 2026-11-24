@@ -4476,6 +4476,45 @@ struct FfiArgs {
     store_arg: Option<usize>,
     /// Every heap argument in declaration order, with whether it is a vector.
     heap: Vec<(usize, bool)>,
+    /// The heap arguments a call copies into the store it hands over when they lie in another
+    /// (`Stores::bridge_args`): `(argument, vector, copy type, element width, writable)` — the
+    /// type `0xFFFF` and the width set for a vector whose elements own no heap.
+    moved: Vec<(usize, bool, u16, u32, bool)>,
+}
+
+/// How a heap argument of type `tp` is copied into the store a library call hands over when it
+/// lies in another (`moved_args`): `(vector, copy type, element width)` — a vector whose
+/// elements own no heap as `width`-byte elements (type `0xFFFF`), any other by its element type,
+/// a record by its own; `None` for a kind no copy is written for (a keyed collection).
+fn moved_copy(cx: &Cx, tp: &Type) -> Option<(bool, u16, u32)> {
+    match tp {
+        Type::Vector(elm, _) => match elm.base() {
+            Type::Integer(_)
+            | Type::Float
+            | Type::Single
+            | Type::Boolean
+            | Type::Character
+            | Type::Enum(_, false, _) => Some((
+                true,
+                u16::MAX,
+                u32::try_from(crate::data::element_storage_size(elm)).unwrap_or(0),
+            )),
+            other => {
+                let d = cx.data.type_elm(other);
+                let k = if d == u32::MAX {
+                    u16::MAX
+                } else {
+                    cx.data.def(d).known_type()
+                };
+                (k != u16::MAX).then_some((true, k, 0))
+            }
+        },
+        Type::Reference(d, _) | Type::Enum(d, true, _) => {
+            let k = cx.data.def(*d).known_type();
+            (k != u16::MAX).then_some((false, k, 0))
+        }
+        _ => None,
+    }
 }
 
 fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
@@ -4485,11 +4524,15 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     let mut prep = String::new();
     let mut store_arg: Option<usize> = None;
     let mut heap = Vec::new();
+    let mut moved = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let tp = a.typedef.base();
         if tp.heap_dep().is_some() {
             store_arg.get_or_insert(i);
             heap.push((i, matches!(tp, Type::Vector(_, _))));
+            if let Some((is_vec, k, size)) = moved_copy(cx, tp) {
+                moved.push((i, is_vec, k, size, !(a.constant || a.value_const)));
+            }
             ffi_params.push("loft_ffi_ref".into());
             if matches!(tp, Type::Vector(_, _)) {
                 let _ = writeln!(
@@ -4547,6 +4590,7 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
         prep,
         store_arg,
         heap,
+        moved,
     })
 }
 
@@ -4592,6 +4636,7 @@ fn library_native(
         prep,
         store_arg,
         heap,
+        moved,
     } = ffi_args(cx, d)?;
     let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
@@ -4599,7 +4644,9 @@ fn library_native(
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
     let (mut select, mut copies) = (String::new(), String::new());
-    let post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
+    let mut post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
+    // Whether `foreign_vector_args` chose a `pin` at run time (`pin`, `pminted`).
+    let pin = !post.is_empty();
     // loft#2227 — a heap answer pinned to an argument's store is copied out of it after the
     // call, and only what the call claimed there is deleted (`loft_ffi_own_*`): log it.  A store
     // minted for the call (`pminted`) is never owned, as `Stores::own_bridge_answer` skips it.
@@ -4628,27 +4675,13 @@ fn library_native(
             };
             let _ = writeln!(log, "    {only}loft_ffi_log_begin(cx, {store});");
         }
+        moved_args(cx, &moved, heap.len(), &store, &mut copies, &mut post)?;
     } else if minted {
         log.push_str("    uint16_t ns = (uint16_t) loft_store_new(cx);\n");
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(cx, ns)".into());
     }
-    // `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps
-    // its state in a context of its own per caller context, handed to each of its symbols first
-    // (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
-    if crate::native_build::component_of(pkg_dir)
-        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
-    {
-        ffi_params.insert(0, "void *".into());
-        ffi_args.insert(
-            0,
-            format!(
-                "loft_component_cx(cx, {}, {})",
-                body::c_string(lib),
-                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
-            ),
-        );
-    }
+    component_cx_arg(pkg_dir, lib, &mut ffi_params, &mut ffi_args);
     cx.ffi_libs
         .borrow_mut()
         .insert((pkg_dir.to_string(), lib.to_string()));
@@ -4672,20 +4705,7 @@ fn library_native(
             ffi_params.join(", ")
         }
     );
-    // `@FR-C-Publish`: the symbol is published by the first thread that resolves it.
-    // The build's own path for a run in place; a shipped program finds the file by name among
-    // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
-    // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
-    // refuses the cast; every host's ABI makes the bytes the same).
-    let _ = writeln!(
-        body,
-        "    LOFT_PUB_GET(fp_sym, s_);\n    \
-         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
-         memcpy(&fp, &s_, sizeof fp);",
-        body::c_string(lib),
-        body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
-        body::c_string(def.native())
-    );
+    resolve_library_symbol(&mut body, lib, def.native());
     // The pin and its copy first, then the arguments read, the foreign copies, the log.
     body.push_str(&select);
     body.push_str(&prep);
@@ -4693,7 +4713,7 @@ fn library_native(
     body.push_str(&log);
     let call = format!("fp({})", ffi_args.join(", "));
     let answer_store = if owned_answer {
-        AnswerStore::Owned(def.native_answer_tp)
+        AnswerStore::Owned(def.native_answer_tp, pin)
     } else if minted {
         AnswerStore::Minted
     } else {
@@ -4701,6 +4721,82 @@ fn library_native(
     };
     library_answer(&mut body, def, ret, ffi_ret, &call, &post, answer_store);
     Ok((sig, body))
+}
+
+/// `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps its
+/// state in a context of its own per caller context, handed to each of its symbols first
+/// (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
+fn component_cx_arg(pkg_dir: &str, lib: &str, params: &mut Vec<String>, args: &mut Vec<String>) {
+    if crate::native_build::component_of(pkg_dir)
+        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
+    {
+        params.insert(0, "void *".into());
+        args.insert(
+            0,
+            format!(
+                "loft_component_cx(cx, {}, {})",
+                body::c_string(lib),
+                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
+            ),
+        );
+    }
+}
+
+/// The statements that put a library native's symbol in `fp`.  `@FR-C-Publish`: the symbol is
+/// published by the first thread that resolves it.  The build's own path for a run in place; a
+/// shipped program finds the file by name among the libraries it opened at start
+/// (`loft_c_bind_libraries`).  ISO C has no conversion from an object pointer to a function
+/// pointer, so the symbol is copied into `fp` (strict C99 refuses the cast; every host's ABI
+/// makes the bytes the same).
+fn resolve_library_symbol(body: &mut String, lib: &str, symbol: &str) {
+    let _ = writeln!(
+        body,
+        "    LOFT_PUB_GET(fp_sym, s_);\n    \
+         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
+         memcpy(&fp, &s_, sizeof fp);",
+        body::c_string(lib),
+        body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
+        body::c_string(symbol)
+    );
+}
+
+/// `Stores::bridge_args` for the arguments of OTHER stores: the library reads every heap argument
+/// through the one store it is handed (`store`, the expression [`library_native`] hands over), so
+/// one that lies in another store is deep-copied into it after the arguments are read
+/// (`loft_ffi_move_in`), and after the call written back when its parameter is not `const`
+/// and released (`loft_ffi_move_back`) — before the foreign copies' end in `post`.  Nothing with
+/// fewer than two heap arguments: the one there is pins the store.
+fn moved_args(
+    cx: &Cx,
+    moved: &[(usize, bool, u16, u32, bool)],
+    heap: usize,
+    store: &str,
+    copies: &mut String,
+    post: &mut String,
+) -> Result<(), String> {
+    if heap < 2 {
+        return Ok(());
+    }
+    let mut back = String::new();
+    for &(j, is_vec, tp, size, writable) in moved {
+        if tp != u16::MAX {
+            cx.copy_type(tp)?;
+        }
+        let (v, w) = (i32::from(is_vec), i32::from(writable));
+        let _ = writeln!(
+            copies,
+            "    loft_ref mv{j} = {{ 0, 0, 0, 0 }};\n    \
+             if (a{j}.rec && a{j}.store_nr != (uint16_t) ({store}) && !loft_ffi_is_foreign(cx, a{j})) {{ \
+             mv{j} = loft_ffi_move_in(cx, loft_types, (uint32_t) ({store}), a{j}, {v}, {tp}, {size}); \
+             r{j} = loft_ffi_moved_ref(cx, mv{j}, {v}); }}"
+        );
+        let _ = writeln!(
+            back,
+            "    if (mv{j}.rec) loft_ffi_move_back(cx, loft_types, loft_ntypes, a{j}, mv{j}, {v}, {tp}, {size}, {w});"
+        );
+    }
+    post.insert_str(0, &back);
+    Ok(())
 }
 
 /// loft#2239 — a store a running `par` shares is never grown: a library call that builds its
@@ -4735,8 +4831,9 @@ enum AnswerStore {
     Given,
     /// A store minted for the answer (`ns`); it goes when there is no answer.
     Minted,
-    /// An argument's store, the answer copied out of it with this type (loft#2227).
-    Owned(u16),
+    /// An argument's store, the answer copied out of it with this type (loft#2227); whether
+    /// `foreign_vector_args` chose that store at run time (`pin`, `pminted`).
+    Owned(u16, bool),
 }
 
 /// The statements after a library native's call (`call`): the answer read in its C shape,
@@ -4774,7 +4871,7 @@ fn library_answer(
             } else {
                 "loft_ffi_record_answer"
             };
-            if let AnswerStore::Owned(answer_tp) = answer_store {
+            if let AnswerStore::Owned(answer_tp, pin) = answer_store {
                 let own = if matches!(tp.base(), Type::Vector(_, _)) {
                     "loft_ffi_own_vector"
                 } else {
@@ -4782,10 +4879,10 @@ fn library_answer(
                 };
                 // Copied out BEFORE `post`, which deletes the foreign copies an identity answer
                 // may name (`Stores::own_bridge_answer` before `bridge_args_done`).
-                let minted_pin = if post.is_empty() {
-                    String::new()
-                } else {
+                let minted_pin = if pin {
                     format!("pminted ? {convert}(cx, r) : ")
+                } else {
+                    String::new()
                 };
                 let _ = writeln!(
                     body,

@@ -36,6 +36,14 @@ fn main() {
   println("REV {r.len()} {r} {v}");
   r += [9];
   println("GROW {r.len()} {r}");
+  w2: vector<u8> = [7, 8];
+  bag = ffi_c_library::Bag { items: [50, 51] };
+  println("TWO {ffi_c_library::cat(v, w2)} {ffi_c_library::cat(r, v)} {ffi_c_library::cat(bag.items, w2)}");
+  t2 = ffi_c_library::bump(v, w2);
+  println("BUMP {t2} {w2} {v}");
+  b1 = ffi_c_library::Bag { items: [1, 2] };
+  b2 = ffi_c_library::Bag { items: [10, 20, 30] };
+  println("BAGS {ffi_c_library::bag_sum(b1, b2)} {ffi_c_library::bag_sum(b2, b1)} {b1.items} {b2.items}");
   p = ffi_c_library::pair(-77, 123456789);
   println("PAIR {p.a} {p.b}");
   println("NARROW {ffi_c_library::narrow(21)} {ffi_c_library::narrow(-1)} {!ffi_c_library::narrow(-1)}");
@@ -67,7 +75,13 @@ fn main() {
 /// library the mapped bytes copied into `v`'s store and copies the answer out of that store
 /// (loft#2227 beside the mapped copy): `[1,2,250,1,2,250]`, both arguments as they were, 100
 /// calls 600.
-const WANT: [&str; 16] = [
+/// Two heap arguments of two stores: the library reads both through the store it is handed, so
+/// the one of the other store is copied into it for the call (`Stores::bridge_args`) — `cat` of
+/// two locals, of an answer and a local, of a field and a local each concatenate the two
+/// (before, the first was read twice); `bump` adds `v`'s length 3 to `w2` in place, and the
+/// copy it wrote is written back: `[10,11]`, sum 21, `v` untouched; `bag_sum` reads a vector
+/// field of each of two records: 3 and 60, so 3 060 and 60 003, both records as they were.
+const WANT: [&str; 19] = [
     "LEN 4",
     "WRAP 6 91 0 255 93",
     "ADD 42 -2",
@@ -80,6 +94,9 @@ const WANT: [&str; 16] = [
     "NONE 0 [] []",
     "REV 4 [250,2,1,7] [1,2,250]",
     "GROW 5 [250,2,1,7,9]",
+    "TWO [1,2,250,7,8] [250,2,1,7,9,1,2,250] [50,51,7,8]",
+    "BUMP 21 [10,11] [1,2,250]",
+    "BAGS 3060 60003 [1,2] [10,20,30]",
     "PAIR -77 123456789",
     "NARROW 42 null true",
     "MAPPED 3 253 50600",
