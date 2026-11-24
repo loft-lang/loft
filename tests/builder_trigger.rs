@@ -525,3 +525,26 @@ fn a_method_the_program_declares_loads_no_library() {
     }
     let _ = fa::remove_dir_all(&tmp);
 }
+
+/// A package beside the program is read only for the triggers it declares, so its manifest's
+/// errors are not the program's: a sibling whose manifest is refused (here, a Rust native part)
+/// does not stop a program that never uses it, while a package a trigger loads is still read,
+/// and refused, where it is used.
+#[test]
+fn a_refused_package_beside_the_program_does_not_stop_it() {
+    let sibling =
+        std::env::temp_dir().join(format!("loft_builder_{}_refusedsib", std::process::id()));
+    let _ = fa::remove_dir_all(&sibling);
+    fa::create_dir_all(&sibling).expect("mkdir");
+    fa::write(
+        sibling.join("loft.toml"),
+        "[package]\nname = \"refusedsib\"\nversion = \"0.1.0\"\n\n[native]\ncrate = \"x\"\n",
+    )
+    .expect("manifest");
+    expect(
+        "besiderefused",
+        "fn main() {\n  b = bag([\"pear\", \"apple\", \"pear\"]);\n  a = b.has(\"apple\");\n  p = b.has(\"plum\");\n  println(\"{a} {p} {b.size()}\");\n}\n",
+        "true false 2",
+    );
+    let _ = fa::remove_dir_all(&sibling);
+}

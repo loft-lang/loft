@@ -39,8 +39,8 @@ pub use crate::opt::store_text_borrow::{StoreTextBorrows, borrowed_store_texts};
 use crate::opt::store_text_borrow::{foreign_store_writer, frame_minted_locals};
 // The return-buffer adoption and the literal-group coverage analyses live in `opt`, which
 // both writers may name (the C backend reads them too); this module keeps its own names.
-pub use crate::opt::ret_adopt::{CompleteWrites, RetAdopt, complete_writes, ret_adopt};
 use crate::opt::ret_adopt::kind_of;
+pub use crate::opt::ret_adopt::{CompleteWrites, RetAdopt, complete_writes, ret_adopt};
 // The push and mint window analyses live in `opt` too (the C backend reads them).
 pub(crate) use crate::opt::push_window::work_buffer_arg;
 pub use crate::opt::push_window::{
@@ -56,16 +56,16 @@ pub use crate::opt::body_writes::{
 };
 pub(crate) use crate::opt::body_writes::{body_writes, link_targets, owned_local, rebound_vars};
 
+pub(crate) use crate::opt::writes::plain_record_type;
 pub use crate::opt::writes::{
     FUSABLE_PUSHES, FusedPush, HoistOwned, HoistTiers, MintTarget, PathKey, fused_push,
     keep_range_path, mint_path, mint_target, pre_alloc_path, push_operands, vector_path,
 };
-pub(crate) use crate::opt::writes::plain_record_type;
 
+pub(crate) use crate::opt::loop_records::is_var;
 pub use crate::opt::loop_records::{
     IN_PLACE_SET_OPS, LoopRecord, LoopRecords, SCALAR_GETTERS, loop_records, mint_type_of,
 };
-pub(crate) use crate::opt::loop_records::is_var;
 
 pub use crate::opt::header::hoistable_vectors;
 pub(crate) use crate::opt::header::{body_blocks_hoist, indexed_vectors, vector_candidates};

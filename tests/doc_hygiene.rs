@@ -2442,7 +2442,11 @@ fn ir_schema_gen_matches_its_loft_source() {
     use loft::database::{Parts, Stores};
     fn render(s: &Stores, tp: u16) -> String {
         let t = &s.types[tp as usize];
-        let name = |i: u16| s.types.get(i as usize).map_or_else(|| format!("#{i}"), |t| t.name.clone());
+        let name = |i: u16| {
+            s.types
+                .get(i as usize)
+                .map_or_else(|| format!("#{i}"), |t| t.name.clone())
+        };
         let fields = |f: &[loft::database::Field]| {
             f.iter()
                 .map(|f| format!("{}@{}:{}", f.name, f.position, name(f.content)))
@@ -2454,7 +2458,10 @@ fn ir_schema_gen_matches_its_loft_source() {
             Parts::EnumValue(v, f) => format!("variant {v} {{{}}}", fields(f)),
             Parts::Enum(v) => format!(
                 "enum [{}]",
-                v.iter().map(|(t, n)| format!("{n}:{}", name(*t))).collect::<Vec<_>>().join(", ")
+                v.iter()
+                    .map(|(t, n)| format!("{n}:{}", name(*t)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             Parts::Vector(e) => format!("vector<{}>", name(*e)),
             Parts::Array(e) => format!("array<{}>", name(*e)),
@@ -2467,7 +2474,8 @@ fn ir_schema_gen_matches_its_loft_source() {
     let base = generated.types.len();
     loft::ir_schema_gen::register_ir_schema(&mut generated);
     let mut p = loft::parser::Parser::new();
-    p.parse_dir("default", true, false).expect("the standard library parses");
+    p.parse_dir("default", true, false)
+        .expect("the standard library parses");
     p.parse("selfhost/src/ir.loft", false);
     let parsed = &p.database;
     let mut differ = Vec::new();

@@ -345,7 +345,10 @@ impl Parser {
         types: &mut std::collections::HashMap<String, String>,
         builders: &mut std::collections::HashMap<String, String>,
     ) {
-        let Some(man) = self.read_manifest(&toml.to_string_lossy()) else {
+        // A candidate is read for its triggers only, so its manifest's errors are not this
+        // program's: a package a trigger then loads is read again where it is used, and its
+        // errors are reported there (`Self::read_manifest`).
+        let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
             return;
         };
         if !man.trigger_enabled {

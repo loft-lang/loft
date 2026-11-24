@@ -40,12 +40,7 @@ pub struct ProgramPlan {
 /// `emit_live` is a build that ships the live tier, which keeps every call on the function a
 /// flip reaches and so takes none of the twin plans.
 #[must_use]
-pub fn plan_program(
-    data: &Data,
-    stores: &Stores,
-    library: bool,
-    emit_live: bool,
-) -> ProgramPlan {
+pub fn plan_program(data: &Data, stores: &Stores, library: bool, emit_live: bool) -> ProgramPlan {
     let mut plan = ProgramPlan {
         // `(R-ValueRecord)` is a whole-program rewrite: an OPEN program (one that ships the
         // live tier) takes none, and no writer keeps a copy of it for that build (NATIVE.md
