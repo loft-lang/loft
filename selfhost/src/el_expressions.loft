@@ -2408,7 +2408,11 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   ret = el::def(e, d).returned[0];
   // A struct-enum parameter handed back is borrowed as a record parameter is (`MergeAttr`).
   enum_param = el_types::struct_enum_def(ret) >= 0 && !(ret is TyOptional) && vars.vars[v]!.argument && !hidden_param(e, vars, v) && attr_nr(el::def(e, d), el_vars::name_of(vars, v)) >= 0;
-  if !(el_types::base(ret) is TyReference) && !enum_param {
+  // (…and a struct-enum LOCAL that views an argument, `at = n; at`, is copied into the buffer as
+  // a record local is: `Bind` on the first pass, the copy on the second — where its view is gone
+  // and the buffer already joined the result.)
+  enum_view = el_types::struct_enum_def(ret) >= 0 && !(ret is TyOptional) && !vars.vars[v]!.argument && (el_ex_copy::views_an_argument(vars, v) || (!e.first_pass && el_types::deps(ret).contains(attr_nr(el::def(e, d), "__retbuf"))));
+  if !(el_types::base(ret) is TyReference) && !enum_param && !enum_view {
     return null;
   }
   dep = el_types::deps(ret);
