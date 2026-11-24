@@ -2514,7 +2514,9 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
     ok = match leaf {
       NdVar { n: lv } => vars.vars[lv].argument && !hidden_param(e, vars, lv),
       NdBlock { block: lb } => lb[0].name == "Object" || lb[0].name == "EnumUnitLit",
-      NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+      // (On pass 1 a user call answering a fresh record — its return borrows nothing yet, a
+      // recursive call above all — names no candidate: Rust's `ls` lists the other arms only.)
+      NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (e.first_pass && starts_with(el::def(e, def_nr).name, "n_") && len(el::def(e, def_nr).returned) > 0 && len(el_types::deps(el::def(e, def_nr).returned[0])) == 0),
       NdNull => e.first_pass,
       _ => false
     };
