@@ -1292,3 +1292,33 @@ pub fn width32_int(t: ir::TypeT) -> boolean {
     _ => false
   }
 }
+
+// Rust's `Type::name` (the key spelling, not a message's): "" where this port is not sure of
+// it, so a caller registers nothing rather than a wrong name.
+pub fn type_key_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => { n = type_key_name(e, inner); if n == "" { "" } else { "{n}?" } },
+    TyInteger { spec } => if narrow_width(spec) == 0 && spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) { "integer" } else { "" },
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    // (A variant's record is no key here: a literal of variants may still join to its enum.)
+    TyReference { n } => if n >= 0 && type_var(e, t) < 0 && el::def(e, n).def_type != el::DT_ENUM_VALUE { el::def(e, n).name } else { "" },
+    TyEnum { n } => if n >= 0 && type_var(e, t) < 0 { el::def(e, n).name } else { "" },
+    TyVector { inner } => if is_unknown(inner) { "vector" } else { n = type_key_name(e, inner); if n == "" { "" } else { "vector<{n}>" } },
+    TyTuple { elems } => {
+      parts: vector<text> = [];
+      for m in elems {
+        mn = type_key_name(e, m);
+        if mn == "" {
+          return "";
+        }
+        parts += [mn];
+      }
+      "({join(parts, ", ")})"
+    },
+    _ => ""
+  }
+}

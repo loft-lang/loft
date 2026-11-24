@@ -529,6 +529,38 @@ fn fill_database(e: el::El, d: integer) {
       el::refuse(e, "a struct field of this type: {shown[..cut]} (`{a.name}` of `{el::def(e, d).name}`)");
       return;
     }
+    // `check_vector` for a vector field: `vector<…>` named after the element's own definition
+    // (a function value's is `i32`, a tuple's its `__tuple<…>` record, a nested vector's its
+    // type), made where missing at the struct's place — so a later literal finds it numbered
+    // here, as Rust numbers it.
+    match ft {
+      TyVector { inner: vti } => {
+        vtd = -1;
+        vtn = "";
+        match vti {
+          TyTuple { elems: vte } => { vtd = el_types::tuple_def_of(e, vte); },
+          TyFunction { args: _ } => { vtd = el::source_nr(e, 0, "i32"); },
+          TyReference { n: vrn, dep: vrd } => { if len(vrd) == 0 && el_types::type_var(e, vti) < 0 { vtd = vrn; } },
+          TyEnum { n: ven } => { if el_types::type_var(e, vti) < 0 { vtd = ven; } },
+          TyVector { inner: _ } => {
+            vtk = el_types::type_key_name(e, vti);
+            if vtk != "" { vtn = "vector<{vtk}>"; vtd = el::source_nr(e, 0, "vector"); }
+          },
+          _ => {}
+        }
+        if vtd >= 0 && vtn == "" {
+          vtn = "vector<{el::def(e, vtd).name}>";
+        }
+        if vtn != "" && el::def_nr(e, vtn) < 0 {
+          vtv = el::add_def(e, vtn, el::def(e, d).position, el::DT_VECTOR);
+          e.b.data.definitions[vtv].parent = vtd;
+          e.b.data.definitions[vtv].known_type = c;
+        } else if vtn != "" && vti is TyTuple {
+          e.b.data.definitions[el::def_nr(e, vtn)].known_type = c;
+        }
+      },
+      _ => {}
+    }
     f = field(e, s, a.name, c);
     if a.nullable {
       set_field_nullable(e, s, f);

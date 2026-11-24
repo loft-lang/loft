@@ -2375,15 +2375,27 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
 pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
   sp = el_types::tuple_spelling_e(e, elems, ", ");
-  if sp == "" {
-    el::refuse(e, "a vector of tuples with a member of this kind");
-    return null;
-  }
   tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
   // `vector_def`'s position: the `]`, or — for a declared element or an empty `[]` — the token
   // before the `[`, read before the literal is.
   cb = closing_bracket(e, tok);
   pos = el::pos_at(e, if cb == tok + 1 || declared { tok - 1 } else { cb });
+  if sp == "" {
+    // Refused, but the tuple's record, `vector<(…)>` and `main_vector<(…)>` are registered
+    // first, as Rust's `vector_def` registers them for any element: every definition after them
+    // keeps Rust's number.
+    rn = el_types::type_key_name(e, t);
+    if rn != "" && el::def_nr(e, "main_vector<{rn}>") < 0 {
+      rtd = el_types::tuple_def(e, elems, pos);
+      el_schema::make_vector_def(e, t, rn, pos, true);
+      rvd = el::def_nr(e, "vector<{rn}>");
+      if rvd >= 0 && rtd >= 0 {
+        e.b.data.definitions[rvd].parent = rtd;
+      }
+    }
+    el::refuse(e, "a vector of tuples with a member of this kind");
+    return null;
+  }
   td = el_types::tuple_def(e, elems, pos);
   nm = "({sp})";
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
