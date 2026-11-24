@@ -5,7 +5,8 @@
 //! What a compiled program needs of the live tier whether or not it runs one: the debug
 //! control channel's mailbox, and the entry points for a flip and a breakpoint.  The live
 //! tier itself (`live_dispatch`) runs the interpreter, so it is not in the runtime a program
-//! links (@PLN191); when it boots it INSTALLS its flip and breakpoint handlers here.  Until
+//! links (@PLN191); when it boots it INSTALLS its flip and breakpoint handlers here, and so
+//! does a program run on the interpreter under `LOFT_DEBUG_CONTROL=1` (`@C170`).  Until
 //! then the answers are the ones an unbooted live tier gives: a flip refuses, a breakpoint is
 //! queued and acknowledged.
 //!

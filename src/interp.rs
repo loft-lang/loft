@@ -39,6 +39,8 @@ pub mod introspect {
 
 /// Live code replacement in a running program.
 pub mod live_dispatch {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::live_dispatch::arm_interp_control;
     pub use crate::live_dispatch::wasm_host_log;
 }
 

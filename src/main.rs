@@ -13957,6 +13957,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
             loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
+        // `@C170` — the `D!:` control channel's breakpoints and flips, answered by this
+        // interpreter (`LOFT_DEBUG_CONTROL=1`).
+        loft::interp::live_dispatch::arm_interp_control(&data);
+        // A serve host run here rebuilds and swaps as a compiled one does.
+        if let Ok(me) = std::env::current_exe() {
+            loft::live_rebuild::set_interp_host(&me.to_string_lossy(), &abs_file, &p.lib_dirs);
+        }
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.
         state.arm_profiler();

@@ -5981,6 +5981,15 @@ impl State {
             crate::debugger::STOPPED_BY_INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let hit = self.capture_break_frame(pc, data);
+        // `@C170` — a program run on the interpreter under the `D!:` control channel pauses
+        // here, in place, until the channel resumes it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.debug.as_ref().is_some_and(|d| d.stepping)
+            && crate::live_dispatch::interp_control_armed()
+        {
+            crate::live_dispatch::interp_pause(self, data, &hit);
+            return false;
+        }
         let suspended = if let Some(d) = self.debug.as_mut() {
             if d.stepping {
                 d.paused = Some(hit);
@@ -7795,6 +7804,12 @@ impl State {
         #[cfg(target_arch = "wasm32")]
         let reload_on = false;
         let mut reload_tick: u32 = RELOAD_POLL_OPS;
+        // `@C170` — the `D!:` control channel answered by this interpreter: the full loop
+        // applies a queued breakpoint at the next op boundary.
+        #[cfg(not(target_arch = "wasm32"))]
+        let control_on = crate::live_dispatch::interp_control_armed();
+        #[cfg(target_arch = "wasm32")]
+        let control_on = false;
         // @PLN140 arc C — allocation PATHS. Hoisted out of the loop like `reload_on`
         // and `uaf_on` above, so an ordinary run pays one never-taken branch per op
         // rather than a lookup. The op is the finest granularity a path can be read
@@ -7818,6 +7833,7 @@ impl State {
         // `LOFT_NO_LEAN_LOOP=1` takes the full loop on purpose — fast_stack_allowed's twin.
         let lean_loop = !(crate::env_once!(std::env::var_os("LOFT_NO_LEAN_LOOP").is_some())
             || reload_on
+            || control_on
             || census_on
             || verify_on
             || alloc_paths_on
@@ -7891,13 +7907,26 @@ impl State {
         while self.code_pos < bytecode_len {
             if reload_on {
                 reload_tick -= 1;
-                if reload_tick == 0 {
+                // The editor's Apply lands at the next op, not at the next counted poll: the
+                // game's next event already runs the applied edit.
+                #[cfg(not(target_arch = "wasm32"))]
+                let apply = control_on && crate::live_control::apply_pending();
+                #[cfg(target_arch = "wasm32")]
+                let apply = false;
+                if reload_tick == 0 || apply {
                     reload_tick = RELOAD_POLL_OPS;
                     #[cfg(not(target_arch = "wasm32"))]
                     if crate::live_reload::poll(self) {
                         bytecode_len = self.bytecode.len() as u32;
+                        if control_on {
+                            crate::live_dispatch::interp_reapply_bps(self, data);
+                        }
                     }
                 }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if control_on && crate::live_dispatch::interp_bp_pending() {
+                crate::live_dispatch::interp_take_bps(self, data);
             }
             let op_pos_rt = self.code_pos;
             // @PLN154 phase 1 — where the stack top stood before the op.  Every route that
@@ -7916,8 +7945,12 @@ impl State {
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
             // not debugging.
-            if self.debug.is_some() && self.debug_check(op_pos_rt, data) {
-                return Dispatch::Suspended;
+            if self.debug.is_some() {
+                if self.debug_check(op_pos_rt, data) {
+                    return Dispatch::Suspended;
+                }
+                // A pause held by the control channel can have reloaded a body.
+                bytecode_len = self.bytecode.len() as u32;
             }
             #[cfg(debug_assertions)]
             let op_pos = self.code_pos;
