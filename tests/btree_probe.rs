@@ -134,10 +134,11 @@ fn run_walk(count: i64, m: i64) -> [f64; 3] {
     let in_map = t.elapsed().as_nanos() as f64;
     assert_eq!(n as i64, count);
     let t = Instant::now();
-    let (mut n, mut cur) = (0, btree::first_record(&slot, all));
+    let hints = btree::WalkHints::default();
+    let (mut n, mut cur) = (0, btree::first_record(&hints, &slot, all));
     while cur != 0 {
         n += 1;
-        cur = btree::next_record(&slot, all, &keys, cur);
+        cur = btree::next_record(&hints, &slot, all, &keys, cur);
     }
     let by_rec = t.elapsed().as_nanos() as f64;
     assert_eq!(n, count);

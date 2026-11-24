@@ -79,14 +79,14 @@ impl Parser {
     /// The program's own library name: the manifest's `[package] name` when there is one,
     /// else the file stem — the same answer for a conventional package, whose entry defaults
     /// to `src/<name>.loft`.
-    fn own_lib_of(filename: &str) -> Option<String> {
+    fn own_lib_of(&self, filename: &str) -> Option<String> {
         let path = std::path::Path::new(filename);
         let from_manifest = path
             .parent()
             .and_then(std::path::Path::parent)
             .map(|root| root.join("loft.toml"))
             .filter(|m| crate::file_access::exists(m))
-            .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
+            .and_then(|m| self.read_manifest(&m.to_string_lossy()))
             .and_then(|m| m.name);
         from_manifest.or_else(|| crate::file_access::file_stem(path))
     }
@@ -132,7 +132,7 @@ impl Parser {
             self.note_entry_dir(filename);
         }
         if !default && self.own_lib.is_none() {
-            self.own_lib = Self::own_lib_of(filename);
+            self.own_lib = self.own_lib_of(filename);
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
@@ -1463,7 +1463,7 @@ impl Parser {
                 .and_then(std::path::Path::parent)
                 .map(|root| root.join("loft.toml"))
                 .filter(|m| crate::file_access::exists(m))
-                .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
+                .and_then(|m| self.read_manifest(&m.to_string_lossy()))
                 .and_then(|m| m.name);
             self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
         }

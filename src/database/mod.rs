@@ -579,6 +579,12 @@ pub struct Stores {
     /// `@PLN226` — the natives this program wired, by library index (`extensions::wire_*`):
     /// shared by `Arc` with the `par` workers, which read it and never write it.
     pub(crate) wired: std::sync::Arc<crate::extensions::WiredNatives>,
+    /// `@PLN226` — this context's index-walk hints (`btree::WalkHints`).
+    pub(crate) bt_hints: crate::btree::WalkHints,
+    /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
+    /// shared with every store it makes live (`Store::tap`).
+    #[cfg(feature = "op-census")]
+    pub tap: std::sync::Arc<crate::store_census::Tap>,
     /// `@PLN226` (`@FR-F-Read-Ref`) — what the top-level text read in progress knows about
     /// places and references; `None` outside one.
     read_refs: Option<structures::ReadRefs>,
@@ -890,6 +896,9 @@ impl Clone for Stores {
             claim_log: None,
             read_refs: None,
             wired: self.wired.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1317,6 +1326,24 @@ impl Stores {
     /// Install an externally-allocated `Store` into this `Stores`'
     /// allocations table.  Returns the parent-side `store_nr`.
     ///
+    /// `LOFT_VERIFY_STACK`: did a record of a live store move since the last drain?  Asked
+    /// after every op, so it is a scan of flags with no allocation.
+    #[must_use]
+    pub fn any_relocation(&self) -> bool {
+        self.allocations.iter().any(|s| !s.relocated.is_empty())
+    }
+
+    /// `LOFT_VERIFY_STACK`: take the records that moved since the last drain, from every store.
+    #[must_use]
+    pub fn take_relocations(&mut self) -> Vec<crate::stack_verify::Relocation> {
+        let mut moved = Vec::new();
+        for s in &mut self.allocations {
+            let nr = s.store_nr;
+            moved.extend(s.relocated.drain(..).map(|(old, new)| (nr, old, new)));
+        }
+        moved
+    }
+
     /// Used by the parent thread after `WorkerStores::take_slot`
     /// extracts a worker's output slot.  The `Store` keeps its bytes
     /// — no memcpy, no claim translation.  Phase 2's rebase walk
@@ -1336,6 +1363,11 @@ impl Stores {
         // first push) died on "Using a freed store" (the @P317
         // bitmap-vs-flag dual invariant, F3 in the sweep catalog).
         store.live = true;
+        // The adopter's instruments from here on (`@FR-C-Boundary`).
+        #[cfg(feature = "op-census")]
+        {
+            store.tap = Some(self.tap.clone());
+        }
         // Inline the free-slot scan rather than calling allocation.rs's
         // private `find_free_slot` — keeping mod.rs from depending on
         // that private helper avoids cross-file plumbing for one
@@ -1721,6 +1753,9 @@ impl Stores {
             claim_log: None,
             read_refs: None,
             wired: std::sync::Arc::default(),
+            bt_hints: crate::btree::WalkHints::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1963,9 +1998,9 @@ impl Stores {
     ) -> Option<u32> {
         let keys = self.keys(tp).to_vec();
         let n_after = if reverse {
-            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         } else {
-            crate::btree::next_record(data, &self.allocations, &keys, cur)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         };
         // Read before the removal: `cur` is about to stop being in the tree.
         let removed_the_last = cur == finish;
@@ -1979,9 +2014,9 @@ impl Stores {
             return None;
         }
         Some(if reverse {
-            crate::btree::next_record(data, &self.allocations, &keys, n_after)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         } else {
-            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         })
     }
 

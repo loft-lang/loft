@@ -4818,9 +4818,13 @@ impl Stores {
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
-        #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(to.store_nr, u64::from(len));
+        {
+            let tap = self.store(to).tap.as_deref();
+            crate::op_census::moved(tap, crate::op_census::Moved::Copy, len as usize);
+            if let Some(tap) = tap {
+                tap.copied_into(to.store_nr, u64::from(len));
+            }
+        }
         let to_at = self
             .store(to)
             .block_in_bounds(to.rec, to.pos as isize, len as isize);

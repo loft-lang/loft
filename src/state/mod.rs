@@ -496,6 +496,8 @@ pub struct State {
     pub(crate) twin_depth: u32,
     /// `@PLN226` — `LOFT_STACK_CENSUS`'s tallies for this interpreter (`stack_census`).
     pub stack_census: Box<crate::stack_census::Census>,
+    /// `@PLN226` — `LOFT_OP_CENSUS`'s tallies for this interpreter (`op_census`).
+    pub op_census: Box<crate::op_census::Census>,
     /// Where the function being generated starts, so a bind row's line is a line of that
     /// function: a bind before its first line marker (a hoisted null init) names line 0.
     pub(crate) bind_fn_start: u32,
@@ -985,7 +987,8 @@ impl State {
     pub fn new(mut db: Stores) -> State {
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
-        crate::store_census::set_stack_store(stack_cur.store_nr);
+        #[cfg(feature = "op-census")]
+        db.tap.set_stack_store(stack_cur.store_nr);
         db.stack_store_at_zero = true; // #306 — protect slot 0 from whole-store frees
         // @PLN154 — arm the stack shadow.  Here and only here: the shadow is what makes a
         // store the one whose slots are checked, so a heap store never carries one.
@@ -1005,7 +1008,7 @@ impl State {
         // as the interpreter's own and a comparison leaves them out.
         #[cfg(feature = "op-census")]
         for r in [&stack_cur, &_const_store] {
-            crate::store_census::alloc_event(format_args!("S {}", db.store(r).trace_name()));
+            crate::store_census::alloc_event(None, format_args!("S {}", db.store(r).trace_name()));
         }
         debug_assert_eq!(
             _const_store.store_nr,
@@ -1019,6 +1022,7 @@ impl State {
             bind_notes: Vec::new(),
             twin_depth: 0,
             stack_census: Box::default(),
+            op_census: Box::default(),
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
@@ -3851,7 +3855,7 @@ impl State {
     #[cold]
     #[inline(never)]
     fn mark_stale_handles(&mut self) {
-        let moved = crate::stack_verify::take_relocations();
+        let moved = self.database.take_relocations();
         if moved.is_empty() {
             return;
         }
@@ -6160,11 +6164,16 @@ impl State {
     /// function does) and by its function.  The call site is resolved from a byte INSIDE the
     /// call instruction, not from `CallFrame.line`, which names the next line after a
     /// statement-final call (loft#1753).
-    fn op_census_step(&self, pc: u32) {
+    fn op_census_step(&mut self, pc: u32) {
         let line = match self.call_stack.get(1) {
-            Some(f) => crate::op_census::site_line(f.call_pos, || {
-                self.line_at(f.call_pos.saturating_sub(1))
-            }),
+            Some(f) => {
+                let call_pos = f.call_pos;
+                crate::op_census::site_line(&self.op_census, call_pos).unwrap_or_else(|| {
+                    let line = self.line_at(call_pos.saturating_sub(1));
+                    crate::op_census::set_site_line(&mut self.op_census, call_pos, line);
+                    line
+                })
+            }
             None => self.line_at(pc),
         };
         let function = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
@@ -6174,7 +6183,8 @@ impl State {
             Some(&op) => u16::from(op),
             None => return,
         };
-        crate::op_census::step(line, function, opcode);
+        let moved = crate::op_census::moved_so_far(&self.database);
+        crate::op_census::step(&mut self.op_census, moved, line, function, opcode);
     }
 
     /// @PLN140 arc C — the op at `pc` allocated `stores` stores; hand the path that
@@ -6776,7 +6786,7 @@ impl State {
         let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
             #[cfg(feature = "op-census")]
-            crate::store_census::at_pc(self.code_pos);
+            self.database.tap.at_pc(self.code_pos);
             let op = self.code::<u8>();
             if op == 255 {
                 let ext = self.code::<u8>();
@@ -7556,8 +7566,8 @@ impl State {
         // `LOFT_ALLOC_TRACE` — the program starts: what came before was the run's own setup.
         #[cfg(feature = "op-census")]
         {
-            crate::store_census::set_lines(self.line_numbers.clone());
-            crate::store_census::alloc_event(format_args!("M"));
+            self.database.tap.set_lines(self.line_numbers.clone());
+            crate::store_census::alloc_event(None, format_args!("M"));
         }
         // loft#952 — and the vocabulary its per-call breadcrumb reports in.  `"<entry>"`
         // above is a placeholder that names nothing; from here on a hard-kill names the
@@ -7913,7 +7923,7 @@ impl State {
             // write per op, alongside the existing crash-report context publish below).
             self.database.alloc_pc = op_pos_rt;
             #[cfg(feature = "op-census")]
-            crate::store_census::at_pc(op_pos_rt);
+            self.database.tap.at_pc(op_pos_rt);
             // @PLN16 debugger — at a registered breakpoint, capture the frame (and
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
@@ -7993,7 +8003,7 @@ impl State {
                     std::process::exit(0);
                 }
             }
-            if verify_on && crate::stack_verify::any_relocation() {
+            if verify_on && self.database.any_relocation() {
                 self.mark_stale_handles();
             }
             if verify_on && self.stack_pos < verify_sp {
@@ -9299,13 +9309,17 @@ impl State {
     ) -> State {
         let mut db = worker.stores;
         #[cfg(feature = "op-census")]
-        crate::store_census::enter_worker();
+        crate::store_census::enter_worker(&db.tap);
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
-        crate::store_census::set_stack_store(stack_cur.store_nr);
+        #[cfg(feature = "op-census")]
+        db.tap.set_stack_store(stack_cur.store_nr);
         // `LOFT_ALLOC_TRACE` — the worker's value stack is the interpreter's own (`State::new`).
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).trace_name()));
+        crate::store_census::alloc_event(
+            None,
+            format_args!("S {}", db.store(&stack_cur).trace_name()),
+        );
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
@@ -9321,6 +9335,7 @@ impl State {
             bind_notes: Vec::new(),
             twin_depth: 0,
             stack_census: Box::default(),
+            op_census: Box::default(),
             bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,

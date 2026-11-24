@@ -13952,10 +13952,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.report_alloc_sites(&data);
     state.report_profile(&data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
-    loft::op_census::write(&loft::op_census::Names {
-        operator: &|op| data.operator_name(op).map(str::to_owned),
-        function: &|d_nr| data.def(d_nr).name().to_string(),
-    });
+    let moved = loft::op_census::moved_so_far(&state.database);
+    loft::op_census::write(
+        &mut state.op_census,
+        moved,
+        &loft::op_census::Names {
+            operator: &|op| data.operator_name(op).map(str::to_owned),
+            function: &|d_nr| data.def(d_nr).name().to_string(),
+        },
+    );
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {

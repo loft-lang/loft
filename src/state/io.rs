@@ -1486,16 +1486,16 @@ impl State {
                     let all = &self.database.allocations;
                     let n = if cur == 0 {
                         if reverse {
-                            btree::last_record(&data, all)
+                            btree::last_record(&self.database.bt_hints, &data, all)
                         } else {
-                            btree::first_record(&data, all)
+                            btree::first_record(&self.database.bt_hints, &data, all)
                         }
                     } else {
                         let keys = self.database.keys(arg);
                         if reverse {
-                            btree::previous_record(&data, all, keys, cur)
+                            btree::previous_record(&self.database.bt_hints, &data, all, keys, cur)
                         } else {
-                            btree::next_record(&data, all, keys, cur)
+                            btree::next_record(&self.database.bt_hints, &data, all, keys, cur)
                         }
                     };
                     self.put_var(state_var - 8, n);

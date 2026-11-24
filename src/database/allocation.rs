@@ -953,12 +953,12 @@ impl Stores {
         store.set_known_type(u16::MAX);
         #[cfg(feature = "op-census")]
         {
-            store.trace_worker = crate::store_census::worker();
-            crate::store_census::alloc_event(format_args!(
-                "N {} {}",
-                store.trace_name(),
-                store.capacity_words()
-            ));
+            store.trace_worker = self.tap.worker();
+            store.tap = Some(self.tap.clone());
+            crate::store_census::alloc_event(
+                store.tap.as_deref(),
+                format_args!("N {} {}", store.trace_name(), store.capacity_words()),
+            );
         }
         // @PLN154 phase 3 — the slot's own number, stamped where the slot goes live so a
         // record relocation can name the store it happened in.
@@ -2191,7 +2191,10 @@ impl Stores {
         store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("F {}", store.trace_name()));
+        crate::store_census::alloc_event(
+            store.tap.as_deref(),
+            format_args!("F {}", store.trace_name()),
+        );
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {
@@ -2358,7 +2361,13 @@ impl Stores {
             if !build.allocations[si].live {
                 continue; // a transient the constructor claimed then freed
             }
-            let moved = std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg_attr(not(feature = "op-census"), allow(unused_mut))]
+            let mut moved =
+                std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg(feature = "op-census")]
+            {
+                moved.tap = Some(self.tap.clone());
+            }
             self.allocations[si] = moved;
             self.clear_free_bit(slot);
             if slot + 1 > self.max {
@@ -3367,6 +3376,13 @@ impl Stores {
                 free_bits[word] |= 1u64 << bit;
             }
         }
+        // The worker's own instruments, shared by every store in its table.
+        #[cfg(feature = "op-census")]
+        let worker_tap = std::sync::Arc::new(self.tap.child());
+        #[cfg(feature = "op-census")]
+        for s in &mut allocations {
+            s.tap = Some(worker_tap.clone());
+        }
         WorkerStores::new(Stores {
             types: self.types.clone(),
             names: self.names.clone(),
@@ -3406,6 +3422,9 @@ impl Stores {
             claim_log: None,
             read_refs: None,
             wired: self.wired.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            #[cfg(feature = "op-census")]
+            tap: worker_tap,
             run: super::RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: self.const_refs.clone(),

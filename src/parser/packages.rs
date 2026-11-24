@@ -96,7 +96,12 @@ impl Parser {
     /// The entry file of a dependency declared by PATH — `dep = { path = "…" }` relative to
     /// the manifest's directory `d`, or the project's `lib/<dep>` — read from the package's
     /// own manifest and touching nothing else; `None` for a registry dependency.
-    pub(super) fn dep_entry_by_path(d: &std::path::Path, dep: &str, value: &str) -> Option<String> {
+    pub(super) fn dep_entry_by_path(
+        &self,
+        d: &std::path::Path,
+        dep: &str,
+        value: &str,
+    ) -> Option<String> {
         let root = match crate::manifest::extract_path_dep(value) {
             Some(path) => d.join(path),
             None => d.join("lib").join(dep),
@@ -105,7 +110,7 @@ impl Parser {
         if !crate::file_access::exists(&toml) {
             return None;
         }
-        let man = crate::manifest::read_manifest(&toml.to_string_lossy())?;
+        let man = self.read_manifest(&toml.to_string_lossy())?;
         let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
         let entry = root.join(entry);
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
@@ -159,12 +164,31 @@ impl Parser {
         None
     }
 
+    /// Read and parse the `loft.toml` at `path` ([`crate::manifest::read_manifest`]), keeping
+    /// what its lexer could not read for [`Self::report_manifest_errors`].  A manifest is read
+    /// from some twenty places of the parse, most of which can only skip what they cannot
+    /// use; reported once the dependencies are resolved, a malformed `loft.toml` reads as
+    /// itself rather than as whatever it failed to declare (a type of the dependency whose
+    /// path it garbled reading as "Undefined type").
+    pub(super) fn read_manifest(&self, path: &str) -> Option<crate::manifest::Manifest> {
+        let m = crate::manifest::read_manifest(path)?;
+        let mut pending = self.manifest_errors.borrow_mut();
+        for e in &m.errors {
+            if !pending.contains(e) {
+                pending.push(e.clone());
+            }
+        }
+        drop(pending);
+        Some(m)
+    }
+
     /// Report the manifests read since the last call that the lexer could not read
-    /// ([`crate::manifest::take_manifest_errors`]), each once per parse, at the manifest's own
-    /// line.  Kept, such a string is a value with `?` where the author's characters were — a
-    /// Windows path's `\a` — and the run then fails on what it should have declared.
+    /// ([`Self::read_manifest`]), each once per parse, at the manifest's own line.  Kept, such
+    /// a string is a value with `?` where the author's characters were — a Windows path's
+    /// `\a` — and the run then fails on what it should have declared.
     pub(super) fn report_manifest_errors(&mut self) {
-        for e in crate::manifest::take_manifest_errors() {
+        let pending = self.manifest_errors.take();
+        for e in pending {
             if self.reported_manifest_errors.contains(&e) {
                 continue;
             }
@@ -217,7 +241,7 @@ impl Parser {
         // The rule the guard is for is a stray same-named MODULE FILE (`use server` in a
         // package that also has `server.loft`); a nested package the manifest points at
         // is the opposite case, and it is named by exactly the path being exempted here.
-        let dep_root = Self::declared_path_dep_root(id, cur_dir);
+        let dep_root = self.declared_path_dep_root(id, cur_dir);
         let blocked = |candidate: &str| {
             let cand = std::path::Path::new(candidate);
             let cand = crate::file_access::plain_canonical(cand);
@@ -405,8 +429,7 @@ impl Parser {
             return;
         };
         let manifest_path = root.join("loft.toml");
-        let Some(manifest) = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-        else {
+        let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) else {
             return;
         };
         if manifest.dependencies.iter().any(|(name, _)| name == id) {
@@ -479,9 +502,7 @@ impl Parser {
         while let Some(dir) = search {
             let manifest_path = dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                if let Some(manifest) =
-                    crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-                {
+                if let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) {
                     let deps: std::collections::HashSet<String> = manifest
                         .dependencies
                         .iter()
@@ -514,9 +535,7 @@ impl Parser {
             let mut map = std::collections::HashMap::new();
             if let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) {
                 let manifest_path = root.join("loft.toml");
-                if let Some(manifest) =
-                    crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-                {
+                if let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) {
                     for (name, value) in manifest.dependencies {
                         if let Some(req) = crate::manifest::extract_version_req(&value) {
                             map.insert(name, req.to_string());
@@ -563,7 +582,7 @@ impl Parser {
         };
         let root = std::path::PathBuf::from(root);
         let manifest_path = root.join("loft.toml");
-        let Some(m) = manifest::read_manifest(&manifest_path.to_string_lossy()) else {
+        let Some(m) = self.read_manifest(&manifest_path.to_string_lossy()) else {
             return;
         };
         if m.name.as_deref() != Some(id) {
@@ -605,7 +624,11 @@ impl Parser {
     /// in-tree path dep as a file shadowing the dependency it IS (loft#963).  Walks to
     /// the same manifest [`Self::probe_manifest_path_dep`] resolves against, so the
     /// exemption and the resolution cannot name different directories.
-    pub(super) fn declared_path_dep_root(id: &str, cur_dir: &str) -> Option<std::path::PathBuf> {
+    pub(super) fn declared_path_dep_root(
+        &self,
+        id: &str,
+        cur_dir: &str,
+    ) -> Option<std::path::PathBuf> {
         if cur_dir.is_empty() {
             return None;
         }
@@ -613,7 +636,8 @@ impl Parser {
         loop {
             let manifest_path = search_dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                let rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
+                let rel = self
+                    .read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
                             (name == id)
@@ -637,7 +661,8 @@ impl Parser {
         loop {
             let manifest_path = search_dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                let dep_rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
+                let dep_rel = self
+                    .read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
                             (name == id)
@@ -650,7 +675,7 @@ impl Parser {
                     let pkg_root = search_dir.join(rel);
                     let dep_manifest = pkg_root.join("loft.toml");
                     let entry = crate::file_access::exists(&dep_manifest)
-                        .then(|| crate::manifest::read_manifest(&dep_manifest.to_string_lossy()))
+                        .then(|| self.read_manifest(&dep_manifest.to_string_lossy()))
                         .flatten()
                         .and_then(|m| m.entry)
                         .unwrap_or_else(|| format!("src{}{id}.loft", sep_str()));
@@ -695,7 +720,7 @@ impl Parser {
         let root_dir = root.to_string_lossy().to_string();
         self.probe_manifest_path_dep(id, &root_dir, f);
         if file_exists(f)
-            && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
+            && let Some(pkg_root) = self.declared_path_dep_root(id, &root_dir)
         {
             self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
         }
@@ -713,12 +738,12 @@ impl Parser {
         cur_script: &str,
         pkg_root: &std::path::Path,
     ) {
-        let Some(range) = Self::declaring_range(cur_script, id) else {
+        let Some(range) = self.declaring_range(cur_script, id) else {
             return;
         };
-        let Some(version) =
-            crate::manifest::read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
-                .and_then(|m| m.version)
+        let Some(version) = self
+            .read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
+            .and_then(|m| m.version)
         else {
             return;
         };
@@ -726,7 +751,7 @@ impl Parser {
             return;
         }
         let importer = crate::resolution_scope::project_root(cur_script)
-            .and_then(|r| crate::manifest::read_manifest(&r.join("loft.toml").to_string_lossy()))
+            .and_then(|r| self.read_manifest(&r.join("loft.toml").to_string_lossy()))
             .and_then(|m| m.name)
             .unwrap_or_else(|| cur_script.to_string());
         diagnostic!(
@@ -1018,7 +1043,7 @@ impl Parser {
             crate::install::constraint_for(Some(&pinned), declared.as_deref()).as_deref()
                 == Some(pinned.as_str())
         };
-        (stands(self.root_dep_constraint(id)) && stands(Self::declaring_range(cur_script, id)))
+        (stands(self.root_dep_constraint(id)) && stands(self.declaring_range(cur_script, id)))
             .then_some(pinned.clone())
     }
 
@@ -1124,7 +1149,7 @@ impl Parser {
         let pin = crate::install::use_constraint(
             pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
-            Self::declaring_range(cur_script, id).as_deref(),
+            self.declaring_range(cur_script, id).as_deref(),
         );
         let line = self.library_api_line(id, cur_script, scope);
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts, line.as_deref())
@@ -1309,7 +1334,7 @@ impl Parser {
         // The package whose file says `use id` declared a range for it, and that holds in
         // every scope: a cached library used from a bare script is bound by its own
         // `[dependencies]` all the same (loft#1687).
-        if let Some(own) = Self::declaring_range(cur_script, id)
+        if let Some(own) = self.declaring_range(cur_script, id)
             && !constraints.contains(&own)
         {
             constraints.push(own);
@@ -1385,7 +1410,7 @@ impl Parser {
         if project_chose {
             return None;
         }
-        Self::declaring_range(cur_script, id)
+        self.declaring_range(cur_script, id)
             .and_then(|range| crate::registry_index::api_line_floor(&range))
     }
 
@@ -1393,9 +1418,9 @@ impl Parser {
     /// `[dependencies]` — `None` when there is no such package, no such entry, or the entry
     /// is a pure path dependency (resolved by path, never from the registry cache).
     #[cfg(feature = "registry")]
-    pub(super) fn declaring_range(cur_script: &str, id: &str) -> Option<String> {
+    pub(super) fn declaring_range(&self, cur_script: &str, id: &str) -> Option<String> {
         let root = crate::resolution_scope::project_root(cur_script)?;
-        let m = crate::manifest::read_manifest(&root.join("loft.toml").to_string_lossy())?;
+        let m = self.read_manifest(&root.join("loft.toml").to_string_lossy())?;
         let (_, value) = m.dependencies.iter().find(|(n, _)| n == id)?;
         crate::manifest::extract_version_req(value).map(str::to_string)
     }
@@ -1485,7 +1510,7 @@ impl Parser {
         manifest_path: &std::path::Path,
         pkg_dir: &std::path::Path,
     ) {
-        let Some(m) = manifest::read_manifest(manifest_path.to_str().unwrap_or("")) else {
+        let Some(m) = self.read_manifest(manifest_path.to_str().unwrap_or("")) else {
             return;
         };
         let id = m
@@ -1693,7 +1718,7 @@ impl Parser {
         };
         let (entry, manifest) = if crate::file_access::exists(&manifest_pb) {
             let manifest_path = manifest_pb.to_string_lossy().into_owned();
-            let m = manifest::read_manifest(&manifest_path)?;
+            let m = self.read_manifest(&manifest_path)?;
             if !self.loft_floor_holds(id, &m) {
                 return None;
             }

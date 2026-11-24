@@ -88,7 +88,6 @@ All are off unless a `LOFT_*` switch arms them.
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
 | `SINK` (`fault_log.rs`), `SINK` (`native.rs` assert trace), `FILE` (`store/dump.rs`), `FILE` (`store_census.rs` alloc trace), `SINKS` (`bind_lowering.rs`), `FILE` (`state/codegen.rs`), `SINK` (`lexer.rs` tokens) | a trace or log file | any thread that writes a line | whole lines | one `write` per line to an `O_APPEND` file; or per context, flushed at the join | none with `O_APPEND`; with buffers, worker lines arrive later |
-| `PROGRAM_LINES` (`store_census.rs`) | the line table workers read | main writes, workers read at start | hands data to workers | the worker's context, filled before it starts | none |
 | `VERIFY` (`stack_verify.rs`), `TEXT_TL` (`state/text.rs`), `CALLS`, `SEEN` (`state/hosted_verify.rs`), `SITES` (`net_profile.rs`) | process-wide tallies and ledgers | main, workers | one verdict for all threads | per context, adopted at the join and printed by the main thread | findings grouped after the join |
 | `Timing` (`platform.rs`) | build timing events | build threads | a shared summary | per build context | none |
 

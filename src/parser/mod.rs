@@ -963,6 +963,10 @@ pub struct Parser {
     /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
     /// reads the manifests again, and an error is the author's to fix once.
     reported_manifest_errors: Vec<crate::manifest::ManifestError>,
+    /// The errors of the manifests this parse read since the last report
+    /// ([`Parser::read_manifest`]), each once — the parse's own (`@FR-C-Own`).  A cell, because
+    /// a manifest is read from helpers that see the parser through `&`.
+    manifest_errors: std::cell::RefCell<Vec<crate::manifest::ManifestError>>,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -2338,6 +2342,7 @@ impl Parser {
             auto_use_catalog_builders: None,
             auto_use_catalog_ambiguous: None,
             reported_manifest_errors: Vec::new(),
+            manifest_errors: std::cell::RefCell::default(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,

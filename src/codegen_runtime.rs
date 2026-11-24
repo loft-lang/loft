@@ -2152,16 +2152,16 @@ pub fn OpStep(
             // index: arg = the index type; the cursor is the record last yielded.
             let next_rec = if cur == 0 {
                 if reverse {
-                    btree::last_record(&data, all)
+                    btree::last_record(&stores.bt_hints, &data, all)
                 } else {
-                    btree::first_record(&data, all)
+                    btree::first_record(&stores.bt_hints, &data, all)
                 }
             } else {
                 let keys = stores.keys(arg as u16);
                 if reverse {
-                    btree::previous_record(&data, all, keys, cur)
+                    btree::previous_record(&stores.bt_hints, &data, all, keys, cur)
                 } else {
-                    btree::next_record(&data, all, keys, cur)
+                    btree::next_record(&stores.bt_hints, &data, all, keys, cur)
                 }
             };
             if next_rec == finish {

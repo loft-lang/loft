@@ -856,6 +856,10 @@ pub struct Store {
     /// adopted worker store's free on the main thread included (`Store::trace_name`).
     #[cfg(feature = "op-census")]
     pub trace_worker: u32,
+    /// `@PLN226` — the instruments of the context the store belongs to
+    /// (`store_census::Tap`), set when a `Stores` makes it live or adopts it; `None` before.
+    #[cfg(feature = "op-census")]
+    pub(crate) tap: Option<std::sync::Arc<crate::store_census::Tap>>,
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
@@ -893,6 +897,13 @@ pub struct Store {
     /// growth and every move by hand, and phase 0 measured 33 separate routes that write
     /// these bytes.
     init_shadow: Vec<u32>,
+    /// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): scratch that
+    /// nothing reads, grown to the widest discarded write.  The store's own, so no other
+    /// thread writes it (`@FR-C-Own`).
+    discard: Vec<u64>,
+    /// `LOFT_VERIFY_STACK`: the records of this store that moved during the current operator,
+    /// `(old, new)` (`stack_verify::note_relocation`); its interpreter drains them after the op.
+    pub(crate) relocated: Vec<(u32, u32)>,
     /// @PLN174 — the foreign bytes this store serves under [`FOREIGN_REC`], or `None` for
     /// every ordinary store.  Set by [`Store::make_foreign`], dropped by
     /// [`Store::release_foreign`] at the handle's free.
@@ -1116,25 +1127,18 @@ fn host_image_bytes(path: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): per-thread scratch
-/// of at least `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next call
-/// on the same thread; every caller writes through it at once.
-fn discard_sink(len: usize) -> *mut u8 {
-    thread_local! {
-        static SINK: std::cell::UnsafeCell<Vec<u64>> = const { std::cell::UnsafeCell::new(Vec::new()) };
-    }
-    SINK.with(|sink| {
-        // SAFETY: the buffer is this thread's alone and no reference to it outlives the call.
-        let sink = unsafe { &mut *sink.get() };
-        let words = len.div_ceil(8).max(8);
-        if sink.len() < words {
-            sink.resize(words, 0);
-        }
-        sink.as_mut_ptr().cast::<u8>()
-    })
-}
-
 impl Store {
+    /// Where a production run's DISCARDED write lands: the store's `discard` scratch, at least
+    /// `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next discard; every
+    /// caller writes through it at once.
+    fn discard_sink(&mut self, len: usize) -> *mut u8 {
+        let words = len.div_ceil(8).max(8);
+        if self.discard.len() < words {
+            self.discard.resize(words, 0);
+        }
+        self.discard.as_mut_ptr().cast::<u8>()
+    }
+
     /// The store's name in `LOFT_ALLOC_TRACE`: its serial, prefixed with the `par` worker that
     /// made it (`<worker>.<serial>`) — a worker numbers its stores on its own.
     #[cfg(feature = "op-census")]
@@ -1493,6 +1497,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1527,6 +1533,8 @@ impl Store {
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         };
         store.init(); // one free block spanning the store: claims empty, free_root = 0
         store
@@ -1729,6 +1737,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1740,6 +1750,8 @@ impl Store {
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         };
         if init {
             store.init();
@@ -1820,6 +1832,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1856,6 +1870,8 @@ impl Store {
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         };
         // `(S-Frame)`: the chain tiles the file, checked before `fl_rebuild` walks it.
         store.validate_structure()?;
@@ -1955,6 +1971,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1989,6 +2007,8 @@ impl Store {
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         };
         // @PLN97 arc G Phase 2 — fail-closed structural validation of an
         // UNTRUSTED buffer, ALWAYS-ON and BEFORE `fl_rebuild`.  A crafted
@@ -2095,11 +2115,10 @@ impl Store {
         }
         // `LOFT_ALLOC_TRACE` — every claim ends here; compiled only into the `op-census` build.
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!(
-            "C {} {} {pos}",
-            self.trace_name(),
-            self.read::<i32>(pos, 0)
-        ));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!("C {} {} {pos}", self.trace_name(), self.read::<i32>(pos, 0)),
+        );
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
@@ -2721,11 +2740,14 @@ impl Store {
                     self.zero_range(rec, from, len);
                 }
                 #[cfg(feature = "op-census")]
-                crate::store_census::alloc_event(format_args!(
-                    "R {} {rec} {} {rec}",
-                    self.trace_name(),
-                    self.read::<i32>(rec, 0)
-                ));
+                crate::store_census::alloc_event(
+                    self.tap.as_deref(),
+                    format_args!(
+                        "R {} {rec} {} {rec}",
+                        self.trace_name(),
+                        self.read::<i32>(rec, 0)
+                    ),
+                );
                 return rec;
             }
         }
@@ -2738,14 +2760,17 @@ impl Store {
         // a frame slot still naming it is indistinguishable from one naming a slot that was
         // simply reused.
         if crate::stack_verify::enabled() {
-            crate::stack_verify::note_relocation(self.store_nr, rec, new);
+            crate::stack_verify::note_relocation(&mut self.relocated, rec, new);
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!(
-            "R {} {rec} {} {new}",
-            self.trace_name(),
-            self.read::<i32>(new, 0)
-        ));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!(
+                "R {} {rec} {} {new}",
+                self.trace_name(),
+                self.read::<i32>(new, 0)
+            ),
+        );
         new
     }
 
@@ -2939,7 +2964,10 @@ impl Store {
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("D {} {rec}", self.trace_name()));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!("D {} {rec}", self.trace_name()),
+        );
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
@@ -3820,6 +3848,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -3831,6 +3861,8 @@ impl Store {
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         }
     }
 
@@ -3894,6 +3926,8 @@ impl Store {
             alloc_serial: self.alloc_serial,
             #[cfg(feature = "op-census")]
             trace_worker: self.trace_worker,
+            #[cfg(feature = "op-census")]
+            tap: self.tap.clone(),
             created_at: self.created_at,
             freed_at: self.freed_at,
             last_op_at: self.last_op_at,
@@ -3928,6 +3962,8 @@ impl Store {
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         }
     }
 
@@ -3988,6 +4024,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -3999,6 +4037,8 @@ impl Store {
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
         }
     }
 
@@ -5264,7 +5304,7 @@ impl Store {
             );
             // SAFETY: the sink is 8-aligned (a `u64` buffer), at least `size_of::<T>()`
             // bytes long by the assert, and nothing reads it.
-            return unsafe { &mut *discard_sink(std::mem::size_of::<T>()).cast::<T>() };
+            return unsafe { &mut *self.discard_sink(std::mem::size_of::<T>()).cast::<T>() };
         };
         // Both preconditions of a reference are PROVED here rather than assumed:
         // `offset_in_bounds` for liveness, the assert above for alignment.
@@ -5287,7 +5327,7 @@ impl Store {
     pub fn addr_span_mut(&mut self, rec: u32, fld: u32, len: usize) -> *mut u8 {
         if self.read_only {
             self.refuse_locked_write(rec, fld);
-            return discard_sink(len);
+            return self.discard_sink(len);
         }
         let at = self.offset_in_bounds(rec, fld, len);
         if self.shadow_armed() {
@@ -5301,7 +5341,7 @@ impl Store {
             self.refuse_locked_write(rec, 8);
             let len = self.bytes_of(rec).len();
             // SAFETY: the sink holds at least `len` bytes and nothing reads it.
-            return unsafe { std::slice::from_raw_parts_mut(discard_sink(len), len) };
+            return unsafe { std::slice::from_raw_parts_mut(self.discard_sink(len), len) };
         }
         assert!(
             !Self::is_foreign_rec(rec),
@@ -5491,7 +5531,11 @@ impl Store {
     fn copy(&self, rec: u32, into: u32) {
         let bytes = self.payload_bytes(rec, "Store::copy");
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Relocate, bytes);
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Relocate,
+            bytes,
+        );
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.ptr.offset(rec as isize * 8 + 4),
@@ -5627,9 +5671,15 @@ impl Store {
             );
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, size as usize);
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Copy,
+            size as usize,
+        );
         #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(self.store_nr, size as u64);
+        if let Some(tap) = &self.tap {
+            tap.copied_into(self.store_nr, size as u64);
+        }
         // SAFETY: both spans were just held inside this store's allocation.
         unsafe {
             std::ptr::copy(
@@ -5695,9 +5745,15 @@ impl Store {
             );
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
+        crate::op_census::moved(
+            to_store.tap.as_deref(),
+            crate::op_census::Moved::Copy,
+            len as usize,
+        );
         #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(to_store.store_nr, len as u64);
+        if let Some(tap) = &to_store.tap {
+            tap.copied_into(to_store.store_nr, len as u64);
+        }
         let to_at = to_store.block_in_bounds(to_rec, to_pos, len);
         // SAFETY: `block_src` and `block_in_bounds` held each span inside its own store.
         unsafe {
@@ -6143,7 +6199,11 @@ impl Store {
             return self.set_str(&moved_out);
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Text,
+            val.len(),
+        );
         let res = self.claim(((val.len() + 15) / 8) as u32);
         self.set_u32_raw(res, 4, val.len() as u32);
         unsafe {
@@ -6173,7 +6233,11 @@ impl Store {
             let words = self.read::<i32>(old, 0);
             if words > 0 && val.len() + 8 <= words as usize * 8 {
                 #[cfg(feature = "op-census")]
-                crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+                crate::op_census::moved(
+                    self.tap.as_deref(),
+                    crate::op_census::Moved::Text,
+                    val.len(),
+                );
                 self.set_u32_raw(old, 4, val.len() as u32);
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -6198,7 +6262,7 @@ impl Store {
             return self.set_str_ptr(own.as_ptr(), len);
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, len);
+        crate::op_census::moved(self.tap.as_deref(), crate::op_census::Moved::Text, len);
         let res = self.claim(((len + 15) / 8) as u32);
         self.set_u32_raw(res, 4, len as u32);
         unsafe {
@@ -6210,7 +6274,11 @@ impl Store {
     #[inline]
     pub fn append_str(&mut self, record: u32, val: &str) -> u32 {
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Text,
+            val.len(),
+        );
         let prev = self.get_u32_raw(record, 4);
         let result = self.resize(record, (prev as usize + val.len()).div_ceil(8) as u32);
         unsafe {
