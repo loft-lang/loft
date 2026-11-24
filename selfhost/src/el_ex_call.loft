@@ -1554,13 +1554,25 @@ fn constant_arg_needs_copy(e: el::El, callee: integer, nr: integer, arg: ir::Nod
 // own (`lower_vec_copy_bind`'s `CopyOwnedField`), answered as a `Vector` block typed by the
 // temp's deps; the first pass only mints, the argument as it was.
 fn constant_arg_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node, pt: ir::TypeT) -> ir::Node {
-  param = el_types::without_deps(el_types::base(pt));
+  m = materialize_collection(e, vars, arg, pt);
+  match m.code {
+    NdInsert { items } => el_ir::v_block(items, m.tp, "Vector"),
+    _ => arg
+  }
+}
+
+// `Parser::materialize_collection_value`: a collection value copied into a fresh `___blk_val_N`
+// that owns a store of its own (`lower_vec_copy_bind`'s `CopyOwnedField`), answering the temp —
+// `Insert([<alloc>, OpAppendVector(tmp, <value>, …), tmp])`, typed by the temp's deps.  The first
+// pass only mints: the value stays as it was.
+pub fn materialize_collection(e: el::El, vars: el_vars::Vars, code: ir::Node, t: ir::TypeT) -> Ex {
+  param = el_types::without_deps(el_types::base(t));
   tmp = el_vars::create_unique(vars, "__blk_val", param);
   el_vars::set_defined(vars, tmp);
-  b = el_ex_bind::vec_copy_bind(e, vars, tmp, ex(arg, param), owned_field: true);
+  b = el_ex_bind::vec_copy_bind(e, vars, tmp, ex(code, param), owned_field: true);
   match b.code {
-    NdInsert { items } => el_ir::v_block(items + [ir::NdVar { n: tmp }], el_vars::tp(vars, tmp), "Vector"),
-    _ => arg
+    NdInsert { items } => ex(ir::NdInsert { items: items + [ir::NdVar { n: tmp }] }, el_vars::tp(vars, tmp)),
+    _ => ex(code, el_vars::tp(vars, tmp))
   }
 }
 
