@@ -854,7 +854,9 @@ static int (*loft_locked_logger)(loft_cx *cx, const char *advice) = 0;
 
 /* What locked a store (`Store::lock_origin`), kept in its `read_only` byte: the author's
  * `#lock = true`, a constant (`Store::lock_constant`), or bytes the program does not own
- * (`Store::FOREIGN_ORIGIN`).  Any of them is non-zero, which is all a write test asks. */
+ * (`Store::FOREIGN_ORIGIN`).  Any of them is non-zero, which is all a write test asks.  The
+ * interpreter's `Store` holds the same byte with the same values (`Store::RO_LOCK`, `RO_CONST`,
+ * `RO_FOREIGN`): a hosted unit writes the interpreter's own struct. */
 #define LOFT_RO_LOCK 1
 #define LOFT_RO_CONST 2
 #define LOFT_RO_FOREIGN 3
