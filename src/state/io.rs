@@ -2114,12 +2114,8 @@ impl State {
             if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
                 && self.database.try_swap_rebind(&src, &dst, tp)
             {
-                // The released slot holds `v`'s old tree, freed as the C runtime's
-                // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
-                if self.database.spare_store == Some(src.store_nr) {
-                    self.database.spare_store = None;
-                    self.database.free(&src);
-                }
+                // The released slot holds `v`'s old tree, freed by the exchange as the C
+                // runtime's `loft_swap_in` frees it.
                 return;
             }
             let code_pos = self.code_pos;

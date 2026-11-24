@@ -1178,3 +1178,185 @@ g1, g3–g7, g10; pins `tests/group_push.rs`, and `tests/record_push.rs` re-deri
 group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_group`,
 `Output::bind_group_push`, `Output::close_groups_before`, `Output::hoist_tiers`, the
 `GROUP_CLOSE` rule in `scripts/emission_audit.py`.
+
+### `(R-RefillBuffer)`
+
+#### A return buffer refills the store a rebind released
+
+```
+  (R-RefillBuffer) on `--native`, the store `(H-SwapRebind)` releases — holding the
+                 rebound variable's previous value, a root of its own type that
+                 nothing references — is KEPT instead of freed (one at a time; a
+                 second release frees the first).  A function's hidden return buffer
+                 whose every mint is the buffer's null-check prologue or a bare
+                 `OpDatabase`, each heading a literal group that writes every field
+                 (`(R-CompleteWrite)`'s coverage) of a REFILLABLE type — every field
+                 owns no heap, or is a vector whose elements own none — mints with
+                 `OpDatabaseRefill`: a null buffer takes the kept store of the same
+                 type as it stands, and the group's zero of each vector field empties
+                 that vector in place (`clear_vector`) for the fill that follows.
+                 Every other mint is fresh and the empty is a no-op on it.  A text, a
+                 keyed collection, a nested record that owns heap, a mint the walk
+                 cannot see the group of, and a `par` worker's stores decline.
+                 THE IN-PLACE CLAUSE: an empty followed by a repeat literal of the
+                 same field (`n` copies of one scalar, `(R-PushFill)`'s form) is one
+                 overwrite when the kept vector holds exactly `n` elements of that
+                 width — every element written, the length already `n`, so the
+                 answer is the empty-and-fill's; any other length, a foreign or
+                 locked vector, empties and fills.
+```
+
+**In words.** The `(R-LoopRecord)` shape across a call.  A builder called in a loop,
+`c = mul(a, c)`, minted a store for its result every call, claimed its vector and filled
+it; the rebind then exchanged it into `c` and freed the store holding `c`'s old value.  The
+two stores now take turns: the one released is the next call's buffer.  It is exact because
+the literal is complete — every scalar is written again — and a refillable type's only heap
+is vectors the group empties and refills, so nothing of the old value survives and nothing
+old is left unreachable in the store.  A kept store is the runtime's, not a leak, and is
+skipped by the exit census.  Effect on mesh3d's `mat4_mul` loop: priced by hand at −52 %
+of the call.  Switch `LOFT_NO_REFILL_BUFFER=1`, read where the buffer is emitted and at run
+time.  The in-place clause skips the reset, the reserve and the two header derivations of a
+fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 %), switch
+`LOFT_NO_REFILL_IN_PLACE=1`, site `Stores::fill_exact`, guard
+`tests/scripts/a-refilled-repeat-literal-is-overwritten-in-place.loft`.  Sites: `hoist::refill_buffers`, `ops::misc_ops` (the mint), the block loop in
+`emit.rs` (the vector-field empty), `Stores::take_spare` / `park_spare`.  Guard
+`tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
+`tests/refill_buffer.rs`.
+
+### `(R-RefillText)`
+
+#### A pooled buffer's texts are refilled in their slots
+
+```
+  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
+                 minted once per activation by a zero-filling OpDatabase and
+                 released before every later call by OpClear(b, tp) (the
+                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
+                 emitted, and the call goes to the callee's REFILL TWIN, whose
+                 text sets into its own return buffer refill the slot: the
+                 slot's block is written over when the new text fits its claim
+                 (len + 8 ≤ 8 × the block's header words), released and claimed
+                 anew when it does not, claimed when the slot is 0; a null text
+                 releases the slot's block.  Admitted where (a) tp's heap is
+                 TEXT ONLY — every heap slot of the type, nested inline records
+                 flattened, is a text (no collection, no reference, no enum
+                 payload that owns heap); (b) the callee builds its result as a
+                 record LITERAL into its own buffer on EVERY exit — `return b`,
+                 or a block whose value is b — the literal writing every text
+                 slot of tp exactly once, and nothing else in the callee names
+                 the buffer; and (c) b is named by nothing but its pool
+                 statement, this call's buffer argument and its releases, and
+                 the result bound from the call is only READ (a reading OpGet*,
+                 the source of a copy that keeps its source).  Where the site
+                 would call an `__inv` or `__rg` twin it releases first instead,
+                 in the pool statement's order.
+```
+
+**In words.**  A pooled buffer's release walk frees every text the previous result held, and
+the callee then claims a fresh block for every text of the new one: per call, one walk and
+one claim-and-free per text field, for blocks that are the same size each time more often
+than not.  Writing over the old block when the new text fits keeps the bytes where they are
+and drops both halves.  What makes it sound is ONE invariant, enforced at three points:
+**a text slot read by the refill holds 0 or a text block that slot owns.**
+
+- *The buffer's history* — (c): its mint zero-fills it (a slot is 0) and every later write
+  is the refill twin's literal (a slot owns its block).  A no-prefill mint
+  (`OpDatabaseNP`, `(R-CompleteWrite)`) or an element slot handed in as the buffer
+  (`(R-Place)`, `(R-ElemFirst)`) leaves BYTES there, which a refill would read as a block
+  number; neither is a pooled buffer, and neither can reach a refill twin, because the
+  decision is the SITE's, not the callee's.  A twin that mints its own buffer keeps the
+  zero-filling mint for the same reason.
+- *The callee* — (b): every exit is a literal writing every text slot, so after the call no
+  slot still holds the previous result's text (no stale value is visible, none leaks); a
+  forwarded exit (`return g(…)`), a copy into the buffer (`OpCopyRecord`, which claims fresh
+  blocks over the old ones) or an early exit that writes nothing declines.  The parser
+  writes every field of a literal, a defaulted text included, so what (b) protects is the
+  live-record count, not a value.
+- *The type* — (a): a refilled text slot is the only heap the walk would have freed; a
+  collection or a heap-owning enum payload would be left for the walk and is out of scope
+  until a clause of its own (vector-build.md's text-bearing elements).
+
+Why a TWIN and not the callee itself: the same callee is also called with buffers that do
+not keep the invariant (a fresh element slot, a no-prefill mint), and one emitted body cannot
+tell them apart; a twin, chosen where the buffer's history is known, can.  It is the shape
+`(R-Inputs)` (`__inv`) and `(R-RangedCall)` (`__rg`) emit.  A previous result read through a
+borrow after the next call is no new hazard: the release walk freed its block at the same
+point, and the scope pass never pools a site whose result a later text still depends on (it
+mints per call there instead).
+
+Native only; the interpreter keeps the walk and the fresh claims and is the oracle.  An
+armed release no call takes is an emission error, never a silent leak.  Effect on
+game_protocol `msg_ping` (x86-64): 18.0 → 4.89 ms, 7.55× → 2.05× Rust, hash unchanged.
+`flow_layout_full`, pluginabi `check_request` and cbor `decode` need the collection clause
+after it (vectors of text-bearing records).  Switch `LOFT_NO_REFILL_TEXT=1`; trace
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict.  Sites: `hoist::refill_text_sites`
+and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the block loop in
+`emit.rs` (the pool statement), `user_fn_call_body` (the call), `substitute_template_body`
+(the twin's text set), `Store::refill_str` (the write).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` — value cells and a
+live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
+`tests/refill_text.rs`.
+
+```
+  (R-RefillText), the collection clause: a function whose hidden return buffer b is
+                 a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
+                 vector<E>, E a record of scalars and texts — KEEPS b's elements
+                 where the mint keeps b (refill_keeps, the test OpDatabaseRefill
+                 asks): the entry sets the length to 0 and keeps K, the old length,
+                 in place of the releasing clear; a text set into an element the
+                 build appended refills the block its slot owns when the slot is
+                 under K and claims past it; and every exit releases the texts of
+                 the kept slots [len, K) the call did not reuse.  Admitted where the
+                 buffer is cleared once, at entry; every append mints its element
+                 with OpNewRecord, emitted without the prefill (R-CompleteWrite);
+                 and every other mention of b, its field views and its appended
+                 elements is a reservation, a length, an element read, an
+                 append's finish, an element's own set or read, the field's zero,
+                 a self-replace, a release or a return.
+```
+
+**In words.**  The same invariant, one level down: a text slot read by the refill holds 0 or
+a block that slot owns.  Slots under the length at entry are live elements, which own their
+texts; past the length a removal can leave a stale copy of a live element's handle, and fresh
+capacity holds whatever the store left there, so neither is trusted and K is the length, not
+the capacity.  The length stays true during the build — a read of the vector mid-build sees
+only what this call appended — which is why each kept slot still goes through the append (a
+form that overwrote kept elements in place under the old length priced −20 % against this
+form's −16.5 %, and answers a mid-build read with stale elements).  The vector grows only
+when its length reaches its capacity, which is at least K, so a slot past K is never one a
+growth copied.  A second clear inside the build would reset the store under the kept slots;
+a prefilling mint would write 0 over a kept text and strand its block; a removal, an insert
+or any use the whitelist does not name declines.  Effect on zttext `flow_layout_full`
+(x86-64): 26.0 → 22.7 ms, 14.15× → 12.35× Rust, hash unchanged.  Switch
+`LOFT_NO_REFILL_ELEMENTS=1`; `LOFT_TRACE_REFILL_TEXT=1` names each heap-element buffer's
+verdict.  Sites: `hoist::keep_elements` (the admission), `Stores::refill_keep_open` /
+`refill_keep_close` (entry and exit), `codegen_runtime::RefillKeepGuard` (the exit on every
+return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (the element's
+text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
+with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
+
+```
+  (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
+                 for heap only vector fields of plain elements (no text, no
+                 collection, no linked group in an element; no other heap field —
+                 Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
+                 buffer with elements that own no heap, the release is not emitted
+                 and the plain callee is called.  Admitted under (c) without its
+                 "only READ": the buffer named by nothing but its pool statement,
+                 the call's buffer argument and its releases, the result bound once.
+```
+
+**In words.**  The refilling callee keeps a live buffer (`refill_keeps`) and empties each
+vector field where it stands; the release before the call freed exactly the vectors it would
+have kept, and the callee's appends then claimed new ones.  The invariant the emptying reads
+is that a vector slot holds 0, the absent mark, or a vector that slot owns — and every write
+the language makes to a vector field keeps that, which is why the result may be written,
+grown or passed on between calls, unlike a text clause's refilled slot.  No twin is needed:
+an emission of the callee that does not refill mints over the live buffer, and that mint
+clears its store.  Native only; the interpreter keeps the release and is the oracle.  Effect
+on hex_recover `forms_upto` (x86-64): 2.00 → 1.02 ms, 12.96× → 6.62× Rust, hash unchanged.
+Switch `LOFT_NO_REFILL_VECTORS=1`; `LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)`.
+Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_declines`,
+`RefillTextSites::vectors`, `refill_text_call` in `calls.rs`.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`; pin
+`tests/refill_text.rs` (the values pass either way, so the pin is the falsifier).

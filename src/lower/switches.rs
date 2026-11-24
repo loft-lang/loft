@@ -53,14 +53,6 @@ pub struct Switches {
     pub distinct_version_disabled: bool,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
     pub header_dbref_disabled: bool,
-    /// `LOFT_NO_REFILL_KEEP=1` — a refilling buffer's entry clear releases its vector, as
-    /// before the live clause.
-    pub refill_keep_disabled: bool,
-    /// `LOFT_NO_REFILL_TEXT=1` — every pooled call site keeps its release and the plain callee.
-    pub refill_text_disabled: bool,
-    /// `LOFT_NO_REFILL_ELEMENTS=1` — `@FR-R-RefillText`'s collection clause off: a
-    /// heap-element refill buffer is released whole at entry and its elements claimed anew.
-    pub refill_elements_disabled: bool,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
     pub byte_read_disabled: bool,
     /// `LOFT_NO_BYTE_RESOLVE=1` — `@FR-R-Base`'s byte clause needs a held BASE again: a
@@ -257,10 +249,6 @@ impl Switches {
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
             byte_resolve_disabled: std::env::var("LOFT_NO_BYTE_RESOLVE").is_ok_and(|v| v != "0"),
-            refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
-            refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
-            refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
-                .is_ok_and(|v| v != "0"),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
             invariant_hoist_disabled: std::env::var("LOFT_NO_INVARIANT_HOIST")
                 .is_ok_and(|v| v != "0"),

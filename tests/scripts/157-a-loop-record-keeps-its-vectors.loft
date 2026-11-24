@@ -1,7 +1,7 @@
 // `@FR-R-LoopRecord`'s REFILL clause — a record literal bound inside a loop whose type holds
 // vectors of no-heap elements keeps its store AND its vectors across passes: the first pass
 // mints, every later pass writes each scalar field over the kept record and empties each
-// vector field in place for the literal's pushes (`@FR-R-RefillBuffer`'s empty).  Admitted
+// vector field in place for the literal's pushes.  Admitted
 // only where every mint heads a literal group that writes every field, and every zero of a
 // vector field is one of those groups'.
 //

@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @catches: LOFT_NO_LITERAL_EXIT_BUFFER — the switch leaves a literal exit unbuilt in the pooled buffer, so the sized shape grows again (3 -> 5 records), which `m1` asserts.
 //
-// `@FR-R-RefillText` — a POOLED call buffer whose type's only heap is text is refilled by the
-// callee's refill twin on `--native`: each text slot is written over the block it already owns
-// when the new text fits, released and claimed anew when it does not, and the pool's release
-// walk (`OpClear`, `@FR-H-ClearRelease`) is not emitted.  The interpreter applies no rewrite and
-// is the oracle; every value below is computed by hand.
+// A POOLED call buffer (`OpClear` before every later call, `@FR-H-ClearRelease`) whose type's
+// only heap is text, refilled by the callee on every call.  Every value below is computed by
+// hand.
 //
 // What can go wrong is a text left from the previous call (a slot the literal skipped), a block
 // written past its claim (a text that grows), a text released twice or not at all (the walk
@@ -15,7 +13,7 @@
 // So m1 counts the live records of every store (`store_memory()`'s census) after 10 and after
 // 1 000 calls of each shape, with the pooled buffer still alive: a text leaked per call is
 // ~2 000 records more, which no store-level leak check sees — the pooled store is freed whole.
-// `LOFT_NO_REFILL_TEXT=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
 // `LOFT_STRICT_STORES=1` must answer identically.
 //
 // @falsified-at: none — written before the rewrite it guards; the planted defects are recorded

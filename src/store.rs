@@ -6245,11 +6245,13 @@ impl Store {
         res
     }
 
-    /// `@FR-R-RefillText` — write `val` into the text slot at `(rec, fld)` reusing the block
-    /// the slot already owns: written over when `val` fits its claim (`len + 8 ≤ 8 × words`),
+    /// `OpSetTextReplace` (`@FR-H-TextReplace`) — write `val` into the text slot at
+    /// `(rec, fld)` reusing the block the slot already owns: written over when `val` fits its
+    /// claim (`len + 8 ≤ 8 × words`),
     /// released and claimed anew when it does not, claimed when the slot is 0.  The caller
-    /// owes the rule's invariant — the slot holds 0 or a text block it owns — which the
-    /// emitter proves at the call site; a slot holding anything else is read as a block.
+    /// owes the invariant — the slot holds 0 or a text block it owns — which the scope pass
+    /// proves at the call site (`scopes::text_replace`); a slot holding anything else is read
+    /// as a block.
     #[inline]
     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
         if self.holds_bytes(val.as_ptr(), val.len()) {
@@ -6538,7 +6540,7 @@ mod tests {
         (plain, rec, foreign, froot)
     }
 
-    /// `@FR-R-RefillText` — the three cases of `refill_str`, read by value, by block and by
+    /// The three cases of `refill_str`, read by value, by block and by
     /// live-claim count: a 0 slot claims; a text that fits is written over the slot's own
     /// block (same block, no claim); one that does not releases the block and claims a fit
     /// (count flat); an empty text and a longer one after it ride the same rules.  A
