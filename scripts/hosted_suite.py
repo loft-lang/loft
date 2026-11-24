@@ -108,7 +108,7 @@ def shadow_of(pkg, work):
 
 
 def judge(loft, libs, pkg, name, path, timeout):
-    base = {**os.environ, "LOFT_NO_RUSTC": "1", "LOFT_HASH_SEED": "0x9E3779B97F4A7C15"}
+    base = {**os.environ, "LOFT_HASH_SEED": "0x9E3779B97F4A7C15"}
     for k in ("LOFT_HOSTED_VERIFY", "LOFT_POISON_CLAIM"):
         base.pop(k, None)
     # Every library interpreted: a `use`d library runs as a hosted unit by default.

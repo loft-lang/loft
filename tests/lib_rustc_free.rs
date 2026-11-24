@@ -89,8 +89,7 @@ impl Scratch {
             .env("CARGO", bin.join("cargo"))
             .env("RUSTC", bin.join("rustc"))
             .env("LOFT_NO_CACHE", "1")
-            .env_remove("LOFT_LIB_BACKEND")
-            .env_remove("LOFT_NO_RUSTC");
+            .env_remove("LOFT_LIB_BACKEND");
         for (k, v) in env {
             cmd.env(k, v);
         }

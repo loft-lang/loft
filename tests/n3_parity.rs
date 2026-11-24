@@ -176,12 +176,12 @@ const DATALIB_PROG: &str = "use datalib::*;\n\
 // @speed 1.3
 #[test]
 fn datalib_store_touching_types_parity() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (mixed + native modes need it)");
+        eprintln!("skip: no C compiler (mixed + native modes need it)");
         return;
     }
 
@@ -235,12 +235,12 @@ fn callback_function_values_parity() {
 /// and `--native` under `LOFT_STORES=warn` and the store guard, and mixed under
 /// `LOFT_POISON=1`.
 fn assert_package_parity(pkg: &str) {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (mixed + native modes need it)");
+        eprintln!("skip: no C compiler (mixed + native modes need it)");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_{pkg}_{}", std::process::id()));
@@ -391,12 +391,12 @@ const PLAINLIB_PROG: &str = "use plainlib::*;\n\
 // @speed 1.2
 #[test]
 fn default_native_dispatches_unopted_library() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (default-native build needs it)");
+        eprintln!("skip: no C compiler (default-native build needs it)");
         return;
     }
 
@@ -465,12 +465,12 @@ fn single_cdylib(native_auto: &Path) -> Option<std::path::PathBuf> {
 // @speed 3
 #[test]
 fn a_library_bridge_name_does_not_depend_on_its_first_builder_2180() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (mixed mode needs it)");
+        eprintln!("skip: no C compiler (mixed mode needs it)");
         return;
     }
     let pid = std::process::id();
@@ -556,12 +556,12 @@ fn a_library_bridge_name_does_not_depend_on_its_first_builder_2180() {
 // @speed 2.8
 #[test]
 fn editing_a_library_interprets_then_rebuilds_when_stable() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (Step 4 needs the native build)");
+        eprintln!("skip: no C compiler (Step 4 needs the native build)");
         return;
     }
 
@@ -657,12 +657,12 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
 // @speed 1.7
 #[test]
 fn interdependent_libraries_are_fully_native() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (F2 needs the native build)");
+        eprintln!("skip: no C compiler (F2 needs the native build)");
         return;
     }
 
@@ -753,12 +753,12 @@ fn interdependent_libraries_are_fully_native() {
 // @speed 1.2
 #[test]
 fn shared_bridge_nested_return_no_orphan_leak() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (mixed mode needs it)");
+        eprintln!("skip: no C compiler (mixed mode needs it)");
         return;
     }
     let pid = std::process::id();
@@ -982,12 +982,12 @@ fn a_dependency_edit_reaches_a_dependent_when_the_layout_probe_cannot_relocate()
 /// two callers' scratch trees apart (same pid, one test binary); `extra_env` is
 /// applied to every `loft` invocation.
 fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (needs the native build)");
+        eprintln!("skip: no C compiler (needs the native build)");
         return;
     }
     let pid = std::process::id();
@@ -1087,12 +1087,12 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
 // @speed 1.6
 #[test]
 fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (needs the native build)");
+        eprintln!("skip: no C compiler (needs the native build)");
         return;
     }
     let pid = std::process::id();
@@ -1201,12 +1201,12 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
 // @speed 1.5
 #[test]
 fn a_single_crosses_the_library_bridge_as_a_single_2165() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable (mixed mode needs it)");
+        eprintln!("skip: no C compiler (mixed mode needs it)");
         return;
     }
     let pid = std::process::id();

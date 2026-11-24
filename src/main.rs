@@ -11677,15 +11677,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let reason = native_fallback_reason
             .as_deref()
             .unwrap_or("native execution did not occur (reason not recorded)");
-        let cure = if reason == loft::cache::RUSTC_NOT_FOUND {
-            "Put a Rust toolchain on PATH"
-        } else {
-            "Fix the toolchain (e.g. `cargo build --release --lib --bin loft`)"
-        };
         eprintln!(
             "loft: LOFT_REQUIRE_NATIVE is set, but native execution was unavailable \
-             ({reason}); refusing to fall back to the interpreter. \
-             {cure}, or unset LOFT_REQUIRE_NATIVE to allow interpreter fallback."
+             ({reason}); refusing to fall back to the interpreter.  Fix what that names, or \
+             unset LOFT_REQUIRE_NATIVE to allow interpreter fallback."
         );
         std::process::exit(1);
     }

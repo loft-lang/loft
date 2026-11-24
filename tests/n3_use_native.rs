@@ -87,7 +87,7 @@ fn cdylib_present_for(dir: &std::path::Path, pkg: &str) -> bool {
 // @speed 1.1
 #[test]
 fn use_compile_native_library_dispatches_on_real_binary() {
-    // The binary auto-builds the cdylib via rustc; skip where it isn't available.
+    // The binary builds the library's C unit with cc; skip where it isn't available.
     if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
@@ -1664,7 +1664,7 @@ fn write_decoy_cdylib(at: &std::path::Path, exports: &[&str], scratch: &std::pat
     // A cdylib with no exports at all still links; the marker keeps it non-empty.
     body.push_str("#[unsafe(no_mangle)] pub extern \"C\" fn loft_decoy_marker() -> u64 { 0 }\n");
     fa::write(&src, body).expect("write the decoy source");
-    loft::platform::process::harness_command("rustc")
+    loft::platform::process::harness_command("cc")
         .arg("--crate-type=cdylib")
         .arg("--edition")
         .arg("2021")

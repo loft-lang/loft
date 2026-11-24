@@ -824,10 +824,7 @@ pub fn adopt_shared_cdylib(
     };
     let fp = mix_fp(
         mix_fp(loft_fp, program_fp),
-        mix_fp(
-            contributing_fingerprint(contributing),
-            crate::cache::native_release_flags_fingerprint(),
-        ),
+        contributing_fingerprint(contributing),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast

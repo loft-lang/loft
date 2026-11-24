@@ -455,7 +455,7 @@ fn main() {
 }
 ";
     let mut legs = vec!["--interpret"];
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok()
@@ -557,7 +557,7 @@ fn main() {
 }
 ";
     let mut legs = vec!["--interpret"];
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok()

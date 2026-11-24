@@ -51,8 +51,7 @@ fn run(lib: &std::path::Path, hosted: bool) -> (bool, String, String) {
         .arg(root.join(SCRIPT))
         .env("LOFT_NO_CACHE", "1");
     if hosted {
-        cmd.env("LOFT_NO_RUSTC", "1")
-            .env("LOFT_REQUIRE_NATIVE", "1")
+        cmd.env("LOFT_REQUIRE_NATIVE", "1")
             .env("LOFT_POISON", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_PROFILE", "1");
@@ -159,7 +158,6 @@ fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
             .arg(&lib)
             .arg(root.join(SCRIPT))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_POISON_CLAIM", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_HOSTED_VERIFY", "1");
@@ -224,7 +222,6 @@ fn a_hosted_unit_built_by_one_program_runs_in_another() {
             .arg(&lib)
             .arg(root.join(script))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_POISON_CLAIM", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_HOSTED_VERIFY", "1")
@@ -344,7 +341,6 @@ fn a_hosted_unit_shares_its_shim_with_the_interpreter() {
         .arg(&lib)
         .arg(root.join("tests/lib/hostedshim_main.loft"))
         .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_NO_RUSTC", "1")
         .output()
         .expect("run loft");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -417,7 +413,6 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
         .arg(&lib)
         .arg(root.join("tests/lib/hostedmods_main.loft"))
         .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_NO_RUSTC", "1")
         .env("LOFT_POISON_CLAIM", "1")
         .env("LOFT_HOSTED_VERIFY", "1")
         .output()
@@ -464,8 +459,7 @@ fn a_call_back_into_the_interpreter_keeps_its_callers_frames() {
             .arg("--lib")
             .arg(&lib)
             .arg(root.join("tests/lib/hostedcallback_main.loft"))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1");
+            .env("LOFT_NO_CACHE", "1");
         if hosted {
             cmd.env("LOFT_REQUIRE_NATIVE", "1");
         } else {
@@ -518,7 +512,6 @@ fn a_library_built_once_is_adopted_with_no_c_compiler() {
             .arg(&lib)
             .arg(root.join("tests/lib/hostedshim_main.loft"))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_REQUIRE_NATIVE", "1");
         if let Some(p) = path {
             cmd.env("PATH", p);
@@ -574,7 +567,6 @@ fn a_hosted_unit_is_the_same_text_wherever_it_is_built() {
             .arg("build-native")
             .arg(&pkg)
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .output()
             .expect("run loft build-native");
         assert!(
@@ -647,7 +639,6 @@ fn a_library_function_named_like_a_stdlib_native_builds_as_a_hosted_unit() {
             .env("LOFT_NO_CACHE", "1");
         if hosted {
             cmd.env("LOFT_LIB_BACKEND", "c")
-                .env("LOFT_NO_RUSTC", "1")
                 .env("LOFT_REQUIRE_NATIVE", "1");
         } else {
             cmd.env("LOFT_NO_NATIVE_LIBS", "1");

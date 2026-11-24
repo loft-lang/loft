@@ -326,7 +326,6 @@ jobs:
       - name: Hosted C — ${{ matrix.package }}
         working-directory: ${{ matrix.package }}
         env:
-          LOFT_NO_RUSTC: 1
           LOFT_POISON_CLAIM: 1
         run: |
           set -o pipefail

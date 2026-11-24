@@ -828,41 +828,6 @@ pub fn rustflags_fingerprint() -> u64 {
     ))
 }
 
-/// `LOFT_NATIVE_RELEASE_FLAGS` — extra `rustc` arguments for the SHIPPED tier
-/// (`--ship` and every generated library cdylib), split on whitespace: a
-/// MEASUREMENT switch for trying a code-generation flag over a whole portal run
-/// (`-C llvm-args=-align-all-functions=6`) before it is made a default.  Empty when unset.
-/// Every cache key that names a release binary folds [`native_release_flags_fingerprint`]
-/// (over [`release_rustc_args`], this list appended),
-/// so a run with other flags never adopts this one's binary.
-#[must_use]
-pub fn native_release_flags() -> Vec<String> {
-    std::env::var("LOFT_NATIVE_RELEASE_FLAGS")
-        .map(|v| v.split_whitespace().map(str::to_string).collect())
-        .unwrap_or_default()
-}
-
-/// The shipped tier's `rustc` arguments: `src/native_release_args.txt` (the one list the
-/// performance scripts read too), then [`native_release_flags`].
-#[must_use]
-pub fn release_rustc_args() -> Vec<String> {
-    let mut args: Vec<String> = include_str!("native_release_args.txt")
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(str::to_string)
-        .collect();
-    args.extend(native_release_flags());
-    args
-}
-
-/// The fingerprint of [`release_rustc_args`]: what a cached release artifact's key folds, so
-/// a binary built with other arguments is never adopted.
-#[must_use]
-pub fn native_release_flags_fingerprint() -> u64 {
-    rustflags_fp_of(&release_rustc_args().join(" "))
-}
-
 /// Pure core of [`rustflags_fingerprint`] (takes the flag string so it is testable).
 fn rustflags_fp_of(flags: &str) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1023,81 +988,6 @@ pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> 
     crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-}
-
-/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
-/// there is no working `rustc`.  Asked once per process, and the ONE place loft asks it:
-/// a launch of `rustc` costs more than a warm start of loft itself, so a run that executes a
-/// program must never reach here.  `LOFT_TIMING=1` reports each launch (`rustc_probe=`), which
-/// is how a start-up that pays one shows it.
-#[must_use]
-pub fn rustc_version() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static VERSION: OnceLock<Option<String>> = OnceLock::new();
-    VERSION
-        .get_or_init(|| {
-            let started = std::time::Instant::now();
-            let version = crate::platform::process::Spawn::new(
-                crate::platform::process::Program::search("rustc"),
-            )
-            .arg("--version")
-            .run(b"")
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("rustc")
-                    .trim()
-                    .to_string()
-            });
-            if crate::platform::timing_enabled() {
-                eprintln!(
-                    "LOFT_TIMING rustc_probe={:.2}ms",
-                    started.elapsed().as_secs_f64() * 1000.0
-                );
-            }
-            version
-        })
-        .as_deref()
-}
-
-/// The reason [`rustc_mismatch`] gives when there is no `rustc` at all — a missing toolchain,
-/// which no runtime rebuild can cure, as opposed to a changed one.
-pub const RUSTC_NOT_FOUND: &str = "rustc not found";
-
-/// The rustc this loft was BUILT with (the `LOFT_BUILD_RUSTC` stamp from
-/// build.rs) vs the one a plain `rustc` resolves RIGHT NOW — which depends
-/// on PATH and rustup's cwd-sensitive toolchain overrides, so it can
-/// differ between two invocations of the same loft binary (the repo's
-/// `rust-toolchain.toml` pin vs the rustup default in `/tmp`).  Every
-/// build that links the SVH-locked `libloft.rlib` is DOOMED under a
-/// mismatch (rustc E0514, "compiled by an incompatible version") — so
-/// build paths ask this BEFORE spawning, and skip to the interpreter with
-/// a one-line reason instead of spewing a compiler error and leaving a
-/// half-written target.  `None` = proceed (matching, or no stamp to
-/// compare); `Some(reason)` = mismatch / no usable rustc.  Memoised: the
-/// answer cannot change within a process.
-#[must_use]
-pub fn rustc_mismatch() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static REASON: OnceLock<Option<String>> = OnceLock::new();
-    REASON
-        .get_or_init(|| {
-            let stamp = option_env!("LOFT_BUILD_RUSTC").unwrap_or("");
-            if stamp.is_empty() {
-                return None;
-            }
-            match rustc_version() {
-                Some(v) if v == stamp.trim() => None,
-                Some(v) => Some(format!(
-                    "rustc changed since this loft was built ({stamp} → {v})"
-                )),
-                None => Some(RUSTC_NOT_FOUND.to_string()),
-            }
-        })
-        .as_deref()
 }
 
 /// @PLN11 Arc N / N0 — clear a native build target whose existing artifact

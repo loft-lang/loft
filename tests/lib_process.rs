@@ -147,7 +147,7 @@ mod spawns_sh {
             .current_dir(&root)
             .env("PATH", path)
             .env("LOFT_TIMEOUT", "300");
-        if !have("rustc") {
+        if !have("cc") {
             cmd.arg("--interpret");
         }
         let out = cmd.output().expect("run scripts/script_twins.sh");
