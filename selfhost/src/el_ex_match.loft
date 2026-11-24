@@ -267,6 +267,10 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     if tv != null {
       return tv;
     }
+    match place {
+      NdTupleGet { var: htv, idx: hti } => record_heap_member_link(e, vars, htv, hti),
+      _ => {}
+    }
     refuse_known(e, at, "a `&` argument that is not a local");
     return null;
   }
@@ -1498,6 +1502,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // ref a literal was built in; a text keeps its body's type as it is.)
   rec_t = if made_d >= 0 { el_types::with_deps(in_t, [for dp in el_types::deps(b.tp) if !el_vars::name_of(vars, dp).starts_with("__ref") { dp }]) } else { in_t };
   if !made && (push == "" || in_t is TyOptional) {
+    // Refused, but a local's `vector<…>` is registered first, as Rust's `vector_def` registers
+    // it for any element: every definition after it keeps Rust's number.
+    if v >= 0 {
+      _ = vector_rows(e, in_t, n, false);
+    }
     el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -4549,4 +4558,33 @@ pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
   ];
   bt = el_types::without_deps(out);
   ex(el_ir::v_block([el_ir::v_set(acc, list[1]!), el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "reduce loop"), ir::NdVar { n: acc }], bt, "reduce"), bt)
+}
+
+// `Parser::record_heap_member_link` (`@FR-T-Record`): a `&` argument naming a HEAP member of a
+// by-value tuple local makes the tuple's `__tuple<…>` record where the call's statement ends,
+// when the record can lay every member out (`ref_tuple_is_record`: no `τ?`, fn-ref or nested
+// tuple).  Refused here, but registered first: every later definition keeps Rust's number.
+fn record_heap_member_link(e: el::El, vars: el_vars::Vars, t: integer, i: integer) {
+  if t < 0 || t >= len(vars.vars) || vars.vars[t].argument || vars.call_tok < 0 {
+    return;
+  }
+  match el_types::base(el_vars::tp(vars, t)) {
+    TyTuple { elems } => {
+      if i < 0 || i >= len(elems) {
+        return;
+      }
+      m = el_types::base(elems[i]);
+      scalar = m is TyInteger || m is TyFloat || m is TySingle || m is TyCharacter || m is TyBoolean || match m { TyEnum { is_ref } => !is_ref, _ => false };
+      if scalar || m is TyText {
+        return;
+      }
+      for x in elems {
+        if x is TyOptional || x is TyFunction || x is TyTuple {
+          return;
+        }
+      }
+      _ = el_types::tuple_def(e, [for x in elems { el_types::without_deps(x) }], el::pos_at(e, el_ex_object::past_call(e, vars.call_tok)));
+    },
+    _ => {}
+  }
 }

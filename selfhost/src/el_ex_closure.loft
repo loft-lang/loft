@@ -47,6 +47,22 @@ use el_ex_bind;
 // (`vars.lambdas`, on both passes), and on the first pass its definition `n___lambda_<fn>_<N>`
 // and, where it captures a name, its closure record `__closure_<fn>_<N>` — the body is never
 // elaborated, the refusal stands.
+// `Data::ensure_tuple_defs`: the `__tuple<…>` record of every tuple `t` holds, inner first.
+fn ensure_tuple_defs(e: el::El, t: ir::TypeT, pos: ir::Position) {
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        ensure_tuple_defs(e, m, pos);
+      }
+      _ = el_types::tuple_def(e, elems, pos);
+    },
+    TyVector { inner } => ensure_tuple_defs(e, inner, pos),
+    TyRefVar { inner } => ensure_tuple_defs(e, inner, pos),
+    TyOptional { inner } => ensure_tuple_defs(e, inner, pos),
+    _ => {}
+  }
+}
+
 fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text) -> Ex {
   if e.context < 0 || body == null {
     el::refuse(e, why);
@@ -65,13 +81,23 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
         _ => {}
       }
     }
-    captures = len(captured_names(e, vars, body!, own)) > 0;
+    cnames = captured_names(e, vars, body!, own);
     ld = el::add_def(e, nm, el::pos_at(e, at), el::DT_FUNCTION);
-    if captures {
+    if len(cnames) > 0 {
       end = match e.p.nodes[body!] { SBlock { end: be } => be, _ => 0 };
-      rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
+      rpos = el::pos_at(e, end + 1);
+      rd = el::add_def(e, rec_nm, rpos, el::DT_STRUCT);
       e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
       e.b.data.definitions[ld].closure_record = rd;
+      // `synthesize_closure_record` registers each capture's tuple records as it lays the
+      // capture's field out (`ensure_tuple_defs`), so they keep Rust's numbers though the
+      // lambda is refused.
+      for cn in cnames {
+        cv = el_vars::var(vars, cn);
+        if cv >= 0 {
+          ensure_tuple_defs(e, el_vars::tp(vars, cv), rpos);
+        }
+      }
     }
   }
   el::refuse(e, why);

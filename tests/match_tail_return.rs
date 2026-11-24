@@ -269,3 +269,87 @@ fn a_view_bound_twice_under_one_name_keeps_its_base_interpret() {
 fn a_view_bound_twice_under_one_name_keeps_its_base_native_c() {
     assert_sibling_view_cases("--native-c");
 }
+
+/// loft#2629 (`@FR-R-TailSelf`) — a self tail call written as an explicit `return` inside an
+/// arm of a function whose tail is a `match` releases the frame ONCE on its jump.  The jump
+/// took the releases before the `return` (already the whole exit) and appended the `match`
+/// tail's too, so the interpreter freed every local twice ("a store was freed twice").
+/// Values hand-computed: the last pass has `n == 0`.
+const TAIL_RETURN_IN_ARM: &str = "struct Rg2629 { lo: integer, name: text }\n\
+enum Nd2629 { NA { v: integer }, NB }\n\
+fn mk2629(v: integer) -> Rg2629 { Rg2629 { lo: v, name: \"r{v}\" } }\n\
+fn r2629(n: integer, c: Nd2629) -> Rg2629? {\n  p = mk2629(n);\n  match c {\n    NA { v } => {\n      if n > 0 { return r2629(n - 1, c); }\n      Rg2629 { lo: p.lo + v, name: p.name }\n    },\n    _ => null\n  }\n}\n\
+fn deep2629(n: integer, c: Nd2629) -> Rg2629? {\n  p = mk2629(n);\n  match c {\n    NA { v } => {\n      if n > 0 { if v > 0 { return deep2629(n - 1, c); } }\n      Rg2629 { lo: p.lo + v, name: p.name }\n    },\n    _ => null\n  }\n}\n\
+fn txt2629(n: integer, c: Nd2629) -> text {\n  s = \"s{n}\";\n  match c {\n    NA { v } => {\n      if n > 0 { return txt2629(n - 1, c); }\n      \"{s}/{v}\"\n    },\n    _ => \"\"\n  }\n}\n\
+fn main() {\n  x = r2629(3, Nd2629::NA { v: 10 });\n  d = deep2629(2, Nd2629::NA { v: 5 });\n  println(\"{x!.lo} {x!.name} {d!.lo} {d!.name} {txt2629(3, Nd2629::NA { v: 7 })}\");\n}\n";
+
+fn assert_tail_return_in_arm(backend: &str) {
+    let probe = write_probe(
+        &format!("2629_{}", backend.trim_start_matches('-')),
+        TAIL_RETURN_IN_ARM,
+    );
+    let (ok, stdout, stderr) = run(backend, &probe);
+    let _ = fa::remove_file(&probe);
+    assert!(
+        ok,
+        "[2629/{backend}] must run cleanly\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "10 r0 5 r0 s0/7",
+        "[2629/{backend}]\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("freed twice"),
+        "[2629/{backend}] a double free\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_self_tail_return_in_an_arm_releases_the_frame_once_interpret() {
+    assert_tail_return_in_arm("--interpret");
+}
+
+#[test]
+fn a_self_tail_return_in_an_arm_releases_the_frame_once_native_c() {
+    assert_tail_return_in_arm("--native-c");
+}
+
+/// loft#2630 — a `for` over the name of a local the function returns: the return-buffer
+/// rename makes that local the hidden parameter on pass 2, and a parameter never "ends", so the
+/// loop kept the spelling on pass 2 alone and every later bind of the name split there only —
+/// the rename onto the split binding grew the signature on pass 2 (an H5 panic, both
+/// backends).  The loop decides on pass 1 for both passes.
+const LOOP_OVER_A_RETURNED_LOCAL: &str = "struct Rg { lo: integer, hi: integer }\n\
+enum Nd { NCall { nm: text, args: vector<Nd> }, NInt { n: integer } }\n\
+fn rng(c: Nd) -> Rg? {\n\
+  match c {\n\
+    NInt { n } => Rg { lo: n, hi: n },\n\
+    NCall { nm, args } => {\n\
+      if nm == \"add\" { a = rng(args[0]); b = rng(args[1]); if a == null || b == null { return null; } return Rg { lo: a!.lo + b!.lo, hi: a!.hi + b!.hi }; }\n\
+      if nm == \"and\" { hi = 0 - 1; for a in args { r = rng(a); if r != null && (hi < 0 || r!.hi < hi) { hi = r!.hi; } } return if hi < 0 { null } else { Rg { lo: 0, hi: hi } }; }\n\
+      if nm == \"narrow\" { a = rng(args[0]); return if a != null && a!.lo > 0 { a } else { null }; }\n\
+      null\n\
+    },\n\
+    _ => null\n\
+  }\n\
+}\n\
+fn main() { r = rng(Nd::NCall { nm: \"narrow\", args: [Nd::NInt { n: 3 }] }); println(\"{r!.lo}\"); }\n\
+";
+
+#[test]
+fn a_loop_over_a_returned_locals_name_parses_alike_on_both_passes() {
+    for backend in ["--interpret", "--native-c"] {
+        let probe = write_probe(
+            &format!("2630_{}", backend.trim_start_matches('-')),
+            LOOP_OVER_A_RETURNED_LOCAL,
+        );
+        let (ok, stdout, stderr) = run(backend, &probe);
+        let _ = fa::remove_file(&probe);
+        assert!(
+            ok && !stderr.contains("H5"),
+            "[2630/{backend}] must compile and run\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(stdout.trim(), "3", "[2630/{backend}]\nstderr:\n{stderr}");
+    }
+}
