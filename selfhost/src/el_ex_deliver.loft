@@ -282,11 +282,23 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     return delivered!;
   }
   if result is TyOptional {
+    // A body ending in a `return` that hands a call the buffer (`one_buffer_chain`) has
+    // delivered already: the body is typed as the declared result.
+    cbl = match code { NdBlock { block } => block[0], _ => return code };
+    ctail = if len(cbl.operators) > 0 { el_ir::unspan(cbl.operators[-1]) } else { ir::NdNull };
+    if match ctail { NdReturn { inner: cri } => chain_answers(el_ir::unspan(cri), rb), _ => false } {
+      if !e.first_pass {
+        cbl.result = [el::def(e, d).returned[0] ?? result];
+        return ir::NdBlock { block: [cbl] };
+      }
+      return code;
+    }
     // A literal tail of a `vector<T>?` takes the buffer as a plain vector's does (`Rename` onto
     // the literal's own `__vdb_N`) — not cleared at the head — where every early exit is a
     // `return null`; the body is the bare `vector<T>?`.
     olit = tail_syntax(e, vars.body);
-    lit_syntax = olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false };
+    // (A trailing `return [items]` is that literal tail: its `return` was taken off above.)
+    lit_syntax = (olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false }) || trailing_literal_return(e, vars.body);
     if e.first_pass {
       oret = el::def(e, d).returned[0];
       if lit_syntax && !el_types::deps(oret).contains(ba) {
@@ -1152,6 +1164,14 @@ fn arm_defines(n: ir::Node, v: integer) -> boolean {
     },
     NdSet { var } => var == v,
     NdInsert { items } => { for it in items { if arm_defines(it, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// A `one_buffer_chain` block answering buffer `w`.
+fn chain_answers(n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdBlock { block } => block[0].name == "one_buffer_chain" && len(block[0].operators) > 0 && el_ir::unspan(block[0].operators[-1]!) == ir::NdVar { n: w },
     _ => false
   }
 }
