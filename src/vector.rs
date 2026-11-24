@@ -1213,22 +1213,6 @@ fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef 
     get_vector(db, size, from, stores)
 }
 
-/// `(R-Header)`'s KEPT clause under `LOFT_HOIST_VERIFY=1` — a holder's read, checked
-/// against the header derived from the store now.
-///
-/// # Panics
-/// When they differ: something changed the vector's record or length and no refresh
-/// followed it.
-#[must_use]
-pub fn kept_header(h: VecHeader, db: &DbRef, stores: &[Store]) -> VecHeader {
-    let fresh = vec_header(db, stores);
-    assert!(
-        h == fresh,
-        "@FR-R-Header kept clause: held {h:?} but the store holds {fresh:?}"
-    );
-    h
-}
-
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
 /// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
 /// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the
@@ -1358,73 +1342,6 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
     v
 }
 
-/// `@FR-R-RecPtr`'s nested clause — the header of the vector held in field `fld` of the record
-/// view whose address is `ptr`: the field's vector record one load through the address, its
-/// length one read of that record, where [`vec_header`] resolves the store and reads the
-/// field through it again.  The null record (a null address) holds the absent vector, as
-/// `vec_header` answers for a null `DbRef`; `locked` is the view's own lock state, held
-/// beside its address, and a vector field lives in its record's store.
-///
-/// # Safety
-///
-/// As [`rec_get`]: `ptr` must be [`rec_ptr`] of `db` with no store reallocated since, and
-/// `fld` the offset of a vector field of the record's type.
-///
-/// # Panics
-///
-/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header disagrees with `vec_header` of the
-/// field.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub unsafe fn field_header<const VERIFY: bool>(
-    ptr: *const u8,
-    locked: bool,
-    db: &DbRef,
-    fld: u32,
-    stores: &[Store],
-) -> VecHeader {
-    let h = if ptr.is_null() {
-        VecHeader {
-            store_nr: db.store_nr,
-            rec: 0,
-            len: 0,
-            locked: false,
-            room: 0,
-        }
-    } else {
-        // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has
-        // not moved, and `fld` is a field of it.
-        let raw = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
-        let rec = if raw == DbRef::ABSENT_REC { 0 } else { raw };
-        let (len, room) = if rec == 0 {
-            (0, 0)
-        } else {
-            let store = &stores[db.store_nr as usize];
-            (store.get_u32_raw(rec, 4), store.elem_room(rec))
-        };
-        VecHeader {
-            store_nr: db.store_nr,
-            rec,
-            len,
-            locked,
-            room,
-        }
-    };
-    if VERIFY {
-        let field = DbRef {
-            store_nr: db.store_nr,
-            rec: db.rec,
-            pos: db.pos + fld,
-        };
-        assert_eq!(
-            h,
-            vec_header(&field, stores),
-            "a vector field's header read through its record's address disagrees with the store"
-        );
-    }
-    h
-}
-
 /// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
 /// the null record (the setter's own `rec != 0` test, `@FR-H-WriteNull` — a view bound to an
 /// absent element, `e = r[9]; e.x = 5`, holds the null address and the write lands nowhere),
@@ -1485,33 +1402,6 @@ fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store
     if !null {
         let _ = stores[store_nr as usize].write_allowed(rec, at);
     }
-}
-
-/// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or
-/// `None` when any element is the null sentinel.  A guarded plain nest is admitted against
-/// this bound, taken once where the vector's header is derived and held beside it, so a nest
-/// that reads the vector pays one linear pass per header derivation and nothing per tap.
-/// An absent or empty vector bounds at 0.
-#[must_use]
-pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
-    let elems = h.elems(8);
-    if h.rec == 0 || elems == 0 {
-        return Some(0);
-    }
-    let base = vec_base(h, stores);
-    // One max over the magnitudes, no branch in the loop: the sentinel's magnitude is 2^63,
-    // above every other value's, so a null element shows as a bound the type cannot hold and
-    // the test runs once at the end.  Written this way the loop vectorises; with an early exit
-    // on the sentinel it did not, and the scan itself was 5.6 % of a resample-bound row.
-    let mut bound: u64 = 0;
-    for i in 0..elems as usize {
-        // SAFETY: `base` is element 0 of a live vector record of `elems` eight-byte elements
-        // (the header was derived from it in this same prelude); `read_unaligned` because an
-        // element offset need not be aligned for `i64` (loft#1481).
-        let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
-        bound = bound.max(v.unsigned_abs());
-    }
-    i64::try_from(bound).ok()
 }
 
 /// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the index resolved
@@ -1582,8 +1472,7 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
 /// same pass as the sum: when every element of a block lies in `[-SUM_BOUND, SUM_BOUND)` and
 /// the running total is more than `SUM_BLOCK * SUM_BOUND` from the i64 edge, no prefix
 /// inside the block can leave the type, so the plain block sum IS what the checked add would
-/// have answered — the magnitude-bound proof `(R-BoundedNest)` makes for an index chain,
-/// made per block at run time.  The first block that fails ends the plain part, and the
+/// have answered — a magnitude-bound proof, made per block at run time.  The first block that fails ends the plain part, and the
 /// caller's checked loop resumes at the index answered; a null element (`i64::MIN`) fails
 /// the bound and is left to that loop, which propagates it.  Answers `(acc, at)`: the total
 /// so far and the first index NOT summed.

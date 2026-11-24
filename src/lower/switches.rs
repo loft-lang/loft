@@ -11,8 +11,6 @@
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy)]
 pub struct Switches {
-    /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
-    pub bounded_nest_disabled: bool,
     /// `LOFT_NO_BOUNDED_SUM=1` — no reduction runs its plain block sum first
     /// (`(R-BoundedNest)`'s reduction clause).
     pub bounded_sum_disabled: bool,
@@ -23,9 +21,6 @@ pub struct Switches {
     /// clause; the bisect step for a wrong element or field read in a loop that appends
     /// elsewhere.  `LOFT_HOIST_VERIFY=1` is the falsifier (each base and address re-derived).
     pub distinct_growth_disabled: bool,
-    /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
-    /// selects (step 1's form).
-    pub nest_raw_disabled: bool,
     /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
     /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
     pub twin_base_disabled: bool,
@@ -45,10 +40,6 @@ pub struct Switches {
     /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
     /// address back out of the reference ([`Output::element_copy_dest`]).
     pub element_address_disabled: bool,
-    /// `LOFT_NO_FIELD_HEADER=1` — `@FR-R-RecPtr`'s nested clause off: a vector field of a
-    /// record view (`v.items`) resolves its store and record again at each length or
-    /// element read ([`Output::field_header_expr`]).
-    pub field_header_disabled: bool,
     /// `LOFT_NO_DISTINCT_VERSION=1` — no loop is emitted twice on a store-distinct test.
     pub distinct_version_disabled: bool,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
@@ -62,10 +53,6 @@ pub struct Switches {
     /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
     /// clause off).
     pub base_rec_ptr_disabled: bool,
-    /// `LOFT_NO_INDEX_RECPTR=1` — a record view bound from `v[i]?` over a vector whose header
-    /// and BASE the frame holds reads its element through `get_vector_hoisted` and resolves
-    /// its address from the store again (`@FR-R-RecPtr`'s index clause off).
-    pub index_rec_ptr_disabled: bool,
     /// `LOFT_NO_GUARDED_FILL=1` — `t = base + i; if t < N { v[t] = c }` keeps its loop
     /// (`@FR-R-Fill`'s guarded clause off).
     pub guarded_fill_disabled: bool,
@@ -164,11 +151,6 @@ pub struct Switches {
     /// through a record parameter inside a callee that a hoisting loop calls.
     /// `LOFT_HOIST_VERIFY=1` is the falsifier — inside the twin every input is re-read.
     pub callee_inputs_disabled: bool,
-    /// `LOFT_NO_FN_HEADER=1` — `(R-Header)`'s FUNCTION clause off: a body that writes no
-    /// store and reads a vector path twice or more keeps deriving the path's header at every
-    /// read instead of once at entry.  The first bisect step for a wrong element read
-    /// outside any loop under `--native`.
-    pub fn_header_disabled: bool,
     /// `LOFT_NO_FILL_HOIST=1` — a filling loop keeps its per-element form (@PLN157 § V-ae,
     /// `@FR-R-Fill`): the bisect step for a wrong element or a missed write out of
     /// `for i in lo..hi { v[base + i] = c }`.
@@ -219,12 +201,10 @@ impl Switches {
     #[allow(clippy::too_many_lines)]
     pub fn from_env() -> Self {
         Switches {
-            bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
             bounded_sum_disabled: !crate::keys::bounded_sum_enabled(),
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
-            nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
             param_twin_ptr_disabled: std::env::var("LOFT_NO_PARAM_TWIN_PTR")
                 .is_ok_and(|v| v != "0"),
             plain_chain_ptr_disabled: std::env::var("LOFT_NO_PLAIN_CHAIN_PTR")
@@ -237,10 +217,8 @@ impl Switches {
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
-            index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
             element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
                 .is_ok_and(|v| v != "0"),
-            field_header_disabled: std::env::var("LOFT_NO_FIELD_HEADER").is_ok_and(|v| v != "0"),
             guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
                 .is_ok_and(|v| v != "0"),
@@ -277,7 +255,6 @@ impl Switches {
             join_read_disabled: !crate::keys::join_read_enabled(),
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
-            fn_header_disabled: std::env::var("LOFT_NO_FN_HEADER").is_ok_and(|v| v != "0"),
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),

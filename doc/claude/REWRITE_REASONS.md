@@ -110,7 +110,7 @@ A refusal is a MATCH that validation rejected, and
 - **No cost when off.**  The call returns at once unless the census is switched on.
 
 An admission logs no reason.  The reason a rewrite fired is the rule, and the clause it
-fired under is in the name it reports (`R-Header/kept`, `R-Apart/records`).
+fired under is in the name it reports (`R-Header/narrow`, `R-Apart/records`).
 
 ## The state of every rule
 

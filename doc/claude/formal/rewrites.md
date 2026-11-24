@@ -502,8 +502,8 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  `LOFT_NO_DISTINCT_GROWTH` keeps every base off under any growth; the
                  verify form re-derives the base at every use as before.
                  THE RESOLVE CLAUSE: a byte, boolean or character element read of a
-                 path whose header is held WITHOUT a base — the function clause of
-                 (R-Header), a loop that grows a store not proven apart — is the same
+                 path whose header is held WITHOUT a base — a loop that grows a
+                 store not proven apart — is the same
                  range test and one load, the base taken from the store AT THE READ
                  (`elem_base` of the header's record).  The header alone proves the
                  vector's record and length, and the read takes the store's buffer as
@@ -527,8 +527,8 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  iterator: a `for` statement, one with a filter or a `#count`
                  step, and a comprehension `[for i in a..b { e }]` all step the
                  same counters under the same test, and all are counted ranges.
-                 A rewrite that also reads the BODY as one block (R-Fill,
-                 R-BoundedNest) asks for the plain `[iterator, body]` shape
+                 A rewrite that also reads the BODY as one block (R-Fill)
+                 asks for the plain `[iterator, body]` shape
                  itself.  The
                  INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
                  operands counted non-sentinel — is deliberately NOT taken: @C85 makes
@@ -609,7 +609,7 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  is read in EITHER spelling — the statement `for i in a..b { v += [e] }`
                  and the comprehension `[for i in a..b { e }]` build one vector — and
                  the reservation is emitted IN FRONT of every guarded copy of the loop
-                 (R-BoundedNest, R-GuardedChain): each emits a whole copy ahead of its
+                 (R-GuardedChain): each emits a whole copy ahead of its
                  `else`, so a reservation written after the guard stands in the arm
                  that does not run.  THE WINDOW CLAUSE: once the trip count is
                  reserved nothing in the loop can grow that vector, so where NOTHING
@@ -773,22 +773,7 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  room for its length, so this changes no answer of a sound store
                  (`tests/store_image_sound.rs`).  A rebind of P's root
                  inside the body removes P; a nested loop's prelude skips a path an
-                 outer one already holds.  The FUNCTION clause: a body that reads a
-                 vector PARAMETER twice or more through an element address, and
-                 leaves that parameter as it found it — never rebinds it, never
-                 hands it to a native that is not a reader, never frees it, and
-                 hands it (or a heap value that may name its store: a parameter, a
-                 view, a link — never a local's own fresh store or a work buffer)
-                 only to callees of which the same holds at that position, a
-                 recursive call answering for itself — binds its header once at
-                 entry, and every read in the body, loops included, serves from it;
-                 in a twin body that already receives the parameter's header (the
-                 twin clause's `__ih_k`) that header IS the binding, never a second
-                 lookup.  Growth of OTHER stores is no concern of a header (its record and
-                 length are the vector's own), so a body that builds its result
-                 beside the reads keeps them; only a BASE would need the store's
-                 memory still, and the clause binds none — a loop inside that is
-                 growth-free derives its base off the held header.
+                 outer one already holds.
                  THE HASH CLAUSE: a counted loop inserting records into one hash
                  LOCAL reserves its table for len(h) + inserts × trip count before
                  it runs (the most inserts a pass can run: an `if` takes its larger
@@ -972,75 +957,6 @@ also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist
 `tests/scripts/a-loop-holds-its-header-across-a-text-write.loft` (falsified under
 `LOFT_POISON=1` by a plant that keeps the base: t2 reads `null`); pin
 `tests/text_set_header.rs`.
-
-```
-  (R-Header), the KEPT clause: a vector field p.f of a plain-record PARAMETER p
-                 that a body never rebinds is KEPT by that body when everything
-                 in it that could change the field's header — its record or its
-                 length — is one of: (a) a record append to p.f itself (the
-                 OpNewRecord … OpFinishRecord group) as a statement outside any
-                 loop; (b) a statement that is a call to a loft function, or
-                 the assignment of one; nothing else.  A store-free op, a scalar
-                 setter and a heap-free record copy change no header; any other
-                 writer mentions no variable that may name p's record or the
-                 vector — p, a variable whose type reaches p's record type, a
-                 vector of the field's element type — unless it is its own
-                 store's; a call that is not a statement leaves every such
-                 argument untouched (the function clause's question); no `CallRef`,
-                 `par` or `yield`, and nothing it calls can lock or unlock a
-                 store (the header carries the lock).  A kept field the body
-                 READS — a walk, an element, a length, or a call that hands p to
-                 a function keeping the field at that position — has ONE holder:
-                 bound at entry where the body HANDS IT DOWN to a callee's kept
-                 twin and the reads it serves, as emitted, are two or more;
-                 received from the caller by `&mut` in the body's KEPT TWIN.  Every read
-                 serves from the holder; after each op of (a) and each call of
-                 (b) the holder is derived again, except a call to the callee's
-                 kept twin, which hands the holder down and so keeps it current
-                 itself.  No base is kept: a claim anywhere may move the store's
-                 memory, never a record number or a length.  A body some rewrite
-                 emits a RUN of statements in — the hand-over's rotate, an
-                 element-first build, `(R-Apart)`, a stream walk — keeps nothing:
-                 the run is emitted outside the statements a holder is refreshed
-                 after.  A kept call takes the ranged form of the kept twin
-                 (`__rg__kh`) where `(R-RangedCall)` admits it.
-```
-
-**The kept clause, in words.**  L7 (`bench/portal/analysis/worklist.md`): lane 17's
-`slope_path_with_undo` walks `m.m_chunks` four times a step in four callees
-(`map_get_hex` twice, `map_ensure_chunk`, `map_set_hex`), each deriving the header from the
-store, and one of them appends to it.  The function clause cannot hold it (a callee writes the
-vector) and the twin clause cannot hand it over (the callee grows a store).  A header changes
-only where something names its record: the apart clause's mention argument, applied to a
-whole body, with the appends that DO name it refreshing the holder at their own site
-(`(R-Refresh)`).  Hand price −13.5 %.  Switch `LOFT_NO_KEPT_HEADER=1`; falsifier
-`LOFT_HOIST_VERIFY=1` (every read of a holder asserts it against a fresh derivation);
-`LOFT_TRACE_KEPT=1` names each candidate key and its verdict.  Sites: `kept::kept_paths` (the
-verdict; `kept::untouched_field` asks a plain callee, and sees a local VIEW of the field, which
-`param_untouched` does not), `Output::begin_kept_headers` (the holders, in the plain body, its
-ranged variant and the `__kh` twin), `Output::kept_after_statement` (the refresh, and a `for`
-walk's hidden vector served from the holder), `Output::kept_twin_call` (the hand-down),
-`Output::kh_live_check` (a twin the live tier flips into the interpreter refreshes before it
-returns).  Guard `tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft`
-(falsified twice: no refresh after the append group, no refresh after a plain call that may
-append); pin `tests/kept_header.rs`.  `Output::kept_check_taken` stops the generation when a
-statement that changes a held field was taken by another rewrite — the net under the run-emitting
-list, which caught the element-first build.  The versioned copy of `(R-Alias)` does not count a
-path held only by a kept holder as held: the copy buys more than a base there (crawler's
-`build_vis_texture` keeps its push window in it; withheld, 1.14× → 2.94× of its twin).  A
-plain body binds only a holder it hands down, counted as emitted (`Output::kept_effective_uses`:
-a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
-own reads alone are what the loop's and the function clause's headers already serve lazily,
-and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.
-A held read of the raising `OpGetVector` reports an index outside the header as the unfused
-read does (`@FR-E-Report`, `FusedElementReadEmitter`); the nullable read answers it silently.
-A loop that changes no kept field copies the holder into its own header local
-for its extent (`Output::kept_loop_copy`): read through the `&mut`, the header stayed in memory
-across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured with
-`bench/stats.py` against `LOFT_NO_KEPT_HEADER=1` (7 samples, every hash equal):
-`slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
-`pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
-most, geomean −0.6 %.
 
 **The text clause, in words.**  A `char` store may alias the text's own header, so a push
 through the text reloaded its length and its bytes at every character — gcc and clang alike.
@@ -1761,16 +1677,7 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
                  resolved — in every copy of the loop, (R-GuardedChain)'s plain copy
-                 as its checked one.  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
-                 `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
-                 header AND element base the frame holds, with IDX a repeatable
-                 expression (pure operators and discharges): IDX is evaluated once,
-                 before the statement, and when it is in range of the header's length
-                 r is the vector's own record at `8 + IDX * size` and its address
-                 `base + IDX * size`; out of range — past the end, below zero, null —
-                 the binding runs as written, reading the named index, and the record
-                 `?` builds is resolved as any view's.  That record lives in a store of
-                 its own, so no text field of r is served by the base's span.  THE
+                 as its checked one.  THE
                  CHOICE CLAUSE: a view bound from a choice between views — `lo = if c
                  { a } else { b }`, whose dep chain FORKS — lives in one of its
                  branches' stores, so it is apart from a store when every branch is;
@@ -1828,18 +1735,6 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  and an index out of range takes the element read itself, so its
                  raise and the null it answers are that read's.  Pre-evaluation
                  asks the same question and leaves the element read in place.
-                 THE NESTED CLAUSE: a VECTOR field of r — `r.items`, or through
-                 inline sub-records `r.pos.items` at the summed offset — read by
-                 a length (`len`, OpLengthVector) or an element read (OpGetVector,
-                 OpGetVectorNullable, the element clause's write) takes its header
-                 through the address: the field's vector record one load at it,
-                 the length one read of that record, at each use, so a write to
-                 the field before the read is seen.  The null address holds the
-                 absent vector.  A view whose only uses are such reads takes its
-                 address on this clause alone when two reads share the one store
-                 resolution the address costs, or one under the base clause, where
-                 the address is free; that use enters the verdict before its
-                 growth, free and rebind conditions, as the text clause's does.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1894,10 +1789,7 @@ address, where a `vec_get_or_raise_runtime` reference and an address read out of
 round trip — `map_set_hex` in `slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
 switch `LOFT_NO_ELEMENT_ADDRESS`, guard
 `tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
-`rec_set`; the nested clause `Output::field_header_expr`, `Output::extra_view_use`,
-`hoist::vector_field_reads` and `vector::field_header` (switch `LOFT_NO_FIELD_HEADER`, guard
-`tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft`;
-`slope_path_with_undo` −7.0 %, `resolve_move` −6.1 % native, hashes equal).  Cells `tests/scripts/157-record-ptr.loft` and
+`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
 `loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
@@ -2477,8 +2369,8 @@ parameter lowers to an `if` whose then arm is the parameter and stays checked (c
 arithmetic — an overflow's null must propagate on both backends — and named the admissible
 successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
 result CANNOT overflow may emit the plain operator, because no fault can occur and no value
-can differ."*  `(R-BoundedNest)` built it for one loop shape with a run-time guard; this is
-the same proof for straight-line arithmetic, decided at generation time
+can differ."*  `(R-GuardedChain)` builds it for a counted loop with a run-time guard; this
+is the same proof for straight-line arithmetic, decided at generation time
 (`generation::range`, mirroring the non-sentinel proof's per-function fixpoint).  The one
 rule that needed its own falsifier is the mask: `null & 255` is null
 (`op_logical_and_int` propagates the sentinel), so `a & lit` is ranged only over a
@@ -2664,8 +2556,7 @@ high multiply on the chain; the measurements are in
                  there, so a guard naming one emits an identifier that does not
                  exist, and the machine RE-ENTERS its loop across a `next_*`
                  call, so a fact proved once at entry is not proved for the
-                 resumes after it (`R-BoundedNest`'s guard declines there for the
-                 same second reason).  A loop with ONE admitted operator declines on
+                 resumes after it.  A loop with ONE admitted operator declines on
                  PROFITABILITY: the guard is a fixed cost per loop ENTRY and the
                  saving is one null test per operator per ITERATION, and an
                  innermost loop is emitted twice — in a small hot function that
@@ -2688,12 +2579,11 @@ high multiply on the chain; the measurements are in
                  `*Nullable` twins of `+ - *` are chain operators too: a chain the
                  guard admits has no fault for them to be silent about.  A chain any
                  of whose leaves is not one of these is declined whole and its
-                 sub-chains asked again.  A loop already admitted as a bounded nest is
-                 not guarded twice.
+                 sub-chains asked again.
 ```
 
-**In words.**  `(R-BoundedNest)`'s method — a fact ESTABLISHED before the
-arithmetic runs, in the same magnitude-bound arithmetic the rule states — for the index
+**In words.**  A fact ESTABLISHED before the arithmetic runs, in magnitude-bound
+arithmetic, for the index
 chains of any counted loop, where the static `(R-Range)` proof stops: `composite_layer`'s
 `j * lw + i`, `x0 + i`, `y0 + j` read record scalars (`lay.lw`, `lay.x0`) that a program
 cannot bound at generation time and a guard can bound at the loop's entry in six checked
@@ -2705,8 +2595,7 @@ loop's duplicated copy gives the full −35 % at +7 % emitted lines on the drawi
 duplicating every guarded loop cost +16 % and doubled every per-function pin, which is
 why only the innermost loop — where the time is and the body is small — is copied.  Found by
 the cells: a `(R-LoopRecord)` local declared at the loop's prelude must be declared before
-the guard and freed after BOTH arms, or the plain arm neither sees it nor frees it (the
-`Value::Loop` emission's order was corrected for the bounded nest too).  Switch
+the guard and freed after BOTH arms, or the plain arm neither sees it nor frees it.  Switch
 `LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN=1`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` at every admitted operator).  Cells `tests/scripts/157-guarded-chain.loft`
 c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
@@ -4154,7 +4043,7 @@ store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
                  holds at least FILL_MIN_SPAN elements.  The counters still end where
                  the whole range leaves them: the guard skips writes, not rounds.
                  The fill is tried before a guard that emits a second copy of the loop
-                 (R-GuardedChain, R-BoundedNest), so both copies are its fallback.
+                 (R-GuardedChain), so both copies are its fallback.
 ```
 
 **In words.** @PLN157 § V-ae.  The elements the fill writes are exactly the elements the
@@ -4174,37 +4063,10 @@ loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
 `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`; on the C writer
 `FnWriter::fill_head` / `fill_tail` and `loft_vh_fill_*`, with the same switches.
 
-### A nest whose arithmetic cannot fault runs plain
+### A sum whose blocks cannot fault runs them plain
 
 ```
-  (R-BoundedNest) an innermost counted loop whose body is ONE accumulate over
-                 `?`-discharged element reads — `acc = acc + term`, the term a
-                 chain of `+`, `-`, `*` and negation over literals, the loop's
-                 counters, variables the loop does not write, and reads
-                 `v[chain]?` of `integer` vectors — runs with the processor's
-                 PLAIN operators when a guard, evaluated once at the loop's
-                 entry, proves that no operation in it can fault: the range's
-                 ends are not the sentinel and the trip count is positive; no
-                 invariant is the sentinel; every vector read has a known
-                 element bound (no stored null); and the MAGNITUDE BOUND of every
-                 chain and of `|acc| + trips × bound(term)` — literals by value,
-                 counters by the larger range end, reads by their vector's bound,
-                 `+`/`-` summing and `*` multiplying, each step checked — fits
-                 the type.  A bound that fits means every true intermediate
-                 fits, so the plain operator answers exactly what the checked
-                 template would; otherwise the checked loop runs, unchanged.
-                 An element bound is a fact about VALUES, taken once at the
-                 outermost loop whose body neither writes the vector (an element
-                 or field set through it, an append, a rebind of its root) nor
-                 hands it to a call — never at the nest's own prelude.
-                 When every read's chain names the counter at most ONCE (so it
-                 is affine, and its extremes over the range are its values at
-                 the two ends), the guard also requires both ends in [0, len)
-                 for every read; then each read is one load through the held
-                 base with no bounds test and no null select — the element
-                 bound has already ruled out a stored null.  A read outside the
-                 range at either end declines the nest whole.  THE REDUCTION
-                 CLAUSE: a counted, exclusive, literal-start loop that is ONE
+  (R-BoundedNest) a counted, exclusive, literal-start loop that is ONE
                  integer accumulate of a scalar vector's elements — `acc = acc +
                  v[i]` (or the operands the other way round), an 8-byte `OpGetInt`
                  at field 0 over a pure path with `i` the loop variable, the
@@ -4212,7 +4074,7 @@ loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
                  base, sums what it can PLAIN before the loop: a block of 1024
                  elements at a time, admitted when every element lies in
                  `[−2^40, 2^40)` and the running total is more than `2^50` from
-                 the i64 edge — the magnitude-bound proof above, taken from the
+                 the i64 edge — a magnitude-bound proof taken from the
                  DATA per block in the same pass — so no prefix inside the block
                  can leave the type and the plain block sum is the checked
                  answer; the first block that fails ends the plain part, the
@@ -4227,32 +4089,7 @@ loop), spans from eight took it −27 %.  Switch `LOFT_NO_GUARDED_FILL`.  Sites:
                  index or a computed start keeps the checked loop.
 ```
 
-**In words.**  @PLN157's guarded plain nest, the admissible successor @C120 names: the
-integer closure is not taken (R-Counter) because an overflow's null must propagate on both
-backends, so the plain form is admitted only where a fact ESTABLISHED before the arithmetic
-runs says no overflow can occur — which is exactly what the guard checks, in the same
-magnitude-bound arithmetic the rule states, with `checked_*` operators whose failure is the
-decline.  The reads stay what they were (a bounds-tested load and the discharge's null
-test); what goes plain is the index chain, the product and the accumulate — the taps of a
-resample, where they were 12 checked operators per tap and ~55 checking instructions in
-front of the arithmetic.  The bound's placement is the cost model: one linear pass per pass
-of the nest's enclosing loop, against the nest's taps under it; at the nest's own prelude
-it would be the nest's cost again, which is why a function-level nest with no enclosing
-loop declines.  A stored null, an accumulator near the maximum, a null invariant and a
-vector written by the enclosing loop are the cells that must DECLINE
-(`tests/scripts/157-bounded-nest.loft` n2, n3, n7c, n8, n16, n17); a read one past the end
-and a chain that goes negative decline the RAW form and answer through the checked loop
-(n19, n23), while the last element, a negative coefficient and a constant index are in range
-(n18, n20, n22) and a counter named twice is not affine (n21).  Switches
-`LOFT_NO_BOUNDED_NEST` and, one step finer, `LOFT_NO_NEST_RAW_READS` (the plain arm keeps its
-bounds-tested reads); falsifier `LOFT_HOIST_VERIFY=1` (every plain operator's answer is
-compared with the checked template's at the operator — `ops::nest_verify` — and every raw read
-with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`,
-`hoist::nest_read_paths`, `Output::nest_fast_path`, `nest_bound_expr`, `nest_chain_at`,
-`ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
-select), `vector::abs_bound_i64`.
-
-**The reduction clause, in words.**  @PLN158 (`bench/portal/analysis/vector-build.md`
+**In words.**  @PLN158 (`bench/portal/analysis/vector-build.md`
 § `sum` re-priced).  The stdlib `sum` was 6.45× its Rust twin: every element paid the checked,
 null-propagating add — a sentinel test on each operand and a `checked_add` — which cannot
 vectorise, against a twin's wrapping add that runs 2-wide on SSE2.  The correct problem is the per-element check, and the answer is this rule's
@@ -8510,12 +8347,6 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   callee refills it under the text clause (otherwise the per-call release is what the pool
   was meant to remove); and a function's `__work_*` text local is the same buffer one level
   down, pooled per frame, with an assignment of the empty literal to it emitted as `clear()`.
-- **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
-  `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
-  condition — no growth of that vector anywhere in the function — and the `?? default`
-  element read outside a loop takes it as the in-loop read does.  Cells: a read past the end
-  (the default answers); a function that appends to the vector it reads (declines).  cbor
-  `decode`: 36 byte-read sites, 6.49 → 5.15 M on the ladder.
 - **A field MOVE covers, for `(R-CompleteWrite)`.**  `group_covers_type` counts an
   `OpMoveField` whose destination is the whole element (offset 0, the element's own type) as
   covering every field, so the mint is the no-prefill form.  Cell: `LOFT_POISON_CLAIM=1` over
