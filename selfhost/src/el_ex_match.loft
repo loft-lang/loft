@@ -4457,8 +4457,10 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   // The element kinds carried, as `map_call`'s: a plain scalar, a text, a plain struct.
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
+  // (…and a vector: a kept element copied whole into its fresh element, as `map_call`'s.)
+  in_vec = !(in_elem is TyOptional) && el_types::base(in_elem) is TyVector && el_ex_base::type_def_nr(e, el_types::base(in_elem)) >= 0;
   by_value = d < 0;
-  if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
+  if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec || in_vec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
     el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4473,13 +4475,16 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   idx = el_vars::create_unique(vars, "filter_idx", int_t);
   el_vars::set_defined(vars, idx);
   plain = el_types::without_deps(in_elem);
-  elm_t = if in_text || in_rec { el_types::with_deps(plain, [mv]) } else { in_elem };
+  elm_t = if in_text || in_rec || in_vec { el_types::with_deps(plain, [mv]) } else { in_elem };
   elm_v = el_vars::create_unique(vars, "filter_elm", elm_t);
   el_vars::set_defined(vars, elm_v);
   res = el_vars::create_unique(vars, "filter_result", ir::TyVector { inner: plain, dep: [] });
   el_vars::set_defined(vars, res);
   in_d = el_ex_base::type_def_nr(e, el_types::base(in_elem));
-  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (in_text || in_rec) && in_d >= 0 { in_d } else { 0 }, dep: [res] });
+  slot = el_vars::create_unique(vars, "elm", if in_vec { el_types::with_deps(plain, [res]) } else { ir::TyReference { n: if (in_text || in_rec) && in_d >= 0 { in_d } else { 0 }, dep: [res] } });
+  if in_vec {
+    el_vars::mark_inline(vars, slot, "unique_elm_var");
+  }
   test: ir::Node = ir::NdNull;
   if by_value {
     test = ir::NdCallRef { var: fv, args: [ir::NdVar { n: elm_v }] };
@@ -4500,7 +4505,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   ops = el_ex_pattern::literal_store(e, vars, res, rows!);
-  comp = el_vars::create_unique(vars, "comp", if in_text || in_rec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
+  comp = el_vars::create_unique(vars, "comp", if in_text || in_rec || in_vec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
   el_vars::set_defined(vars, comp);
   w = ir::NdVar { n: res };
   steps: vector<ir::Node> = [
@@ -4509,11 +4514,14 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     el_ir::v_if(test, ir::NdNull, ir::NdContinue { n: 0 }),
     el_ir::v_set(comp, ir::NdVar { n: elm_v })
   ];
-  if in_text || in_rec {
+  if in_text || in_rec || in_vec {
     sv = ir::NdVar { n: slot };
     vk = ir::NdInt { n: rows!.vec_known };
     steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
-    if in_text {
+    if in_vec {
+      steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: el::def(e, in_d).known_type }])];
+    } else if in_text {
       steps += [el_ex_pattern::elem_write(e, in_elem, sv, ir::NdVar { n: comp })];
     } else {
       rk = el::def(e, struct_ref(e, el_types::base(in_elem))).known_type;
