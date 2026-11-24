@@ -240,31 +240,6 @@ pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
     })
 }
 
-/// Does `callee` run `OpDatabase` on its own hidden return buffer (@PLN157 § V-j)?  That
-/// is the witness-promoted delivery shape: the reuse arm CLEARS the buffer's whole store,
-/// so a buffer such a callee receives must own its store — it cannot be placed.
-pub(crate) fn callee_reinits_buffer(data: &Data, callee: &crate::data::Definition) -> bool {
-    let Some(attr) = callee.hidden_return_buffer_attr() else {
-        return true; // no buffer attr: not a delivery this analysis understands
-    };
-    let bv = callee.variables().var(&callee.attributes()[attr].name);
-    if bv == u16::MAX {
-        return true;
-    }
-    let mut reinits = false;
-    callee.code().any_node(&mut |n| {
-        if let Value::Call(d, args) = n
-            && (*d as usize) < data.definitions.len()
-            && data.def(*d).name() == "OpDatabase"
-            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == bv)
-        {
-            reinits = true;
-        }
-        false
-    });
-    reinits
-}
-
 /// @PLN157 § V-y — what [`complete_writes`] admitted: `db_vars` are locals whose EVERY
 /// `OpDatabase` site heads a covering literal group (the emitter calls `OpDatabaseNP`);
 /// `mint_tps` are element types whose every `OpNewRecord` site in this function does

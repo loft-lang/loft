@@ -2976,52 +2976,6 @@ impl Stores {
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — place a call's return buffer as a RECORD inside
-    /// `host`'s store, so what the callee builds into it is claimed where the consuming
-    /// append wants the elements to live.  The record is shaped exactly as `OpDatabase`
-    /// shapes a fresh-store buffer (type tag at word 1, content defaulted, `pos` 8); only
-    /// the store differs.  The store's `known_type` is the HOST's and stays untouched.
-    #[must_use]
-    pub fn place_record_in(&mut self, host: &crate::keys::DbRef, db_tp: u16) -> crate::keys::DbRef {
-        let size = self.enum_parent_size(db_tp);
-        let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
-        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
-        // @PLN157 § V-y (`@FR-R-CompleteWrite`) — the placed buffer is a vector record
-        // whose only field the CALLEE's entry clear rewrites (the shape-A clear, or the
-        // adopted init's len reset — the ABI every admitted callee has); the prefill's
-        // whole effect is this one u32 zero, written directly instead of dispatching
-        // through `set_default_value`.
-        self.store_mut(&r).set_u32_raw(r.rec, 8, 0);
-        r
-    }
-
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the move-append: relocate `size` bytes of the
-    /// dying temporary's element into the fresh destination element and ZERO the source,
-    /// both in ONE store — the element's heap handles stay valid because they never change
-    /// store, and the zeroed source is what keeps the temporary's own clear and free from
-    /// releasing what it no longer owns.  The caller dispatches on store identity and takes
-    /// the deep copy when they differ; this is only the same-store arm.
-    ///
-    /// # Panics
-    ///
-    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the two elements do NOT share a store —
-    /// the caller's dispatch failed.  Never in the emitted default.
-    pub fn move_record_shallow<const VERIFY: bool>(
-        &mut self,
-        src: &crate::keys::DbRef,
-        dst: &crate::keys::DbRef,
-        size: u32,
-    ) {
-        if VERIFY {
-            assert_eq!(
-                src.store_nr, dst.store_nr,
-                "move-append across stores — the same-store dispatch let a cross-store pair through"
-            );
-        }
-        self.copy_block(src, dst, size);
-        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
-    }
-
     /// [`Self::clear_vector_release`] for a vector whose element owns no heap, which the
     /// emitter knows from the type (`@FR-H-ClearRelease`): a foreign view dropped as there,
     /// otherwise the length reset that clear arrives at after asking the type table.
@@ -3259,8 +3213,7 @@ impl Stores {
         crate::vector::clear_vector(db, &mut self.allocations);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
-    /// lives on: the deep release of what the record still owns (elements the loop did not
+    /// Free a PLACED buffer record inside a store that lives on: the deep release of what the record still owns (elements the loop did not
     /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`
     /// performed for a fresh-store buffer released the whole STORE; a placed buffer's store
     /// is the destination's and must survive.
@@ -3619,7 +3572,7 @@ impl Stores {
     }
 
     /// `(R-MoveLast)` — the last-use store of an owned record local into a field: a
-    /// relocation within one store, the deep copy across two (see `move_record_shallow`).
+    /// relocation within one store, the deep copy across two.
     ///
     /// # Panics
     ///

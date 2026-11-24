@@ -1042,3 +1042,139 @@ ownership question it raised is settled by @C122 and @C139: a representation is 
 compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
 `LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
 `src/generation/view_return.rs`; guard `loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft`.
+
+### `(R-MoveAppend)`
+
+#### A dying temporary's elements move into the append that consumes them
+
+```
+  (R-MoveAppend) in `for f in call(…) { V += [f] }` where the call MINTS its result
+                 (a borrowed-view return declines), the loop variable's ONLY use
+                 after its binding is that one append (a read after it, a second
+                 append, an append under a further loop all decline), V is an owned
+                 local plain vector of a PLAIN STRUCT element never rebound in the
+                 function, and the call's hidden buffer serves nothing else — the
+                 buffer is PLACED as a record inside V's own `__vdb` store at the
+                 loop (V is in scope there, so its store exists on every path), the
+                 append relocates the element's bytes and ZEROES the source when
+                 source and destination share that store (anything else keeps the
+                 deep copy, which is always correct), and the buffer's free is a
+                 record-level release — the deep walk of what the loop did not
+                 move, then the record's block — inside the store that lives on.
+                 Three lifetime conditions bound the placement.  (1) The placed
+                 record dies WITH ITS HOST STORE: the release is injected before
+                 EVERY free of the host `__vdb` — the early dead-after-last-read
+                 site as much as scope end, since a later store can recycle a dead
+                 host's slot and a deferred release then deletes a record inside
+                 whatever owns it — and the buffer attr's own scope-end free is
+                 the null-guarded backstop that covers an ADOPTED `__retbuf` host,
+                 which no in-function site frees.  Between host deaths an
+                 enclosing loop REUSES the placement (the callee's entry clear
+                 resets its length).  (2) A host store CLEARED whole re-arms the
+                 guard: `OpDatabase`'s reuse arm reclaims the placement with the
+                 clear, so the buffer var is nulled at that site or the next call
+                 delivers into unclaimed bytes.  (3) The buffer's type must be V's
+                 ELEMENT's own wrapper — the lookup is by name, and a struct named
+                 like a stdlib type variable finds the GENERIC template whose
+                 field still carries the typevar, which a record-level walk
+                 misreads (such a name declines the pairing).
+```
+
+**In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
+element re-CLAIMED its inner vectors in the destination's store, copied them, and freed
+the source's — two claims and two frees per element (23 % of the `fronds` row).  Placing
+the buffer where the elements must end up makes the callee's own delivery put them there,
+and the append is then a shallow relocation whose heap handles never change store.  The
+zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
+under-approximations on purpose; the one that carries values is use-after — falsified by
+removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
+`3 409 0`).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
+push header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
+cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
+`hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the
+placement in `Output::output_block`, the move arm in `OpCopyRecordEmitter`, the record
+free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
+`Stores::place_record_in`, `Stores::move_record_shallow`, `Stores::free_record_in`.
+
+### `(R-FaultFlag)`
+
+#### A `for` statement runs fast under a fault flag, and as written when it faults
+
+```
+  (R-FaultFlag)  a `for` statement whose every node is a literal, a local, a `Set` of a
+                 scalar local nothing takes the address of, a block, an `if`, a loop, a
+                 `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
+                 template touches no state once its recoverable raise is taken out, and
+                 which holds a DISCHARGE ON A RECURRENCE — one whose tested value
+                 depends, through the statement's assignments, on a local its result
+                 is written into — runs a fast copy first.  In it a
+                 `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
+                 `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
+                 flag instead of raising.  Each fault form answers exactly the exact form's
+                 value while the flag stays clear.  An integer operator keeps its checked
+                 form: its null tests are branches the processor predicts, off the value
+                 path, and a flag computed per operator measured slower (`02_sum_loop`
+                 1.81× → 2.24×).  A store READ (a getter or length, by name) and a call to a
+                 loft function whose own body passes the walk without a raise are admitted
+                 in a statement that writes no store.
+                 After the copy a set flag restores every written local declared before the
+                 statement and runs the statement as written, so a fault is answered and
+                 reported once, by the exact statement.  The copy is skipped under
+                 `--dev-soft-halt` (an overflow REPORTS there) and at a site that has rerun
+                 8 times.  Inside the copy a constant range of 1 to 64 rounds over a body
+                 free of loops, `break`, `continue` and `return`, of at most 48 nodes, is
+                 unrolled, the counters left where the loop leaves them.
+```
+
+**In words.** A discharge or a checked operator compiles to a select or a branch on a loop's
+critical path, and a select in a constant loop's body keeps LLVM from unrolling it, so one
+call's divisions cannot overlap the next call's.  The fast copy moves every such test off the
+path into one flag, read once after the statement.  Its only effect is on the statement's
+scalar locals, which a rerun restores, so a set flag leaves no trace: this is @C120's rule
+kept (every observable value as the interpreter answers it, faults included), with the fact
+established after a speculative run instead of before the arithmetic.  `06_newton_sqrt`:
+1.67× → 1.14× of Rust.  Switch `LOFT_NO_FAULT_FLAG=1`; `LOFT_TRACE_FAULT_FLAG=1` names each
+admission and each decline with its reason.  Sites: `generation/fault_flag.rs`
+(`fault_flag_admits`, `fault_flag_statement`, `fault_flag_unrolled`), the fault forms in
+`emit.rs` (the discharge), `calls.rs` (the raise), the runtime helpers `ops::fault_flag_*`.  Guard
+`loft-suite/rules/rewrites/R-FaultFlag/a-for-statement-run-under-a-fault-flag-answers-as-written.loft`.
+
+### `(R-GroupPush)`
+
+#### A mint group outside any held header binds its own
+
+```
+  (R-GroupPush)  a mint GROUP — OpPreAllocVector(P, n, size) · n × (e = OpNewRecord(P)
+                 · writes into e · OpFinishRecord(P, e)) — over a bare-variable plain
+                 vector P (the (R-Mint) shape) whose path holds NO record-push header
+                 where it stands, whose every mint qualifies under (R-PushRec), and
+                 whose every OTHER statement up to the n-th finish is one the header
+                 admission lets through (an in-place set, a store-free builder, a
+                 § V-d fresh delivery, a nested mint on another path) with P never
+                 rebound and never minted or reserved outside the count, binds a
+                 push header of its own right after its reservation and emits its
+                 mints and finishes through it (R-PushRec), the header dying at the
+                 n-th finish; every read of P inside the group stays a store read.
+                 The reservation STAYS — it is what gives the header its capacity —
+                 and a growth inside the group is (R-Refresh)'s.  A builder that may
+                 write a store, a mint or finish on P nested where the count cannot
+                 see it, and a group that runs out before its n-th finish each keep
+                 the templates, which resolve per element and are always right.
+```
+
+**In words.** @PLN157.  `(R-PushRec)` gave the header to a mint INSIDE a loop
+that holds one; every other append — a literal group at function level, a group inside a
+loop that declined, a group on a per-pass local — paid the `record_new` dispatch, the prefill
+and the `record_finish` dispatch per element: the drawing library's `fronds` built its 1 296
+points per call that way (`fd_pts += [pt(…), pt(…)]`, `fd_pts` declared per pass), 15 µs of a
+102 µs call.  The group's own reservation already guarantees the slots, so the header derived
+after it is exact for the whole group, and the group is straight-line code the parser emits —
+the same producer `(R-Mint)` trusts.
+The audit reads the group's close marker (`// @FR-R-GroupPush group __ph_N closed`) because
+the header's Rust binding outlives the group.  Switch `LOFT_NO_GROUP_PUSH`; falsifier
+`LOFT_HOIST_VERIFY=1` (the header re-derived at the slot and the finish; the growth cell g6
+is the one that moves the record mid-group).  Cells `tests/scripts/157-group-push.loft`
+g1, g3–g7, g10; pins `tests/group_push.rs`, and `tests/record_push.rs` re-derived where the
+group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_group`,
+`Output::bind_group_push`, `Output::close_groups_before`, `Output::hoist_tiers`, the
+`GROUP_CLOSE` rule in `scripts/emission_audit.py`.

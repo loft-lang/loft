@@ -23,9 +23,6 @@ pub struct Switches {
     /// clause; the bisect step for a wrong element or field read in a loop that appends
     /// elsewhere.  `LOFT_HOIST_VERIFY=1` is the falsifier (each base and address re-derived).
     pub distinct_growth_disabled: bool,
-    /// `LOFT_NO_FAULT_FLAG=1` — no `for` statement runs a fast copy under a fault flag
-    /// (`@FR-R-FaultFlag`).
-    pub fault_flag_disabled: bool,
     /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
     /// selects (step 1's form).
     pub nest_raw_disabled: bool,
@@ -128,14 +125,6 @@ pub struct Switches {
     /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
     /// step for a wrong element or scalar read in a loop that declares a vector per pass.
     pub rebound_mover_disabled: bool,
-    /// `LOFT_NO_GROUP_PUSH=1` — a mint group outside any held header keeps its templates
-    /// (`@FR-R-GroupPush` off); the bisect step for a wrong element out of a literal record
-    /// append.  `LOFT_HOIST_VERIFY=1` is the falsifier (header re-derived at slot and finish).
-    pub group_push_disabled: bool,
-    /// `LOFT_NO_MOVE_APPEND=1` — a paired append keeps the deep copy, as before @PLN157
-    /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
-    /// `for f in call(…) {{ v += [f] }}` loop.
-    pub move_append_disabled: bool,
     /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
     /// the bisect step for a wrong or missing piece out of a loop over a `split`.
     pub lazy_split_disabled: bool,
@@ -243,7 +232,6 @@ impl Switches {
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
-            fault_flag_disabled: std::env::var("LOFT_NO_FAULT_FLAG").is_ok_and(|v| v != "0"),
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
             param_twin_ptr_disabled: std::env::var("LOFT_NO_PARAM_TWIN_PTR")
                 .is_ok_and(|v| v != "0"),
@@ -287,8 +275,6 @@ impl Switches {
                 || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
             bare_append_disabled: std::env::var("LOFT_NO_BARE_APPEND").is_ok_and(|v| v != "0"),
             rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
-            group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
-            move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
             range_end_header_disabled: std::env::var("LOFT_NO_RANGE_END_HEADER")
                 .is_ok_and(|v| v != "0"),

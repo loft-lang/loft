@@ -122,9 +122,8 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     });
     // A buffer that serves this call alone is never minted.  Its every mention must be
     // accounted for — the one call argument, its frees, its null declaration, and the null
-    // test that guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends`
-    // reconciles a placed buffer; a buffer with any other use keeps its mint, and the loop
-    // is lazy all the same.
+    // test that guards a mint at first use (`@FR-O-LazyBuffer`); a buffer with any other
+    // use keeps its mint, and the loop is lazy all the same.
     for (vec, ls) in &mut out {
         let buf = bufs[vec];
         if buffer_serves_one_call(body, data, buf) {
@@ -214,8 +213,8 @@ fn lazy_split_block(
 /// Does the hidden buffer `buf` serve ONE call and nothing else, so that a rewrite which
 /// drops that call may leave the buffer unminted?  Its every mention must be accounted
 /// for — the one call argument, its frees, its null declaration, and the null test that
-/// guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends` reconciles a placed
-/// buffer.  A buffer with any other use keeps its mint, and the rewrite stands all the same.
+/// guards a mint at first use (`@FR-O-LazyBuffer`).  A buffer with any other use keeps its
+/// mint, and the rewrite stands all the same.
 pub(crate) fn buffer_serves_one_call(body: &Value, data: &Data, buf: u16) -> bool {
     let mut total = 0u32;
     let mut call_args = 0u32;
