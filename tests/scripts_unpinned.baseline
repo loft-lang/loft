@@ -4,6 +4,7 @@
 tests/scripts/138-vector-of-vector-single.loft
 tests/scripts/157-bounded-nest.loft
 tests/scripts/160-long-fill.loft
+tests/scripts/184-nested-narrow-int-vector.loft
 tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
 tests/scripts/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.loft
 tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
@@ -47,6 +48,10 @@ tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft
 tests/scripts/2498-a-transient-record-is-no-member-of-itself.loft
 tests/scripts/2499-a-match-with-a-leaving-arm-last-in-an-if-branch-runs.loft
 tests/scripts/39-diagnostics-passing.loft
+tests/scripts/432-untyped-vector-literal-arg.loft
+tests/scripts/624-nested-narrow-width.loft
+tests/scripts/75-native-stub.loft
+tests/scripts/923-nullable-vector-element-schema.loft
 tests/scripts/a-byte-classifier-reads-its-table.loft
 tests/scripts/a-call-proving-its-26th-parameter-is-not-a-destination-twin.loft
 tests/scripts/a-checked-element-read-answers-from-one-header-read.loft
@@ -68,10 +73,12 @@ tests/scripts/a-hash-walk-is-in-key-order-across-widths-and-removals.loft
 tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
 tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
 tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft
+tests/scripts/a-json-value-formats-as-its-json-on-every-backend.loft
 tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 tests/scripts/a-keyed-entry-agrees-across-key-widths-and-removals.loft
 tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
+tests/scripts/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.loft
 tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft
 tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
 tests/scripts/a-leaf-reads-and-writes-float-and-boolean-elements-at-its-proven-index.loft

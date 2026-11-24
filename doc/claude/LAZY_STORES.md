@@ -395,8 +395,8 @@ static ones, answered at the bind).
 
 ## The one place the invariant is escaped by design
 
-`output_c_direct_call` ([`generation/mod.rs`](../../src/generation/mod.rs)) hoists a
-RAW base pointer for a `vector<T>` argument and hands C `(pointer, count)`. Its own
+A `#c` binding (`c_binding` in [`src/c/mod.rs`](../../src/c/mod.rs), `loft_cvec_ptr`) hands C a
+RAW base pointer for a `vector<T>` argument, with a count where the C signature has one. Its own
 contract says that pointer is valid FOR THE CALL and no longer. Every element C
 touches after that skips `valid()` entirely, and C **writes back** through it.
 

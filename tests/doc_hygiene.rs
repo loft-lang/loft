@@ -922,7 +922,7 @@ fn json_stdlib_has_no_stale_stub_language() {
 /// had no reachable filesystem. It does now, so the stubs are gone — but the
 /// hazard the old guard was pointing at is real and unchanged: these arms drift.
 /// They drifted for a year. The interpreter's browser branches were real host
-/// bridges while `codegen_runtime.rs`'s were stubs returning nothing, so the two
+/// bridges while the compiled runtime's were stubs returning nothing, so the two
 /// backends had different filesystems and `--html` — which runs the generated
 /// code — had the empty one.
 ///
@@ -933,19 +933,15 @@ fn json_stdlib_has_no_stale_stub_language() {
 /// wasm-bindgen FEATURE.
 #[test]
 fn file_operations_gate_on_host_fs_not_the_wasm_feature() {
-    for path in [
-        "src/state/io.rs",
-        "src/database/io.rs",
-        "src/codegen_runtime.rs",
-    ] {
+    for path in ["src/state/io.rs", "src/database/io.rs", "src/fs_ops.rs"] {
         let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
         assert!(
             src.contains("host_fs"),
             "{path} must gate its file operations on the `host_fs` cfg — the one name for \
              \"this build reaches the filesystem through a JS host\" (loft#851)."
         );
-        // `feature = "wasm"` still has honest uses here: `src/codegen_runtime.rs`
-        // reads the CLOCK differently under wasm-bindgen, which is a real
+        // `feature = "wasm"` still has honest uses in these files: a file may read the
+        // CLOCK differently under wasm-bindgen, which is a real
         // difference between the two browsers rather than a file question. So the
         // check is scoped to lines that also mention a file operation.
         let strays: Vec<String> = src
@@ -2472,7 +2468,7 @@ fn ir_schema_gen_matches_its_loft_source() {
     }
     let mut generated = Stores::new();
     let base = generated.types.len();
-    loft::ir_schema_gen::register_ir_schema(&mut generated);
+    let _ = loft::ir_schema_gen::register_ir_schema(&mut generated);
     let mut p = loft::parser::Parser::new();
     p.parse_dir("default", true, false)
         .expect("the standard library parses");

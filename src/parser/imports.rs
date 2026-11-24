@@ -168,7 +168,7 @@ impl Parser {
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                self.add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
+                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
                 if let Some(man) = self.read_manifest(&toml.to_string_lossy()) {
                     for (dep, value) in &man.dependencies {
                         // PURE lookups only: a sibling package, a `path =` dependency, the
@@ -200,7 +200,7 @@ impl Parser {
                                 .or_else(|| Self::registry_dep_root(&d, dep, value)),
                         };
                         if let Some(root) = root {
-                            self.add_pkg_triggers(
+                            Self::add_pkg_triggers(
                                 &root.join("loft.toml"),
                                 &root,
                                 &mut map,
@@ -231,7 +231,7 @@ impl Parser {
         for root in Self::packages_in(&dirs) {
             let mut one: [Names; 3] = [Names::new(), Names::new(), Names::new()];
             let [m, t, b] = &mut one;
-            self.add_pkg_triggers(&root.join("loft.toml"), &root, m, t, b);
+            Self::add_pkg_triggers(&root.join("loft.toml"), &root, m, t, b);
             for ((mine, all), seen) in one.into_iter().zip(flag.iter_mut()).zip(twice.iter_mut()) {
                 for (name, pkg) in mine {
                     match all.get(&name) {
@@ -338,7 +338,6 @@ impl Parser {
     /// (`method -> package`), its public types and its declared builders — when the
     /// package opts in via `[triggers] enabled`.
     pub(super) fn add_pkg_triggers(
-        &self,
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,

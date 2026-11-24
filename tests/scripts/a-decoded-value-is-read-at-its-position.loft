@@ -41,6 +41,9 @@
 //    n 7), F13 { "ok": false, "n": 3 } → -1, F11 (no "ok") → -99, F7 → -1000.
 //
 // @falsify-tier: ship
+//
+// @falsified-at: none — the defect it caught lived only in the rustc writer, which is retired
+//   (`@C170`); it still holds the answers on the interpreter and the C.
 
 enum Val {
   VNull,

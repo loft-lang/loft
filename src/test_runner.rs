@@ -1653,13 +1653,14 @@ pub(crate) fn run_tests(
             // Deliberately NOT the wrap harness's rule ("if `main` exists, only `main`
             // runs") — see TESTING.md § `tests/wrap.rs` — shared runner for docs and scripts tests.  That one answers a different
             // question: the harness drives whole SCRIPTS, where `main` is the program.
-            if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
-                test_fns.retain(|(_, n)| n.starts_with("test_"));
-            }
-
-            // Apply function name filter (from "file.loft::name" syntax).
+            //
+            // A filter (`file.loft::name`, `file.loft::{a,b}`) names exactly what runs, so it
+            // replaces that narrowing rather than applying after it: `file.loft::main` runs
+            // `main` even beside tests, and a harness can ask for the set it chose.
             if let Some(ref filter) = fn_filter {
                 test_fns.retain(|(_, name)| filter.iter().any(|f| name == f));
+            } else if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
+                test_fns.retain(|(_, n)| n.starts_with("test_"));
             }
 
             if test_fns.is_empty() {

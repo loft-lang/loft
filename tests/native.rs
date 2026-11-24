@@ -126,6 +126,28 @@ fn script_shaped(src: &str) -> bool {
     src.lines().any(|l| l.starts_with("// @SCRIPT"))
 }
 
+/// The functions of `entry` the corpus runs: `Definition::is_corpus_entry_point`, the ONE answer
+/// `tests/wrap.rs` reads for the interpreter's half — the two halves of a differential that run
+/// different sets cannot report a divergence between them (loft#1293).
+fn corpus_entry_names(entry: &Path, src: &str) -> Result<Vec<String>, String> {
+    let mut p = loft::parser::Parser::new();
+    let (data, db) = common::cached_default();
+    p.data = data;
+    p.database = db;
+    p.lib_dirs.extend(common::corpus::args_lib_dirs(src, entry));
+    let start = p.data.definitions();
+    p.parse(&entry.to_string_lossy(), false);
+    if p.diagnostics.level() >= loft::diagnostics::Level::Error {
+        // The runner reports the file's errors (or its `@EXPECT_ERROR`) itself.
+        return Ok(vec!["main".to_string()]);
+    }
+    Ok((start..p.data.definitions())
+        .map(|d| p.data.def(d))
+        .filter(|d| d.is_corpus_entry_point())
+        .map(|d| d.name().strip_prefix("n_").unwrap_or(d.name()).to_string())
+        .collect())
+}
+
 /// Build and run `entry` on the C backend; `Err` carries the run's stdout and stderr.
 ///
 /// Under `LOFT_NATIVE_LEAK_CHECK` a store left at exit fails the program, as it fails a
@@ -134,7 +156,15 @@ fn run_on_c(entry: &Path, how: CRun) -> Result<(), String> {
     let src = fa::read_to_string(entry).map_err(|e| format!("{}: {e}", entry.display()))?;
     let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     match how {
-        CRun::Tests => cmd.arg("--tests").arg(entry).arg("--native"),
+        // The file's entry points as the interpreter's half picks them
+        // (`Definition::is_corpus_entry_point`, loft#1293), named to the runner.
+        CRun::Tests => match corpus_entry_names(entry, &src)? {
+            names if names.is_empty() => return Ok(()),
+            names => cmd
+                .arg("--tests")
+                .arg(format!("{}::{{{}}}", entry.display(), names.join(",")))
+                .arg("--native"),
+        },
         CRun::Program => cmd.arg("--native").arg(entry),
     };
     cmd.env("LOFT_TIMEOUT", "300");
