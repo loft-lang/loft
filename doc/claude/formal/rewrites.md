@@ -7999,33 +7999,43 @@ keeps every use one that reads.  (5) is the one way a span and a copy can differ
 A run-time tag in the field ("owned or span?") was the other representation.  It is
 declined here because every `text` field read in every program would test it (@C125).
 
-**Instance 1, built** (`src/lower/decode_view.rs` decides; `rule_tags.py sites
-@FR-R-DecodeView` lists the sites).  The twin layout is the record itself: an ENUM whose every text- or
-byte-string-carrying variant leaves the record's last eight bytes free keeps the span there —
-the frame's bytes `[lo, lo + n)` under the sign bit, `0` for the owned form — with the field
-itself null, so a release frees nothing for it and a copy or a shallow move carries the word
-with the record's bytes.  A variant minted as a record of its own is the variant's size and
-has no such room: a region that mints one declines.
+**Instance 1, built** (`src/lower/decode_view.rs` decides, the C writes it:
+`src/c/body/decode_view.rs`, the `DV_BIT` twin in `src/c/mod.rs`, the `loft_dv_*` helpers in
+`loft_rt.h`; `rule_tags.py sites @FR-R-DecodeView` lists the sites).  The twin layout is the
+record itself: an ENUM whose every text- or byte-string-carrying variant leaves the record's
+last eight bytes free keeps the span there — two 32-bit words, the length and then the start
+plus one under the top bit, both `0` for the owned form, so the store holds no 64-bit value
+for it — with the field itself null, so a release frees nothing for it and a copy or a shallow
+move carries the word with the record's bytes.  A variant minted as a record of its own is the
+variant's size and has no such room: a region that mints one declines.
 - The ROOT is a function whose one byte-vector parameter B (not `&`, no other parameter but
   numbers, texts and hidden buffers) it hands to a call answering a decoded value; it names B
-  as the frame for the length of its call.  (1) is the read-only
+  as the frame (`cx->dv_frame`) for the length of its call, in its frame wrapper — a root's
+  `__wr` work twin under a wrapper of its own — and gives the previous one back after it.  A
+  root takes no `(R-Transient)` site: its decoded values stay in the store, where the span
+  words are.  (1) is the read-only
   walk: B and every parameter it is handed to may be read for a length, read under a getter,
   sliced or text-run, and handed to a region call — anything else, an element address outside
   a getter included, declines.  (2) and (3) are the region's closure: every loft function a
   value of the enum (or a record or collection holding one) reaches joins the region, the
   root may not return one, and a native, a function reference, a `yield` or a `par` declines.
-- Every region function is re-emitted as its `__dv` twin, beside its own body for the callers
-  outside.  A text run of a parameter that is B at every call writes the span when its guard
-  holds and the bytes are UTF-8 — (5) — and the owned text otherwise; a byte slice sets its
-  local's span word, the local's move writes it, and the local's holder is placed only on the
+- Every region function is written again as its `__dv` twin, beside its own body for the
+  callers outside; every call a twin or a root makes to a region function names the twin,
+  whatever other variant (`__rg`, `__d`) the call takes.  A text run of a parameter that is B
+  at every call writes the span when its guard holds and the bytes are UTF-8 — (5) — and the
+  owned text otherwise (`loft_dv_span_text`); a byte slice sets its local's span word
+  (`loft_dvs<v>`), the local's move writes it, and the local's holder is placed only on the
   guard's fallback path.  Every other write of a span field clears the word.
-- (4) in instance 1: a text field is read through `OpGetText`, which answers the frame's bytes
-  for a span; a byte-string field is never READ in a region — a read declines the root.
+- (4) in instance 1: a text field is read through `OpGetText` or a borrowed bind of it, which
+  answers the frame's bytes for a span (`loft_dv_text`); a byte-string field is never READ in
+  a region — a read declines the root.
 - Not yet admitted: a frame held in a local of the root, a struct (no free bytes), a byte
   string read as a value.
 
-Measured on pluginabi `check_request` (over-9x.md): 2.57 → 1.64 ms per op on one core
-(−36 %, against −46 % priced), every row's hash unchanged.  Switch `LOFT_NO_DECODE_VIEW`;
+pluginabi `check_request` admits no root today: cbor's `read_value` reads a decoded byte
+string, the third case above, so the lane runs as written (the trace names the read; the
+numbers are in [the companion](rewrites-history.md#r-decodeview-on-the-c)), every row's hash
+unchanged.  Switch `LOFT_NO_DECODE_VIEW`;
 trace `LOFT_TRACE_DECODE_VIEW` names each root admitted and each one declined with the
 mention that declined it.  Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`,
 its value cells hand-computed on both backends — a lookup by key, a format, a length and a
@@ -8033,7 +8043,7 @@ character walk, invalid UTF-8, an empty text, unread byte strings, a nested map,
 owned value beside a decoded one, a pooled buffer refilled with an integer and then texts,
 and the declines: a byte string read, the frame written after the decode, a decoded value
 returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
-pin `tests/decode_view.rs` holds the roots and the region.
+pin `tests/decode_view.rs` holds the roots, the region and the span writes on the emitted C.
 
 **The structure clause (@C141, read once) — instance 1 BUILT.**  Instance 1 of the rule keeps a decoded value's
 LEAVES in the frame and still builds its structure: `check_request` mints a map, a vector of
@@ -8081,8 +8091,8 @@ a kept value is a built one.  A value inspected more than once is the case of
 `(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.
 
 **Instance 1 of the structure clause, built** (`src/lower/decode_structure.rs` and
-`decode_structure_scan.rs` decide).  It rides on the view
-clause's roots, region and frame.  The POSITION of a value is the scalar arguments of the
+`decode_structure_scan.rs` decide, the C writes it: `src/c/body/decode_structure.rs`,
+`loft_ps_text` in `loft_rt.h`).  It rides on the view clause's roots, region and frame.  The POSITION of a value is the scalar arguments of the
 decoder call that answers it: `decode(b).value` is `read_value(b, 0, 0).value`, a map entry's
 key is `read_value(b, p, d + 1).value` for the `p` the loop handed that call.  The frame does
 not change while a position lives ((1), the region's read-only walk), and the decoder answers
@@ -8099,11 +8109,15 @@ and answers the same value.
   and takes the field from the value it builds: (9) for a leaf.  Its WALK TWIN `P__psw<k>`
   runs the same body and hands each element appended to the walked vector field — the
   positions of the calls its parts were moved from — to a closure, stopping at the closure's
-  first answer.  A walked local may only be appended to and moved into its field, and a
+  first answer.  The closure is a C function of its own (`G__psc<n>`, a `loft_ps_fn`), its
+  statements written by the consumer's writer; it copies the locals it names in from the
+  site's address array at its start and back at each of its exits, and a `return` inside it
+  writes the site's answer and stops the walk.  A walked local may only be appended to and moved into its field, and a
   call's position must not be reassigned between its part's binding and the append.
-- A CONSUMER is every other function of the root's chain.  It holds a value as a tuple:
-  `(0, position…)`, or `(tag, 0…)` for a unit literal it returns; a decoded record as
-  `(position, scalar fields…)`; an element as a tuple of positions.  The reads (7) admits:
+- A CONSUMER is every other function of the root's chain, written as its twin `G__ps` taking
+  the frame first; a root is written in that form under its own name.  It holds a value as a
+  struct (`loft_tup<n>`): `(0, position…)`, or `(2, 0…, tag)` for a unit literal it returns;
+  a decoded record as `(position, scalar fields…)`; an element as a struct of positions.  The reads (7) admits:
   the tag (the shape, computed once per arm), a number, boolean or text field inside the arm
   that proved the variant, a scalar field of the record, an in-order walk of a vector field
   (`for e in v.entries`, the loop's body becoming the walk twin's closure, which leaves only
@@ -8117,13 +8131,17 @@ and answers the same value.
 - (8) holds by construction: the record the root reads `ok` and `next` from is the decoder's
   own scalar answer, computed by the shape twin over the whole frame before the root reads a
   position, and a refused frame's position answers the decoder's value for it.
+- A positional body is written statement by statement and keeps no vector hoist, so every
+  statement meets the clause.  A twin the C cannot write takes the clause away from the whole
+  unit, and a root it cannot write keeps its built form; the trace names either.
 - Not yet admitted: a byte-string field read, a value walked by index, a decoder with two
-  slot fields in one variant, a consumer that is recursive.
+  slot fields in one variant, a consumer that is recursive, a walk inside a walk.
 
 A position decoded where it was made — the decoder's own call in `decode`, each part a walk
-appends — carries that decode's tag and slots, so no reader decodes its head again.  Measured
-on pluginabi `check_request` (`bench/stats.py`, one core, hash unchanged): 4.66× → 0.94×
-(1.58 → 0.32 ms against the twin's 0.34 ms); the hand price of the same form was 0.30 ms.  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
+appends — carries that decode's tag and slots, so no reader decodes its head again.  pluginabi
+`check_request` reaches the clause only through the view clause's roots, which it does not
+admit today (above); the measurements are in
+[the companion](rewrites-history.md#r-decodeview-on-the-c).  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
 `LOFT_TRACE_DECODE_STRUCTURE` names each producer and root admitted and each decline with its
 reason, `=2` also prints each consumer's IR.  Guard
 `tests/scripts/a-decoded-value-is-read-at-its-position.loft`, every cell hand-computed on both
@@ -8132,7 +8150,7 @@ label only the built value holds, an array summed, a nested lookup, a find in an
 the status alone, invalid UTF-8, a frame one level too deep, truncated, or with a trailing
 byte, an empty map, and the declines: a second hand-off, a read in a loop, a value returned.
 Its planted defect hands every part of an entry at the key's position; the pin
-`tests/decode_structure.rs` holds the roots, the twins and the switch.  The side-by-side run
+`tests/decode_structure.rs` holds the roots, the twins, the walks and the switch on the emitted C.  The side-by-side run
 of both forms under `LOFT_HOIST_VERIFY=1` the clause names is not built: the switch A/B and
 the interpreter are its falsifiers.
 
