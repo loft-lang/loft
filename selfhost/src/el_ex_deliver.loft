@@ -1069,7 +1069,9 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     return ir::NdBlock { block: [bl] };
   }
   // Read before the tail is rewritten: `tail` views the statement the delivery replaces.
-  borrowed = arm_params(tail, []);
+  // (The parameters an arm answers: a LOCAL arm is copied into the buffer, which the body then
+  // answers — `e = vv[0]; if c { [] } else { e }` borrows `__retbuf`, not `e`.)
+  borrowed = [for bp in arm_params(tail, []) if vars.vars[bp].argument { bp }];
   // (An arm answering a local, a call's or a projection's vector delivers it into the buffer,
   // which the body then answers — the buffer, and a parameter a projection arm reads through.)
   if len(borrowed) == 0 && built_arm(e, vars, tail) {
