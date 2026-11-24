@@ -983,6 +983,7 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
     }
   }
   first_names: vector<text> = [];
+  alt_names: vector<text> = [];
   for pn in pats {
     match e.p.nodes[pn] {
       PWild => {
@@ -1089,7 +1090,8 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                   }
                 }
               }
-              if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) {
+              // (A slot a partial name made `τ?` is still `τ` to the patterns that bind it.)
+              if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) && !match el_vars::tp(vars, mv) { TyOptional { inner: mvi } => el_types::is_equal(e, mvi, ft), _ => false } {
                 el::refuse(e, "a binding the listed patterns type differently: {bname}");
                 return null;
               }
@@ -1111,12 +1113,14 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
           }
         }
         if split {
-          if len(r.alts) == 0 {
-            first_names = anames;
-          } else if len(anames) != len(first_names) || !all_in(anames, first_names) {
-            el::refuse(e, "a name only some of the listed patterns bind");
-            return null;
+          // (`@FR-P-Alt-Diff`: a name only some listed patterns bind is `τ?`, null where another
+          // matched — typed and filled once every pattern is read, below.)
+          for an in anames {
+            if !first_names.contains(an) {
+              first_names += [an];
+            }
           }
+          alt_names += [anames.join("|")];
           r.alts += [VAlt { cond: c, binds: ab, fcond: fc }];
         } else {
           r.binds += ab;
@@ -1131,7 +1135,61 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
       }
     }
   }
+  // `@FR-P-Alt-Diff`, as Rust's multi-pattern arm makes it: each name some pattern lacks, in
+  // the order of its slot, is typed `τ?` (`capture_optional`) and set to its null at the end of
+  // every pattern's bindings that lacks it.
+  partial: vector<integer> = [];
+  for pn2 in first_names {
+    for ns in alt_names {
+      if !ns.split('|').contains(pn2) && !partial.contains(el_vars::var(vars, pn2)) {
+        partial += [el_vars::var(vars, pn2)];
+      }
+    }
+  }
+  partial = sorted_ints(partial);
+  for pv in partial {
+    pname = "";
+    for fnm in first_names {
+      if el_vars::var(vars, fnm) == pv {
+        pname = fnm;
+      }
+    }
+    pt = el_vars::tp(vars, pv);
+    if !(pt is TyOptional) {
+      if match pt { TyInteger { spec } => el_types::narrow_width(spec) > 0, _ => false } {
+        el::refuse(e, "a narrow integer capture only some of the listed patterns bind");
+        return null;
+      }
+      pt = ir::TyOptional { inner: pt };
+      el_vars::set_type(vars, pv, pt);
+    }
+    // (`Parser::null` of a `vector<T>?` is the bare null; a record's the reference sentinel.)
+    pnull = if match pt { TyOptional { inner: pvi } => pvi is TyVector, _ => false } { ir::NdNull } else { el_convert::null_of(e, match pt { TyOptional { inner: pti } => match pti { TyReference { n: _ } => pti, TyVector { inner: _ } => pti, TyText { dep: _ } => ir::TyText { dep: [] }, _ => el_types::without_deps(pti) }, _ => pt }) };
+    if pnull == null {
+      el::refuse(e, "a capture only some of the listed patterns bind, of this type: {type_kind(pt)}");
+      return null;
+    }
+    for ai in 0..len(r.alts) {
+      if !alt_names[ai].split('|').contains(pname) {
+        r.alts[ai].binds += [el_ir::v_set(pv, pnull!)];
+      }
+    }
+  }
   r
+}
+
+fn sorted_ints(xs: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in xs {
+    at = len(out);
+    for o in out {
+      if x < o && at == len(out) {
+        at = o#index;
+      }
+    }
+    out.insert(at, x);
+  }
+  out
 }
 
 pub fn all_in(xs: vector<text>, ys: vector<text>) -> boolean {

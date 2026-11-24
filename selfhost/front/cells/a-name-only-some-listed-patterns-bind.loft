@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a multi-pattern arm binding a name only some of its patterns bind types it `τ?`,
+// null where another pattern matched (`@FR-P-Alt-Diff`) — integer, text, record and vector captures,
+// and a pattern binding nothing.
+// Prints: 100001 1/7 true:-5 -|3 x:-1:-1 y:12:-1 z:-1:208
+
+struct Pt { x: integer, y: integer }
+enum Rec {
+  Ra { u: integer }, Rb { w: integer }, Rc { u: integer, w: integer }, Rd { t: text },
+  Rp { p: Pt, tag: text }, Rl { items: vector<integer>, tag: text }, Rn { tag: text },
+}
+fn both(r: Rec) -> integer { match r { Ra { u }, Rb { w } => (u ?? 100) * 1000 + (w ?? 7), _ => -1 } }
+fn three(r: Rec) -> text { match r { Ra { u }, Rb { w }, Rc { u, w } => "{u}/{w ?? 7}", _ => "x" } }
+fn gap(r: Rec) -> text { match r { Ra { u }, Rb, Rc { u } => "{u == null}:{u ?? -5}", _ => "x" } }
+fn texts(r: Rec) -> text { match r { Rd { t }, Ra { u } => "{t ?? \"-\"}|{u ?? -1}", _ => "x" } }
+fn heap(r: Rec) -> text {
+  match r {
+    Rp { p, tag }, Rl { items, tag }, Rn { tag } => {
+      a = if p == null { -1 } else { p.x * 10 + p.y };
+      b = if items == null { -1 } else { len(items) * 100 + items[1] };
+      "{tag}:{a}:{b}"
+    },
+    _ => "o",
+  }
+}
+fn main() {
+  println("{both(Rb { w: 1 })} {three(Ra { u: 1 })} {gap(Rb { w: 2 })} {texts(Ra { u: 3 })} {heap(Rn { tag: "x" })} {heap(Rp { p: Pt { x: 1, y: 2 }, tag: "y" })} {heap(Rl { items: [4, 8], tag: "z" })}");
+}
