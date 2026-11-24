@@ -4422,20 +4422,16 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     Ok(params)
 }
 
-/// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
-/// the loft-ffi C ABI): the file the interpreter loads for it too
-/// (`native_build::prebuilt_native_lib`), with the package's directory.  None for a package
-/// without one — never a build.
+/// The component loft ships that a `#native` symbol's package names (the loft-ffi C ABI): the
+/// file the interpreter loads for it too (`native_build::prebuilt_native_lib`), with the
+/// package's directory.  None for a package without one — never a build.
 fn prebuilt_library(data: &Data, native: &str) -> Option<(String, String)> {
     let krate = data.native_symbol_crates.get(native)?;
-    let (name, pkg_dir) = data
+    let (_, pkg_dir) = data
         .native_packages
         .iter()
         .find(|(c, _)| c.replace('-', "_") == *krate)?;
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| name.replace('-', "_"));
-    crate::native_build::prebuilt_native_lib(pkg_dir, &stem).map(|lib| (pkg_dir.clone(), lib))
+    crate::native_build::prebuilt_native_lib(pkg_dir).map(|lib| (pkg_dir.clone(), lib))
 }
 
 /// A library native's arguments as the loft-ffi ABI takes them: the typed parameters, the
@@ -5004,8 +5000,8 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             params.join(", ")
         }
     );
-    // A package whose native part needs no build — a component, a library shipped prebuilt per
-    // host (@PLN205) — is installed, never rebuilt: say what is missing.
+    // A package whose natives are a component (@PLN205) is installed, never rebuilt: say what
+    // is missing.
     let unbuildable = cx
         .data
         .native_symbol_crates
@@ -5016,7 +5012,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
-        .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+        .and_then(|(_, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir));
     // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
     // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
     // to a call the C makes by name, so the message says what does.

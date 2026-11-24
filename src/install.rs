@@ -71,53 +71,10 @@ pub struct InstallOptions {
 pub struct InstallReport {
     pub installed: Vec<(String, String)>,
     pub skipped_cached: Vec<(String, String)>,
-    /// @PLN21 Phase 5 — per-package native surfacing lines (prebuilt
-    /// availability for this host + declared runtime libs), rendered by
-    /// `format_report` so a user sees whether `use <pkg>` needs a toolchain.
+    /// Per-package native surfacing lines (a refused native library, the declared runtime
+    /// libs, the C shim's build), rendered by `format_report` so a user sees at install what
+    /// `use <pkg>` will need.
     pub surface: Vec<String>,
-}
-
-/// @PLN21 Phase 4 — opportunistically fetch a prebuilt cdylib for THIS host so
-/// the package runs with NO Rust toolchain.  Best-effort: any miss (no entry for
-/// the host triple, an fp built against a different loft-ffi, offline, or a
-/// download/hash failure) silently leaves only the source, which
-/// `auto_build_native` compiles on first use.  On success the cdylib lands at
-/// `prebuilt/<triple>/lib<stem>.<ext>` + a `.loft-build-fp` sidecar — exactly
-/// where `extensions::resolve_native_lib` looks first (Phase 1).
-fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
-    if opts.offline {
-        return false;
-    }
-    let triple = crate::cache::host_triple();
-    let Some(bin) = r.version.binaries.get(&triple) else {
-        return false;
-    };
-    let pkg_dir = registry_index::extract_dir(&r.name, &r.version.semver);
-    // Only a binary built against THIS loft's loft-ffi ABI is compatible.
-    if bin.loft_ffi_fp != Some(crate::cache::loft_ffi_fingerprint()) {
-        return false;
-    }
-    // The cdylib stem is the package manifest's `[library] native` field.
-    let Some(stem) = crate::manifest::read_manifest(&pkg_dir.join("loft.toml").to_string_lossy())
-        .and_then(|m| m.native)
-        // The stem becomes a FILENAME below, and this manifest came off the network.
-        // Same rule, same reason as the package name: see `libscan::is_valid_package_name`.
-        .filter(|s| crate::libscan::is_valid_package_name(s))
-    else {
-        return false;
-    };
-    let dir = pkg_dir.join("prebuilt").join(&triple);
-    if crate::file_access::create_dir_all(&dir).is_err() {
-        return false;
-    }
-    let filename = crate::platform::cdylib_file_name(&stem);
-    let dest = dir.join(&filename);
-    if registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_err() {
-        return false;
-    }
-    // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
-    crate::cache::write_native_artifact_fingerprint(&dir, crate::cache::loft_ffi_fingerprint());
-    true
 }
 
 /// @PLN199 G3a — the artifacts the running loft's release built for the packages of `graph`,
@@ -167,27 +124,6 @@ fn fetch_auto_artifact(
     }
     let dest = dir.join(crate::platform::cdylib_file_name(stem));
     registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_ok()
-}
-
-/// @PLN21 Phase 5 — the prebuilt-availability one-liner for a package: given the
-/// host triple, the triples that have a published binary, and whether one was
-/// just installed.  Pure (no IO) → unit-tested directly.
-fn prebuilt_status(host: &str, available: &[String], installed: bool) -> String {
-    if installed {
-        format!("prebuilt installed for {host} — no Rust toolchain needed")
-    } else if available.iter().any(|t| t == host) {
-        format!(
-            "a {host} prebuilt exists but was built against a different loft-ffi — \
-             builds from source on first use"
-        )
-    } else if available.is_empty() {
-        "no prebuilt published — builds from source on first use (needs rustc)".to_string()
-    } else {
-        format!(
-            "no prebuilt for {host} (available: {}) — builds from source on first use (needs rustc)",
-            available.join(", ")
-        )
-    }
 }
 
 /// The graph `loft install <package_name>[@constraint]` installs.  A package named WITHOUT a
@@ -366,26 +302,17 @@ fn install_resolved(
                 .push((r.name.clone(), r.version.semver.clone()));
             continue;
         }
-        // @PLN21 Phase 4 — best-effort: grab a host-matching prebuilt cdylib so
-        // first use needs no toolchain (silently no-ops when none applies).
-        let got_prebuilt = fetch_prebuilt(r, opts);
-        // @PLN21 Phase 5 — surface whether `use <pkg>` needs a toolchain, plus
-        // any declared runtime system libs.
-        let host = crate::cache::host_triple();
-        let available: Vec<String> = r.version.binaries.keys().cloned().collect();
         let manifest = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy());
-        // Only a package with Rust code of its own — a library stem, a `[native]` crate, or a
-        // library compiled to one — builds anything: a package that is loft alone was told
-        // it "needs rustc", which it never does.
-        let builds_native = |m: &crate::manifest::Manifest| {
-            m.native.is_some() || m.native_crate.is_some() || m.compile.as_deref() == Some("native")
-        };
-        if !available.is_empty() || manifest.as_ref().is_some_and(builds_native) {
+        // A package with a native library of its own is refused where it is used; say so now,
+        // while the user is installing (@PLN225).
+        if let Some(e) = manifest.as_ref().and_then(|m| {
+            m.errors
+                .iter()
+                .find(|e| e.message == crate::manifest::RUST_NATIVE_REFUSED)
+        }) {
             report.surface.push(format!(
-                "{} {}: {}",
-                r.name,
-                r.version.semver,
-                prebuilt_status(&host, &available, got_prebuilt)
+                "{} {}: not usable — {}",
+                r.name, r.version.semver, e.message
             ));
         }
         if let Some(m) = manifest {
@@ -402,8 +329,8 @@ fn install_resolved(
             // it work — it is about WHEN the answer arrives. A package needing a
             // C compiler should say so while the user is installing packages and
             // expecting to hear about dependencies, not later inside the first
-            // run of their program. Same reasoning as the prebuilt-cdylib fetch
-            // three lines up.
+            // run of their program. Same reasoning as the refused-library line
+            // above.
             //
             // Best-effort, and deliberately so: a failure here is surfaced and
             // the install still succeeds, because the parser will report it
@@ -1493,8 +1420,7 @@ pub fn format_report(report: &InstallReport) -> String {
             let _ = writeln!(out, "  {n} {v}");
         }
     }
-    // @PLN21 Phase 5 — per-package native surfacing (prebuilt availability +
-    // declared runtime libs), so a user sees whether `use <pkg>` needs a toolchain.
+    // Per-package native surfacing, so a user sees what `use <pkg>` will need.
     if !report.surface.is_empty() {
         let _ = writeln!(out, "Native:");
         for line in &report.surface {
@@ -2219,19 +2145,6 @@ mod tests {
         assert!(s.contains("Already cached"));
         assert!(s.contains("web 0.1.0"));
         assert!(s.contains("2 package(s) total"));
-    }
-
-    // @PLN21 Phase 5 — the prebuilt-availability one-liner across its branches.
-    #[test]
-    fn prebuilt_status_branches() {
-        use super::prebuilt_status;
-        let host = "x86_64-unknown-linux-gnu";
-        assert!(prebuilt_status(host, &[], true).contains("no Rust toolchain needed"));
-        assert!(prebuilt_status(host, &[], false).contains("no prebuilt published"));
-        let other = vec!["aarch64-apple-darwin".to_string()];
-        assert!(prebuilt_status(host, &other, false).contains("available: aarch64-apple-darwin"));
-        let same = vec![host.to_string()];
-        assert!(prebuilt_status(host, &same, false).contains("different loft-ffi"));
     }
 
     /// @PLN78 — the toolchain lives in the registry so it can be found and updated,

@@ -2288,7 +2288,7 @@ fn issue623_routeless_native_answers_one_diagnostic_on_a_page() {
     fa::write(
         tmp.join("nobridge/loft.toml"),
         "[package]\nname = \"nobridge\"\nversion = \"0.1.0\"\n\n\
-         [library]\nentry = \"src/nobridge.loft\"\nnative = \"loft_nobridge\"\n",
+         [library]\nentry = \"src/nobridge.loft\"\n",
     )
     .expect("write fixture loft.toml");
     // A bare `#native` the library carries no C part for — the #623 shape.

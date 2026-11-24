@@ -11,7 +11,6 @@
 3 src/database/journal.rs
 3 src/database/loft_file.rs
 1 src/documentation.rs
-1 src/extensions.rs
 1 src/ir_read.rs
 3 src/lexer.rs
 3 src/lib_placement/wire.rs
@@ -20,7 +19,6 @@
 7 src/main.rs
 2 src/migrate_long.rs
 2 src/native.rs
-3 src/native_build.rs
 1 src/native_lib.rs
 7 src/native_utils.rs
 4 src/opt/native_key.rs

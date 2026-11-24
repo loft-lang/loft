@@ -4917,10 +4917,6 @@ fn native_lib_test_skipped(entry: &Path) -> bool {
 /// interpreter lib suites (separate, concurrently-run test binaries) don't race
 /// on a shared file (e.g. `moros_render_test.glb`).  Duplicated from `wrap.rs`
 /// (integration-test binaries can't share fns).  Non-unix falls back to `pkg_dir`.
-/// The backends a program calling a Rust native part runs on: the interpreter, which loads
-/// the cdylib (`@PLN206 P6`).  A program compiled with `--native` cannot call one.
-const RUST_NATIVE_BACKENDS: &[&str] = &["--interpret"];
-
 fn run_lib_test_in_temp_cwd(
     loft_bin: &str,
     pkg_dir: &Path,
@@ -5168,21 +5164,19 @@ fn native_library_suite() -> std::io::Result<()> {
     Ok(())
 }
 
-/// A package's native part, called from a program on every backend.  The Rust half, a
-/// `[native] crate` package (`native_scalar_pkg`), runs interpreted with its cdylib loaded:
-/// no library is built through rustc and a C unit cannot call a Rust native (`@PLN206 P6`).
-/// The C half (`c_scalar_pkg`, the same functions as a `[c] shim`) is linked into the program
-/// by `--native` and called by the interpreter through the same C.  Each fixture's test
-/// asserts the oracles 42 and -1 (a narrowed return would bring -1 back as 4294967295), so a
-/// broken link or a wrong value fails loudly — not vacuously.
+/// A package's native part, called from a program on every backend: the `[c] shim` of
+/// `c_scalar_pkg` is linked into the program by `--native` and called by the interpreter
+/// through the same C.  The package's test asserts the oracles 42 and -1 (a narrowed return
+/// would bring -1 back as 4294967295), so a broken link or a wrong value fails loudly — not
+/// vacuously.  A package's own Rust native library is refused (@PLN225,
+/// `tests/native_loader.rs`).
 #[test]
 fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let loft_bin = env!("CARGO_BIN_EXE_loft");
-    let cells: [(&str, &[&str]); 3] = [
-        ("tests/lib/native_scalar_pkg", &["--interpret"]),
+    let cells: [(&str, &[&str]); 2] = [
         ("tests/lib/c_scalar_pkg", &["--native"]),
         ("tests/lib/c_scalar_pkg", &["--interpret"]),
     ];
@@ -5202,60 +5196,6 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
             "{pkg} {mode:?}: the package's test did not pass:\n{combined}"
         );
     }
-    Ok(())
-}
-
-/// `@PLN206 P6` — a library whose loft functions call its own Rust native part (a hand-written
-/// cdylib, `[library] native`, built from its `[native] crate`) is not compiled: no library is
-/// built through rustc, and a C unit cannot call a Rust native.  It runs interpreted with that
-/// cdylib loaded, and answers: 43 = `native_answer()` (42) + 1, the oracle that the call reached
-/// the Rust native.  Under `LOFT_REQUIRE_NATIVE` the run refuses, naming the Rust native part.
-#[test]
-fn a_library_calling_its_rust_native_part_runs_interpreted_with_it() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!(
-            "a_library_calling_its_rust_native_part_runs_interpreted_with_it: skipped (no libloft.rlib / rustc)"
-        );
-        return Ok(());
-    }
-    let lib_dir = std::env::current_dir()?.join("tests/lib");
-    let dir = std::env::temp_dir().join(format!("loft_lib_rust_native_{}", std::process::id()));
-    let _ = fa::remove_dir_all(&dir);
-    fa::create_dir_all(&dir)?;
-    let program = dir.join("p.loft");
-    fa::write(
-        &program,
-        "use native_scalar_pkg::*;\nfn main() { println(\"{answer_plus(1)}\"); }\n",
-    )?;
-    let run = |require: bool| {
-        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
-        cmd.args(["--interpret", "--lib"])
-            .arg(&lib_dir)
-            .arg(&program)
-            .current_dir(&dir)
-            .env("LOFT_TIMEOUT", "600");
-        if require {
-            cmd.env("LOFT_REQUIRE_NATIVE", "1");
-        }
-        cmd.output()
-    };
-    let out = run(false)?;
-    assert!(
-        out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "43",
-        "the library runs interpreted with its Rust native and answers 43:\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let out = run(true)?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !out.status.success() && stderr.contains("Rust native part"),
-        "LOFT_REQUIRE_NATIVE refuses the interpreted library, naming why:\n{stderr}"
-    );
-    let _ = fa::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -5641,153 +5581,6 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
     }
     fa::rename(&hidden, &tree)?;
     let _ = fa::remove_dir_all(&root);
-    Ok(())
-}
-
-/// loft#907 — a `#native "sym"` its library implements under a DIFFERENT Rust
-/// name must reach that implementation.
-///
-/// `#native "sym"` is an API id: a library registers its implementations by loft
-/// symbol (`loft_register_bridges! { "sym" => other__loft_bridge }`) and may point
-/// one at a differently-named fn.  `--interpret` reads that table; `--native` put
-/// the `#native` string straight into a `#[link_name]`, so it bound whatever else
-/// the cdylib exported under that name.  In the published `graphics` that was the
-/// same call in the older raw `(ptr, count)` shape rather than loft's
-/// `(LoftStore, LoftRef)` one, for ten functions — `save_png` returned `false`
-/// under `--native` and `true` under `--interpret`, silently, and the WebGL
-/// upload calls were mis-marshalled the same way.
-///
-/// The `native_remap_pkg` fixture exports a DECOY under each `#native` name
-/// (-1000 / -2000), so a regression does not merely fail to link — it answers,
-/// and the answer names which resolution path was taken.  `native_scalar_pkg`
-/// above is the clean-binding control: the redirect must leave it untouched.
-///
-/// Serialises via `native_suite_lock` and skips cleanly without `rustc` / the
-/// loft rlib, like the other native suites.
-#[test]
-// The interpreter only: a Rust native part runs interpreted (`@PLN206 P6`), and a `#c` binding
-// names its C symbol itself, so the C has no registration table to remap through.
-fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!(
-            "remapped_native_symbol_resolves_to_its_implementation_on_both_backends: \
-             skipped (no libloft.rlib / rustc)"
-        );
-        return Ok(());
-    }
-    let loft_bin = env!("CARGO_BIN_EXE_loft");
-    let pkg_dir = Path::new("tests/lib/native_remap_pkg");
-
-    for &backend in RUST_NATIVE_BACKENDS {
-        let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "remap", &[backend])?;
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            !combined.contains("no implementation"),
-            "{backend}: the remapped native symbol was not linked at all (P269):\n{combined}"
-        );
-        assert!(
-            combined.contains("test result: ok"),
-            "{backend}: a remapped `#native` symbol did not reach its implementation \
-             (loft#907) — the assertion message names the wrong answer it got:\n{combined}"
-        );
-    }
-    Ok(())
-}
-
-/// loft#907, the compiled-library path: a library's OWN loft code calling a remapped native
-/// links the implementation too.  `--interpret` compiles a `use`d library's loft code into a
-/// shared library, and that build ran before the implementations were read off the loaded
-/// cdylib, so it linked the `#native` string literally: drawing's guide, calling graphics'
-/// `save_png` from `render_file`, wrote no PNG on `--interpret` and did on `--native`
-/// (`extensions::preload_native_libs`).  `remap_sum_twice` answers -4000 through the decoy.
-#[test]
-fn a_compiled_library_links_a_remapped_native_to_its_implementation() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!(
-            "a_compiled_library_links_a_remapped_native_to_its_implementation: \
-             skipped (no libloft.rlib / rustc)"
-        );
-        return Ok(());
-    }
-    let lib_root = fa::try_plain_canonical(Path::new("tests/lib"))
-        .unwrap_or_else(|| Path::new("tests/lib").to_path_buf());
-    let dir = std::env::temp_dir().join(format!("loft_remap_compiled_{}", std::process::id()));
-    let _ = fa::remove_dir_all(&dir);
-    fa::create_dir_all(&dir)?;
-    let prog = dir.join("p.loft");
-    fa::write(
-        &prog,
-        "use native_remap_pkg;\nfn main() {\n  println(\"{native_remap_pkg::remap_sum_twice([10, 20, 12])} {native_remap_pkg::remap_answer()}\");\n}\n",
-    )?;
-    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--interpret")
-        .arg("--lib")
-        .arg(&lib_root)
-        .arg(&prog)
-        .current_dir(&dir)
-        .env("LOFT_TIMEOUT", "600")
-        .output()?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let _ = fa::remove_dir_all(&dir);
-    assert_eq!(
-        stdout.trim(),
-        "84 7",
-        "the library's compiled code reached the decoy under the `#native` name (-4000) or \
-         did not run:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    Ok(())
-}
-
-/// The imaging fixture's PNG round-trip — a `[native] crate` package whose
-/// `#native` functions (`load_png`/`save_png`) do STORE-MUTATING file I/O via
-/// raw `std::fs`.  Guards two things at once: (1) the store-mutating C-ABI path
-/// (LoftStore + LoftRef marshalling, the hardest native shape), and (2) the
-/// source-dir cwd anchoring — `loft test` runs from the package root, but a
-/// native crate's `std::fs` must resolve `map.png` / `_tmp_*.png` where loft's
-/// `file()` does (`tests/`), which only holds because the runner chdir's to
-/// `source_dir`.  Both round-trip files assert hard pixel oracles, so a broken
-/// link OR a cwd regression fails loudly.
-///
-/// Serialises via `native_suite_lock`; skips cleanly without `rustc` / the loft
-/// rlib, like the other native suites.
-#[test]
-// The interpreter only: the fixture's natives are a Rust crate, which runs interpreted
-// (`@PLN206 P6`); the published imaging's C part is checked on every backend by its own CI.
-fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!("imaging_fixture_png_roundtrip_both_backends: skipped (no libloft.rlib / rustc)");
-        return Ok(());
-    }
-    let loft_bin = env!("CARGO_BIN_EXE_loft");
-    let pkg_dir = Path::new("tests/fixtures/libs/imaging");
-    for stem in ["14-image", "15-regression"] {
-        for &mode in RUST_NATIVE_BACKENDS {
-            let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, stem, &[mode])?;
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            assert!(
-                combined.contains("test result: ok"),
-                "imaging {stem} {mode} round-trip did not pass:\n{combined}"
-            );
-        }
-    }
     Ok(())
 }
 

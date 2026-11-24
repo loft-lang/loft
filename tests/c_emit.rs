@@ -7843,9 +7843,9 @@ fn main() {
 }
 
 /// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's
-/// components only, and the cargo build of a crate it would never load cost a `use graphics`
-/// over 25 minutes before a word of C (`native_build::c_target`).  The library's crate here
-/// cannot compile; without the rule `--emit-c` still tries, leaving `native-auto/` behind.
+/// components only, and a library declaring a crate of its own is refused at its manifest.  The
+/// library's crate here cannot compile; a build of it would leave `native-auto/` or
+/// `native/target` behind.
 #[test]
 fn a_c_build_builds_no_rust_native_crate() {
     let dir = scratch("c_target_no_crate");
@@ -7887,42 +7887,17 @@ fn a_c_build_builds_no_rust_native_crate() {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("loft runs");
+    // @PLN225 — the library declares a native library of its own in Rust, which is refused at
+    // its manifest: the C build stops there and builds nothing.
+    let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.status.success(),
-        "--emit-c:\n{}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success() && err.contains(loft::manifest::RUST_NATIVE_REFUSED),
+        "--emit-c refuses the library's Rust crate:\n{err}"
     );
     assert!(
-        fa::read_to_string(dir.join("p.c")).is_ok_and(|c| c.contains("INT64_C(42)")),
-        "the C carries the library's answer (`twice(21)`, folded)"
+        !fa::exists(lib.join("native-auto")) && !fa::exists(lib.join("native/target")),
+        "a C build started a build of the library's Rust crate"
     );
-    assert!(
-        !fa::exists(lib.join("native-auto")),
-        "a C build started a cargo build of the library's Rust crate"
-    );
-    // Run as well: the library path the program starts with is resolved without a build.
-    if have_cc() && loft::platform::c_runtime_posix_host() {
-        let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg("--native-c")
-            .arg("--lib")
-            .arg(dir.join("libs"))
-            .arg(&prog)
-            .current_dir(&dir)
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_TIMEOUT", "300")
-            .output()
-            .expect("loft runs");
-        let err = String::from_utf8_lossy(&run.stderr);
-        assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            "42\n",
-            "--native-c:\n{err}"
-        );
-        assert!(
-            !err.contains("building native library"),
-            "--native-c started a cargo build of the library's Rust crate:\n{err}"
-        );
-    }
     let _ = fa::remove_dir_all(&dir);
 }
 
@@ -8064,12 +8039,11 @@ fn main() {
 }
 ";
 
-/// A library whose native part is only a Rust crate has no implementation in a C build, which
-/// never links one (`native_build::c_target`): a program that calls such a native is refused
-/// at BUILD, never compiled into a stub that halts at the call — such a release is deprecated
-/// (its native part is Rust, which loft does not build; PKG_REGISTRY.md § Deprecation).  The
-/// refusal names the library, why, and the cure, not the interpreter's "cdylib missing or
-/// stale / a poisoned call index" reading, which a call the C makes by name cannot be.
+/// A library whose native part is only a Rust crate is refused at BUILD on the C, never compiled
+/// into a stub that halts at the call: its manifest is refused where it is read (@PLN225), such
+/// a release being deprecated (PKG_REGISTRY.md § Deprecation).  The refusal names the library's
+/// manifest and the cure, not the interpreter's "cdylib missing or stale / a poisoned call
+/// index" reading, which a call the C makes by name cannot be.
 #[test]
 fn a_rust_crate_native_is_named_as_such_on_the_c() {
     if !have_cc() {
@@ -8120,9 +8094,7 @@ fn a_rust_crate_native_is_named_as_such_on_the_c() {
         "nothing was compiled and run\n{printed}"
     );
     assert!(
-        err.contains("has only a Rust native part")
-            && err.contains("rustlib")
-            && err.contains("loft install rustlib"),
+        err.contains(loft::manifest::RUST_NATIVE_REFUSED) && err.contains("rustlib/loft.toml"),
         "the refusal names the library, why, and the cure\n{err}"
     );
     assert!(

@@ -735,10 +735,10 @@ fn package_libraries_by_package(
             let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
                 .and_then(|m| m.native)
                 .unwrap_or_else(|| crate_name.replace('-', "_"));
-            // A C build loads only what is already built — a package's prebuilt C library or
-            // a component — never a Rust cdylib, so it builds nothing here (`c_target`).
+            // A C build loads only what is already built — a component — and builds nothing
+            // here (`c_target`).
             let so = if loft::native_build::c_target() {
-                loft::native_build::prebuilt_native_lib(pkg_dir, &stem)
+                loft::native_build::prebuilt_native_lib(pkg_dir)
             } else {
                 loft::interp::extensions::resolve_native_lib(pkg_dir, &stem)
             };

@@ -281,33 +281,72 @@ fn cwd_directive_survives_warm_load() {
     let _ = fa::remove_dir_all(&cache_dir);
 }
 
-/// #310 — a program whose library carries a native cdylib (`[library]
-/// native = "<stem>"`) must dlopen it on WARM runs too.  The registration
-/// (`pending_native_libs`) is parse-time state, and the warm load skips
-/// parsing — pre-fix it received an empty list, left the panic stubs wired,
-/// and every cached run died at the first `#native` call ("native function
-/// not loaded").  The fix persists `nlib <stem> <pkg_dir>` manifest lines and
-/// re-resolves them at warm load (cold-equal freshness semantics).
+/// The `ffi_c_library` fixture as a scratch library tree whose native part is a component
+/// (`[native] component`), its C built into a components directory the run names with
+/// `LOFT_COMPONENTS`: the directory for `--lib` and the components directory.  `None` where no
+/// `cc` builds it.
+fn ffi_c_component(tag: &str) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let root = workspace_root();
+    let libs = std::env::temp_dir().join(format!("loft_arce_{tag}_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&libs);
+    let pkg = libs.join("ffi_c_library");
+    let fixture = root.join("tests/fixtures/ffi_c_library");
+    fa::create_dir_all(pkg.join("src")).expect("the package directory");
+    fa::copy(fixture.join("loft.toml"), pkg.join("loft.toml")).expect("copy the manifest");
+    fa::copy(
+        fixture.join("src/ffi_c_library.loft"),
+        pkg.join("src/ffi_c_library.loft"),
+    )
+    .expect("copy the source");
+    let components = libs.join("components");
+    fa::create_dir_all(&components).expect("the components directory");
+    let built = loft::platform::process::harness_command("cc")
+        .args(["-shared", "-fPIC", "-O2", "-I"])
+        .arg(root.join("loft-ffi/include"))
+        .arg(fixture.join("native/ffi_c_library.c"))
+        .arg("-o")
+        .arg(components.join(loft::native_build::platform_lib_name("loft_ffi_c_library")))
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !built {
+        eprintln!("skip: no cc builds the fixture's C");
+        let _ = fa::remove_dir_all(&libs);
+        return None;
+    }
+    loft::cache::write_native_artifact_fingerprint(
+        &components,
+        loft::cache::loft_ffi_fingerprint(),
+    );
+    Some((libs, components))
+}
+
+/// #310 — a program whose library has a native library (a component, `[native] component`)
+/// must dlopen it on WARM runs too.  The registration (`pending_native_libs`) is parse-time
+/// state, and the warm load skips parsing — pre-fix it received an empty list, left the panic
+/// stubs wired, and every cached run died at the first `#native` call ("native function not
+/// loaded").  The fix persists `nlib <stem> <pkg_dir>` manifest lines and re-resolves them at
+/// warm load (cold-equal resolution).
 #[test]
 fn program_cache_warm_keeps_native_libs() {
-    let pid = std::process::id();
-    let tmp = std::env::temp_dir();
-    let script = tmp.join(format!("loft_arce_nlib_{pid}.loft"));
+    let Some((libs, components)) = ffi_c_component("nlib") else {
+        return;
+    };
+    let script = libs.join("prog.loft");
     fa::write(
         &script,
-        "use native_pkg::*;\n\nfn main() {\n    r = ext_add_one(41);\n    print(\"r={r}\\n\");\n}\n",
+        "use ffi_c_library;\n\nfn main() {\n    r = ffi_c_library::add(40, 2);\n    print(\"r={r}\\n\");\n}\n",
     )
     .expect("write script");
-    let cache_dir = tmp.join(format!("loft_arce_nlib_cache_{pid}"));
-    let _ = fa::remove_dir_all(&cache_dir);
+    let cache_dir = libs.join("cache");
 
     let run_lib = |cache: Option<&std::path::Path>| {
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
-            .arg(workspace_root().join("tests/lib"))
+            .arg(&libs)
             .arg(&script)
-            .current_dir(workspace_root())
+            .current_dir(&libs)
+            .env("LOFT_COMPONENTS", &components)
             .env_remove("LOFT_STDLIB_CACHE");
         if let Some(dir) = cache {
             cmd.env_remove("LOFT_NO_CACHE").env("XDG_CACHE_HOME", dir);
@@ -322,7 +361,7 @@ fn program_cache_warm_keeps_native_libs() {
         )
     };
 
-    // Cache-off baseline (also auto-builds the fixture cdylib if needed).
+    // Cache-off baseline.
     let (ok_off, out_off, err_off) = run_lib(None);
     assert!(ok_off, "cache-off failed: {out_off}\n{err_off}");
     assert!(out_off.contains("r=42"), "off output: {out_off}");
@@ -332,7 +371,7 @@ fn program_cache_warm_keeps_native_libs() {
     assert!(ok_cold, "cold failed: {out_cold}\n{err_cold}");
     assert!(out_cold.contains("r=42"), "cold output: {out_cold}");
 
-    // Warm must dlopen the cdylib again — pre-#310 this panicked with
+    // Warm must dlopen the library again — pre-#310 this panicked with
     // "native function not loaded".
     let (ok_warm, out_warm, err_warm) = run_lib(Some(&cache_dir));
     assert!(
@@ -341,8 +380,7 @@ fn program_cache_warm_keeps_native_libs() {
     );
     assert!(out_warm.contains("r=42"), "warm output: {out_warm}");
 
-    let _ = fa::remove_file(&script);
-    let _ = fa::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&libs);
 }
 
 /// #322 — a `--lib`-resolved dependency edit must invalidate the program

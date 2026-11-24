@@ -533,7 +533,7 @@ fn print_help() {
     println!("                                GitHub release exists + emit the index.json");
     println!("                                entry to paste into a registry PR");
     println!("  new <name> [opts]             scaffold a fresh library: loft.toml + src/ +");
-    println!("                                tests/ + README; --native adds native/ skeleton;");
+    println!("                                tests/ + README; --native adds a C part (c/);");
     println!("                                --chunk adds .github/workflows/library-ci.yml");
     println!("  yank <pkg>@<ver> --severity   author helper: draft a registry yank PR — emits");
     println!("    <tier> --advisory <id>      the typed `status` entry for index.json + the");
@@ -566,7 +566,6 @@ fn print_help() {
     );
     println!("                                a rerun reuses its parse, a dev build included;");
     println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
-    println!("  generate [path]               generate Rust stubs for #native declarations");
     println!("                                writes native/src/generated.rs in the package");
     println!("  package [path]                build a publishable <pkg>-<version>.tar.gz");
     println!(
@@ -3120,8 +3119,9 @@ fn escape_json_string(s: &str) -> String {
 ///     └── 01-smoke.loft   — single `test_smoke` exercising the stub
 /// ```
 ///
-/// With `--native`: also creates `native/Cargo.toml` + `native/src/lib.rs`
-/// + `native/build.rs` for the cdylib bindings.
+/// With `--native`: the library gets a native part in C — `c/<name>.c`, listed under
+/// `[c] shim` and bound by a `#c` declaration in the entry file, with a test calling it
+/// (PACKAGES_C_BINDING.md).  loft builds it with `cc`; no Rust crate (@PLN225).
 ///
 /// With `--chunk`: also creates `.github/workflows/library-ci.yml`
 /// using the canonical template from
@@ -3132,6 +3132,7 @@ fn escape_json_string(s: &str) -> String {
 /// Refuses if `<name>/` already exists.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
+    use std::fmt::Write as _;
     use std::io::Write as _;
 
     // The package-name rule lives in ONE place (`libscan::is_valid_package_name`)
@@ -3169,7 +3170,7 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         Ok(())
     };
 
-    // loft.toml — includes [native] declaration when --native.  The loft floor is the loft
+    // loft.toml — includes the `[c] shim` when --native.  The loft floor is the loft
     // this library is written against: a floor older than that is a claim nothing checked, and
     // the resolver hands the library to a loft it does not build on.
     let floor = env!("CARGO_PKG_VERSION");
@@ -3177,8 +3178,8 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">={floor}\"\n\
              description = \"One-line description of {name}.\"\n\n\
-             [library]\nentry = \"src/{name}.loft\"\nnative = \"loft_{name}\"\n\n\
-             [native]\ncrate = \"loft-{name}\"\n\n[dependencies]\n"
+             [library]\nentry = \"src/{name}.loft\"\n\n\
+             [c]\nshim = \"c/{name}.c\"\n\n[dependencies]\n"
         )
     } else {
         format!(
@@ -3188,8 +3189,8 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         )
     };
 
-    // src/<name>.loft — placeholder stub.
-    let src_loft = format!(
+    // src/<name>.loft — placeholder stub; with --native, a function the C part answers.
+    let mut src_loft = format!(
         "// Copyright (c) 2026\n// SPDX-License-Identifier: LGPL-3.0-or-later\n\n\
          // {name} — replace with a one-line description of the library.\n\n\
          // Returns the greeting.  Replace with the library's actual API.\n\
@@ -3197,7 +3198,7 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
     );
 
     // tests/01-smoke.loft — minimal regression guard.
-    let test_loft = format!(
+    let mut test_loft = format!(
         "// Smoke test for {name}.\n\
          use {name};\n\n\
          fn test_hello() {{\n  \
@@ -3205,6 +3206,27 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
            assert(greeting == \"hello from {name}\", \"hello() returned {{greeting ?? \\\"null\\\"}}\");\n\
          }}\n"
     );
+    // c/<name>.c — the native part, built by loft with `cc` and bound by `#c`.
+    let shim_c = format!(
+        "/* The native part of {name}: C99, built by loft with `cc` and bound by the `#c`\n\
+         \x20* declarations in src/{name}.loft.  Add a function here and a `#c` line there. */\n\
+         #include <stdint.h>\n\n\
+         int64_t {name}_answer(void) {{\n    return 42;\n}}\n"
+    );
+    if native {
+        let _ = write!(
+            src_loft,
+            "\n// Answered by the C part (c/{name}.c): a `#c` declaration names the C symbol and\n\
+             // its C signature.\n\
+             pub fn answer() -> integer;\n#c \"{name}_answer\" \"int64_t(void)\"\n"
+        );
+        let _ = write!(
+            test_loft,
+            "\nfn test_answer() {{\n  \
+               assert({name}::answer() == 42, \"answer() returned {{{name}::answer()}}\");\n\
+             }}\n"
+        );
+    }
 
     let readme = format!(
         "# {name}\n\n\
@@ -3326,21 +3348,7 @@ echo "  external lib         -> loft publish + open a registry PR."
         // Executable where the host keeps an execute bit; a no-op on Windows.
         platform::set_permission_bits(&pkg_dir.join("release.sh"), 0o755)?;
         if native {
-            let cargo_toml = format!(
-                "[package]\nname = \"loft-{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nlicense = \"LGPL-3.0-or-later\"\n\n\
-                 [lib]\ncrate-type = [\"cdylib\", \"rlib\"]\n\n\
-                 [dependencies]\nloft-ffi = \"0.1\"\n\n\
-                 [build-dependencies]\nloft-ffi-build = \"0.2\"\n"
-            );
-            let build_rs =
-                "fn main() {\n    loft_ffi_build::generate_register_from_loft(\"../src\");\n}\n";
-            let lib_rs = "// Native bindings for the loft library.\n\
-                 // Add `#[unsafe(no_mangle)] pub extern \"C\" fn n_<name>(...)` here for each\n\
-                 // function whose loft signature is annotated `#native`.\n\n\
-                 include!(concat!(env!(\"OUT_DIR\"), \"/loft_register_gen.rs\"));\n";
-            write_file("native/Cargo.toml", &cargo_toml)?;
-            write_file("native/build.rs", build_rs)?;
-            write_file("native/src/lib.rs", lib_rs)?;
+            write_file(&format!("c/{name}.c"), &shim_c)?;
         }
         if chunk {
             // Canonical CI YAML — single-package matrix; user edits when adding more.
@@ -3384,9 +3392,7 @@ echo "  external lib         -> loft publish + open a registry PR."
     println!("  README.md");
     println!("  release.sh");
     if native {
-        println!("  native/Cargo.toml");
-        println!("  native/build.rs");
-        println!("  native/src/lib.rs");
+        println!("  c/{name}.c");
     }
     if chunk {
         println!("  .github/workflows/library-ci.yml");
@@ -4024,330 +4030,6 @@ fn install_from_registry(arg: &str) {
          Trying to install: {arg}"
     );
     std::process::exit(1);
-}
-
-/// PKG.6a: Generate Rust stubs for all `#native` declarations in a package.
-///
-/// Reads the package's `.loft` entry file, finds all `#native "symbol"`
-/// declarations, and emits a Rust source file with the correct C-ABI
-/// signatures plus `todo!()` bodies.
-#[expect(clippy::too_many_lines, reason = "inherited")]
-fn generate_native_stubs(pkg_path: &std::path::Path) {
-    use loft::data::{DefType, Type};
-
-    let toml_path = pkg_path.join("loft.toml");
-    if !fa::exists(&toml_path) {
-        eprintln!("Error: no loft.toml in {}", pkg_path.display());
-        std::process::exit(1);
-    }
-    let manifest = match loft::manifest::read_manifest(&toml_path.to_string_lossy()) {
-        Some(m) => m,
-        None => {
-            eprintln!("Error: cannot read {}", toml_path.display());
-            std::process::exit(1);
-        }
-    };
-    let entry = manifest
-        .entry
-        .as_deref()
-        .map(|e| pkg_path.join(e))
-        .unwrap_or_else(|| {
-            let name = manifest.name.as_deref().unwrap_or("lib");
-            pkg_path.join(format!("src/{name}.loft"))
-        });
-    if !fa::exists(&entry) {
-        eprintln!("Error: entry file {} not found", entry.display());
-        std::process::exit(1);
-    }
-
-    // Parse just enough to read definitions.
-    let abs = file_access::plain_canonical(&entry);
-    let default_str = stdlib_default_dir().to_string_lossy().to_string();
-
-    let mut p = parser::Parser::new();
-    if let Some(src_dir) = entry.parent() {
-        p.lib_dirs.push(src_dir.to_string_lossy().to_string());
-    }
-    // Load default definitions so types are known.
-    let _ = p.parse_stdlib(&default_str);
-    p.parse(&abs.to_string_lossy(), false);
-
-    // Collect #native declarations.
-    let mut stubs: Vec<String> = Vec::new();
-    // Map struct name → (d_nr, fields) for generating field offset constants.
-    let mut struct_field_mods: std::collections::HashMap<
-        String,
-        (u32, Vec<(String, usize, Type)>),
-    > = std::collections::HashMap::new();
-    for d_nr in 0..p.data.definitions() {
-        let def = p.data.def(d_nr);
-        if def.native.is_empty() || !matches!(def.def_type, DefType::Function) {
-            continue;
-        }
-        let sym = &def.native;
-
-        let mut c_params: Vec<String> = Vec::new();
-        let mut body_lines: Vec<String> = Vec::new();
-        let mut param_names: Vec<String> = Vec::new();
-
-        for attr in &def.attributes {
-            let name = &attr.name;
-            match &attr.typedef {
-                // Post-2c round 10c: wide Type::Integer (former Type::Long) → i64.
-                Type::Integer(s) if s.is_wide() => {
-                    c_params.push(format!("{name}: i64"));
-                    param_names.push(name.clone());
-                }
-                Type::Integer(_) | Type::Character => {
-                    c_params.push(format!("{name}: i32"));
-                    param_names.push(name.clone());
-                }
-                Type::Float => {
-                    c_params.push(format!("{name}: f64"));
-                    param_names.push(name.clone());
-                }
-                Type::Single => {
-                    c_params.push(format!("{name}: f32"));
-                    param_names.push(name.clone());
-                }
-                Type::Boolean => {
-                    c_params.push(format!("{name}: bool"));
-                    param_names.push(name.clone());
-                }
-                Type::Text(_) => {
-                    c_params.push(format!("{name}_ptr: *const u8, {name}_len: usize"));
-                    body_lines.push(format!(
-                        "    let {name} = unsafe {{ loft_ffi::text({name}_ptr, {name}_len) }};"
-                    ));
-                    param_names.push(name.clone());
-                }
-                Type::Enum(_, false, _) => {
-                    // Simple enum (tag only) — passed as u8.
-                    c_params.push(format!("{name}: u8"));
-                    param_names.push(name.clone());
-                }
-                Type::Reference(_, _)
-                | Type::Vector(_, _)
-                | Type::Enum(_, true, _)
-                | Type::Sorted(_, _, _)
-                | Type::Index(_, _, _)
-                | Type::Hash(_, _, _)
-                | Type::Radix(_, _, _)
-                | Type::Trie(_, _, _) => {
-                    let type_name = p.data.display_type_name(&attr.typedef);
-                    c_params.push(format!("{name}: loft_ffi::LoftRef /* {type_name} */"));
-                    param_names.push(name.clone());
-                }
-                other => {
-                    let type_name = p.data.display_type_name(other);
-                    c_params.push(format!(
-                        "{name}: () /* {type_name} — not supported in native */"
-                    ));
-                    param_names.push(name.clone());
-                }
-            }
-        }
-
-        // Return type classification: text, ref, or scalar.
-        enum RetKind {
-            None,
-            Scalar(String),
-            Text,
-            Ref(String),
-        }
-        let ret_type_name = p.data.display_type_name(&def.returned);
-        let ret_kind = match &def.returned {
-            Type::Void | Type::Null => RetKind::None,
-            // Post-2c round 10c: wide Type::Integer (former Type::Long) → i64.
-            Type::Integer(s) if s.is_wide() => RetKind::Scalar(" -> i64".into()),
-            Type::Integer(_) | Type::Character => RetKind::Scalar(" -> i32".into()),
-            Type::Float => RetKind::Scalar(" -> f64".into()),
-            Type::Single => RetKind::Scalar(" -> f32".into()),
-            Type::Boolean => RetKind::Scalar(" -> bool".into()),
-            Type::Text(_) => RetKind::Text,
-            Type::Enum(_, false, _) => RetKind::Scalar(" -> u8".into()),
-            Type::Reference(_, _)
-            | Type::Vector(_, _)
-            | Type::Enum(_, true, _)
-            | Type::Sorted(_, _, _)
-            | Type::Index(_, _, _)
-            | Type::Hash(_, _, _)
-            | Type::Radix(_, _, _)
-            | Type::Trie(_, _, _) => {
-                RetKind::Ref(format!(" -> loft_ffi::LoftRef /* {ret_type_name} */"))
-            }
-            _ => RetKind::Scalar(format!(
-                " -> () /* {ret_type_name} — not supported in native */"
-            )),
-        };
-        let ret_ty = match &ret_kind {
-            RetKind::None => String::new(),
-            RetKind::Scalar(s) | RetKind::Ref(s) => s.clone(),
-            RetKind::Text => " -> loft_ffi::LoftStr".into(),
-        };
-        let has_return = !matches!(ret_kind, RetKind::None);
-
-        let has_text_param = def
-            .attributes
-            .iter()
-            .any(|a| matches!(a.typedef, Type::Text(_)));
-        let has_ref_param = def
-            .attributes
-            .iter()
-            .any(|a| crate::data::is_dbref(&a.typedef));
-        let has_ref_ret = crate::data::is_dbref(&def.returned);
-
-        // If any param or return is a Ref, prepend LoftStore as first C-ABI param.
-        if has_ref_param || has_ref_ret {
-            c_params.insert(0, "store: loft_ffi::LoftStore".to_string());
-        }
-
-        let needs_unsafe = has_text_param || has_ref_param || has_ref_ret;
-        let unsafe_kw = if needs_unsafe { "unsafe " } else { "" };
-
-        // Collect struct types referenced as params for field offset generation.
-        for attr in &def.attributes {
-            if let Type::Reference(d_nr, _) = &attr.typedef {
-                let struct_def = p.data.def(*d_nr);
-                if !struct_def.attributes.is_empty() {
-                    let sname = struct_def.name.to_lowercase();
-                    if !struct_field_mods.contains_key(&sname) {
-                        let mut fields = Vec::new();
-                        for (i, f) in struct_def.attributes.iter().enumerate() {
-                            fields.push((f.name.clone(), i, f.typedef.clone()));
-                        }
-                        struct_field_mods.insert(sname, (*d_nr, fields));
-                    }
-                }
-            }
-        }
-
-        // Format parameter list — wrap if longer than 90 chars.
-        let params_joined = c_params.join(", ");
-        let sig_line = format!("pub {unsafe_kw}extern \"C\" fn {sym}({params_joined}){ret_ty}");
-        let params_str = if sig_line.len() > 95 && c_params.len() > 1 {
-            format!("\n    {},\n", c_params.join(",\n    "))
-        } else {
-            params_joined
-        };
-
-        let mut stub = format!(
-            "#[unsafe(no_mangle)]\npub {unsafe_kw}extern \"C\" fn {sym}({params_str}){ret_ty} {{\n"
-        );
-        for line in &body_lines {
-            stub.push_str(line);
-            stub.push('\n');
-        }
-
-        let args = param_names.join(", ");
-        match &ret_kind {
-            RetKind::Text => {
-                stub.push_str(&format!(
-                    "    let result: String = todo!(\"implement {sym}({args})\");\n"
-                ));
-                stub.push_str("    loft_ffi::ret(result)\n");
-            }
-            RetKind::Ref(_) => {
-                stub.push_str(&format!(
-                    "    let result: loft_ffi::LoftRef = todo!(\"implement {sym}({args})\");\n"
-                ));
-                stub.push_str("    result\n");
-            }
-            _ if has_return => {
-                stub.push_str(&format!("    todo!(\"implement {sym}({args})\")\n"));
-            }
-            _ if !param_names.is_empty() => {
-                stub.push_str(&format!("    todo!(\"implement {sym}({args})\")\n"));
-            }
-            _ => {}
-        }
-        stub.push_str("}\n");
-        stubs.push(stub);
-    }
-
-    if stubs.is_empty() {
-        println!("No #native declarations found.");
-        return;
-    }
-
-    // Generate field offset modules for referenced struct types.
-    //
-    // Offsets and record size come from the SAME canonical struct schema the
-    // interpreter and native codegen consult (`Stores::position` /
-    // `Stores::size`) — never a layout re-derived here.  A separate
-    // size/offset calculation drifts from the real runtime layout (e.g. a
-    // plain `integer` field is an 8-byte i64, not 4 bytes, and loft reorders
-    // 8-byte fields ahead of 4-byte record refs for alignment), which
-    // silently corrupts every native struct read/write.  @P321c.
-    let mut field_modules = String::new();
-    for (sname, (d_nr, fields)) in &struct_field_mods {
-        let struct_tp = p.data.def(*d_nr).known_type;
-        let total_size = p.database.size(struct_tp);
-
-        field_modules.push_str(&format!("/// Field offsets for struct `{sname}`.\n"));
-        field_modules.push_str(&format!(
-            "/// Record size: {total_size} bytes ({} words).\n",
-            total_size.div_ceil(8)
-        ));
-        field_modules.push_str("#[allow(dead_code)]\n");
-        field_modules.push_str(&format!("pub mod {sname}_fields {{\n"));
-        for (fname, _, tp) in fields {
-            let offset = p.database.position(struct_tp, fname);
-            // Skip names that aren't real record fields (e.g. methods that
-            // leak into the collected attribute list) — `position` returns
-            // u16::MAX for them; emitting a `= 65535` const would be bogus.
-            if offset == u16::MAX {
-                continue;
-            }
-            let type_comment = match tp {
-                Type::Integer(_) => "integer",
-                Type::Float => "float",
-                Type::Single => "single",
-                Type::Boolean => "boolean",
-                Type::Text(_) => "text (record ref)",
-                Type::Reference(_, _) => "struct ref",
-                Type::Vector(_, _) => "vector ref",
-                _ => "other",
-            };
-            let upper = fname.to_uppercase();
-            field_modules.push_str(&format!(
-                "    pub const {upper}: u16 = {offset}; // {type_comment}\n"
-            ));
-        }
-        field_modules.push_str("}\n\n");
-    }
-
-    let mut output = String::from(
-        "// Auto-generated by `loft generate`. Fill in the todo!() bodies.\n\
-         // Functions with text parameters use loft_ffi helpers.\n\
-         // Struct field offsets are in *_fields modules.\n\n\
-         #![allow(clippy::missing_safety_doc)]\n\n",
-    );
-    if stubs.iter().any(|s| s.contains("loft_ffi")) {
-        output.push_str("// Add to Cargo.toml: loft-ffi = { path = \"../../../loft-ffi\" }\n\n");
-    }
-
-    // Emit field offset modules first.
-    output.push_str(&field_modules);
-
-    for (i, stub) in stubs.iter().enumerate() {
-        if i > 0 {
-            output.push('\n');
-        }
-        output.push_str(stub);
-    }
-
-    let out_dir = pkg_path.join("native/src");
-    if fa::exists(&out_dir) {
-        let out_file = out_dir.join("generated.rs");
-        fa::write(&out_file, &output).unwrap_or_else(|e| {
-            eprintln!("Error writing {e}");
-            std::process::exit(1);
-        });
-        println!("Wrote {} stubs to {}", stubs.len(), out_file.display());
-    } else {
-        print!("{output}");
-    }
 }
 
 /// `LOFT_NATIVE_NO_CACHE=1` — the P254 hard kill switch for every native cache layer: the
@@ -8506,14 +8188,9 @@ fn main() {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    let lib_file = loft::interp::extensions::platform_lib_name(stem);
-                    let prebuilt = format!("{pkg_dir}/native/{lib_file}");
-                    if fa::exists(std::path::Path::new(&prebuilt)) {
-                        native_lib_paths.push(prebuilt);
-                    } else if let Some(built) =
-                        loft::interp::extensions::auto_build_native(&pkg_dir, stem)
+                    if let Some(lib) = loft::interp::extensions::resolve_native_lib(&pkg_dir, stem)
                     {
-                        native_lib_paths.push(built);
+                        native_lib_paths.push(lib);
                     }
                 }
             } else if fa::is_dir(std::path::Path::new("src")) {
@@ -8531,20 +8208,6 @@ fn main() {
             if !native_requested {
                 native_mode = false;
             }
-        // @P229 G3, restored at the new location — pre-build every installed registry
-        // package's native cdylib SEQUENTIALLY, so a parallel test runner does not have
-        // many processes queueing on the one global build lock while holding its slots.
-        // Not a user-facing verb: it is a CI warm-up, and it says what it did so a run
-        // that pre-builds nothing is distinguishable from one that had nothing to do.
-        } else if a == "--prebuild-natives" {
-            #[cfg(feature = "registry")]
-            {
-                let (attempted, built) = loft::interp::extensions::prebuild_installed_natives();
-                println!("loft: pre-built {built} of {attempted} installed native package(s)");
-            }
-            #[cfg(not(feature = "registry"))]
-            println!("loft: built without the registry feature — nothing to pre-build");
-            return;
         // @F55 — package management (loft install, loft.toml, lockfile)
         } else if a == "install" {
             // Collect flags + positional in any order.
@@ -9112,14 +8775,15 @@ fn main() {
             handle_cache(&argv, &mut i);
             return;
         } else if a == "generate" {
-            // PKG.6a: `loft generate` — emit Rust stubs for #native declarations.
-            let pkg_path = if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
-                std::path::PathBuf::from(&argv[i])
-            } else {
-                std::env::current_dir().unwrap_or_default()
-            };
-            generate_native_stubs(&pkg_path);
-            return;
+            // @PLN225 — `loft generate` wrote Rust stubs for a package's `#native`
+            // declarations; a package's native part is C now, so there is nothing to generate.
+            eprintln!(
+                "loft generate: a package's native part is written in C, not Rust, so there are \
+                 no Rust stubs to generate.  List the C sources under `[c] shim = \"c/<file>.c\"` \
+                 in loft.toml and bind each function with a `#c` declaration in the package's \
+                 loft source (`loft new --native <name>` scaffolds one)."
+            );
+            std::process::exit(1);
         } else if a == "package" {
             // PKG.REG R1 (PKG_REGISTRY.md): `loft package [path]` — build a
             // gzipped tarball + print SHA-256 + size + the registry-index
@@ -12564,10 +12228,10 @@ fn add_package_paths(
                         lib_dirs.push(ps);
                     }
                 }
-                // Register native lib path for auto-build/loading.
+                // Register the native library path for loading.
                 if let Some(ref stem) = manifest.native {
                     let pkg_dir = search.to_string_lossy().to_string();
-                    if let Some(so_path) = extensions::auto_build_native(&pkg_dir, stem) {
+                    if let Some(so_path) = extensions::resolve_native_lib(&pkg_dir, stem) {
                         native_lib_paths.push(so_path);
                     }
                 }

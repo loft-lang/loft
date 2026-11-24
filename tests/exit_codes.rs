@@ -231,7 +231,8 @@ fn unresolved_native_warns_at_load_not_at_call() {
         "program body must still run; stdout: {stdout}"
     );
     assert!(
-        stderr.contains("did not load") && stderr.contains("loft_ghost_nonexistent_symbol"),
+        stderr.contains("no native library provides")
+            && stderr.contains("loft_ghost_nonexistent_symbol"),
         "expected a load-time diagnostic naming the unresolved symbol; stderr: {stderr}"
     );
 }
@@ -1674,8 +1675,8 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
 /// @C102 — the moments that belong to a developer name a missing `rustc`, while a program run
 /// stays silent (the test above): `loft --version` says which toolchain native would use, the
 /// `loft test` summary names what would let it exercise native (not `loft test --native`,
-/// which cannot help there), and `loft new --native` lists it in its next steps.  `PATH` is
-/// an empty directory, so `rustc` is not found.  The control cells run where this machine has
+/// which cannot help there); `loft new --native` scaffolds a C part and names no rustc.  `PATH`
+/// is an empty directory, so `rustc` is not found.  The control cells run where this machine has
 /// a `rustc` on its real `PATH` — each must then NOT name the missing tool, or a message that
 /// always prints would pass.
 #[test]
@@ -1739,10 +1740,11 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
         "loft test: the summary names the missing rustc, not a command that cannot help\n{tested}"
     );
 
+    // @PLN225 — `loft new --native` scaffolds a C part, which needs no rustc: no rustc line.
     let created = run(&["new", "--native", "c102lib"], &tmp, true);
     assert!(
-        created.contains(&format!("# native/ is Rust: {hint}")),
-        "loft new --native: the next steps name the missing rustc\n{created}"
+        created.contains("c/c102lib.c") && !created.contains(hint),
+        "loft new --native: a C part, and no rustc line\n{created}"
     );
     let plain = run(&["new", "c102plain"], &tmp, true);
     assert!(
@@ -1788,7 +1790,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     fa::write(
         lib.join("loft.toml"),
         "[package]\nname = \"noimpl\"\nversion = \"0.1.0\"\n\n\
-         [library]\nentry = \"src/noimpl.loft\"\nnative = \"loft_noimpl\"\n",
+         [library]\nentry = \"src/noimpl.loft\"\n",
     )
     .expect("manifest");
     fa::write(
@@ -1825,7 +1827,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
         "names the function:\n{err}"
     );
     assert!(
-        err.contains("native library 'noimpl'"),
+        err.contains("#native function(s) of 'noimpl'"),
         "names the library:\n{err}"
     );
     let (code, out, err) = run("uncalled", "  println(\"fine\");");

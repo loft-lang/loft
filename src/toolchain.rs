@@ -130,7 +130,7 @@ pub fn rustc_version() -> Option<&'static str> {
 
 /// @C102 — what a developer is told when this machine has no `rustc`.  A program run says
 /// nothing (it succeeds on the interpreter); the moments that belong to the developer say
-/// this: `loft --version`, the `loft test` summary, and `loft new --native`'s next steps.
+/// this: `loft --version` and the `loft test` summary.
 pub const NO_RUSTC: &str = "no rustc on PATH, so native builds are unavailable \
                             (install one from https://rustup.rs)";
 
