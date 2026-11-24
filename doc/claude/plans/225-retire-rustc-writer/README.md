@@ -7,10 +7,45 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, `status:active` on [loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225).
-R0's test-suite census is taken ([census.md](census.md)); R1 is done: libraries in @PLN206, the
-compiled stdlib as a C unit here.  Work continues on `tuxedo-pr2617-next`.  Each list in
-[inventory.md](inventory.md) carries the command that measures it again.
+**Finished 2026-11-24** on `tuxedo-pln225`, which reaches `main` through the join PR;
+[loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225) is closed.  loft has two
+backends, the interpreter and the C; nothing in the tree or its CI builds through `rustc` except
+loft itself.
+
+| Phase | Outcome |
+|---|---|
+| **R0** | `@C170` recorded, with its refusal and guard.  The test-suite census ([census.md](census.md)): every failure was a test's own rust leg, none a C or interpreter defect.  `revalidate-libs` passes all 56 live library releases on the interpreter and the C. |
+| **R1** | A used library runs as its hosted C unit (@PLN206), and so do the standard library's compiled functions. |
+| **R2** | `--native-rust` and `LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`; `--html`, `--native-wasm` and `--native-android` build through C (O2: no WASI clang is a refusal with the install line); `--threads` on `--html` is refused, a page runs `par` on one thread; `loft build` needs no rustup target. |
+| **R3** | A library's Rust native part is refused where it is used, naming the `[c] shim`; `loft generate` is refused and `loft new --native` scaffolds C.  Registry census: no live release needs rustc ([census.md](census.md) § Libraries). |
+| **R4** | Every test runs on the interpreter and the C; `tests/native.rs` runs its corpus through C with the interpreter's entry-point predicate (loft#1293).  65 writer-only patch receipts retired here and 47 in the language suite; 59 that also patch the interpreter or the C keep those hunks (`tests/falsified_retired_paths.txt`). |
+| **R5** | 18 of the 22 writer-only rewrites removed with no change to any program's C or bytecode over the corpus (3246 programs); R-LitHoist, R-FnRefValue, R-PushFill/record and R-Refresh stay, each with the measurement that kept it ([rewrite-audit.md](rewrite-audit.md)). |
+| **R6** | CI, scripts and the Makefile carry no rustc lane, runtime-rlib build or install, and no writer ASan job. |
+| **R7** | `src/generation/`, `codegen_runtime.rs`, `native_lib.rs`, `toolchain.rs` and the rustc build paths deleted; what the interpreter and the C shared moved out first (`coroutine_host.rs`, `host_print.rs`, `fs_ops.rs`).  The `#rust` templates STAY: they are the interpreter's operator source, not the writer's ([inventory.md](inventory.md) § The standard library).  `src/` 732 890 → 672 999 lines; the release binary 35.8 → 33.2 MB. |
+| **R8** | CLAUDE.md, the skills, the working docs and the formal chapters describe two backends; the writer's sections moved to their history companions.  O3: no diagnostic code retired — every one still has an emitting site. |
+
+**Verified at the close:** the full test suite passes (6262 tests, against the pinned language suite), and `revalidate-libs` passes every live library release on the interpreter and the C (56 releases; [census.md](census.md) § Measured at the close).
+
+**Found and fixed on the way** (each with a guard): a hosted unit's lock byte was an invalid
+`bool` on the interpreter's side (`STORE_MODEL.md`, D21b); the C did not carry the lazy natives
+without a bind, nor a `JsonValue` format; a pruned library artifact left its C behind; a sibling
+package's manifest errors stopped an unrelated program; `scripts/suite_pin.py` could not make its
+pin worktree in a linked git worktree; the IR schema check ran through the
+writer (it now compares layouts directly); an explicit `--tests file::name` filter ran nothing
+beside tests; a library run as a hosted unit reached a component (`net`) through a context of
+its own, so a program's own call to that component missed the connections the library had
+accepted (`formal/concurrency.md` `C-Boundary`; the test-integration lock now floors `web` and
+`server` at their C releases).
+
+**Follow-ups, outside this plan:** `loft targets`' surface (`index/target_surface.json`) is still
+derived from the Rust runtime's `cfg`s and wants deriving from the C; the rules whose refusal
+reasons only the writer reported say nothing now (`make reason-census`, wired on demand per
+REWRITE_REASONS.md); 16 `tests/scripts` cells are on the backlog to move into the language suite
+(`tests/scripts_unpinned.baseline`); the suite runner's `native` mode is the C's; the CI filter's
+nightly-only clause (`scripts/ci_test_filter.py`, a `mod rust_writer`) now matches no test and
+can go with its callers; 22 language-suite cells still name the writer's code in the comment
+that tells their defect; the `wasm32-unknown-unknown` cfg arms and `web_browser.rs` go with the
+target-surface follow-up.
 
 ## Goal
 
