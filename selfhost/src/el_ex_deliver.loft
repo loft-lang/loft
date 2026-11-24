@@ -264,6 +264,17 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       return ir::NdBlock { block: [qbl] };
     }
   }
+  // (A `vector<T>?` branch whose arms are the null sentinel or the local the buffer was renamed
+  // onto (`if c { null } else { e = [..]; e }`): the local's arm built in place, the body answers
+  // the buffer's `?`.)
+  if ba < 0 && !e.first_pass && result is TyOptional {
+    obl = match code { NdBlock { block } => block[0], _ => return code };
+    otl = if len(obl.operators) > 0 { el_ir::unspan(obl.operators[-1]) } else { ir::NdNull };
+    if otl is NdIf && renamed_or_null_arms(e, vars, otl) {
+      obl.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]) }];
+      return ir::NdBlock { block: [obl] };
+    }
+  }
   if ba < 0 {
     if !e.first_pass {
       el::refuse(e, "a function returning a vector whose buffer is renamed");
@@ -1879,6 +1890,30 @@ pub fn grown_tail(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node {
   }
   bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: gv }]), bl.operators[0]] };
   ir::NdBlock { block: [bl] }
+}
+
+// Is every arm of the branch `n` the null sentinel, or a block ending in the hidden parameter the
+// buffer was renamed onto?  (At least one of the latter.)
+fn renamed_or_null_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  renamed = 0;
+  for arm in branch_arms(n, []) {
+    leaf = last_value(arm);
+    match el_ir::unspan(leaf) {
+      NdVar { n: lv } => {
+        if !(vars.vars[lv].argument && hidden_param(e, vars, lv)) {
+          return false;
+        }
+        renamed += 1;
+      },
+      NdCall { def_nr, args } => {
+        if !(len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") {
+          return false;
+        }
+      },
+      _ => { return false; }
+    }
+  }
+  renamed > 0
 }
 
 // Does `d` hold a hidden collection or record parameter already — a buffer it grew or reserved?
