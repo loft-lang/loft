@@ -2243,6 +2243,49 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   r
 }
 
+// `Parser::match_subject_shape`: `<shape>/<type>[<borrows>]` — a literal, a parameter, a local,
+// a read (an `Op…`), a call; the record, enum, text, scalar, collection or tuple it types as,
+// `nullable_` for a `τ?`; and the locals its type borrows, by name.
+fn subject_shape(e: el::El, vars: el_vars::Vars, code: ir::Node, st: ir::TypeT) -> text {
+  shape = if subject_literal(code) { "literal" } else {
+    match el_ir::unspan(code) {
+      NdVar { n } => if n >= 0 && n < len(vars.vars) && vars.vars[n].argument { "argument" } else { "local" },
+      NdCall { def_nr } => if starts_with(el::def(e, def_nr).name, "Op") { "read" } else { "call" },
+      _ => "other"
+    }
+  };
+  inner = match st { TyOptional { inner: i } => i, _ => st };
+  nullable = if st is TyOptional { "nullable_" } else { "" };
+  b = el_types::base(inner);
+  kind = match b {
+    TyReference { n: _ } => "record",
+    TyEnum { is_ref } => if is_ref { "record_enum" } else { "enum" },
+    TyText { dep: _ } => "text",
+    TyTuple { elems: _ } => "tuple",
+    TyInteger { spec: _ } => "scalar",
+    TyBoolean => "scalar",
+    TyFloat => "scalar",
+    TySingle => "scalar",
+    TyCharacter => "scalar",
+    _ => if el_types::is_collection(b) { "collection" } else { "other" }
+  };
+  names: vector<text> = [];
+  for d in el_types::deps(inner) {
+    if d >= 0 && d < len(vars.vars) {
+      names += [el_vars::name_of(vars, d)];
+    }
+  }
+  "{shape}/{nullable}{kind}[{names.join(",")}]"
+}
+
+fn subject_literal(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && subject_literal(el_ir::last(block[0].operators))),
+    NdInsert { items } => len(items) > 0 && subject_literal(items[-1]!),
+    _ => false
+  }
+}
+
 fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_match");
@@ -2255,6 +2298,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   match st {
     TyRefVar { inner } => { st = inner; },
     _ => {}
+  }
+  // (`match_subject`: what the match is over, as Rust's trace prints it — compared per site.)
+  if el_trace::on() {
+    el_trace::route(e, "match_subject={subject_shape(e, vars, x.code, st)}");
   }
   // `@PLN25`: a `τ?` scalar subject matches as its base (`peel_link` starts at `base()`), its
   // null reaching the `_` arm.

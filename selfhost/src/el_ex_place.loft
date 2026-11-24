@@ -1192,6 +1192,15 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       _ => {}
     }
   }
+  // (`literal_into_place`, as Rust's trace prints it at the literal's end — the projection
+  // road is the second pass's: every reason this port builds such a literal apart is a primed
+  // collection field reading the place.)
+  if el_trace::on() && !e.first_pass {
+    lat = match e.p.nodes[rhs] { SStructLit { at: la } => la, _ => -1 };
+    if lat >= 0 {
+      el_trace::route_after_literal(e, lat, if apart { "literal_into_place=apart(decline_place:primed_reads_place)" } else { "literal_into_place=in_place(place)" });
+    }
+  }
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
   if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) {
