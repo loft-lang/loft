@@ -971,79 +971,46 @@ fn find_wasmtime() -> Option<PathBuf> {
     fa::exists(&p).then_some(p)
 }
 
-/// Run `source` on `wasm32-wasip2` under wasmtime.  Emits native Rust via the
-/// loft binary, injects a WASI-stdout `loft_host_print` shim (the codegen calls
-/// `crate::loft_host_print` on wasm32 without the `wasm` feature, but only the
-/// browser path declares that import), compiles against the prebuilt loft
-/// `wasm32-wasip2` rlib, and runs it.  Returns `(output, ok)`, or `None` when a
-/// prerequisite (wasmtime, rustc, the rlib) is missing.
+/// Run `source` as a WASI module under wasmtime: `loft --native-wasm` builds it through the C
+/// backend and clang (@PLN225 — the rustc writer's wasip2 leg is retired; what each caller
+/// checks is the target's, not the writer's).  Returns `(output, ok)`, or `None` when a
+/// prerequisite (wasmtime, the wasm32 C toolchain, the loft binary) is missing.
 fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(String, bool)> {
     let wasmtime = find_wasmtime()?;
-    which("rustc")?;
+    if !c_page_toolchain() {
+        return None;
+    }
     let root = repo_root();
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         return None;
     }
-    // Prefer the release rlib (the Makefile-built one); fall back to debug.
-    let (rlib, deps) = ["release", "debug"].iter().find_map(|prof| {
-        let r = root.join(format!("target/wasm32-wasip2/{prof}/libloft.rlib"));
-        // Where cargo put loft's dependencies: `deps/`, or one directory per unit on a cargo
-        // of the per-unit layout — where a `deps/` left by an older build is debris.
-        fa::exists(&r).then(|| {
-            let dirs = loft::cargo_layout::dependency_dirs(
-                &root.join(format!("target/wasm32-wasip2/{prof}")),
-            );
-            (r, dirs)
-        })
-    })?;
 
     let tmp = std::env::temp_dir();
     let src = tmp.join(format!("{name}.loft"));
-    let rs = tmp.join(format!("{name}_wasip2.rs"));
-    let wasm = tmp.join(format!("{name}_wasip2.wasm"));
+    let wasm = tmp.join(format!("{name}_wasi.wasm"));
     fa::write(&src, source).ok()?;
+    let _ = fa::remove_file(&wasm);
 
-    let mut emit = loft::platform::process::harness_command(&loft_bin);
-    emit.args([
-        "--native",
-        "--native-emit",
-        rs.to_str()?,
-        "--path",
-        &format!("{}/", root.display()),
-    ]);
-    for d in lib_dirs {
-        emit.arg("--lib").arg(root.join(d));
-    }
-    emit.arg(src.to_str()?);
-    if !emit.output().ok()?.status.success() {
-        return Some(("loft --native-emit failed".to_string(), false));
-    }
-
-    // wasip2 print() now lowers to std `print!` (WASI stdout) directly — the
-    // generated source is self-contained, no host-import shim needed (#268).
-    let compile = loft::platform::process::harness_command("rustc")
-        .args([
-            "--edition=2024",
-            "--target",
-            "wasm32-wasip2",
-            "--crate-type",
-            "bin",
-            "-O",
-            "--extern",
-        ])
-        .arg(format!("loft={}", rlib.display()))
-        .args(
-            deps.iter()
-                .flat_map(|d| ["-L".to_string(), format!("dependency={}", d.display())]),
-        )
-        .arg("-o")
+    let mut build = loft::platform::process::harness_command(&loft_bin);
+    build
+        .arg("--native")
+        .arg("--native-wasm")
         .arg(&wasm)
-        .arg(&rs)
-        .output()
-        .ok()?;
-    if !compile.status.success() {
-        return Some((String::from_utf8_lossy(&compile.stderr).into_owned(), false));
+        .args(["--path", &format!("{}/", root.display())]);
+    for d in lib_dirs {
+        build.arg("--lib").arg(root.join(d));
+    }
+    build.arg(src.to_str()?);
+    let built = build.output().ok()?;
+    if !built.status.success() || !fa::exists(&wasm) {
+        return Some((
+            format!(
+                "loft --native-wasm failed: {}",
+                String::from_utf8_lossy(&built.stderr)
+            ),
+            false,
+        ));
     }
     // @P334 fix (2026-05-29): preopen the dirs a test program may touch so
     // wasip2 file I/O works.  The wasip2 filesystem is sandboxed — without a
@@ -1070,7 +1037,9 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     if let Ok(cwd) = std::env::current_dir() {
         add(cwd);
     }
+    // The C module jumps through wasm exception handling (setjmp, `c_driver::build_wasm`).
     let mut cmd = loft::platform::process::harness_command(&wasmtime);
+    cmd.args(["-W", "exceptions=y"]);
     for dir in &preopens {
         cmd.arg("--dir").arg(dir);
     }
@@ -1100,7 +1069,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
 /// only for the browser host-import path. wasip2 has working WASI stdout, so its
 /// `print` branch now lowers to std `print!`. A printing program must both
 /// compile and emit to stdout under wasmtime. Self-skips when the wasm toolchain
-/// (rustc wasm32-wasip2 + wasmtime + rlib) is unavailable.
+/// (wasmtime + the wasm32 C toolchain) is unavailable.
 #[test]
 fn wasip2_print_writes_stdout_p268() {
     let src = "fn main() { print(\"p268_ok\\n\"); }\n";
@@ -1121,7 +1090,7 @@ fn wasip2_print_writes_stdout_p268() {
 /// thread" before `main` ran.  The large-stack thread is now
 /// `#[cfg(not(target_family = "wasm"))]`; wasm runs `main` directly.  A trivial
 /// program must therefore run to completion under wasmtime.  Self-skips when the
-/// wasm toolchain (rustc wasm32-wasip2 + wasmtime + rlib) is unavailable.
+/// wasm toolchain (wasmtime + the wasm32 C toolchain) is unavailable.
 #[test]
 fn native_wasm_main_runs_without_main_stack_thread_521() {
     let src = "fn main() { println(\"wasm521_ok\") }\n";
@@ -2314,6 +2283,113 @@ fn the_c_page_answers_what_the_rust_page_answers() {
     }
 }
 
+/// #623 — a page whose program calls a bare `#native` the library carries only as a Rust native
+/// part answers ONE loft-authored diagnostic naming the function and its library, never a
+/// compiler's cascade against generated code (the rustc writer's E0428 / E0610 / E0061, which
+/// cost an hour of bisecting per `--html` build).  Through the C (@PLN225) the cure is the
+/// library's C part, which the diagnostic names.
+///
+/// Reachability-scoped, matching P269 / @PLN26: a `#native` that is merely DECLARED must not
+/// reject an otherwise-valid program, and a `#native` whose symbol is one the page supplies
+/// (`graphics`' `#native "loft_gl_swap_buffers"` shape) is the working host-import path.
+#[test]
+fn issue623_routeless_native_answers_one_diagnostic_on_a_page() {
+    if !c_page_toolchain() {
+        return;
+    }
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    if !fa::exists(&loft_bin) {
+        eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join("loft_html_issue623");
+    let _ = fa::remove_dir_all(&tmp);
+    let lib_src = tmp.join("nobridge/src");
+    fa::create_dir_all(&lib_src).expect("create fixture lib dir");
+    fa::write(
+        tmp.join("nobridge/loft.toml"),
+        "[package]\nname = \"nobridge\"\nversion = \"0.1.0\"\n\n\
+         [library]\nentry = \"src/nobridge.loft\"\nnative = \"loft_nobridge\"\n",
+    )
+    .expect("write fixture loft.toml");
+    // A bare `#native` the library carries no C part for — the #623 shape.
+    fa::write(
+        lib_src.join("nobridge.loft"),
+        "pub fn hash_b64(data: text) -> text;\n#native\n",
+    )
+    .expect("write fixture lib source");
+
+    let build = |name: &str, program: &str| -> String {
+        let src = tmp.join(format!("{name}.loft"));
+        fa::write(&src, program).expect("write program");
+        let out = loft::platform::process::harness_command(&loft_bin)
+            .current_dir(&tmp)
+            .arg(&src)
+            .arg("--lib")
+            .arg(tmp.join("nobridge"))
+            .arg("--native")
+            .arg("--html")
+            .arg(tmp.join(format!("{name}.html")))
+            .output()
+            .expect("run loft --html");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    // CALLED → one diagnostic naming the function and its library, and no compiler cascade.
+    let called = build(
+        "issue623_called",
+        "use nobridge::*;\nfn main() {\n  h = hash_b64(\"abc\");\n  println(\"h={h}\");\n}\n",
+    );
+    assert!(
+        called.contains("hash_b64") && called.contains("nobridge"),
+        "the diagnostic must name the loft fn and its library:\n{called}"
+    );
+    assert!(
+        called.lines().filter(|l| l.starts_with("loft:")).count() == 1,
+        "one loft-authored diagnostic, not a cascade:\n{called}"
+    );
+    assert!(
+        !called.contains("error[E") && !called.contains("error:"),
+        "no compiler's cascade against generated code:\n{called}"
+    );
+    assert!(
+        !fa::exists(tmp.join("issue623_called.html")),
+        "a refused page writes no bundle:\n{called}"
+    );
+
+    // DECLARED BUT NOT CALLED → still builds; an unused `#native` is not an error.
+    let uncalled = build(
+        "issue623_uncalled",
+        "use nobridge::*;\nfn main() {\n  println(\"no native call here\");\n}\n",
+    );
+    assert!(
+        fa::exists(tmp.join("issue623_uncalled.html")),
+        "an uncalled #native must not reject the program:\n{uncalled}"
+    );
+
+    // A `#native` whose SYMBOL is one the page supplies (`loft_gl_key_pressed`, the same
+    // `integer -> integer` shape) is the working raw host-import path: an over-broad "a
+    // routeless native is an error" rule breaks every WebGL `--html` program.
+    fa::write(
+        lib_src.join("nobridge.loft"),
+        "pub fn scalar_op(n: integer) -> integer;\n#native \"loft_gl_key_pressed\"\n",
+    )
+    .expect("rewrite fixture lib source");
+    let distinct = build(
+        "issue623_distinct_symbol",
+        "use nobridge::*;\nfn main() {\n  n = scalar_op(2);\n  println(\"n={n}\");\n}\n",
+    );
+    assert!(
+        fa::exists(tmp.join("issue623_distinct_symbol.html")),
+        "a #native naming a host import the page supplies must build:\n{distinct}"
+    );
+}
+
 // Tests whose subject is the Rust writer (its emission, its rewrites, its page, the
 // `[native] crate` layer): they run in the nightly, never per change
 // (TESTING.md § The compiled backend a test runs on; scripts/ci_test_filter.py).
@@ -2412,231 +2488,5 @@ mod rust_writer {
                 "the relayed control frames answered {reply:?}: {all}"
             );
         }
-    }
-
-    /// #623 — a `#native` symbol with no `[wasm.bridge].routes` entry must produce
-    /// ONE loft-authored diagnostic naming the symbol, its library, and the
-    /// `loft.toml` fix — not the raw rustc cascade it used to.
-    ///
-    /// The emitted crate carried both a host-import `extern` declaration and a local
-    /// wrapper body under the same name, so the build failed with `E0428` plus a
-    /// string of `E0610`/`E0061` against generated code (rustc's "remove the extra
-    /// argument" pointing at nothing the author can act on).  Diagnosing one instance
-    /// that way cost an hour of bisecting per-native `--html` builds.
-    ///
-    /// Reachability-scoped, matching P269 / @PLN26: a routeless `#native` that is
-    /// merely DECLARED must not reject an otherwise-valid program, so this also
-    /// asserts the uncalled case still builds.
-    #[test]
-    fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
-        if !wasm32_target_installed() {
-            eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
-            return;
-        }
-        let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
-        if !fa::exists(&loft_bin) {
-            eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
-            return;
-        }
-
-        let tmp = std::env::temp_dir().join("loft_html_issue623");
-        let _ = fa::remove_dir_all(&tmp);
-        let lib_src = tmp.join("nobridge/src");
-        fa::create_dir_all(&lib_src).expect("create fixture lib dir");
-        fa::write(
-            tmp.join("nobridge/loft.toml"),
-            "[package]\nname = \"nobridge\"\nversion = \"0.1.0\"\n\n\
-             [library]\nentry = \"src/nobridge.loft\"\nnative = \"loft_nobridge\"\n",
-        )
-        .expect("write fixture loft.toml");
-        // A `#native` with NO [wasm.bridge].routes entry — the #623 shape.
-        fa::write(
-            lib_src.join("nobridge.loft"),
-            "pub fn hash_b64(data: text) -> text;\n#native\n",
-        )
-        .expect("write fixture lib source");
-
-        let build = |name: &str, program: &str| -> String {
-            let src = tmp.join(format!("{name}.loft"));
-            fa::write(&src, program).expect("write program");
-            let out = loft::platform::process::harness_command(&loft_bin)
-                .current_dir(&tmp)
-                .arg(&src)
-                .arg("--lib")
-                .arg(tmp.join("nobridge"))
-                .arg("--native")
-                .arg("--html")
-                .arg(tmp.join(format!("{name}.html")))
-                .output()
-                .expect("run loft --html");
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            )
-        };
-
-        // CALLED → the clean diagnostic, and none of the old cascade.
-        let called = build(
-            "issue623_called",
-            "use nobridge::*;\nfn main() {\n  h = hash_b64(\"abc\");\n  println(\"h={h}\");\n}\n",
-        );
-        assert!(
-            called.contains("has no [wasm.bridge].routes entry"),
-            "expected the missing-route diagnostic, got:\n{called}"
-        );
-        assert!(
-            called.contains("hash_b64") && called.contains("n_hash_b64"),
-            "diagnostic must name the loft fn and its #native symbol:\n{called}"
-        );
-        assert!(
-            called.contains("[wasm.bridge.routes]") && called.contains("loft.toml"),
-            "diagnostic must name the fix (loft.toml [wasm.bridge.routes]):\n{called}"
-        );
-        assert!(
-            !called.contains("E0428"),
-            "the duplicate-definition cascade must be gone:\n{called}"
-        );
-
-        // DECLARED BUT NOT CALLED → still builds; an unused routeless native is not
-        // an error (it emits no body, so nothing collides).
-        let uncalled = build(
-            "issue623_uncalled",
-            "use nobridge::*;\nfn main() {\n  println(\"no native call here\");\n}\n",
-        );
-        assert!(
-            !uncalled.contains("has no [wasm.bridge].routes entry"),
-            "an uncalled routeless #native must not reject the program:\n{uncalled}"
-        );
-        assert!(
-            !uncalled.contains("E0428"),
-            "uncalled routeless #native must still build cleanly:\n{uncalled}"
-        );
-        // Positive proof, so the two `!contains` above cannot pass on a build that
-        // failed for some unrelated reason.
-        assert!(
-            fa::exists(tmp.join("issue623_uncalled.html")),
-            "the uncalled case must actually emit its bundle:\n{uncalled}"
-        );
-
-        // A routeless `#native` whose SYMBOL DIFFERS from the fn name is the
-        // legitimate raw host-import path (`graphics`' `#native
-        // "loft_gl_swap_buffers"` on `gl_swap_buffers`): the declaration and the
-        // wrapper have different names, so nothing collides and the browser shell
-        // supplies the import.  Only the BARE `#native` form — symbol == the fn's own
-        // emitted `n_<name>` — is the #623 shape.  Guard it: an over-broad
-        // "routeless is an error" rule breaks every WebGL `--html` program.
-        // The symbol must be one the browser shell ACTUALLY provides.  It used to be a
-        // made-up `host_scalar_op`, which no shell defines — so the case asserted that a
-        // page importing a function nothing supplies builds fine, and such a page dies at
-        // instantiate with a LinkError (loft#668, which now rejects it at build time).
-        // `loft_gl_key_pressed` is real, and its `integer -> integer` shape is the same.
-        fa::write(
-            lib_src.join("nobridge.loft"),
-            "pub fn scalar_op(n: integer) -> integer;\n#native \"loft_gl_key_pressed\"\n",
-        )
-        .expect("rewrite fixture lib source");
-        let distinct = build(
-            "issue623_distinct_symbol",
-            "use nobridge::*;\nfn main() {\n  n = scalar_op(2);\n  println(\"n={n}\");\n}\n",
-        );
-        assert!(
-            !distinct.contains("has no [wasm.bridge].routes entry"),
-            "a #native with a DISTINCT symbol is the working host-import path and \
-             must not be rejected:\n{distinct}"
-        );
-        assert!(
-            fa::exists(tmp.join("issue623_distinct_symbol.html")),
-            "the distinct-symbol case must still emit its bundle:\n{distinct}"
-        );
-    }
-
-    /// @PLN26 phase 3 (#438) — a program that uses a `#native` (`[native] crate`) package
-    /// compiles to `--native-wasm` and runs under wasmtime: loft cross-builds the package's
-    /// native crate to `wasm32-wasip2` on demand and links its rlib (+ the host proc-macro
-    /// deps).  `native_scalar_pkg` is a minimal wasm-clean fixture, so this pins the loft
-    /// cross-build PIPELINE, isolated from any heavy crate's own wasm-cleanliness.  Skipped
-    /// when the wasip2 target or wasmtime is absent.
-    ///
-    /// Both native SHAPES, because they have different linkage requirements and only one of
-    /// them was ever covered here (loft#967).  A scalar (`native_answer() -> 42`) compiles to
-    /// a plain `extern "C"` call that asks nothing of loft's runtime.  A vector RETURN
-    /// (`native_span(4)`) makes codegen wrap the call in `loft::native_call::enter` +
-    /// `build_store` so the crate can allocate into a loft store — and those two helpers were
-    /// gated behind `native-extensions`, a feature the wasm runtime rlib cannot enable
-    /// (it buys `dlopen`).  So every store-touching native refused to build on this target
-    /// while the scalar cell stayed green and reported the pipeline as covered.
-    #[test]
-    fn pln26_phase3_native_package_runs_on_wasm() {
-        let Some(wasmtime) = which("wasmtime") else {
-            eprintln!("skip: wasmtime not installed");
-            return;
-        };
-        let have_wasip2 = loft::platform::process::harness_command("rustup")
-            .args(["target", "list", "--installed"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .is_some_and(|s| s.lines().any(|l| l == "wasm32-wasip2"));
-        if !have_wasip2 {
-            eprintln!("skip: wasm32-wasip2 target not installed");
-            return;
-        }
-        let root = repo_root();
-        let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
-        if !fa::exists(&loft_bin) {
-            eprintln!("skip: target/release/loft not built");
-            return;
-        }
-        let tmp = std::env::temp_dir().join("loft_pln26_p3");
-        let _ = fa::create_dir_all(&tmp);
-        let prog = tmp.join("native_pkg_wasm.loft");
-        // Values, not just shapes: `native_span` returns `[100, 101, …]` deterministically,
-        // so a truncated or misordered store copy is visible rather than merely "non-empty".
-        fa::write(
-            &prog,
-            "use native_scalar_pkg::*;\nfn main() {\n  answer = native_answer();\n  \
-             print(\"native-answer={answer}\\n\");\n  v = native_span(4);\n  \
-             print(\"native-span={len(v)}:{v[0]},{v[1]},{v[2]},{v[3]}\\n\");\n}\n",
-        )
-        .unwrap();
-        let wasm = tmp.join("native_pkg_wasm.wasm");
-        let _ = fa::remove_file(&wasm);
-        // Clean any prior wasm cross-build so the ON-DEMAND build path is exercised.
-        let _ = fa::remove_dir_all(
-            root.join("tests/lib/native_scalar_pkg/native/target/wasm32-wasip2"),
-        );
-
-        let build = loft::platform::process::harness_command(&loft_bin)
-            .arg("--native")
-            .arg("--native-wasm")
-            .arg(&wasm)
-            .arg("--lib")
-            .arg(root.join("tests/lib"))
-            .arg(&prog)
-            .output()
-            .expect("run loft --native-wasm");
-        assert!(
-            build.status.success() && fa::exists(&wasm),
-            "loft --native-wasm of a #native-package program failed:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-
-        let run = loft::platform::process::harness_command(&wasmtime)
-            .arg(&wasm)
-            .output()
-            .expect("run wasmtime");
-        let stdout = String::from_utf8_lossy(&run.stdout);
-        assert!(
-            stdout.contains("native-answer=42"),
-            "wasm `#native` call returned wrong/no value: stdout={stdout:?} stderr={}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-        assert!(
-            stdout.contains("native-span=4:100,101,102,103"),
-            "loft#967 — a store-allocating `#native` returned the wrong vector on wasip2: \
-             stdout={stdout:?} stderr={}",
-            String::from_utf8_lossy(&run.stderr)
-        );
     }
 }
