@@ -5806,7 +5806,16 @@ impl<T: Default> PassCell<T> {
 /// Held without naming the pass's type, as [`PassAny`] is: the core layer names no higher one
 /// (`tests/extraction_hygiene.rs`).  A clone of the `Data` starts it empty, as [`PassCell`] does.
 #[derive(Default)]
-pub struct ScopedCell(std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>);
+pub struct ScopedCell(std::sync::Arc<std::sync::Mutex<ScopedSlot>>);
+
+/// A [`ScopedCell`]'s value and the boxes of spans that ended: a span that opens again takes a
+/// spare of its type and writes its value into it, so a pass that opens one span per function
+/// allocates its box once, not once per function.
+#[derive(Default)]
+pub struct ScopedSlot {
+    open: Option<Box<dyn std::any::Any + Send>>,
+    spare: Vec<Box<dyn std::any::Any + Send>>,
+}
 
 impl Clone for ScopedCell {
     fn clone(&self) -> Self {
@@ -5824,7 +5833,7 @@ impl ScopedCell {
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        f(slot.as_mut().map(|v| {
+        f(slot.open.as_mut().map(|v| {
             v.downcast_mut::<T>()
                 .expect("a span memo is read as the one type its pass names")
         }))
@@ -5832,11 +5841,23 @@ impl ScopedCell {
 
     /// Open a span holding `value` until the answered guard drops.
     pub fn open<T: Send + 'static>(&self, value: T) -> ScopedSpan {
-        let prev = self
+        let mut slot = self
             .0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(Box::new(value));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let boxed: Box<dyn std::any::Any + Send> =
+            match slot.spare.iter().rposition(|b| b.is::<T>()) {
+                Some(at) => {
+                    let mut b = slot.spare.swap_remove(at);
+                    if let Some(v) = b.downcast_mut::<T>() {
+                        *v = value;
+                    }
+                    b
+                }
+                None => Box::new(value),
+            };
+        let prev = slot.open.replace(boxed);
+        drop(slot);
         ScopedSpan {
             cell: self.0.clone(),
             prev,
@@ -5847,17 +5868,20 @@ impl ScopedCell {
 /// The open span of a [`ScopedCell`]; dropping it restores the value the span replaced.
 #[must_use]
 pub struct ScopedSpan {
-    cell: std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>,
+    cell: std::sync::Arc<std::sync::Mutex<ScopedSlot>>,
     prev: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl Drop for ScopedSpan {
     fn drop(&mut self) {
         let prev = self.prev.take();
-        *self
+        let mut slot = self
             .cell
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(ended) = std::mem::replace(&mut slot.open, prev) {
+            slot.spare.push(ended);
+        }
     }
 }
 
