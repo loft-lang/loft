@@ -58,7 +58,7 @@
 4 scripts/gen_target_surface.py
 1 scripts/hard_cap.sh
 1 scripts/inline_audit.py
-8 scripts/interp_gap.py
+7 scripts/interp_gap.py
 3 scripts/lib_warning_scan.py
 3 scripts/lint_sweep.py
 2 scripts/migrate_plan_refs.py
