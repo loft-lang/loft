@@ -1,5 +1,5 @@
 # Baseline of every `#[ignore = "..."]` and `#[cfg_attr(<cfg>, ignore = "...")]` in
-# tests/*.rs and src/**/*.rs.  One `<file>::<test_name>\t<reason>` pair per line,
+# tests/*.rs (with the parts in tests/<binary>/) and src/**/*.rs.  One `<file>::<test_name>\t<reason>` pair per line,
 # sorted; the file is part of the key because two `src/` tests share a bare name.
 # Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on
 # any drift.  A drift typically means one of:
@@ -37,8 +37,8 @@ tests/format_width_is_bounded.rs::a_width_below_zero_pads_nothing	no `ulimit -v`
 tests/frontend_counts.rs::front_end_allocations_do_not_grow	advisory: ci.yml's `front-end allocation pins (ubuntu, advisory)` job runs it with `--ignored` (both rows); a moved count shows red there, never failing a test leg or the merge
 tests/fuzz_differential.rs::keyed_generated_agree_across_backends	F3 differential (rustc per program) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --features fuzzing --test fuzz_differential -- --ignored`
 tests/host_call.rs::measure_call_cost	a measurement, not a gate — run with --test host_call measure_call_cost -- --ignored --nocapture
-tests/issues.rs::p122_long_running_struct_loop	P122 stress, 10 min in debug: --release, or --ignored
-tests/issues.rs::regen_fill_rs	maintenance: regenerates src/fill.rs — run manually when default/*.loft changes
+tests/issues/fields_and_lambdas.rs::regen_fill_rs	maintenance: regenerates src/fill.rs — run manually when default/*.loft changes
+tests/issues/loop_returns.rs::p122_long_running_struct_loop	P122 stress, 10 min in debug: --release, or --ignored
 tests/leak_cases.rs::leak_cases_native	heavy (rustc per case) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cases leak_cases_native -- --ignored`
 tests/leak_cross_mode.rs::issue1369_nullable_rebind_absent_source_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
 tests/leak_cross_mode.rs::p297_nested_call_arg_temp_leak_free_both_backends	heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`
