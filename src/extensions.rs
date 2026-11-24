@@ -215,6 +215,7 @@ pub struct WiredNatives {
     /// panic of a missing native names it.
     pub(crate) stubs: Vec<Option<String>>,
     /// @PLN24 arc B — the `#c` binding each `#c` declaration's index calls (`c_call::register`).
+    #[cfg(feature = "native-extensions")]
     pub(crate) c_bindings: Vec<Option<std::sync::Arc<crate::c_call::CBinding>>>,
 }
 

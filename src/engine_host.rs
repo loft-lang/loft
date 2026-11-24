@@ -41,8 +41,6 @@
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
 
-#[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
 // VecDeque / keys::Str are used only in the native (non-wasm) engine-host
 // paths, so they read as unused in wasm / feature-restricted builds.
 #[allow(unused_imports)]
@@ -282,6 +280,9 @@ pub struct EngineCx {
     kernel: Option<Kernel>,
     #[cfg(not(target_arch = "wasm32"))]
     client: Option<ClientKernel>,
+    /// The browser's connector (`browser`): the WebSocket client of a page.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    browser: Option<browser::BrowserClient>,
     ctl: EngineCtl,
 }
 
@@ -2537,7 +2538,7 @@ pub mod browser {
         host_ws_ready, host_ws_recv, host_ws_send,
     };
 
-    struct BrowserClient {
+    pub(crate) struct BrowserClient {
         ws: i32,
         alive: bool,
         /// The async half of "connect blocks until upgraded": kind-0 fires
@@ -2555,12 +2556,8 @@ pub mod browser {
         last_tick_us: i64,
     }
 
-    thread_local! {
-        static CLIENT: RefCell<Option<BrowserClient>> = const { RefCell::new(None) };
-    }
-
-    fn with_client<R>(f: impl FnOnce(&mut BrowserClient) -> R) -> Option<R> {
-        CLIENT.with(|c| c.borrow_mut().as_mut().map(f))
+    fn with_client<R>(e: &mut EngineCx, f: impl FnOnce(&mut BrowserClient) -> R) -> Option<R> {
+        e.browser.as_mut().map(f)
     }
 
     /// @PLN18 08-S6 — `swap_world(w)` in the browser: register the world as
@@ -2642,7 +2639,7 @@ pub mod browser {
     /// (`cid: -1` = local origin).  False = no client kernel is booted.
     pub fn n_kernel_post(stores: &mut Stores, stack: &mut DbRef) {
         let msg = stores.get::<Str>(stack).str().to_owned();
-        let ok = with_client(|c| {
+        let ok = with_client(&mut stores.engine, |c| {
             c.events.push_back(Event {
                 cid: -1,
                 kind: 1,
@@ -2667,8 +2664,8 @@ pub mod browser {
     /// on a handshake that never comes.
     pub fn n_kernel_local(stores: &mut Stores, stack: &mut DbRef) {
         let tick_us = stores.get::<i64>(stack);
-        CLIENT.with(|c| {
-            *c.borrow_mut() = Some(BrowserClient {
+        {
+            stores.engine.browser = Some(BrowserClient {
                 ws: -1,
                 alive: true,
                 opened: true,
@@ -2687,7 +2684,7 @@ pub mod browser {
                 tick_interval_us: tick_us.max(1),
                 last_tick_us: 0,
             });
-        });
+        }
         stores.put(stack, true);
     }
 
@@ -2700,8 +2697,8 @@ pub mod browser {
         let ws = host_ws_connect(&format!("ws://{host}:{port}/ws"));
         let ok = ws >= 0;
         if ok {
-            CLIENT.with(|c| {
-                *c.borrow_mut() = Some(BrowserClient {
+            {
+                stores.engine.browser = Some(BrowserClient {
                     ws,
                     alive: true,
                     opened: false,
@@ -2720,7 +2717,7 @@ pub mod browser {
                     tick_interval_us: tick_us.max(1),
                     last_tick_us: 0,
                 });
-            });
+            }
         }
         stores.put(stack, ok);
     }
@@ -2729,86 +2726,92 @@ pub mod browser {
     /// the SAME machinery the native connector uses; fire kind-0 + flush the
     /// outbox once the socket opens, and kind-2 once it has closed.
     pub fn n_kernel_client_pump(stores: &mut Stores, stack: &mut DbRef) {
-        let n = with_client(|c| {
-            let mut added = 0i64;
-            if !c.opened && host_ws_ready(c.ws) {
-                c.opened = true;
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 0,
-                    payload: String::new(),
-                    status: 0,
-                });
-                added += 1;
-                for msg in std::mem::take(&mut c.outbox) {
-                    let _ = host_ws_send(c.ws, &msg, false);
+        let EngineCx { browser, ctl, .. } = &mut stores.engine;
+        let n = browser
+            .as_mut()
+            .map(|c| {
+                let mut added = 0i64;
+                if !c.opened && host_ws_ready(c.ws) {
+                    c.opened = true;
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 0,
+                        payload: String::new(),
+                        status: 0,
+                    });
+                    added += 1;
+                    for msg in std::mem::take(&mut c.outbox) {
+                        let _ = host_ws_send(c.ws, &msg, false);
+                    }
                 }
-            }
-            while c.alive && c.ws >= 0 && host_ws_recv(c.ws) == 1 {
-                let payload = host_ws_last_message();
-                // Keyframes ride `S:`-framed reliable frames for BOUND peers
-                // only — a browser is never bound, but parse defensively.
-                if let Some(rest) = payload.strip_prefix("S:")
-                    && let Some((seq_s, body)) = rest.split_once(':')
-                    && let Ok(seq) = seq_s.parse::<i64>()
-                {
-                    conflate_slot(&mut c.slots, seq, body);
-                    continue;
+                while c.alive && c.ws >= 0 && host_ws_recv(c.ws) == 1 {
+                    let payload = host_ws_last_message();
+                    // Keyframes ride `S:`-framed reliable frames for BOUND peers
+                    // only — a browser is never bound, but parse defensively.
+                    if let Some(rest) = payload.strip_prefix("S:")
+                        && let Some((seq_s, body)) = rest.split_once(':')
+                        && let Ok(seq) = seq_s.parse::<i64>()
+                    {
+                        conflate_slot(&ctl.sync_ids, &mut c.slots, seq, body);
+                        continue;
+                    }
+                    if is_sync_msg(&ctl.sync_ids, &payload) {
+                        conflate_ws(&ctl.sync_ids, &mut c.slots, &payload);
+                        continue;
+                    }
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 1,
+                        payload,
+                        status: 0,
+                    });
+                    added += 1;
                 }
-                if is_sync_msg(&payload) {
-                    conflate_ws(&mut c.slots, &payload);
-                    continue;
+                // The socket closed without ever opening: no server answered.  A native
+                // connect answers false there, and `run_client` says so and returns with no
+                // event and no tick.  A script must not be able to tell the two kernels
+                // apart, so this says the same line (`run_client` in
+                // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
+                // queued.
+                if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
+                    c.alive = false;
+                    crate::wasm::output_push(&format!(
+                        "engine_host: cannot connect to {}\n",
+                        c.peer
+                    ));
                 }
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 1,
-                    payload,
-                    status: 0,
-                });
-                added += 1;
-            }
-            // The socket closed without ever opening: no server answered.  A native
-            // connect answers false there, and `run_client` says so and returns with no
-            // event and no tick.  A script must not be able to tell the two kernels
-            // apart, so this says the same line (`run_client` in
-            // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
-            // queued.
-            if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
-                c.alive = false;
-                crate::wasm::output_push(&format!("engine_host: cannot connect to {}\n", c.peer));
-            }
-            // The server connection closed: what it sent before closing is queued
-            // above, the kind-2 event follows it, and `run_client` returns after this
-            // turn has delivered both — the native connector's `FrameRead::Closed`.
-            // A local kernel has no socket (`ws` is -1) and nothing to lose.
-            if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
-                c.alive = false;
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 2,
-                    payload: String::new(),
-                    status: 0,
-                });
-                added += 1;
-            }
-            added
-        })
-        .unwrap_or(0);
+                // The server connection closed: what it sent before closing is queued
+                // above, the kind-2 event follows it, and `run_client` returns after this
+                // turn has delivered both — the native connector's `FrameRead::Closed`.
+                // A local kernel has no socket (`ws` is -1) and nothing to lose.
+                if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
+                    c.alive = false;
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 2,
+                        payload: String::new(),
+                        status: 0,
+                    });
+                    added += 1;
+                }
+                added
+            })
+            .unwrap_or(0);
         stores.put(stack, n);
     }
 
     pub fn n_kernel_client_alive(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.alive).unwrap_or(false);
+        let v = with_client(&mut stores.engine, |c| c.alive).unwrap_or(false);
         stores.put(stack, v);
     }
 
     /// `client_stop()` — mirror of the native connector's exit surface.
-    pub fn n_kernel_client_stop(_stores: &mut Stores, _stack: &mut DbRef) {
-        let _ = with_client(|c| c.alive = false);
+    pub fn n_kernel_client_stop(stores: &mut Stores, _stack: &mut DbRef) {
+        let _ = with_client(&mut stores.engine, |c| c.alive = false);
     }
 
     pub fn n_kernel_client_next_event(stores: &mut Stores, stack: &mut DbRef) {
-        let got = with_client(|c| match c.events.pop_front() {
+        let got = with_client(&mut stores.engine, |c| match c.events.pop_front() {
             Some(ev) => {
                 c.last = ev;
                 true
@@ -2820,25 +2823,25 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_event_kind(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.kind).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last.kind).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     /// Status of the last event (kind-3 http completions carry it; `0` otherwise).
     pub fn n_kernel_client_event_status(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.status).unwrap_or(0);
+        let v = with_client(&mut stores.engine, |c| c.last.status).unwrap_or(0);
         stores.put(stack, v);
     }
 
     /// Origin of the last event: `0` = the server, `-1` = a local `post`.
     pub fn n_kernel_client_event_cid(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.cid).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last.cid).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
         let dest = stores.get::<DbRef>(stack);
-        let v = with_client(|c| c.last.payload.clone()).unwrap_or_default();
+        let v = with_client(&mut stores.engine, |c| c.last.payload.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
             .addr_mut::<String>(dest.rec, dest.pos)
@@ -2851,7 +2854,7 @@ pub mod browser {
     /// `run_client`'s loop takes its first turn, so a script's `on_tick` does not run
     /// ahead of its kind-0 event, and not at all when no server answered.
     pub fn n_kernel_client_tick_due(stores: &mut Stores, stack: &mut DbRef) {
-        let due = with_client(|c| {
+        let due = with_client(&mut stores.engine, |c| {
             if !c.opened {
                 return false;
             }
@@ -2881,8 +2884,8 @@ pub mod browser {
     /// UDP); sync sends still count the shared seq space (carrier symmetry).
     pub fn n_kernel_client_send(stores: &mut Stores, stack: &mut DbRef) {
         let msg = stores.get::<Str>(stack).str().to_owned();
-        let sync = is_sync_msg(&msg);
-        let ok = with_client(|c| {
+        let sync = is_sync_msg(&stores.engine.ctl.sync_ids, &msg);
+        let ok = with_client(&mut stores.engine, |c| {
             if !c.alive {
                 return false;
             }
@@ -2903,7 +2906,7 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_sync_next(stores: &mut Stores, stack: &mut DbRef) {
-        let got = with_client(|c| {
+        let got = with_client(&mut stores.engine, |c| {
             for slot in &mut c.slots {
                 if slot.dirty {
                     slot.dirty = false;
@@ -2918,13 +2921,13 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last_sync.0).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last_sync.0).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
         let dest = stores.get::<DbRef>(stack);
-        let v = with_client(|c| c.last_sync.1.clone()).unwrap_or_default();
+        let v = with_client(&mut stores.engine, |c| c.last_sync.1.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
             .addr_mut::<String>(dest.rec, dest.pos)
