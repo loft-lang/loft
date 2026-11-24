@@ -10,31 +10,25 @@ use loft::file_access as fa;
 
 extern crate loft;
 
-/// W1.9 (native): virt_fs populate, get, and clear round-trip.
-///
-/// This exercises the thread-local VIRT_FS helpers without needing WASM.
-#[cfg(feature = "wasm")]
+/// The files a page hands the module are served from memory by the parser's lexer, each by
+/// its name, and a name it was not handed reads as absent.
 #[test]
-fn virt_fs_roundtrip() {
-    use loft::wasm::{virt_fs_clear, virt_fs_get, virt_fs_populate};
-
-    virt_fs_populate(&[
+fn a_page_s_files_are_read_by_their_name() {
+    let mut parser = loft::parser::Parser::new();
+    let lexer = &mut parser.lexer;
+    lexer.add_page_files(&[
         ("main.loft".to_string(), "fn main() {}".to_string()),
         (
             "helper.loft".to_string(),
             "fn greet() -> text { \"hi\" }".to_string(),
         ),
     ]);
-
-    assert_eq!(virt_fs_get("main.loft").as_deref(), Some("fn main() {}"));
+    assert_eq!(lexer.page_file("main.loft"), Some("fn main() {}"));
     assert_eq!(
-        virt_fs_get("helper.loft").as_deref(),
+        lexer.page_file("helper.loft"),
         Some("fn greet() -> text { \"hi\" }")
     );
-    assert!(virt_fs_get("missing.loft").is_none());
-
-    virt_fs_clear();
-    assert!(virt_fs_get("main.loft").is_none());
+    assert!(lexer.page_file("missing.loft").is_none());
 }
 
 /// W1.9 (Node.js integration test): runs the full WASM bridge test suite.

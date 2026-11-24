@@ -168,10 +168,11 @@ impl WorkerTrace {
             )))]
             eprintln!("{summary}");
             #[cfg(feature = "wasm")]
-            stores
-                .par_trace
-                .borrow_mut()
-                .push_str(&format!("{summary}\n"));
+            {
+                let mut trace = stores.par_trace.borrow_mut();
+                trace.push_str(&summary);
+                trace.push('\n');
+            }
             // @PLN117 — the raw browser build (`loft --html`) has no stderr, so
             // the tracer would report into nothing.  Send it down the page's own
             // print path instead, which is what makes an in-browser `par` gate

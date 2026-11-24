@@ -280,8 +280,8 @@ fn page_files(
     std::sync::Arc::new(all_files.iter().cloned().collect())
 }
 
-/// [`Game::start`] on a game's session `slot`, handing the program the `stage`d world.
-fn start_on(slot: &mut Option<GameSession>, stage: Option<String>, files_json: &str) -> String {
+/// [`Game::start`] on a game's session `slot`, handing the program the `staged` world.
+fn start_on(slot: &mut Option<GameSession>, staged: Option<String>, files_json: &str) -> String {
     #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
     dispose(slot);
@@ -338,7 +338,7 @@ fn start_on(slot: &mut Option<GameSession>, stage: Option<String>, files_json: &
         // while its first frame runs.
         state.database.output = Some(String::new());
         state.database.page_files = Some(page_files(&all_files));
-        crate::engine_host::stage_swap(&mut state.database, stage);
+        crate::engine_host::stage_swap(&mut state.database, staged);
         let mut data = p.data;
         byte_code(&mut state, &mut data);
         crate::interp::wasm_gl::register_wgl_natives(&mut state);

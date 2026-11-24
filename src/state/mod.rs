@@ -2931,7 +2931,7 @@ impl State {
                 .allocations
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| s.live && !s.read_only)
+                .filter(|(_, s)| s.live && s.read_only == 0)
                 .map(|(i, s)| (i as u16, s.generation))
                 .collect();
             self.coroutine_frame_mut(idx).saved_store_generations = gens;
@@ -7416,7 +7416,7 @@ impl State {
     /// Interpreter-side accessor mirrored by
     /// `Stores::const_ref_at_runtime`.  The template
     /// `#rust"s.const_ref_at(@d_nr as usize)"` resolves to this method
-    /// in the bytecode interpreter context (where `s: &mut State`).  @P275.
+    /// in the bytecode interpreter context (where `s: &mut State`).
     #[must_use]
     pub fn const_ref_at(&self, d_nr: usize) -> crate::keys::DbRef {
         self.const_refs[d_nr]

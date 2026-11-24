@@ -743,9 +743,10 @@ fn relocate_imports_beside(so: &std::path::Path, probe: &std::path::Path) {
     };
     let own = crate::file_access::file_name(so).unwrap_or_default();
     for entry in crate::file_access::read_dir(dir).unwrap_or_default() {
-        let Some(name) = entry.file_name() else {
+        let Some(name) = crate::file_access::file_name(&entry) else {
             continue;
         };
+        let name = name.as_str();
         if name == own || !name.to_ascii_lowercase().ends_with(".dll") {
             continue;
         }
