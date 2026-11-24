@@ -85,6 +85,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         // borrow of the holder, nor of the block typed as it.)
         lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
+        // (The second pass's holder is typed as that pass reads the subject: a capture's read
+        // borrows `__closure` there where the first pass's placeholder borrowed its name.)
+        if !e.first_pass {
+          el_vars::set_var_type(vars, held, lhs);
+        }
         el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
         h = ir::NdVar { n: held };
         test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [h]), h, d.code);

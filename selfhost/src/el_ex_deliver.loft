@@ -103,7 +103,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // copied into it (`deliver_mid_vector_returns`: a local by `OpReplaceVector`).
       tail_store = match tail { NdBlock { block: tb } => literal_backing_store(tb[0]), _ => -1 };
       mids = bl.operators[0..len(bl.operators) - 1];
-      if tail_buf < 0 && tail_store >= 0 && row >= 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 && starts_with(el_vars::name_of(vars, tail_store), "__vdb_") {
+      // (An early exit answering a constant's view is no store the buffer can be renamed onto:
+      // the tail takes `Bind`, below.)
+      cview_exits = el_ex_copy::const_view_returns(e, mids) + el_ex_copy::const_view_deliveries(e, mids, rb);
+      if tail_buf < 0 && tail_store >= 0 && row >= 0 && cview_exits == 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 && starts_with(el_vars::name_of(vars, tail_store), "__vdb_") {
         rename_onto(e, vars, rb, tail_store);
         for op in bl.operators {
           if op#index < len(bl.operators) - 1 {
@@ -138,7 +141,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // backing below, and each early exit is copied into it first.
       rv = el_ex_copy::returned_local(vars, tail);
       bk = if rv >= 0 { el_ex_copy::literal_backing(vars, rv) } else { -1 };
-      if tail_buf < 0 && bk >= 0 && row >= 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 {
+      if tail_buf < 0 && bk >= 0 && row >= 0 && cview_exits == 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 {
         for op in bl.operators {
           if op#index < len(bl.operators) - 1 {
             bl.operators[op#index] = mid_deliver(e, vars, op, bk, row);
@@ -149,7 +152,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           return code;
         }
         code = ir::NdBlock { block: [bl] };
-      } else if tail_buf < 0 && bind_local(vars, tail) >= 0 && row >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) {
+      } else if tail_buf < 0 && bind_local(vars, tail) >= 0 && row >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) + el_ex_copy::local_vector_returns(vars, mids) + el_ex_copy::const_view_returns(e, mids) + el_ex_copy::buffer_returns(mids, rb) {
         // `RetPromotion::Bind`: a local tail keeps its own store and is copied into the buffer
         // below (`materialize_vector_return_into`); every earlier `return` delivers into the
         // buffer first (`deliver_mid_vector_returns`: a local by `OpReplaceVector`, a fresh
@@ -348,6 +351,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   local = match tail { NdVar { n } => if !vars.vars[n].argument && el_vars::tp(vars, n) is TyVector && (!e.first_pass || el_ex_copy::child_allocs(e, vars, code, n) >= 2) { n } else { -1 }, _ => -1 };
   // A vector field of a local record is copied into the buffer at the tail, as such a local is.
   field_tail = calls(e, tail, "OpGetField") && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument;
+  // A top-level vector constant's view (`{ NUMS }`, `is_const_view`): `Bind` on its anchor, the
+  // constant copied into the buffer after the tail statement (loft#2585's tail spelling).
+  cview = calls(e, tail, "OpConstRef");
+  cview_anchor = if cview { el_types::deps(bl.result[0] ?? ir::TyVoid)[0] ?? -1 } else { -1 };
+  if cview && cview_anchor >= 0 {
+    el_trace::retpromo(e, vars, cview_anchor, "Bind");
+  }
   ret = el::def(e, d).returned[0];
   // (`AsIs` over a user function forwarding a foreign store: the call's own buffer is a vector
   // of the result's element, its type made where the body ends — at its `}` — on the first pass.)
@@ -364,7 +374,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if local >= 0 {
       el_trace::retpromo(e, vars, local, "Bind");
     }
-    if (literal || local >= 0 || field_tail) && !el_types::deps(ret).contains(ba) {
+    if (literal || local >= 0 || field_tail || cview) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && el_ex_copy::returned_local(vars, tail) >= 0 {
       // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
@@ -473,7 +483,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     rename_onto(e, vars, rb, db[0]);
     buf = db[0];
     bl.result = [el_types::without_deps(el_types::base(result))];
-  } else if local >= 0 || field_tail {
+  } else if local >= 0 || field_tail || cview {
     nm = el_types::elem_name(e, elem);
     // A record element's own row; any other's content type (a narrow integer is stored at its
     // width, `byte` for `u8`, which its name does not say).
@@ -485,7 +495,9 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
     b = ir::NdVar { n: rb };
     src = if local >= 0 { ir::NdVar { n: local } } else { tail };
-    el_trace::retpromo(e, vars, local, "Bind");
+    if !cview {
+      el_trace::retpromo(e, vars, local, "Bind");
+    }
     bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, src, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
     bl.result = [own];
   } else {

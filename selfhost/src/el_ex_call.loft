@@ -32,6 +32,8 @@ use el_ex_vector;
 use el_ex_name;
 use binds;
 use el_ex_into;
+use el_ex_bind;
+use opt_length;
 
 // Does `n` read a variable whose template type names placeholder `h`?
 pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
@@ -1530,6 +1532,38 @@ pub fn collect_rebinds_owned(e: el::El, f: integer, code: ir::Node, n: integer, 
   }
 }
 
+// `Parser::constant_arg_needs_copy` (loft#1729): argument `nr` of a call to `callee` is a
+// top-level vector constant's view handed to a by-value vector parameter of a loft function that
+// may write it — asked on both passes; a callee parsed at or after the caller is assumed to write.
+fn constant_arg_needs_copy(e: el::El, callee: integer, nr: integer, arg: ir::Node, pt: ir::TypeT) -> boolean {
+  if !calls(e, el_ir::unspan(arg), "OpConstRef") || !(el_types::base(pt) is TyVector) || e.context < 0 {
+    return false;
+  }
+  cd = el::def(e, callee);
+  loft_defined = (starts_with(cd.name, "n_") || starts_with(cd.name, "t_") || cd.instance_of >= 0) && !((cd.code[0] ?? ir::NdNull) is NdNull);
+  if !loft_defined || nr >= len(cd.attributes) || cd.attributes[nr]!.value_const {
+    return false;
+  }
+  if callee >= e.context {
+    return true;
+  }
+  opt_length::param_writes(e.b, callee, opt_length::new_cache(e.b))[nr] ?? true
+}
+
+// `materialize_collection_value`: the view copied into a fresh `___blk_val_N` with a store of its
+// own (`lower_vec_copy_bind`'s `CopyOwnedField`), answered as a `Vector` block typed by the
+// temp's deps; the first pass only mints, the argument as it was.
+fn constant_arg_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node, pt: ir::TypeT) -> ir::Node {
+  param = el_types::without_deps(el_types::base(pt));
+  tmp = el_vars::create_unique(vars, "__blk_val", param);
+  el_vars::set_defined(vars, tmp);
+  b = el_ex_bind::vec_copy_bind(e, vars, tmp, ex(arg, param));
+  match b.code {
+    NdInsert { items } => el_ir::v_block(items + [ir::NdVar { n: tmp }], el_vars::tp(vars, tmp), "Vector"),
+    _ => arg
+  }
+}
+
 pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
@@ -1747,6 +1781,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
+      // loft#1729, `@FR-R-Const`: a constant's view handed to a parameter the callee may write
+      // travels as a copy (`constant_arg_needs_copy`, `materialize_collection_value`).
+      if constant_arg_needs_copy(e, d, a#index, c!, pt) {
+        conv += [constant_arg_copy(e, vars, c!, pt)];
+        continue;
+      }
       conv += [c!];
     } else if takes(e, pt, at) && !(el_convert::plain_scalar(pt) && el_convert::plain_scalar(at)) {
       conv += [arg];

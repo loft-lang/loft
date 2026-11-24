@@ -946,17 +946,65 @@ fn flat_expression(n: ir::Node) -> boolean {
 // value other than a plain scalar or a literal text — a vector, a record, a text assembled in a
 // buffer, anything that names a slot — are refused by name.
 fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integer?) {
-  if tp != null || value == null {
-    el::refuse(e, "a constant with a declared type or no value");
+  if value == null {
+    el::refuse(e, "a constant with no value");
     return;
+  }
+  // `@FR-N-Decl`: a declared type is the value's commitment (`constant_into_declared`).
+  declared: ir::TypeT? = null;
+  if tp != null {
+    declared = el_types::parse_type(e, tp!);
+    if declared == null {
+      return;
+    }
   }
   was = e.context;
   e.context = -1;
   vars = el_vars::new_vars("__const_{name}", e.file);
+  // The declared type is the initialiser's expected type, as a declared local's is: a literal
+  // is built at it (`[1, 2]` as `u8` elements).
+  if declared != null {
+    vars.expect_node = value!;
+    vars.expect = declared!;
+  }
   x = el_ex_assign::expression(e, vars, value!);
   e.context = was;
-  if el_types::is_unknown(x.tp) {
+  // Registered on the first pass whatever the value answers (Rust's `add_def` with the pass-1
+  // type as it stands, before any refusal: a refused constant still numbers as Rust's does).
+  d = constant_def(e, at, name);
+  if d < 0 {
     return;
+  }
+  if el_types::is_unknown(x.tp) {
+    // (`constant_into_declared` answers the declared type whatever the value is.)
+    if e.first_pass && declared != null {
+      el::set_returned(e, d, declared!);
+      e.b.data.definitions[d].code = [x.code];
+      return;
+    }
+    el::set_returned(e, d, x.tp);
+    if !e.first_pass {
+      el::refuse(e, "a constant whose value has no type");
+    }
+    return;
+  }
+  // A VECTOR constant is pre-built in the constant store and read through `OpConstRef` at each
+  // use (`parse_constant_value`'s constant arm): its definition holds the literal and its type.
+  // Undeclared, the literal's own type stands, deps and all (Rust's `set_returned(c_nr, tp)`).
+  ctp = if declared != null { declared! } else { x.tp };
+  if el_types::base(ctp) is TyVector && el_types::base(x.tp) is TyVector {
+    el::set_returned(e, d, ctp);
+    e.b.data.definitions[d].code = [x.code];
+    return;
+  }
+  el::set_returned(e, d, el_types::without_deps(ctp));
+  if declared != null && !el_types::is_equal(e, el_types::base(x.tp), el_types::base(declared!)) {
+    cx = el_convert::convert(e, vars, x.code, x.tp, declared!, false);
+    if cx == null {
+      el::refuse(e, "a constant whose value its declared type does not take");
+      return;
+    }
+    x = el_ex_base::Ex { code: cx!, tp: declared! };
   }
   plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
   // A value that names a slot of the scratch frame needs a temporary the use site does not have.
@@ -970,6 +1018,13 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
     el::refuse(e, "a constant of this kind: {el_ex_base::type_kind(x.tp)}");
     return;
   }
+  el::set_returned(e, d, el_types::without_deps(x.tp));
+  e.b.data.definitions[d].code = [x.code];
+}
+
+// The constant's definition (`DefType::Constant`), made on the first pass where the parser
+// stands on the `;`, found again on the second; -1 where the name is taken.
+fn constant_def(e: el::El, at: integer, name: text) -> integer {
   semi = at;
   while semi < len(e.p.src) && !(e.p.src[semi] is Semi) {
     semi += 1;
@@ -978,15 +1033,14 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
   if e.first_pass {
     if d >= 0 {
       el::refuse(e, "a constant over an existing name");
-      return;
+      return -1;
     }
     d = el::add_def(e, name, el::pos_at(e, semi), el::DT_CONSTANT);
   }
   if d < 0 || el::def(e, d).def_type != el::DT_CONSTANT {
-    return;
+    return -1;
   }
-  el::set_returned(e, d, el_types::without_deps(x.tp));
-  e.b.data.definitions[d].code = [x.code];
+  d
 }
 
 // `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
@@ -1303,6 +1357,11 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
   rt = def.returned[0] ?? ir::TyVoid;
   elem = match rt { TyVector { inner } => inner, _ => ir::TyVoid };
   if !buffered || elem is TyVoid || el_types::is_collection(elem) {
+    return false;
+  }
+  // (`extract_literal_values` folds a scalar element written by `OpSetInt` but not the four-byte
+  // `OpSetInt4` an `i32` element is pushed with: `const_vector_blocker` declines the twin.)
+  if el_ex_pattern::push_op(el_types::base(elem)) == "OpPushInt4" {
     return false;
   }
   match el_types::base(elem) {
