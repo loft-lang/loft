@@ -377,7 +377,7 @@ pub(super) fn run_scan_phase(
         // the per-statement `x` under `t` (loft#2628).
         let bases = crate::scopes::witness::view_bind_bases(orig_code, v, &function, data);
         if !bases.is_empty() {
-            let mut joined: Vec<u16> = function.tp(v).depend().to_vec();
+            let mut joined: Vec<u16> = function.tp(v).depend();
             for b in bases {
                 if !joined.contains(&b) {
                     joined.push(b);
