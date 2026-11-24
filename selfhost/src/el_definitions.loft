@@ -1419,6 +1419,13 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
     return false;
   }
   match el_types::base(elem) {
+    // (`const_elem_unsupported`: a struct enum's element — `[Ci { r: 3 }]` as a `vector<Sh>` —
+    // names records its variants' field writes do not describe.)
+    TyEnum { n: _, is_ref } => {
+      if is_ref {
+        return false;
+      }
+    },
     TyTuple { elems } => {
       for m in elems {
         b = el_types::base(m);

@@ -2653,6 +2653,10 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         return ex(ir::NdReturn { inner: buffer_chain(ocall, obuf, el::def(e, e.context).returned[0] ?? result) }, ir::TyNever);
       }
     }
+    // (…and a vector local, the tail delivery deciding where its store goes.)
+    if result is TyOptional && el_types::base(result) is TyVector && match el_ir::unspan(v.code) { NdVar { n: olv } => !vars.vars[olv].argument && el_types::base(el_vars::tp(vars, olv)) is TyVector, _ => false } {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
     // (A fresh literal from a `vector<T>?` function is returned as it is too: a trailing one is
     // the tail the delivery renames the buffer onto, as the dense result's.)
     if result is TyOptional && el_types::base(result) is TyVector && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: ob } => literal_backing_store(ob[0]) >= 0, _ => false }) {
