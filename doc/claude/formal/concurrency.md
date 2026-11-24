@@ -170,7 +170,7 @@ second thread is kept out, and a lock is the last way: [LOCKS.md](../LOCKS.md) l
 that remains, why it is needed, and what would replace it.
 
 **What each costs.**  Measured against the same program with the state in thread-locals
-(f048ff16e), arm64 macOS, the median of nine alternated runs; the numbers are in @PLN226 § Cost.
+on arm64 macOS, the median of nine alternated runs; the numbers are in @PLN226 § Cost.
 
 | Rule | Paid where | Measured |
 |---|---|---|

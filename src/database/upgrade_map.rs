@@ -208,7 +208,7 @@ fn number_range(node: &LayoutNode) -> Option<(i128, i128, bool)> {
 /// Do two layout names name one type?  Equal, or equal once every library qualifier
 /// (`assets::` in `assets::Scene`, `lib::` inside `__nullable<lib::S>`) is removed.  The
 /// qualifier only separates two libraries' same-named types in ONE program's type table — the
-/// first definer keeps the bare name (`typedef::fill_database`, @P379) — so the name a store
+/// first definer keeps the bare name (`typedef::fill_database`) — so the name a store
 /// recorded depends on what else its writer loaded: a pack written beside `mesh3d` holds
 /// `assets::Scene`, and `assets`' own hosted unit, compiled alone, names the same type `Scene`.
 /// A library qualifier starts lower-case; a type's own name (`Shape::Circle`, an
