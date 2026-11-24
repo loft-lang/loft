@@ -41,8 +41,8 @@ symptom.
 ## Two backends, one direction
 
 loft runs a program two ways. The compiled build is what ships — the C backend through `cc`,
-judged on its ship lane (PERFORMANCE.md § What is judged); the Rust writer is shelved and no
-new rewrite lands in it — so the C build is the optimisation target. The interpreter is what people use while they develop and debug; its
+judged on its ship lane (PERFORMANCE.md § What is judged) — so the C build is the optimisation
+target. The interpreter is what people use while they develop and debug; its
 job is to never be so slow that it becomes unusable — roughly, not more than a hundred times
 slower than the compiled program on the same code. So:
 
