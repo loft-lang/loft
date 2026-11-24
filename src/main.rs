@@ -367,9 +367,8 @@ fn print_help() {
     println!("                                a browser prints for a trap resolve to function");
     println!("                                names instead of bare indices (a larger page)");
     println!(
-        "  --threads | --no-threads      with --html: force the browser thread pool on or off"
+        "  --no-threads                  with --html: accepted; a page runs `par` on one thread"
     );
-    println!("                                (default: on exactly when the program uses `par`)");
     println!("  targets [<target>]            which stdlib builtins are NOT available on a target");
     println!("                                (ask before designing, not after the build fails)");
     println!(
@@ -7870,9 +7869,8 @@ fn main() {
             } else {
                 String::new()
             });
-        // @PLN117 — override the automatic choice of whether the page carries
-        // loft's browser thread pool.  By default a program that uses `par` gets
-        // it and one that doesn't stays single-threaded.
+        // @C3 — a page runs `par` on one thread: `--threads` is refused below and
+        // `--no-threads` accepted.
         } else if a == "--threads" {
             html_threads = Some(true);
         } else if a == "--no-threads" {
@@ -9127,7 +9125,7 @@ fn main() {
         #[cfg(feature = "registry")]
         loft::registry_advisories::refresh_cached_feed();
     }
-    // A page the C builds runs `par` on one thread: `--threads` is refused rather than ignored,
+    // @C3 — a page the C builds runs `par` on one thread: `--threads` is refused rather than ignored,
     // and `--no-threads` asks for what every page does.
     if html_out.is_some() && html_threads == Some(true) {
         eprintln!("loft: --html: a page runs `par` on one thread; drop --threads");

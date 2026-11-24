@@ -85,7 +85,7 @@ C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/rust_sp
 C126	code	src/parser/definitions.rs::appears in no parameter	ok	-	
 C127	code	src/parser/fit.rs; src/parser/expressions.rs	ok	-	
 C128	code	src/parser/vectors.rs::fn yield_owned_closure	ok	-	
-C129	code	src/generation/mod.rs::release_pass_probe; src/generation/ops/int_arith.rs::fn probe_form	ok	-	no refusal site: there is no syntax to opt in
+C129	code	src/c/body.rs::fn probe_operator	ok	-	no refusal site: there is no syntax to opt in
 C130	code	src/parser/store_else.rs	ok	-	
 C131	code	src/parser/objects.rs; src/parser/operators.rs	ok	-	
 C132	code	src/data.rs	ok	-	
@@ -106,7 +106,7 @@ C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs:
 C147	code	src/btree.rs; src/placement.rs::the B+tree in `crate::btree`	ok	-	
 C148	code	src/store.rs; src/database/format.rs; src/parser/objects.rs	ok	-	
 C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-	
-C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	
+C150	code	src/c/body.rs::fn hash_reserve(&mut self	ok	-	
 C151	code	src/hash.rs::pub fn records_by_slot	ok	-	
 C152	code	src/hash.rs::pub fn hash_inline	ok	-	the layouts coexist and both backends read and write them (store_persist_loft every_hash_layout_lives_beside_the_others_in_one_store); placement::HASH 3 reads 2 (layout_golden an_older_hash_token_this_build_reads_hands_the_store_over_raw)
 C153	code	scripts/crate_layers.py::SIBLINGS: list[tuple[str, str]]	ok	-	crate_layers check holds opt -> rust/lower and interp <-> rust/lower at their budgets (extraction_hygiene library_modules_keep_their_layers, with the sibling-rule selftest)

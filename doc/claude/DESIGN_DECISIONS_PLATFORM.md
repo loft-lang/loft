@@ -13,17 +13,20 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 ## C3 — WASM `par()` runs sequentially
 
-**Decision.** In the browser a program that uses `par` gets the THREADED runtime — Web Workers
-over a `SharedArrayBuffer` — and runs its bodies in parallel; `--threads` / `--no-threads`
-override the choice.  Where that runtime is not available (no COOP/COEP headers, or a build
-without the nightly toolchain its atomics std needs, which the build says) `par` runs
-sequentially with the same answer.  **Why.** Bundle size, worker start-up and COOP/COEP are costs
-paid only by a page that uses `par`, and a page without the headers still runs.
+**Decision.** A `--html` page runs `par` sequentially, on the page's one thread, with the
+answer the interpreter gives; `--threads` is refused and `--no-threads` asks for what every page
+does.  The page is built by the C backend, whose wasm build is unthreaded.  Threaded `par` in a
+browser exists only in the wasm-bindgen bundle of loft itself, over Web Workers and a
+`SharedArrayBuffer`.  **Why.** A page needs no COOP/COEP headers, no worker start-up and no
+nightly toolchain, and it computes the same value; the threaded page was the rustc writer's,
+which rebuilt std with atomics, and it left with the writer (@PLN225).
 
-**Revisit when.** The threaded runtime no longer needs a nightly toolchain to build.  Decided
-2026-04, changed by @PLN117 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
-**Holds at:** `@C3` — `tests/wasm/html-thread-proof.sh`, `tests/wasm/par-ui-responsive.sh` (the
-`browser-threads` workflow).
+**Revisit when.** The C backend's wasm build gains threads (wasi-threads or Web Workers over
+shared memory) — then a page that uses `par` can take them again.  Decided 2026-04, changed by
+@PLN117 and by @PLN225 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Holds at:** `@C3` — the `--threads` refusal in `src/main.rs`; `tests/wasm/html-thread-proof.sh`
+(a page that uses `par` computes the interpreter's value, with and without isolation);
+`tests/wasm/par-ui-responsive.sh` (the bundle's threads; the `browser-threads` workflow).
 **Catalogue:** @F33 (par), @F54 (WASM/browser target).
 
 ## C70 — No per-library IR snapshot / cache
