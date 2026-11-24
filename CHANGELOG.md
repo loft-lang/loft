@@ -22,6 +22,16 @@ only be cross-built and never run before it shipped, and loft ships only what it
 On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
 the last release with an Intel Mac bundle.
 
+**One compiled backend: C.**  `--native` builds through a C compiler, and so do `--html`,
+`--native-wasm`, `--native-android` and the libraries a program uses; the Rust code generator is
+gone, and compiling a loft program needs no Rust toolchain.  `--native-rust` and
+`LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`.  The second line of `loft --version`
+and the `loft test` summary name the C compiler a native build uses, or say there is none.  A page
+built with `--html` runs `par` on one thread, so `--threads` is refused there (`--no-threads` asks
+for what every page does).  `loft introspect --show-rust` and `--rust-out` and the REPL's `:rust`
+are gone: `--native-emit <file.c>` writes the C a program compiles to.  `loft cache warm` no longer
+takes `--runtime` or `--no-runtime`.
+
 ### May need a change in your code
 
 **A library's native part is C.**  A package whose `loft.toml` declares a native library of its
