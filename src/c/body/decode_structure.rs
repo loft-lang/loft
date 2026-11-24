@@ -410,55 +410,55 @@ impl FnWriter<'_> {
     }
 
     fn ps_shape_return(&mut self, prod: &Producer, bl: &Block, ind: usize) -> Result<(), String> {
-        let r = ds::parse_return(self.cx.data, prod, bl)
+        let form = ds::parse_return(self.cx.data, prod, bl)
             .ok_or("decode structure: a return the plan cannot read")?;
         let id = self.cx.ps_shape_t(prod);
-        let s = self.temp(CType::Tuple(id));
-        let (x0, x1) = match r.slot {
+        let shape = self.temp(CType::Tuple(id));
+        let (x0, x1) = match form.slot {
             Slot::None => ("INT64_C(0)".to_string(), "INT64_C(0)".to_string()),
-            Slot::Num(v) => {
-                let e = self.expr(v, ind)?;
-                let x = match e.kind {
-                    K::Bool | K::Cond => format!("(int64_t) {}", super::as_bool(e)?),
-                    _ => as_shape(self.cx, e, CType::Int)?,
+            Slot::Num(val) => {
+                let num = self.expr(val, ind)?;
+                let word = match num.kind {
+                    K::Bool | K::Cond => format!("(int64_t) {}", super::as_bool(num)?),
+                    _ => as_shape(self.cx, num, CType::Int)?,
                 };
-                (x, "INT64_C(0)".to_string())
+                (word, "INT64_C(0)".to_string())
             }
             Slot::Text(guard, lo, hi) => {
-                let g = self.expr(guard, ind)?;
-                let g = as_cond(g)?;
-                let (a, b) = (self.temp(CType::Int), self.temp(CType::Int));
-                self.line(ind, &format!("if ({g}) {{"));
+                let test = self.expr(guard, ind)?;
+                let test = as_cond(test)?;
+                let (lo_t, hi_t) = (self.temp(CType::Int), self.temp(CType::Int));
+                self.line(ind, &format!("if ({test}) {{"));
                 let lo = self.expr(lo, ind + 1)?;
                 let lo = as_shape(self.cx, lo, CType::Int)?;
                 let hi = self.expr(hi, ind + 1)?;
                 let hi = as_shape(self.cx, hi, CType::Int)?;
-                self.line(ind + 1, &format!("{a} = {lo};"));
-                self.line(ind + 1, &format!("{b} = {hi};"));
+                self.line(ind + 1, &format!("{lo_t} = {lo};"));
+                self.line(ind + 1, &format!("{hi_t} = {hi};"));
                 self.line(ind, "} else {");
-                self.line(ind + 1, &format!("{a} = INT64_MIN;"));
-                self.line(ind + 1, &format!("{b} = 0;"));
+                self.line(ind + 1, &format!("{lo_t} = INT64_MIN;"));
+                self.line(ind + 1, &format!("{hi_t} = 0;"));
                 self.line(ind, "}");
-                (a, b)
+                (lo_t, hi_t)
             }
             Slot::Built => ("INT64_MIN".to_string(), "INT64_C(0)".to_string()),
         };
-        let mut members = vec![format!("{}", r.tag), x0, x1];
+        let mut members = vec![format!("{}", form.tag), x0, x1];
         for sc in &prod.scalars {
-            match r.scalars.iter().find(|x| x.0 == sc.off) {
-                Some((_, v)) => {
-                    let e = self.expr(v, ind)?;
-                    members.push(as_shape(self.cx, e, param_ctype(sc.rust))?);
+            match form.scalars.iter().find(|x| x.0 == sc.off) {
+                Some((_, val)) => {
+                    let field = self.expr(val, ind)?;
+                    members.push(as_shape(self.cx, field, param_ctype(sc.rust))?);
                 }
                 None => members.push("0".into()),
             }
         }
         self.line(
             ind,
-            &format!("{s} = (loft_tup{id}) {{ {} }};", members.join(", ")),
+            &format!("{shape} = (loft_tup{id}) {{ {} }};", members.join(", ")),
         );
         self.epilogue(ind);
-        self.line(ind, &format!("return {s};"));
+        self.line(ind, &format!("return {shape};"));
         Ok(())
     }
 
@@ -986,43 +986,7 @@ impl FnWriter<'_> {
         let text = std::mem::replace(&mut self.body, saved_body);
         self.pending = saved_pending;
         r?;
-        // What the closure copies in and back: every local, parameter, temporary and
-        // declaration of the enclosing body it names, and the frame this body was handed.
-        let names = super::parallel::identifiers(&text);
-        let mut copies = Vec::new();
-        for v in 0..self.shapes.len() {
-            let v16 = v as u16;
-            let name = var_name(self.vars.name(v16), v16);
-            if !names.contains(name.as_str()) || v16 == walk.elem {
-                continue;
-            }
-            if self.params[v] {
-                let decl = self
-                    .param_decls
-                    .get(&v16)
-                    .cloned()
-                    .ok_or_else(|| format!("a walk reads parameter {}", self.vars.name(v16)))?;
-                copies.push((name, Some(decl)));
-            } else {
-                copies.push((name, None));
-            }
-        }
-        for (t, _) in &self.temps[..temps_before] {
-            if names.contains(t.as_str()) {
-                copies.push((t.clone(), None));
-            }
-        }
-        for d in &self.decls[..decls_before] {
-            if let Some(n) = super::parallel::declared_name(d)
-                && names.contains(n)
-                && !copies.iter().any(|(c, _)| c == n)
-            {
-                copies.push((n.to_string(), None));
-            }
-        }
-        if names.contains("loft_psb") {
-            copies.push(("loft_psb".into(), Some("loft_ref loft_psb".into())));
-        }
+        let copies = self.ps_closure_copies(&text, walk.elem, temps_before, decls_before)?;
         let id = self.ps.as_ref().map_or(0, |p| p.closures.len());
         let name = format!("{}__psc{id}", crate::c::c_name(self.cx.data, self.d));
         let pv = if copies.is_empty() {
@@ -1050,13 +1014,7 @@ impl FnWriter<'_> {
             &format!("{o} = {owner}; /* @FR-R-DecodeView structure walk */"),
         );
         let ret = cons.returns.map(|r| self.cx.ps_rep_ctype(prod, r));
-        let answer = match ret {
-            Some(c) => self.temp(c),
-            None => {
-                let t = self.temp(CType::Int);
-                t
-            }
-        };
+        let answer = self.temp(ret.unwrap_or(CType::Int));
         let frame = self.ps_frame(prod, Some(cons));
         let mut call = format!("{}(cx, {frame}", self.cx.ps_name(pd, &format!("__psw{k}")));
         for i in 0..prod.params.len() {
@@ -1076,6 +1034,56 @@ impl FnWriter<'_> {
         self.line(ind + 1, "}");
         self.line(ind, "}");
         Ok(())
+    }
+
+    /// What a walk's closure copies in and back: every local, parameter, temporary and
+    /// declaration of the enclosing body its `text` names but the element `elem`, and the
+    /// frame this body was handed.
+    fn ps_closure_copies(
+        &self,
+        text: &str,
+        elem: u16,
+        temps_before: usize,
+        decls_before: usize,
+    ) -> Result<Vec<(String, Option<String>)>, String> {
+        let skip = var_name(self.vars.name(elem), elem);
+        let names = super::parallel::identifiers(text);
+        let mut copies = Vec::new();
+        for v in 0..self.shapes.len() {
+            let v16 = v as u16;
+            let name = var_name(self.vars.name(v16), v16);
+            if !names.contains(name.as_str()) || v16 == elem {
+                continue;
+            }
+            if self.params[v] {
+                let decl = self
+                    .param_decls
+                    .get(&v16)
+                    .cloned()
+                    .ok_or_else(|| format!("a walk reads parameter {}", self.vars.name(v16)))?;
+                copies.push((name, Some(decl)));
+            } else {
+                copies.push((name, None));
+            }
+        }
+        for (t, _) in &self.temps[..temps_before] {
+            if names.contains(t.as_str()) {
+                copies.push((t.clone(), None));
+            }
+        }
+        for d in &self.decls[..decls_before] {
+            if let Some(n) = super::parallel::declared_name(d)
+                && names.contains(n)
+                && n != skip
+                && !copies.iter().any(|(c, _)| c == n)
+            {
+                copies.push((n.to_string(), None));
+            }
+        }
+        if names.contains("loft_psb") {
+            copies.push(("loft_psb".into(), Some("loft_ref loft_psb".into())));
+        }
+        Ok(copies)
     }
 
     /// The walks' closures, each declaring what the enclosing function declares
@@ -1153,7 +1161,7 @@ pub(crate) fn ps_functions(cx: &Cx) -> Result<(String, String), String> {
             let _ = writeln!(protos, "{sig};");
             let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
         }
-        let (sig, body) = ps_slow_text(cx, pd, &plan.producers[&pd])?;
+        let (sig, body) = ps_slow_text(cx, pd, &plan.producers[&pd]);
         let _ = writeln!(protos, "{sig};");
         let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
     }
@@ -1267,7 +1275,7 @@ fn ps_function(cx: &Cx, d: u32, mode: PsMode) -> Result<(String, String), String
 
 /// `P__pst(cx, B, position…, off)`: the text at `off` of the value the plain decoder builds at
 /// the position — the answer for a text field only the built value holds.
-fn ps_slow_text(cx: &Cx, pd: u32, prod: &Producer) -> Result<(String, String), String> {
+fn ps_slow_text(cx: &Cx, pd: u32, prod: &Producer) -> (String, String) {
     let def = cx.data.def(pd);
     let vars = def.variables();
     let mut params = vec!["loft_cx *cx".to_string(), "loft_ref b".to_string()];
@@ -1298,7 +1306,7 @@ fn ps_slow_text(cx: &Cx, pd: u32, prod: &Producer) -> Result<(String, String), S
         crate::c::c_name(cx.data, pd),
         call.join(", ")
     );
-    Ok((sig, body))
+    (sig, body)
 }
 
 /// A positional root's variable shapes: each position local the struct it is held in.

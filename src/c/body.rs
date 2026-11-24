@@ -1344,14 +1344,9 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
         self.cold_finish(&out)?;
-        // The arms' functions land only with the body that calls them: a body the writer
-        // declines is written again, and its arms with it.
-        if let Some((decls, bodies)) = arms {
-            self.cx.gen_decls.borrow_mut().push_str(&decls);
-            self.cx.gen_bodies.borrow_mut().push_str(&bodies);
-        }
-        // A walk's closures land with the body that calls them, as the arms do.
-        if let Some((decls, bodies)) = closures {
+        // The arms' functions, and a walk's closures, land only with the body that calls them:
+        // a body the writer declines is written again, and its arms with it.
+        for (decls, bodies) in arms.into_iter().chain(closures) {
             self.cx.gen_decls.borrow_mut().push_str(&decls);
             self.cx.gen_bodies.borrow_mut().push_str(&bodies);
         }

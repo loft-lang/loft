@@ -5459,6 +5459,10 @@ pub(crate) fn framed_plain(
     framed(cx, d, name, params, ret, body, "static", None)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one wrapper: the function's name, signature and body, its storage, and the frame a decode root names"
+)]
 fn framed(
     cx: &Cx,
     d: u32,
