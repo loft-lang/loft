@@ -375,6 +375,43 @@ static uint32_t loft_h_slot_value(loft_cx *cx, loft_store_t *s, uint32_t claim, 
     return rec.rec | LOFT_H_SLOT_RECORD;
 }
 
+/* `@FR-Col-Layouts` — the layout a table made or rebuilt now takes is the writing build's
+ * policy, read once per context: `LOFT_NO_HASH_TAG` untagged 4-byte slots (hash::hash_tag),
+ * which implies `LOFT_NO_HASH_INLINE`, an owning table's entries in its arena
+ * (hash::hash_inline).  A reader reads every layout whatever the policy. */
+static void loft_h_policy(loft_cx *cx) {
+    if (cx->h_policy_read) return;
+    cx->h_policy_read = 1;
+    cx->h_untagged = getenv("LOFT_NO_HASH_TAG") != 0;
+    cx->h_no_inline = cx->h_untagged || getenv("LOFT_NO_HASH_INLINE") != 0;
+    cx->h_trace = getenv("LOFT_TRACE_HASH_LAYOUT") != 0;
+}
+
+/* hash::new_slot_bytes: the slot width a table made or rebuilt now takes. */
+static uint32_t loft_h_new_slot_bytes(loft_cx *cx) {
+    loft_h_policy(cx);
+    return cx->h_untagged ? LOFT_H_SLOT_BYTES : 8;
+}
+
+/* hash::trace_layout: `LOFT_TRACE_HASH_LAYOUT=1` names each table made, grown or demoted, its
+ * layout before and after, and the place that holds it. */
+static void loft_h_layout_name(loft_cx *cx, uint32_t f, char *out, size_t cap) {
+    const char *kind = (f & LOFT_H_INLINE) ? "inline" : (f & LOFT_H_TAGGED) ? "tagged" : "plain";
+    snprintf(out, cap, "%s%s", kind, (f & LOFT_H_STRIDE_MASK) == 0 ? " borrowing" : "");
+}
+
+static void loft_h_trace_layout(loft_cx *cx, const char *event, loft_ref c, int has_from, uint32_t from, uint32_t now) {
+    loft_h_policy(cx);
+    if (!cx->h_trace) return;
+    char was[32] = "", is[32];
+    if (has_from) {
+        loft_h_layout_name(cx, from, was, sizeof was - 4);
+        strcat(was, " -> ");
+    }
+    loft_h_layout_name(cx, now, is, sizeof is);
+    fprintf(stderr, "hash layout: %s %s%s at %u:%u+%u\n", event, was, is, (unsigned) c.store_nr, (unsigned) c.rec, (unsigned) c.pos);
+}
+
 static uint32_t loft_h_arena_table(loft_cx *cx, loft_store_t *s, uint32_t sb, uint32_t stride) {
     uint32_t claim = loft_st_claim(cx, s, LOFT_H_RESERVED + 16 * sb / 8);
     loft_zero_fill(cx, s, claim);
@@ -414,9 +451,11 @@ static uint32_t loft_h_ensure_table(loft_cx *cx, loft_ref c, uint32_t stride) {
     loft_store_t *s = loft_store_of(cx, c);
     uint32_t existing = loft_collection_rec(cx, s, c.rec, c.pos);
     if (existing != 0) return existing;
-    uint32_t claim = stride != 0 ? loft_h_inline_create(cx, s, 16, stride, c.rec) : loft_h_arena_table(cx, s, 8, stride);
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint32_t claim = stride != 0 && !cx->h_no_inline ? loft_h_inline_create(cx, s, 16, stride, c.rec) : loft_h_arena_table(cx, s, sb, stride);
     loft_h_write_seed(cx, s, claim, loft_fresh_seed(cx));
     loft_set_u32(cx, s, c.rec, c.pos, claim);
+    loft_h_trace_layout(cx, "made", c, 0, 0, loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD));
     return claim;
 }
 
@@ -443,7 +482,10 @@ static void loft_h_install_table(loft_cx *cx, loft_ref c, uint32_t old_claim, ui
     /* The place names another table from here (`@FR-R-TableHandle`). */
     loft_h_reshaped(cx, s);
     loft_set_u32(cx, s, c.rec, c.pos, new_claim);
-    if (old_claim != 0) loft_st_delete(cx, s, old_claim);
+    if (old_claim != 0) {
+        loft_h_trace_layout(cx, "grown", c, 1, loft_u32(cx, s, old_claim, LOFT_H_STRIDE_FLD), loft_u32(cx, s, new_claim, LOFT_H_STRIDE_FLD));
+        loft_st_delete(cx, s, old_claim);
+    }
 }
 
 /* hash::hash_free_pos: the first empty bucket from the entry's home, and its tag. */
@@ -503,11 +545,13 @@ static uint32_t loft_h_grow_if_full(loft_cx *cx, loft_ref c, uint32_t claim, uin
     loft_store_t *s = loft_store_of(cx, c);
     uint32_t count = loft_h_hdr(cx, s, claim).count;
     if (!loft_h_is_full(cx, length, count)) return 0;
-    uint64_t want = loft_h_room_for_buckets(cx, (uint64_t) count * 2, 8);
+    /* An untagged table is rebuilt tagged unless the policy writes untagged (`(Col-Tag)`). */
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint64_t want = loft_h_room_for_buckets(cx, (uint64_t) count * 2, sb);
     if (want > UINT32_MAX) return 0;
     uint32_t grown = loft_st_claim(cx, s, (uint32_t) want);
     loft_zero_fill(cx, s, grown);
-    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, sb == 8 ? LOFT_H_TAGGED : 0);
     loft_h_rehash_into(cx, c, claim, grown, keys, nk);
     loft_h_install_table(cx, c, claim, grown);
     return grown;
@@ -588,9 +632,10 @@ static void loft_h_inline_demote(loft_cx *cx, loft_ref c, uint32_t claim, const 
     loft_hhdr h = loft_h_hdr(cx, s, claim);
     uint32_t owner = loft_u32(cx, s, claim, LOFT_AR_OWNER_FLD);
     uint64_t seed = loft_h_read_seed(cx, s, claim);
-    uint32_t table = loft_h_arena_table(cx, s, 8, h.stride);
+    uint32_t table = loft_h_arena_table(cx, s, loft_h_new_slot_bytes(cx), h.stride);
     loft_h_write_seed(cx, s, table, seed);
     loft_set_u32(cx, s, c.rec, c.pos, table);
+    loft_h_trace_layout(cx, "demoted", c, 1, loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD), loft_u32(cx, s, table, LOFT_H_STRIDE_FLD));
     uint32_t e0 = loft_h_ent0(cx, h.count);
     uint8_t *bytes = (uint8_t *) malloc(h.stride ? h.stride : 1);
     if (!bytes) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -732,7 +777,8 @@ static uint32_t loft_h_replace_at(loft_cx *cx, loft_ref c, uint32_t bucket, uint
 static void loft_h_reserve(loft_cx *cx, loft_ref c, int64_t count, uint32_t stride, const loft_key *keys, int nk) {
     if (count < 0) return;
     uint64_t need = (loft_h_words_for(cx, (uint64_t) count) - LOFT_H_RESERVED) * 2;
-    uint64_t words = loft_h_room_for_buckets(cx, need, 8);
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint64_t words = loft_h_room_for_buckets(cx, need, sb);
     if (words > UINT32_MAX) return;
     loft_store_t *s = loft_store_of(cx, c);
     uint32_t claim = loft_h_ensure_table(cx, c, stride);
@@ -744,7 +790,7 @@ static void loft_h_reserve(loft_cx *cx, loft_ref c, int64_t count, uint32_t stri
     if (loft_h_hdr(cx, s, claim).count >= target) return;
     uint32_t grown = loft_st_claim(cx, s, (uint32_t) words);
     loft_zero_fill(cx, s, grown);
-    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, sb == 8 ? LOFT_H_TAGGED : 0);
     loft_h_rehash_into(cx, c, claim, grown, keys, nk);
     loft_h_install_table(cx, c, claim, grown);
 }
