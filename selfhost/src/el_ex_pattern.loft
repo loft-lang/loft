@@ -2584,6 +2584,28 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
   }
   if el_types::is_unknown(in_t) {
+    // `Data::vector_def` of an element the first pass cannot type yet — a literal of a struct
+    // declared BELOW it (any other unknown first item is this port's own, which Rust types):
+    // `vector<unknown>` is the library's `vector`, and `main_vector<unknown>` is made at the
+    // literal's `]` — numbered there on both sides though the literal is refused.
+    ut = match e.p.nodes[n] { SVecLit { at } => at, _ => -1 };
+    below = ut >= 0 && len(items) > 0 && match e.p.nodes[items[0]] {
+      SStructLit { name: bn } => {
+        bd = el::def_nr(e, bn);
+        lp = el::pos_at(e, ut);
+        // (An unnamed `{…}` is typed by its place, which Rust knows.)
+        bn != "" && (bd < 0 || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
+      },
+      _ => false
+    };
+    if e.first_pass && below && el::def_nr(e, "main_vector<unknown>") < 0 {
+      if ut >= 0 {
+        um = el::add_def(e, "main_vector<unknown>", el::pos_at(e, closing_bracket(e, ut)), el::DT_STRUCT);
+        e.b.data.definitions[um].source = 0;
+        e.b.data.definitions[um].returned = [ir::TyReference { n: um, dep: [] }];
+        e.b.data.definitions[um].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
+      }
+    }
     return refused_build();
   }
   // `parse_item`: each later item is converted to the element the first set

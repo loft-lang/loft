@@ -293,6 +293,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       // four-byte number it is stored as.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
       TyFunction { args: _ } => el::source_nr(e, 0, "i32"),
+      TyIterator { step: _ } => el::source_nr(e, 0, "iterator"),
       _ => el::source_nr(e, 0, nm)
     };
   }
@@ -453,6 +454,11 @@ pub fn lay_out_late(e: el::El, d: integer) {
 
 fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
+  // `main_vector<unknown>` — a first-pass literal's wrapper whose element was not typed yet — is
+  // never laid out: its field's content has no definition (`fill_database` skips it).
+  if def.name == "main_vector<unknown>" {
+    return;
+  }
   // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
   // a record of itself) is registered under a name no program type can take.
   own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
