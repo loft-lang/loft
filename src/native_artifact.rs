@@ -496,8 +496,10 @@ pub(crate) fn prune_artifacts(dir: &std::path::Path, family: &str) {
             continue;
         };
         let _ = crate::file_access::remove_file(&so);
-        let _ = crate::file_access::remove_file(dir.join(format!("{stem}.rs")));
-        let _ = crate::file_access::remove_file(dir.join(format!("{stem}.args")));
+        // The unit's C goes with it; `.rs` and `.args` are what older builds left beside one.
+        for companion in ["c", "rs", "args"] {
+            let _ = crate::file_access::remove_file(dir.join(format!("{stem}.{companion}")));
+        }
     }
 }
 

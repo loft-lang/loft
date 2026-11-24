@@ -1489,16 +1489,19 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
 
 /// loft#715's tail — a package's `native-auto/` stays BOUNDED.
 ///
-/// The artifact name carries the consumer's type-layout fingerprint, so a new file
-/// appears per distinct consumer context, and nothing collected the old ones.
+/// A new artifact appears per distinct KEY, and nothing else collects the old ones.
 /// Measured before this guard existed: `tests/lib/typeshift/native-auto` held 532
 /// artifacts and 9.1 GB, growing ~28 MB per suite run, and the tree carried 25 GB
 /// of it.  Disk, not correctness — which is exactly why nobody looked.
 ///
-/// Builds more distinct contexts than the keep window and requires the directory to
-/// stop growing.  The count is what carries this: a fix that pruned nothing would
-/// still leave every program RUNNING, so no behavioural assertion can see it.
-// @speed 12.8
+/// A hosted C unit (`@PLN206`) runs in any program, so its key is the loft that built it,
+/// its build switches and the versions of the packages it carries — no longer the
+/// consumer's type layout.  What accumulates now is one artifact per loft build, which one
+/// test process cannot mint, so the directory is SEEDED with more stale artifacts of the
+/// family than the keep window, each older than the next, and one real run builds its own
+/// artifact on top.  The count is what carries this: a fix that pruned nothing would still
+/// leave every program RUNNING, so no behavioural assertion can see it.
+// @speed 1.1
 #[test]
 fn a_packages_artifact_directory_stays_bounded() {
     if loft::platform::process::harness_command("cc")
@@ -1515,100 +1518,117 @@ fn a_packages_artifact_directory_stays_bounded() {
     fa::create_dir_all(&tmp).unwrap();
     // A private copy, for the same reason the two tests above take one: this
     // COUNTS `native-auto/`, so it must own it.
-    let lib = private_lib(&tmp, &["mathnative", "typeshift"]);
+    let lib = private_lib(&tmp, &["mathnative"]);
     let native_auto = lib.join("mathnative/native-auto");
     fa::create_dir_all(&native_auto).unwrap();
+    let family = loft::opt::native_key::auto_cdylib_stem(&lib.join("mathnative").to_string_lossy());
+    let day = std::time::Duration::from_secs(86_400);
+    let long_ago = std::time::SystemTime::now() - 100 * day;
 
     // loft#831, residual half — a stand-in for the `[c] shim` cdylib a package builds
-    // into this same directory. It is seeded HERE, before the loop, because the sweep
-    // orders by mtime and a shim is content-keyed and built exactly ONCE: it is
-    // permanently the oldest file, and therefore the first thing an age-ordered sweep
-    // takes. Deleting an auto-native artifact costs a rebuild; deleting the shim
-    // deletes the only definition of the package's `#c` symbols, and the next run dies
-    // with "symbol not found — or check the spelling", naming neither the library nor
-    // the sweep. Reproduced against `tests/fixtures/sqldb/sqlite` before the fix:
-    // saturate, run once, shim gone, exit 101.
-    //
-    // It rides along with the bound assertion rather than in a test of its own because
-    // the twelve rustc builds below are the whole cost, and running them twice put ~12s
-    // on the PR's critical path — `n3_use_native` sits in nextest's single-slot
-    // `heavy-serial` group, so that is 12s nothing else can overlap with.
+    // into this same directory. It is seeded OLDEST because the sweep orders by mtime and
+    // a shim is content-keyed and built exactly ONCE: it is permanently the oldest file,
+    // and therefore the first thing an age-ordered sweep takes. Deleting an auto-native
+    // artifact costs a rebuild; deleting the shim deletes the only definition of the
+    // package's `#c` symbols, and the next run dies with "symbol not found — or check the
+    // spelling", naming neither the library nor the sweep. Reproduced against
+    // `tests/fixtures/sqldb/sqlite` before the fix: saturate, run once, shim gone, exit 101.
     let shim = native_auto.join(loft::opt::native_key::platform_cdylib_name(
         "mathnative_shim_00000000deadbeef",
     ));
     assert!(
         write_decoy_cdylib(&shim, &[], &tmp),
-        "rustc could not build the stand-in shim"
+        "cc could not build the stand-in shim"
+    );
+    fa::set_modified(&shim, long_ago).unwrap();
+
+    // Twelve stale artifacts of the family, as twelve earlier loft builds leave them: each
+    // its own key, each a day newer than the one before, all older than the run below.
+    let seeded = 12;
+    let stale: Vec<std::path::PathBuf> = (1..=seeded)
+        .map(|i| {
+            let so = native_auto.join(loft::opt::native_key::platform_cdylib_name(&format!(
+                "{family}_{i:016x}"
+            )));
+            assert!(
+                write_decoy_cdylib(&so, &[], &tmp),
+                "cc could not build stale artifact {i}"
+            );
+            fa::set_modified(&so, long_ago + u32::try_from(i).unwrap() * day).unwrap();
+            // The unit's C, which a build writes beside its library.
+            fa::write(
+                native_auto.join(format!("{family}_{i:016x}.c")),
+                "/* unit */\n",
+            )
+            .unwrap();
+            so
+        })
+        .collect();
+
+    let prog = tmp.join("main.loft");
+    fa::write(
+        &prog,
+        "use mathnative::*;\nfn main() { println(\"{double(21)}\"); }\n",
+    )
+    .unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--lib")
+        .arg(&lib)
+        .arg(&prog)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("run the loft binary");
+    assert!(
+        out.status.success(),
+        "the program must still RUN — pruning is a disk policy, never a failure.\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "42\n",
+        "the program produced the wrong answer"
     );
 
-    // Each program pads its own type table with a different number of structs, so
-    // every one is a distinct layout fingerprint and mints its own artifact.
-    let mut built = 0;
-    for n in 0..12 {
-        let pad: String = (0..n)
-            .map(|i| format!("struct Pad{i} {{ p_a: integer, p_b: text }}\n"))
-            .collect();
-        let prog = tmp.join(format!("ctx{n}.loft"));
-        fa::write(
-            &prog,
-            format!("use mathnative::*;\n{pad}fn main() {{ println(\"{{double(21)}}\"); }}\n"),
-        )
-        .unwrap();
-        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg("--lib")
-            .arg(&lib)
-            .arg(&prog)
-            .env("LOFT_NO_CACHE", "1")
-            .output()
-            .expect("run the loft binary");
-        assert!(
-            out.status.success(),
-            "context {n} must still RUN — pruning is a disk policy, never a failure.\
-             \nstderr:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "42\n",
-            "context {n} produced the wrong answer"
-        );
-        built += 1;
-    }
-
-    let count = fa::read_dir(&native_auto)
+    // The sweep bounds only the family it BUILT, so the shim is not counted here; the
+    // LIBRARIES only, not the generated source each artifact leaves beside it.
+    let survivors: Vec<String> = fa::read_dir(&native_auto)
         .map(|rd| {
             rd.iter()
-                .filter(|e| {
-                    fa::extension(*e).is_some_and(|x| x == "so" || x == "dylib" || x == "dll")
-                })
-                .count()
+                .filter(|e| fa::has_extension(*e, std::env::consts::DLL_EXTENSION))
+                .filter_map(|e| e.file_name())
+                .filter(|n| n.contains(&family))
+                .map(str::to_string)
+                .collect()
         })
-        .unwrap_or(0);
-
-    // The CONTROL: distinct contexts really did mint distinct artifacts, so the
-    // bound below is a bound and not an artifact of everything sharing one name.
+        .unwrap_or_default();
+    // The CONTROL: the run built an artifact of its own, so the directory held
+    // `seeded + 1` of the family and the sweep had to take some.
+    let built = survivors.iter().any(|n| {
+        !stale
+            .iter()
+            .any(|s| fa::file_name(s).is_some_and(|f| f == *n))
+    });
     assert!(
-        count > 1,
-        "the {built} contexts shared one artifact, so this test proves nothing about \
-         pruning — the padding no longer shifts the layout fingerprint"
+        built,
+        "the run built no artifact of its own, so no sweep ran and this test proves \
+         nothing about pruning — survivors: {survivors:#?}"
     );
-    // The sweep bounds only the family it BUILT, so the decoy is not counted here.
-    let family = fa::read_dir(&native_auto)
-        .map(|rd| {
-            rd.iter()
-                .filter(|e| {
-                    // The LIBRARIES only: each artifact also leaves the generated `.rs`
-                    // and `.args` it was built from, and counting those reads as 3x.
-                    fa::has_extension(*e, std::env::consts::DLL_EXTENSION)
-                        && e.file_name().is_some_and(|n| n.contains("loft_auto_"))
-                })
-                .count()
-        })
-        .unwrap_or(0);
     assert!(
-        family <= 8,
-        "`native-auto/` grew to {family} auto-native artifacts from {built} contexts; \
-         it must keep at most the 8 most recent (`KEEP_ARTIFACTS`) — total files {count}"
+        survivors.len() <= 8,
+        "`native-auto/` holds {} auto-native artifacts after {seeded} stale ones and a \
+         build; it must keep at most the 8 most recent (`KEEP_ARTIFACTS`):\n{survivors:#?}",
+        survivors.len()
+    );
+    // The most recent are what stays: the oldest stale artifact goes, the newest stays.
+    assert!(
+        !fa::exists(&stale[0]) && fa::exists(&stale[seeded - 1]),
+        "the sweep must take the OLDEST artifacts:\n{survivors:#?}"
+    );
+    // A pruned artifact's C goes with it: kept, one ~1.6 MB unit per earlier build stays forever.
+    assert!(
+        !fa::exists(native_auto.join(format!("{family}_{:016x}.c", 1)))
+            && fa::exists(native_auto.join(format!("{family}_{seeded:016x}.c"))),
+        "the sweep must take a pruned artifact's C with it, and keep a kept one's"
     );
     // And the sweep took nothing that was not its own: a `[c]` shim living in the same
     // directory would take the package's whole `#c` surface with it (loft#831).
@@ -1650,27 +1670,23 @@ fn a_packages_artifact_directory_stays_bounded() {
 // `--interpret` dies at `compile.rs:365` with exit 101.
 
 /// Compile a stand-in cdylib at `at`, exporting exactly `exports` (bare
-/// `extern "C" fn() -> u64` stubs).  With none, it is the artifact that loads and
+/// `uint64_t f(void)` stubs), with the C compiler that builds the real units
+/// (`platform::c_unit_compiler`).  With none, it is the artifact that loads and
 /// resolves nothing; with one, it forces the PARTIAL case — some functions
 /// dispatch native and the rest interpret, in the same run.
 fn write_decoy_cdylib(at: &std::path::Path, exports: &[&str], scratch: &std::path::Path) -> bool {
-    let src = scratch.join("decoy.rs");
-    let mut body = String::new();
+    let src = scratch.join("decoy.c");
+    let mut body = String::from("#include <stdint.h>\n");
     for sym in exports {
-        body.push_str(&format!(
-            "#[unsafe(no_mangle)] pub extern \"C\" fn {sym}() -> u64 {{ 0 }}\n"
-        ));
+        body.push_str(&format!("uint64_t {sym}(void) {{ return 0; }}\n"));
     }
     // A cdylib with no exports at all still links; the marker keeps it non-empty.
-    body.push_str("#[unsafe(no_mangle)] pub extern \"C\" fn loft_decoy_marker() -> u64 { 0 }\n");
+    body.push_str("uint64_t loft_decoy_marker(void) { return 0; }\n");
     fa::write(&src, body).expect("write the decoy source");
-    loft::platform::process::harness_command("cc")
-        .arg("--crate-type=cdylib")
-        .arg("--edition")
-        .arg("2021")
-        .arg(&src)
-        .arg("-o")
+    loft::platform::process::harness_command(loft::platform::c_unit_compiler())
+        .args(["-shared", "-fPIC", "-o"])
         .arg(at)
+        .arg(&src)
         .output()
         .is_ok_and(|o| o.status.success())
 }
@@ -1745,7 +1761,7 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
     let artifact = sole_artifact(&native_auto);
     assert!(
         write_decoy_cdylib(&artifact, &[], &tmp),
-        "rustc could not build the decoy cdylib"
+        "cc could not build the decoy cdylib"
     );
 
     let out = run(&[]);
@@ -1839,7 +1855,7 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
     let artifact = sole_artifact(&native_auto);
     assert!(
         write_decoy_cdylib(&artifact, &["loft_shared_mathnative__n_factorial"], &tmp),
-        "rustc could not build the decoy cdylib"
+        "cc could not build the decoy cdylib"
     );
 
     let out = run();
