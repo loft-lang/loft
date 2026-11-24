@@ -304,9 +304,9 @@ static int loft_pg_load_one(loft_cx *cx, loft_pg *r, const loft_tdesc *T, loft_r
 /* store_load_key / store_load_keys / store_load_key_text / store_load_keys_text: each key's
  * entry, through one reader; the count found.  `label` names the call in the loader stats — the
  * single text key's line names its key, as the interpreter's does — and 0 says nothing. */
-static int64_t loft_pg_load_keys_as(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
+static loft_word loft_pg_load_keys_as(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
                                     const char *refusal, uint16_t content, const loft_key *keys, int nk, int kind,
-                                    const loft_kv *kv, int64_t n, const char *label) {
+                                    const loft_kv *kv, loft_word n, const char *label) {
     loft_pg r;
     int64_t loaded = 0;
     if (!loft_pg_begin(cx, &r, local, path, sc, refusal)) return 0;
@@ -358,7 +358,7 @@ static int64_t loft_pg_load_key_list(loft_cx *cx, const loft_tdesc *T, loft_ref 
                                      loft_ref list, int text) {
     int64_t n;
     loft_kv *kv = loft_pg_key_list(cx, list, text, &n);
-    int64_t got = loft_pg_load_keys_as(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n,
+    loft_word got = loft_pg_load_keys_as(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n,
                                        text ? "store_load_keys_text" : "store_load_keys");
     free(kv);
     return got;
@@ -426,9 +426,9 @@ static int64_t loft_pg_load_box_kv(loft_cx *cx, const loft_tdesc *T, loft_ref lo
     if (stats) {
         char head[512];
         int at = snprintf(head, sizeof head, "store_load_box: [");
-        for (int64_t a = 0; a < nf && at < 400; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) f[a].i);
+        for (loft_word a = 0; a < nf && at < 400; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) f[a].i);
         at += snprintf(head + at, sizeof head - at, "]..[");
-        for (int64_t a = 0; a < nt && at < 450; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) t[a].i);
+        for (loft_word a = 0; a < nt && at < 450; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) t[a].i);
         snprintf(head + at, sizeof head - at, "] limit=%lld loaded=%lld", (long long) limit, (long long) loaded);
         loft_pg_stats(cx, &r, head);
     }
@@ -441,7 +441,7 @@ static int64_t loft_pg_load_box(loft_cx *cx, const loft_tdesc *T, loft_ref local
                                 loft_ref till, int64_t limit, const char *type_name) {
     int64_t nf, nt;
     loft_kv *f = loft_pg_key_list(cx, from, 0, &nf), *t = loft_pg_key_list(cx, till, 0, &nt);
-    int64_t loaded = loft_pg_load_box_kv(cx, T, local, path, sc, refusal, content, keys, nk, f, nf, t, nt, limit, type_name, 1);
+    loft_word loaded = loft_pg_load_box_kv(cx, T, local, path, sc, refusal, content, keys, nk, f, nf, t, nt, limit, type_name, 1);
     free(f);
     free(t);
     return loaded;

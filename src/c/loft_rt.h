@@ -3207,7 +3207,7 @@ LOFT_HOT_INLINE void loft_vh_put_float(loft_cx *cx, loft_vh h, uint32_t size, lo
  * [0, len): its float, its reference and its address, no index test. */
 LOFT_HOT_INLINE double loft_vh_at_float(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: float");
-    if (LOFT_VH_OUT(h, f)) return (double) NAN;
+    if (LOFT_VH_OUT(h, f)) return (loft_fword) NAN;
     double v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
@@ -8086,7 +8086,7 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int_at_nn(loft_cx *cx, loft_vh h, uint32_t s
     return v;
 }
 LOFT_HOT_INLINE double loft_vh_get_float_nn(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld) {
-    if (LOFT_VH_OUT(h, f)) return (double) NAN;
+    if (LOFT_VH_OUT(h, f)) return (loft_fword) NAN;
     double v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;

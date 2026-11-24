@@ -81,8 +81,8 @@ loft_io_http_get(const char *url, size_t n);
 __attribute__((import_module("loft_io"), import_name("loft_host_http_get_copy"))) void
 loft_io_http_copy(uint8_t *p);
 __attribute__((import_module("loft_io"), import_name("loft_host_http_range"))) size_t
-loft_io_http_range(const char *url, size_t n, double off, double len);
-__attribute__((import_module("loft_io"), import_name("loft_host_http_range_total"))) double
+loft_io_http_range(const char *url, size_t n, loft_fword off, loft_fword len);
+__attribute__((import_module("loft_io"), import_name("loft_host_http_range_total"))) loft_fword
 loft_io_http_range_total(void);
 
 /* The host's answer of `n` bytes, malloc'd. */
@@ -114,7 +114,7 @@ static int loft_fetch_page(loft_cx *cx, const char *url, loft_bytes *out, char *
 static long loft_net_range(loft_cx *cx, const char *url, uint64_t off, uint8_t *buf, size_t len, char *err, size_t cap) {
     if (len == 0) return 0;
 #if defined(LOFT_BROWSER)
-    size_t n = loft_io_http_range(url, strlen(url), (double) off, (double) len);
+    size_t n = loft_io_http_range(url, strlen(url), (loft_fword) off, (loft_fword) len);
     if (n == (size_t) -1) {
         snprintf(err, cap, "browser range fetch failed for %s", url);
         return -1;
@@ -168,7 +168,7 @@ static int loft_net_size(loft_cx *cx, const char *url, uint64_t *size, char *err
     /* The total is what the probe's response named, so the probe runs first. */
     uint8_t one;
     if (loft_net_range(cx, url, 0, &one, 1, err, cap) < 0) return 0;
-    double total = loft_io_http_range_total();
+    loft_fword total = loft_io_http_range_total();
     if (total < 0) {
         snprintf(err, cap, "remote store: could not determine size of %s", url);
         return 0;
