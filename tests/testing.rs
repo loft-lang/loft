@@ -13,7 +13,6 @@ mod common;
 use loft::compile::byte_code;
 use loft::compile::show_code;
 use loft::data::Data;
-use loft::generation::Output;
 use loft::log_config::LogConfig;
 use std::fs::File;
 use std::io::Write;
@@ -340,15 +339,6 @@ impl Drop for Test {
             return;
         }
         scopes::check(&mut p.data, &mut p.database);
-        // P132: also generate per-test native code in release builds so the
-        // n2..n10/o7 codegen-inspection tests can read tests/generated/<name>.rs
-        // when the suite is run via `cargo test --release` (the new default
-        // since make ci switched to release for ~1800x speedup).
-        self.generate_code(&p, start).unwrap();
-        // generate_code (fill.rs) and generate_lib (text.rs) are now done
-        // via dedicated staleness-check tests to avoid file-write races
-        // during parallel test execution.  Per-test native codegen output
-        // still goes to tests/generated/<test>.rs below.
         let mut state = State::new(p.database);
         let codegen_panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             byte_code(&mut state, &mut p.data);
@@ -489,32 +479,6 @@ impl Drop for Test {
 }
 
 impl Test {
-    fn generate_code(&self, p: &Parser, start: u32) -> std::io::Result<()> {
-        // Only the test's own code is written, numbered from 0 as a program emitted alone
-        // would be.  The stdlib's native rendering is not: nothing reads it, and writing it
-        // on every test cost ~15 % of a test binary's instructions.
-        // Write code output when the result is tested, not only for errors or warnings.
-        if self.result != Value::Null || !self.tp.is_unknown() {
-            fa::create_dir_all("tests/generated")?;
-            let mut o = Output::new(&p.data, &p.database);
-            let w = &mut fa::create(format!("tests/generated/{}_{}.rs", self.file, self.name))?;
-            let def_nr = p.data.definitions();
-            // Find the entry function n_test and emit only reachable functions.
-            let test_fn = p.data.def_nr("n_test");
-            if test_fn != u32::MAX {
-                o.output_native_reachable(w, start, def_nr, &[test_fn])?;
-            } else {
-                o.output_native(w, start, def_nr)?;
-            }
-            writeln!(w, "#[test]\nfn code_{}() {{", self.name)?;
-            writeln!(w, "    let mut stores = Stores::new();")?;
-            writeln!(w, "    init(&mut stores);")?;
-            writeln!(w, "    n_test(&mut stores);")?;
-            writeln!(w, "}}")?;
-        }
-        Ok(())
-    }
-
     fn assert_diagnostics(&self, p: &Parser) {
         let mut expected = BTreeSet::new();
         for w in &self.warnings {

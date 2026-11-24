@@ -8640,7 +8640,7 @@ mod store_free_sentinel {
             }
             if def.attributes().iter().all(|a| is_scalar(&a.typedef))
                 && scalar(def.returned())
-                && !native_op_is_store_free(def)
+                && !crate::opt::writes::native_op_is_store_free(def)
                 && !REVIEWED_WRITERS.contains(&def.name())
             {
                 unclassified.push(def.name().to_string());
