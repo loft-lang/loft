@@ -734,20 +734,23 @@ pub(crate) fn relocate_for_probe(
 /// and a unit that was current was rebuilt — or, with no compiler, not adopted at all.  So each
 /// library beside the artifact whose file name the artifact carries (an import names its
 /// library by file name) goes aside with it.  A link that fails leaves the probe as it was.
-#[cfg(windows)]
 fn relocate_imports_beside(so: &std::path::Path, probe: &std::path::Path) {
+    if !crate::platform::stages_dlls_beside_binary() {
+        return;
+    }
     let (Some(dir), Some(to), Ok(bytes)) =
         (so.parent(), probe.parent(), crate::file_access::read(so))
     else {
         return;
     };
     let own = crate::file_access::file_name(so).unwrap_or_default();
+    let suffix = format!(".{}", crate::platform::dll_extension());
     for entry in crate::file_access::read_dir(dir).unwrap_or_default() {
         let Some(name) = crate::file_access::file_name(&entry) else {
             continue;
         };
         let name = name.as_str();
-        if name == own || !name.to_ascii_lowercase().ends_with(".dll") {
+        if name == own || !name.to_ascii_lowercase().ends_with(&suffix) {
             continue;
         }
         if bytes
@@ -761,9 +764,6 @@ fn relocate_imports_beside(so: &std::path::Path, probe: &std::path::Path) {
         }
     }
 }
-
-#[cfg(not(windows))]
-fn relocate_imports_beside(_so: &std::path::Path, _probe: &std::path::Path) {}
 
 /// Say once that an artifact could not be moved off its path to be asked about
 /// its type layout, so it was rebuilt rather than adopted.

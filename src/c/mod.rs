@@ -5271,7 +5271,7 @@ fn on_call_cycle(cx: &Cx, d: u32) -> bool {
         return known;
     }
     let mut seen = std::collections::HashSet::new();
-    let mut todo: Vec<u32> = crate::debugger::callees(cx.data, d).into_iter().collect();
+    let mut todo: Vec<u32> = direct_callees(cx, d);
     let mut found = false;
     while let Some(f) = todo.pop() {
         if f == d {
@@ -5279,11 +5279,27 @@ fn on_call_cycle(cx: &Cx, d: u32) -> bool {
             break;
         }
         if seen.insert(f) {
-            todo.extend(crate::debugger::callees(cx.data, f));
+            todo.extend(direct_callees(cx, f));
         }
     }
     cx.on_cycle.borrow_mut().insert(d, found);
     found
+}
+
+/// Every function `d`'s body calls by name.  A missed call could hide a cycle and leave a
+/// recursive body forced inline, so the walk visits every node.
+fn direct_callees(cx: &Cx, d: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    if d < cx.data.definitions() {
+        cx.data.def(d).code.walk(&mut |v| {
+            if let crate::data::Value::Call(c, _) = v
+                && !out.contains(c)
+            {
+                out.push(*c);
+            }
+        });
+    }
+    out
 }
 
 /// `body` without its hand-over points (`FnWriter::expand_safepoints`).
