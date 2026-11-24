@@ -329,11 +329,18 @@ fn a_browser_page_converts_a_store_written_under_an_older_layout() {
         "the native control did not convert the older layout: {native}"
     );
 
+    // The page is built where the reader is alone: a page carries the files its program names
+    // from beside it (@C164), and the fixture beside `reader.loft` would ride along in every
+    // page.  Each page's filesystem is then exactly the files `seed_page` gives it.
+    let alone = dir.join("build");
+    fa::create_dir_all(&alone).expect("create build dir");
+    let reader_alone = alone.join("reader.loft");
+    fa::copy(&reader, &reader_alone).expect("copy reader");
     let html = dir.join("reader.html");
     let built = loft::platform::process::harness_command(&loft)
         .args(["--native", "--html", html.to_str().expect("utf-8 path")])
-        .arg(&reader)
-        .current_dir(&dir)
+        .arg(&reader_alone)
+        .current_dir(&alone)
         .output()
         .expect("invoke loft --html");
     if !built.status.success() || !fa::exists(&html) {
