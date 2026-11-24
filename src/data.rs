@@ -12994,7 +12994,13 @@ impl Data {
                 && self
                     .def_names
                     .first_bound(&self.definitions[*d as usize].name)
-                    .is_some_and(|first| first != *d && self.is_type_def(first))
+                    // A generic's type-variable placeholder is no earlier type: its wrapper is
+                    // spelled `__typevar_<T>` already, so a user's `T` keeps the bare one.
+                    .is_some_and(|first| {
+                        first != *d
+                            && self.is_type_def(first)
+                            && !self.is_type_var_placeholder(first)
+                    })
             {
                 seen.push(*d);
                 let _ = {
