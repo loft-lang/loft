@@ -1951,9 +1951,10 @@ fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
 /// (@PLN163 P2b).  The census reads the IR after the scope pass, and a generator mints some
 /// copies only when it emits (`copy_manifest.rs`); a copy that reaches no verdict is a copy the
 /// refusal would let through.  Each cell is compiled with both instruments on through
-/// `--native-emit`, which runs the interpreter's code generation and then the native generator
-/// without compiling the result, and `copy_manifest::report` names — once per generator — every
-/// emitted copy of a droppable no verdict covers.
+/// `--native-emit`, which runs the interpreter's code generation without compiling the result,
+/// and `copy_manifest::report` names every emitted copy of a droppable no verdict covers.  The
+/// interpreter's generator is the one that mints copies of its own: the rustc writer, which
+/// minted the other half, is retired (@PLN225 R2), and the C writer emits the IR's copies.
 #[test]
 fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
     let cells = all_cells();
@@ -1980,16 +1981,16 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
             .collect::<Vec<_>>()
     });
     let mut wrong = Vec::new();
-    // Emitted copies per generator: the interpreter reports first, the native generator second.
-    let mut emitted = [0usize; 2];
+    // Emitted copies: the interpreter's generator is the one that reports.
+    let mut emitted = [0usize; 1];
     for (c, lines) in cells.iter().zip(reports) {
         let summaries: Vec<&String> = lines
             .iter()
             .filter(|l| l.starts_with("lease-manifest:"))
             .collect();
-        if summaries.len() != 2 {
+        if summaries.len() != 1 {
             wrong.push(format!(
-                "{}: expected a manifest report from both generators, got {summaries:?}",
+                "{}: expected one manifest report, got {summaries:?}",
                 c.name
             ));
             continue;
