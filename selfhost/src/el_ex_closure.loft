@@ -68,11 +68,12 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
     el::refuse(e, why);
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  outer = el::def(e, e.context).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  nm = "n___lambda_{bare}_{vars.lambdas}";
-  rec_nm = "__closure_{bare}_{vars.lambdas}";
+  root = el::lambda_root(el::def(e, e.context).name);
+  lk = el::lambda_take(e, root);
+  nm = "n___lambda_{root}_{lk}";
+  rec_nm = "__closure_{root}_{lk}";
   vars.lambdas += 1;
+  vars.lambda_recs += [rec_nm];
   if e.first_pass && el::def_nr(e, nm) < 0 {
     own: vector<text> = names;
     for pn in params {
@@ -211,11 +212,14 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if len(caps) > 0 && holds_lambda(e, body!) {
         return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: around another lambda");
       }
-      outer = el::def(e, e.context).name;
-      bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-      nm = "__lambda_{bare}_{vars.lambdas}";
-      rec_nm = "__closure_{bare}_{vars.lambdas}";
+      // (`next_lambda_name`: numbered in the enclosing FUNCTION's sequence, a lambda inside a
+      // lambda as its sibling — `__lambda_f_1` beside `__lambda_f_0`.)
+      root = el::lambda_root(el::def(e, e.context).name);
+      lk = el::lambda_take(e, root);
+      nm = "__lambda_{root}_{lk}";
+      rec_nm = "__closure_{root}_{lk}";
       vars.lambdas += 1;
+      vars.lambda_recs += [rec_nm];
       ctx = e.context;
       tvs = e.type_vars;
       e.type_vars = [];
@@ -583,9 +587,8 @@ fn forward_capture(e: el::El, vars: el_vars::Vars, c: text) -> boolean {
   if e.context < 0 {
     return false;
   }
-  outer = el::def(e, e.context).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  rd = el::def_nr(e, "__closure_{bare}_{vars.lambdas}");
+  froot = el::lambda_root(el::def(e, e.context).name);
+  rd = el::def_nr(e, "__closure_{froot}_{el::lambda_peek(e, froot)}");
   if rd < 0 {
     return false;
   }

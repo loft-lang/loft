@@ -46,6 +46,9 @@ pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
 }
 
 pub fn elab_file(e: el::El, file: integer) {
+  // (`Parser::lambda_counters` is cleared as each pass parses the file.)
+  e.lambda_roots = [];
+  e.lambda_next = [];
   // (Each pass reads a file's field defaults into a struct context table of its own, from 0.)
   e.dflt_vars = 0;
   match e.p.nodes[file] {
@@ -2073,16 +2076,14 @@ fn apply_annotations(e: el::El, d: integer, annots: vector<integer>) -> boolean 
 // owner slot `<name>__own` of the same shared record type — what the scope pass hands the
 // local's owner witness to at the build.
 fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
-  outer = el::def(e, parent).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  for k in 0..vars.lambdas {
-    rec = el::def_nr(e, "__closure_{bare}_{k}");
+  for rec_nm in vars.lambda_recs {
+    rec = el::def_nr(e, rec_nm);
     if rec < 0 {
       continue;
     }
     // A fn field's UNION record (loft#1874) is left alone: its captures keep the record's
     // static adoption, and the lambda's own record is no longer the one it builds.
-    lam = el::def_nr(e, "n___lambda_{bare}_{k}");
+    lam = el::def_nr(e, "n___lambda_{rec_nm[10..]}");
     if lam >= 0 && el::def(e, lam).closure_record >= 0 && el::def(e, lam).closure_record != el::NONE && starts_with(el::def(e, el::def(e, lam).closure_record).name, "__closure_u_") {
       continue;
     }
