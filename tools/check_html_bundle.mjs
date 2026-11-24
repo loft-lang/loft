@@ -15,7 +15,8 @@
 //      the bundle imports `__wbindgen_placeholder__` (35+ entries) which the
 //      embedded loft-gl-wasm.js glue does not provide → the page fails to
 //      instantiate ("Import ... __wbindgen_placeholder__: module is not an
-//      object").  A correct --html bundle imports ONLY `loft_gl` + `loft_io`.
+//      object").  A correct --html bundle imports ONLY `loft_gl` + `loft_io`, and the
+//      WASI host its page provides.
 //
 //   2. MISSING asyncify — if `wasm-opt` (binaryen) was not on PATH at build
 //      time, the `--asyncify` pass never ran, so there is no frame-yield.  The
@@ -50,9 +51,14 @@ try {
   process.exit(1);
 }
 
-// (1) Import modules must be exactly the raw extern bridges the HTML provides.
+// (1) Import modules must be exactly the raw extern bridges the HTML provides: `loft_gl` and
+// `loft_io`, and `wasi_snapshot_preview1` where the page carries its WASI host (a module the C
+// backend wrote, through clang's WASI libc).
 const importMods = [...new Set(WebAssembly.Module.imports(mod).map((i) => i.module))];
-const badMods = importMods.filter((mm) => mm !== 'loft_gl' && mm !== 'loft_io');
+const pageWasi = html.includes('imports.wasi_snapshot_preview1');
+const badMods = importMods.filter(
+  (mm) => mm !== 'loft_gl' && mm !== 'loft_io' && !(mm === 'wasi_snapshot_preview1' && pageWasi),
+);
 if (badMods.length) {
   console.error(
     `FAIL: unexpected import module(s) ${JSON.stringify(badMods)}.\n` +
