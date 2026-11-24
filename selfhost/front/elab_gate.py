@@ -101,6 +101,9 @@ HANDED = re.compile(r"^state \d \d+:\d+ (stmt|arg)( |$)")
 # `var` lines say which STATEMENT changed a function's variable table (port-debug-output.md
 # § 1): they locate a difference `fn-end` reports and are not part of the verdict.
 VAR = re.compile(r"^state \d \d+:\d+ var ")
+# path -> [(function, subject, item, side)] of the not-yet-agreeing definitions of a refused
+# program (`STATE_PENDING`, unscored).
+STATE_PENDING = {}
 ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 
 # The `route` lines of both sides and the port's `refuse` lines by program
@@ -535,6 +538,21 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                 if cd or sd or rd:
                     layers[k] = (cd, sd, rd)
             REFUSED_FN_LAYERS[path] = layers
+        # UNSCORED: the state of the definitions whose IR does not agree yet (`beside`).  A rule
+        # that over-marks shows here a cycle before the function's IR agrees and the row is
+        # scored; it moves no verdict.
+        pending = {k for k, (v, _) in fns.items() if v == "beside"}
+        if pending:
+            ps_r, ps_m = state_table(o.stderr), state_table(m.stderr)
+            rows = []
+            for key in set(ps_r) | set(ps_m):
+                if key[0] not in pending:
+                    continue
+                a, b2 = ps_r.get(key, set()), ps_m.get(key, set())
+                for item in sorted(a ^ b2):
+                    rows.append((key[0], key[1], item, "rust" if item in a else "loft"))
+            with STATE_LOCK:
+                STATE_PENDING[path] = rows
         return "refused", refused, fns
     if mine == want:
         # The program's functions, and its records and field-carrying variants (their layout and
@@ -933,6 +951,19 @@ def main():
         for h in ranked[:12]:
             c = taken[h]
             print(f"    {h:30} {c['programs']:5} / {c['carried']:5} / {c['refusing']:5} / {c['missing']:5}")
+        # The unscored state of not-yet-agreeing definitions (`STATE_PENDING`): one line, and each
+        # row to `LOFT_ELAB_STATE_PENDING_FILE`.
+        if STATE_PENDING:
+            n_rows = sum(len(v) for v in STATE_PENDING.values())
+            n_progs = sum(1 for v in STATE_PENDING.values() if v)
+            by = collections.Counter(item.split("=")[0] + " " + side for rows_ in STATE_PENDING.values() for _, _, item, side in rows_)
+            print(f"state of not-yet-agreeing definitions (unscored): {n_rows} row(s) in {n_progs} program(s); "
+                  + ", ".join(f"{k} {n}" for k, n in by.most_common(8)))
+            if os.environ.get("LOFT_ELAB_STATE_PENDING_FILE"):
+                with open(os.environ["LOFT_ELAB_STATE_PENDING_FILE"], "w", encoding="utf-8") as fh:
+                    for path_, rows_ in sorted(STATE_PENDING.items()):
+                        for fn_, subj, item, side in rows_:
+                            fh.write(f"{path_}\t{fn_}\t{subj}\t{item}\t{side}\n")
         # The route GATE: for the return-delivery classifiers Rust logs as `handler=verdict`, the
         # verdict the port reports at the same site — not only whether it took the handler.  A site
         # is a pass and a line (the n-th verdict of a handler on that line pairs with the n-th);
