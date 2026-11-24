@@ -986,9 +986,9 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
          fn main() { println(\"{envkey_sum(10)}\"); }\n",
     )
     .expect("write script");
-    // `(emitted Rust, whether the parse came from the cache)`.
+    // `(emitted C, whether the parse came from the cache)`.
     let emit = |cache: &std::path::Path, tag: &str, env: &[(&str, &str)]| -> (String, bool) {
-        let out_rs = root.join(format!("{tag}.rs"));
+        let out_rs = root.join(format!("{tag}.c"));
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--native")
             .arg("--native-emit")
@@ -1005,16 +1005,17 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
         }
         let out = cmd.output().expect("failed to invoke loft binary");
         assert!(out.status.success(), "{tag}: {out:?}");
-        let rs = fa::read_to_string(&out_rs).expect("emitted Rust");
+        let rs = fa::read_to_string(&out_rs).expect("emitted C");
         (
             rs,
             String::from_utf8_lossy(&out.stderr).contains("[warm] hit"),
         )
     };
-    // The promoted local is a parameter of the callee: its signature carries `var_v`.
-    let promoted = |rs: &str| {
-        rs.lines()
-            .any(|l| l.starts_with("fn n_envkey_sum(") && l.contains("mut var_v: DbRef"))
+    // The promoted local is a parameter of the callee: its C signature carries `v`'s
+    // reference (`loft_ref v1_v`).
+    let promoted = |c: &str| {
+        c.lines()
+            .any(|l| l.starts_with("static int64_t n_envkey_sum(") && l.contains("loft_ref v1_v"))
     };
     let clean = root.join("clean");
     let (reference, _) = emit(&clean, "reference", &[]);
