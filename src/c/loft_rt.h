@@ -174,7 +174,8 @@ static int loft_text_le(loft_cx *cx, loft_str a, loft_str b) {
 #pragma GCC diagnostic ignored "-Wstringop-overread"
 #endif
 static int loft_str_eq(loft_cx *cx, loft_str a, loft_str b) {
-    return a.len == b.len && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
+    return loft_str_is_null(cx, a) == loft_str_is_null(cx, b) && a.len == b.len
+        && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
 }
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
 #pragma GCC diagnostic pop
@@ -2191,7 +2192,8 @@ static inline void *loft_ta_zero(loft_cx *cx, size_t n) {
 /* A text's bytes copied into the arena. */
 static inline loft_str loft_ta_str(loft_cx *cx, loft_str s) {
     loft_str out = { 0, 0 };
-    if (s.len == 0) return out;
+    /* "" keeps a pointer: a view with none is not the empty text. */
+    if (s.len == 0) return loft_str_is_null(cx, s) ? s : loft_lit(cx, "", 0);
     char *p = (char *) loft_ta_alloc(cx, s.len);
     memcpy(p, s.p, s.len);
     out.p = p;
@@ -7593,7 +7595,7 @@ static int64_t loft_vector_sum_int(loft_cx *cx, loft_ref v, int64_t acc) {
 static loft_text loft_text_from_cstr(loft_cx *cx, const char *c) {
     loft_text t = { 0, 0, 0 };
     if (!c) {
-        loft_push_char(cx, &t, 0);
+        loft_text_set_null(cx, &t);
         return t;
     }
     size_t n = strlen(c);

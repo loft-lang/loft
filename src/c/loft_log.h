@@ -511,7 +511,7 @@ static int loft_log_production_fault(loft_cx *cx, int sev, const char *label, co
     loft_push(cx, &m, "] ", 2);
     loft_push(cx, &m, prefix, strlen(prefix));
     loft_push(cx, &m, message.p, message.len);
-    loft_log_record(cx, sev, loft_lit(cx, m.p, m.len), file, line);
+    loft_log_record(cx, sev, loft_view(cx, &m), file, line);
     free(m.p);
     loft_set_fatal(cx);
     return 1;

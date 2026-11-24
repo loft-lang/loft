@@ -114,8 +114,10 @@ static uint32_t loft_rx_null_rec(loft_cx *cx, loft_store_t *s, uint32_t t) {
     return (w & LOFT_RX_SLOT_TAG) ? w & ~LOFT_RX_SLOT_TAG : 0;
 }
 
-/* trie_db::is_null_key: a null text reads as "\0" (`(L-Null-Text)`). */
-static int loft_rx_null_key(loft_cx *cx, const uint8_t *b, size_t len) { return len == 1 && b[0] == 0; }
+/* trie_db::is_null_key: is the key the null text (`(L-Null-Text)`)? */
+static int loft_rx_null_key(loft_cx *cx, const uint8_t *b, size_t len) {
+    return loft_str_is_null(cx, loft_lit(cx, (const char *) b, len));
+}
 
 /* radix_db::add / trie_db::add: the record into the tree, made on first use; a trie's null key
  * into the slot ahead of the tree (`@FR-Col-Trie`). */

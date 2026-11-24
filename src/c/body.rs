@@ -11883,7 +11883,7 @@ impl<'a> FnWriter<'a> {
             ("OpClear", [r, tp]) => self.clear_op(r, tp, ind),
             ("OpClearText", [dest]) => {
                 let dest = self.text_dest(dest)?;
-                Ok(E::new(format!("{dest}.len = 0"), K::Void))
+                Ok(E::new(format!("loft_text_clear(cx, &{dest})"), K::Void))
             }
             ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text(cx)", K::View)),
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),

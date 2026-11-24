@@ -18,7 +18,10 @@ static loft_str loft_view(loft_cx *cx, const loft_text *t) {
     return loft_lit(cx, t->p ? t->p : "", t->len);
 }
 
-/* The null text: the one byte "\0". */
+/* The null text (`@FR-L-Null-Text`).  Every producer of an absent text takes it from
+ * `loft_null_text` (a view) or `loft_text_set_null` (an owned text), and every reader asks
+ * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.
+ * Today it is the one byte "\0". */
 static loft_str loft_null_text(loft_cx *cx) {
     static const char zero[1] = { 0 };
     return loft_lit(cx, zero, 1);
@@ -156,6 +159,25 @@ static void loft_push_char(loft_cx *cx, loft_text *t, char c) {
     loft_push(cx, t, &c, 1);
 }
 
+/* An owned text's absence: is it the null text, make it the null text, make it "" (a null
+ * one too — the start of every assignment). */
+static int loft_text_is_null(loft_cx *cx, const loft_text *t) {
+    return t->p && t->len == 1 && t->p[0] == 0;
+}
+static void loft_text_set_null(loft_cx *cx, loft_text *t) {
+    t->len = 0;
+    loft_push_char(cx, t, 0);
+}
+static inline void loft_text_clear(loft_cx *cx, loft_text *t) {
+    t->len = 0;
+}
+
+/* The bytes a text key's digest is taken over (`@FR-S-Digest`, `text_null::digest_text`): a
+ * null key digests as one NUL byte, what every stored digest of a null key was taken over. */
+static loft_str loft_digest_text(loft_cx *cx, loft_str s) {
+    return loft_str_is_null(cx, s) ? loft_lit(cx, "", 1) : s;
+}
+
 static void loft_text_append(loft_cx *cx, loft_text *t, loft_str s) {
     loft_push(cx, t, s.p, s.len);
 }
@@ -177,16 +199,15 @@ LOFT_TEXT_INLINE void loft_text_concat(loft_cx *cx, loft_text *t, loft_str s) {
 #ifndef LOFT_NO_SHORT_APPEND
     /* One byte into a buffer with room: a store and a length bump.  Behind a one-byte slice's
      * own fast path (`loft_text_sub`) the C compiler sees the length 1 and keeps only this. */
-    if (s.len == 1 && s.p[0] != 0 && t->len < t->cap && !(t->len == 1 && t->p[0] == 0)) {
+    if (s.len == 1 && !loft_str_is_null(cx, s) && t->len < t->cap && !loft_text_is_null(cx, t)) {
         char c = s.p[0];
         t->p[t->len++] = c;
         return;
     }
 #endif
-    if (loft_str_is_null(cx, loft_view(cx, t))) return;
+    if (loft_text_is_null(cx, t)) return;
     if (loft_str_is_null(cx, s)) {
-        t->len = 0;
-        loft_push_char(cx, t, 0);
+        loft_text_set_null(cx, t);
         return;
     }
     loft_text_append(cx, t, s);
@@ -194,6 +215,10 @@ LOFT_TEXT_INLINE void loft_text_concat(loft_cx *cx, loft_text *t, loft_str s) {
 
 LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
     if (t->p && s.p == t->p && s.len == t->len) return;
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, t);
+        return;
+    }
     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
         memmove(t->p, s.p, s.len);
         t->len = s.len;
@@ -253,6 +278,10 @@ static void loft_text_move(loft_cx *cx, loft_text *to, loft_text *from) {
 
 static loft_text loft_text_own(loft_cx *cx, loft_str s) {
     loft_text t = { 0, 0, 0 };
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &t);
+        return t;
+    }
     loft_push(cx, &t, s.p, s.len);
     return t;
 }
