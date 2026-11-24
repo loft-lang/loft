@@ -4759,7 +4759,7 @@ fn set_text<const F: bool>(s: &mut State) {
     let v_v1 = s.get_stack_m::<F, DbRef>();
     {
         let db = v_v1;
-        let s_val = v_val.str().to_string();
+        let s_val = crate::text_null::own(v_val.str());
         if db.rec != 0 {
             let store = s.database.store_mut(&db);
             let s_pos = store.set_str(&s_val);
@@ -4784,7 +4784,7 @@ fn set_text_replace<const F: bool>(s: &mut State) {
     let v_v1 = s.get_stack_m::<F, DbRef>();
     {
         let db = v_v1;
-        let s_val = v_val.str().to_string();
+        let s_val = crate::text_null::own(v_val.str());
         if db.rec != 0 {
             s.database
                 .store_mut(&db)

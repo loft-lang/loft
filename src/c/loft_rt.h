@@ -3666,6 +3666,11 @@ static void loft_set_text(loft_cx *cx, loft_ref r, uint32_t fld, loft_str v) {
     if (r.rec == 0) return;
     if (LOFT_WRITE_REFUSED(loft_store_of(cx, r))) return;
     loft_store_t *s = loft_store_of(cx, r);
+    /* The null text is the unset handle, never a record (`@FR-L-Null-Text`). */
+    if (loft_str_is_null(cx, v)) {
+        loft_set_u32(cx, s, r.rec, r.pos + fld, 0);
+        return;
+    }
     loft_text copy = { 0, 0, 0 };
     if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(cx, v);
@@ -3684,6 +3689,12 @@ static void loft_refill_text(loft_cx *cx, loft_ref r, uint32_t fld, loft_str v) 
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(cx, r);
     if (LOFT_WRITE_REFUSED(s)) return;
+    if (loft_str_is_null(cx, v)) {
+        uint32_t held = loft_u32(cx, s, r.rec, r.pos + fld);
+        if (held != 0) loft_st_delete(cx, s, held);
+        loft_set_u32(cx, s, r.rec, r.pos + fld, 0);
+        return;
+    }
     loft_text copy = { 0, 0, 0 };
     if (v.len && v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(cx, v);

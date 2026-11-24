@@ -224,8 +224,10 @@ static int64_t loft_pg_field_value(loft_cx *cx, loft_pg *r, uint32_t rec, uint32
 }
 
 /* PagedReader::str_bytes: the bytes of the string record `srec` (its length @4, its bytes from
- * @8) into the key buffer; empty for no record, and for one whose length runs past it. */
+ * @8) into the key buffer; the null text for no record (`@FR-L-Null-Text`), and empty for one
+ * whose length runs past it. */
 static loft_str loft_pg_text_at(loft_cx *cx, loft_pg *r, uint32_t srec) {
+    if (srec == 0) return loft_null_text(cx);
     uint32_t words = loft_pg_record_extent(cx, r, srec);
     size_t len = words == 0 ? 0 : loft_pg_u32(cx, r, srec, 4);
     if ((uint64_t) len + 8 > (uint64_t) words * 8) len = 0;

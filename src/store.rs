@@ -6220,8 +6220,13 @@ impl Store {
         len != 0 && at >= base && at < base + self.size as usize * 8
     }
 
+    /// A text record holding `val`, its number answered — or 0 for the null text, which is
+    /// stored as the unset handle and never as a record (`@FR-L-Null-Text`).
     #[inline]
     pub fn set_str(&mut self, val: &str) -> u32 {
+        if crate::text_null::is_null(val) {
+            return 0;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             // Out of the store before the claim can move it.
             let moved_out = val.to_owned();
@@ -6254,6 +6259,15 @@ impl Store {
     /// as a block.
     #[inline]
     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        if crate::text_null::is_null(val) {
+            // The null text is the unset handle: the slot's block is released.
+            let old = self.get_u32_raw(rec, fld);
+            if old != 0 && !self.is_locked() {
+                self.delete(old);
+            }
+            self.set_u32_raw(rec, fld, 0);
+            return;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             let moved_out = val.to_owned();
             self.refill_str(rec, fld, &moved_out);
@@ -6287,6 +6301,12 @@ impl Store {
 
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
+        // SAFETY: the caller hands `len` readable bytes at a non-null `ptr`.
+        if ptr.is_null()
+            || crate::text_null::is_null_bytes(unsafe { std::slice::from_raw_parts(ptr, len) })
+        {
+            return 0;
+        }
         if self.holds_bytes(ptr, len) {
             // SAFETY: the caller hands `len` readable bytes at `ptr`.
             let own = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();

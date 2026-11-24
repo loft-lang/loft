@@ -1215,9 +1215,12 @@ pub fn hash_bucket_addrs<P: PageProvider>(
 }
 
 /// Read the string at string-record `rec` over the paged reader (fld 4 = length,
-/// fld 8.. = UTF-8 bytes). A `rec == 0`, or a record the image does not hold whole, yields the
-/// empty string ([`PagedReader::str_bytes`]).
+/// fld 8.. = UTF-8 bytes).  `rec == 0` is the null text (`@FR-L-Null-Text`); a record the
+/// image does not hold whole yields the empty string ([`PagedReader::str_bytes`]).
 fn read_reader_str<P: PageProvider>(reader: &mut PagedReader<P>, rec: u32) -> String {
+    if rec == 0 {
+        return crate::text_null::null_string();
+    }
     String::from_utf8_lossy(&reader.str_bytes(rec)).into_owned()
 }
 
