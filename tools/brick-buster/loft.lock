@@ -4,9 +4,9 @@ schema_version = 1
 
 [[package]]
 name = "graphics"
-version = "0.14.3"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.14.3/graphics-0.14.3.tar.gz"
-sha256 = "da3a5dc6f36be919ce8379132c2d36cbfe535349c44ab0badb579db16d9660fe"
+version = "0.14.4"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.14.4/graphics-0.14.4.tar.gz"
+sha256 = "2b7331ef5ba52261638ebd7560a5eb2ad0fc498e3050a4848a2f031922410671"
 source = "registry"
 deps = ["glb", "gpu", "gpu_gl", "gpu_host", "imaging", "mesh3d"]
 
@@ -49,9 +49,9 @@ source = "registry"
 
 [[package]]
 name = "gpu_gl"
-version = "0.3.5"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_gl-v0.3.5/gpu_gl-0.3.5.tar.gz"
-sha256 = "de61b45feb914bfd3938ccba1decc642afe05ca944347272295b59800bd38bf9"
+version = "0.3.6"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_gl-v0.3.6/gpu_gl-0.3.6.tar.gz"
+sha256 = "fd56b418628993c4fc0e7bb38cf848f6517b356d77a466c86c3e05459b1a8a76"
 source = "registry"
 deps = ["gpu"]
 
@@ -73,15 +73,22 @@ deps = ["gpu"]
 
 [[package]]
 name = "gpu_vulkan"
-version = "0.2.3"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_vulkan-v0.2.3/gpu_vulkan-0.2.3.tar.gz"
-sha256 = "f5780333a2b10684c01aaa5694337e309bf71a0a8cc025560a995d86fc704602"
+version = "0.2.4"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_vulkan-v0.2.4/gpu_vulkan-0.2.4.tar.gz"
+sha256 = "805cb4cd12476e423a6d50e2236023c50a4739383f8da2d97276c9c440f3c4e6"
 source = "registry"
 deps = ["gpu"]
 
 [[package]]
 name = "imaging"
-version = "0.5.5"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/imaging-v0.5.5/imaging-0.5.5.tar.gz"
-sha256 = "afdbfc88b087ba253b8c5dd9723e3f5929441ee1f6305d34f7a4ed294dee59bf"
+version = "0.5.6"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/imaging-v0.5.6/imaging-0.5.6.tar.gz"
+sha256 = "a7e3f402d5ea0e5186e357b549789bd224f9e2cb437aa1c4e605d37c396b41cd"
+source = "registry"
+
+[[package]]
+name = "audio"
+version = "0.2.8"
+url = "https://github.com/loft-lang/loft-libs-game/releases/download/audio-v0.2.8/audio-0.2.8.tar.gz"
+sha256 = "290a710368879036afb1eed473534e520f3cadd261f1e9c71c78405df3ce1fbc"
 source = "registry"
