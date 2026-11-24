@@ -48,15 +48,15 @@ index a467060ad..6265bb3f3 100644
      let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
      // Monotone merge with any prior placeholder entry.
      let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);
-@@ -1042,7 +1042,7 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
-         for &d in &fns {
-             let def = data.def(d);
-             let mut written = crate::fxhash::FxHashSet::default();
--            find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
-+            find_written_vars(def.code(), data, &mut written, &mut cur);
-             let entry = cur.get_mut(&d).expect("every definition has an entry");
-             for (i, w) in entry.iter_mut().enumerate() {
-                 if !*w && written.contains(&(i as u16)) {
+@@ -1078,7 +1078,7 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
+         queued.remove(&d);
+         let def = data.def(d);
+         let mut written = crate::fxhash::FxHashSet::default();
+-        find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
++        find_written_vars(def.code(), data, &mut written, &mut cur);
+         let entry = cur.get_mut(&d).expect("every definition has an entry");
+         let mut grew = false;
+         for (i, w) in entry.iter_mut().enumerate() {
 diff --git a/src/parser/control.rs b/src/parser/control.rs
 index e0d514cbc..64290a6ff 100644
 --- a/src/parser/control.rs
