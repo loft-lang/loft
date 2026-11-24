@@ -144,12 +144,9 @@ fn header_of<'a>(ir: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
-/// The header names `local` as a parameter — in the bytecode spelling (`v:vector<…>`) or,
-/// for a method printed only in the native section, the emitted one (`mut var_v: DbRef`).
+/// The header names `local` as a parameter, in the bytecode spelling (`v:vector<…>`).
 fn names_parameter(header: &str, local: &str) -> bool {
-    header
-        .split(", ")
-        .any(|p| p.starts_with(&format!("{local}:")) || p.starts_with(&format!("mut var_{local}:")))
+    header.split(", ").any(|p| p.starts_with(&format!("{local}:")))
 }
 
 #[test]

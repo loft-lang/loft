@@ -458,14 +458,14 @@ fn emit_bytecode(
         // Match the slots/types sections: restrict to user functions.
         // show_code already skips `default/`, but compiler-synthesized
         // runtime helpers (`i_parse_*`) carry an empty position and a
-        // non-`n_` name, so they'd otherwise leak in.  List the user
-        // `n_` functions explicitly (show_functions is a substring
-        // include-list); empty = no user functions = empty section.
+        // non-`n_` name, so they'd otherwise leak in.  List the user's
+        // `n_` functions and `t_` methods explicitly (show_functions is a
+        // substring include-list); empty = no user functions = empty section.
         let user_fns: Vec<String> = (0..data.definitions())
             .filter_map(|d| {
                 let def = data.def(d);
                 (def.def_type == DefType::Function
-                    && def.name.starts_with("n_")
+                    && (def.name.starts_with("n_") || def.name.starts_with("t_"))
                     && !def.name.starts_with("n___lambda_")
                     && !crate::compile::is_default_file(def.position.file.as_str()))
                 .then(|| def.name.clone())
