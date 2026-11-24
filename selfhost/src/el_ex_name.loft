@@ -40,7 +40,7 @@ use el_ex_into;
 
 // `type_name(T)` of a plain declared struct; anything else is refused by name.
 pub fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   name = "";
   plain = false;
   if kind == "sizeof" && st != null {
@@ -154,7 +154,7 @@ pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?, se: integer? =
 // (`variant_size`), a tuple's or a typed value's its type's.  A type variable (inside a generic,
 // sized per instance through `OpSizeofRef`) is refused by name.
 pub fn sizeof_of(e: el::El, vars: el_vars::Vars, st: integer?, se: integer?) -> Ex {
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   value = se;
   if st != null {
     plain_name = match e.p.nodes[st!] {
@@ -214,7 +214,7 @@ pub fn sized(e: el::El, n: integer, int_t: ir::TypeT) -> Ex {
 // `Parser::variant_size`: a struct enum's value sized by the variant it holds — its tag read into
 // `_sizeof_disc_N`, then one test per variant, the absent value's size last.
 pub fn variant_size(e: el::El, vars: el_vars::Vars, value: ir::Node, en: integer, absent: integer) -> ir::Node {
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   d = el_vars::create_unique(vars, "sizeof_disc", int_t);
   el_vars::set_defined(vars, d);
   disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [value, ir::NdInt { n: 0 }])]);

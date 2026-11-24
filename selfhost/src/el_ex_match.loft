@@ -578,7 +578,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     var_tp = el_types::with_deps(el_types::without_deps(el_types::base(elem)), [vec]);
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
-  idx = el_ex_pattern::loop_index(vars, id, named: true);
+  idx = el_ex_pattern::loop_index(e, vars, id, named: true);
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
@@ -1232,7 +1232,7 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
     }
     from += [kx.code];
   }
-  it = el_vars::create_unique(vars, "iter", ir::TyInteger { spec: i32_spec() });
+  it = el_vars::create_unique(vars, "iter", count_type(e));
   el_vars::set_defined(vars, it);
   to: vector<ir::Node> = [];
   for k in hi {
@@ -1391,7 +1391,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   ss: el_ex_vector::SliceStart? = null;
   if sliced {
-    ss = el_ex_vector::slice_start(vars, x, id);
+    ss = el_ex_vector::slice_start(e, vars, x, id);
     elem = ss!.elem;
   } else if !ranged && !keyed {
     in_type = el_types::base(x.tp);
@@ -1417,9 +1417,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
-  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else if keyed && !kr!.whole { -1 } else { el_ex_pattern::loop_index(vars, if src_id == "_" { "_" } else { id }) };
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else if keyed && !kr!.whole { -1 } else { el_ex_pattern::loop_index(e, vars, if src_id == "_" { "_" } else { id }) };
   if keyed && kr!.whole {
-    wst = el_vars::add_variable(vars, "{if src_id == "_" { el_vars::name_of(vars, idx) } else { id }}#iter_state", ir::TyInteger { spec: i32_spec() });
+    wst = el_vars::add_variable(vars, "{if src_id == "_" { el_vars::name_of(vars, idx) } else { id }}#iter_state", count_type(e));
     el_vars::set_defined(vars, wst);
     kr = KeyRange { iter: wst, start: kr!.start, coll: kr!.coll, on: kr!.on, arg: kr!.arg, elem: kr!.elem, whole: true, idx: idx };
   }
@@ -1666,7 +1666,7 @@ pub fn text_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
     el::refuse(e, "a `for _` over a text");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   pos = el_vars::add_variable(vars, "{h.id}#next", int_t);
   el_vars::set_defined(vars, pos);
   idx = el_vars::add_variable(vars, "{h.id}#index", int_t);
@@ -1779,7 +1779,7 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
       elem = el_types::with_deps(elem, [scratch]);
     }
   }
-  idx = el_ex_pattern::loop_index(vars, h.id);
+  idx = el_ex_pattern::loop_index(e, vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
   lv = loop_var(vars, h.src_id, h.id, elem);
   // (A source held on this pass is what the loop's variable borrows, `ref(P)["_vector_N"]`,
@@ -1809,7 +1809,7 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   // (`x#iter_state` is a second-pass mint: numbered after every first-pass variable.)
-  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
+  state = el_vars::add_variable(vars, "{base}#iter_state", count_type(e));
   el_vars::set_defined(vars, state);
   known = el_schema::keyed_type(e, ct);
   on = 128;
@@ -2072,6 +2072,12 @@ pub fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex 
     return ex(ir::NdNull, to);
   }
   if el_convert::narrowing_int(x.tp, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    // `@FR-I-Narrow-U32`: `as u32` is the same guarded narrowing as the implicit one — 0 where
+    // the value does not fit.
+    u = el_convert::into_u32_with_default(e, x.code, to);
+    if u != null {
+      return ex(u!, to);
+    }
     el::refuse(e, "a narrowing cast no constant answers");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3085,7 +3091,7 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     el::refuse(e, "a match over an iterator of this element type: {type_kind(elem)}");
     return void;
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   buf = el_vars::create_unique(vars, "stream_buf", ir::TyVector { inner: elem, dep: [] });
   el_vars::set_defined(vars, buf);
   gen = el_vars::create_unique(vars, "stream_gen", x.tp);
@@ -3227,7 +3233,7 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   // (A view of the source inside the caller's cursor record: freeing it frees the record.)
   el_vars::set_skip_free(vars, srcv, "parse_cursor_match");
   el_vars::set_defined(vars, srcv);
-  posv = el_vars::create_unique(vars, "cursor_pos", ir::TyInteger { spec: i32_spec() });
+  posv = el_vars::create_unique(vars, "cursor_pos", count_type(e));
   el_vars::set_defined(vars, posv);
   rs = el_ex_base::field_get(e, cd, cs[1]!, ir::NdVar { n: cv });
   rp = el_ex_base::field_get(e, cd, cs[2]!, ir::NdVar { n: cv });
@@ -3695,11 +3701,11 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     if rule == -2 {
       fwd = match e.p.nodes[if grp >= 0 { grp } else { el0 }] { PCap { name: fwn } => fwn, _ => "" };
       if grp >= 0 {
-        el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+        el_vars::create_unique(vars, "cursor_seg", count_type(e));
         pattern_bind(vars, fwd, ir::TyUnknown { n: 0 }, names);
       } else {
         pattern_bind(vars, fwd, ir::TyUnknown { n: 0 }, names);
-        el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+        el_vars::create_unique(vars, "cursor_seg", count_type(e));
       }
       seg_names = [];
       seg_pats = [];
@@ -3793,7 +3799,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         }
         sep_disc = match el::def(e, sed).attributes[sa].value[0] { NdEnum { ord: so } => so, _ => 0 };
       }
-      osg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+      osg = el_vars::create_unique(vars, "cursor_seg", count_type(e));
       el_vars::set_defined(vars, osg);
       pre += [el_ir::v_set(osg, ir::NdInt { n: 0 })];
       ocall = el_ex_call::call_args(e, vars, rule, [ir::NdVar { n: cur[0]! }], [el_vars::tp(vars, cur[0]!)]);
@@ -3923,7 +3929,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     }
     nv = pattern_bind(vars, rn, rt, names);
     el_vars::set_defined(vars, nv);
-    sg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+    sg = el_vars::create_unique(vars, "cursor_seg", count_type(e));
     el_vars::set_defined(vars, sg);
     sentinel = if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
     pre += [el_ir::v_set(nv, sentinel), el_ir::v_set(sg, ir::NdInt { n: 0 })];
@@ -4283,7 +4289,7 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   if fv >= 0 {
     el_vars::set_defined(vars, fv);
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   mv = el_vars::create_unique(vars, "map_vec", walked_type(list[0]!, types[0]!));
   el_vars::set_defined(vars, mv);
   idx = el_vars::create_unique(vars, "map_idx", int_t);
@@ -4381,7 +4387,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   if fv >= 0 {
     el_vars::set_defined(vars, fv);
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   mv = el_vars::create_unique(vars, "filter_vec", walked_type(list[0]!, types[0]!));
   el_vars::set_defined(vars, mv);
   idx = el_vars::create_unique(vars, "filter_idx", int_t);
@@ -4463,7 +4469,7 @@ pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
     el::refuse(e, "a `reduce` over or to a value that is no plain scalar, or by a function with hidden parameters");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   acc = el_vars::create_unique(vars, "reduce_acc", el_types::without_deps(out));
   el_vars::set_defined(vars, acc);
   mv = el_vars::create_unique(vars, "reduce_vec", walked_type(list[0]!, types[0]!));

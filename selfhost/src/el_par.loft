@@ -82,7 +82,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el::refuse(e, if ln.queue == "" { "a `par` worker answering this type: {el_ex_base::type_kind(ret)}" } else { "a `par` loop over this element: {el_ex_base::type_kind(elem)}" });
     return void;
   }
-  int_t = ir::TyInteger { spec: el_ex_base::i32_spec() };
+  int_t = el_ex_base::count_type(e);
   idx = el_vars::add_variable(vars, "{result}#index", int_t);
   el_vars::set_defined(vars, idx);
   len_var = el_vars::create_unique(vars, "par_len", int_t);

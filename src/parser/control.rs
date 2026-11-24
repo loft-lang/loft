@@ -610,6 +610,33 @@ pub(super) fn arm_body_is_null(code: &Value) -> bool {
     }
 }
 
+/// Does every path of `code` answer the bare `null` or leave — a `return`, `break`, `continue`
+/// or halt — with at least one path answering the `null`, so the arm's own code carries no
+/// value of the join's type?  A nested `match` (an `if` chain) whose arms are `null` or
+/// `return` is one; an arm that only leaves is `never`, not a null arm.  Such an arm keeps its
+/// code and takes the join's typed null BEHIND it: replacing it dropped its `return` (both
+/// backends answered null), and leaving it untyped left the interpreter's chain reading a
+/// slot the arm never wrote.  `@FR-N-Join`'s null arm, for an arm that is not the literal.
+pub(super) fn yields_only_null(data: &crate::data::Data, code: &Value) -> bool {
+    null_paths(data, code) == Some(true)
+}
+
+/// `Some(answers_null)` when every path of `code` answers the bare `null` or leaves — true when
+/// at least one answers the `null` — and `None` when a path answers anything else.
+fn null_paths(data: &crate::data::Data, code: &Value) -> Option<bool> {
+    match code.unspan() {
+        Value::Null => Some(true),
+        Value::Return(_) | Value::Break(_) | Value::Continue(_) => Some(false),
+        Value::Block(bl) if bl.name == FORWARD_CALL => None,
+        Value::Block(bl) if is_block_divergent(&bl.operators) => Some(false),
+        Value::Block(bl) => null_paths(data, bl.operators.last()?),
+        Value::If(_, then_b, else_b) => {
+            Some(null_paths(data, then_b)? | null_paths(data, else_b)?)
+        }
+        other => is_halt_call(data, other).then_some(false),
+    }
+}
+
 /// The name of the block that spells a pass-1 PLACEHOLDER arm: a `match` arm calling a function
 /// declared further down, which pass 1 cannot type and builds no IR for.  Left as the bare
 /// `Value::Null` it was handed, it read as the `null` literal — to the arm joins (loft#2305) and to
@@ -6768,7 +6795,16 @@ impl Parser {
                         // DbRef sentinel.  `null`'s catch-all answers a bare
                         // `Value::Null`, which pushes nothing, and the join then read an
                         // uninitialised 12-byte slot as a live reference.
-                        bl.operators[p] = self.null_value(&false_type);
+                        let typed = self.null_value(&false_type);
+                        if !matches!(bl.operators[p].unspan(), Value::Null)
+                            && yields_only_null(&self.data, &bl.operators[p])
+                        {
+                            // An arm of no type that is no `null` literal — a nested `match`
+                            // whose paths answer null or return — keeps its code.
+                            bl.operators.push(typed);
+                        } else {
+                            bl.operators[p] = typed;
+                        }
                     }
                     bl.result = false_type.clone();
                 }

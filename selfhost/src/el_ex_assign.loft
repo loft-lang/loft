@@ -434,6 +434,18 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       if g != null {
         l = l[..-1] + [g!];
         discharged = true;
+      } else if !e.first_pass && el_convert::narrowing_store(el_types::base(t), el_types::base(result)) && el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result) != null {
+        // (`@FR-W-Store`, asked by `convert` before the fit.)
+        l = l[..-1] + [el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result)!];
+        converted = true;
+      } else if !e.first_pass && el_convert::narrowing_int(el_types::base(t), el_types::base(result)) && !el_convert::value_fits(e, vars, l[-1] ?? ir::NdNull, el_types::base(result)) {
+        // (`convert` asks the narrowing before its equal-types accept: a `u32` result guards a
+        // value it may not hold, `@FR-I-Narrow-U32`.)
+        u = el_convert::into_u32_with_default(e, l[-1] ?? ir::NdNull, el_types::base(result));
+        if u != null && !(result is TyOptional) {
+          l = l[..-1] + [u!];
+          converted = true;
+        }
       }
       t = result;
     } else {
@@ -665,10 +677,11 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
   match e.p.nodes[n] {
-    SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
+    SInt { v } => ex(ir::NdInt { n: v }, count_type(e)),
     SLong { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
     SWide { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
-    SFloat { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
+    // `@FR-W-Lit`: a plain decimal literal is a `single` under the 32-bit regime.
+    SFloat { v } => if el_types::regime32(e) { ex(ir::NdSingle { f: v as single }, ir::TySingle) } else { ex(ir::NdFloat { f: v }, ir::TyFloat) },
     SDouble { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
     SSingle { v } => ex(ir::NdSingle { f: v }, ir::TySingle),
     SChar { c } => ex(el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: c }]), ir::TyCharacter),

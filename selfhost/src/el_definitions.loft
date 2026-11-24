@@ -93,7 +93,7 @@ fn top_item(e: el::El, it: integer) {
       if name == "width" && arg == "32" && e.source != el::STD_SOURCE && !e.width32_files.contains(e.file) {
         e.width32_files += [e.file];
       }
-      if name == "width" && arg != "64" {
+      if name == "width" && arg != "64" && arg != "32" {
         el::refuse(e, "a `#width {arg}` file");
       }
     },

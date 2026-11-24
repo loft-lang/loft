@@ -192,7 +192,7 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   for b in [lo, hi] {
     if len(b) == 0 {
       bounds += [ir::NdInt { n: if b#index == 0 { 0 } else { 2147483647 } }];
-      btypes += [ir::TyInteger { spec: i32_spec() }];
+      btypes += [count_type(e)];
       continue;
     }
     y = el_ex_assign::expression(e, vars, b[0]!);
@@ -320,7 +320,7 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   subj = if sv >= 0 { ir::NdVar { n: sv } } else { el_ir::unspan(x.code) };
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   bounds: vector<ir::Node> = [];
   for b in [lo, hi] {
     if len(b) == 0 {
@@ -399,13 +399,13 @@ pub struct SliceStart {
   pub elem: ir::TypeT
 }
 
-pub fn slice_start(vars: el_vars::Vars, x: Ex, id: text) -> SliceStart {
+pub fn slice_start(e: el::El, vars: el_vars::Vars, x: Ex, id: text) -> SliceStart {
   elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
   init = ir::NdNull;
   subj = ir::NdNull;
   walk = -1;
   match x.code { NdIter { var, create, init: ii } => { walk = var; subj = create; init = ii; }, _ => {} }
-  idx = el_ex_pattern::loop_index(vars, id);
+  idx = el_ex_pattern::loop_index(e, vars, id);
   // A record element walked is a view of the vector's local.
   match elem {
     TyReference { n: _ } => { match el_ir::unspan(subj) { NdVar { n: sv } => { elem = el_types::with_deps(elem, [sv]); }, _ => {} } },
@@ -459,7 +459,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
       el_ir::v_set(st.idx, el_ir::cl(e, "OpMinInt", [i_v, ir::NdInt { n: 1 }])),
       el_ir::v_if(el_ir::cl(e, "OpLtInt", [i_v, ir::NdVar { n: lov }]), ir::NdBreak { n: 0 }, ir::NdNull),
       i_v
-    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+    ], count_type(e), "Iter range")
   } else {
     n_v = ir::NdVar { n: nxt };
     el_ir::v_block([
@@ -467,7 +467,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
       el_ir::v_set(st.idx, n_v),
       el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
       i_v
-    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+    ], count_type(e), "Iter range")
   };
   if record {
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
@@ -480,7 +480,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
 
 // A `for` over a vector slice (`parse_for` with the range's preamble as its start).
 pub fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
-  st = slice_start(vars, x, h.id);
+  st = slice_start(e, vars, x, h.id);
   lv = loop_var(vars, h.src_id, h.id, st.elem);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1627,6 +1627,18 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       r = el_ex_call::call_args(e, vars, m, [x.code], [x.tp]);
       return r ?? ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // `@FR-W-Op`: negating a 32-bit integer under the 32-bit regime stays 32-bit (it cannot
+    // leave the range: `i32::MIN` is the null), so it is retyped the regime's `i32`, unwrapped.
+    if el_types::regime32(e) && el_types::width32_int(x.tp) {
+      r = call_op(e, vars, op, [x.code], [x.tp]);
+      match el_types::base(r.tp) {
+        TyInteger { spec } => {
+          nt = ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: spec.not_null, forced_size: 4 } };
+          return ex(r.code, if r.tp is TyOptional { ir::TyOptional { inner: nt } } else { nt });
+        },
+        _ => return r
+      }
+    }
   }
   call_op(e, vars, op, [x.code], [x.tp])
 }
@@ -1704,6 +1716,7 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
   for n in rights {
     b = el_ex_assign::expression(e, vars, n);
     x = el_ex_null::builtin_op(e, vars, "+", acc, b);
+    x = el_ex_call::width32_op(e, "+", acc.tp, b.tp, x);
     x.tp = el_ex_call::propagated(acc, b, x.tp);
     acc = el_ex_null::arithmetic_span(e, ats[n#index] ?? at, "+", x);
   }

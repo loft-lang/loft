@@ -119,6 +119,7 @@ PORT_STATE_KINDS = set()
 REFUSED_FN_LAYERS = {}
 REFUSED_LAYERS = {}  # refused program -> (the port reported a layer, Rust did)
 AGREE_SILENT = set()  # agreeing programs one side reported no contract and no state for
+ONE_SIDED = {}  # refused program -> (definitions only Rust registers, only the port does)
 CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
 
 
@@ -463,6 +464,15 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         return "differ", f"elab exited {m.returncode}: {m.stderr.strip()[-300:]}", {}
     want = o.stdout.splitlines()
     fns, w, mn = by_function(want, mine, refused_in, bool(refused))
+    # The definitions only one side registers (`ONE_SIDED`): a refusal must not drop a definition
+    # Rust registers — one that does shifts the number of every definition after it, so they all
+    # differ in numbers only.  Counted per program, the schema and the head left out.
+    if refused:
+        only_r = sorted(n for n in w if n not in mn and n not in ("(head)", "(schema)"))
+        only_m = sorted(n for n in mn if n not in w and n not in ("(head)", "(schema)"))
+        if only_r or only_m:
+            with STATE_LOCK:
+                ONE_SIDED[path] = (only_r, only_m)
     # A `beside` function's shape, for the worklist: whether it differs in numbers only, and
     # whether the port's section is (nearly) empty — a function a refusal elsewhere emptied.
     shapes = {}
@@ -770,6 +780,18 @@ def main():
         print(f"layers of refused programs: compared in {len(REFUSED_LAYERS) - silent} of "
               f"{len(REFUSED_LAYERS)} with agreeing definitions"
               + (f"; the port reports none for {silent}" if silent else ""))
+    if ONE_SIDED:
+        # A refusal that drops a definition Rust registers shifts every later definition's
+        # number (`beside numbers`): the rule is register-then-refuse.  A rise here is a new one.
+        nr = sum(len(a) for a, _ in ONE_SIDED.values()); np_ = sum(len(b) for _, b in ONE_SIDED.values())
+        print(f"definitions one side registers: {nr} Rust only, {np_} port only, in {len(ONE_SIDED)} refused programs")
+        if os.environ.get("LOFT_ELAB_ONE_SIDED_FILE"):
+            with open(os.environ["LOFT_ELAB_ONE_SIDED_FILE"], "w", encoding="utf-8") as fh:
+                for f, (a, b) in sorted(ONE_SIDED.items()):
+                    for n in a:
+                        fh.write(f"{baseline.name_of(f, root, suite)}\t{n}\trust\n")
+                    for n in b:
+                        fh.write(f"{baseline.name_of(f, root, suite)}\t{n}\tport\n")
     if fv["unaligned"]:
         # Which layers and tiers hold the refused programs' unaligned definitions back.
         print(f"definitions of refused programs unaligned: {fv['unaligned']} (their IR agrees; "

@@ -13850,6 +13850,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // definition — to start each run, then dropped the copy: ~0.7 ms of a warm `hello`
     // (@PLN179 finding 001).
     let mut data = std::sync::Arc::new(p.data);
+    let mut failed_tests = 0_usize;
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
         // INDIVIDUALLY with a fresh `state.database` per call.  This
@@ -13906,6 +13907,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `db.database(1000)` would panic with `allocations[max]` OOB.
             let clean_data = (*data).clone();
             let clean_db = state.database.clone();
+            let annotations =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
             let mut byte_code_secs = 0.0;
             let mut run_secs = 0.0;
             for name in &test_names {
@@ -13927,6 +13930,37 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 let t_run = std::time::Instant::now();
                 state_iter.execute_argv(name, std::sync::Arc::new(data_iter), &[]);
                 run_secs += t_run.elapsed().as_secs_f64();
+                // A test's fault is in ITS state, which the check after the run never
+                // reads: reported and counted here, the next test still run, a non-zero
+                // exit at the end — as the generated binary's runner does (`FAIL <name>`).
+                // Without it a failed `assert` in a file with no `main` exited 0, silent,
+                // on the interpreter alone.
+                let err = state_iter.database.runtime_error.take();
+                if let Some(e) = &err
+                    && let loft::runtime_error::RuntimeErrorKind::Exit { code } = e.kind
+                {
+                    loft::runtime_error::exit_program(code);
+                }
+                let faulted = err.is_some() || state_iter.database.run_failed();
+                // `@EXPECT_FAIL`: such a test passes only by failing, with one of the
+                // expected messages in its own (`loft_failed_with` on the C runner).
+                let want = annotations.expected_failure(name);
+                let msg = err.as_ref().map_or("", |e| e.message.as_str());
+                if !want.is_empty() && !faulted {
+                    eprintln!("FAIL {name} (expected to fail)");
+                    failed_tests += 1;
+                } else if faulted
+                    && (want.is_empty()
+                        || !want
+                            .iter()
+                            .any(|w| w.is_empty() || msg.contains(w.as_str())))
+                {
+                    if let Some(e) = err {
+                        eprint!("{}", e.render());
+                    }
+                    eprintln!("FAIL {name}");
+                    failed_tests += 1;
+                }
             }
             loft::platform::phase("byte_code", byte_code_secs);
             loft::platform::phase("run", run_secs);
@@ -14068,7 +14102,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // came to report the same fault two different ways (loft#1056).
         eprint!("{}", err.render());
     }
-    if state.database.run_failed() {
+    if state.database.run_failed() || failed_tests > 0 {
         std::process::exit(1);
     }
     // The table is not freed on the way out: the process is ending, and freeing it was a

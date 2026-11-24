@@ -2623,6 +2623,23 @@ pub fn i32_spec() -> ir::IntegerSpec {
   ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 }
 }
 
+// `Data::body_width32`: is definition `d`'s body under the 32-bit regime — written in a file
+// under it, outside the standard library?  (An instance keeps its template's position.)
+pub fn body_width32(e: el::El, d: integer) -> boolean {
+  wd = el::def(e, d);
+  len(e.width32_files) > 0 && wd.source != el::STD_SOURCE && e.width32_files.contains(wd.position.file)
+}
+
+// `Parser::count_type` (`@FR-W-Count`, `@FR-W-Lit`): the type of a plain integer literal and of
+// every count or counter the compiler makes itself — the regime's `i32` (`IntegerSpec::i32`, its
+// width forced to 4) in a file under the 32-bit regime, else the `signed32` template.
+pub fn count_type(e: el::El) -> ir::TypeT {
+  if el_types::regime32(e) {
+    return ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 4 } };
+  }
+  ir::TyInteger { spec: i32_spec() }
+}
+
 // `IntegerSpec::wide`, the type a 64-bit literal answers.
 pub fn wide_spec() -> ir::IntegerSpec {
   ir::IntegerSpec { min: -2147483647, max: 4294967295, not_null: false, forced_size: 0 }

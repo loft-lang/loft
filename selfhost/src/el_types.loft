@@ -482,6 +482,16 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         return depended(e, n, deps);
       }
       dl: vector<text> = if attach { deps } else { [] };
+      // `width32_name` (`@FR-W-Name`): in a file under the 32-bit regime a plain `integer` is an
+      // `i32` and a plain `float` a `single`; `integer limit(…)` names its own range, and the
+      // standard library's own definitions keep their machine width.
+      if member == "" && !e.default && e.width32_files.contains(e.file) {
+        if name == "integer" && limit == null {
+          name = "i32";
+        } else if name == "float" {
+          name = "single";
+        }
+      }
       if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
@@ -1256,6 +1266,21 @@ pub fn type_owns_hook(e: el::El, t: ir::TypeT, h: text, path: vector<integer>) -
       false
     },
     TyIterator { step: _ } => h == "OpDrop",
+    _ => false
+  }
+}
+
+// Is the body being read in a file under the 32-bit regime (`Data::width32`)?
+pub fn regime32(e: el::El) -> boolean {
+  len(e.width32_files) > 0 && e.width32_files.contains(e.file)
+}
+
+// `Parser::width32_int`: an integer type 32-bit by declaration (`IntegerSpec::is_width32`),
+// nullable or not.  A plain `integer` reports the i32 bounds while it holds 64 bits, so it is
+// not one.
+pub fn width32_int(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyInteger { spec } => spec.max <= 2147483647 && (if spec.forced_size != 0 { spec.forced_size <= 4 } else { !(spec.min == -2147483647 && spec.max == 2147483647) }),
     _ => false
   }
 }
