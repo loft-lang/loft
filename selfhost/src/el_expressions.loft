@@ -2525,6 +2525,7 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
     return null;
   }
   ps: vector<integer> = [];
+  call_arm = false;
   for arm in el_ex_deliver::branch_arms(tail, []) {
     leaf = el_ir::unspan(join_leaf(arm));
     ok = match leaf {
@@ -2532,7 +2533,7 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
       NdBlock { block: lb } => lb[0].name == "Object" || lb[0].name == "EnumUnitLit",
       // (On pass 1 a user call answering a fresh record — its return borrows nothing yet, a
       // recursive call above all — names no candidate: Rust's `ls` lists the other arms only.)
-      NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (e.first_pass && starts_with(el::def(e, def_nr).name, "n_") && len(el::def(e, def_nr).returned) > 0 && len(el_types::deps(el::def(e, def_nr).returned[0])) == 0),
+      NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (starts_with(el::def(e, def_nr).name, "n_") && len(el::def(e, def_nr).returned) > 0 && (!e.first_pass || len(el_types::deps(el::def(e, def_nr).returned[0])) == 0)),
       NdNull => e.first_pass,
       _ => false
     };
@@ -2541,11 +2542,51 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
     }
     match leaf {
       NdVar { n: pv } => { if !ps.contains(pv) { ps += [pv]; } },
+      // (Pass 2: a call arm's candidates are what its answer borrows — a parameter joins `ps`
+      // (`MergeAttr`), a local of the body cannot be renamed onto the buffer (`Bind`).)
+      NdCall { def_nr: cd, args: cargs } => {
+        if starts_with(el::def(e, cd).name, "n_") && !e.first_pass {
+          for cdp in el_types::deps(el::def(e, cd).returned[0] ?? ir::TyVoid) {
+            match el_ir::unspan(cargs[cdp] ?? ir::NdNull) {
+              NdVar { n: cav } => {
+                if vars.vars[cav].argument && !hidden_param(e, vars, cav) {
+                  if !ps.contains(cav) { ps += [cav]; }
+                } else if !vars.vars[cav].argument {
+                  call_arm = true;
+                }
+              },
+              _ => {}
+            }
+          }
+        }
+      },
       _ => {}
     }
   }
   if len(ps) == 0 {
     return null;
+  }
+  // (Pass 2, a call arm beside the parameter: Rust's `ls` holds the call's view and the
+  // parameter, `Rename(_mv_…, n)`, which cannot rename a parameter — `Bind`: every arm is copied
+  // into `__retbuf` (`materialize_return_into`), the result naming the lone buffer, not `n`.)
+  if call_arm && !e.first_pass {
+    rbv = el_vars::var(vars, "__retbuf");
+    td = el_types::struct_enum_def(el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid));
+    if td < 0 {
+      td = struct_ref(e, el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid));
+    }
+    if rbv < 0 || td < 0 {
+      return null;
+    }
+    bret = el::def(e, d).returned[0] ?? ir::TyVoid;
+    owned = el_types::with_deps(el_types::without_deps(el_types::base(bret)), [rbv]);
+    arms = el_ex_copy::copy_arms(e, vars, tail, rbv, td, owned);
+    if arms == null {
+      return null;
+    }
+    bl.operators[-1] = el_ir::respan(bl.operators[-1], arms!);
+    e.b.data.definitions[d].returned = [el_types::with_deps(el_types::without_deps(bret), [el_types::MARKER])];
+    return ir::NdBlock { block: [bl] };
   }
   ret = el::def(e, d).returned[0];
   dep = el_types::deps(ret);
