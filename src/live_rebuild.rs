@@ -52,9 +52,6 @@ enum Rebuild {
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
-    /// The tier of the rebuild in flight or ready: the shipped one (`--ship`) for `rebuild
-    /// fast` and in a build swapped in at full speed (`LOFT_LIVE_SHIP=1`).
-    static REBUILD_SHIP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static REBUILD: RefCell<Rebuild> = const { RefCell::new(Rebuild::Idle) };
     static REBUILD_SEQ: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Why the last rebuild failed, for the editor that asked (`D!:rebuild?`).
@@ -148,9 +145,6 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
         .arg("--no-warnings")
         .arg("--check")
         .arg("--native");
-    if REBUILD_SHIP.with(std::cell::Cell::get) {
-        cmd.push_arg("--ship");
-    }
     if let Some(libs) = live_var("LOFT_LIVE_LIBS") {
         for d in libs.split(':').filter(|s| !s.is_empty()) {
             cmd.push_arg("--lib").push_arg(d);
@@ -189,13 +183,6 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
 /// a halt.
 #[cfg(not(target_arch = "wasm32"))]
 fn rebuild_start() -> bool {
-    rebuild_start_tier(std::env::var("LOFT_LIVE_SHIP").is_ok_and(|v| v == "1"))
-}
-
-/// Start a rebuild, of the shipped tier (`--ship`, the speed the game ships at) when `ship`,
-/// else of the semantics tier the check reads.
-#[cfg(not(target_arch = "wasm32"))]
-fn rebuild_start_tier(ship: bool) -> bool {
     let (Some(driver), Some(src)) = (live_var("LOFT_LIVE_DRIVER"), live_var("LOFT_LIVE_SRC"))
     else {
         eprintln!(
@@ -205,11 +192,9 @@ fn rebuild_start_tier(ship: bool) -> bool {
     };
     REBUILD.with(|r| {
         let mut r = r.borrow_mut();
-        if matches!(*r, Rebuild::Building { .. }) && REBUILD_SHIP.with(std::cell::Cell::get) == ship
-        {
+        if matches!(*r, Rebuild::Building { .. }) {
             return true; // idempotent: one build at a time
         }
-        REBUILD_SHIP.with(|c| c.set(ship));
         match spawn_build(&driver, &src) {
             Ok(b) => {
                 eprintln!("loft-live: rebuild started ({src})");
@@ -327,18 +312,8 @@ fn rebuild_status() -> i64 {
 /// Control-channel shims (@PLN18 08-S7) — the kernel's debug handler drives
 /// the rebuild machinery without reaching the private internals.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn n_rebuild_start_ctl(ship: bool) -> bool {
-    if ship {
-        rebuild_start_tier(true)
-    } else {
-        rebuild_start()
-    }
-}
-
-/// Is the ready build of the shipped tier (`rebuild fast`)?  Only that one is full speed.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn rebuild_is_ship() -> bool {
-    REBUILD_SHIP.with(std::cell::Cell::get) && rebuild_status() == REBUILD_READY
+pub(crate) fn n_rebuild_start_ctl() -> bool {
+    rebuild_start()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

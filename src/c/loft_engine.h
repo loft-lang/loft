@@ -624,13 +624,6 @@ static int64_t loft_rebuild_status(loft_cx *cx);
 static loft_text loft_kernel_rebuild_artifact(loft_cx *cx);
 static const char *loft_rebuild_failure(loft_cx *cx);
 static uint8_t loft_swap_start(loft_cx *cx, loft_str artifact);
-/* `D!:swap dev` asked for the program interpreted again, not a binary: the swap step spawns the
- * driver with `--interpret`, the libraries and the source (`LOFT_LIVE_*`).  Read and cleared by
- * the swap. */
-static int loft_sw_dev_next = 0;
-/* `D!:rebuild fast` asked for the shipped tier (`--ship`), the speed the game ships at; a build
- * swapped in at full speed (`LOFT_LIVE_SHIP=1`) rebuilds at it too. */
-static int loft_rb_ship_next = 0;
 
 /* `debug_cmd_dispatch`, the command core both roles share: 1 and the immediate reply in `r`, or 0
  * for a command whose answer would come from the pause loop. */
@@ -650,7 +643,6 @@ static int loft_eh_debug_dispatch(loft_cx *cx, const char *cmd, size_t n, loft_t
     } else if (LOFT_VERB("apply")) {
         loft_push_cstr(cx, r, "D:apply queued");
     } else if (LOFT_VERB("rebuild")) {
-        loft_rb_ship_next = an == 4 && memcmp(arg, "fast", 4) == 0;
         loft_push_cstr(cx, r, loft_rebuild_start(cx) ? "D:rebuild started" : "D:rebuild refused");
     } else if (LOFT_VERB("rebuild?")) {
         /* A failed build says why, so the editor shows it beside the build it refused. */
@@ -660,22 +652,10 @@ static int loft_eh_debug_dispatch(loft_cx *cx, const char *cmd, size_t n, loft_t
         else snprintf(b, sizeof b, "D:rebuild %lld", (long long) st);
         loft_push_cstr(cx, r, b);
     } else if (LOFT_VERB("swap")) {
-        /* `auto` and `fast`: the rebuilt binary, the tier this build already is.  `dev`: the
-         * program interpreted again, for its debugger — the driver is the target, and the swap
-         * step hands it `--interpret`, the libraries and the source. */
         loft_text target = { 0, 0, 0 };
-        int dev = an == 3 && memcmp(arg, "dev", 3) == 0;
-        if (dev) {
-            const char *driver = getenv("LOFT_LIVE_DRIVER"), *src = getenv("LOFT_LIVE_SRC");
-            if (driver && *driver && src && *src) loft_push_cstr(cx, &target, driver);
-            else fputs("loft-swap: back to the interpreter needs the loft driver that started this build\n", stderr);
-        } else if (an == 0 || (an == 4 && (memcmp(arg, "auto", 4) == 0 || memcmp(arg, "fast", 4) == 0))) {
-            target = loft_kernel_rebuild_artifact(cx);
-        } else {
-            loft_push(cx, &target, arg, an);
-        }
-        uint8_t ok = target.len > 0 && loft_swap_start(cx, loft_view(cx, &target));
-        if (ok) loft_sw_dev_next = dev;
+        if (an == 0 || (an == 4 && memcmp(arg, "auto", 4) == 0)) target = loft_kernel_rebuild_artifact(cx);
+        else loft_push(cx, &target, arg, an);
+        uint8_t ok = loft_swap_start(cx, loft_view(cx, &target));
         loft_text_free(cx, &target);
         loft_push_cstr(cx, r, ok ? "D:swap true" : "D:swap false");
     } else if (LOFT_VERB("quit")) {
@@ -1872,7 +1852,6 @@ static void loft_sw_reset(loft_cx *cx) {
     loft_sw.ready = loft_sw.snap = 0;
     loft_sw.pid = -1;
     loft_sw.phase = LOFT_SW_IDLE;
-    loft_sw_dev_next = 0;
 }
 
 /* The listener kernel dropped at a handover: its listener, UDP socket and every connection
@@ -1914,32 +1893,11 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
             loft_sw_reset(cx);
             return 0;
         }
-        /* `{ artifact }`, or for `swap dev` the program interpreted again:
-         * `{ driver, --interpret, --lib <dir> …, source }`. */
-        const char *live_libs = loft_sw_dev_next ? getenv("LOFT_LIVE_LIBS") : 0;
-        char *libs = live_libs ? loft_sw_dup(cx, live_libs, strlen(live_libs)) : 0;
-        size_t nl = 0;
-        for (const char *c = libs; c && *c; c++) nl += *c == ':';
-        char **argv = (char **) calloc(5 + 2 * (nl + 1), sizeof *argv);
-        if (!argv) { fputs("loft: out of memory\n", stderr); abort(); }
-        size_t k = 0;
-        argv[k++] = loft_sw.artifact;
-        if (loft_sw_dev_next) {
-            argv[k++] = (char *) "--interpret";
-            for (char *d = libs ? strtok(libs, ":") : 0; d; d = strtok(0, ":")) {
-                argv[k++] = (char *) "--lib";
-                argv[k++] = d;
-            }
-            argv[k++] = (char *) getenv("LOFT_LIVE_SRC");
-        }
-        argv[k] = 0;
+        char *argv[] = { loft_sw.artifact, 0 };
         const char *set[] = { "LOFT_RESUME", loft_sw.snap, "LOFT_SWAP_READY", loft_sw.ready, 0 };
-        /* Dispatch reset: the new process runs the edited program; one interpreted again is
-         * back on the development tier. */
-        const char *unset[] = { "LOFT_FLIP_FNS", loft_sw_dev_next ? "LOFT_LIVE_SHIP" : 0, 0 };
+        /* Dispatch reset: the new build has the edits compiled. */
+        const char *unset[] = { "LOFT_FLIP_FNS", 0 };
         long pid = loft_sw_spawn(cx, argv, set, unset, 0, 0, 1);
-        free(argv);
-        free(libs);
         if (pid < 0) {
             fprintf(stderr, "loft-swap: rolled back (cannot spawn %s: %s)\n", loft_sw.artifact, strerror(errno));
             loft_sw_remove_snapshot(cx, loft_sw.snap);
@@ -2031,8 +1989,6 @@ static int loft_rb_spawn(loft_cx *cx, const char *driver, const char *src, char 
     argv[a++] = (char *) "--check";
     /* The running build is a C build: its successor is built the same way. */
     argv[a++] = (char *) "--native-c";
-    const char *live_ship = getenv("LOFT_LIVE_SHIP");
-    if (loft_rb_ship_next || (live_ship && strcmp(live_ship, "1") == 0)) argv[a++] = (char *) "--ship";
     for (char *tok = libcopy ? strtok(libcopy, ":") : 0; tok; tok = strtok(0, ":")) {
         if (!*tok) continue;
         argv[a++] = (char *) "--lib";

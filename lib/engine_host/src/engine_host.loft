@@ -131,22 +131,6 @@ pub fn swap_world(w: reference) -> boolean;
 // build SERVES, then retires.  A new build that fails to serve rolls back
 // — the old build never stopped listening.  Returns false when the
 // artifact path is missing or a swap is already in progress.
-//
-// A game served for development runs on the INTERPRETER, where the
-// debugger, flips and Apply live — and the interpreter is not the speed the
-// game ships at.  Its rebuild keeps it there: the swap boots the program
-// interpreted again with the world, so the debugger survives an edit.  To
-// see the real speed, switch the running game to full speed and back over
-// the debug control channel (LOFT_DEBUG_CONTROL=1), keeping its world:
-//   D!:rebuild fast   build the shipped tier (--ship), in the background
-//   D!:swap fast      hand the world to that build: the speed it ships at,
-//                     with no debugger, flips or Apply (refused until a
-//                     `rebuild fast` is ready)
-//   D!:swap dev       hand it back to the program interpreted again, with
-//                     its debugger
-//   D!:swap auto      swap after an edit, staying on the tier it runs on
-// Measure speed at full speed: a number taken while debugging is the
-// interpreter's.
 pub fn swap_start(artifact: text) -> boolean;
 #native
 
