@@ -556,10 +556,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
     }
   }
-  // A lambda with no buffer yet whose vector tail is a buffered call grows one (`Grow`).
-  if rb < 0 && e.first_pass && el_types::base(result) is TyVector {
+  // A lambda with no buffer yet whose vector tail is a buffered call grows one (`Grow`).  Not
+  // for a `vector<T>?` result: Rust's ladder answers `AwaitReservedBuffer` there, the call left
+  // building into its own `__ref_N`.
+  if rb < 0 && e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) {
     el_ex_deliver::lambda_grow(e, vars, code, result);
-  } else if rb < 0 && !e.first_pass && el_types::base(result) is TyVector && e.declared_lambdas.contains(el::def(e, e.context).name) {
+  } else if rb < 0 && !e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) && e.declared_lambdas.contains(el::def(e, e.context).name) {
     code = el_ex_deliver::grown_tail(e, vars, code);
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.
