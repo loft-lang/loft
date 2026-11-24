@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the graphics library is a `[native] crate` the C does not link — every loft it spawns runs with LOFT_NATIVE_BACKEND=rust.
 
 //! GL-render gold-image regression for the crystal editor smoke
 //! mode (`tools/audience-demo/crystal_editor.loft --smoke`).

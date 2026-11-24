@@ -1169,8 +1169,8 @@ pub fn hex_at_world(wx: float, wz: float) -> (integer, integer) {
 }
 
 // SegMesh → GL line vertices, stride 10 (pos.xyz + normal pad + rgba),
-// two vertices per segment, palette-coloured.  Draw with
-// `gl_draw_mode(vao, len/10, DRAW_LINES)`.  A lightweight alternative to
+// two vertices per segment, palette-coloured.  Draw with graphics'
+// `w.upload(verts, 10).draw_mode(w, shader, DRAW_LINES)`.  A lightweight alternative to
 // the projector's 3D-beam baking for a quick top-down viewer/editor.
 // Example: @ACR-002
 pub fn crystal_mesh_to_lines(m: SegMesh) -> vector<single> {
