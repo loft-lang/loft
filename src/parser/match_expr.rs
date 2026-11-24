@@ -165,6 +165,53 @@ impl Parser {
         r
     }
 
+    /// @PLN91 — the `match_subject` state route: what a `match` is over, as `<shape>/<type>`
+    /// and its borrows (`literal/record[]`, `call/nullable_record[]`, `local/record[ops]`), so a
+    /// change to how one kind of subject is held can be checked against every corpus program
+    /// that has that kind — and, the port printing the same, compared per site.
+    fn match_subject_shape(&self, subject: &Value, tp: &Type) -> String {
+        fn literal(v: &Value) -> bool {
+            match v.unspan() {
+                Value::Block(bl) => bl.name == "Object" || bl.operators.last().is_some_and(literal),
+                Value::Insert(ops) => ops.last().is_some_and(literal),
+                _ => false,
+            }
+        }
+        let shape = match subject.unspan() {
+            _ if literal(subject) => "literal",
+            Value::Var(v) if self.vars.is_argument(*v) => "argument",
+            Value::Var(_) => "local",
+            Value::Call(d, _) if self.data.def(*d).name().starts_with("Op") => "read",
+            Value::Call(_, _) => "call",
+            _ => "other",
+        };
+        let (nullable, base) = match tp {
+            Type::Optional(b) => ("nullable_", b.as_ref()),
+            t => ("", t),
+        };
+        let kind = match base.base() {
+            Type::Reference(_, _) => "record",
+            Type::Enum(_, true, _) => "record_enum",
+            Type::Enum(_, false, _) => "enum",
+            Type::Text(_) => "text",
+            Type::Tuple(_) => "tuple",
+            Type::Integer(_) | Type::Boolean | Type::Float | Type::Single | Type::Character => {
+                "scalar"
+            }
+            t if crate::parser::vectors::is_collection(t) => "collection",
+            _ => "other",
+        };
+        // The subject's borrows, by name: a literal or a fresh call holds none, a view names
+        // what it reads (`ncc/record[ops]`).
+        let deps: Vec<&str> = base
+            .depend()
+            .iter()
+            .filter(|&&d| d < self.vars.count())
+            .map(|&d| self.vars.name(d))
+            .collect();
+        format!("{shape}/{nullable}{kind}[{}]", deps.join(","))
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "the match construct in one pass: the subject's shape picks the arm grammar, and every arm's pattern, guard, body and type join read the same arm list and lexer position"
@@ -185,6 +232,10 @@ impl Parser {
         // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
         // match `void`, and a local bound to it refused pass 2's real type.
         let mut subject_type = self.expression(&mut subject).unrewritten();
+        if self.state_trace_on() {
+            let shown = self.match_subject_shape(&subject, &subject_type);
+            self.state_route(&format!("match_subject={shown}"));
+        }
         self.match_subject_root = self.subject_place_root(&subject);
         // @PLN187 — a tuple subject is inspected position by position, by its patterns; any
         // other abstract subject is read by the match itself.
