@@ -1083,8 +1083,11 @@ pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       _ => {}
     }
     rest = len(items) - 1 - start;
-    if rest == 1 {
-      ops += [items[start]!];
+    // (A text walk's start — `iter_text`'s index, `_for_text_N`, position — is three statements
+    // of its own, not one `create_iter`.)
+    text_start = len([for ti in items[start..-1] if match ti { NdSet { var: tsv } => starts_with(el_vars::name_of(vars, tsv), "_for_text_"), _ => false } { 1 }]) > 0;
+    if rest == 1 || text_start {
+      ops += items[start..-1];
     } else if rest > 1 {
       ops += [ir::NdInsert { items: items[start..-1] }];
     }
@@ -1392,9 +1395,18 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   ss: el_ex_vector::SliceStart? = null;
+  // (A text is walked character by character, `iter_text`, as a `for` walks it: `x#next` minted
+  // first, the text held in `_for_text_N`.)
+  texted = !ranged && !keyed && !sliced && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) && !rev;
+  tpos = -1;
   if sliced {
     ss = el_ex_vector::slice_start(e, vars, x, id);
     elem = ss!.elem;
+  } else if texted {
+    elem = ir::TyCharacter;
+    // (A `_` walk's counters are the comprehension's own, `_next_N` / `_index_N`.)
+    tpos = if src_id == "_" { el_vars::create_unique(vars, "next", count_type(e)) } else { el_vars::add_variable(vars, "{id}#next", count_type(e)) };
+    el_vars::set_defined(vars, tpos);
   } else if !ranged && !keyed {
     in_type = el_types::base(x.tp);
     if !(in_type is TyVector) || x.tp is TyOptional {
@@ -1427,7 +1439,13 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
   // number is taken although the fill names no walk.)
-  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced || keyed { elem } else { el_types::with_deps(elem, [vec]) });
+  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced || keyed || texted { elem } else { el_types::with_deps(elem, [vec]) });
+  ttv = -1;
+  tres = -1;
+  if texted {
+    ttv = el_vars::create_unique(vars, "for_text", match el_ir::unspan(x.code) { NdVar { n: tsv } => ir::TyText { dep: [tsv] }, _ => x.tp });
+    tres = el_vars::create_unique(vars, "for_result", ir::TyCharacter);
+  }
   vars.active_loops += [lv];
   vars.active_values += [if sliced || keyed { ir::NdNull } else { x.code }];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
@@ -1507,7 +1525,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   nx: ir::Node? = if keyed && kr!.whole {
     el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: kr!.iter }, kr!.coll, ir::NdInt { n: kr!.on }, ir::NdInt { n: kr!.arg }])], elem, "sorted iter next")
-  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!, rev: rev) } else { vector_step(e, vec, idx, elem, rev: rev) };
+  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!, rev: rev) } else if texted { text_step(e, ttv, tpos, idx, tres) } else { vector_step(e, vec, idx, elem, rev: rev) };
   if nx == null || rows == null {
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1517,6 +1535,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if keyed {
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
+  } else if texted {
+    tbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    steps += [el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [ir::NdVar { n: ttv }])]), tbrk, ir::NdNull), el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpSizeText", [ir::NdVar { n: ttv }]), ir::NdVar { n: idx }]), tbrk, ir::NdNull)];
   } else if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
     if rev {
@@ -1589,7 +1610,12 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     // (`build_comprehension_code`'s value form allocates through `vector_db`, not `insert_new`:
     // its element keeps borrowing the `_vec_N` it was minted for.)
     if made {
-      el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store || as_value { v } else { db }] });
+      // (A vector element's temp bound into a local is typed as the body's vector itself.)
+      if made_vec && !as_value {
+        el_vars::set_var_type(vars, celm, b.tp);
+      } else {
+        el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store || as_value { v } else { db }] });
+      }
     } else if !as_value && !had_store && fill_count < 0 && !empty_constant_range(e, source) {
       // (`insert_new`: a fresh local's element borrows the backing minted for it, whatever the
       // element's type — where an element is pushed at all: a fill copies one constant, and a
@@ -1635,7 +1661,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
-  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
+  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else if texted { [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(ttv, x.code), el_ir::v_set(tpos, ir::NdInt { n: 0 })] } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }
@@ -1669,16 +1695,29 @@ pub fn constant_body(e: el::El, code: ir::Node) -> boolean {
   }
 }
 
+// `iter_text`'s step: the character at the byte position, the position moved past it (one byte
+// at least), the character answered.
+fn text_step(e: el::El, tv: integer, pos: integer, idx: integer, res: integer) -> ir::Node {
+  t = ir::NdVar { n: tv };
+  p = ir::NdVar { n: pos };
+  i = ir::NdVar { n: idx };
+  r = ir::NdVar { n: res };
+  el_ir::v_block([
+    el_ir::v_set(idx, p),
+    el_ir::v_set(res, el_ir::cl(e, "OpTextCharacterNullable", [t, p])),
+    el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [p, el_ir::cl(e, "OpLengthCharacter", [r])])),
+    el_ir::v_if(el_ir::cl(e, "OpLeInt", [p, i]), el_ir::v_set(pos, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), ir::NdNull),
+    r
+  ], ir::TyCharacter, "for text next")
+}
+
 // `parse_for` over a text (`walks_text`, `iter_text`): the loop's `x#next` (the byte position)
 // and `x#index` (where the character starts), the text held in `_for_text_N` — borrowing a local
 // it names — and each step reading the character there (`OpTextCharacterNullable`) and moving
 // past it, one byte at least.  The walk ends at an absent text and past its size.  A `_`
 // binding and a `&text` source are refused by name.
 pub fn text_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
-  if h.id == "_" {
-    el::refuse(e, "a `for _` over a text");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+  // (A `_` binding walks as any other: `_#next`, `_#index`, its character a `___N`.)
   int_t = count_type(e);
   pos = el_vars::add_variable(vars, "{h.id}#next", int_t);
   el_vars::set_defined(vars, pos);
