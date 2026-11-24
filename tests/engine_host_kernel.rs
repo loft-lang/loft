@@ -1480,9 +1480,9 @@ fn scopeguard_kill(stem: String) -> impl Drop {
 /// eval, live edit acknowledged through the pause (the S3 poll-now),
 /// resume, the SECOND hit proving breakpoint re-resolution across the
 /// reload (offsets moved, identity did not), rebuild driven over the
-/// channel, swap — and the NEW build, compiled, serving the edit over the
-/// RESTORED world.  The compiled build has no breakpoints, so the rustc
-/// writer's post-swap hit is not asked of it (@PLN225 R4).
+/// channel, swap — and the program interpreted again, serving the edit over the
+/// RESTORED world and hitting a breakpoint set in it: the session keeps its
+/// debugger across a rebuild (`@C170`).
 // @speed 2.4
 #[test]
 fn s7_debugger_loop_end_to_end() {
@@ -1629,6 +1629,21 @@ fn main() {{
     // Stage 9: the new build serves the edit over the RESTORED world (events=101).
     ws_send(&game2, "c");
     assert_eq!(ws_recv(&game2), "got:c#201");
+
+    // Stage 10: the successor is the program interpreted again, so the session keeps its
+    // debugger across the swap: a breakpoint set over a new control connection is hit there.
+    let ctl2 = ws_connect(port);
+    ws_send(&ctl2, "D!:bp bump_events");
+    assert_eq!(ws_recv(&ctl2), "D:ok bp bump_events");
+    ws_send(&game2, "d");
+    let hit3 = ws_recv(&ctl2);
+    assert!(
+        hit3.starts_with("D:hit bump_events"),
+        "a hit in the swapped-in process: {hit3}"
+    );
+    ws_send(&ctl2, "D!:resume");
+    assert_eq!(ws_recv(&ctl2), "D:resumed");
+    assert_eq!(ws_recv(&game2), "got:d#301");
 
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(

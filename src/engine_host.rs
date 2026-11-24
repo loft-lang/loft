@@ -2334,7 +2334,19 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     return 0;
                 };
                 use crate::platform::process::{Program, Spawn, Tree};
-                let mut successor = Spawn::new(Program::os(&artifact));
+                // An interpreted host hands its world to the same program interpreted again,
+                // so the session keeps its debugger; a compiled host to the rebuilt binary.
+                let (mut successor, booting) =
+                    if let Some(argv) = crate::live_rebuild::interpreted_successor() {
+                        let mut s = Spawn::new(Program::os(&argv[0]));
+                        for a in &argv[1..] {
+                            s.push_arg(a);
+                        }
+                        let src = argv.last().cloned().unwrap_or_default();
+                        (s, format!("{src} on the interpreter"))
+                    } else {
+                        (Spawn::new(Program::os(&artifact)), artifact.clone())
+                    };
                 // An interpreted host names its program to the rebuild in-process; the new
                 // build learns it from its environment.
                 for (name, value) in crate::live_rebuild::live_env_for_successor() {
@@ -2343,8 +2355,8 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 let spawned = successor
                     .env("LOFT_RESUME", &snap)
                     .env("LOFT_SWAP_READY", &ready)
-                    // Dispatch reset: the new build has the edits COMPILED —
-                    // startup flips must not resurrect the interpreter tier.
+                    // Dispatch reset: the new process runs the edited program, so a
+                    // startup flip of the old one must not carry over.
                     .env_remove("LOFT_FLIP_FNS")
                     .stdin(std::process::Stdio::null())
                     // The new build is a HANDOVER TARGET, not part of this
@@ -2355,7 +2367,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     .start();
                 match spawned {
                     Ok(child) => {
-                        eprintln!("loft-swap: booting {artifact} (meaning frozen)");
+                        eprintln!("loft-swap: booting {booting} (meaning frozen)");
                         *sw = SwapPhase::Waiting {
                             child,
                             ready,
@@ -2365,7 +2377,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                         1
                     }
                     Err(e) => {
-                        eprintln!("loft-swap: rolled back (cannot spawn {artifact}: {e})");
+                        eprintln!("loft-swap: rolled back (cannot spawn {booting}: {e})");
                         remove_world_snapshot(&snap);
                         *sw = SwapPhase::Idle;
                         0

@@ -98,6 +98,23 @@ fn live_var(name: &str) -> Option<String> {
     Some(v.clone())
 }
 
+/// The successor a swap of an INTERPRETED host starts: the same program, interpreted again —
+/// its driver, `--interpret`, its library directories and its source — so a development
+/// session keeps its debugger, its flips and Apply across a rebuild (`@C170`: those live in the
+/// interpreter).  The rebuild's C build stays the check that the edit compiles.  `None` for a
+/// host the driver did not interpret, which swaps into the rebuilt binary.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn interpreted_successor() -> Option<Vec<String>> {
+    let host = LIVE_HOST.get()?;
+    let mut argv = vec![host.driver.clone(), "--interpret".to_string()];
+    for d in host.libs.split(':').filter(|d| !d.is_empty()) {
+        argv.push("--lib".to_string());
+        argv.push(d.to_string());
+    }
+    argv.push(host.src.clone());
+    Some(argv)
+}
+
 /// The live variables a swapped-in build is started with, so it can rebuild in turn: those
 /// the environment it inherits does not hold already.
 #[cfg(not(target_arch = "wasm32"))]
