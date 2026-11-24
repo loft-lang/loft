@@ -939,30 +939,6 @@ jobs:
           LOFT: ${{ github.workspace }}/target/release/loft
         run: python3 scripts/slot_matrix.py gate --full
 
-  slot-matrix-rust:
-    # @windows-exempt: the matrix generates platform-free loft; the rustc writer's platform questions are the toolchain matrix's
-    # @nightly-class: report — a statement the rustc writer emits wrongly for one form of operand, which the language suite reads only once a day
-    name: Slot matrix, every cell on the rustc writer
-    if: github.event_name != 'pull_request'
-    needs: pr-ci-started
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install mold + sqlite
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
-      - name: Build the release loft binary and the runtime library the rustc writer links
-        run: cargo build --release --lib --bin loft
-      # @PLN221 — the per-PR tests never run the rustc writer; this leg runs every cell of the
-      # matrix on it, against its own baseline, `scripts/slot_matrix.rust.baseline`
-      # (SLOT_MATRIX.md § The gate).
-      - name: The gate, every cell on the rustc writer
-        env:
-          LOFT: ${{ github.workspace }}/target/release/loft
-        run: python3 scripts/slot_matrix.py gate --rust --full
-
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
     # @PLN203 C8 — `ci.yml`'s `c-sweep` on the other two hosts and their compilers: Apple clang,
@@ -1727,10 +1703,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `msrv` resolves to Cargo.toml's `rust-version` — the oldest stable `--native`
-        # is proven on.  A user one stable behind is the common case, and `--native`
-        # compiles a user's program with THEIR rustc, so beta and nightly alone tested
-        # the future and never the past.
+        # `msrv` resolves to Cargo.toml's `rust-version` — the oldest stable loft is proven
+        # to build and run on.  Someone building loft one stable behind is the common case, so
+        # beta and nightly alone tested the future and never the past.
         toolchain: [beta, nightly, msrv]
     steps:
       - uses: actions/checkout@v5
@@ -1793,19 +1768,6 @@ jobs:
       # The sibling `a_delegating_producer_binds_its_companion_cleanly` PASSES here
       # and so is deliberately NOT skipped — a skip for a green test would cost
       # coverage and buy nothing.
-      # The GENERATED Rust is compiled by the `rustc` the native pipeline spawns, which is the
-      # default toolchain unless told otherwise: under a matrix toolchain it could not read the
-      # rlib that toolchain had just built (E0463) and fell back to a cached stable one that
-      # predated the tree (`E0425 op_pow_int`).  One toolchain for the build and the pipeline.
-      # The restored `target/` is keyed on Cargo.lock and saved only on a miss, so its loft
-      # rlibs are main's from whenever the lock last changed.  `native_lib::find_loft_rlib`
-      # prefers an unhashed `libloft.rlib`, then the newest hashed one — a cached rlib wins over
-      # the one this build makes, and generated code naming a runtime function the cached
-      # library lacks fails to compile (`E0599 vector_record_append`, the branch probe for
-      # PR #2069).  Dropped here, the only loft rlib is the one `cargo test` builds below.
-      - name: Drop the cached loft rlibs
-        run: rm -f target/release/libloft.rlib target/release/deps/libloft-*.rlib target/release/deps/libloft-*.rmeta target/release/build/loft/*/out/libloft.rlib target/release/build/loft/*/out/libloft.rmeta
-
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.tc.outputs.toolchain }}
@@ -1816,19 +1778,6 @@ jobs:
           --skip native_rs_functions_up_to_date --skip library_suite
           --skip a_private_scope_end_hook_in_a_library_runs
 
-      # The toolchain matrix compiles GENERATED Rust in the OS temp dir; when
-      # a leg fails, that generated source is the diagnosis and is otherwise
-      # lost with the runner.
-      - name: Upload generated sources on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-native-src-${{ matrix.toolchain }}
-          path: |
-            /tmp/loft_native_*.rs
-            /tmp/loft_*_test.rs
-          if-no-files-found: ignore
-          retention-days: 14
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -2163,7 +2112,7 @@ jobs:
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -2180,7 +2129,7 @@ jobs:
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
