@@ -306,6 +306,8 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
         vector_type(e, content_type(e, t));
       }
     },
+    // (…and a nullable narrow one's, its nullable row: `byte<0,true>`.)
+    TyOptional { inner: noi } => match noi { TyInteger { spec: nos } => { if narrow_early && el_types::narrow_width(nos) > 0 { vector_type(e, content_type(e, t)); } }, _ => {} },
     _ => {}
   }
   // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
@@ -339,6 +341,7 @@ pub fn pushed_vector_row(e: el::El, t: ir::TypeT) {
         return;
       }
     },
+    TyOptional { inner: poi } => match poi { TyInteger { spec: pos } => { if el_types::narrow_width(pos) > 0 { vector_type(e, content_type(e, t)); return; } }, _ => {} },
     _ => {}
   }
   vector_store_type(e, t, nm);
@@ -674,7 +677,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
     // (A nullable plain enum is stored as the enum's byte, its null inside: `vector<C?>` is laid
     // out as `vector<C>`.)
-    TyOptional { inner } => match inner { TyEnum { n, is_ref: _ } => enum_content(e, n), TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), TyText { dep: _ } => known(e, "text"), _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref: _ } => enum_content(e, n), TyInteger { spec: ns } => if el_types::int4(ns) || el_types::narrow_width(ns) > 0 { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), TyText { dep: _ } => known(e, "text"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
@@ -992,6 +995,19 @@ fn byte_name(m: integer, nullable: boolean) -> text {
 
 // The store type a narrow element of `spec` already has (`byte`, `short_raw<min,false>`), or -1
 // — a lookup that makes nothing, for a read that must not mint a type out of order.
+// …and a NULLABLE narrow element's (`byte<0,true>`, `short<-32767,true>`), or -1.
+pub fn nullable_narrow_element(e: el::El, spec: ir::IntegerSpec) -> integer {
+  w = el_types::narrow_width(spec);
+  m = el_types::nullable_start(spec);
+  if w == 1 {
+    return schema_type(e, byte_name(m, true));
+  }
+  if w == 2 {
+    return schema_type(e, "short<{m},true>");
+  }
+  -1
+}
+
 pub fn narrow_element(e: el::El, spec: ir::IntegerSpec) -> integer {
   w = el_types::narrow_width(spec);
   if w == 1 {
