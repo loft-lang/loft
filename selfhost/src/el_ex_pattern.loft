@@ -1928,7 +1928,8 @@ pub fn statement_end(e: el::El, from: integer) -> integer {
   depth = 0;
   while at < len(e.p.src) {
     t = e.p.src[at];
-    if t is LBracket || t is LParen || t is LBrace {
+    // (A format string's hole opens inside its `StrHole` token and closes on a `}` token.)
+    if t is LBracket || t is LParen || t is LBrace || t is StrHole {
       depth += 1;
     } else if t is RBracket || t is RParen || (t is RBrace && depth > 0) {
       depth -= 1;
