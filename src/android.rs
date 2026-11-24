@@ -650,6 +650,15 @@ fn host_tag() -> &'static str {
 mod tests {
     use super::{app_assets, needs_internet};
 
+    /// The C the C backend writes for the program `src`.
+    fn emitted_c(src: &str) -> String {
+        let mut p = loft::parser::Parser::new();
+        p.parse_dir("default", true, false).expect("stdlib");
+        p.parse_str(src, "<app>", false);
+        loft::scopes::check(&mut p.data, &mut p.database);
+        loft::c::emit_browser_program(&p.data, &p.database).expect("the program emits as C")
+    }
+
     /// An app asks for the network exactly when its C reaches it: a URL fetch of the runtime, the
     /// engine host's, or a component's natives; a program that does none of these asks for none.
     #[test]
@@ -687,10 +696,10 @@ mod tests {
         };
         // No list: what the program's C names, and nothing else.
         assert_eq!(names("", &[]), Ok(vec![]));
-        assert_eq!(
-            names("loft_lit(\"data/b.txt\", 10)", &[]),
-            Ok(vec!["data/b.txt".to_string()])
-        );
+        // The C the emitter writes for a program that names the file, never a hand-written
+        // spelling of it: a text constant's spelling in the C is what the scan reads.
+        let c = emitted_c("fn main() { p = \"data/b.txt\"; println(\"{p}\"); }");
+        assert_eq!(names(&c, &[]), Ok(vec!["data/b.txt".to_string()]));
         let report =
             crate::file_access::read_to_string(dir.join("game-report.txt")).expect("report");
         assert!(report.contains("data/b.txt"), "{report}");
