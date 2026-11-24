@@ -237,7 +237,7 @@ fn bootstrap_core(
     if let Some((src, stdlib)) = reload
         && std::env::var("LOFT_LIVE_RELOAD").is_ok_and(|v| v != "0")
     {
-        crate::live_reload::install(src, stdlib, &p.lib_dirs, &p.data);
+        state.reload = crate::live_reload::install(src, stdlib, &p.lib_dirs, &p.data);
     }
     #[cfg(target_arch = "wasm32")]
     let _ = reload;
@@ -447,7 +447,7 @@ fn dispatch<R>(
         // BEFORE the position resolution, so the dispatch that follows an
         // edit already runs the new body.  Internally throttled (200 ms).
         #[cfg(not(target_arch = "wasm32"))]
-        if crate::live_reload::active() && crate::live_reload::poll(&mut live.state) {
+        if crate::live_reload::active(&live.state) && crate::live_reload::poll(&mut live.state) {
             // @PLN18 08-S7 — offsets moved; breakpoint identity must not.
             debug_reapply_bps(&mut live.state, &live._parser.data);
         }

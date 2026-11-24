@@ -13894,7 +13894,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // session inherits the RESOLVED stdlib dir — a relative "default"
         // only exists when the cwd happens to be a loft checkout (#346).
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
-            loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
+            state.reload =
+                loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.

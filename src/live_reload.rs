@@ -38,7 +38,6 @@
 //!   emit `OpCoroutineCreate`, a different shape);
 //! - a parse error keeps the old body (stale meaning beats a dead loop).
 
-use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use crate::state::State;
@@ -68,36 +67,39 @@ pub struct ReloadHost {
     version: u32,
 }
 
-thread_local! {
-    static HOST: RefCell<Option<ReloadHost>> = const { RefCell::new(None) };
-}
-
 /// Does a saved edit wait for the editor's Apply (`LOFT_LIVE_RELOAD=hold`)?
 fn held() -> bool {
     static HELD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *HELD.get_or_init(|| std::env::var("LOFT_LIVE_RELOAD").is_ok_and(|v| v == "hold"))
 }
 
-/// Is live reload active on this thread?  One cheap check for the execute
-/// loop's counter-gated slow path.
-pub fn active() -> bool {
-    HOST.with(|h| h.borrow().is_some())
+/// Is live reload active for `state`?  One cheap check for the execute loop's counter-gated
+/// slow path.
+#[must_use]
+pub fn active(state: &State) -> bool {
+    state.reload.is_some()
 }
 
-/// Install the reload host for `path`.  Builds the shadow session through
-/// the ordinary program pipeline and parity-checks its def space against
-/// the running program's; on any mismatch reload is disabled with a
-/// warning — never an error (the program itself is unaffected).
-pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
+/// The reload host for `path`, for the running state to hold (`State::reload`).  Builds the
+/// shadow session through the ordinary program pipeline and parity-checks its def space
+/// against the running program's; on any mismatch reload is disabled with a warning — never
+/// an error (the program itself is unaffected) — and the answer is `None`.
+#[must_use]
+pub fn install(
+    path: &str,
+    stdlib_dir: &str,
+    lib_dirs: &[String],
+    running: &crate::data::Data,
+) -> Option<Box<ReloadHost>> {
     let Ok(content) = crate::file_access::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");
-        return;
+        return None;
     };
     let mut parser = match crate::parser::Parser::open_program(stdlib_dir, lib_dirs) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("live-reload: shadow session failed ({e}); reload disabled");
-            return;
+            return None;
         }
     };
     let pre_diag = parser.diagnostics.entries().len();
@@ -122,7 +124,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         if errors.len() > 3 {
             eprintln!("live-reload:   … {} more", errors.len() - 3);
         }
-        return;
+        return None;
     }
     // Parity: the patch writes MAIN-space def numbers into the running
     // state; the shadow's bytecode embeds SHADOW-space numbers.  They must
@@ -134,7 +136,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
             shadow.definitions(),
             running.definitions()
         );
-        return;
+        return None;
     }
     for d in 0..running.definitions() {
         if shadow.def_identity(d) != running.def_identity(d) {
@@ -143,7 +145,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
                 shadow.def(d).name,
                 running.def(d).name
             );
-            return;
+            return None;
         }
     }
     // #351 — the watch set: every file the program parsed (entry, modules,
@@ -185,30 +187,35 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         });
     }
     let module_count = files.len() - 1;
-    HOST.with(|h| {
-        *h.borrow_mut() = Some(ReloadHost {
-            parser,
-            files,
-            last_check: Instant::now(),
-            version: 0,
-        });
+    let host = Box::new(ReloadHost {
+        parser,
+        files,
+        last_check: Instant::now(),
+        version: 0,
     });
     if module_count > 0 {
         eprintln!("live-reload: watching {path} (+{module_count} module/library files)");
     } else {
         eprintln!("live-reload: watching {path}");
     }
+    Some(host)
 }
 
 /// The execute-loop hook: throttled file check; on change, reload every
 /// changed named fn.  Returns `true` when bytecode was appended (the loop
 /// must refresh its cached length).
 pub fn poll(state: &mut State) -> bool {
-    HOST.with(|h| {
-        let mut h = h.borrow_mut();
-        let Some(host) = h.as_mut() else {
-            return false;
-        };
+    let Some(mut host) = state.reload.take() else {
+        return false;
+    };
+    let grew = poll_host(&mut host, state);
+    state.reload = Some(host);
+    grew
+}
+
+/// [`poll`] with the host taken out of the state it patches.
+fn poll_host(host: &mut ReloadHost, state: &mut State) -> bool {
+    {
         // HELD (`LOFT_LIVE_RELOAD=hold`, what an editor launches): a saved edit waits for the
         // editor's Apply, and then lands at once, whatever the throttle says.
         if held() {
@@ -260,7 +267,7 @@ pub fn poll(state: &mut State) -> bool {
             }
         }
         grew
-    })
+    }
 }
 
 /// Extract every column-0 `fn`/`pub fn` block, keyed by its declaration HEAD — the first

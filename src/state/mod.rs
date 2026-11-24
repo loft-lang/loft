@@ -498,6 +498,9 @@ pub struct State {
     pub stack_census: Box<crate::stack_census::Census>,
     /// `@PLN226` — `LOFT_OP_CENSUS`'s tallies for this interpreter (`op_census`).
     pub op_census: Box<crate::op_census::Census>,
+    /// `@PLN226` — this run's live-reload host (`LOFT_LIVE_RELOAD`, `live_reload::install`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub reload: Option<Box<crate::live_reload::ReloadHost>>,
     /// Where the function being generated starts, so a bind row's line is a line of that
     /// function: a bind before its first line marker (a hoisted null init) names line 0.
     pub(crate) bind_fn_start: u32,
@@ -1023,6 +1026,8 @@ impl State {
             twin_depth: 0,
             stack_census: Box::default(),
             op_census: Box::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            reload: None,
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
@@ -7827,7 +7832,7 @@ impl State {
         // predictable branch per op; only ever true under LOFT_LIVE_RELOAD=1.
         const RELOAD_POLL_OPS: u32 = 32_768;
         #[cfg(not(target_arch = "wasm32"))]
-        let reload_on = crate::live_reload::active();
+        let reload_on = crate::live_reload::active(self);
         #[cfg(target_arch = "wasm32")]
         let reload_on = false;
         let mut reload_tick: u32 = RELOAD_POLL_OPS;
@@ -9360,6 +9365,8 @@ impl State {
             twin_depth: 0,
             stack_census: Box::default(),
             op_census: Box::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            reload: None,
             bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,
