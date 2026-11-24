@@ -1185,7 +1185,12 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       SFieldInit { e: fe } => {
         // (A record item writes its element, a nested write the mask leaves: built apart.)
         rec_item = match e.p.nodes[fe ?? 0] { SVecLit { items: vits } => fe != null && len([for vi in vits if (e.p.nodes[vi] is SStructLit) { vi }]) > 0, _ => false };
-        if fe != null && e.p.nodes[fe!] is SVecLit && (element_place || rec_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot))) {
+        // (`@FR-R-InPlaceLiteral`'s decline, `primed_reads_place`: an item whose write carries a
+        // receiver the mask does not take out — a formatted text's work text — reads the place,
+        // and so does a comprehension field's build: both built apart, as record items are.)
+        fmt_item = match e.p.nodes[fe ?? 0] { SVecLit { items: fits } => fe != null && len([for fi2 in fits if match e.p.nodes[fi2] { SString { parts } => len(parts) > 1, _ => false } { fi2 }]) > 0, _ => false };
+        comp_field = fe != null && e.p.nodes[fe!] is SComprehension;
+        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field) {
           apart = true;
         }
       },
