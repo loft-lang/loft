@@ -720,13 +720,49 @@ pub(crate) fn relocate_for_probe(
     if std::env::var_os("LOFT_FORCE_PROBE_RELOCATE_FAIL").is_some() {
         return Err("LOFT_FORCE_PROBE_RELOCATE_FAIL".to_string());
     }
-    if crate::file_access::hard_link(so, probe).is_ok() {
-        return Ok(());
+    if crate::file_access::hard_link(so, probe).is_err() {
+        crate::file_access::copy(so, probe)
+            .map_err(|e| format!("link and copy both failed: {e}"))?;
     }
-    crate::file_access::copy(so, probe)
-        .map(|_| ())
-        .map_err(|e| format!("link and copy both failed: {e}"))
+    relocate_imports_beside(so, probe);
+    Ok(())
 }
+
+/// Windows finds a library's imports beside the library (`file_access::load_library`), and
+/// where else a run path points elsewhere: a hosted unit imports its package's `[c] shim` from
+/// the `native-auto/` it lies in.  Moved aside alone, the probe found no shim, did not open,
+/// and a unit that was current was rebuilt — or, with no compiler, not adopted at all.  So each
+/// library beside the artifact whose file name the artifact carries (an import names its
+/// library by file name) goes aside with it.  A link that fails leaves the probe as it was.
+#[cfg(windows)]
+fn relocate_imports_beside(so: &std::path::Path, probe: &std::path::Path) {
+    let (Some(dir), Some(to), Ok(bytes)) =
+        (so.parent(), probe.parent(), crate::file_access::read(so))
+    else {
+        return;
+    };
+    let own = crate::file_access::file_name(so).unwrap_or_default();
+    for entry in crate::file_access::read_dir(dir).unwrap_or_default() {
+        let Some(name) = entry.file_name() else {
+            continue;
+        };
+        if name == own || !name.to_ascii_lowercase().ends_with(".dll") {
+            continue;
+        }
+        if bytes
+            .windows(name.len())
+            .any(|w| w.eq_ignore_ascii_case(name.as_bytes()))
+        {
+            let at = to.join(name);
+            if crate::file_access::hard_link(&entry, &at).is_err() {
+                let _ = crate::file_access::copy(&entry, &at);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn relocate_imports_beside(_so: &std::path::Path, _probe: &std::path::Path) {}
 
 /// Say once that an artifact could not be moved off its path to be asked about
 /// its type layout, so it was rebuilt rather than adopted.
