@@ -91,9 +91,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
-      # The native tests link loft's RELEASE rlib and drive the release binary, as in ci.yml.
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
+      # The native tests drive the release binary, as in ci.yml.
+      - name: Build (release loft binary for integration tests)
+        run: cargo build --release --bin loft
       - name: Install cargo-nextest
         if: github.event_name == 'push' || inputs.filter != ''
         uses: taiki-e/install-action@nextest

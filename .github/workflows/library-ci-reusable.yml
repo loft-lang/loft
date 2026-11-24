@@ -85,10 +85,10 @@ jobs:
       #
       # It used to be `loft-ref` + `hashFiles(Cargo.lock)`.  `loft-ref` is a BRANCH
       # (`main`), and `Cargo.lock` does not change when loft's *source* does — so every
-      # commit to loft `main` produced the SAME key.  The cache then restored a
-      # `loft-src/target` built against the previous `libloft.rlib`, and a library's
-      # native cdylib linked against it failed at run time with `native function not
-      # loaded` — which reads as a stale local build and is nothing of the kind.
+      # commit to loft `main` produced the SAME key.  The cache then restored the previous
+      # commit's `loft-src/target`, and a library's native part built against it failed
+      # at run time with `native function not loaded` — which reads as a stale local
+      # build and is nothing of the kind.
       #
       # Measured 2026-08-21: after loft#1057 merged, loft-libs-graphics' next PR run
       # failed five `--deps` tests this way, while the identical suite passed locally
@@ -121,7 +121,7 @@ jobs:
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft --bin loft-components
+          cargo build --release --bin loft --bin loft-components
           target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
@@ -751,7 +751,7 @@ jobs:
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft
+          cargo build --release --bin loft
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       - name: Why — ${{ matrix.package }}
