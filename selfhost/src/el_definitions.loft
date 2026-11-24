@@ -11,6 +11,7 @@ use syntax::*;
 use el;
 use el_vars;
 use el_types;
+use el_retpromo;
 use el_expressions;
 use el_ex_object;
 use el_ex_base;
@@ -1939,6 +1940,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       }
     }
     e.b.data.definitions[e.context].code = [code];
+    // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
+    el_retpromo::report(e, vars, code, body!, match e.p.nodes[body!] { SBlock { end: rbe } => rbe, _ => -1 });
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
     }
