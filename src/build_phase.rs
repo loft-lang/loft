@@ -97,12 +97,7 @@ fn builtin(name: &str) -> Option<ResolvedTarget> {
             // requirement (warn, don't block).
             &["wasm-opt"],
         )),
-        "wasi" => Some(make(
-            Shape::Wasi,
-            Some("wasm32-wasip2"),
-            &[],
-            &[],
-        )),
+        "wasi" => Some(make(Shape::Wasi, Some("wasm32-wasip2"), &[], &[])),
         _ => None,
     }
 }
@@ -972,12 +967,18 @@ mod tests {
         let html = resolve_target("html", &m).unwrap();
         assert_eq!(html.shape, Shape::Html);
         assert_eq!(html.triple.as_deref(), Some("wasm32-unknown-unknown"));
-        assert!(html.requires_rust_targets.is_empty(), "a page builds through the C");
+        assert!(
+            html.requires_rust_targets.is_empty(),
+            "a page builds through the C"
+        );
         assert_eq!(html.requires_tools, vec!["wasm-opt"]);
 
         let wasi = resolve_target("wasi", &m).unwrap();
         assert_eq!(wasi.shape, Shape::Wasi);
-        assert!(wasi.requires_rust_targets.is_empty(), "a wasi build goes through the C");
+        assert!(
+            wasi.requires_rust_targets.is_empty(),
+            "a wasi build goes through the C"
+        );
 
         let native = resolve_target("native", &m).unwrap();
         assert_eq!(native.shape, Shape::Native);

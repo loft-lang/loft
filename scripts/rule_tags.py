@@ -556,6 +556,8 @@ def census_listed():
 # under them), `executor` (the interpreter's run loop or runtime shape — nothing is admitted
 # per site), `runtime` (a per-type or per-helper runtime shape), `unbuilt` (no code applies it).
 CENSUS_EXEMPT = {
+    "R-FnRefValue": ("unbuilt", "the C declines a value-record plan with a fn-ref dispatch answering a tuple"),
+    "R-LitHoist": ("condition", "the invariant-literal analysis R-LoopBuffer's buffer owner reads; counted under it"),
     "R-Phase": ("meta", "says which phase applies each rule"),
     "R-Escape": ("meta", "the contract every rewrite keeps"),
     "R-Switch": ("meta", "every rewrite's switch and falsifier"),

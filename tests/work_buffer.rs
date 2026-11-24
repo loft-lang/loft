@@ -146,7 +146,9 @@ fn header_of<'a>(ir: &'a str, name: &str) -> &'a str {
 
 /// The header names `local` as a parameter, in the bytecode spelling (`v:vector<…>`).
 fn names_parameter(header: &str, local: &str) -> bool {
-    header.split(", ").any(|p| p.starts_with(&format!("{local}:")))
+    header
+        .split(", ")
+        .any(|p| p.starts_with(&format!("{local}:")))
 }
 
 #[test]

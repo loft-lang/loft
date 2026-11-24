@@ -216,7 +216,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-FirstClaim)` | `R-FirstClaim` interp |
 | `(R-FlatCopy)` | `R-FlatCopy` c |
 | `(R-FnRefBuffer)` | `R-FnRefBuffer` c · `/frame` c |
-| `(R-FnRefValue)` | not counted (`rule_tags.py phases --check` names it) |
+| `(R-FnRefValue)` | not counted — unbuilt: the C declines a value-record plan with a fn-ref dispatch answering a tuple |
 | `(R-FormatAppend)` | `R-FormatAppend` parse · `/c` c |
 | `(R-ForwardResult)` | `R-ForwardResult` ir |
 | `(R-ForwardWalk)` | `R-ForwardWalk` parse |
@@ -239,7 +239,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c |
 | `(R-LiftReuse)` | `R-LiftReuse` ir |
-| `(R-LitHoist)` | not counted (`rule_tags.py phases --check` names it) |
+| `(R-LitHoist)` | not counted — condition: the invariant-literal analysis R-LoopBuffer's buffer owner reads; counted under it |
 | `(R-LiteralAppend)` | `R-LiteralAppend` ir |
 | `(R-LiteralWalk)` | `R-LiteralWalk` parse |
 | `(R-LoopBuffer)` | `R-LoopBuffer` ir |

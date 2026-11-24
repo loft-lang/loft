@@ -337,7 +337,7 @@ fn print_help() {
     println!("                                runner's C shim includes, and exit");
     println!("  --native-c                    the same as --native (the C compiler: LOFT_CC,");
     println!("                                CC, else cc)");
-    println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
+    println!("  --native-wasm [out.wasm]      compile to WebAssembly (WASI, through C and clang)");
     println!("                                (default: .loft/<script>.wasm beside the script)");
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
