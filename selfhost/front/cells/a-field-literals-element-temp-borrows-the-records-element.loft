@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a field literal's element temp takes the field's element type, borrowing the outer literal's element only where the record is an item of one.
+// Prints: 1 1 1 1 1
+
+enum T { TInt { lo: integer }, TVec { inner: T } }
+struct D { returned: vector<T> }
+struct E { ns: vector<integer> }
+fn take(d: D) -> integer { len(d.returned) }
+fn f1() -> integer { ds = [D { returned: [TInt { lo: 4 }] }]; len(ds) }
+fn f2() -> integer { d = D { returned: [TInt { lo: 4 }] }; len(d.returned) }
+fn f3() -> integer { take(D { returned: [TInt { lo: 4 }] }) }
+fn f4() -> integer { es = [E { ns: [1, 2] }]; len(es) }
+fn f5() -> D { D { returned: [TInt { lo: 4 }] } }
+fn main() { println("{f1()} {f2()} {f3()} {f4()} {len(f5().returned)}"); }

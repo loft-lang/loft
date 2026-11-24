@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record match whose arm can `return` is copied arm by arm, the exit building into the return buffer.
+// Prints: 5 / 5 / 5 / 5
+
+enum T { TInt { lo: integer }, TVec { inner: T } }
+struct D { returned: vector<T> }
+fn d1(ds: vector<D>, k: integer) -> T {
+  match k {
+    0 => { if len(ds) > 0 { return TVec { inner: TInt { lo: 9 } }; } { t = ds[1].returned[0] ?? TInt { lo: 0 }; if 1 > 100 { TVec { inner: t } } else { t } } },
+    _ => { t = ds[k].returned[0] ?? TInt { lo: 0 }; if k > 100 { TVec { inner: t } } else { t } }
+  }
+}
+fn d2(ds: vector<D>, k: integer) -> T {
+  match k {
+    0 => { t = ds[1].returned[0] ?? TInt { lo: 0 }; if 1 > 100 { TVec { inner: t } } else { t } },
+    _ => { t = ds[k].returned[0] ?? TInt { lo: 0 }; if k > 100 { TVec { inner: t } } else { t } }
+  }
+}
+fn d3(ds: vector<D>, k: integer) -> T {
+  t = ds[k].returned[0] ?? TInt { lo: 0 }; if k > 100 { TVec { inner: t } } else { t }
+}
+fn d4(ds: vector<D>, k: integer) -> T {
+  if k > 3 { return TInt { lo: 1 }; }
+  t = ds[k].returned[0] ?? TInt { lo: 0 }; if k > 100 { TVec { inner: t } } else { t }
+}
+fn main() {
+  ds = [D { returned: [TInt { lo: 4 }] }, D { returned: [TInt { lo: 5 }] }];
+  match d1(ds, 1) { TInt { lo } => println("{lo}"), _ => println("v") }
+  match d2(ds, 1) { TInt { lo } => println("{lo}"), _ => println("v") }
+  match d3(ds, 1) { TInt { lo } => println("{lo}"), _ => println("v") }
+  match d4(ds, 1) { TInt { lo } => println("{lo}"), _ => println("v") }
+}

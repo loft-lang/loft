@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `return v;` at the end names no buffer on the first pass; a tail `v` does, and its caller borrows the call's buffer.
+// Prints: [1] [1] [0,1] [0,1]
+
+fn a1() -> vector<integer> { v: vector<integer> = []; v += [1]; return v; }
+fn a2() -> vector<integer> { v: vector<integer> = []; v += [1]; v }
+fn a3() -> vector<integer> { v: vector<integer> = []; for i in 0..2 { v += [i]; } v }
+fn a4() -> vector<integer> { v: vector<integer> = []; for i in 0..2 { v += [i]; } return v; }
+fn main() { x = a1(); y = a2(); z = a3(); w = a4(); println("{x} {y} {z} {w}"); }

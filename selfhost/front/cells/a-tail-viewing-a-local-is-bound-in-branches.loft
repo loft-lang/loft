@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a tail answering a local that views another local, in branches and under `vector<T>?`, binds the buffer on the first pass.
+// Prints: [11,22,33] [11,22,33] [1,2] [11,22,33] [11,22,33]
+
+fn b1(k: integer) -> vector<integer>? { if k < 0 { null } else { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e } }
+fn b2(k: integer) -> vector<integer> { if k < 0 { [] } else { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e } }
+fn b3(k: integer) -> vector<integer>? { if k < 0 { null } else { e = [1, 2]; e } }
+fn b4(k: integer) -> vector<integer>? { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; if k < 0 { null } else { e } }
+fn b5(k: integer) -> vector<integer>? { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e }
+fn main() { println("{b1(1)} {b2(1)} {b3(1)} {b4(1)} {b5(1)}"); }
