@@ -103,9 +103,11 @@ jobs:
 
       # Mirrors release.yml: make-release.sh needs `zip`; the Linux leg runs as root in the
       # manylinux image (dnf, no sudo); macOS ships zip; Windows takes it from chocolatey.
+      # A mirror that stalls is left for the next one (a request's own timeout and a minimum
+      # rate): a stalled mirror held the whole step until its 600 s ran out.
       - name: Install packaging tools (Linux)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: timeout 600 dnf -y -q install zip unzip
+        run: timeout 600 dnf -y -q --setopt=timeout=30 --setopt=minrate=10k --setopt=retries=5 install zip unzip
 
       - name: Install packaging tools (Windows)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'
