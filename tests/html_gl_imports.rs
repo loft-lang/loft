@@ -34,35 +34,12 @@ fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A clang that links a WASI program: the C's wasm route a page is built through.
-fn wasm32_installed() -> bool {
-    loft::platform::wasm_c_toolchain().triple.is_some()
-}
-
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-// The test whose subject is the Rust writer's page runs in the nightly, never per change
-// (TESTING.md § The compiled backend a test runs on; scripts/ci_test_filter.py).
-mod rust_writer {
-    use super::*;
-
-    // @speed 1.0
-    #[test]
-    fn dhtml_vector_arg_gl_host_import_is_emitted() {
-        if !wasm32_installed() {
-            eprintln!(
-                "SKIP dhtml_vector_arg_gl_host_import_is_emitted: wasm32-unknown-unknown target not installed"
-            );
-            return;
-        }
-        vector_arg_import_is_emitted("--native", "rust");
-    }
-}
-
-/// The same page from the C backend (@PLN203 C6): the import comes from the one contract both
-/// writers read (`host_imports`), and the module runs from its exported `loft_start` on the
+/// The same page from the C backend (@PLN203 C6): the import comes from the contract the page
+/// reads (`host_imports`), and the module runs from its exported `loft_start` on the
 /// page's WASI layer (`doc/loft-wasi.js`).
 // @speed 1.0
 #[test]
