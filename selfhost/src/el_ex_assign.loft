@@ -236,8 +236,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       return ex(ir::NdNull, ir::TyVoid);
     }
   }
+  // (An empty `{ }` returns before `parse_block_inner`'s loop, which is what moves the line on
+  // to the `}`: a statement after it on that line still takes its marker.)
   if len(stmts) == 0 {
-    close_line(e, n);
     return ex(el_ir::v_block([], ir::TyVoid, "empty block"), ir::TyVoid);
   }
   t = ir::TyVoid;

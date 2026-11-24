@@ -277,7 +277,7 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
   }
 }
 
-pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: boolean = false) -> Ex {
+pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: boolean = false, owned_field: boolean = false) -> Ex {
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   // (`unique_elm_var`: an element of a record type — a template's type variable among them — is
   // typed as that type, so an instance at a scalar drops the element's borrows with it.)
@@ -288,7 +288,9 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: 
   if !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && el_ex_assign::copied_place(e, x.code) {
     el_vars::mark_copy_bound(vars, v, "lower_vec_copy_bind");
   }
-  field_read = !(el_ir::unspan(x.code) is NdVar);
+  // (A constant's view is read whole as a bare variable is — `is_const_view` makes the verdict
+  // `CopyVar`, not a field read: the first pass keeps the view's borrow and mints nothing.)
+  field_read = owned_field || (!(el_ir::unspan(x.code) is NdVar) && !calls(e, el_ir::unspan(x.code), "OpConstRef"));
   if vars.amp_vectors.contains(v) {
     el::refuse(e, "a whole-vector rebind of a vector local a `&` links (refilled in place)");
     return ex(ir::NdNull, ir::TyVoid);

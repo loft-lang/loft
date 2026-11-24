@@ -323,24 +323,78 @@ fn has_package_directive(p: syntax::Syntax, items: vector<integer>) -> boolean {
   false
 }
 
-// `Data::passes_on`'s third case, refused: a type of library `lib` that is not `pub` but that a
-// `pub` definition's signature names (`api_surface::name_only_defs`) — its importer may name it.
+// `api_surface::name_only_defs` for library `lib`: the closure of the types its `pub`
+// definitions' signatures name (a result, a visible parameter, a `pub` field of a record, a
+// variant's `pub` field), within the library's own source; those not `pub` are NAME-ONLY and
+// pass on to an importer (`Data::passes_on`, @C140).
 fn name_only_types(e: el::El, lib: integer) {
-  for d in e.b.data.definitions {
-    if d.source == lib && d.pub_visible {
-      for a in d.attributes {
-        if names_private_type(e, a.typedef[0] ?? ir::TyVoid, lib) {
-          el::refuse(e, "a library type named only by a `pub` signature");
-          return;
+  work: vector<integer> = [for d in e.b.data.definitions if d.source == lib && d.pub_visible && surface_kind(d) { d#index }];
+  seen = work;
+  while len(work) > 0 {
+    d = work[-1]!;
+    work = work[0..len(work) - 1];
+    for r in referenced_types(e, d) {
+      if r >= 0 && r < len(e.b.data.definitions) && el::def(e, r).source == lib && surface_kind(el::def(e, r)) && !seen.contains(r) {
+        seen += [r];
+        if !el::def(e, r).pub_visible && !e.name_only.contains(r) {
+          e.name_only += [r];
         }
+        work += [r];
       }
-      for t in d.returned {
-        if d.def_type == el::DT_FUNCTION && names_private_type(e, t, lib) {
-          el::refuse(e, "a library type named only by a `pub` signature");
-          return;
+    }
+  }
+}
+
+// `api_surface::classify` answers a kind: not a variant, a vector, a stub or an instance.
+fn surface_kind(d: ir::Definition) -> boolean {
+  d.instance_of < 0 && d.def_type != el::DT_ENUM_VALUE && d.def_type != el::DT_VECTOR && d.def_type != el::DT_UNKNOWN
+}
+
+// `referenced_defs_of(…, pub_fields_only)`.
+fn referenced_types(e: el::El, d: integer) -> vector<integer> {
+  def = el::def(e, d);
+  out: vector<integer> = [];
+  for t in def.returned {
+    type_defs(t, out);
+  }
+  record = def.def_type == el::DT_STRUCT || def.def_type == el::DT_ENUM_VALUE;
+  for a in def.attributes {
+    if !a.hidden && (!record || a.pub_field) {
+      type_defs(a.typedef[0] ?? ir::TyVoid, out);
+    }
+  }
+  if def.def_type == el::DT_ENUM {
+    for v in e.b.data.definitions {
+      if v.parent == d && v.def_type == el::DT_ENUM_VALUE {
+        for a in v.attributes {
+          if !a.hidden && a.pub_field {
+            type_defs(a.typedef[0] ?? ir::TyVoid, out);
+          }
         }
       }
     }
+  }
+  out
+}
+
+// `collect_type_defs`.
+fn type_defs(t: ir::TypeT, out: &vector<integer>) {
+  match t {
+    TyReference { n } => { out += [n]; },
+    TyEnum { n } => { out += [n]; },
+    TyOptional { inner } => type_defs(inner, out),
+    TyVector { inner } => type_defs(inner, out),
+    TyRefVar { inner } => type_defs(inner, out),
+    TyRewritten { inner } => type_defs(inner, out),
+    TyTuple { elems } => { for m in elems { type_defs(m, out); } },
+    TySorted { n } => { out += [n]; },
+    TyIndex { n } => { out += [n]; },
+    TyRadix { n } => { out += [n]; },
+    TyHash { n } => { out += [n]; },
+    TyTrie { n } => { out += [n]; },
+    TyIterator { step, inner } => { type_defs(step, out); type_defs(inner, out); },
+    TyFunction { args, result } => { for m in args { type_defs(m, out); } type_defs(result, out); },
+    _ => {}
   }
 }
 

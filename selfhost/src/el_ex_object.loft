@@ -430,6 +430,7 @@ pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, f
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  el_ex_pattern::name_fields(e, d, fields);
   // A variant's literal is built in a buffer of its enum, the type every position it stands in
   // expects of it (`parse_object`'s expected type).
   wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
@@ -2979,6 +2980,13 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
   d = if mset >= 0 { el_dispatch::select(e, mset, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, routed_receiver(x.tp, types)) };
+  // `Parser::field`'s routine arm: a method of a type another source declares (a used library's
+  // `fn matches(self: Lexer, …)`) is reached through the type's member — the slot's routine
+  // where no method spelling of this scope names it (`find_fn` asks this source and the
+  // standard library only).
+  if d < 0 && mset < 0 {
+    d = slot_routine(e, routed_receiver(x.tp, types), name);
+  }
   if d < 0 && mset >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3276,6 +3284,26 @@ pub fn after_paren(e: el::El, from: integer) -> integer {
 // standard library's.
 pub fn look(e: el::El, source: integer, name: text) -> integer {
   if source < 0 { el::def_nr(e, name) } else { el::source_nr(e, source, name) }
+}
+
+// The routine a receiver type's member `name` holds (`Type::Routine`), or -1 — a variant's
+// enum's where the variant carries none.
+pub fn slot_routine(e: el::El, receiver: ir::TypeT, name: text) -> integer {
+  first = match receiver { TyRefVar { inner } => inner, _ => receiver };
+  if el_types::is_unknown(first) || first is TyNull {
+    return -1;
+  }
+  tn = type_def_nr(e, first);
+  while tn >= 0 {
+    for a in el::def(e, tn).attributes {
+      if a.name == name {
+        r = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
+        return if r >= 0 && r < len(e.b.data.definitions) && receives(e, r, tn) { r } else { -1 };
+      }
+    }
+    tn = if el::def(e, tn).def_type == el::DT_ENUM_VALUE && el::def(e, tn).parent >= 0 { el::def(e, tn).parent } else { -1 };
+  }
+  -1
 }
 
 pub fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1) -> integer {

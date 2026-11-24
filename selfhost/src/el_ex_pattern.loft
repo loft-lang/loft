@@ -2267,6 +2267,67 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
 
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
+// `parse_object` for an anonymous `{ f: … }`: the record its position expects — a collection's
+// element struct — written in place as that struct's literal, as `unqualify_literal` rewrites a
+// qualified one; then its own fields' anonymous items from their declared types.  Only where
+// this source reaches the struct by its name.
+pub fn name_anonymous(e: el::El, n: integer, t: ir::TypeT) {
+  match e.p.nodes[n] {
+    SStructLit { at, name, member, fields, base } => {
+      if name == "" && member == "" && base == null {
+        sd = match el_types::base(t) { TyReference { n: rn } => rn, _ => -1 };
+        if sd >= 0 && el::def(e, sd).def_type == el::DT_STRUCT && el::def_nr(e, el::def(e, sd).name) == sd {
+          e.p.nodes[n] = SStructLit { at: at, name: el::def(e, sd).name, member: "", fields: fields, base: base };
+          name_fields(e, sd, fields);
+        }
+      } else if member == "" && base == null {
+        // (A named literal's own fields: `SToken { possible: [{ … }] }`.)
+        nd = el::def_nr(e, name);
+        if nd >= 0 && el::def(e, nd).def_type == el::DT_STRUCT {
+          name_fields(e, nd, fields);
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// The anonymous items of a collection literal `n` of type `t`: a vector's or a keyed kind's
+// element record.
+pub fn name_items(e: el::El, n: integer, t: ir::TypeT) {
+  bt = el_types::base(t);
+  et = match bt { TyVector { inner } => inner, _ => if el_types::keyed_elem(bt) >= 0 { ir::TyReference { n: el_types::keyed_elem(bt), dep: [] } } else { ir::TyVoid } };
+  if et is TyVoid {
+    return;
+  }
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        name_anonymous(e, it, et);
+      }
+    },
+    _ => {}
+  }
+}
+
+// The field initialisers of a literal of struct `d`: each anonymous record or collection item
+// named from the field's declared type.
+pub fn name_fields(e: el::El, d: integer, fields: vector<integer>) {
+  for f in fields {
+    match e.p.nodes[f] {
+      SFieldInit { name: fname, e: fe } => {
+        a = attr_nr(el::def(e, d), fname);
+        if fe != null && a >= 0 {
+          ft = el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid;
+          name_anonymous(e, fe!, ft);
+          name_items(e, fe!, ft);
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
   if el_trace::on() {
     el_trace::route(e, "parse_vector");
@@ -2275,6 +2336,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
     _ => {}
+  }
+  for it in items {
+    name_anonymous(e, it, declared);
   }
   // `[x; n]` (`parse_multiply`): the last item is the template, built as any item, and its
   // count follows it (`Value::Return(count)`), lowered after the items to one
@@ -2304,7 +2368,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   if len(items) > 0 {
     // (`unique_elm_var`: the element borrows its container — `depend(elm, vec)` — a value
     // literal's `_vec_N` as a local destination.)
-    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] }) };
+    // (`unique_elm_var`: an element of a record type is typed as that record from the first
+    // mint — an item whose type the first pass does not know yet, a call declared below, leaves it so.)
+    elm_rec = match el_types::base(declared) { TyReference { n: drn } => if drn > 0 && el::def(e, drn).def_type == el::DT_STRUCT { drn } else { 0 }, _ => 0 };
+    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_rec, dep: [v] }) };
     // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
     // one record made through it, what `child_allocs` counts.
     if e.first_pass && !value {
