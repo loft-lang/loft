@@ -5756,7 +5756,7 @@ static void loft_vec_push_single(loft_cx *cx, loft_ref v, float x) {
  * candidate is the answer whenever it reads back.  When it does not, its neighbour on `v`'s
  * other side may (just below a power of two the half-gap towards zero is the narrower): `buf`
  * becomes that neighbour and 1 is answered when it reads back. */
-static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double v, double near, int single) {
+static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double v, double nearest, int single) {
     const char *q = buf;
     int neg = *q == '-';
     if (neg) q++;
@@ -5765,8 +5765,8 @@ static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double
     for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9') d[nd++] = *q;
     if (nd != p || !*q) return 0;
     int e = atoi(q + 1);
-    /* Away from `near` towards `v`: up in magnitude when `v` lies beyond it. */
-    int up = (fabs(v) > fabs(near));
+    /* Away from `nearest` towards `v`: up in magnitude when `v` lies beyond it. */
+    int up = (fabs(v) > fabs(nearest));
     int i = nd - 1;
     if (up) {
         while (i >= 0 && d[i] == '9') d[i--] = '0';

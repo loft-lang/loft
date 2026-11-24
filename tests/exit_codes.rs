@@ -405,6 +405,12 @@ fn issue684_subcommand_still_works_as_first_positional() {
 /// environments where the target is not installed.
 #[test]
 fn w1_1_html_export_produces_file() {
+    // `--html` builds through the C and clang for wasm32 (@C170): a host without that
+    // toolchain has no page to make.
+    if loft::platform::wasm_c_toolchain().triple.is_none() {
+        eprintln!("SKIP: no wasm32 C toolchain (clang with a WASI sysroot)");
+        return;
+    }
     let dir = std::env::temp_dir();
     let src = dir.join("loft_w1_1_test.loft");
     let out = dir.join("loft_w1_1_test.html");
@@ -420,10 +426,6 @@ fn w1_1_html_export_produces_file() {
     let _ = fa::remove_file(&src);
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
-    if stderr.contains("wasm32-unknown-unknown") && stderr.contains("not be installed") {
-        eprintln!("SKIP: wasm32-unknown-unknown target not installed");
-        return;
-    }
     assert!(
         result.status.success(),
         "expected --html to succeed; stdout={stdout:?}; stderr={stderr:?}"
