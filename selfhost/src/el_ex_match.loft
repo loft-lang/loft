@@ -2288,10 +2288,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     // A call answering a view of its arguments keeps what it borrows of them the same way.
     view_call = match el_ir::unspan(x.code) { NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)), _ => false };
     // (So does a `?? return` / `?? panic(…)` / `?? break` subject: the same `ncr` block.)
-    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } { st } else { el_types::without_deps(el_types::base(st)) };
-    // (A call's answer is held as its record, never nullable and borrowing nothing — `match
-    // mk(k) { … }` over a `T?` holds a `ref(T)`, a `null` arm or not; a literal subject is the
-    // held record's own store.)
+    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } { st } else if match el_ir::unspan(x.code) { NdCall { def_nr: _ } => true, NdBlock { block: sb } => sb[0].name == "Object" || sb[0].name == "EnumUnitLit", _ => false } { el_types::without_deps(el_types::base(st)) } else { el_types::base(st) };
+    // (Held never nullable.  A call's answer — `match mk(k) { … }` over a `T?` holds `ref(T)` —
+    // and a literal, the held record's own store, borrow nothing; any other subject keeps what it
+    // borrows: a `??` over a view of a local holds `ref(Nd)["ops"]`, Rust's `local/record[ops]`.)
     // (In a text function Rust names the `??`'s own `_ncr_N` as what the answer borrows, not
     // the held subject — not carried: refused by name.)
     if match e.p.nodes[subject] { SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyText {
