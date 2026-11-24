@@ -264,9 +264,8 @@ Closed entries: [facts-history.md](facts-history.md).
 
 ### D-fact-3 (OPEN, @PLN211) — each twin kind carries its own key
 - **Violates:** `Fact-Twin` (one key, one registry)
-- **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); native's name suffixes and its
-  bit keys OR'd into a definition number (`DV_BIT`, `src/lower/decode_view.rs`; `KH_BIT`,
-  `src/generation/kept.rs`); the IR's `_tuple`, `__given_` and `@st` names
+- **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); the bit keys OR'd into a
+  definition number (`DV_BIT`, `src/lower/decode_view.rs`); the IR's `_tuple`, `__given_` and `@st` names
 - **Effect:** a twin under two assumptions is a hand-made combination; the C's mask has eight
   named bits and 24 parameter bits left, guarded by a compile-time assert.
 - **Removal:** a key of (function, assumptions) and one registry, the existing twins re-keyed
