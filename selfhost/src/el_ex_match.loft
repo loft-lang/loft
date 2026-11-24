@@ -4336,7 +4336,10 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   // by `OpSetText`) and a plain struct (copied into its fresh element).
   text_out = el_types::base(out) is TyText && !(out is TyOptional);
   rec_out = !(out is TyOptional) && struct_ref(e, el_types::base(out)) >= 0 && el::def(e, struct_ref(e, el_types::base(out))).def_type == el::DT_STRUCT;
-  out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out;
+  // (…and a vector: each answer copied whole into its fresh element, `OpCopyRecord` at the
+  // element vector's type.)
+  vec_out = !(out is TyOptional) && el_types::base(out) is TyVector && el_ex_base::type_def_nr(e, el_types::base(out)) >= 0;
+  out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out || vec_out;
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
   in_ok = el_convert::plain_scalar(in_elem) || in_text || in_rec;
@@ -4369,7 +4372,12 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   res = el_vars::create_unique(vars, "map_result", rt);
   el_vars::set_defined(vars, res);
   out_d = el_ex_base::type_def_nr(e, el_types::base(out));
-  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (text_out || rec_out) && out_d >= 0 { out_d } else { 0 }, dep: [res] });
+  // (`unique_elm_var` over a vector element: the slot is that vector, borrowing the result, an
+  // inline ref.)
+  slot = el_vars::create_unique(vars, "elm", if vec_out { el_types::with_deps(el_types::without_deps(el_types::base(out)), [res]) } else { ir::TyReference { n: if (text_out || rec_out) && out_d >= 0 { out_d } else { 0 }, dep: [res] } });
+  if vec_out {
+    el_vars::mark_inline(vars, slot, "unique_elm_var");
+  }
   // The callback's call, made as any call (`callback_call`): its hidden buffers are the call's.
   call: ir::Node = ir::NdNull;
   if by_value {
@@ -4395,11 +4403,15 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   el_vars::set_defined(vars, comp);
   w = ir::NdVar { n: res };
   steps: vector<ir::Node> = [el_ir::v_set(elm_v, nx!), vector_past_end(e, mv, idx), el_ir::v_set(comp, call)];
-  if text_out || rec_out {
+  if text_out || rec_out || vec_out {
     sv = ir::NdVar { n: slot };
     vk = ir::NdInt { n: rows!.vec_known };
     steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
-    if text_out {
+    if vec_out {
+      // (The fresh element vector starts empty, then takes the answer's items.)
+      steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: el::def(e, out_d).known_type }])];
+    } else if text_out {
       steps += [el_ex_pattern::elem_write(e, out, sv, ir::NdVar { n: comp })];
     } else {
       rk = el::def(e, struct_ref(e, el_types::base(out))).known_type;
