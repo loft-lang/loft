@@ -13521,8 +13521,9 @@ mod scrub_tests {
         /// Rewritten to `loft::<m>::` by `scrub_generated_crate_refs` and by
         /// `calls.rs`'s per-template substitution.
         const REWRITTEN: &[&str] = &["state", "runtime_error"];
-        /// The generated crate's OWN item, so `crate::` is already right for it.
-        const GENERATED_OWN: &[&str] = &["wasm"];
+        /// The generated crate's OWN items, so `crate::` is already right for them: none since
+        /// `print` captures through its stores (`Stores::print_or_host`).
+        const GENERATED_OWN: &[&str] = &[];
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
         let mut seen: Vec<String> = Vec::new();

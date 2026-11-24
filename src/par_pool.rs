@@ -172,7 +172,7 @@ impl WorkerTrace {
             )))]
             eprintln!("{summary}");
             #[cfg(feature = "wasm")]
-            crate::wasm::output_push(&format!("{summary}\n"));
+            crate::page::with(|p| p.trace.borrow_mut().push_str(&format!("{summary}\n")));
             // @PLN117 — the raw browser build (`loft --html`) has no stderr, so
             // the tracer would report into nothing.  Send it down the page's own
             // print path instead, which is what makes an in-browser `par` gate

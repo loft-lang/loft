@@ -2871,16 +2871,7 @@ impl Parser {
                     let f = self.lib_path(&id);
                     let refused = self.lexer.diagnostics().level() == Level::Fatal
                         && level_before != Level::Fatal;
-                    let f_exists = file_exists(&f) || {
-                        #[cfg(feature = "wasm")]
-                        {
-                            crate::wasm::virt_fs_get(&f).is_some()
-                        }
-                        #[cfg(not(feature = "wasm"))]
-                        {
-                            false
-                        }
-                    };
+                    let f_exists = file_exists(&f) || { self.lexer.page_file(&f).is_some() };
                     if f_exists {
                         let cur = &self.lexer.pos().file;
                         self.todo_files.push((cur.to_string(), self.data.source));
@@ -2994,7 +2985,7 @@ impl Parser {
                         .lexer
                         .source_text(auto_use_scan_file.as_str())
                         .map_or_else(
-                            || Self::read_source(auto_use_scan_file.as_str()),
+                            || self.read_source(auto_use_scan_file.as_str()),
                             str::to_string,
                         );
                     // A type the file DECLARES is its own, never a trigger: a script with

@@ -20,9 +20,9 @@ impl Parser {
         if !default {
             self.data.limits = self.data.limits.min(crate::limits::Limits::from_env());
         }
-        // under the `wasm` feature, check VIRT_FS before trying the real filesystem.
+        // A file the page handed the module (wasm), before the real file system.
         #[cfg(feature = "wasm")]
-        if let Some(content) = crate::wasm::virt_fs_get(filename) {
+        if let Some(content) = self.lexer.page_file(filename).map(str::to_string) {
             return self.parse_virtual(&content, filename, default);
         }
         self.parse_main(filename, None, default)

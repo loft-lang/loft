@@ -5588,7 +5588,7 @@ fn print<const F: bool>(s: &mut State) {
     #[cfg(all(not(feature = "wasm"), target_arch = "wasm32", target_os = "wasi"))]
     crate::codegen_runtime::host_print(v_v1.str());
     #[cfg(feature = "wasm")]
-    crate::wasm::output_push(v_v1.str());
+    s.database.print_or_host(v_v1.str());
 }
 
 fn print_r(s: &mut State, r: Regs) -> Regs {

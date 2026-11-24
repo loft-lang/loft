@@ -15,13 +15,12 @@
 //! Split for testability: [`apply`] is a pure `(session, frame) -> replies`
 //! step (unit-tested natively); [`pump`] wires it to the wasm host I/O.
 
-use std::cell::RefCell;
 
 use crate::interp::debugger::StepMode;
 use crate::interp::state::State;
 
 /// The parked interpreter + its owning parser, plus the run's lifecycle flags.
-struct Session {
+pub(crate) struct Session {
     /// Owns the `Data` the `State` executes against (its address must stay put;
     /// boxed, held here for the session's lifetime).
     parser: Box<crate::parser::Parser>,
@@ -48,8 +47,9 @@ struct Session {
     user_from: u32,
 }
 
-thread_local! {
-    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+/// `f` over the page's debug session (`crate::page`).
+fn with_session<R>(f: impl FnOnce(Option<&mut Session>) -> R) -> R {
+    crate::page::with(|p| f(p.debug.borrow_mut().as_mut()))
 }
 
 /// Parse the embedded stdlib + `program_src` into an interpreter session ready to
@@ -69,6 +69,14 @@ pub fn start(program_src: &str) -> bool {
 /// # Errors
 /// The parse diagnostics, rendered, when the stdlib or the program does not compile.
 pub fn start_reporting(program_src: &str) -> Result<(), String> {
+    let session = open(program_src)?;
+    crate::page::with(|p| *p.debug.borrow_mut() = Some(session));
+    Ok(())
+}
+
+/// A debug session over `program_src`: the embedded stdlib and the program, compiled, in
+/// stepping mode, not yet run.
+fn open(program_src: &str) -> Result<Session, String> {
     let mut p = Box::new(crate::parser::Parser::new());
     // Parsed against again after compiling: no whole-program signature rewrite.
     p.data.open_world = true;
@@ -91,18 +99,21 @@ pub fn start_reporting(program_src: &str) -> Result<(), String> {
     // Stepping mode so a registered breakpoint SUSPENDS (returns) instead of
     // record-and-continue — the cooperative pause.
     state.enable_stepping();
-    SESSION.with(|s| {
-        *s.borrow_mut() = Some(Session {
-            parser: p,
-            state,
-            started: false,
-            done: false,
-            counter: 0,
-            program_source,
-            user_from,
-        });
-    });
-    Ok(())
+    // Only a browser build captures print (`Stores::output`): natively the output goes to
+    // stdout as it always does.
+    #[cfg(feature = "wasm")]
+    {
+        state.database.output = Some(String::new());
+    }
+    Ok(Session {
+        parser: p,
+        state,
+        started: false,
+        done: false,
+        counter: 0,
+        program_source,
+        user_from,
+    })
 }
 
 /// Break on the LAST line of `main`, so a run ends paused instead of unwound.
@@ -445,12 +456,9 @@ fn is_scalar_type(t: &str) -> bool {
 /// answer rather than silence.
 #[must_use]
 pub fn command(cmd: &str) -> Vec<String> {
-    SESSION.with(|s| {
-        let mut g = s.borrow_mut();
-        match g.as_mut() {
-            Some(sess) => apply(sess, cmd),
-            None => vec!["D:err no session".to_string()],
-        }
+    with_session(|s| match s {
+        Some(sess) => apply(sess, cmd),
+        None => vec!["D:err no session".to_string()],
     })
 }
 
@@ -476,9 +484,6 @@ pub fn command(cmd: &str) -> Vec<String> {
 pub fn debug_start(source: &str) -> String {
     let desugared = crate::script::script_desugar(source);
     let src = desugared.as_deref().unwrap_or(source);
-    // The capture buffer is per-thread and shared with `compile_and_run`; a stale tail from
-    // an earlier run would otherwise surface as output of this session's first `run`.
-    let _ = take_output();
     let value = match start_reporting(src) {
         Ok(()) => json_object(&[("ok", crate::json::Parsed::Bool(true))]),
         Err(e) => json_object(&[
@@ -526,19 +531,17 @@ fn json_object(fields: &[(&str, crate::json::Parsed)]) -> crate::json::Parsed {
 
 /// Whatever the program printed since the last call.
 ///
-/// Only a browser build captures print — `crate::wasm::output_push` is where the print op
-/// routes under the `wasm` feature.  Natively the output goes to stdout as it always does,
-/// so this is empty and the JSON field is present-but-empty rather than absent: one shape
-/// for the page to read whichever build served it.
+/// Only a browser build captures print — the session's state captures it under the `wasm`
+/// feature (`Stores::output`).  Natively the output goes to stdout as it always does, so this
+/// is empty and the JSON field is present-but-empty rather than absent: one shape for the
+/// page to read whichever build served it.
 fn take_output() -> String {
-    #[cfg(feature = "wasm")]
-    {
-        crate::wasm::output_take()
-    }
-    #[cfg(not(feature = "wasm"))]
-    {
-        String::new()
-    }
+    let mut out = with_session(|s| {
+        s.and_then(|sess| sess.state.database.output.as_mut().map(std::mem::take))
+            .unwrap_or_default()
+    });
+    out.push_str(&crate::page::take_trace());
+    out
 }
 
 /// The pump the JS driver calls (per animation frame): drain every pending
@@ -547,9 +550,8 @@ fn take_output() -> String {
 /// emit each `D:` reply over the host output for the server relay.  No-op when no
 /// session is active.
 pub fn pump() {
-    SESSION.with(|s| {
-        let mut guard = s.borrow_mut();
-        let Some(sess) = guard.as_mut() else {
+    with_session(|s| {
+        let Some(sess) = s else {
             return;
         };
         loop {
@@ -571,20 +573,20 @@ pub fn pump() {
 
 #[cfg(test)]
 mod tests {
-    use super::{SESSION, apply, start};
+    use super::{Session, apply, open};
 
     // Drive the full debug cycle over the session with the SAME command grammar
     // the browser relay feeds: bp -> run (pause) -> eval a live local -> resume
     // (terminate). Uses `apply` directly (host I/O is the wasm-only wiring).
     #[test]
     fn debug_session_bp_run_eval_resume_cycle() {
-        assert!(start(
+        let mut session: Session = open(
             "fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
-             fn main() { compute(40); }\n"
-        ));
-        SESSION.with(|s| {
-            let mut g = s.borrow_mut();
-            let sess = g.as_mut().expect("session");
+             fn main() { compute(40); }\n",
+        )
+        .expect("session");
+        {
+            let sess = &mut session;
             assert_eq!(apply(sess, "bp compute"), vec!["D:ok bp compute"]);
             // run -> pauses at compute's entry; the arg n=40 is live.
             let hit = apply(sess, "run");
@@ -600,7 +602,7 @@ mod tests {
             assert_eq!(apply(sess, "eval 2 + 3"), vec!["D:eval 2 + 3=5"]);
             // resume -> runs to completion.
             assert_eq!(apply(sess, "resume"), vec!["D:terminated"]);
-        });
+        }
     }
 
     /// A text- or vector-valued expression evaluates, and answers the value (loft#1187).
@@ -625,14 +627,14 @@ mod tests {
     // exercises the same path.
     #[test]
     fn a_failed_eval_does_not_end_the_session() {
-        assert!(start(
+        let mut session: Session = open(
             "fn fib(n: integer) -> integer { if n < 2 { return n; } fib(n-1) + fib(n-2) }\n\
              fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
-             fn main() { compute(40); }\n"
-        ));
-        let s = SESSION.with(|s| {
-            let mut g = s.borrow_mut();
-            let sess = g.as_mut().expect("session");
+             fn main() { compute(40); }\n",
+        )
+        .expect("session");
+        let s = {
+            let sess = &mut session;
             let _ = apply(sess, "bp compute");
             let _ = apply(sess, "run");
             // Works before.
@@ -646,7 +648,7 @@ mod tests {
             let after = apply(sess, "eval fib(10)");
             let other = apply(sess, "eval n + 2");
             (before, bad, after, other)
-        });
+        };
         assert_eq!(s.0, vec!["D:eval fib(10)=55"]);
         assert_eq!(s.1, vec!["D:eval nosuchfunction(1)=<unavailable>"]);
         assert_eq!(
@@ -667,14 +669,14 @@ mod tests {
     // also pass on a build where nothing resolves at all.
     #[test]
     fn eval_calls_the_programs_own_functions_and_the_stdlib() {
-        assert!(start(
+        let mut session: Session = open(
             "fn fib(n: integer) -> integer { if n < 2 { return n; } fib(n-1) + fib(n-2) }\n\
              fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
-             fn main() { compute(40); }\n"
-        ));
-        SESSION.with(|s| {
-            let mut g = s.borrow_mut();
-            let sess = g.as_mut().expect("session");
+             fn main() { compute(40); }\n",
+        )
+        .expect("session");
+        {
+            let sess = &mut session;
             assert_eq!(apply(sess, "bp compute"), vec!["D:ok bp compute"]);
             assert!(apply(sess, "run")[0].starts_with("D:hit compute"));
             // A user fn on a literal.  fib(10) is 55, computed by hand.
@@ -689,17 +691,17 @@ mod tests {
                 apply(sess, "eval len(\"abc\")"),
                 vec!["D:eval len(\"abc\")=3"]
             );
-        });
+        }
     }
 
     #[test]
     fn a_text_or_vector_valued_eval_answers_its_value() {
-        assert!(start(
+        let mut session: Session = open(
             "fn shout(s: text) -> text { s.to_uppercase() }\n             fn evens(n: integer) -> vector<integer> { [for i in 0..n { i * 2 }] }\n             struct Stats { lo: integer, hi: integer }\n             fn stats(a: integer, b: integer) -> Stats { Stats { lo: a, hi: b } }\n             fn compute(n: integer, t: text) -> integer {\n  m = n + 2;\n  m + len(t) - 3\n}\n             fn main() { compute(40, \"abc\"); }\n"
-        ));
-        SESSION.with(|s| {
-            let mut g = s.borrow_mut();
-            let sess = g.as_mut().expect("session");
+        )
+        .expect("session");
+        {
+            let sess = &mut session;
             assert_eq!(apply(sess, "bp compute"), vec!["D:ok bp compute"]);
             let hit = apply(sess, "run");
             assert!(hit[0].starts_with("D:hit compute"), "paused: {hit:?}");
@@ -721,6 +723,6 @@ mod tests {
                 );
             }
             assert_eq!(apply(sess, "resume"), vec!["D:terminated"]);
-        });
+        }
     }
 }

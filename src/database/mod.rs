@@ -594,6 +594,10 @@ pub struct Stores {
     pub(crate) engine: crate::engine_host::EngineCx,
     /// `@PLN226` — the program's web buffers (`web_bytes::WebCx`).
     pub(crate) web: crate::web_bytes::WebCx,
+    /// The files a page handed the module (`wasm_entry`), for the program's own reads while
+    /// the page's run lasts; `None` outside one.
+    #[cfg(host_fs)]
+    pub(crate) page_files: Option<std::sync::Arc<std::collections::HashMap<String, String>>>,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -914,6 +918,8 @@ impl Clone for Stores {
             output: None,
             engine: crate::engine_host::EngineCx::default(),
             web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1745,6 +1751,7 @@ pub const BASE_TYPES: u16 = 7;
 
 impl Stores {
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per field of the stores")]
     pub fn new() -> Stores {
         let mut result = Stores {
             types: Vec::new(),
@@ -1785,6 +1792,8 @@ impl Stores {
             output: None,
             engine: crate::engine_host::EngineCx::default(),
             web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),

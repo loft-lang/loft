@@ -3432,6 +3432,8 @@ impl Stores {
             output: None,
             engine: crate::engine_host::EngineCx::default(),
             web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
             #[cfg(feature = "op-census")]
             tap: worker_tap,
             run: super::RunDiagnostics::default(),

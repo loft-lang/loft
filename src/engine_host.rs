@@ -295,7 +295,6 @@ pub(crate) struct EngineCtl {
     #[cfg(not(target_arch = "wasm32"))]
     swap: SwapPhase,
     /// The snapshot root registered by `swap_world`: (record, known_type).
-    #[cfg(not(target_arch = "wasm32"))]
     world_root: Option<(DbRef, u16)>,
     /// The registered world's layout sidecar, when it goes over as an image.
     #[cfg(not(target_arch = "wasm32"))]
@@ -469,6 +468,13 @@ fn with_kernel_ctl<R>(
 ) -> Option<R> {
     let EngineCx { kernel, ctl, .. } = e;
     kernel.as_mut().map(|k| f(k, ctl))
+}
+
+/// The world the program registered with `swap_world`, if any: its root and its known type.
+#[cfg(host_fs)]
+#[must_use]
+pub(crate) fn world_root(stores: &Stores) -> Option<(DbRef, u16)> {
+    stores.engine.ctl.world_root
 }
 
 /// The engine context a writer's typed twin reaches through its `Stores` cell.
@@ -2572,7 +2578,7 @@ pub mod browser {
             stores.put(stack, false);
             return;
         }
-        crate::wasm::swap_root_set(w, kt);
+        stores.engine.ctl.world_root = Some((w, kt));
         let resumed = match crate::wasm::swap_stage_take() {
             // @PLN196 step 8 — a world handed over as a store image loads through the
             // converter, as the native swap's does.  The page checked this build against the
@@ -2775,10 +2781,9 @@ pub mod browser {
                 // queued.
                 if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
                     c.alive = false;
-                    crate::wasm::output_push(&format!(
-                        "engine_host: cannot connect to {}\n",
-                        c.peer
-                    ));
+                    if let Some(out) = stores.output.as_mut() {
+                        out.push_str(&format!("engine_host: cannot connect to {}\n", c.peer));
+                    }
                 }
                 // The server connection closed: what it sent before closing is queued
                 // above, the kind-2 event follows it, and `run_client` returns after this

@@ -205,7 +205,7 @@ impl Parser {
     pub(super) fn lib_path(&mut self, id: &str) -> String {
         // Under the `wasm` feature, VIRT_FS wins over filesystem lookups.
         #[cfg(feature = "wasm")]
-        if crate::wasm::virt_fs_get(&format!("{id}.loft")).is_some() {
+        if self.lexer.page_file(&format!("{id}.loft")).is_some() {
             return format!("{id}.loft");
         }
 
