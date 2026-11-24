@@ -68,8 +68,8 @@ HEAVY_BINARIES=(
 # (`--list-subjects` prints the counts; `subject_filter <name>` the names): a bare
 # stem over-matches as easily as it under-matches — `~par` (for par_*/parallel)
 # also took `group_apart_lint`, `~own` took `viewer_markd*own*`, and `~import`
-# took the browser test `html_gl_imports`, which made `--subject packages` rebuild
-# the wasm rlibs it never links.  The doc_hygiene guard below catches an UNMATCHED
+# took the browser test `html_gl_imports`, which made `--subject packages` run a
+# browser suite it never meant to.  The doc_hygiene guard below catches an UNMATCHED
 # binary, never a wrongly matched one; only reading the list does.
 pattern_matches() {
   local p="$1" b="$2"
@@ -130,7 +130,7 @@ subject_paths() {
   case "$1" in
     (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/|^src/limits\.rs' ;;
     (scopes)   echo '^src/scopes\.rs|^src/scopes/|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs|^src/repeat_run\.rs|^src/byte_copy\.rs|^src/vec_copy\.rs|^src/text_run\.rs|^src/pure_reuse\.rs|^src/shared_call\.rs|^src/bound_append\.rs|^src/forward_result\.rs|^src/literal_append\.rs' ;;
-    (codegen)  echo '^src/generation/|^src/opt/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/ctor_literal\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/self_replace\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
+    (codegen)  echo '^src/opt/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/ctor_literal\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/self_replace\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs|^src/ledger\.rs' ;;
     (store)    echo '^src/store\.rs|^src/vector\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/btree\.rs|^src/placement\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
@@ -147,9 +147,7 @@ subject_paths() {
 
 # The nextest filterset for the DEFAULT run: everything except the heavy binaries and the
 # nightly-only tests.  The nightly clause is CI's own (`ci_test_filter.py nightly`): a test whose
-# subject is the Rust writer lives in a `mod rust_writer` and runs on neither per-change gate,
-# which is also what lets the curated run skip the two wasm rlib builds (find_problems.sh
-# `selection_needs`): the per-change `--html` / `--native-wasm` tests go through the C.
+# subject is the Rust writer lives in a `mod rust_writer` and runs on neither per-change gate.
 curated_filter() {
   local parts=() b d
   for b in "${HEAVY_BINARIES[@]}"; do parts+=("binary($b)"); done
