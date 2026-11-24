@@ -615,8 +615,40 @@ pub unsafe fn load_library(name: impl AsRef<Path>) -> Result<libloading::Library
     } else {
         given.to_path_buf()
     };
+    // Windows looks for a library's own imports beside the program, not beside the library,
+    // so a hosted unit that imports its package's `[c] shim` from the same `native-auto/`
+    // did not load unless something had loaded the shim first.  A FILE is loaded with
+    // `LOAD_WITH_ALTERED_SEARCH_PATH`: its directory takes the program directory's place in
+    // the search, as a run path does elsewhere.
+    #[cfg(windows)]
+    let loaded = if at.is_absolute() {
+        // SAFETY: the caller's contract, stated above.
+        unsafe {
+            libloading::os::windows::Library::load_with_flags(
+                &at,
+                libloading::os::windows::LOAD_WITH_ALTERED_SEARCH_PATH,
+            )
+        }
+        .map(libloading::Library::from)
+    } else {
+        // SAFETY: the caller's contract, stated above.
+        unsafe { libloading::Library::new(&at) }
+    };
+    #[cfg(not(windows))]
     // SAFETY: the caller's contract, stated above.
-    unsafe { libloading::Library::new(&at) }.map_err(|e| e.to_string())
+    let loaded = unsafe { libloading::Library::new(&at) };
+    // The loader's reason is the error's SOURCE on Windows (`LoadLibraryExW failed` alone
+    // named none): the whole chain, in order.
+    loaded.map_err(|e| {
+        let mut text = e.to_string();
+        let mut cause: Option<&dyn std::error::Error> = std::error::Error::source(&e);
+        while let Some(s) = cause {
+            text.push_str(": ");
+            text.push_str(&s.to_string());
+            cause = s.source();
+        }
+        text
+    })
 }
 
 #[must_use]
