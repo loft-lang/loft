@@ -2255,12 +2255,42 @@ pub struct VecRows {
   pub vec_known: integer
 }
 
+// The element's name as Rust's `Type::name` spells it, for a type `elem_name` has no rows for: an
+// optional (`character?`, `vector<integer>?`) and a vector of one.  Registration only: the
+// vector stays refused.
+fn registration_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => {
+      n = el_types::elem_name(e, inner);
+      if n == "" { n = registration_name(e, inner); }
+      if n == "" { "" } else { "{n}?" }
+    },
+    TyVector { inner } => {
+      n = el_types::elem_name(e, inner);
+      if n == "" { n = registration_name(e, inner); }
+      if n == "" { "" } else { "vector<{n}>" }
+    },
+    _ => el_types::elem_name(e, t)
+  }
+}
+
 pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   if t is TyTuple {
     return tuple_vector_rows(e, t, lit, declared);
   }
   nm = el_types::elem_name(e, t);
   if nm == "" {
+    // Refused, but `vector<…>` and `main_vector<…>` are registered first, as Rust's `vector_def`
+    // registers them for any element: every definition after them keeps Rust's number.
+    rn = registration_name(e, t);
+    if rn != "" && el::def_nr(e, "vector<{rn}>") < 0 {
+      rtok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
+      rat = closing_bracket(e, rtok);
+      if rat == rtok + 1 || declared {
+        rat = rtok - 1;
+      }
+      el_schema::make_vector_def(e, t, rn, el::pos_at(e, rat), true, narrow_early: false);
+    }
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }

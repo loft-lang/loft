@@ -2811,10 +2811,15 @@ fn tail_view_work_ref(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir
   if tv < 0 || vars.vars[tv].argument || el_vars::is_compiler_generated(vars, tv) || heap_def(el_vars::tp(vars, tv)) < 0 || !el_ex_copy::views_local(vars, tv) {
     return;
   }
+  // (A STRUCT ENUM's view at the tail is bound, `RetPromotion::Bind`, on the second pass: its
+  // work ref is minted there, after the earlier statements' stores, and kept — the enum keeps
+  // `__retbuf`.  A record's is minted on both passes and substituted out.)
+  senum = el_convert::struct_enum(el_types::base(result));
+  if senum && e.first_pass {
+    return;
+  }
   tw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
-  // (A STRUCT ENUM's view at the tail is bound, `RetPromotion::Bind`: its work ref is minted
-  // and kept — the enum keeps `__retbuf`; a record's is substituted out.)
-  if !el_convert::struct_enum(el_types::base(result)) && tw != el_ex_null::return_buffer(e, vars) {
+  if !senum && tw != el_ex_null::return_buffer(e, vars) {
     el_vars::unregister_work_ref(vars, tw);
   }
 }

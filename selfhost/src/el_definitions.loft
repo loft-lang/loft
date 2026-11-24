@@ -1418,10 +1418,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           } else {
             param_default(e, init!, t!)
           };
-          if d == null {
-            return "";
+          // (A default refused — the refusal stands — still leaves the function registered,
+          // as Rust registers it: every definition after it keeps Rust's number.)
+          if d != null {
+            dv = d!;
           }
-          dv = d!;
         }
         arguments += [Argument { name: an, typedef: t!, constant: fixed, dflt: dv }];
       },
