@@ -134,27 +134,6 @@ fn run_html_wasm_full(
     )
 }
 
-/// [`run_html_wasm_full`] through the Rust writer and rustc, for a test whose subject is the
-/// Rust writer's page — it runs in the nightly, from `mod rust_writer`.
-fn run_rust_html_wasm_full(
-    name: &str,
-    source: &str,
-    lib_dirs: &[&str],
-    assets: &[PathBuf],
-    extra_args: &[&str],
-    harness_rel: &str,
-) -> Option<(String, String, bool)> {
-    run_html_page(
-        "--native",
-        name,
-        source,
-        lib_dirs,
-        assets,
-        extra_args,
-        harness_rel,
-    )
-}
-
 /// [`run_html_wasm`] for a page whose module the C backend writes (`--native-c --html`,
 /// @PLN203 C6): the same page builder, the same harness, the WASI layer `doc/loft-wasi.js`.
 fn run_c_html_wasm(name: &str, source: &str) -> Option<(String, String, bool)> {
@@ -2389,103 +2368,47 @@ fn issue623_routeless_native_answers_one_diagnostic_on_a_page() {
     );
 }
 
-// Tests whose subject is the Rust writer (its emission, its rewrites, its page, the
-// `[native] crate` layer): they run in the nightly, never per change
-// (TESTING.md § The compiled backend a test runs on; scripts/ci_test_filter.py).
-mod rust_writer {
-    use super::*;
-
-    // @PLN98 P3.4 — the live/debug tier on the BROWSER WASM runtime (headless node), every
-    // property read off ONE `--html --debug` page: a debug page links the full engine, and its
-    // `--asyncify` pass over that 16 MB module is the cost of the build, so four pages built for
-    // four properties made four tests that each waited out the others' (400 s on the runner,
-    // past the duration gate).  The one page answers all of them:
-    //
-    // - the client bootstraps the parked interpreter from the EMBEDDED source (P3.1, no
-    //   filesystem), flips its functions to it, and the compiled `main` DISPATCHES each call
-    //   into the interpreter over the SHARED store: five functions flip (all but `main`), and
-    //   `main`'s four calls into them dispatch;
-    // - sharing is ONE heap (Probe 2): `main` writes `w.a = 777` (compiled) and the
-    //   interpreted `reader` reads it; the interpreted `writer` writes `w.b = 999` and `main`
-    //   reads it — both directions agree;
-    // - the COOPERATIVE debug cycle (P3.2): `loft_debug_selftest` sets a breakpoint, runs to it,
-    //   reads the paused frame, steps and resumes, as the native build does;
-    // - the INTERACTIVE client: `D!:` control frames relayed over `host_input`
-    //   (bp -> run -> eval -> resume) answer `D:` replies over host output, with no threads,
-    //   sockets or native `debug_cmd_dispatch` — the client half of the server->browser relay.
-    #[test]
-    fn html_debug_tier_runs_on_wasm() {
-        let source = "struct W { a: integer, b: integer }\n\
-                      fn addup(a: integer, b: integer) -> integer {\n  a + b\n}\n\
-                      fn triple(x: integer) -> integer {\n  addup(x, addup(x, x))\n}\n\
-                      fn reader(w: W) -> integer { w.a }\n\
-                      fn writer(w: W) { w.b = 999; }\n\
-                      fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\n\
-                      fn main() {\n  \
-                        w = W { a: 0, b: 0 };\n  \
-                        w.a = 777;\n  \
-                        r = reader(w);\n  \
-                        writer(w);\n  \
-                        c = compute(40);\n  \
-                        print(\"triple(14)={triple(14)} r={r} b={w.b} c={c}\")\n}\n";
-        let name = "p98_debug_tier";
-        let Some((stdout, stderr, ok)) = run_rust_html_wasm_full(
-            name,
-            source,
-            &[],
-            &[],
-            &["--debug=alice"],
-            "tools/wasm_repro.mjs",
-        ) else {
-            return; // skipped: no node / no wasm target / no release loft
-        };
-        let all = format!("{stdout}{stderr}");
-        assert!(ok, "the --debug wasm client trapped.\n{all}");
-        assert!(
-            all.contains("flipped 5 fn(s) to the interpreter"),
-            "the debug client flipped every function but main to the interpreter: {all}"
+/// A page the C builds carries no debug channel, so `--html --debug` and `--html --debug=<name>`
+/// are refused at the build, naming the cure, rather than ignored: the page they asked for would
+/// have no live tier to flip and nothing to answer a debugger.  (The Rust writer's browser debug
+/// tier — `html_debug_tier_runs_on_wasm`, the server relay of `tests/wasm_debug_relay.rs` —
+/// retired with the writer, @PLN225 R4.)
+#[test]
+fn html_debug_is_refused() {
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    if !fa::exists(&loft_bin) {
+        eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
+        return;
+    }
+    let tmp = std::env::temp_dir().join("loft_html_debug_refused");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create test dir");
+    let src = tmp.join("dbg.loft");
+    fa::write(&src, "fn main() { println(\"hi\"); }\n").expect("write program");
+    for flag in ["--debug", "--debug=alice"] {
+        let html = tmp.join("dbg.html");
+        let _ = fa::remove_file(&html);
+        let out = loft::platform::process::harness_command(&loft_bin)
+            .arg("--native")
+            .arg("--html")
+            .arg(&html)
+            .arg(flag)
+            .arg(&src)
+            .output()
+            .expect("run loft --html");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`--html {flag}` must be refused at the build:\n{stderr}"
         );
         assert!(
-            all.contains("dispatched 4 interp call(s) over the shared store"),
-            "each of main's calls dispatched into the interpreter: {all}"
+            stderr.contains("a page has no debug channel; drop --debug"),
+            "`--html {flag}`: the refusal names the cure:\n{stderr}"
         );
         assert!(
-            all.contains("triple(14)=42 r=777 b=999 c=42"),
-            "the interpreted calls answered over one shared heap, both directions: {all}"
+            !fa::exists(&html),
+            "`--html {flag}` wrote a page:\n{stderr}"
         );
-        let wasm = extracted_wasm(name);
-        let node = |harness: &str| {
-            let out = loft::platform::process::harness_command("node")
-                .arg(repo_root().join(harness))
-                .arg(&wasm)
-                .output()
-                .expect("invoke node harness");
-            let all = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (all, out.status.success())
-        };
-        let (all, ok) = node("tools/wasm_debug_selftest.mjs");
-        assert!(ok, "the debug-selftest harness failed: {all}");
-        assert!(
-            all.contains("PAUSE n=40 STEP m=42 DONE=true") && all.contains("RETURN=1"),
-            "the cooperative debug cycle ran on wasm: {all}"
-        );
-        let (all, ok) = node("tools/wasm_debug_client.mjs");
-        assert!(ok, "the debug-client driver failed: {all}");
-        for reply in [
-            "D:ok bp compute",
-            "D:hit compute n=40",
-            "D:eval n=40",
-            "D:eval n + 2=42",
-            "D:terminated",
-        ] {
-            assert!(
-                all.contains(reply),
-                "the relayed control frames answered {reply:?}: {all}"
-            );
-        }
     }
 }

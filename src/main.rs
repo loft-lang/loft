@@ -9646,6 +9646,15 @@ fn main() {
         #[cfg(feature = "registry")]
         loft::registry_advisories::refresh_cached_feed();
     }
+    // A page the C builds carries no debug channel: `--debug[=name]` is refused rather than
+    // ignored (`html_debug_is_refused`).
+    if html_out.is_some() && debug_name.is_some() && native_c {
+        eprintln!(
+            "loft: --html: a page has no debug channel; drop --debug, and debug the program \
+             with `loft debug <file>`"
+        );
+        std::process::exit(2);
+    }
     // Resolve sentinel empty paths to .loft/ defaults now that file_name is known.
     if let Some(ref mut p) = native_wasm
         && p.is_empty()
