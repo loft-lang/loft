@@ -21,6 +21,8 @@ use el_ex_null;
 use el_ex_deliver;
 use el_trace;
 use el_length;
+use el_ex_base;
+use el_expressions;
 
 // `RetSite`: where the candidate's value leaves the function.
 pub const BLOCK_TAIL = 0;
@@ -272,7 +274,7 @@ fn classify_site(e: el::El, vars: el_vars::Vars, code: ir::Node, ls: vector<inte
     // The `Bind` leg of a RECORD result copies the tail into the buffer
     // (`materialize_return_into`): its route per delivered leaf.
     if starts_with(verdict.shown, "Bind ") && verdict.shown.contains("substitute: false") && record_def(e, ctx.ret) >= 0 {
-      for mr in materialize_routes(e, ctx) {
+      for mr in materialize_routes(e, vars, ctx) {
         out += ["materialize_return_into={mr}"];
       }
     }
@@ -387,11 +389,16 @@ pub fn classify(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer, tran
     return says("Rename {{ buf_attr: {rb}, chain_site: {b(ctx.site == MID_RETURN && is_work_ref)} }}", rb);
   }
   // loft#1078 / loft#2292 — a record buffer the tail's delivered leaves READ: the re-mint would
-  // destroy the copy's source.  (Read off the lowered tail: the second pass.)
+  // destroy the copy's source.  (Read off the lowered tail: the second pass.)  `ref_return`'s
+  // body is the site's own value list: the function's statements at the tail, the returned
+  // value alone at a mid-body `return`.
   record_ret = match el_types::base(ctx.ret) { TyReference { n: _ } => true, TyEnum { is_ref } => is_ref, _ => false };
   if record_ret && !e.first_pass && buf_attr >= 0 && buf_var >= 0 && buf_var != v {
-    lt = last_operator(code);
-    if lt != null && delivered_leaf_reads(e, lt!, buf_var) {
+    // (The port's IR of a mid-body `return` is its delivery already, a copy naming the buffer;
+    // Rust asks before it.  A returned plain local reads no buffer.)
+    lt: ir::Node? = if ctx.site == MID_RETURN { ctx.tail_ir } else { last_operator(code) };
+    plain_local = ctx.site == MID_RETURN && ctx.tail_syn >= 0 && match e.p.nodes[ctx.tail_syn] { SName { member } => member == "", _ => false };
+    if lt != null && !plain_local && delivered_leaf_reads(e, lt!, buf_var) {
       return says("SkipJoinArm", -1);
     }
   }
@@ -779,7 +786,7 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
     ctx.site = BLOCK_TAIL;
     ctx.tail_syn = syn;
     ctx.tail_ir = tail ?? ir::NdNull;
-    for mr in materialize_routes(e, ctx) {
+    for mr in materialize_routes(e, vars, ctx) {
       eprintln("state {pass1} {pos.line}:{pos.pos} route materialize_return_into={mr}");
     }
     if w >= 0 {
@@ -795,13 +802,32 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
     t = el_ir::unspan(tail!);
     c = call_of(t) ?? ir::NdNull;
     v = match t { NdVar { n } => n, _ => -1 };
-    if v >= 0 && v < len(vars.vars) {
+    if v >= 0 && v < len(vars.vars) && starts_with(el_vars::name_of(vars, v), "___ret_join_") {
+      // A branch this port holds in a join temp: Rust's `ls` is the branch's own deps, the
+      // locals its arms answer — each renamed onto the buffer (`Rename(a,b)`).
+      ws = el_types::deps(el_vars::tp(vars, v));
+      for w in ws {
+        if el_ex_copy::views_a_local(vars, w) {
+          return;
+        }
+      }
+      if len(ws) == 0 {
+        return;
+      }
+    } else if v >= 0 && v < len(vars.vars) {
       // `return_views_local` / `ls_can_be_record_buffer` copy a view (`MaterializeView`, which
       // this port's lowering reports itself); any other local is renamed onto the buffer.
       if el_ex_copy::views_a_local(vars, v) || !record_shaped(e, vars, v, ctx.ret) {
         return;
       }
       ws = [v];
+    } else if (t is NdIf) && syn >= 0 && (e.p.nodes[syn] is SIf || e.p.nodes[syn] is SMatch) {
+      // A branch of locals and their field reads, held as a branch: its deps, read off the
+      // syntax as on the first pass.
+      ws = syn_branch_locals(e, vars, syn);
+      if len(ws) == 0 || any_views_a_local(vars, ws) {
+        return;
+      }
     } else if c is NdCall {
       ws = call_result_deps(e, c);
       if len(ws) == 0 {
@@ -834,6 +860,9 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
         }
         ws = [v1];
       },
+      // A branch whose every arm answers a local or a field of one: its deps are those locals.
+      SIf { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
+      SMatch { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
       // (A literal tail asks no delivery on the first pass.)
       _ => { return; }
     }
@@ -1125,52 +1154,57 @@ fn last_literal_ref(vars: el_vars::Vars) -> integer {
 // The routes the copy of the site's value into the buffer takes: `arms` for a branch that can
 // leave (holds a `return`), whose arm is `null`, descending into each arm; `whole` for a leaf.
 // The second pass reads the lowered value, the first its syntax.
-fn materialize_routes(e: el::El, ctx: Ctx) -> vector<text> {
-  if e.first_pass {
-    return if ctx.tail_syn >= 0 { syn_materialize(e, ctx.tail_syn, []) } else { [] };
+fn materialize_routes(e: el::El, vars: el_vars::Vars, ctx: Ctx) -> vector<text> {
+  // A mid-body `return`'s IR is this port's delivery already (its copy and null tests): its
+  // verdicts are read off the returned value's syntax, on both passes.
+  if e.first_pass || ctx.site == MID_RETURN {
+    return if ctx.tail_syn >= 0 { syn_materialize(e, vars, ctx.tail_syn, []) } else { [] };
   }
-  ir_materialize(ctx.tail_ir, [])
+  // At the tail, the value before the lowering copied it; the copy's own blocks and null tests
+  // are not what Rust's verdicts walk.
+  src = if ctx.site == BLOCK_TAIL && !(vars.ret_src is NdNull) { vars.ret_src } else { ctx.tail_ir };
+  ir_materialize(e, vars, src, [])
 }
 
-fn ir_materialize(n: ir::Node, out: vector<text>) -> vector<text> {
+// One verdict per level `materialize_return_into` descends: `arms` where it copies a branch arm
+// by arm (and recurses into each arm), `whole` where it copies the value it reached.
+fn ir_materialize(e: el::El, vars: el_vars::Vars, n: ir::Node, out: vector<text>) -> vector<text> {
   r = out;
   match n {
-    NdReturn { inner } => { return ir_materialize(inner, r); },
+    NdReturn { inner } => { return ir_materialize(e, vars, inner, r); },
     NdSpan { inner } => {
       t = el_ir::unspan(n);
-      if ir_arms(t) {
+      if ir_arms(e, vars, t) {
         r += ["arms"];
-        return ir_materialize(t, r);
+        return ir_materialize(e, vars, t, r);
       }
     },
     _ => {}
   }
   t = el_ir::unspan(n);
-  if !ir_arms(t) {
+  if !ir_arms(e, vars, t) {
     r += ["whole"];
     return r;
   }
   r += ["arms"];
   match t {
-    NdIf { t: a, f: b } => { r = ir_materialize(b, ir_materialize(a, r)); },
-    NdBlock { block } => { if len(block[0].operators) > 0 { r = ir_materialize(block[0].operators[-1]!, r); } },
-    NdInsert { items } => { if len(items) > 0 { r = ir_materialize(items[-1]!, r); } },
+    NdIf { t: a, f: b } => { r = ir_materialize(e, vars, b, ir_materialize(e, vars, a, r)); },
+    NdBlock { block } => { if len(block[0].operators) > 0 { r = ir_materialize(e, vars, block[0].operators[-1]!, r); } },
+    NdInsert { items } => { if len(items) > 0 { r = ir_materialize(e, vars, items[-1]!, r); } },
     _ => {}
   }
   r
 }
 
-// `leaving_branch || arms_yield_null`: a branch (not a record literal) holding a `return`, or an
-// `if` with a `null` arm.
-fn ir_arms(t: ir::Node) -> boolean {
+// `leaving_branch || arms_yield_null || branch_has_nullable_leaf`: a branch (not a record
+// literal) holding a `return`, one that can answer `null`, or one with a leaf that may be absent.
+// A null leaf itself is copied arm by arm too: nothing to copy, the sentinel it already is.
+fn ir_arms(e: el::El, vars: el_vars::Vars, t: ir::Node) -> boolean {
   branch = match t { NdIf { cond: _ } => true, NdBlock { block } => block[0].name != "Object", NdInsert { items: _ } => true, _ => false };
-  if !branch {
-    return false;
-  }
-  if holds_return(t) {
+  if branch && holds_return(t) {
     return true;
   }
-  match t { NdIf { t: a, f: b } => el_ir::unspan(a) is NdNull || el_ir::unspan(b) is NdNull, _ => false }
+  el_expressions::branch_yields_null(e, t) || el_ex_copy::branch_has_nullable_leaf(e, vars, t)
 }
 
 fn holds_return(n: ir::Node) -> boolean {
@@ -1185,37 +1219,40 @@ fn holds_return(n: ir::Node) -> boolean {
   }
 }
 
-fn syn_materialize(e: el::El, n: integer, out: vector<text>) -> vector<text> {
+// The first pass, read off the syntax (this port lowers no statement on it).
+fn syn_materialize(e: el::El, vars: el_vars::Vars, n: integer, out: vector<text>) -> vector<text> {
   r = out;
   match e.p.nodes[n] {
-    SJump { kind, e: je } => { if kind == "return" && je != null { return syn_materialize(e, je!, r); } },
-    SStmt { e: se } => { if se != null { return syn_materialize(e, se!, r); } },
+    SJump { kind, e: je } => { if kind == "return" && je != null { return syn_materialize(e, vars, je!, r); } },
+    SStmt { e: se } => { if se != null { return syn_materialize(e, vars, se!, r); } },
     _ => {}
   }
-  if !syn_arms(e, n) {
+  if !syn_arms(e, vars, n) {
     r += ["whole"];
     return r;
   }
   r += ["arms"];
   match e.p.nodes[n] {
+    // Each arm is a level of its own, as the block Rust lowers it to; an `else if` is the
+    // nested branch itself.
     SIf { then: it, other: io } => {
-      r = syn_materialize(e, block_value(e, it), r);
+      r = syn_materialize(e, vars, it, r);
       if io != null {
-        r = syn_materialize(e, block_value(e, io!), r);
+        r = syn_materialize(e, vars, io!, r);
       }
     },
     SMatch { arms } => {
       for ar in arms {
-        match e.p.nodes[ar] { SArm { body: ab } => { if ab != null { r = syn_materialize(e, block_value(e, ab!), r); } }, _ => {} }
+        match e.p.nodes[ar] { SArm { body: ab } => { if ab != null { r = syn_materialize(e, vars, ab!, r); } }, _ => {} }
       }
     },
-    SBlock { stmts: _ } => { r = syn_materialize(e, block_value(e, n), r); },
+    SBlock { stmts: _ } => { r = syn_materialize(e, vars, block_value(e, n), r); },
     _ => {}
   }
   r
 }
 
-fn syn_arms(e: el::El, n: integer) -> boolean {
+fn syn_arms(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
   branch = e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SBlock;
   if !branch {
     return false;
@@ -1223,8 +1260,40 @@ fn syn_arms(e: el::El, n: integer) -> boolean {
   if len(returns_of(e, n, [])) > 0 {
     return true;
   }
+  syn_leaf_null(e, vars, n, false)
+}
+
+// `arms_yield_null` / `branch_has_nullable_leaf` on the syntax: a branch arm that is `null`, or a
+// leaf that may be absent — an index read (`OpGet…`), a call of a user function answering a heap
+// value, a field of such a source, a record local that may hold nothing.  `leaf` is set below the
+// branch, where a bare value is asked (the branch itself is asked only through its arms).
+fn syn_leaf_null(e: el::El, vars: el_vars::Vars, n: integer, leaf: boolean) -> boolean {
   match e.p.nodes[n] {
-    SIf { then: it, other: io } => e.p.nodes[block_value(e, it)] is SNull || (io != null && e.p.nodes[block_value(e, io!)] is SNull),
+    SIf { then: it, other: io } => syn_leaf_null(e, vars, block_value(e, it), true) || (io != null && syn_leaf_null(e, vars, block_value(e, io!), true)),
+    SMatch { arms } => {
+      for ar in arms {
+        match e.p.nodes[ar] { SArm { body: ab } => { if ab != null && syn_leaf_null(e, vars, block_value(e, ab!), true) { return true; } }, _ => {} }
+      }
+      false
+    },
+    SBlock { stmts } => len(stmts) > 0 && block_value(e, n) != n && syn_leaf_null(e, vars, block_value(e, n), true),
+    SNull { at: _ } => true,
+    _ => leaf && syn_may_be_absent(e, vars, n)
+  }
+}
+
+fn syn_may_be_absent(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SIndex { e: _ } => true,
+    SMember { e: me, call } => !call && me != null && syn_may_be_absent(e, vars, me!),
+    SCall { f } => f != null && match e.p.nodes[f!] {
+      SName { name: cn, member } => member == "" && el::def_nr(e, "n_{cn}") >= 0 && el_ex_base::heap_def(el::def(e, el::def_nr(e, "n_{cn}")).returned[0] ?? ir::TyVoid) >= 0,
+      _ => false
+    },
+    SName { name: vn, member } => {
+      v = if member == "" { el_vars::var(vars, vn) } else { -1 };
+      v >= 0 && el_ex_copy::record_may_be_absent(vars, v, [])
+    },
     _ => false
   }
 }
@@ -1249,4 +1318,58 @@ fn last_work_ref_of(e: el::El, vars: el_vars::Vars, ret: ir::TypeT) -> integer {
     }
   }
   r
+}
+
+// The locals a branch's arms answer, in arm order and each once — an arm that is a local, or a
+// field read rooted at one; [] where some arm answers anything else (a call, a literal, `null`).
+fn syn_branch_locals(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  arms: vector<integer> = [];
+  match e.p.nodes[n] {
+    SIf { then: it, other: io } => {
+      arms += [block_value(e, it)];
+      if io == null {
+        return [];
+      }
+      arms += [block_value(e, io!)];
+    },
+    SMatch { arms: ma } => {
+      for ar in ma {
+        match e.p.nodes[ar] { SArm { body: ab } => { if ab == null { return []; } arms += [block_value(e, ab!)]; }, _ => { return []; } }
+      }
+    },
+    _ => { return []; }
+  }
+  for a in arms {
+    sub = if e.p.nodes[a] is SIf || e.p.nodes[a] is SMatch { syn_branch_locals(e, vars, a) } else { [syn_root_local(e, vars, a)] };
+    if len(sub) == 0 {
+      return [];
+    }
+    for x in sub {
+      if x < 0 {
+        return [];
+      }
+      if !r.contains(x) {
+        r += [x];
+      }
+    }
+  }
+  r
+}
+
+fn syn_root_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 },
+    SMember { e: me, call } => if !call && me != null { syn_root_local(e, vars, me!) } else { -1 },
+    _ => -1
+  }
+}
+
+fn any_views_a_local(vars: el_vars::Vars, ws: vector<integer>) -> boolean {
+  for w in ws {
+    if el_ex_copy::views_a_local(vars, w) {
+      return true;
+    }
+  }
+  false
 }
