@@ -330,3 +330,45 @@ fn a_vector_local_is_backed_by_its_own_element_type() {
         );
     }
 }
+
+/// loft#2628 (`@FR-O-Witness`) — a witnessed local bound to views of TWO locals keeps BOTH
+/// alive for its own lifetime.  The scope pass joined the view-bind bases with `depend`, which
+/// replaces the list, so `t = x.tp` beside a later `t = m.tp` kept only `m`: the per-pass `x`
+/// stayed in the loop body under `t`, and the self-hosted elaborator read a released record
+/// through it (an `if` typed `boolean`, a garbage integer spec) on both backends.
+#[test]
+fn a_witnessed_local_keeps_every_base_it_views() {
+    let src = "enum Ty2628 { TInt { lo: integer }, TBool, TVec { inner: integer } }\n\
+               struct Ex2628 { tp: Ty2628, code: integer }\n\
+               fn mk2628(n: integer) -> Ex2628 { Ex2628 { tp: Ty2628::TInt { lo: n }, code: n } }\n\
+               fn fresh2628() -> Ty2628 { Ty2628::TBool }\n\
+               fn body2628(never: boolean, also: boolean) -> Ty2628 {\n\
+               \x20 t = Ty2628::TVec { inner: 0 };\n\
+               \x20 for s in 1..4 { x = mk2628(s * 10); t = x.tp; }\n\
+               \x20 if never { m = mk2628(99); t = m.tp; }\n\
+               \x20 if also { t = fresh2628(); }\n\
+               \x20 t\n\
+               }\n\
+               fn main() { r = body2628(false, false); assert(r is TInt, \"int\"); }\n";
+    let table = var_table_of("2628", src, "n_body2628");
+    let row = |name: &str| {
+        table
+            .lines()
+            .find(|l| l.split_whitespace().nth(2) == Some(name))
+            .unwrap_or_else(|| panic!("no `{name}` row in\n{table}"))
+            .to_string()
+    };
+    let t = row("t");
+    assert!(
+        t.contains("x(") && t.contains("m("),
+        "`t` views both `x` and `m`, and must name both:\n{t}"
+    );
+    // Each base lives as long as `t` does: the function's body scope.
+    for base in ["x", "m"] {
+        let r = row(base);
+        assert!(
+            r.contains("scope=1 "),
+            "`{base}` must outlive the loop that binds it:\n{r}"
+        );
+    }
+}
