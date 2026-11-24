@@ -139,6 +139,9 @@ pub struct El {
   pub p1_bind: vector<integer>,
   // `Variable::created_in_loop` of each function's first-pass variables, `context * 65536 + nr`.
   pub loop_made: vector<integer>,
+  // `Function::loops` as pass 1 left it, per function (`context * 65536 + count`): pass 2's loop
+  // numbers continue after them (`start_loop`).
+  pub loops_p1: vector<integer>,
   // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
   // pass, read as the typed declaration on both).
   pub cast_decls: vector<integer>,

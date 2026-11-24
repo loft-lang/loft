@@ -1562,6 +1562,7 @@ pub fn condition(e: el::El, c: Ex) -> Ex? {
 // does not hold — `if !cond { break }` — and runs the body, a block expecting nothing.
 pub fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> Ex {
   c0 = el_ex_assign::expression(e, vars, cond);
+  start_loop(e, vars);
   cc = condition(e, c0);
   if cc == null {
     el::refuse(e, "a `while` condition that is not a boolean: {type_kind(c0.tp)}");

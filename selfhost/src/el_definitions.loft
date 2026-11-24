@@ -1909,6 +1909,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       for lm in vars.loop_made {
         e.loop_made += [e.context * 65536 + lm];
       }
+      e.loops_p1 += [e.context * 65536 + vars.loops_started];
     }
     if infers && e.first_pass {
       it = el_types::without_deps(vars.tail_tp[0] ?? ir::TyVoid);
