@@ -1998,6 +1998,107 @@ static void loft_par_job_join(loft_cx *cx, loft_par_job *j, loft_thread_id id) {
 }
 #endif
 
+/* A threaded page's pool (@C3, plans/227).  A page's main thread may not wait: a wasm wait there
+ * traps, and so does a contended libc lock, once its short spin runs out.  And a Worker the page
+ * creates begins running only after the main thread returns to the event loop.  So the page
+ * starts its workers once, before the program runs (`loft_pool_start`, which the page calls
+ * and then waits until each worker is up); each pool thread waits for a job and never ends, so
+ * no thread's exit takes a lock while the main thread runs.  A `par` on the main thread hands
+ * every slice to a pool worker and spins on each worker's `done`, running no slice itself, so
+ * it holds and wants no lock while a worker runs (`loft_pool_run`).  Any other thread start on
+ * a page (a `par` in a worker, a `parallel` block) is refused by the page, and the fallback in
+ * `loft_par_job_start` runs the slice where it is.  The pool's words are `@FR-C-Publish` data:
+ * written by one thread, read by another, through the compiler's atomics. */
+#if defined(LOFT_PAGE_POOL)
+#ifndef LOFT_POOL_MAX
+#define LOFT_POOL_MAX 16
+#endif
+typedef struct {
+    int seq;             /* raised by the main thread when it hands this worker a job */
+    int done;            /* the `seq` of the last job this worker finished */
+    loft_par_job *job;   /* the job, written before `seq` is raised */
+} loft_pool_slot;
+static loft_pool_slot loft_pool[LOFT_POOL_MAX];
+static int loft_pool_n = 0;
+static pthread_t loft_pool_main;
+/* `?loftTrace=1` on a page (`loft_set_par_trace`): each `par` says how many workers it ran on. */
+static int loft_pool_trace = 0;
+/* The page's script, called while the main thread waits: it shows what the workers printed. */
+__attribute__((import_module("loft_page"), import_name("pool_idle"))) extern void loft_page_pool_idle(void);
+
+/* Called on the main thread, which it names when no pool did (a page without isolation). */
+__attribute__((export_name("loft_set_par_trace"))) void loft_set_par_trace(int on) {
+    loft_pool_trace = on;
+    if (!loft_pool_n) loft_pool_main = pthread_self();
+}
+
+static void *loft_pool_loop(void *arg) {
+    loft_pool_slot *s = (loft_pool_slot *) arg;
+    int seen = 0;
+    for (;;) {
+        int now;
+        while ((now = __atomic_load_n(&s->seq, __ATOMIC_ACQUIRE)) == seen)
+            __builtin_wasm_memory_atomic_wait32(&s->seq, seen, -1);
+        seen = now;
+        loft_par_job_run(&s->job->cx, s->job);
+        /* The last write of the job: everything it freed is freed before the main thread goes on. */
+        __atomic_store_n(&s->done, seen, __ATOMIC_RELEASE);
+    }
+    return 0;
+}
+
+/* Start up to `n` pool threads; the number started.  Called by the page before `loft_start`. */
+static int loft_pool_start_threads(int n) {
+    pthread_attr_t at;
+    int k;
+    if (loft_pool_n) return loft_pool_n;
+    if (n > LOFT_POOL_MAX) n = LOFT_POOL_MAX;
+    loft_pool_main = pthread_self();
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, LOFT_PAR_STACK);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    for (k = 0; k < n; k++) {
+        pthread_t id;
+        if (pthread_create(&id, &at, loft_pool_loop, &loft_pool[k]) != 0) break;
+    }
+    pthread_attr_destroy(&at);
+    loft_pool_n = k;
+    return k;
+}
+
+/* Run `t` jobs on the pool from the main thread, at most one per worker, and wait for all of them
+ * without blocking: `t <= loft_pool_n`. */
+static void loft_pool_run(loft_par_job *jobs, int t) {
+    int k;
+    int pending = 1;
+    for (k = 0; k < t; k++) {
+        loft_pool_slot *s = &loft_pool[k];
+        s->job = &jobs[k];
+        __atomic_add_fetch(&s->seq, 1, __ATOMIC_RELEASE);
+        __builtin_wasm_memory_atomic_notify(&s->seq, 1);
+    }
+    while (pending) {
+        pending = 0;
+        for (k = 0; k < t; k++) {
+            loft_pool_slot *s = &loft_pool[k];
+            if (__atomic_load_n(&s->done, __ATOMIC_ACQUIRE) != __atomic_load_n(&s->seq, __ATOMIC_RELAXED)) pending = 1;
+        }
+        if (pending) loft_page_pool_idle();
+    }
+    /* What the last of them printed, shown before the main thread goes on. */
+    loft_page_pool_idle();
+}
+
+/* The page found a worker that did not come up: its slot has no thread, so no `par` uses the
+ * pool and each runs on the main thread. */
+__attribute__((export_name("loft_pool_stop"))) void loft_pool_stop(void) { loft_pool_n = 0; }
+
+/* Whether a `par` here runs on the pool: this is the main thread, and the page started workers. */
+static int loft_pool_here(void) {
+    return loft_pool_n > 0 && pthread_equal(pthread_self(), loft_pool_main);
+}
+#endif
+
 /* `adopt` is 0 for a site whose results are values; for a record site it copies each worker's
  * rows into `res`, the caller's result store, made before the workers fork so every worker's
  * table holds it below `parent_n` (see loft_par_adopt). */
@@ -2009,6 +2110,43 @@ static void loft_par_run(loft_cx *cx, int64_t n, int64_t threads, loft_par_body 
                 (long long) n, (long long) t, (long long) (n > 0 ? t : 0));
 /* A hosted unit's stores are the interpreter's, and a call it makes back runs in the
  * interpreter of the calling thread: its `par` rows run on that thread, with the same answers. */
+#if defined(LOFT_PAGE_POOL)
+    /* On a page's main thread every slice runs on a pool worker, the first one too, and the
+     * main thread only waits (see `loft_pool_run`).  The rows are cut into at most one slice per
+     * worker: how they are cut never changes the answer (@FR-C-Det). */
+    if (t > 1 && loft_pool_here()) {
+        int k, s = t > loft_pool_n ? loft_pool_n : (int) t;
+        t = s;
+        if (loft_pool_trace) printf("loft: par n_rows=%lld distinct_workers=%lld\n", (long long) n, (long long) t);
+        cx->par_sharing++;
+        loft_par_job *jobs = (loft_par_job *) calloc((size_t) t, sizeof *jobs);
+        if (!jobs) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (k = 0; k < t; k++)
+            loft_par_job_init(cx, &jobs[k], body, ctx, k * n / t, (k + 1) * n / t, adopt != 0);
+        loft_pool_run(jobs, s);
+        cx->par_sharing--;
+        for (k = 0; adopt && k < t; k++) {
+            loft_par_job *j = &jobs[k];
+            if (!j->kept) continue;
+            cx->par_caller = cx->stores;
+            cx->par_caller_n = cx->nstores;
+            cx->stores = j->kept;
+            cx->nstores = j->kept_n;
+            adopt(cx, ctx, j->lo, j->hi, j->parent_n);
+            loft_store_t *own = cx->par_caller;
+            uint32_t own_n = cx->par_caller_n;
+            cx->stores = own;
+            cx->nstores = own_n;
+            cx->hint_table = 0;
+            loft_par_free_table(cx, j->kept, j->parent_n, j->kept_n);
+            j->kept = 0;
+        }
+        free(jobs);
+        return;
+    }
+    if (loft_pool_trace && t > 1 && pthread_equal(pthread_self(), loft_pool_main))
+        printf("loft: par n_rows=%lld distinct_workers=1\n", (long long) n);
+#endif
 #if defined(LOFT_THREADS) && !defined(LOFT_HOSTED)
     if (t > 1) {
         int64_t k;

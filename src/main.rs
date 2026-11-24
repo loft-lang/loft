@@ -11238,7 +11238,7 @@ fn main() {
                 std::path::Path::new(wasm_out),
                 &shim_sources,
                 ship_build,
-                false,
+                c_driver::WasmHost::Wasi,
                 false,
             ) {
                 eprintln!("loft: {e}");
@@ -11519,13 +11519,32 @@ fn main() {
                 .flat_map(|l| l.shim.iter().cloned())
                 .collect();
             let wasm = build_dir.join("prog.wasm");
+            // @C3 — a page whose program runs a `par` loop on threads gets the threaded build,
+            // whose pool of Web Workers runs it (plans/227); `--threads` / `--no-threads`
+            // override.  Without a threads sysroot the page is built unthreaded and says so:
+            // `par` then runs on the main thread, with the same answers.
+            // A `par` loop's worker is emitted as `loft_parbody<n>`, a name the runtime's own
+            // headers never spell (`src/c/body/par.rs`).
+            let want_threads = html_threads.unwrap_or_else(|| c.contains("loft_parbody"));
+            let threaded = want_threads && loft::platform::wasm_threads_sysroot().is_some();
+            if want_threads && !threaded {
+                eprintln!(
+                    "loft: --html: this page runs `par` on the main thread — no WASI sysroot \
+                     for wasm32-wasip1-threads was found (`make wasi-threads-sysroot` installs one)"
+                );
+            }
+            let host = if threaded {
+                c_driver::WasmHost::ThreadedPage
+            } else {
+                c_driver::WasmHost::Page
+            };
             if let Err(e) =
-                c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true, html_names)
+                c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, host, html_names)
             {
                 eprintln!("loft: {e}");
                 std::process::exit(1);
             }
-            (wasm, false)
+            (wasm, threaded)
         } else {
             let rs_path = build_dir.join("prog.rs");
             let (wasm_shim_objects, wasm_shim_failed) =
@@ -12066,7 +12085,9 @@ fn main() {
         // (`doc/loft-wasi.js`); any other module is the stomp this guards.
         let checked = html_wasm_import_modules_ok(&wasm_bytes).or_else(|mut bad| {
             if native_c {
-                bad.retain(|m| m != "wasi_snapshot_preview1");
+                // A threaded page's module starts its threads through `wasi.thread-spawn`,
+                // which `doc/loft-thread.js` answers.
+                bad.retain(|m| m != "wasi_snapshot_preview1" && m != "wasi");
             }
             if bad.is_empty() { Ok(()) } else { Err(bad) }
         });
@@ -12166,7 +12187,7 @@ fn main() {
         // (module `export` stripped, as with the asyncify and deliver glue) so a page
         // stays a single file.
         let thread_js = include_str!("../doc/loft-thread.js").replace(
-            "export { startLoftWorkers, loftInstantiate, loftTextDecoder, loftSharedMemory, loftMemoryImportLimits };",
+            "export { startLoftWorkers, loftInstantiate, loftTextDecoder, loftSharedMemory, loftMemoryImportLimits, loftCPool };",
             "",
         );
         // @lib_plan-29 W2: concatenate every used library's
@@ -12448,7 +12469,7 @@ const imports={{loft_io:{{
 // @PLN117 — one boot path: loftInstantiate threads the page when the wasm was
 // built for it AND the host is cross-origin isolated, and otherwise brings it up
 // exactly as before (par then runs sequentially, same results).
-loftInstantiate(wasmBytes,imports).then(({{instance,memory}})=>{{
+loftInstantiate(wasmBytes,imports,0,(i,m)=>{{mem=m||i.exports.memory;}}).then(({{instance,memory}})=>{{
   mem=memory||instance.exports.memory;
   loftInstallEnv(instance, mem);
   // If the wasm was asyncify-instrumented (wasm-opt --asyncify present), drive it
@@ -12501,7 +12522,7 @@ for(const reg of (globalThis.LOFT_WASM_EXTENSIONS||[])){{
 // @PLN117 — one boot path: loftInstantiate threads the page when the wasm was
 // built for it AND the host is cross-origin isolated, and otherwise brings it up
 // exactly as before (par then runs sequentially, same results).
-loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
+loftInstantiate(wasmBytes,imports,0,(i,m)=>{{mem=m||i.exports.memory;}}).then(async ({{instance,memory}})=>{{
   mem=memory||instance.exports.memory;
   loftInstallEnv(instance, mem);
   // @P321(c) Phase 3b: decode base64 PNG assets to RGBA bytes before

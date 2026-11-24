@@ -172,6 +172,17 @@ jobs:
           timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
           clang lld wasi-libc libclang-rt-dev-wasm32
 
+      # A page that runs `par` on Web Workers links against wasi-sdk's wasm32-wasip1-threads
+      # sysroot (doc/claude/plans/227-par-on-c-pages.md); Ubuntu's wasi-libc has no threads
+      # variant.  The key follows the Makefile's WASI_SDK_VERSION.
+      - name: Cache the WASI threads sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/.loft/toolchains/wasi-sysroot
+          key: wasi-sysroot-34
+      - name: Install the WASI threads sysroot
+        run: timeout 600 make wasi-threads-sysroot
+
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 

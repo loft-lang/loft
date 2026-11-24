@@ -172,7 +172,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads wasi-threads-sysroot check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -1854,6 +1854,17 @@ check-wasm-threads:
 	rustup run nightly cargo check --lib --target wasm32-unknown-unknown \
 	--no-default-features --features "random wasm-native-threads" \
 	--target-dir target/loft/html-mt -Zbuild-std=panic_abort,std
+
+# @C3 — wasi-sdk's WASI sysroot, whose `wasm32-wasip1-threads` libc a page that runs `par` on
+# Web Workers links against (plans/227-par-on-c-pages.md); distribution packages of the WASI
+# libc carry no threads variant.  Put where `loft::platform::wasm_threads_sysroot` looks.
+WASI_SDK_VERSION ?= 34
+wasi-threads-sysroot:
+	@d="$$HOME/.loft/toolchains"; v=$(WASI_SDK_VERSION); \
+	if [ -f "$$d/wasi-sysroot/lib/wasm32-wasip1-threads/libc.a" ]; then exit 0; fi; \
+	mkdir -p "$$d" && \
+	curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$$v/wasi-sysroot-$$v.0.tar.gz" \
+	  | tar xz -C "$$d" && rm -rf "$$d/wasi-sysroot" && mv "$$d/wasi-sysroot-$$v.0" "$$d/wasi-sysroot"
 
 wasm-mt:
 	RUSTFLAGS='$(WASM_MT_RUSTFLAGS)' RUSTC=$(NIGHTLY_RUSTC) \

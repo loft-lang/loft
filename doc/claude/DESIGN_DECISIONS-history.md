@@ -54,6 +54,12 @@ walk found it and the entry now states the current rule.
 
 **Moved from the register entry (2026-09-29).**  Reopened and changed by @PLN117 (owner, finished).  The original reasons for running `par` sequentially — bundle size, worker start-up, COOP/COEP — became costs paid only by a page that uses `par`.
 
+**Carried to the C backend by @PLN227 (2026-11-24).**  With the rustc writer retiring (@PLN225), the
+page is the C backend's, which ran every `par` on the main thread.  Its threaded runtime is the
+WASI libc's threads on wasi-sdk's `wasm32-wasip1-threads` sysroot, so the nightly toolchain is no
+longer the condition; the page's main thread never waits (measured: a wasm wait there traps), which
+the decision now states.
+
 ## C38 — Closure capture is copy-at-definition
 
 **Catalogue:** @F22 (closures & lambdas).

@@ -3290,8 +3290,10 @@ fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String)
 /// [`emit_unit_for`] writes it for the browser, and the exported `loft_start` the page's script
 /// runs it by — under asyncify, which suspends it at each frame the program yields and resumes
 /// it from the same export.  The libc's constructors run first, once: a page never calls the
-/// WASI `_start` that would; and since the program ends by returning rather than by `exit`, the
-/// export flushes what it printed itself.
+/// WASI `_start` that would.  On a threaded page (`LOFT_PAGE_POOL`, @C3) they run in the exported
+/// `loft_pool_start`, which the page calls before `loft_start` to start the pool's workers.  And
+/// since the program ends by returning rather than by `exit`, the export flushes what it printed
+/// itself.
 ///
 /// # Errors
 /// A program without a `main` that takes nothing, or the first [`Refusal`].
@@ -3309,9 +3311,16 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     let _ = write!(
         out,
         "\nextern void __wasm_call_ctors(void);\n\
+         static int loft_page_ctors_run = 0;\n\
+         static void loft_page_ctors(void) {{\n    \
+         if (!loft_page_ctors_run) {{ loft_page_ctors_run = 1; __wasm_call_ctors(); }}\n}}\n\
+         #if defined(LOFT_PAGE_POOL)\n\
+         __attribute__((export_name(\"loft_pool_start\"))) int loft_pool_start(int n) {{\n    \
+         loft_page_ctors();\n    return loft_pool_start_threads(n);\n}}\n\
+         #endif\n\
          __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
          loft_cx *cx = &loft_main_cx;\n    \
-         static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
+         loft_page_ctors();\n    \
          loft_bind_tables();\n    loft_start(cx, 0, 0);\n    {}\n    {call}\n    loft_leak_report(cx);\n    \
          fflush(stdout);\n    fflush(stderr);\n}}\n\
          int main(void) {{ return 0; }}\n",

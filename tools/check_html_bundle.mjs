@@ -53,11 +53,18 @@ try {
 
 // (1) Import modules must be exactly the raw extern bridges the HTML provides: `loft_gl` and
 // `loft_io`, and `wasi_snapshot_preview1` where the page carries its WASI host (a module the C
-// backend wrote, through clang's WASI libc).
+// backend wrote, through clang's WASI libc).  A page whose module runs `par` on Web Workers
+// (plans/227) also imports its shared memory (`env`), the libc's thread start (`wasi`) and the
+// pool's idle call (`loft_page`), which the page's thread script answers.
 const importMods = [...new Set(WebAssembly.Module.imports(mod).map((i) => i.module))];
 const pageWasi = html.includes('imports.wasi_snapshot_preview1');
+const pagePool = html.includes("'thread-spawn'");
 const badMods = importMods.filter(
-  (mm) => mm !== 'loft_gl' && mm !== 'loft_io' && !(mm === 'wasi_snapshot_preview1' && pageWasi),
+  (mm) =>
+    mm !== 'loft_gl' &&
+    mm !== 'loft_io' &&
+    !(mm === 'wasi_snapshot_preview1' && pageWasi) &&
+    !(['env', 'wasi', 'loft_page'].includes(mm) && pagePool),
 );
 if (badMods.length) {
   console.error(
@@ -85,8 +92,17 @@ if (!exps.includes('asyncify_start_unwind')) {
 // (3) Sanity: instantiate with no-op stub imports (no GL/host work runs here).
 try {
   const stub = new Proxy({}, { get: () => new Proxy({}, { get: () => () => 0 }) });
+  // An imported memory is a memory (a threaded page's), at least as large as a page declares.
+  const memImport = WebAssembly.Module.imports(mod).find((i) => i.kind === 'memory');
+  const imports = memImport
+    ? new Proxy({}, {
+      get: (_, m) => (m === memImport.module
+        ? { [memImport.name]: new WebAssembly.Memory({ initial: 4096, maximum: 16384, shared: true }) }
+        : stub[m]),
+    })
+    : stub;
   // eslint-disable-next-line no-new
-  new WebAssembly.Instance(mod, stub);
+  new WebAssembly.Instance(mod, imports);
 } catch (e) {
   console.error(`FAIL: bundle does not instantiate even with stub imports: ${e.message}`);
   process.exit(1);

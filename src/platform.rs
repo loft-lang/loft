@@ -2014,6 +2014,55 @@ pub fn wasm_c_toolchain() -> &'static WasmC {
     })
 }
 
+/// The WASI sysroot a threaded page's module links against (`wasm32-wasip1-threads`, @C3): the
+/// first that holds that target's libc and links a small pthread program with the
+/// [`wasm_c_toolchain`] clang.  Looked for in `LOFT_WASI_THREADS_SYSROOT`, the sysroot the WASI
+/// build uses, `$WASI_SDK_PATH/share/wasi-sysroot`, `/opt/wasi-sdk/share/wasi-sysroot` and
+/// `~/.loft/toolchains/wasi-sysroot` (where `make wasi-threads-sysroot` puts wasi-sdk's).
+/// Distribution packages of the WASI libc carry no threads variant; wasi-sdk's sysroot does.
+/// `None` when none links: the page is then built unthreaded.  Asked once per process.
+#[must_use]
+pub fn wasm_threads_sysroot() -> Option<&'static str> {
+    static ROOT: OnceLock<Option<String>> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        use process::{Program, Spawn};
+        let tc = wasm_c_toolchain();
+        let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.extend(env("LOFT_WASI_THREADS_SYSROOT"));
+        candidates.extend(tc.sysroot.clone());
+        candidates.extend(env("WASI_SDK_PATH").map(|p| format!("{p}/share/wasi-sysroot")));
+        candidates.push("/opt/wasi-sdk/share/wasi-sysroot".to_string());
+        candidates.extend(env("HOME").map(|h| format!("{h}/.loft/toolchains/wasi-sysroot")));
+        let probe_out =
+            scratch_dir().join(format!("loft_wasm_mt_probe_{}.wasm", std::process::id()));
+        candidates.into_iter().find(|root| {
+            if !crate::file_access::exists(format!("{root}/lib/wasm32-wasip1-threads/libc.a")) {
+                return false;
+            }
+            let mut probe = Spawn::new(Program::os(&tc.cc));
+            probe.push_args(["--target=wasm32-wasip1-threads", "-pthread"]);
+            probe.push_arg(format!("--sysroot={root}"));
+            if let Some(ld) = &tc.ld {
+                probe.push_arg(format!("--ld-path={ld}"));
+            }
+            probe
+                .push_args(["-Wl,--import-memory,--export-memory,--max-memory=67108864"])
+                .push_args(["-x", "c", "-", "-o"])
+                .push_arg(&probe_out);
+            let linked = probe
+                .run(
+                    b"#include <pthread.h>\nstatic void *f(void *a) { return a; }\n\
+                      int main(void) { pthread_t t; return pthread_create(&t, 0, f, 0); }\n",
+                )
+                .is_ok_and(|r| r.status.success());
+            let _ = crate::file_access::remove_file(&probe_out);
+            linked
+        })
+    })
+    .as_deref()
+}
+
 /// [`wasm_c_toolchain`]'s answer.
 pub struct WasmC {
     pub cc: String,

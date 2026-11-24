@@ -16,14 +16,19 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 **Decision.** In the browser a program that uses `par` gets the THREADED runtime — Web Workers
 over a `SharedArrayBuffer` — and runs its bodies in parallel; `--threads` / `--no-threads`
 override the choice.  Where that runtime is not available (no COOP/COEP headers, or a build
-without the nightly toolchain its atomics std needs, which the build says) `par` runs
-sequentially with the same answer.  **Why.** Bundle size, worker start-up and COOP/COEP are costs
+without a WASI sysroot for `wasm32-wasip1-threads`, which the build says) `par` runs
+sequentially with the same answer.  A page's main thread never waits — a wasm wait there traps
+— so the page starts a pool of workers before the program runs, a `par` on the main thread
+hands every slice to the pool and spins until they are done, and any other thread start on a
+page runs its work where it is.  **Why.** Bundle size, worker start-up and COOP/COEP are costs
 paid only by a page that uses `par`, and a page without the headers still runs.
 
-**Revisit when.** The threaded runtime no longer needs a nightly toolchain to build.  Decided
-2026-04, changed by @PLN117 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
-**Holds at:** `@C3` — `tests/wasm/html-thread-proof.sh`, `tests/wasm/par-ui-responsive.sh` (the
-`browser-threads` workflow).
+**Revisit when.** A browser lets a page's main thread wait: the pool could then start on demand
+and the main thread run a slice itself.  Decided 2026-04, changed by @PLN117 and carried to the
+C backend by @PLN227 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Holds at:** `@C3` — `src/c/loft_keyed.h` (the page pool), `doc/loft-thread.js` (its page half),
+`tests/wasm/html-thread-proof.sh`, `tests/wasm/par-ui-responsive.sh` (the `browser-threads`
+workflow).
 **Catalogue:** @F33 (par), @F54 (WASM/browser target).
 
 ## C70 — No per-library IR snapshot / cache
