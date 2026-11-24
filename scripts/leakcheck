@@ -11,7 +11,7 @@
 #
 #     clean        no leak, ran fine
 #     leak (N)     N stores not freed at program exit
-#     compile-fail native rustc / codegen rejected the program
+#     compile-fail the native C compile / codegen rejected the program
 #     run-fail     non-zero exit (panic, failed assert, …)
 #
 # Usage:
@@ -22,11 +22,9 @@
 # `fn main(){ test(); }` so leak-case snippets run as-is.
 #
 # Flags:
-#   -i   interpreter only (skip the slow native rustc compile)
-#   -B   skip the auto-rebuild of the loft binary + libloft.rlib
-#        (by default leakcheck refreshes them so results match current source —
-#         this is the trap that bites: native links a STALE libloft.rlib unless
-#         `cargo build --release --lib` runs after a source edit)
+#   -i   interpreter only (skip the native compile)
+#   -B   skip the auto-rebuild of the loft binary
+#        (by default leakcheck refreshes it so results match current source)
 #   -v   verbose — show the raw interp/native stderr on a non-clean verdict
 #
 # Examples:
@@ -59,17 +57,14 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-# Refresh the binary + the native-link rlib so verdicts match current source.
+# Refresh the binary so verdicts match current source.
 if [ "$no_build" -eq 0 ]; then
-  ( cd "$ROOT" && cargo build --release --lib --bin loft ) >/tmp/leakcheck_build.log 2>&1
+  ( cd "$ROOT" && cargo build --release --bin loft ) >/tmp/leakcheck_build.log 2>&1
   if [ "$?" -ne 0 ]; then
     echo "leakcheck: build failed — see /tmp/leakcheck_build.log" >&2
     tail -5 /tmp/leakcheck_build.log >&2
     exit 1
   fi
-  # `--lib --bin loft` does not always re-link the top-level libloft.rlib that
-  # the native compile links; a bare `--lib` does.
-  ( cd "$ROOT" && cargo build --release --lib ) >>/tmp/leakcheck_build.log 2>&1
 fi
 
 if [ ! -x "$LOFT" ]; then

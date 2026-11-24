@@ -219,27 +219,26 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # The runtime library the bundle deliberately leaves out — `libloft.rlib`, its `deps/`
-      # and the standard library, in the installed layout (scripts/runtime_bundle.sh) — so
-      # `make install-main` installs main's loft with `--native` working, without compiling it
-      # (scripts/install_main_ci.sh).  The same target directory as the bundle's binary: the
-      # library is already built as that binary's dependency, and the pair must be one build.
+      # The binary and the standard library in the installed layout (scripts/runtime_bundle.sh),
+      # so `make install-main` installs main's loft without compiling it
+      # (scripts/install_main_ci.sh).  `--native` needs nothing more: it compiles through the
+      # machine's C compiler.
       - name: Package the runtime library
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
-          CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
+          CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft --target ${{ matrix.target }}
           scripts/runtime_bundle.sh ${{ matrix.target }} dist
 
       # A runtime that cannot link a program is the one failure the download exists to avoid,
       # so each leg that can run its own artefact compiles one with `--native` against it.
       - name: Smoke-test the runtime (--native)
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
@@ -255,9 +254,9 @@ jobs:
           [ "$out" = "daily runtime ok" ] || { echo "the runtime did not compile and run its own program"; exit 1; }
 
       - name: Upload the runtime
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         uses: actions/upload-artifact@v4
         with:

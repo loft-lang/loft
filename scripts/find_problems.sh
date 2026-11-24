@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# The native backend the tests compile through: the C, as on CI's PR gate (@PLN203);
-# `LOFT_NATIVE_BACKEND=` (set, empty) puts rustc-native back for one run.
+# The native backend the tests compile through: the C, named as CI's PR gate names it (@PLN203).
 export LOFT_NATIVE_BACKEND="${LOFT_NATIVE_BACKEND-c}"
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
@@ -193,9 +192,7 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 #      edit loop makes stale — was the one left out, hidden behind the
 #      two rows naming the ones it did build.  A whole green verdict was
 #      read off a run whose native half linked a library four commits
-#      old (2026-09-06) — `make check-rlib` says so in a second, but
-#      only if you think to run it, and after the run it only tells
-#      you the cycle was wasted.
+#      old (2026-09-06).
 #
 # Cargo is incremental, so each step is ~free on a clean tree.  Logs
 # go to /tmp/loft_cdylib.log so the test log stays focused on test

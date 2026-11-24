@@ -439,12 +439,6 @@ def main():
                 s.ok, s.out = False, "not run: the previous reds still fail (`--fresh` runs everything)"
                 print(line(s))
                 continue
-            if s.name == "tests":
-                # The native harness links the release rlib (`make check-rlib`); a stale one
-                # fails those tests with a message shaped like a code defect.
-                ok, out, _ = sh("make -s check-rlib")
-                if not ok:
-                    print("  note  check-rlib: " + out.strip().splitlines()[-1][:100])
             if s.needs == "bin" and not BIN.exists():
                 s.ok, s.out = False, f"no binary at {BIN} — nothing changed that builds it; run `cargo build --bin loft`"
                 print(line(s))

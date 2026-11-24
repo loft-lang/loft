@@ -573,10 +573,8 @@ rebuild-native-cdylibs:
 # sweeping an empty directory and reporting the 23 GB one emptied.
 REPO_TAG := $(shell printf '%s' "$(notdir $(CURDIR))" | tr -c 'A-Za-z0-9._-' '_').$(shell printf '%s' "$(CURDIR)" | cksum | cut -d' ' -f1)
 TEST_SCRATCH := /var/tmp/loft-test-scratch-$(REPO_TAG)
-# The native backend a TEST run compiles through: the C, as on CI's PR gate (@PLN203); the
-# rustc-native backend runs on the daily schedule.  `make <target> NATIVE_BACKEND=` puts rustc
-# back for one run.  Only the test runs read it: a census or a perf lane counting the Rust
-# writer keeps `--native` = rustc.
+# The native backend a TEST run compiles through: the C, the one compiled backend, named as
+# CI's PR gate names it (@PLN203).
 NATIVE_BACKEND ?= c
 TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH) LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND)
 
@@ -2158,61 +2156,6 @@ ir-schema-check:  ## Is src/ir_schema_gen.rs still what selfhost/src/ir.loft gen
 ir-schema-regen:  ## Rewrite src/ir_schema_gen.rs from selfhost/src/ir.loft
 	@scripts/ir_schema_check.sh --fix
 	@echo "now run: cargo test --lib baked_layout_mirrors_loft_schema"
-
-.PHONY: check-rlib
-check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present and current?
-	@# The native path (`build_shared_cdylib`) links `libloft.rlib`, and NOTHING in an
-	@# ordinary edit loop rebuilds it: `cargo build --bin loft` refreshes the binary and
-	@# leaves the library rlib alone, `cargo build --release --lib` is the only thing that
-	@# touches it.  So a session that iterates on the compiler with `--bin loft` drifts,
-	@# and the drift is invisible until a gate runs.
-	@#
-	@# It costs a full cycle when it lands, which is why this check exists at all.  It does
-	@# not fail like a compile error: it surfaces ~9 minutes in as a handful of native tests
-	@# failing for what look like unrelated reasons — `libloft.rlib not found for this
-	@# build`, a cdylib mtime that did not advance, a `native_scripts` sweep going red — each
-	@# naming a file that is present when you go and look.
-	@#
-	@# This target REPORTS; it is not wired into `ci`.  `make ci` builds all three itself
-	@# (beside the wasm builds it already ran), because a gate that refuses on a condition
-	@# it could satisfy is friction on every run after every edit, and friction is what
-	@# gets a check switched off.  Reach for this before a BARE `cargo test --release`,
-	@# which builds no rlib of its own and is where the drift actually bites.
-	@# Keyed on the SOURCES, not on `deps/`.  A from-source tree usually has no
-	@# `deps/libloft-<hash>.rlib` at all — only the bare uplifted one — so comparing the
-	@# two finds nothing and reports "current" on a tree that is anything but.  What is
-	@# always true is that a `.rs` newer than an rlib means that rlib predates the code
-	@# the rest of the gate is about to test.
-	@#
-	@# THREE rlibs, because there are three link targets and each has its own suite:
-	@# the native one (`--native`, the cdylib tests), the browser one (`--html`), and
-	@# wasip2 (the wasm library suite).  They drift independently — refreshing the
-	@# native rlib does nothing for `--html`, which is how a green re-run still went red
-	@# on `moros_editor_html_smoke` and `wasm_library_suite` alone.  A target directory
-	@# that does not exist is SKIPPED, not failed: not every checkout installs the wasm
-	@# targets, and a check that fails on their absence would just be turned off.
-	@fail=0; \
-	for spec in \
-	    "target/release/libloft.rlib|cargo build --release --lib|native (--native, cdylib tests)" \
-	    "target/loft/html/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html|browser (--html)" \
-	    "target/wasm32-wasip2/release/libloft.rlib|cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random|wasip2 (wasm library suite)"; do \
-	    rlib=$${spec%%|*}; rest=$${spec#*|}; cure=$${rest%%|*}; what=$${rest#*|}; \
-	    dir=$$(dirname "$$(dirname "$$rlib")"); \
-	    if [ ! -d "$$dir" ]; then continue; fi; \
-	    if [ ! -f "$$rlib" ]; then \
-	        echo "make: $$rlib is MISSING — the $$what tests cannot link."; \
-	        echo "  Run: $$cure"; fail=1; continue; \
-	    fi; \
-	    newer=$$(find src Cargo.toml -newer "$$rlib" -print -quit 2>/dev/null); \
-	    if [ -n "$$newer" ]; then \
-	        echo "make: $$rlib is STALE — $$newer is newer than it."; \
-	        echo "  The $$what tests link it, so they would test an outdated library"; \
-	        echo "  and fail ~9 minutes in for reasons that look unrelated to the edit."; \
-	        echo "  Run: $$cure"; fail=1; \
-	    fi; \
-	done; \
-	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "libloft.rlib: present and current (native + wasm)"
 
 .PHONY: ci-guard
 # What a full gate needs free BEFORE it starts: three profiles rebuilt plus a run's scratch
