@@ -3429,6 +3429,8 @@ impl Stores {
             wired: self.wired.clone(),
             bridge_labels: self.bridge_labels.clone(),
             bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::codegen_runtime::NativeRun::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),

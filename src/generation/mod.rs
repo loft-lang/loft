@@ -7140,7 +7140,7 @@ impl Output<'_> {
             .collect();
         let tail = if reads.len() == 1 { "," } else { "" };
         format!(
-            "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &mut Stores = unsafe {{ &mut *cell.get() }}; __s.move_field_out(&DbRef {{ store_nr: __lr.store_nr, rec: __lr.rec, pos: __lr.pos + {vo} }}, &var_{rb}, {vt}_u16); let __t = ({}{tail}); OpFreeRef(cell, __lr, \"__lr\"); return __t; }}\n",
+            "  if loft::live_dispatch::live_flipped(cell, {idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &mut Stores = unsafe {{ &mut *cell.get() }}; __s.move_field_out(&DbRef {{ store_nr: __lr.store_nr, rec: __lr.rec, pos: __lr.pos + {vo} }}, &var_{rb}, {vt}_u16); let __t = ({}{tail}); OpFreeRef(cell, __lr, \"__lr\"); return __t; }}\n",
             reads.join(", "),
             vo = dt.vo,
             vt = dt.vt
@@ -7295,11 +7295,11 @@ impl Output<'_> {
             // The tuple is read BEFORE the releases: the answer may be the buffer, or a
             // record materialised for a tuple parameter that the body handed straight back.
             return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __t = {{ let __s: &Stores = unsafe {{ &*cell.get() }}; {reads} }};{post} return __t; }}\n"
+                "  if loft::live_dispatch::live_flipped(cell, {idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __t = {{ let __s: &Stores = unsafe {{ &*cell.get() }}; {reads} }};{post} return __t; }}\n"
             ));
         }
         Some(format!(
-            "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} return __lr; }}\n"
+            "  if loft::live_dispatch::live_flipped(cell, {idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} return __lr; }}\n"
         ))
     }
 
@@ -9056,7 +9056,8 @@ extern crate loft;"
                  let cell = std::cell::UnsafeCell::new(\n        \
                  loft::live_dispatch::bootstrap_from_bytes(LOFT_LIVE_FNS, LOFT_SRC)\n            \
                  .unwrap_or_else(|e| {{ eprintln!(\"loft-debug: {{e}}\"); Stores::new() }}));\n    \
-                 if loft::live_dispatch::live_enabled() {{ loft::live_dispatch::flip_all_dispatch_debug(); }} else {{ init(&cell); }}\n    \
+                 let _program = loft::codegen_runtime::browser_program(&cell);\n    \
+                 if loft::live_dispatch::live_enabled() {{ loft::live_dispatch::flip_all_dispatch_debug(&cell); }} else {{ init(&cell); }}\n    \
                  {prelude}    n_main(&cell{args});{ckpt}\n    \
                  loft::live_dispatch::wasm_host_log(&format!(\"loft-debug: dispatched {{}} interp call(s) over the shared store\\n\", loft::live_dispatch::dispatch_count()));\n}}\n\
                  \n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_debug_selftest() -> i32 {{\n    \
@@ -9077,7 +9078,7 @@ extern crate loft;"
         } else {
             writeln!(
                 w,
-                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_start() {{\n    loft::codegen_runtime::install_browser_panic_hook();\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n}}"
+                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_start() {{\n    loft::codegen_runtime::install_browser_panic_hook();\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    let _program = loft::codegen_runtime::browser_program(&cell);\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n}}"
             )
         }
     }
@@ -11352,7 +11353,7 @@ extern crate loft;"
             // carried on (loft#1263).
             writeln!(
                 w,
-                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), &file.to_string(), line as u32).report_and_exit();\n  }}"
+                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), &file.to_string(), line as u32).report_and_exit_on(&stores.frames);\n  }}"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
@@ -11413,7 +11414,7 @@ extern crate loft;"
             // Same shared decision as `n_assert` above (loft#1263).
             writeln!(
                 w,
-                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), &file.to_string(), line as u32).report_and_exit();"
+                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), &file.to_string(), line as u32).report_and_exit_on(&stores.frames);"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
@@ -12262,13 +12263,13 @@ extern crate loft;"
                             format!("\"{escaped_file}\"")
                         };
                     format!(
-                        "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
-                         let _call_guard = codegen_runtime::NamedCallGuard;"
+                        "\n  cr_call_push(cell, \"{loft_name}\", {file_expr}, {loft_line});\n  \
+                         let _call_guard = codegen_runtime::NamedCallGuard(cell);"
                     )
                 } else {
                     format!(
-                        "\n  cr_call_push_lean(\"{escaped_file}\", {loft_line});\n  \
-                         let _call_guard = codegen_runtime::CallGuard;"
+                        "\n  cr_call_push_lean(cell, \"{escaped_file}\", {loft_line});\n  \
+                         let _call_guard = codegen_runtime::CallGuard(cell);"
                     )
                 };
                 self.call_stack_prefix = Some(format!(

@@ -2692,7 +2692,7 @@ impl Stores {
                 8,
                 Store::FOREIGN_ORIGIN,
             )
-            .report_and_exit();
+            .report_and_exit_on(&self.frames);
         }
     }
 

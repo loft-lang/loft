@@ -2694,7 +2694,7 @@ impl State {
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_retain(gen_ref, &self.database);
+            return crate::codegen_runtime::coroutine_retain(gen_ref, &mut self.database);
         }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()

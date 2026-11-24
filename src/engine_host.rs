@@ -283,7 +283,7 @@ pub struct EngineCx {
     /// The browser's connector (`browser`): the WebSocket client of a page.
     #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
     browser: Option<browser::BrowserClient>,
-    ctl: EngineCtl,
+    pub(crate) ctl: EngineCtl,
 }
 
 /// The part of a program's engine host its kernel's pump also reaches — the sync classes a
@@ -308,6 +308,10 @@ pub(crate) struct EngineCtl {
     /// The debug channel's breakpoints, subscriber and waiting commands (`live_control`).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) debug: crate::live_control::DebugCx,
+    /// The parked interpreter of a live build (`live_dispatch`), held without naming its type
+    /// (the core layer names no interpreter type).  Out of here while a dispatch runs it, so a
+    /// control command that arrives during that dispatch's pause finds none and is queued.
+    pub(crate) live: Option<Box<dyn std::any::Any>>,
 }
 
 impl Clone for EngineCx {
@@ -487,6 +491,11 @@ pub(crate) fn stage_swap(stores: &mut Stores, snapshot: Option<String>) {
 #[must_use]
 pub(crate) fn world_root(stores: &Stores) -> Option<(DbRef, u16)> {
     stores.engine.ctl.world_root
+}
+
+/// The program's parked live interpreter, when it runs a live build (`live_dispatch`).
+pub(crate) fn live(stores: &mut Stores) -> &mut Option<Box<dyn std::any::Any>> {
+    &mut stores.engine.ctl.live
 }
 
 /// The program's debug channel state (`live_control::DebugCx`).
@@ -2100,12 +2109,12 @@ static QUIT_AFTER_REPLY: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String> {
     let reply: Option<String> = match cmd.split_once(' ').map_or((cmd, ""), |(a, b)| (a, b)) {
         ("bp", name) if !name.is_empty() => {
-            let ok = crate::live_control::debug_set_bp(&mut ctl.debug, name, cid);
+            let ok = crate::live_control::debug_set_bp(ctl, name, cid);
             Some(format!("D:{} bp {name}", if ok { "ok" } else { "err" }))
         }
         ("flip", rest) => {
             let (name, on) = rest.split_once(' ').unwrap_or((rest, "1"));
-            let ok = crate::live_control::set_flip(name, on != "0");
+            let ok = crate::live_control::set_flip(ctl, name, on != "0");
             Some(format!("D:flip {ok}"))
         }
         ("eval", name) if !name.is_empty() => {

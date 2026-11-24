@@ -481,7 +481,7 @@ mod __coro {
     use loft::database::Stores;
     use loft::keys::DbRef;
     pub fn alloc_coroutine_held(cell: &std::cell::UnsafeCell<Stores>, coro: Box<dyn loft::codegen_runtime::LoftCoroutine>) -> DbRef { (super::__host().coroutines.alloc_held)(cell, coro) }
-    pub fn coroutine_retain(g: DbRef, s: &Stores) -> DbRef { (super::__host().coroutines.retain)(g, s) }
+    pub fn coroutine_retain(g: DbRef, s: &mut Stores) -> DbRef { (super::__host().coroutines.retain)(g, s) }
     pub fn coroutine_next_i64(g: DbRef, s: &mut Stores) -> i64 { (super::__host().coroutines.next_i64)(g, s) }
     pub fn coroutine_next_into(g: DbRef, s: &mut Stores, d: &mut [i64]) -> bool { (super::__host().coroutines.next_into)(g, s, d) }
     pub fn coroutine_next_dbref(g: DbRef, s: &mut Stores) -> DbRef { (super::__host().coroutines.next_dbref)(g, s) }

@@ -512,7 +512,7 @@ pub fn limit_exceeded(pos: &crate::lexer::Position, message: &str) -> ! {
 /// own panics (`Parser::guarded`, `compile::byte_code`) with the position they were at — a
 /// position is the compile's own, never looked up by thread (`@FR-C-Boundary`).
 pub fn compile_panicked(pos: &crate::lexer::Position, payload: &(dyn std::any::Any + Send)) {
-    if !PANIC_HOOK_INSTALLED.load(Ordering::Relaxed) || crate::call_frames::in_lazy_driver() {
+    if !PANIC_HOOK_INSTALLED.load(Ordering::Relaxed) {
         return;
     }
     let detail = payload
@@ -578,8 +578,9 @@ pub fn install_panic_hook() {
         // @PLN133 S8 — a fault inside a lazy DRIVER is contained and reported
         // through `store_lazy_error`, so it is not a crash and must not be
         // announced as one. Printing it would be worse than noise: a lookup that
-        // correctly answered null would look like a program that fell over.
-        if crate::call_frames::in_lazy_driver() {
+        // correctly answered null would look like a program that fell over.  The
+        // payload names it (`@FR-C-Boundary`: nothing asks which thread raised it).
+        if info.payload().is::<crate::call_frames::ContainedFault>() {
             return;
         }
         prev(info);

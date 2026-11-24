@@ -476,7 +476,7 @@ pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool 
     }
 }
 
-pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &Stores) -> DbRef {
+pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_retain(gen_ref),
         None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref, stores),

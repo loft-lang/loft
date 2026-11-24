@@ -22,37 +22,40 @@ use std::sync::OnceLock;
 use crate::database::Stores;
 use crate::keys::DbRef;
 
-/// The live tier's flip, installed when it boots.
-static FLIP: OnceLock<fn(&str, bool) -> bool> = OnceLock::new();
+use crate::engine_host::EngineCtl;
+
+/// The live tier's flip, installed when it boots.  It answers for the program whose engine
+/// control `EngineCtl` is: the parked interpreter is held there.
+static FLIP: OnceLock<fn(&mut EngineCtl, &str, bool) -> bool> = OnceLock::new();
 /// The live tier's breakpoint setter, installed when it boots.
 #[cfg(not(target_arch = "wasm32"))]
-static SET_BP: OnceLock<fn(&mut DebugCx, &str, i64) -> bool> = OnceLock::new();
+static SET_BP: OnceLock<fn(&mut EngineCtl, &str, i64) -> bool> = OnceLock::new();
 
 /// Called by the live tier's boot: route [`set_flip`] to it.
-pub fn install_flip(flip: fn(&str, bool) -> bool) {
+pub(crate) fn install_flip(flip: fn(&mut EngineCtl, &str, bool) -> bool) {
     let _ = FLIP.set(flip);
 }
 
 /// Called by the live tier's boot: route [`debug_set_bp`] to it.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn install_set_bp(set_bp: fn(&mut DebugCx, &str, i64) -> bool) {
+pub(crate) fn install_set_bp(set_bp: fn(&mut EngineCtl, &str, i64) -> bool) {
     let _ = SET_BP.set(set_bp);
 }
 
 /// Flip `name` between its compiled body and the interpreter.  False when no live tier
 /// has booted, or the function is not one it can flip.
-pub fn set_flip(name: &str, on: bool) -> bool {
-    FLIP.get().is_some_and(|flip| flip(name, on))
+pub(crate) fn set_flip(ctl: &mut EngineCtl, name: &str, on: bool) -> bool {
+    FLIP.get().is_some_and(|flip| flip(ctl, name, on))
 }
 
 /// Set a breakpoint at the entry of `name`.  With no live tier booted, the request is
 /// queued like one that arrives during a pause, and acknowledged.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_set_bp(d: &mut DebugCx, name: &str, cid: i64) -> bool {
+pub(crate) fn debug_set_bp(ctl: &mut EngineCtl, name: &str, cid: i64) -> bool {
     if let Some(set_bp) = SET_BP.get() {
-        set_bp(d, name, cid)
+        set_bp(ctl, name, cid)
     } else {
-        debug_mailbox_push(d, DebugCmd::SetBp(name.to_string(), cid));
+        debug_mailbox_push(&mut ctl.debug, DebugCmd::SetBp(name.to_string(), cid));
         true
     }
 }
@@ -123,8 +126,9 @@ pub fn take_apply() -> bool {
 }
 
 /// Typed twin for generated code: `live_flip(name: text, on: boolean) -> boolean`.
-pub fn n_live_flip(_cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
-    u8::from(set_flip(name, on == 1))
+pub fn n_live_flip(cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    u8::from(set_flip(&mut stores.engine.ctl, name, on == 1))
 }
 
 /// Interp stack native: under the interpreter everything is already

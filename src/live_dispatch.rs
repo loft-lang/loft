@@ -24,7 +24,7 @@
 //! Failure posture: every bootstrap problem WARNS and falls back to fully
 //! compiled execution — live mode is an instrument, never a halt.
 
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -63,14 +63,24 @@ struct Live {
     names: &'static [&'static str],
 }
 
-thread_local! {
-    static LIVE: RefCell<Option<Live>> = const { RefCell::new(None) };
+/// The parked interpreter of the program running over `stores`, when it has one
+/// (`EngineCtl::live`, `@FR-C-Own`): the program world that `bootstrap_core` handed out
+/// carries it, and a `par` worker's stores do not.
+fn parked(stores: &mut Stores) -> Option<&mut Live> {
+    crate::engine_host::live(stores)
+        .as_mut()
+        .and_then(|b| b.downcast_mut::<Live>())
+}
+
+/// [`parked`] over the engine control a control command arrives with.
+fn parked_in(ctl: &mut crate::engine_host::EngineCtl) -> Option<&mut Live> {
+    ctl.live.as_mut().and_then(|b| b.downcast_mut::<Live>())
 }
 
 /// The entry check every generated user fn opens with.  Cold path cost when
 /// live mode is off: one relaxed atomic load.
 #[inline]
-pub fn live_flipped(idx: usize) -> bool {
+pub fn live_flipped(cell: &UnsafeCell<Stores>, idx: usize) -> bool {
     if !ENABLED.load(Ordering::Relaxed) {
         return false;
     }
@@ -80,8 +90,8 @@ pub fn live_flipped(idx: usize) -> bool {
     {
         return false;
     }
-    // Worker threads have no parked State — they run the compiled body.
-    LIVE.with(|l| l.borrow().is_some())
+    // A worker's stores have no parked State — it runs the compiled body.
+    parked(unsafe { &mut *cell.get() }).is_some()
 }
 
 /// True after a successful bootstrap — generated `main` uses this to skip
@@ -255,40 +265,34 @@ fn bootstrap_core(
 
     // The handover: the program runs over the BOOTSTRAP's world.  The parked
     // State keeps a placeholder; every dispatch swaps the world back in.
-    let stores = std::mem::take(&mut state.database);
+    let mut stores = std::mem::take(&mut state.database);
     crate::live_control::install_flip(set_flip);
     #[cfg(not(target_arch = "wasm32"))]
     crate::live_control::install_set_bp(debug_set_bp);
-    LIVE.with(|l| {
-        *l.borrow_mut() = Some(Live {
-            _parser: p,
-            state,
-            fns,
-            names: fn_names,
-        });
-    });
-    ENABLED.store(true, Ordering::Relaxed);
-
+    let live = Live {
+        _parser: p,
+        state,
+        fns,
+        names: fn_names,
+    };
     // Startup flips: LOFT_FLIP_FNS="tick,reply" (loft names, no n_ prefix).
     if let Ok(list) = std::env::var("LOFT_FLIP_FNS") {
         for name in list.split(',').filter(|s| !s.is_empty()) {
-            if !set_flip(name, true) {
+            if !set_flip_in(&live, name, true) {
                 eprintln!("loft-live: LOFT_FLIP_FNS names unknown fn `{name}` — ignored");
             }
         }
     }
+    *crate::engine_host::live(&mut stores) = Some(Box::new(live));
+    ENABLED.store(true, Ordering::Relaxed);
     stores
 }
 
 /// Flip one fn (loft name, without the `n_` prefix) to the interpreter (`on`)
 /// or back to compiled (`!on`).  Returns false when the name is unknown or
 /// unresolved — a refused flip, never a halt.
-pub fn set_flip(name: &str, on: bool) -> bool {
-    LIVE.with(|l| {
-        l.borrow()
-            .as_ref()
-            .is_some_and(|live| set_flip_in(live, name, on))
-    })
+fn set_flip(ctl: &mut crate::engine_host::EngineCtl, name: &str, on: bool) -> bool {
+    parked_in(ctl).is_some_and(|live| set_flip_in(live, name, on))
 }
 
 /// The flip body against an already-borrowed [`Live`] — shared by the public
@@ -329,20 +333,14 @@ pub fn dispatch_count() -> u64 {
 /// [`bootstrap_from_bytes`].  Each flipped call then routes through [`dispatch`]
 /// (counted by [`dispatch_count`]).  Reports the flip count to the browser host so
 /// a headless run can observe the tier switched on.
-pub fn flip_all_dispatch_debug() {
+pub fn flip_all_dispatch_debug(cell: &UnsafeCell<Stores>) {
     DEBUG.store(true, Ordering::Relaxed);
-    let names: Vec<String> = LIVE.with(|l| {
-        l.borrow().as_ref().map_or_else(Vec::new, |live| {
-            live.names
-                .iter()
-                .filter_map(|n| n.strip_prefix("n_").map(String::from))
-                .collect()
-        })
-    });
     let mut flipped = 0usize;
-    for name in &names {
-        if set_flip(name, true) {
-            flipped += 1;
+    if let Some(live) = parked(unsafe { &mut *cell.get() }) {
+        for name in live.names.iter().filter_map(|n| n.strip_prefix("n_")) {
+            if set_flip_in(live, name, true) {
+                flipped += 1;
+            }
         }
     }
     wasm_host_log(&format!(
@@ -427,11 +425,16 @@ fn dispatch<R>(
     idx: usize,
     run: impl FnOnce(&mut State, &crate::data::Data, u32, u32) -> R,
 ) -> R {
-    LIVE.with(|l| {
-        let mut borrow = l.borrow_mut();
-        let live = borrow
-            .as_mut()
-            .expect("live_flipped() gates dispatch on a parked State");
+    // The parked State leaves the program world for the dispatch, so a control command
+    // that arrives during it (a breakpoint's pause) finds none and is queued.
+    let in_cell = unsafe { &mut *cell.get() };
+    let mut parked_box = crate::engine_host::live(in_cell)
+        .take()
+        .expect("live_flipped() gates dispatch on a parked State");
+    let r = {
+        let live = parked_box
+            .downcast_mut::<Live>()
+            .expect("the parked interpreter is a Live");
         let d_nr = live.fns[idx];
         let n = DISPATCHED.fetch_add(1, Ordering::Relaxed) + 1;
         if DEBUG.load(Ordering::Relaxed) {
@@ -440,7 +443,6 @@ fn dispatch<R>(
         // The swap: generated callers up the stack hold `&mut Stores` derived
         // from this same UnsafeCell — the cell's ADDRESS stays put, only the
         // value moves, and no native frame touches it until we return.
-        let in_cell = unsafe { &mut *cell.get() };
         std::mem::swap(&mut live.state.database, in_cell);
         // @PLN18 08-S3 — the reload poll runs with the world swapped IN
         // (an edit's new const texts append to the REAL CONST_STORE) and
@@ -457,7 +459,9 @@ fn dispatch<R>(
         let r = run(state, data, d_nr, pos);
         std::mem::swap(&mut live.state.database, in_cell);
         r
-    })
+    };
+    *crate::engine_host::live(in_cell) = Some(parked_box);
+    r
 }
 
 /// Dispatch a `Void` fn.  `push` lands the args via [`State::put_stack`] in
@@ -516,9 +520,10 @@ pub fn live_call_ref(
 // The kernel (engine_host) owns the TRANSPORT (`D!:` frames, loopback +
 // LOFT_DEBUG_CONTROL-gated); THIS module owns the semantics.  Commands that
 // need the parked State arrive through a MAILBOX: when a dispatch is paused
-// at a breakpoint, `LIVE` is mutably borrowed, so the control handler (which
-// runs inside the pause loop's mini-pump) must never borrow it again — it
-// posts, and the pause loop (which legally holds `&mut State`) applies.
+// at a breakpoint, the dispatch holds the parked State (out of the program's
+// `EngineCtl::live`), so the control handler (which runs inside the pause
+// loop's mini-pump) finds none — it posts, and the pause loop (which legally
+// holds `&mut State`) applies.
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::live_control::debug_mailbox_drain;
@@ -530,16 +535,14 @@ pub use crate::live_control::{DebugCmd, DebugCx, debug_mailbox_push};
 /// posted to the mailbox when a pause holds it (the pause loop applies and
 /// acks).  Returns false only when the fn is unknown at direct application.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_set_bp(d: &mut DebugCx, name: &str, cid: i64) -> bool {
-    d.sub = cid;
-    let direct = LIVE.with(|l| match l.try_borrow_mut() {
-        Ok(mut guard) => guard.as_mut().map(|live| debug_apply_bp(live, d, name)),
-        Err(_) => None, // paused: the pause loop applies it
-    });
-    if let Some(ok) = direct {
-        ok
+fn debug_set_bp(ctl: &mut crate::engine_host::EngineCtl, name: &str, cid: i64) -> bool {
+    ctl.debug.sub = cid;
+    let crate::engine_host::EngineCtl { live, debug, .. } = ctl;
+    if let Some(live) = live.as_mut().and_then(|b| b.downcast_mut::<Live>()) {
+        debug_apply_bp(live, debug, name)
     } else {
-        debug_mailbox_push(d, DebugCmd::SetBp(name.to_string(), cid));
+        // Paused: the dispatch holds the parked State, and the pause loop applies it.
+        debug_mailbox_push(debug, DebugCmd::SetBp(name.to_string(), cid));
         true
     }
 }
@@ -627,18 +630,18 @@ fn interp_known(name: &str) -> bool {
 
 /// A flip on the interpreter: the function runs interpreted already, either way.
 #[cfg(not(target_arch = "wasm32"))]
-fn interp_flip(name: &str, _on: bool) -> bool {
+fn interp_flip(_ctl: &mut crate::engine_host::EngineCtl, name: &str, _on: bool) -> bool {
     interp_known(name)
 }
 
 /// Queue a breakpoint for the dispatch loop; `cid` hears its hits.
 #[cfg(not(target_arch = "wasm32"))]
-fn interp_set_bp(d: &mut DebugCx, name: &str, cid: i64) -> bool {
+fn interp_set_bp(ctl: &mut crate::engine_host::EngineCtl, name: &str, cid: i64) -> bool {
     if !interp_known(name) {
         return false;
     }
-    d.sub = cid;
-    d.queued.push(name.to_string());
+    ctl.debug.sub = cid;
+    ctl.debug.queued.push(name.to_string());
     true
 }
 
@@ -750,7 +753,7 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                     );
                 }
                 DebugCmd::SetBp(name, cid) => {
-                    // Applied with the State at hand (LIVE is borrowed, so
+                    // Applied with the State at hand (the dispatch holds it, so
                     // no set_flip — the fn is interpreted ALREADY if we are
                     // paused inside it; otherwise the flip lands on the next
                     // un-paused set).
@@ -849,14 +852,20 @@ mod tests {
     }
 
     // @PLN98 P3.1 — the full embedded bootstrap (parse + byte-code + wire + park)
-    // succeeds and hands out a seeded world.  Parks the process-global LIVE
-    // interpreter, so it relies on nextest's per-test process isolation.
+    // succeeds and hands out a seeded world, which carries the parked interpreter.
+    // Sets the process-wide flip tables, so it relies on nextest's per-test process
+    // isolation.
     #[test]
     fn bootstrap_from_bytes_ok() {
         static FNS: &[&str] = &["n_main"];
         let stores = super::bootstrap_from_bytes(FNS, "fn main() {\n  print(\"hi\")\n}\n")
             .expect("bootstrap_from_bytes succeeds");
+        let mut stores = stores;
         assert!(!stores.types.is_empty(), "parked world carries a schema");
+        assert!(
+            super::parked(&mut stores).is_some(),
+            "the world carries its parked interpreter"
+        );
     }
 }
 

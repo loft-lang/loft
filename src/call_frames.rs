@@ -1,120 +1,123 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator: the frames a native thread is running
+// @I68 — Native Rust generator: the frames a native program is running
 
-//! What a native thread is running: the loft frames on its shadow call stack, and whether it
-//! is inside a lazy store's driver.
+//! What a generated program is running: the loft frames on its shadow call stack, and whether
+//! it is inside a lazy store's driver.
 //!
 //! Generated code pushes and pops the frames (`cr_call_push` / `cr_call_pop`, re-exported by
-//! `codegen_runtime` under the paths emitted Rust names); a fault report reads them, which is
-//! why this sits in the core layer with the stores and the error renderer rather than with the
-//! rest of the native runtime (@PLN191).
+//! `codegen_runtime` under the paths emitted Rust names) on the `Stores` it runs over; a fault
+//! report reads them there, which is why this sits in the core layer with the stores and the
+//! error renderer rather than with the rest of the native runtime (@PLN191).
 
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 
-thread_local! {
-    /// @PLN133 S8 — is this thread inside a lazy DRIVER right now?
+use crate::database::Stores;
+
+/// `(name, file, declaration line, call site)` per frame: the call site is the line the frame
+/// is calling from, written by [`cr_call_site`] before each call.
+pub type NativeFrame = (&'static str, &'static str, u32, u32);
+
+/// The shadow call stack of a generated program, and its lazy-driver window — the `--native`
+/// twin of the interpreter's `State` call frames.  Owned by the program's `Stores`
+/// (`Stores::frames`, `@FR-C-Own`): a `par` worker's stores start with none, and a fault
+/// report reads the stores that faulted, never the thread (`@FR-C-Boundary`).
+///
+/// The live prefix is `frames[..depth]`: a pop only decrements the depth, leaving its entry
+/// as garbage the next push at that depth overwrites, so the per-call cost is a bounds test,
+/// three word stores and a depth update (loft#1426 M1, @PLN157 P1).  Every reader slices
+/// `[..depth]`, clamped to the array — the LEAN tier advances the depth through
+/// [`cr_call_push_lean`] without writing frames.
+#[derive(Default)]
+pub struct NativeFrames {
+    depth: usize,
+    frames: Vec<NativeFrame>,
+    /// @PLN133 S8 — is this program inside a lazy DRIVER right now?
     ///
-    /// It changes what a fault MEANS. An ordinary loft call that overflows the
-    /// stack is a program bug and halting is right; the same overflow inside a
-    /// FETCH is not, because @PLN129's contract is @C80 — a failed fetch reports
-    /// through `store_lazy_error` and the lookup answers null. So a buggy driver
-    /// must not turn a lookup into a program halt, which is what moving the
-    /// source from Rust to loft would otherwise have cost.
+    /// It changes what a fault MEANS. An ordinary loft call that overflows the stack is a
+    /// program bug and halting is right; the same overflow inside a FETCH is not, because
+    /// @PLN129's contract is @C80 — a failed fetch reports through `store_lazy_error` and the
+    /// lookup answers null.  A `par` worker running its own fetch has its own stores, so it
+    /// is its own answer.
+    in_lazy_driver: bool,
+}
+
+impl Clone for NativeFrames {
+    /// A copied `Stores` is a new context: it runs no frame yet.
+    fn clone(&self) -> Self {
+        NativeFrames::default()
+    }
+}
+
+impl NativeFrames {
+    /// The live frames, outermost first.
+    #[must_use]
+    pub fn live(&self) -> &[NativeFrame] {
+        &self.frames[..self.depth.min(self.frames.len())]
+    }
+
+    /// Is a fault here a driver's, and therefore containable?
     ///
-    /// Thread-local rather than global: a `par` worker running its own fetch is
-    /// its own answer.
-    static IN_LAZY_DRIVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+    /// Read by `cr_stack_overflow` and `RuntimeError::report_and_exit_on`, which exit the
+    /// process for an ordinary fault and unwind with a [`ContainedFault`] for this one.
+    #[must_use]
+    pub fn in_lazy_driver(&self) -> bool {
+        self.in_lazy_driver
+    }
 
-/// Is a fault on this thread a driver's, and therefore containable?
-///
-/// Read by `cr_stack_overflow`, which exits the process for an ordinary overflow
-/// and unwinds for this one, and by the panic hook, which stays silent for a
-/// fault that is about to be reported through the driver's own channel instead.
-#[must_use]
-pub fn in_lazy_driver() -> bool {
-    IN_LAZY_DRIVER.with(std::cell::Cell::get)
-}
+    /// Mark whether this program runs a lazy driver — the window [`Self::in_lazy_driver`]
+    /// answers for.
+    pub fn set_in_lazy_driver(&mut self, inside: bool) {
+        self.in_lazy_driver = inside;
+    }
 
-/// Mark whether this thread runs a lazy driver — the window [`in_lazy_driver`] answers for.
-pub fn set_in_lazy_driver(inside: bool) {
-    IN_LAZY_DRIVER.with(|f| f.set(inside));
-}
-
-// Thread-local shadow call stack used by native-compiled loft code.
-// Each entry is (function_name, source_file, line_number).
-// Generated code calls `cr_call_push` / `cr_call_pop` around every function body.
-//
-// The live prefix is `CALL_FRAMES[..CALL_DEPTH]`: a pop only decrements the
-// depth, leaving its entry as garbage the next push at that depth overwrites.
-// Split this way (loft#1426 M1, @PLN157 P1) the per-call cost is a bounds test,
-// three word stores and two `Cell` updates — the `RefCell<Vec>` form's borrow
-// flag, length update and re-borrowing pop measured ~7 ns of the ~18 ns a
-// native call costs.  Every reader slices `[..depth]`; none can fail the way a
-// `try_borrow` could, because a read never observes a half-made entry — the
-// depth is bumped only after the entry is fully written, and the readers
-// (frame renderers, `stack_trace()`) run between pushes, not inside one.
-thread_local! {
-    static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    /// `(name, file, declaration line, call site)` per frame: the call site is the line
-    /// this frame is calling from, written by [`cr_call_site`] before each call.
-    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32, u32)>> =
-        const { UnsafeCell::new(Vec::new()) };
-}
-
-/// Read the live frames — `CALL_FRAMES[..CALL_DEPTH]` — without copying.
-///
-/// The `min` clamp is load-bearing for the LEAN tier (@PLN157): a `--lean`
-/// binary advances the depth through [`cr_call_push_lean`] without writing
-/// frames, so the array can be shorter than the depth — its readers then see
-/// whatever named frames exist (none, usually) instead of panicking inside
-/// the diagnostic they serve.
-///
-/// SAFETY (of the internal `&*ptr`): the only `&mut` into `CALL_FRAMES` lives
-/// inside `cr_call_push`'s statement on this same thread and is gone by the
-/// time any reader runs; entries below `depth` are fully initialised because
-/// the depth is published after the write.
-pub(crate) fn with_call_frames<R>(
-    f: impl FnOnce(&[(&'static str, &'static str, u32, u32)]) -> R,
-) -> R {
-    let depth = CALL_DEPTH.get();
-    CALL_FRAMES.with(|frames| {
-        let v = unsafe { &*frames.get() };
-        f(&v[..depth.min(v.len())])
-    })
-}
-
-/// Where the running native frame was declared, for a RECOVERABLE fault's log line — the same
-/// position the halting path names on `--native` (`State::running_frame_declaration` is the
-/// interpreter's twin), because the generated code keeps no per-statement line.  `None` on the
-/// lean tier, which pushes no frames, and outside any loft frame.
-pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
-    with_call_frames(|frames| {
-        frames
+    /// Where the running frame was declared, for a RECOVERABLE fault's log line — the same
+    /// position the halting path names on `--native` (`State::running_frame_declaration` is
+    /// the interpreter's twin).  `None` on the lean tier, which pushes no frames, and
+    /// outside any loft frame.
+    #[must_use]
+    pub fn running_position(&self) -> Option<crate::lexer::Position> {
+        self.live()
             .last()
             .map(|(_, file, line, _)| crate::lexer::Position {
                 file: crate::lexer::intern_file(file),
                 line: *line,
                 pos: 1,
             })
-    })
-}
+    }
 
-/// The loft frames this native thread is inside, innermost first.
-///
-/// The `--native` counterpart of the interpreter's `State::current_call_chain`, in the
-/// same shape (bare function names) so that one renderer serves both backends —
-/// `RuntimeError::report_and_exit` attaches these to a fault raised by `assert` or
-/// `panic`, neither of which can see a `State` to read frames from.
-#[must_use]
-pub fn native_call_chain() -> Vec<String> {
-    with_call_frames(|b| {
-        b.iter()
+    /// The loft frames this program is inside, innermost first.
+    ///
+    /// The `--native` counterpart of the interpreter's `State::current_call_chain`, in the
+    /// same shape (bare function names) so that one renderer serves both backends —
+    /// `RuntimeError::report_and_exit_on` attaches these to a fault raised by `assert` or
+    /// `panic`.
+    #[must_use]
+    pub fn call_chain(&self) -> Vec<String> {
+        self.live()
+            .iter()
             .rev()
             .map(|(nm, _, _, _)| (*nm).to_string())
             .collect()
-    })
+    }
+}
+
+/// The unwind payload of a fault CONTAINED inside a lazy driver: the driver's call answers
+/// it to `store_lazy_error`, and the CLI's panic hook stays silent for it — the payload says
+/// what the fault is, so nothing asks which thread raised it (`@FR-C-Boundary`).  Spelled the
+/// way the interpreter's contained fetch spells it: `<kind label>: <message>`.
+pub struct ContainedFault(pub String);
+
+/// The frames of the program running over `cell`.
+#[inline]
+#[expect(
+    clippy::mut_from_ref,
+    reason = "the generated program's `UnsafeCell<Stores>` is its one context"
+)]
+fn frames_of(cell: &UnsafeCell<Stores>) -> &mut NativeFrames {
+    // SAFETY: generated code holds `cell` for the whole run and calls this between its own
+    // statements; the borrow ends with the statement that took it.
+    unsafe { &mut (*cell.get()).frames }
 }
 
 /// Push a frame onto the shadow call stack.  Called at the start of every
@@ -127,7 +130,7 @@ pub fn native_call_chain() -> Vec<String> {
 /// level.  An `#[inline]` function is compiled again INSIDE the program at that level instead
 /// of being called in its optimised form from the release `libloft`: measured on a
 /// call-heavy program (48 M named calls), 141 s without the attribute and 255 s with it.
-pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
+pub fn cr_call_push(cell: &UnsafeCell<Stores>, name: &'static str, file: &'static str, line: u32) {
     // @PLN28 — native call-depth guard.  Generated Rust recurses one native
     // frame per loft call, so unbounded recursion overflows the OS stack with
     // an opaque `fatal runtime error: stack overflow, aborting`.  The
@@ -143,23 +146,21 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // chain and made it one frame longer than the interpreter's — the two backends
     // named different functions for one fault.  The position is read off the frame
     // BELOW for the same reason: it is the function that is running.
-    let depth = CALL_DEPTH.get();
+    let f = frames_of(cell);
+    let depth = f.depth;
     if depth >= crate::limits::MAX_CALL_DEPTH as usize {
-        let (running_file, running_line) =
-            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln, _)| (*f, *ln)));
-        cr_stack_overflow(running_file, running_line);
+        let (running_file, running_line) = f
+            .live()
+            .last()
+            .map_or((file, line), |(_, fl, ln, _)| (*fl, *ln));
+        cr_stack_overflow(cell, running_file, running_line);
     }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: the exclusive borrow lasts only this statement, on this
-        // thread, and nothing else can run inside it.
-        let v = unsafe { &mut *frames.get() };
-        if depth < v.len() {
-            v[depth] = (name, file, line, 0);
-        } else {
-            v.push((name, file, line, 0));
-        }
-    });
-    CALL_DEPTH.set(depth + 1);
+    if depth < f.frames.len() {
+        f.frames[depth] = (name, file, line, 0);
+    } else {
+        f.frames.push((name, file, line, 0));
+    }
+    f.depth = depth + 1;
     // Refresh the shared breadcrumb at every native fn
     // entry so a watchdog-fired hard-kill identifies the most recent
     // loft fn we entered.  Single combined call.  When the timeout
@@ -170,26 +171,23 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
 
 /// Record the line the running frame is calling FROM (loft#1753).  Emitted before each
 /// statement that calls into a frame, in a function that pushed a named frame, so that
-/// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
-/// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
+/// `n_stack_trace` reports each frame's `line` as the call site that entered it — the
+/// interpreter's `CallFrame.line`.  One store into the program's frame array; the lean tier
 /// never emits it.
 ///
 /// Deliberately NOT `#[inline]`, for the reason [`cr_call_push`] gives: only the semantics tier
 /// emits it, and inlined it is compiled again inside the program at that tier's low
 /// optimisation level.  Measured on fib(40) (331 M calls): 15.2 s inlined, 12.8 s called
 /// (loft#2009).  The lean tier never emits it, so its out-of-line form costs that tier nothing.
-pub fn cr_call_site(line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth == 0 {
+pub fn cr_call_site(cell: &UnsafeCell<Stores>, line: u32) {
+    let f = frames_of(cell);
+    if f.depth == 0 {
         return;
     }
-    CALL_FRAMES.with(|frames| {
-        // SAFETY: as in `cr_call_push` — an exclusive borrow for this statement only.
-        let v = unsafe { &mut *frames.get() };
-        if let Some(frame) = v.get_mut(depth - 1) {
-            frame.3 = line;
-        }
-    });
+    let at = f.depth - 1;
+    if let Some(frame) = f.frames.get_mut(at) {
+        frame.3 = line;
+    }
 }
 
 /// Report the call-stack overflow and stop the program, through the renderer every
@@ -198,26 +196,25 @@ pub fn cr_call_site(line: u32) {
 ///
 /// `file` / `line` are the string literals `cr_call_push` was emitted with — the
 /// declaration of the function whose entry exceeded the cap, which is the position the
-/// interpreter reports for the same fault (loft#1058).  Before this the two backends
-/// spelled one event two ways: no `-->` block or caret here, its own frame format, and
-/// the depth count only on this side.  The count now lives in
+/// interpreter reports for the same fault (loft#1058).  The depth count lives in
 /// `RuntimeErrorKind::describe()`, so BOTH backends carry it, and the frames come from
 /// the same `render_call_chain` the interpreter's go through.
 ///
-/// The lazy-driver bypass @PLN133 S8 asks for is `report_and_exit`'s, shared with
+/// The lazy-driver bypass @PLN133 S8 asks for is `report_and_exit_on`'s, shared with
 /// `panic` and `assert`: a fault inside a driver unwinds into `store_lazy_error` rather
 /// than halting the program.
 #[cold]
 #[inline(never)]
-fn cr_stack_overflow(file: &str, line: u32) -> ! {
-    crate::runtime_error::RuntimeError::stack_overflow(file, line).report_and_exit()
+fn cr_stack_overflow(cell: &UnsafeCell<Stores>, file: &str, line: u32) -> ! {
+    crate::runtime_error::RuntimeError::stack_overflow(file, line)
+        .report_and_exit_on(frames_of(cell))
 }
 
 /// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap
 /// without the frame record.  A `--lean` binary trades the shadow stack's
 /// diagnostics — `stack_trace()` answers no frames, a native `assert`/`panic`
 /// carries no loft frame block, the watchdog breadcrumb is not refreshed —
-/// for a per-call cost of one bounds test and two `Cell` updates (measured
+/// for a per-call cost of one bounds test and a depth update (measured
 /// ~1.2 ns against ~6.7 ns for the named prelude).  What it KEEPS is the
 /// depth cap itself, at the same `MAX_CALL_DEPTH` both backends share; the
 /// overflow report names this call's own entry site rather than the frame
@@ -225,23 +222,23 @@ fn cr_stack_overflow(file: &str, line: u32) -> ! {
 /// the named tier).  [`CallGuard`] balances it unchanged: the pop is a bare
 /// decrement either way.
 #[inline]
-pub fn cr_call_push_lean(file: &'static str, line: u32) {
-    let depth = CALL_DEPTH.get();
-    if depth >= crate::limits::MAX_CALL_DEPTH as usize {
-        cr_stack_overflow(file, line);
+pub fn cr_call_push_lean(cell: &UnsafeCell<Stores>, file: &'static str, line: u32) {
+    let f = frames_of(cell);
+    if f.depth >= crate::limits::MAX_CALL_DEPTH as usize {
+        cr_stack_overflow(cell, file, line);
     }
-    CALL_DEPTH.set(depth + 1);
+    f.depth += 1;
 }
 
 /// Pop a frame from the shadow call stack.  Called at the end of every
 /// generated function body (including early returns via a drop guard).
-/// One `Cell` decrement — the entry itself stays behind as garbage the next
+/// One decrement — the entry itself stays behind as garbage the next
 /// push at this depth overwrites.
 #[inline]
-pub fn cr_call_pop() {
-    let depth = CALL_DEPTH.get();
-    if depth > 0 {
-        CALL_DEPTH.set(depth - 1);
+pub fn cr_call_pop(cell: &UnsafeCell<Stores>) {
+    let f = frames_of(cell);
+    if f.depth > 0 {
+        f.depth -= 1;
     }
 }
 
@@ -250,12 +247,12 @@ pub fn cr_call_pop() {
 /// [`cr_call_push_lean`]: that tier compiles the program fully optimised, and inlined the pop
 /// is a bare decrement at every return — measured on fib(45) (1.8 G calls) 5.66 s inlined and
 /// 10.57 s with the drop out of line (loft#2009).  The semantics tier uses [`NamedCallGuard`].
-pub struct CallGuard;
+pub struct CallGuard<'a>(pub &'a UnsafeCell<Stores>);
 
-impl Drop for CallGuard {
+impl Drop for CallGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        cr_call_pop();
+        cr_call_pop(self.0);
     }
 }
 
@@ -266,11 +263,11 @@ impl Drop for CallGuard {
 /// and 9.8 s called, 7.5 s together with [`cr_call_site`] out of line (loft#2009).  The two
 /// tiers want opposite answers for one body, so each tier names its own guard and the emitter
 /// picks it (`generation/mod.rs`, where the push is chosen).
-pub struct NamedCallGuard;
+pub struct NamedCallGuard<'a>(pub &'a UnsafeCell<Stores>);
 
-impl Drop for NamedCallGuard {
+impl Drop for NamedCallGuard<'_> {
     fn drop(&mut self) {
-        cr_call_pop();
+        cr_call_pop(self.0);
     }
 }
 
