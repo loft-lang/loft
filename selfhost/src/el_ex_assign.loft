@@ -411,12 +411,10 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
     if froot >= 0 && !vars.vars[froot].argument && defines_var(l[0..len(l) - 1], froot) {
       m = el_ex_call::materialize_collection(e, vars, l[-1], t);
       l[-1] = m.code;
-      // (Bound from a call, a fresh value: `t = m.tp` beside `t = rx!.tp` above — one name bound
-      // to views in two sibling blocks — compiled `t` wrong even where neither ran, loft#2627.)
       // (The first pass keeps the tail's own borrow — the record it reads through — as Rust's
       // pass-1 value does; the second answers the copy.)
       if !e.first_pass {
-        t = el_types::with_deps(m.tp, el_types::deps(m.tp));
+        t = m.tp;
       }
     }
   }
