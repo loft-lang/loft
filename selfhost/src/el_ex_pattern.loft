@@ -274,7 +274,7 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     el_vars::set_name(vars, nm, mv);
   }
   if rest != "" {
-    pv = el_vars::create_unique(vars, "alt_pos", ir::TyInteger { spec: i32_spec() });
+    pv = el_vars::create_unique(vars, "alt_pos", count_type(e));
     el_vars::set_defined(vars, pv);
     acc: ir::Node = ir::NdInt { n: 0 };
     k = len(branches) - 1;
@@ -478,7 +478,7 @@ pub fn rep_group(e: el::El, n: integer) -> integer {
 pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> el_ex_match::SliceArm? {
   sed = el_types::struct_enum_def(elm);
   es = element_stride(e, elm);
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   // The fixed head before the run: its elements at their own positions, their tests ANDed
   // after the run's (`elem_conds`), their bindings ahead of the run's captures.
   gi = 0;
@@ -748,7 +748,7 @@ pub struct SliceProj { pub vd: integer, pub fa: integer, pub ft: ir::TypeT }
 // (`step` apart — 2 skips a separated run's separators) appended — the element itself, or with
 // `proj` its field.
 pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: integer, lo: ir::Node, hi: ir::Node, step: integer, proj: SliceProj?) -> ir::Node? {
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   vt_inner = if proj == null { elm } else { proj!.ft };
   vt = ir::TyVector { inner: vt_inner, dep: [] };
   el_vars::set_var_type(vars, rv, vt);
@@ -1445,6 +1445,9 @@ pub fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         }
       }
     },
+    // (A pattern's literal is read at the fixed widths, under the 32-bit regime too.)
+    SInt { v } => return ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
+    SFloat { v } => return ex(ir::NdFloat { f: v }, ir::TyFloat),
     _ => {}
   }
   el_ex_assign::expression(e, vars, n)
@@ -1534,7 +1537,7 @@ pub fn literal_walk(e: el::El, vars: el_vars::Vars, h: ForHead, lit: Built) -> E
     prelude += [el_ir::v_set(t, it)];
     temps += [t];
   }
-  idx = loop_index(vars, h.id);
+  idx = loop_index(e, vars, h.id);
   prelude += [el_ir::v_set(idx, ir::NdInt { n: -1 })];
   lv = loop_var(vars, h.src_id, h.id, lit.elem);
   vars.active_loops += [lv];
@@ -1620,7 +1623,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     el::refuse(e, "a range over this type: {type_kind(l.tp)}");
     return null;
   }
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   // `parse_in_range_body`: a bound that folds to a constant is the constant; any other is held
   // in `_range_start_N` / `_range_end_N`.
   lc = el_convert::const_int(e, l.code);
@@ -1664,7 +1667,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     }
     prelude += [el_ir::v_block(guard, ir::TyVoid, "Range null guard")];
   }
-  idx = loop_index(vars, id);
+  idx = loop_index(e, vars, id);
   i = ir::NdVar { n: idx };
   // `rev(r)` (`want_reverse`): the same bounds and guard, walked from the end down.
   if rev {
@@ -1728,13 +1731,13 @@ pub fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, re
   // (A `for _` statement over a range also declares the named counter `_#index` it never
   // reads: one more variable, seen where a variable's number is printed.)
   if h.id == "_" && rwo != null {
-    el_vars::add_variable(vars, "_#index", ir::TyInteger { spec: i32_spec() });
+    el_vars::add_variable(vars, "_#index", count_type(e));
   }
   if rwo == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1864,13 +1867,13 @@ pub fn object_ops(e: el::El, vars: el_vars::Vars, d: integer, values: vector<ir:
 pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer) -> Ex {
   rwo = range_walk(e, vars, h.id, source, rev: true);
   if h.id == "_" && rwo != null {
-    el_vars::add_variable(vars, "_#index", ir::TyInteger { spec: i32_spec() });
+    el_vars::add_variable(vars, "_#index", count_type(e));
   }
   if rwo == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = ir::TyInteger { spec: i32_spec() };
+  int_t = count_type(e);
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1895,8 +1898,8 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding unless `named`.
-pub fn loop_index(vars: el_vars::Vars, id: text, named: boolean = false) -> integer {
-  int_t = ir::TyInteger { spec: i32_spec() };
+pub fn loop_index(e: el::El, vars: el_vars::Vars, id: text, named: boolean = false) -> integer {
+  int_t = count_type(e);
   idx = if id == "_" && !named { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
   el_vars::set_defined(vars, idx);
   idx
@@ -2528,6 +2531,22 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   conv: vector<Ex> = [];
   for x in xs {
+    // (`narrow_store_checks` at each item: `@FR-W-Store`, then `@FR-I-Narrow-U32`'s guard of a
+    // value a non-null `u32` element may not hold.)
+    if !e.first_pass && !(in_t is TyOptional) && el_types::base(in_t) is TyInteger && el_types::base(x.tp) is TyInteger && el_convert::narrowing_store(el_types::base(x.tp), in_t) {
+      ws = el_convert::width32_store(e, x.code, x.tp, in_t);
+      if ws != null {
+        conv += [ex(ws!, in_t)];
+        continue;
+      }
+      if el_convert::narrowing_int(el_types::base(x.tp), in_t) && !el_convert::value_fits(e, vars, x.code, in_t) {
+        ug = el_convert::into_u32_with_default(e, x.code, in_t);
+        if ug != null {
+          conv += [ex(ug!, in_t)];
+          continue;
+        }
+      }
+    }
     if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && el_ex_deliver::variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
       conv += [x];
       continue;

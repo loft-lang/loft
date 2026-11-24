@@ -877,7 +877,14 @@ pub fn write_op(at: ir::Attribute) -> text {
 
 // `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
 // through, typed as the field — borrowing what the record borrows, and the record's local.
+// A field read or a method call (`parse_method_selecting`), a method's answer then crossing the
+// 32-bit regime's boundary (`width32_call_result`).
 pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean, more: boolean = false) -> Ex {
+  x = member_inner(e, vars, at, re, name, args, call, more: more);
+  if call { el_ex_call::width32_call_result(e, x) } else { x }
+}
+
+fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean, more: boolean = false) -> Ex {
   if re == null {
     el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1715,7 +1722,13 @@ fn literal_argument(e: el::El, a: integer) -> boolean {
   }
 }
 
+// A call by its name (`parse_call`), its answer then crossing the 32-bit regime's boundary
+// (`width32_call_result`).
 pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
+  el_ex_call::width32_call_result(e, call_expression_inner(e, vars, at, f, args))
+}
+
+fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
   name = "";
   // A qualified `lib::f(…)` reaches the library's own definitions alone (`Parser::parse_var`'s
   // `source`, `select_qualified_overload`); -1 for a bare call.

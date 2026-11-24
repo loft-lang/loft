@@ -576,6 +576,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     c = call_op(e, vars, op[..-1], [el_ir::unspan(p.code), x.code], [pt, x.tp]);
+    c = el_ex_call::width32_op(e, op[..-1], pt, x.tp, c);
     x = c;
   }
   if e.first_pass {
@@ -2013,6 +2014,7 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     return ex(ir::NdNull, ir::TyVoid);
   }
   r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [sv, x.tp]);
+  r = el_ex_call::width32_op(e, bin, sv, x.tp, r);
   el_vars::drop_use(vars, v);
   // `(N-Join)`: an inferred local stepped by a value that may be null (`s += a / b`) is `τ?`, as
   // `change_var_type`'s nullable arm makes it (`compound_null_store`); a declared slot keeps its

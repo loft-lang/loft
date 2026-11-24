@@ -1779,6 +1779,13 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [el_ir::cl(e, "OpNullRefSentinel", [])];
       continue;
     }
+    // `@FR-W-Call`, the argument's side: a 64-bit caller hands a regime callee its argument at
+    // the callee's width.
+    wa = width32_call_argument(e, arg, at, pt, d);
+    if wa != null {
+      conv += [wa!];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       // loft#1729, `@FR-R-Const`: a constant's view handed to a parameter the callee may write
@@ -2614,8 +2621,97 @@ pub fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer,
   b = el_ex_assign::expression(e, vars, r);
   vars.lit_hint_node = -1;
   x = el_ex_null::builtin_op(e, vars, op, a, b);
+  x = width32_op(e, op, a.tp, b.tp, x);
   x.tp = arith_type(e, vars, op, a, b, x.tp);
   el_ex_null::arithmetic_span(e, at, op, x)
+}
+
+// `Parser::width32_call_result` (`@FR-W-Call`, the answer's side, and `@FR-W-Count`): in a file
+// under the 32-bit regime the answer of a callee whose body is 64-bit — an integer inside the
+// `i32` range by its type (not an `i64` or a `u32`) — is narrowed where the call returns
+// (`OpNarrow32`), and a plain `float` rounded to a `single` (`OpCastSingleFromFloat`).  A count
+// (`len`, `size`) is typed the regime's `i32` without the conversion.  An operator (`Op…`) and a
+// callee under the regime are left as they are.
+pub fn width32_call_result(e: el::El, x: Ex) -> Ex {
+  if !el_types::regime32(e) {
+    return x;
+  }
+  d = match el_ir::unspan(x.code) { NdCall { def_nr } => def_nr, _ => -1 };
+  if d < 0 || starts_with(el::def(e, d).name, "Op") || el_ex_base::body_width32(e, d) {
+    return x;
+  }
+  op = "";
+  nt = ir::TyVoid;
+  match el_types::base(x.tp) {
+    TyInteger { spec } => {
+      if spec.max > 2147483647 {
+        return x;
+      }
+      op = "OpNarrow32";
+      nt = if el_types::width32_int(x.tp) { el_types::base(x.tp) } else { ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: spec.not_null, forced_size: 4 } } };
+    },
+    TyFloat => {
+      op = "OpCastSingleFromFloat";
+      nt = ir::TySingle;
+    },
+    _ => return x
+  }
+  if x.tp is TyOptional {
+    nt = ir::TyOptional { inner: nt };
+  }
+  nm = el::def(e, d).name;
+  count = nm == "n_len" || nm == "n_size" || (starts_with(nm, "t_") && (ends_with(nm, "_len") || ends_with(nm, "_size")));
+  if op == "OpNarrow32" && count {
+    return ex(x.code, nt);
+  }
+  ex(el_ir::cl(e, op, [x.code]), nt)
+}
+
+// `Parser::width32_call_argument` (`@FR-W-Call`, the argument's side): a file outside the 32-bit
+// regime calling a function whose body is under it hands its arguments across the boundary — a
+// plain `integer` for a parameter the regime made a whole-range `i32` is narrowed at the call
+// (`OpNarrow32`, null when it does not fit), a `float` for a `single` one rounded
+// (`OpCastSingleFromFloat`).  An `i64` / `f64` parameter takes the value as it is.  Null when
+// nothing crosses.
+pub fn width32_call_argument(e: el::El, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT, d: integer) -> ir::Node? {
+  if el_types::regime32(e) || starts_with(el::def(e, d).name, "Op") || !el_ex_base::body_width32(e, d) {
+    return null;
+  }
+  match el_types::base(at) {
+    TyInteger { spec: _ } => match el_types::base(pt) {
+      TyInteger { spec: dst } => {
+        if el_convert::narrowing_store(el_types::base(at), el_types::base(pt)) && el_types::width32_int(pt) && dst.min <= -2147483647 && dst.max >= 2147483647 {
+          return el_ir::cl(e, "OpNarrow32", [arg]);
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  if el_types::base(at) is TyFloat && el_types::base(pt) is TySingle {
+    return el_ir::cl(e, "OpCastSingleFromFloat", [arg]);
+  }
+  null
+}
+
+// `@FR-W-Op` (`handle_operator`'s and `compound_op`'s regime step): in a file under the 32-bit
+// regime an integer operation on two 32-bit operands is a 32-bit operation — its result an `i32`
+// (forced 4 bytes, the call's nullability kept) and, but for `& | ^`, which cannot leave the
+// range, wrapped in `OpNarrow32`, so a value outside the range reads null.  Asked after the
+// operator's call and before `@FR-N-Div` / `@FR-N-Prop` type its `τ?`.
+pub fn width32_op(e: el::El, op: text, a: ir::TypeT, b: ir::TypeT, x: Ex) -> Ex {
+  arith = op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
+  if !arith || !el_types::regime32(e) || !el_types::width32_int(a) || !el_types::width32_int(b) {
+    return x;
+  }
+  match el_types::base(x.tp) {
+    TyInteger { spec } => {
+      code = if op == "&" || op == "|" || op == "^" { x.code } else { el_ir::cl(e, "OpNarrow32", [x.code]) };
+      n = ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: spec.not_null, forced_size: 4 } };
+      ex(code, if x.tp is TyOptional { ir::TyOptional { inner: n } } else { n })
+    },
+    _ => x
+  }
 }
 
 // The type of `a op b` that the operator typed `t`: `@FR-N-Div` / `@FR-N-Domain`, a quotient or
