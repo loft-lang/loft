@@ -1326,8 +1326,8 @@ jobs:
     # @windows-exempt: Windows runs both link modes in win-cdylib.yml; this is the Unix half
     name: Native static link (${{ matrix.os }})
     needs: changes
-    # rustc-native runs in the nightly only (the schedule, and release-gate / a dispatch that
-    # call this workflow): never on a pull request, nor on every push to main.
+    # The nightly only (the schedule, and release-gate / a dispatch that call this workflow):
+    # never on a pull request, nor on every push to main.
     if: needs.changes.outputs.code == 'true' && inputs.os != 'windows-latest' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
