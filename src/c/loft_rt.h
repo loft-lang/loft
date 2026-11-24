@@ -7097,13 +7097,21 @@ static unsigned __stdcall loft_timeout_watch(void *arg) {
 
 /* A rename that replaces the file `to` names, as Rust's `fs::rename` — and so the interpreter —
  * does on every host.  POSIX `rename` does; the Windows CRT's refuses an existing target, so
- * there it is `MoveFileExA` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`. */
+ * there it is `MoveFileExW` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`.  The
+ * paths go over in their wide form, as every path does (`loft_wpath`, loft_io.h). */
 #if defined(_WIN32)
-__declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+#include <wchar.h>
+__declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *from, const wchar_t *to, unsigned long flags);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
+static wchar_t *loft_wpath(const char *s);
 static int loft_rename(loft_cx *cx, const char *from, const char *to) {
-    if (MoveFileExA(from, to, 1ul /* MOVEFILE_REPLACE_EXISTING */)) return 0;
-    switch (GetLastError()) {
+    wchar_t *wf = loft_wpath(from), *wt = loft_wpath(to);
+    int ok = MoveFileExW(wf, wt, 1ul /* MOVEFILE_REPLACE_EXISTING */);
+    unsigned long e = ok ? 0 : GetLastError();
+    free(wf);
+    free(wt);
+    if (ok) return 0;
+    switch (e) {
     case 2: case 3: errno = ENOENT; break; /* ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND */
     case 5: case 32: errno = EACCES; break; /* ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION */
     default: errno = EIO; break;
