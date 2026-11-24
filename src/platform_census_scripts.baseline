@@ -88,4 +88,3 @@
 1 tests/wasm/html-plain-server.py
 3 tools/indexer/fix_broken_links.py
 2 tools/indexer/rewrite_links.py
-1 tools/ir_schema/extract.py
