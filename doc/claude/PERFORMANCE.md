@@ -258,8 +258,8 @@ program, because your functions were compiled into the binary being sampled and 
 named `n_<yours>`. To profile the front end alone — parse, IR, codegen — use
 `--engine -- --interpret --check p.loft`: **`--check` on its own is not front-end-only**,
 because the default backend is the compiler, so `check_only` still falls through the native
-pipeline and rustc builds a binary it then does not run (the rustc-share guard says so, and
-names the missing flag).  The report has two tables: self time by SYMBOL, and the same
+pipeline and the C compiler builds a binary it then does not run (the build-share guard says
+so, and names the missing flag).  The report has two tables: self time by SYMBOL, and the same
 samples by MODULE — every symbol folded onto the loft module it belongs to, the runtime
 below loft onto `allocator` / `mem` / `hashing` / `vec/string`.  Read a compile off the
 second: its top symbol is 5–8 % and ties with the allocator's, so the symbol table names
@@ -424,9 +424,9 @@ These are baked into the script rather than offered as options, because each one
 profile can be confidently wrong.
 
 **The build is not the run.** loft's *default* backend is the compiler: `loft prog.loft`
-generates Rust, shells out to rustc, and runs the binary it built. `perf` follows forks, so
-recording that command records the **build** — rustc, LLVM and lld take the entire top of
-the profile, and the few samples that are your program come back as bare hex, because the
+generates C, shells out to the C compiler, and runs the binary it built. `perf` follows forks, so
+recording that command records the **build** — the C compiler and the linker take the entire
+top of the profile, and the few samples that are your program come back as bare hex, because the
 binary is stripped. So a native run is built **once, unprofiled**, and only then recorded;
 `--no-warm` opts out. The warm-up really does run your program, side effects and all, which
 is why the script announces it.
@@ -434,22 +434,21 @@ is why the script announces it.
 The lever that symbolizes the binary is the `--native-debug` flag, and it is the only one:
 the binary cache key hashes *that flag*, not the environment (`src/main.rs`). Set
 `LOFT_NATIVE_KEEP_SYMBOLS=1` on its own and an already-cached **stripped** binary is handed
-straight back — the setting applies and nothing changes. `--native-debug` keeps symbols,
-emits DWARF line tables, and preserves the generated `.rs`, so `--annotate` lands on
-generated Rust carrying its `// loft:<file>:<line>` marker.
+straight back — the setting applies and nothing changes. `--native-debug` keeps symbols
+and emits DWARF line tables from the generated C's `#line` markers, which name the loft source,
+so `--annotate` lands on the `.loft` line.
 
 What survives is a profile that names your code:
 
 ```
-25.27%  hot_a-d780ac7f0  [.] loft_native_1057163::n_slow_part
-14.66%  hot_a-d780ac7f0  [.] loft::ops::op_add_int
+25.27%  hot_a-d780ac7f0  [.] n_slow_part
 13.86%  loft             [.] loft::use_analysis::first_arg_write_ops   ← front end, not your program
- 5.53%  hot_a-d780ac7f0  [.] loft_native_1057163::n_fast_part
+ 5.53%  hot_a-d780ac7f0  [.] n_fast_part
 ```
 
 The `loft` rows are the front end (parse, IR, codegen, cache lookup); the other command is
-your compiled program, its functions named `n_<yours>`. When rustc still takes 20 % or more,
-the script says so rather than letting a plausible-looking LLVM profile pass for a hot
+your compiled program, its functions named `n_<yours>`. When the build still takes 20 % or more,
+the script says so rather than letting a plausible-looking compiler profile pass for a hot
 program.
 
 **Self time, not inclusive.** loft's hot paths are recursive tree walkers — `scopes::scan`,
@@ -472,115 +471,8 @@ startup cache: same command, same output, a tenth of the time, and a flat profil
 the store loader. That is the normal result of profiling the same file twice, so the script
 detects it and says so — use `--no-cache`, or vary the file's content per measurement.
 
-### `LOFT_NATIVE_CHECKPOINTS` — when the sampler cannot reach (the second instrument)
-
-**This is not the normal way to profile.** `scripts/profile.sh` is, and it perturbs the
-program not at all. Reach for checkpoints only where that route is closed: a stripped
-release binary, a machine with no `perf` (every macOS box), or **wasm**, where there is no
-sampler of any kind.
-
-The generator writes a probe into the emitted Rust at the one call/op chokepoint
-(`output_call_inner`), so every OPERATOR the program executes is counted at its own loft
-`file:line`. Two tiers:
-
-```bash
-LOFT_NATIVE_CHECKPOINTS=count loft --ship p.loft   # counts; every target
-LOFT_NATIVE_CHECKPOINTS=time  loft --ship p.loft   # counts + inclusive ticks
-```
-
-The report prints the hot operator sites and then a **by-function rollup**, which is
-exclusive by construction — a user CALL is deliberately not a site, because timing it
-would make its ticks inclusive of its callees and one table would then mix inclusive and
-exclusive rows.
-
-**Why counts are the portable tier, and ticks are not.** Measured on an Apple M-series:
-reading the cycle counter (`mrs cntvct_el0`) costs **0.72 ns** — cheaper than
-the `AtomicU64` increment at 1.43 ns, and 20× cheaper than `Instant::now()` at 14.7 ns, so
-the instrument uses the instruction and never `Instant`. But the counter only *advances*
-every **~41.7 ns**: 196 728 of 200 000 back-to-back reads returned the same value, while an
-operator runs in ~1–3 ns. No single operator's duration is measurable. The tick column
-survives at all only because the counter is asynchronous to the code, so the quantised
-deltas dither and their SUM converges — which is why every row publishes its execution
-count beside its ticks. **A row with few executions is noise wearing a number's clothes**;
-read the count first.
-
-⚠ **And read the tick column as a HINT, never as a time profile — it is biased toward
-operator-dense functions.** Validated against the pure-Rust reference, instrumented the
-same way (`bench/bench.rs` with an exclusive self-time guard per function, same clock, the
-same `lock_curved` workload — both produce `sink 122400`, so the work is identical):
-
-| function | rust self% | loft ticks% | loft calls% |
-|---|---:|---:|---:|
-| `lock_layer` | **30.30** | 14.96 | 24.99 |
-| `brush_sample` | **28.16** | 21.58 | 9.16 |
-| `raster_segment` | **22.68** | **49.24** | 52.54 |
-| `chan` | 10.34 | 3.30 | 6.37 |
-
-The two largest rows disagree by about 2×, in opposite directions, for two reasons that are
-both real. The probe is charged per OPERATOR, so a function with many cheap operators is
-inflated: `raster_segment`'s tick share (49.2) sits on top of its call share (52.5), which
-means that row's ticks carry almost nothing the counts did not already say. And the
-reference's own guards cost it 4× (0.12 s → 0.48 s) by stopping `chan`, `clampf` and
-`clampi` being inlined, so ~15 % of its self-time is time that belongs to their callers in
-the real build. **Neither instrumented distribution is the truth.** The ticks are not
-noise — normalised cost per operator varies 5.5× across functions (15.7 → 86.2 ticks% per
-G-execution) and both instruments agree `brush_sample` is expensive per operation — but a
-tick share must not be quoted as "where the time goes".
-
-**The counts, by contrast, validate exactly.** Against the reference's call counts they
-give whole-number operators per call, each matching what the loft source says: `chan`
-**3.00** (`((c >> sh) & 255) as float` — shift, and, conv), `color_g` **2.00**, `ramp`
-**9.00**, with `clampi` 1.99 and `floor_i` 3.05 where a branch varies the body. That is the
-column to build an argument on. Counts need no clock at all, which is why they behave identically on
-native, wasip2 and in a browser, where `performance.now()` is deliberately clamped as a
-Spectre mitigation. On a target with no userspace counter the report says so rather than
-printing zeros that read as "this operator took no time".
-
-**Instrument less with a scope filter.** `mode:<filter>` instruments only the operators
-whose enclosing loft function or source file contains `<filter>`, so a second pass over one
-subsystem costs a fraction of the first pass over everything:
-
-```bash
-LOFT_NATIVE_CHECKPOINTS=time:raster_segment loft --ship p.loft   # one function
-LOFT_NATIVE_CHECKPOINTS=count:brush.loft    loft --ship p.loft   # one module
-```
-
-Measured on `lock_curved`: **1155 sites → 126**, and the run drops from 4.98 s to 3.32 s
-(overhead 5.4× → 3.6×). Note what that ratio does *not* track — site count fell by 89 % and
-cost by only a third, because the filtered function alone is 52 % of the program's operator
-EXECUTIONS. The filter is paid for in executions, not in sites, so filter to the hot thing
-and expect a modest saving; filter to a cold one and the run is nearly free. The second
-benefit is accuracy: instrumenting less perturbs rustc's inlining less, so a filtered run's
-shares sit closer to the shipped build's.
-
-**What it costs, and what that means.** Measured on `lock_curved` (400 iterations, 3.3 G
-operator executions): plain 0.93 s, `count` **2.75 s (3.0×)**, `time` **4.98 s (5.4×)**.
-More important than the slowdown is what the probe does to rustc: an operator wrapped in a
-macro is still inline, but the wrapping **changes what may be inlined across it**, so the
-distribution you read is the instrumented program's, not the shipped one's. Use it to find
-*which* code runs and roughly where the time concentrates; confirm a ratio with
-`compare.py` or `profile.sh`.
-
-That difference is not theoretical, and it is what the instrument is FOR. `lock_curved`'s
-`perf` profile read `n_lock_layer` at 77.6 % self and concluded the one target
-was `brush_sample`'s record return — which @PLN157 § V-aa then closed, for −3 %. The
-checkpoint rollup on the same row says why the prize was small:
-
-```
- calls%  ticks%     executions  function
- 52.53%  49.31%     1731264000  n_raster_segment
-  9.15%  21.56%      301695600  n_brush_sample
- 25.00%  14.93%      823778800  n_lock_layer
-  3.41%   9.70%      112471200  n_ramp
-```
-
-`raster_segment` is **52 % of the program's operator executions** — 1.73 of 3.30 billion, at
-**52 147 operators per call**, against a reference call the plain Rust runs in ~1.2 µs. Note
-which column that claim rests on: the validated COUNTS, not the ticks. The release build
-inlines `raster_segment` into `lock_layer`, so `perf` credits the caller and cannot see it,
-while a checkpoint is keyed to the loft function the operator was WRITTEN in. That is the
-one question a sampler on optimised code cannot answer, and the reason to keep this
-instrument beside the normal one.
+The per-operator instrument the rustc writer wrote into a program (`LOFT_NATIVE_CHECKPOINTS`)
+left with that writer; its section is in [PERFORMANCE-history.md](PERFORMANCE-history.md).
 
 ### Count before you time
 
@@ -693,7 +585,7 @@ history is the density of the commits, which is why `--record` exists.
 > no-difference and looks like "the optimisation does not matter here".
 >
 > On a 20 000-call probe whose whole hot loop is inside `drawing`, the baseline and
-> `LOFT_NO_SCALAR_HOIST=1` time 394 ms and 393 ms. Both numbers are also dominated by the rustc
+> `LOFT_NO_SCALAR_HOIST=1` time 394 ms and 393 ms. Both numbers are also dominated by the native
 > compile the run pays, which is the second way that shape of timing misleads.
 >
 > To A/B a library's own codegen, the cdylib has to be rebuilt under the switch — clear
@@ -741,15 +633,13 @@ and guarded by a COUNT, never by a time (@PLN166).
 - **Where a slower test's time went.**  With `LOFT_TIMING_LEDGER=<dir>` every loft process
   appends rows to `<dir>/timing-<pid>.tsv`: its phases (`parse_default`, `parse_user`,
   `scopes`, `lints`, `byte_code`, `native_emit`, `run`), the program's own native compile
-  (`binary <program> hit|miss <secs>` — rustc and its heals, or the cache that spared them),
+  (`binary-c <program> hit|miss <secs>` — the C compile, or the cache that spared it),
   each external build step (`exec`) and each library build, every row ending with the test
   that started that loft (`LOFT_TIMING_TEST`, passed by `platform::process::harness_command`).
   `python3 scripts/timing_compare.py <before> <after>` compares two ledgers — a directory, or
   `run:<id>[:<leg>]` for a CI run, which uploads one as `timing-ledger-<os>-<shard>` — by
   category and by test, largest growth first, so a slower test reads as the phase that grew
-  instead of a commit range to bisect.  Compare builds from comparable target directories:
-  rustc searches loft's `target/release/deps`, and over thousands of stale artefacts an
-  empty program's compile takes a quarter longer.
+  instead of a commit range to bisect.
 - **The bench.**  `python3 bench/frontend/frontend.py` measures the cold, warm and edit-loop
   modes over a generated corpus frozen by `CORPUS_VERSION` (tiny / medium / large), the modes
   INTERLEAVED run by run so load drift hits all of them alike; `--counts` adds instruction
@@ -833,7 +723,7 @@ design of each is in the record; the delivered items are listed below the table.
 | **A keyed removal shifts its bucket run back** — `lru_mixed` | both | `loft_h_remove_at` shifts; `(Col-RemoveKeyed)` asks only that every other key stays reachable.  A tombstone removal changes the table in both runtimes and in the image: the owner's decision | the same section |
 | **Pixels are `vector<integer>`, 8 bytes each** — graphics `canvas`, `clear` | both | `u32` cannot hold opaque white (`(N-Reserve)` keeps its top code), so the width is a language question, not a rewrite | the same section |
 
-**Delivered, for reference:** P1 (operand fusion — [INTERPRETER_PERFORMANCE.md § Operand fusion](INTERPRETER_PERFORMANCE.md#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
+**Delivered, for reference:** P1 (operand fusion — [INTERPRETER_PERFORMANCE.md § Operand fusion](INTERPRETER_PERFORMANCE.md#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no compiler
 probe on a cache hit), F1 (the front end's hot spots), F2 (the allocation gate's two pins), BUILD1 (no lib/bin double compile),
 BUILD2 (the native-test binary cache), P5/P6 (amortised vector growth, free-block coalescing),
 P7's `reserve`, O8's `const_eval`, pre-allocated vector literals and constant range
@@ -852,4 +742,4 @@ has the program cache on (`LOFT_NO_CACHE=1` for an exact before/after).
 - [PROFILING.md](PROFILING.md) — which switch arms which profiler
 - [PROFILE_ORACLE.md](PROFILE_ORACLE.md) — the profilers' known answers
 - [NATIVE.md](NATIVE.md) · [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md) — native codegen and its rewrites
-- [INTERNALS.md](INTERNALS.md) — `src/fill.rs`, `src/state/`, `src/generation/`
+- [INTERNALS.md](INTERNALS.md) — `src/fill.rs`, `src/state/`

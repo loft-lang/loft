@@ -74,7 +74,7 @@ cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole 
                                          #   (`make ci` runs it in the pool)
 make suite ARGS="@FR-B-Copy --mode both-c" # the LANGUAGE SUITE (loft-lang/loft-suite, beside
                                          #   this tree): one rule's cells on the interpreter and
-                                         #   the C backend (`all` adds rustc-native), a chapter
+                                         #   the C backend, a chapter
                                          #   (`--chapter heap`), or everything.  A new .loft test
                                          #   is a CELL there, under its rule; `tests/scripts`
                                          #   keeps only what this repo names — TESTING.md.  Every

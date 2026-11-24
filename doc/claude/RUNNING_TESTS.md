@@ -298,7 +298,7 @@ Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`, and the re
 builds only what the selection links (§ [Preferred shape](#preferred-shape-human-at-a-terminal--background--peek--wait)).
 
 **On a shared box, cap it.**  nextest runs one test process per hardware thread and every
-native test starts its own `rustc` besides, so an uncapped curated run holds the machine at a
+native test starts its own C compile besides, so an uncapped curated run holds the machine at a
 load of several times its core count for its whole length.  `NEXTEST_TEST_THREADS=<n> nice -n 10
 ./scripts/find_problems.sh …` caps the processes and yields the CPU to whatever else runs (the
 environment reaches nextest unchanged).  And read the first line, `changed: …`: a file no subject
@@ -375,7 +375,7 @@ nothing, so the one real regression arrives inside a band nobody trusts.
 Correctness is what fails a build; speed is what you read.
 
 Timeouts keep their job: they bound what we do **not** control — a socket, a
-process spawn, `rustc`. They are a liveness bound, not a speed measurement, and
+process spawn, the C compiler. They are a liveness bound, not a speed measurement, and
 a test that takes its whole timeout tells you nothing about how fast it is.
 
 ### The unit, and why it is not seconds
@@ -422,7 +422,7 @@ regression is one large one, both reviewable at the moment they land.
 
 ### What it does not measure
 
-It calibrates CPU, so a test dominated by `rustc`, disk or the network normalises
+It calibrates CPU, so a test dominated by the C compiler, disk or the network normalises
 poorly. And it is wall-clock: where a **deterministic counter** exists — claimed
 records, allocations, bytes — prefer that and assert on it. A counter is
 identical on every machine at any load, which is why

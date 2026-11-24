@@ -88,24 +88,16 @@ loft --tests --native file.loft         # single file
 loft --tests --native file.loft::name   # single function
 ```
 
-When `--native` is combined with `--tests`, each file is compiled to a native
-Rust binary via `output_native_reachable` + `rustc`, then executed:
+When `--native` is combined with `--tests`, each file is written as ONE C unit
+(`c::emit_tests_of`, or the program itself when the file has a `fn main()`), compiled once by
+the host's C compiler, and run once per test with that test's name, so each test starts from
+fresh stores as it does on the interpreter.  A test passes when its run exits 0 and leaves no
+store unfreed.
 
-1. Generate Rust source with all selected test functions called from a
-   generated `main()`.  Files with `fn main()` use the loft main directly.
-2. Compile with `rustc` (links against `libloft.rlib`).
-3. Run the binary and check exit status.
-
-**Binary cache:** each compiled test binary is kept in the temp directory as
-`loft_test_native_<stem>_<key>_bin`, keyed by `native_cache_key` over the generated source and
-the `libloft.rlib` it links; an unchanged file does not recompile.  The source is built in a
-per-process directory and the binary published under its key by an atomic rename, so parallel
-runs never share a half-written file.
-
-**Stale rlib detection:** run from loft's own source root (a `Cargo.toml` in the working
-directory), the runner compares `libloft.rlib` against the newest `src/` and `default/` file
-and runs `cargo build --lib` when a source is newer.  Anywhere else it uses the installed rlib
-as it is.
+**Binary cache:** the compiled unit is kept under the file's `.loft/cache/`, keyed by its
+content (the C, the compiler and its flags, the libraries it links); an unchanged file does
+not recompile.  The route through the retired rustc writer is in
+[LOFT_TEST-history.md](LOFT_TEST-history.md).
 
 **Limitations:**
 - `@EXPECT_FAIL` tests are skipped (native can't catch panics for matching).
@@ -126,8 +118,8 @@ test result: FAILED. 1 failed; 5 passed; 6 total; 2 files  [ran on the interpret
 **The result line names the backend it came from.**  `loft test` and `loft test
 --native` each exercise exactly ONE backend, and a bare `ok` cannot tell a clean other backend
 from one never compiled.  The note rides on the DEFAULT path, because that is the run people
-read as covering both.  On a machine with no `rustc`, where `loft test --native` cannot run, it
-names that instead: `native not exercised: no rustc on PATH, …` (@C102).
+read as covering both.  On a machine with no C compiler, where `loft test --native` cannot run,
+it names that instead: ``native not exercised: no C compiler (`cc` could not be run), …`` (@C102).
 
 Under `--native` the note also reports `N skipped` — tests counted as passing
 that never ran on that backend (`@EXPECT_FAIL` / `@IGNORE`, or a file with no

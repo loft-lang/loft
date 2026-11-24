@@ -12,7 +12,7 @@ This document covers how loft source code is turned into executable bytecode: th
 - [IR — The `Value` tree (`src/data.rs`)](#ir--the-value-tree-srcdatars)
 - [Type resolution (`src/typedef.rs`)](#type-resolution-srctypedefrs)
 - [Scope analysis (`src/scopes.rs`)](#scope-analysis-srcscopesrs)
-- [Rust code generation (`src/generation/`)](#rust-code-generation-srcgeneration)
+- [Operator code generation (`src/create.rs`)](#operator-code-generation-srccreaters)
 - [Bytecode generation (`src/compile.rs`, `src/state/`)](#bytecode-generation-srccompilers-srcstate)
 - [Default library (`default/*.loft`)](#default-library-defaultloft)
 - [Naming conventions enforced by the parser](#naming-conventions-enforced-by-the-parser)
@@ -424,36 +424,16 @@ Creates an exact duplicate of a variable (same name, same type including deps) w
 
 ---
 
-## Rust code generation (`src/generation/`)
+## Operator code generation (`src/create.rs`)
 
-`src/generation/` provides the `Output` struct and `rust_type` function used to transpile compiled loft programs to Rust source files. This is used only during development to regenerate `src/fill.rs` and `src/native.rs` from the `#rust "..."` annotations in the default library. It is not involved in the normal interpreter execution path.
-
-### `Output<'a>`
-
-```rust
-pub struct Output<'a> {
-    pub data: &'a Data,         // read-only view of all definitions
-    pub stores: &'a Stores,     // runtime type schema
-    pub counter: u32,           // unique label counter for generated identifiers
-    pub def_nr: u32,            // definition number currently being emitted
-    pub indent: u32,            // current indentation level
-    pub declared: HashSet<u16>, // variable slots already declared in this function
-}
-```
-
-Bundles the read-only compile-time data with the mutable emission state so that individual emit functions receive a single context argument.
-
-### `rust_type(tp, context) -> String`
-
-Maps a loft `Type` to the corresponding Rust type string. The `context` parameter controls the form:
-
-| Context | Effect |
-|---|---|
-| `Context::Argument` | Stack/argument passing type (e.g. `Str` for text, `i32` for integer) |
-| `Context::Variable` | Local variable type (e.g. `String` for text — owned heap allocation) |
-| `Context::Reference` | Prefixes the argument type with `&` |
-
-Integer types are mapped to `u8`/`u16`/`i8`/`i16`/`i32` based on the `Integer(min, max)` range. Reference, vector, and collection types all map to `DbRef`.
+`src/create.rs` writes `src/fill.rs`, the interpreter's bytecode-operator dispatch table, from
+each operator's `#rust "..."` template in `default/*.loft` (`generate_code_to`; `make fill`
+regenerates it).  A non-operator `#rust` function is a primitive the interpreter registers in
+`src/native.rs`.  Both files are checked byte for byte against their sources
+(`tests/issues.rs::fill_rs_up_to_date`, `::native_rs_functions_up_to_date`).  It is not
+involved in the normal interpreter execution path; compiled programs are written by the C
+backend ([C_BACKEND.md](C_BACKEND.md)).  The retired Rust code generator (`src/generation/`)
+is described in [COMPILER-history.md](COMPILER-history.md).
 
 ---
 
@@ -473,7 +453,7 @@ The bytecode is a compact encoding of the `Call`/`Set`/`If`/`Loop` IR nodes. It 
 
 The default library is loaded before any user source. It is parsed with `default: true`, which:
 - Allows `OpXxx`-prefixed names (operator definitions).
-- Allows `#rust "..."` annotations that supply the Rust implementation string for the code generator (`src/generation/`).
+- Allows `#rust "..."` annotations that supply an operator's Rust body for the interpreter (`src/create.rs` writes them into `src/fill.rs`), or mark a primitive `src/native.rs` registers.
 - Allows `#hot` / `#cold` on an operator: its dispatch priority.  A `#hot` operator takes a one-byte opcode and runs inline in the interpreter's lean loop, so its template may use only its operands, the stack accessors, `code_pos` and `raise_recoverable` (anything more fails to compile as hot); a `#cold` one is rare and takes a two-byte opcode.  Changing either is `make fill` (formal/rewrites.md `(R-HotInline)`, `(R-OpPriority)`).
 - Registers all built-in types, operators, and standard functions in `Data` and `Stores`.
 
@@ -594,10 +574,9 @@ intentional exception is documented at its site in `fill.rs`).
 | `src/database/structures.rs` | Record construction, parsing, `get_ref`, `get_field`, `vector_add` |
 | `src/database/io.rs` | File I/O: `read_data`, `write_data`, `get_file`, `get_dir`, `get_png` |
 | `src/database/format.rs` | Display/formatting: `show`, `dump`, `rec`, `path` |
-| `src/generation/` | Rust code generator — `Output` struct, `rust_type` mapping, emits `fill.rs` / `native.rs` |
 | `src/calc.rs` | Field byte-offset calculator for struct/enum-variant layout |
 | `src/stack.rs` | Bytecode-generation stack frame (`Stack`, `Loop`) |
-| `src/create.rs` | Drives code generation: `generate_lib` and `generate_code` |
+| `src/create.rs` | Writes `src/fill.rs` from the `#rust` operator templates: `generate_code`, `generate_code_to` |
 | `default/*.loft` | Built-in operators and standard library |
 
 ---

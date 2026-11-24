@@ -333,3 +333,20 @@ still build.  `--interpret` keeps its existing (silent, last-loaded) behavior.
 - **Repro / guards:** `tests/lib/collide_a` + `collide_b` (both export
   `collide_shared`), `collide_main` (calls both → rejected) / `collide_unused`
   (unused → builds); in-crate `native_symbol_collision_across_packages_detected`.
+
+## Stale wasm runtime rlib after the i64 migration (until 2026-11-24, @PLN225)
+
+Moved from CAVEATS.md § the integer migration when the rustc writer, and the wasm runtime rlib
+its `--html` build linked, were retired (`@C170`):
+
+- **Stale derived artefacts after the migration (discovered
+  2026-04-21).**  Neither `cargo test` nor `make ci` rebuilds
+  `target/wasm32-unknown-unknown/release/libloft.rlib`.
+  A developer who runs `cargo test --release` against a
+  post-migration source tree but pre-migration artefacts will see
+  **html_wasm failures** that look like real regressions: `--html`
+  rustc errors cite `codegen_runtime.rs:1244` (old `cr_rand_int`
+  position) vs. current line 1409.
+  Rebuild commands are in `DEVELOPMENT.md § Common pitfalls`.
+  This class of tripwire is a general post-migration risk, not a
+  language bug.

@@ -359,9 +359,9 @@ list, so `loft --tests --interpret <file>` does not run `<file>` — the path st
 not finish; the parse site is the `--tests` arm in `src/main.rs`.
 
 Implementation lives in `src/timeout.rs` (watchdog thread, deadline atomics, breadcrumb store),
-with checkpoint calls in `src/state/mod.rs` (interpreter dispatch), `src/codegen_runtime.rs`
-(`cr_check_deadline()` injected at native fn-entry and loop back-edges) and `src/lexer.rs`
-(parse-time recovery loop).
+with checkpoint calls in `src/state/mod.rs` (interpreter dispatch) and `src/lexer.rs`
+(parse-time recovery loop).  A compiled program bounds itself: `src/c/loft_rt.h` arms `alarm`
+(a watchdog thread on Windows) and stops with 124 at the deadline.
 
 **Under cargo test** a hang inside an in-process harness (`tests/wrap.rs`) is bounded by
 nextest instead: `.config/nextest.toml` gives every test process a `slow-timeout` (300 s

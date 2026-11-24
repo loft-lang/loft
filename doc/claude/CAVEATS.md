@@ -342,17 +342,6 @@ literal no longer parses.  Use `integer` (i64) and plain literals.
   bytes).  Narrow fields (`u8 / u16 / i8 / i16 / i32`) stay
   compact via `Parts::{Byte, Short, Int}` so pixel buffers,
   bit-packed protocols, and RGBA data are unaffected.
-- **Stale derived artefacts after the migration (discovered
-  2026-04-21).**  Neither `cargo test` nor `make ci` rebuilds
-  `target/wasm32-unknown-unknown/release/libloft.rlib`.
-  A developer who runs `cargo test --release` against a
-  post-migration source tree but pre-migration artefacts will see
-  **html_wasm failures** that look like real regressions: `--html`
-  rustc errors cite `codegen_runtime.rs:1244` (old `cr_rand_int`
-  position) vs. current line 1409.
-  Rebuild commands are in `DEVELOPMENT.md § Common pitfalls`.
-  This class of tripwire is a general post-migration risk, not a
-  language bug.
 - **~~Cdylib FFI wrapper claim in this file was obsolete.~~ RESOLVED
   2026-05-21 (@P310).**  The half-stride discrepancy this bullet
   flagged is fixed: `vector_elem_rust_type` now emits `*const i64`

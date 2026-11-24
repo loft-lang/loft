@@ -180,8 +180,8 @@ on their own branches at the same time: no step waits on them, and none touches 
    receipts' merge, the allocation pins, the platform census).  A miss there costs a whole
    run, where `find_problems.sh --changed`, the debugging loop, runs only tests.
 7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
-   (into `~/.local`, from main's daily build when this machine's rustc built it, else
-   rebuilt where only what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
+   (into `~/.local`, from main's daily build for this host, else rebuilt where only
+   what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
    installed main).  Every agent on the box scores its guards against that binary
    (`make falsify` without `REF`); a stale one makes each score against an older main, and a
    fix main now holds reads INERT only once the install has it.  `cat

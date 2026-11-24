@@ -41,10 +41,10 @@ checker inside the compiler.  The rules themselves are
   over.  Neither is a reason to remove a rule now: the count is of sites, not of time (the
   performance portal weighs that), and it is of the programs measured.  It is the evidence a
   removal is argued from when one is proposed.
-- **The census runs every writer.**  It reads the C writer and the rustc one while that
-  exists (`rewrite_census.WRITERS`, the one list), and takes the larger count where both
-  report: a rule the parser or the scope pass decides counts the same under each.  A rule
-  only the rustc writer applies leaves the census with that writer.
+- **The census runs the compiled writer.**  It reads the C writer, the one compiled writer
+  (`rewrite_census.WRITERS`, the one list); a rule the parser or the scope pass decides counts
+  there as well.  The rules only the retired rustc writer applied are in
+  [formal/rewrites-history.md § Retired with the rustc writer](formal/rewrites-history.md#retired-with-the-rustc-writer-pln225-r5).
 - **No self-check.**  The compiler has no mode in which it verifies its own analyses while a
   program runs.  A layer that validates the analyses adds complexity to check complexity.
 - **Logging is the assurance.**  A decision is trusted because it can be read from outside:
