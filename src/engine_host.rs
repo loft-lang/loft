@@ -295,6 +295,10 @@ pub(crate) struct EngineCtl {
     sync_ids: SyncIds,
     #[cfg(not(target_arch = "wasm32"))]
     swap: SwapPhase,
+    /// `D!:swap fast`: the next swap goes into the rebuilt binary at full speed, even from an
+    /// interpreted host, which otherwise swaps into the program interpreted again.
+    #[cfg(not(target_arch = "wasm32"))]
+    swap_fast: bool,
     /// The snapshot root registered by `swap_world`: (record, known_type).
     world_root: Option<(DbRef, u16)>,
     /// The world snapshot the page staged for this program's `swap_world` (`wasm_entry::Game`).
@@ -2145,10 +2149,12 @@ fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String
             crate::live_control::request_apply();
             Some("D:apply queued".to_string())
         }
-        ("rebuild", _) => {
+        ("rebuild", tier) => {
+            // `rebuild fast` builds the shipped tier (`--ship`), the one `swap fast` takes.
             let ok = crate::live_rebuild::n_rebuild_start_ctl(
                 &mut ctl.rebuild,
                 ctl.world_layout.as_deref(),
+                tier == "fast",
             );
             Some(format!(
                 "D:rebuild {}",
@@ -2171,12 +2177,31 @@ fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String
             })
         }
         ("swap", artifact) => {
-            let target = if artifact == "auto" || artifact.is_empty() {
+            // `auto` keeps the tier (an interpreted host swaps into the program interpreted
+            // again), `fast` swaps into the rebuilt binary at full speed, `dev` stays on the
+            // interpreter; a path names the binary.  The rebuilt artifact is the target of all
+            // three: it is the check that the edit compiles.
+            let target = if matches!(artifact, "" | "auto" | "fast" | "dev") {
                 crate::live_rebuild::rebuild_artifact_ctl(&ctl.rebuild)
             } else {
                 artifact.to_string()
             };
+            let fast = artifact == "fast";
+            if fast && !crate::live_rebuild::rebuild_is_ship(
+                    &mut ctl.rebuild,
+                    ctl.world_layout.as_deref(),
+                ) {
+                // The speed a developer measures must be the speed the game ships at.
+                eprintln!(
+                    "loft-swap: full speed takes the shipped build — `rebuild fast` first, then `swap fast`"
+                );
+                return Some("D:swap false".to_string());
+            }
+            ctl.swap_fast = fast;
             let ok = swap_start_impl(ctl, &target);
+            if !ok {
+                ctl.swap_fast = false;
+            }
             Some(format!("D:swap {ok}"))
         }
         ("quit", _) => {
@@ -2417,6 +2442,36 @@ fn swap_start_impl(ctl: &mut EngineCtl, artifact: &str) -> bool {
     true
 }
 
+/// The process a swap boots, and how it is named in the log: an interpreted host hands its world
+/// to the same program interpreted again, so the session keeps its debugger, unless the swap is
+/// `fast` (the shipped build, at the speed the game ships at); a compiled host to the rebuilt
+/// binary.  The live variables go with it, so it can rebuild in turn, and a build at full speed
+/// carries `LOFT_LIVE_SHIP=1` so its own rebuilds stay shipped.
+#[cfg(not(target_arch = "wasm32"))]
+fn swap_successor(artifact: &str, fast: bool) -> (crate::platform::process::Spawn, String) {
+    use crate::platform::process::{Program, Spawn};
+    let (mut successor, booting) =
+        if !fast && let Some(argv) = crate::live_rebuild::interpreted_successor() {
+            let mut s = Spawn::new(Program::os(&argv[0]));
+            for a in &argv[1..] {
+                s.push_arg(a);
+            }
+            let src = argv.last().cloned().unwrap_or_default();
+            (s, format!("{src} on the interpreter"))
+        } else {
+            (Spawn::new(Program::os(artifact)), artifact.to_string())
+        };
+    for (name, value) in crate::live_rebuild::live_env_for_successor() {
+        successor.push_env(name, value);
+    }
+    let successor = if fast {
+        successor.env("LOFT_LIVE_SHIP", "1")
+    } else {
+        successor.env_remove("LOFT_LIVE_SHIP")
+    };
+    (successor, booting)
+}
+
 /// The per-turn swap step `run()` drives: 0 = serve normally, 1 = FROZEN
 /// (mechanics only — pump runs, meaning waits), 2 = handed over (run
 /// returns; this process retires).  All failure paths roll back to 0.
@@ -2453,25 +2508,9 @@ fn swap_step_on(stores: &mut Stores, sw: &mut SwapPhase) -> i64 {
                     *sw = SwapPhase::Idle;
                     return 0;
                 };
-                use crate::platform::process::{Program, Spawn, Tree};
-                // An interpreted host hands its world to the same program interpreted again,
-                // so the session keeps its debugger; a compiled host to the rebuilt binary.
-                let (mut successor, booting) =
-                    if let Some(argv) = crate::live_rebuild::interpreted_successor() {
-                        let mut s = Spawn::new(Program::os(&argv[0]));
-                        for a in &argv[1..] {
-                            s.push_arg(a);
-                        }
-                        let src = argv.last().cloned().unwrap_or_default();
-                        (s, format!("{src} on the interpreter"))
-                    } else {
-                        (Spawn::new(Program::os(&artifact)), artifact.clone())
-                    };
-                // An interpreted host names its program to the rebuild in-process; the new
-                // build learns it from its environment.
-                for (name, value) in crate::live_rebuild::live_env_for_successor() {
-                    successor.push_env(name, value);
-                }
+                use crate::platform::process::Tree;
+                let fast = std::mem::take(&mut stores.engine.ctl.swap_fast);
+                let (successor, booting) = swap_successor(&artifact, fast);
                 let spawned = successor
                     .env("LOFT_RESUME", &snap)
                     .env("LOFT_SWAP_READY", &ready)
