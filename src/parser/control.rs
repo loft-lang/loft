@@ -611,26 +611,29 @@ pub(super) fn arm_body_is_null(code: &Value) -> bool {
 }
 
 /// Does every path of `code` answer the bare `null` or leave — a `return`, `break`, `continue`
-/// or halt — so the arm's own code carries no value of the join's type?  A nested `match` (an
-/// `if` chain) whose arms are all `null` or `return` is one.  Such an arm keeps its code and
-/// takes the join's typed null BEHIND it: replacing it dropped its `return` (both backends
-/// answered null), and leaving it untyped left the interpreter's chain reading a slot the arm
-/// never wrote.  `@FR-N-Join`'s null arm, for an arm that is not the literal.
+/// or halt — with at least one path answering the `null`, so the arm's own code carries no
+/// value of the join's type?  A nested `match` (an `if` chain) whose arms are `null` or
+/// `return` is one; an arm that only leaves is `never`, not a null arm.  Such an arm keeps its
+/// code and takes the join's typed null BEHIND it: replacing it dropped its `return` (both
+/// backends answered null), and leaving it untyped left the interpreter's chain reading a
+/// slot the arm never wrote.  `@FR-N-Join`'s null arm, for an arm that is not the literal.
 pub(super) fn yields_only_null(data: &crate::data::Data, code: &Value) -> bool {
+    null_paths(data, code) == Some(true)
+}
+
+/// `Some(answers_null)` when every path of `code` answers the bare `null` or leaves — true when
+/// at least one answers the `null` — and `None` when a path answers anything else.
+fn null_paths(data: &crate::data::Data, code: &Value) -> Option<bool> {
     match code.unspan() {
-        Value::Null | Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
-        Value::Block(bl) if bl.name == FORWARD_CALL => false,
-        Value::Block(bl) => {
-            is_block_divergent(&bl.operators)
-                || bl
-                    .operators
-                    .last()
-                    .is_some_and(|o| yields_only_null(data, o))
-        }
+        Value::Null => Some(true),
+        Value::Return(_) | Value::Break(_) | Value::Continue(_) => Some(false),
+        Value::Block(bl) if bl.name == FORWARD_CALL => None,
+        Value::Block(bl) if is_block_divergent(&bl.operators) => Some(false),
+        Value::Block(bl) => null_paths(data, bl.operators.last()?),
         Value::If(_, then_b, else_b) => {
-            yields_only_null(data, then_b) && yields_only_null(data, else_b)
+            Some(null_paths(data, then_b)? | null_paths(data, else_b)?)
         }
-        other => is_halt_call(data, other),
+        other => is_halt_call(data, other).then_some(false),
     }
 }
 
