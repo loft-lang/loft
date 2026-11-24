@@ -1192,6 +1192,24 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
         comp_field = fe != null && e.p.nodes[fe!] is SComprehension;
         if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field) {
           apart = true;
+          // (`snapshot_read_destination`: an item INDEXING the destination's vector —
+          // `v: [len(b.inner.v), b.inner.v[0]]` — has Rust copy it first, `_build_src_N` and the
+          // store it is built in, the copy borrowing that store, before the build takes this road.)
+          sfa = attr_nr(el::def(e, rd), match e.p.nodes[fi] { SFieldInit { name: sfn } => sfn, _ => "" });
+          if aroot >= 0 && e.p.nodes[fe!] is SVecLit && sfa >= 0 && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot)) {
+            match el_types::base(el::def(e, rd).attributes[sfa]!.typedef[0]) {
+              TyVector { inner: svi } => {
+                smd = el::def_nr(e, "main_vector<{el_types::elem_name(e, svi)}>");
+                if smd >= 0 {
+                  ssrc = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: svi, dep: [] });
+                  el_vars::set_defined(vars, ssrc);
+                  sdb = el_vars::work_vec_db(vars, ir::TyReference { n: smd, dep: [] });
+                  el_vars::set_type(vars, ssrc, ir::TyVector { inner: svi, dep: [sdb] });
+                }
+              },
+              _ => {}
+            }
+          }
         }
       },
       _ => {}
