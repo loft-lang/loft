@@ -133,3 +133,81 @@ fn return_in_every_arm_releases_once_interpret() {
 fn return_in_every_arm_releases_once_native() {
     assert_released_once_after_the_arm("every", EVERY_ARM, "--native");
 }
+
+/// loft#2626 — an arm whose value is a nested `match` answering `null` or returning on every
+/// path, beside an arm that answers a record, text or vector.  The interpreter's chain was
+/// sized from the untyped arm and never stored the sibling's value (`null`, or a refused free
+/// of a stray store); the `if` form replaced the nested `match` — its `return` included — with
+/// the typed null on both backends.  Each program prints `<flt> <int>`, hand-computed: the
+/// `TyFlt` call answers the sibling's value, the `TyInt` call the nested `return`.
+const NULL_ARM_HEAD: &str = "enum Ty2626 { TyInt { lo: integer }, TyFlt, TySgl }\n\
+struct Nd2626 { name: text }\n\
+fn cl2626(n: text) -> Nd2626 { Nd2626 { name: n } }\n";
+
+const NULL_ARM_CASES: [(&str, &str, &str, &str); 5] = [
+    (
+        "record",
+        "fn wa(at: Ty2626, pt: Ty2626) -> Nd2626? {\n  match at {\n    TyInt { lo: _ } => match pt { TyInt { lo: d } => { if d < 0 { return cl2626(\"narrow\"); } null }, _ => null },\n    TyFlt => cl2626(\"cast\"),\n    _ => null\n  }\n}\n",
+        "a = wa(Ty2626::TyFlt, Ty2626::TySgl); b = wa(Ty2626::TyInt { lo: 0 - 5 }, Ty2626::TyInt { lo: 0 - 5 }); println(\"{if a == null { \"null\" } else { a!.name }} {if b == null { \"null\" } else { b!.name }}\");",
+        "cast narrow",
+    ),
+    (
+        "text",
+        "fn wa(at: Ty2626, pt: Ty2626) -> text? {\n  match at {\n    TyInt { lo: _ } => match pt { TyInt { lo: d } => { if d < 0 { return \"narrow\"; } null }, _ => null },\n    TyFlt => \"cast\",\n    _ => null\n  }\n}\n",
+        "a = wa(Ty2626::TyFlt, Ty2626::TySgl); b = wa(Ty2626::TyInt { lo: 0 - 5 }, Ty2626::TyInt { lo: 0 - 5 }); println(\"{a} {b}\");",
+        "cast narrow",
+    ),
+    (
+        "vector",
+        "fn wa(at: Ty2626, pt: Ty2626) -> vector<integer>? {\n  match at {\n    TyInt { lo: _ } => match pt { TyInt { lo: d } => { if d < 0 { return [1]; } null }, _ => null },\n    TyFlt => [2, 3],\n    _ => null\n  }\n}\n",
+        "a = wa(Ty2626::TyFlt, Ty2626::TySgl); b = wa(Ty2626::TyInt { lo: 0 - 5 }, Ty2626::TyInt { lo: 0 - 5 }); println(\"{a} {b}\");",
+        "[2,3] [1]",
+    ),
+    (
+        "bound",
+        "fn wa(at: Ty2626, pt: Ty2626) -> Nd2626? {\n  r = match at {\n    TyInt { lo: _ } => match pt { TyInt { lo: d } => { if d < 0 { return cl2626(\"narrow\"); } null }, _ => null },\n    TyFlt => cl2626(\"cast\"),\n    _ => null\n  };\n  r\n}\n",
+        "a = wa(Ty2626::TyFlt, Ty2626::TySgl); b = wa(Ty2626::TyInt { lo: 0 - 5 }, Ty2626::TyInt { lo: 0 - 5 }); println(\"{if a == null { \"null\" } else { a!.name }} {if b == null { \"null\" } else { b!.name }}\");",
+        "cast narrow",
+    ),
+    (
+        "if",
+        "fn wa(at: Ty2626, pt: Ty2626) -> Nd2626? {\n  if at is TyInt { match pt { TyInt { lo: d } => { if d < 0 { return cl2626(\"narrow\"); } null }, _ => null } } else if at is TyFlt { cl2626(\"cast\") } else { null }\n}\n",
+        "a = wa(Ty2626::TyFlt, Ty2626::TySgl); b = wa(Ty2626::TyInt { lo: 0 - 5 }, Ty2626::TyInt { lo: 0 - 5 }); println(\"{if a == null { \"null\" } else { a!.name }} {if b == null { \"null\" } else { b!.name }}\");",
+        "cast narrow",
+    ),
+];
+
+fn assert_null_arm_cases(backend: &str) {
+    for (tag, wa, body, want) in NULL_ARM_CASES {
+        let src = format!("{NULL_ARM_HEAD}{wa}fn main() {{ {body} }}\n");
+        let probe = write_probe(
+            &format!("2626_{tag}_{}", backend.trim_start_matches('-')),
+            &src,
+        );
+        let (ok, stdout, stderr) = run(backend, &probe);
+        let _ = fa::remove_file(&probe);
+        assert!(
+            ok,
+            "[2626 {tag}/{backend}] must run cleanly\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(
+            stdout.trim(),
+            want,
+            "[2626 {tag}/{backend}]\nstderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("BUG"),
+            "[2626 {tag}/{backend}] a refused free\nstderr:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_null_arm_beside_a_value_arm_keeps_both_interpret() {
+    assert_null_arm_cases("--interpret");
+}
+
+#[test]
+fn a_null_arm_beside_a_value_arm_keeps_both_native_c() {
+    assert_null_arm_cases("--native-c");
+}
