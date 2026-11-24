@@ -388,56 +388,27 @@ fn build_const_vectors(
     state.const_refs.clone_from(&state.database.const_refs);
 }
 
-/// Which `#native` symbol each panicking stub stands for, by library index.
+/// The symbol the stub now running stands for, rendered for the panic message: the stub is a
+/// plain `fn` pointer and so cannot carry the symbol it replaced, so it reads the library
+/// index `State::invoke_native` published (`Stores::lib_idx`) and its program's table
+/// (`WiredNatives::stubs`) — the two builds where the name matters most are the ones with no
+/// console to re-run under `LOFT_STUB_DEBUG=1`: a browser bundle, and a released binary
+/// (loft#1189).
 ///
-/// A stub is a plain `fn` pointer and so cannot carry the symbol it replaced, which left the
-/// panic saying only that SOME native was missing — and the two builds where that matters most
-/// are the ones with no console to re-run under `LOFT_STUB_DEBUG=1`: a browser bundle, and a
-/// released binary.  loft#1189 spent its investigation on exactly that message.
-///
-/// `State::invoke_native` already publishes the index it is about to dispatch
-/// (`Stores::lib_idx`), so the stub can read it back and look the symbol up
-/// here.  A process-global is right for THIS map where it was wrong for the stub SET: the set
-/// decides what a wiring pass may replace, and two compiles racing there skipped each other's
-/// symbols, while this map only renders a message.  Two States can still land different symbols
-/// on one index, so the entry is a SET and the message names every candidate rather than
-/// picking one and sounding certain.
-static STUB_SYMBOLS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<u16, std::collections::BTreeSet<String>>>,
-> = std::sync::OnceLock::new();
-
-fn remember_stub_symbol(idx: u16, sym: &str) {
-    let map = STUB_SYMBOLS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(mut m) = map.lock() {
-        m.entry(idx).or_default().insert(sym.to_string());
-    }
-}
-
-/// The symbol the stub now running stands for, rendered for the panic message.
-///
-/// Never fails and never blocks the report: an unknown index answers a description rather than
-/// a name, because a message that says less is still better than one that says nothing.
-fn stub_symbol_now(idx: u16) -> String {
-    let Some(map) = STUB_SYMBOLS.get() else {
-        return format!("<library index {idx}>");
-    };
-    let Ok(m) = map.lock() else {
-        return format!("<library index {idx}>");
-    };
-    match m.get(&idx) {
-        None => format!("<library index {idx}>"),
-        Some(names) if names.len() == 1 => {
-            format!("`{}`", names.iter().next().unwrap_or(&idx.to_string()))
-        }
-        Some(names) => format!(
-            "one of {} (two programs put different symbols on library index {idx})",
-            names
-                .iter()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(" / ")
-        ),
-    }
+/// Never fails: an unknown index answers a description rather than a name, because a message
+/// that says less is still better than one that says nothing.
+fn stub_symbol_now(stores: &crate::database::Stores) -> String {
+    let idx = stores.lib_idx;
+    stores
+        .wired
+        .stubs
+        .get(usize::from(idx))
+        .cloned()
+        .flatten()
+        .map_or_else(
+            || format!("<library index {idx}>"),
+            |sym| format!("`{sym}`"),
+        )
 }
 
 /// Is `msg` the panic of a native-function stub (below): a `#native` symbol whose library was
@@ -524,13 +495,17 @@ fn register_native_stubs(state: &mut State, data: &Data) {
                      if the run is green with LOFT_POISON unset, or an earlier line reports \
                      a `BUG` refusal of a store free / a strict-store violation, it is (b) — re-run with \
                      `LOFT_STRICT_STORES=1` to name the access and the free.",
-                    stub_symbol_now(stores.lib_idx)
+                    stub_symbol_now(stores)
                 );
             }
         };
         state.static_fn(sym, stub);
         if let Some(&idx) = state.library_names.get(sym) {
-            remember_stub_symbol(idx, sym);
+            crate::extensions::put_slot(
+                &mut std::sync::Arc::make_mut(&mut state.database.wired).stubs,
+                idx,
+                sym.to_string(),
+            );
         }
         // @PLN199 — a compiled library's text function also gets the slot its
         // destination-passing call uses (`<symbol>#dest`, `State::gen_cdylib_text_dest_call`):
@@ -539,7 +514,11 @@ fn register_native_stubs(state: &mut State, data: &Data) {
             let dest = crate::extensions::shared_dest_symbol(sym);
             state.static_fn(&dest, stub);
             if let Some(&idx) = state.library_names.get(&dest) {
-                remember_stub_symbol(idx, &dest);
+                crate::extensions::put_slot(
+                    &mut std::sync::Arc::make_mut(&mut state.database.wired).stubs,
+                    idx,
+                    dest.clone(),
+                );
             }
             stub_syms.insert(dest);
         }

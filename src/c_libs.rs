@@ -44,13 +44,15 @@ pub struct CLibrary {
     pub shim: Vec<String>,
 }
 
-/// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
-/// valid for the process lifetime (the Library handle is leaked).
+/// Wrapper for `*const ()` that is Send and Sync — function pointers from cdylibs are
+/// valid for the process lifetime (the Library handle is leaked), and code is only read.
 #[cfg(feature = "native-extensions")]
 #[derive(Clone, Copy)]
 pub(crate) struct FnPtr(pub(crate) *const ());
 #[cfg(feature = "native-extensions")]
 unsafe impl Send for FnPtr {}
+#[cfg(feature = "native-extensions")]
+unsafe impl Sync for FnPtr {}
 
 /// Global registry of native function pointers loaded from cdylibs.
 #[cfg(feature = "native-extensions")]

@@ -29,11 +29,6 @@ use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
 use std::collections::HashMap;
-// Every registry this guards is itself `native-extensions`-only, so the import follows the
-// same gate — without it a `--no-default-features` build warns on an unused import, which is
-// noise in the one gate whose whole job is to be read.
-#[cfg(feature = "native-extensions")]
-use std::sync::Mutex;
 
 #[cfg(feature = "native-extensions")]
 pub fn load_all(_state: &mut crate::state::State, paths: Vec<String>) {
@@ -198,68 +193,36 @@ struct NativeSig {
     cx: Option<crate::c_libs::CxFns>,
 }
 
-/// Side table: library index → (the generated bridge, signature), resolved ONCE by
-/// `wire_native_fns`.  The dispatcher reads it through [`cached_sig`], never per call.
+/// Library index → (the generated bridge, signature), resolved ONCE by `wire_native_fns`.
 #[cfg(feature = "native-extensions")]
 type NativeSlot = (FnPtr, std::sync::Arc<NativeSig>);
-#[cfg(feature = "native-extensions")]
-static NATIVE_SIGS: Mutex<Option<HashMap<u16, NativeSlot>>> = Mutex::new(None);
 
-/// Bumped by every wiring pass that writes `NATIVE_SIGS` or `SHARED_SIGS`, so a thread's
-/// copy of a slot ([`cached_sig`]) is refetched after a rewire.
-#[cfg(feature = "native-extensions")]
-static SIGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A thread's copy of a wired-native table, indexed by library index: the generation it was
-/// filled under, and the slots it has met.
-#[cfg(feature = "native-extensions")]
-struct SigCache<V> {
-    generation: u64,
-    slots: Vec<Option<V>>,
+/// `@PLN226` — the natives ONE program wired, by its library index (`State::library`): what
+/// its dispatchers read, one index per call — no lock, no per-thread copy.  Kept in the
+/// program's `Stores` (`Stores::wired`) and shared read-only with its `par` workers; a library
+/// index is a number in one program's table, so another program's wiring never reaches it.
+#[derive(Default, Clone)]
+pub struct WiredNatives {
+    #[cfg(feature = "native-extensions")]
+    native: Vec<Option<NativeSlot>>,
+    #[cfg(feature = "native-extensions")]
+    shared: Vec<Option<SharedSlot>>,
+    /// loft#715 — the bridge symbol each shared slot dispatches to, so a fault raised while
+    /// the bridge is on the stack can NAME it ([`crate::call_frames::shared_bridge_label`]).
+    #[cfg(feature = "native-extensions")]
+    pub(crate) labels: Vec<Option<String>>,
+    /// loft#1189 — the `#native` symbol each panicking stub stands for (`compile.rs`), so the
+    /// panic of a missing native names it.
+    pub(crate) stubs: Vec<Option<String>>,
 }
 
-#[cfg(feature = "native-extensions")]
-thread_local! {
-    static NATIVE_SIG_CACHE: std::cell::RefCell<SigCache<NativeSlot>> =
-        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
-    static SHARED_SIG_CACHE: std::cell::RefCell<SigCache<SharedSlot>> =
-        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
-}
-
-/// The wired slot for `lib_idx`: from this thread's copy, or — on a thread's first call to
-/// it, or after a rewire — from the shared table under its lock.  A native call reads its
-/// slot here once per call, so the per-call cost is an index, not a lock, a hash of the
-/// symbol and a clone of its signature (the lock is never held across the call itself,
-/// P245: a blocking native would serialise every `par` worker behind it).
-#[cfg(feature = "native-extensions")]
-fn cached_sig<V: Clone>(
-    cache: &'static std::thread::LocalKey<std::cell::RefCell<SigCache<V>>>,
-    table: &Mutex<Option<HashMap<u16, V>>>,
-    lib_idx: u16,
-) -> Option<V> {
-    let generation = SIGS_GENERATION.load(std::sync::atomic::Ordering::Acquire);
-    cache.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.generation != generation {
-            c.slots.clear();
-            c.generation = generation;
-        }
-        let at = usize::from(lib_idx);
-        if let Some(Some(v)) = c.slots.get(at) {
-            return Some(v.clone());
-        }
-        let v = table
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()?
-            .get(&lib_idx)?
-            .clone();
-        if c.slots.len() <= at {
-            c.slots.resize(at + 1, None);
-        }
-        c.slots[at] = Some(v.clone());
-        Some(v)
-    })
+/// Put `v` at `lib_idx`, growing the table to it.
+pub(crate) fn put_slot<V>(slots: &mut Vec<Option<V>>, lib_idx: u16, v: V) {
+    let at = usize::from(lib_idx);
+    if slots.len() <= at {
+        slots.resize_with(at + 1, || None);
+    }
+    slots[at] = Some(v);
 }
 
 /// #303 — wire-time signature of a shared-store bridge function, derived from
@@ -289,15 +252,13 @@ struct SharedSig {
     ret_leaves: Vec<ArgT>,
 }
 
-/// @PLN11 Arc N — side table for the **shared-store** bridge
+/// @PLN11 Arc N — the **shared-store** bridge's slot
 /// (`native_lib::generate_shared_cdylib_lib_rs`): library index → (bridge fn ptr,
-/// signature).  Populated by `wire_shared_native_fns`, read by
-/// `shared_store_dispatch`.  Separate from `NATIVE_SIGS` because the ABI differs
-/// (a `*mut Stores` + `LibArg` bridge, not the `LoftStore`/raw-ptr marshalling).
+/// signature).  Written by `wire_shared_native_fns`, read by `shared_store_dispatch`.
+/// Apart from [`NativeSlot`] because the ABI differs (a `*mut Stores` + `LibArg` bridge, not
+/// the `LoftStore`/raw-ptr marshalling).
 #[cfg(feature = "native-extensions")]
 type SharedSlot = (FnPtr, std::sync::Arc<SharedSig>);
-#[cfg(feature = "native-extensions")]
-static SHARED_SIGS: Mutex<Option<HashMap<u16, SharedSlot>>> = Mutex::new(None);
 
 /// Compute the argument type list and return type from a definition's signature.
 /// Returns `None` if the signature contains types that can't be auto-marshalled
@@ -585,11 +546,6 @@ pub fn wire_native_fns_for(
     let empty_registry = HashMap::new();
     let registry = guard.as_ref().unwrap_or(&empty_registry);
 
-    let mut sigs = NATIVE_SIGS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let sig_table = sigs.get_or_insert_with(HashMap::new);
-
     // Stub symbols whose cdylib never provided them — collected so the failure is
     // reported LOUDLY at load (below), not left to surface as a generic panic at
     // first call deep in execution.
@@ -668,12 +624,15 @@ pub fn wire_native_fns_for(
         };
 
         // Store the bridge and signature for runtime dispatch.
-        sig_table.insert(lib_idx, (FnPtr(bridge), std::sync::Arc::new(sig)));
+        put_slot(
+            &mut std::sync::Arc::make_mut(&mut state.database.wired).native,
+            lib_idx,
+            (FnPtr(bridge), std::sync::Arc::new(sig)),
+        );
 
         // Replace the stub with the generic auto-marshal dispatcher.
         state.replace_static_fn(sym, native_auto_dispatch);
     }
-    SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
 
     if report_unresolved && !unresolved.is_empty() {
         report_unresolved_natives(data, &unresolved);
@@ -1131,23 +1090,18 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
 
     // Phase 2: record signatures, then replace the stub dispatch targets.
     {
-        let mut guard = SHARED_SIGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let table = guard.get_or_insert_with(HashMap::new);
-        for (_, lib_idx, ptr, sig) in &wired {
-            table.insert(*lib_idx, (FnPtr(*ptr), std::sync::Arc::new(sig.clone())));
+        // loft#715 — with each slot, the symbol it dispatches to, so a fault raised while
+        // the bridge is on the stack can NAME it.
+        let table = std::sync::Arc::make_mut(&mut state.database.wired);
+        for (sym, lib_idx, ptr, sig) in &wired {
+            put_slot(
+                &mut table.shared,
+                *lib_idx,
+                (FnPtr(*ptr), std::sync::Arc::new(sig.clone())),
+            );
+            put_slot(&mut table.labels, *lib_idx, sym.clone());
         }
-        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
-    // loft#715 — remember which symbol each slot dispatches to, so a fault raised
-    // while the bridge is on the stack can NAME it.  Written once at wiring, read
-    // only on the panic path.
-    crate::call_frames::label_shared_bridges(
-        wired
-            .iter()
-            .map(|(sym, lib_idx, ..)| (*lib_idx, sym.clone())),
-    );
     for (sym, ..) in &wired {
         state.replace_static_fn(sym, shared_store_dispatch);
     }
@@ -1163,18 +1117,12 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
         .collect();
     if !dests.is_empty() {
         {
-            let mut guard = SHARED_SIGS
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let table = guard.get_or_insert_with(HashMap::new);
-            for (idx, _, ptr, sig) in &dests {
-                table.insert(*idx, (*ptr, std::sync::Arc::clone(sig)));
+            let table = std::sync::Arc::make_mut(&mut state.database.wired);
+            for (idx, dest, ptr, sig) in &dests {
+                put_slot(&mut table.shared, *idx, (*ptr, std::sync::Arc::clone(sig)));
+                put_slot(&mut table.labels, *idx, dest.clone());
             }
-            SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
         }
-        crate::call_frames::label_shared_bridges(
-            dests.iter().map(|(idx, dest, ..)| (*idx, dest.clone())),
-        );
         for (_, dest, ..) in &dests {
             state.replace_static_fn(dest, shared_store_dispatch_dest);
         }
@@ -1271,7 +1219,12 @@ fn shared_store_dispatch_raw(
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
     let outer_bridge = std::mem::replace(&mut stores.in_bridge, lib_idx.wrapping_add(1));
-    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&SHARED_SIG_CACHE, &SHARED_SIGS, lib_idx)
+    let Some((FnPtr(bridge_ptr), sig)) = stores
+        .wired
+        .shared
+        .get(usize::from(lib_idx))
+        .cloned()
+        .flatten()
     else {
         panic!("no shared signature for lib_idx {lib_idx}")
     };
@@ -1569,7 +1522,7 @@ fn write_fn_ref(d_nr: i64, closure: crate::keys::DbRef) -> [u8; FN_REF_SIZE] {
 }
 
 /// Generic auto-marshal dispatcher. Called via `OpStaticCall` for all
-/// auto-wired native functions. Reads signature from `NATIVE_SIGS` using
+/// auto-wired native functions. Reads signature from `Stores::wired` using
 /// the library index of the call: `Call = fn(&mut Stores, &mut DbRef)` does not
 /// receive it, so `State::invoke_native` records it in `Stores::lib_idx` first.
 #[cfg(feature = "native-extensions")]
@@ -1580,7 +1533,12 @@ fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate:
     // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the owning
     // cdylib registered, resolved at wiring — a symbol without one is reported there
     // (loft#886) and never wired, so its stub stays in place.
-    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&NATIVE_SIG_CACHE, &NATIVE_SIGS, lib_idx)
+    let Some((FnPtr(bridge_ptr), sig)) = stores
+        .wired
+        .native
+        .get(usize::from(lib_idx))
+        .cloned()
+        .flatten()
     else {
         panic!("no signature for lib_idx {lib_idx}")
     };
@@ -1617,36 +1575,26 @@ impl<T: Copy> ArgBuf<T> {
 
 #[cfg(all(test, feature = "native-extensions"))]
 mod dispatch_cache_tests {
-    use super::{ArgBuf, SIGS_GENERATION, SigCache, cached_sig};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use super::{ArgBuf, WiredNatives, put_slot};
 
-    static TABLE: Mutex<Option<HashMap<u16, u32>>> = Mutex::new(None);
-    thread_local! {
-        static CACHE: std::cell::RefCell<SigCache<u32>> =
-            const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
-    }
-
-    fn wire(lib_idx: u16, v: u32) {
-        TABLE
-            .lock()
-            .unwrap()
-            .get_or_insert_with(HashMap::new)
-            .insert(lib_idx, v);
-        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
-    }
-
-    /// A rewire of a slot this thread already called through must be seen on the next call:
-    /// two programs run one after another in one thread can give the same library index to
-    /// different natives, and a stale copy would call the first program's bridge.
+    /// Two programs in one process give the same library index to different natives: each
+    /// program's table answers its own, and a `par` worker's copy answers its program's.
     #[test]
-    fn a_rewired_slot_is_never_served_from_the_stale_copy() {
-        wire(300, 11);
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
-        wire(300, 22);
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(22));
-        assert_eq!(cached_sig(&CACHE, &TABLE, 301), None);
+    fn a_library_index_names_its_own_programs_native() {
+        let mut first = WiredNatives::default();
+        let mut second = WiredNatives::default();
+        put_slot(&mut first.labels, 300, "first_bridge".to_string());
+        put_slot(&mut second.labels, 300, "second_bridge".to_string());
+        let worker = std::sync::Arc::new(first.clone());
+        assert_eq!(first.labels[300].as_deref(), Some("first_bridge"));
+        assert_eq!(second.labels[300].as_deref(), Some("second_bridge"));
+        assert_eq!(worker.labels[300].as_deref(), Some("first_bridge"));
+        assert_eq!(first.labels.get(301).cloned().flatten(), None);
+        assert_eq!(
+            first.labels.len(),
+            301,
+            "one slot past the highest index, no more"
+        );
     }
 
     /// Past the inline slots the buffer moves to the heap and keeps every argument.

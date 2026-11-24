@@ -576,6 +576,9 @@ pub struct Stores {
     /// `@PLN226` (loft#2227) — the records ONE bridge call claims in its pinned argument
     /// store: armed by `extensions::claim_log_begin`, noted by the claim and resize callbacks.
     pub(crate) claim_log: Option<(u16, Vec<u32>)>,
+    /// `@PLN226` — the natives this program wired, by library index (`extensions::wire_*`):
+    /// shared by `Arc` with the `par` workers, which read it and never write it.
+    pub(crate) wired: std::sync::Arc<crate::extensions::WiredNatives>,
     /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
     pub(crate) run: RunDiagnostics,
     /// `@PLN226` — the render in progress (`format::RenderState`).
@@ -882,6 +885,7 @@ impl Clone for Stores {
             in_bridge: 0,
             host_state: std::ptr::null_mut(),
             claim_log: None,
+            wired: self.wired.clone(),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1711,6 +1715,7 @@ impl Stores {
             in_bridge: 0,
             host_state: std::ptr::null_mut(),
             claim_log: None,
+            wired: std::sync::Arc::default(),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),

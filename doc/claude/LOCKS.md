@@ -67,8 +67,6 @@ handlers' install.
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
 | `C_BINDINGS` (`c_call.rs`) | library index → `#c` binding — **locked and cloned on every interpreted `#c` call** | set before the run; read by every thread | a program's table in a process global | a `State` table set before the run, read-only after (`C-Boundary`) | none |
-| `NATIVE_SIGS`, `SHARED_SIGS` (`extensions.rs`) | library index → bridge and signature | set at wiring; read through a thread-local copy | a program's table in a process global; the thread-local cache and a generation counter cover several programs per process | the table in `State`, read-only during the run — no lock, no thread-local, no generation | none |
-| `SHARED_LABELS` (`call_frames.rs`), `STUB_SYMBOLS` (`compile.rs`) | names a fault or a missing native reports | set at wiring; read on a fault | same | `State` tables | none |
 | `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | same; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
 | `NATIVE_REGISTRY`, `BRIDGE_REGISTRY`, `CX_BRIDGES`, `LOADED_LIBS`, `REFUSED_LIBS`, `LOAD_LOCK` (`c_libs.rs`) | what `dlopen` loaded and registered | loaders, wiring | a library is opened once per process | an append-only table published once per entry; `LOAD_LOCK` stays — an open must not run twice | — |
 | `DEP_HEADERS` (`c_shim.rs`) | dependency headers per package for shim builds | one compile thread per program | a program's data in a process global | a `Data` field | none |
@@ -107,8 +105,7 @@ All are off unless a `LOFT_*` switch arms them.
 ## Open work
 
 The locks marked **not needed**, and the hot ones, go first: `C_BINDINGS` (every `#c` call),
-`store_budget` (every allocation under a ceiling), the wiring tables (`NATIVE_SIGS` with its
-thread-local cache).  Then the
+`store_budget` (every allocation under a ceiling).  Then the
 compile session that takes the `Data` memos (`PassCell`, `ScopedCell`) and the per-program
 globals of the compiler.  The logger and the tallies follow the per-thread-then-merged form once
 the order of their lines is agreed.  @PLN226 P4b carries them.
