@@ -23,15 +23,29 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The bundle archive: Info-ZIP's `zip`, or 7-Zip where only it is installed (a Windows runner
-# whose package feed is down).  Nothing reads the archive's own bytes — `repro-verify.sh`
-# unpacks it and compares the contents' SHA256SUMS — so either writer serves.
+# The bundle archive: Info-ZIP's `zip`, 7-Zip where only it is installed (a Windows runner
+# whose package feed is down), or Python's `zipfile` (a Linux image whose package mirror did
+# not answer).  Nothing reads the archive's own bytes — `repro-verify.sh` unpacks it and
+# compares the contents' SHA256SUMS — so any writer serves; each keeps the files' modes.
 if command -v zip >/dev/null; then
   zip_dir() { zip -qr "$1" "$2"; }
 elif command -v 7z >/dev/null; then
   zip_dir() { 7z a -tzip -bso0 -bsp0 "$1" "$2"; }
+elif command -v python3 >/dev/null; then
+  zip_dir() {
+    python3 - "$1" "$2" <<'PY'
+import os, sys, zipfile
+out, top = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk(top):
+        dirs.sort()
+        z.write(root)
+        for f in sorted(files):
+            z.write(os.path.join(root, f))
+PY
+  }
 else
-  echo "make-release: 'zip' (or 7-Zip's '7z') is required" >&2; exit 1
+  echo "make-release: 'zip', 7-Zip's '7z' or python3 is required" >&2; exit 1
 fi
 
 # Hashing command — the per-OS runners that call this each ship a different one:
