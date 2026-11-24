@@ -2779,6 +2779,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     vector_of(e, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
+  // (A record element is not laid out on the first pass, so it has no rows yet: the literal
+  // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.)
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t))) {
+    rcodes: vector<ir::Node> = [];
+    for x in xs {
+      rcodes += [x.code];
+    }
+    return Built { x: ex(ir::NdNull, if value { ir::TyVector { inner: el_types::without_deps(in_t), dep: [] } } else { ir::TyVoid }), items: rcodes, elem: in_t };
+  }
   if rows == null {
     return refused_build();
   }
