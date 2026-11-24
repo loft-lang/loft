@@ -285,7 +285,7 @@ impl Drop for NamedCallGuard {
 /// never started.  Appending this turns "a type is wrong somewhere" into "this
 /// library's bridge passed something this loft cannot use".
 #[must_use]
-pub fn shared_bridge_label(marked: u16, wired: &crate::extensions::WiredNatives) -> Option<String> {
+pub fn shared_bridge_label(marked: u16, labels: &[Option<String>]) -> Option<String> {
     #[cfg(feature = "native-extensions")]
     {
         if marked == 0 {
@@ -293,8 +293,7 @@ pub fn shared_bridge_label(marked: u16, wired: &crate::extensions::WiredNatives)
         }
         let lib_idx = marked - 1;
         Some(
-            wired
-                .labels
+            labels
                 .get(usize::from(lib_idx))
                 .cloned()
                 .flatten()
@@ -306,7 +305,7 @@ pub fn shared_bridge_label(marked: u16, wired: &crate::extensions::WiredNatives)
     }
     #[cfg(not(feature = "native-extensions"))]
     {
-        let _ = (marked, wired);
+        let _ = (marked, labels);
         None
     }
 }

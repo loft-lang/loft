@@ -14,7 +14,7 @@
 //! the whole path is wasm-safe (no threads, no sockets, no process spawn).
 //!
 //! Split for testability: [`apply`] is a pure `(session, frame) -> replies`
-//! step (unit-tested natively); [`pump`] wires it to the wasm host I/O.
+//! step (unit-tested natively); [`Debugger::pump`] wires it to the wasm host I/O.
 
 use crate::interp::debugger::StepMode;
 use crate::interp::state::State;
@@ -47,31 +47,91 @@ pub(crate) struct Session {
     user_from: u32,
 }
 
-/// `f` over the page's debug session (`crate::page`).
-fn with_session<R>(f: impl FnOnce(Option<&mut Session>) -> R) -> R {
-    crate::page::with(|p| f(p.debug.borrow_mut().as_mut()))
+/// `@PLN226` — a page's debugger: the debug session over the program it started.  The page
+/// holds the handle and passes it to every call (`@FR-C-Boundary`): two debuggers on one page
+/// never meet, and nothing is kept per thread.
+///
+/// A doc page (@PLN149 step 8) holds the source the reader is editing and drives it through
+/// [`Self::start`] and [`Self::command`] — set a breakpoint, pause, read the frame, evaluate
+/// an expression against it, resume; the writer route's relay feeds the same grammar through
+/// [`Self::pump`], so the two drive one implementation.
+///
+/// ```js
+/// const dbg = new Debugger();
+/// JSON.parse(dbg.start(source));            // {"ok":true} | {"ok":false,"error":"…"}
+/// JSON.parse(dbg.command('bp 4'));          // {"replies":[…],"output":"…"}
+/// ```
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+#[derive(Default)]
+pub struct Debugger {
+    session: Option<Session>,
 }
 
-/// Parse the embedded stdlib + `program_src` into an interpreter session ready to
-/// debug (compiled, not yet run).  Returns `false` if either does not parse
-/// clean.  Replaces any previous session.
-#[must_use]
-pub fn start(program_src: &str) -> bool {
-    start_reporting(program_src).is_ok()
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+impl Debugger {
+    /// A debugger with no program yet.
+    #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen(constructor))]
+    #[must_use]
+    pub fn new() -> Debugger {
+        Debugger::default()
+    }
+
+    /// Start a debug session over `source`, replacing this debugger's previous one.
+    ///
+    /// Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
+    /// page that offers to run the code in front of the reader has to say why it will not.
+    ///
+    /// A bare script (top-level statements, no `fn main`) is desugared exactly as
+    /// `compile_and_run` desugars it, so the two entries accept the same inputs.
+    pub fn start(&mut self, source: &str) -> String {
+        let desugared = crate::script::script_desugar(source);
+        let src = desugared.as_deref().unwrap_or(source);
+        let value = match self.start_reporting(src) {
+            Ok(()) => json_object(&[("ok", crate::json::Parsed::Bool(true))]),
+            Err(e) => json_object(&[
+                ("ok", crate::json::Parsed::Bool(false)),
+                ("error", crate::json::Parsed::Str(e)),
+            ]),
+        };
+        crate::json::to_json_string(&value)
+    }
+
+    /// Apply one debug command to the live session.
+    ///
+    /// Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced
+    /// and whatever the program printed while it ran.  The two travel together because a
+    /// `run` or a `resume` produces both, and a page fetching them separately could paint a
+    /// pause before the output that led to it.
+    ///
+    /// The grammar is [`Self::replies`]': `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
+    /// `eval <expr>`, `fns`.
+    pub fn command(&mut self, cmd: &str) -> String {
+        use crate::json::Parsed;
+        let replies = self.replies(cmd);
+        let value = json_object(&[
+            (
+                "replies",
+                Parsed::Array(replies.into_iter().map(Parsed::Str).collect()),
+            ),
+            ("output", Parsed::Str(self.take_output())),
+        ]);
+        crate::json::to_json_string(&value)
+    }
 }
 
-/// [`start`], with the diagnostics on failure instead of a bare `false`.
-///
-/// A page that offers a REPL over the code in front of the reader has to say WHY the code
-/// did not compile — "it didn't work" is not something a reader can act on. The bool form
-/// stays for the callers that only branch on it.
-///
-/// # Errors
-/// The parse diagnostics, rendered, when the stdlib or the program does not compile.
-pub fn start_reporting(program_src: &str) -> Result<(), String> {
-    let session = open(program_src)?;
-    crate::page::with(|p| *p.debug.borrow_mut() = Some(session));
-    Ok(())
+impl Debugger {
+    /// Parse the embedded stdlib + `program_src` into the session, ready to debug (compiled,
+    /// not yet run), replacing the previous one.
+    ///
+    /// A page that offers a REPL over the code in front of the reader has to say WHY the code
+    /// did not compile — "it didn't work" is not something a reader can act on.
+    ///
+    /// # Errors
+    /// The parse diagnostics, rendered, when the stdlib or the program does not compile.
+    pub fn start_reporting(&mut self, program_src: &str) -> Result<(), String> {
+        self.session = Some(open(program_src)?);
+        Ok(())
+    }
 }
 
 /// A debug session over `program_src`: the embedded stdlib and the program, compiled, in
@@ -447,111 +507,54 @@ fn is_scalar_type(t: &str) -> bool {
     ) || t.starts_with("integer(")
 }
 
-/// The DIRECT entry, for a caller that already holds the session in its own process — the
-/// doc site's panel, which calls straight into the wasm module and has no relay to speak
-/// `D!:` frames through, and the native tests, which drive the same grammar [`pump`] does.
-/// `pump` is the same step wired to the host I/O channel instead.
-///
-/// `D:err no session` when [`start`] has not run, so a caller that lost its session gets an
-/// answer rather than silence.
-#[must_use]
-pub fn command(cmd: &str) -> Vec<String> {
-    with_session(|s| match s {
-        Some(sess) => apply(sess, cmd),
-        None => vec!["D:err no session".to_string()],
-    })
-}
+impl Debugger {
+    /// The DIRECT entry, for a caller that holds the debugger — the doc site's panel, which
+    /// calls straight into the wasm module and has no relay to speak `D!:` frames through,
+    /// and the native tests, which drive the same grammar [`Self::pump`] does.  `pump` is the
+    /// same step wired to the host I/O channel instead.
+    ///
+    /// `D:err no session` when no program started, so a caller that lost its session gets an
+    /// answer rather than silence.
+    #[must_use]
+    pub fn replies(&mut self, cmd: &str) -> Vec<String> {
+        match self.session.as_mut() {
+            Some(sess) => apply(sess, cmd),
+            None => vec!["D:err no session".to_string()],
+        }
+    }
 
-// ── @PLN149 step 8 — the entries a doc page calls ───────────────────────────
-//
-// `crate::wasm::compile_and_run` runs a program and hands back its output; these two let a
-// PAGE drive the same program — set a breakpoint, pause, read the frame, evaluate an
-// expression against it, resume.  Until now this module was reachable only from a
-// `--html --debug` build with the source BAKED IN and a WebSocket relay feeding it `D!:`
-// frames.  A doc page has neither: it holds the source the reader is editing and calls
-// straight in.  The command grammar is the same one [`pump`] applies, so the page and the
-// relay drive one implementation rather than two that agree until they do not.
+    /// Whatever the program printed since the last call.
+    ///
+    /// Only a browser build captures print — the session's state captures it under the `wasm`
+    /// feature (`Stores::output`).  Natively the output goes to stdout as it always does, so
+    /// this is empty and the JSON field is present-but-empty rather than absent: one shape
+    /// for the page to read whichever build served it.
+    fn take_output(&mut self) -> String {
+        let Some(sess) = self.session.as_mut() else {
+            return String::new();
+        };
+        #[cfg_attr(not(feature = "wasm"), allow(unused_mut))]
+        let mut out = sess
+            .state
+            .database
+            .output
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        #[cfg(feature = "wasm")]
+        out.push_str(&std::mem::take(
+            &mut *sess.state.database.par_trace.borrow_mut(),
+        ));
+        out
+    }
 
-/// Start a debug session over `source`, replacing any previous one.
-///
-/// Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
-/// page that offers to run the code in front of the reader has to say why it will not.
-///
-/// A bare script (top-level statements, no `fn main`) is desugared exactly as
-/// `compile_and_run` desugars it, so the two entries accept the same inputs.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-#[must_use]
-pub fn debug_start(source: &str) -> String {
-    let desugared = crate::script::script_desugar(source);
-    let src = desugared.as_deref().unwrap_or(source);
-    let value = match start_reporting(src) {
-        Ok(()) => json_object(&[("ok", crate::json::Parsed::Bool(true))]),
-        Err(e) => json_object(&[
-            ("ok", crate::json::Parsed::Bool(false)),
-            ("error", crate::json::Parsed::Str(e)),
-        ]),
-    };
-    crate::json::to_json_string(&value)
-}
-
-/// Apply one debug command to the live session.
-///
-/// Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced and
-/// whatever the program printed while it ran.  The two travel together because a `run` or a
-/// `resume` produces both, and a page fetching them separately could paint a pause before
-/// the output that led to it.
-///
-/// The grammar is [`command`]'s: `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
-/// `eval <expr>`, `fns`.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-#[must_use]
-pub fn debug_command(cmd: &str) -> String {
-    use crate::json::Parsed;
-    let replies = command(cmd);
-    let value = json_object(&[
-        (
-            "replies",
-            Parsed::Array(replies.into_iter().map(Parsed::Str).collect()),
-        ),
-        ("output", Parsed::Str(take_output())),
-    ]);
-    crate::json::to_json_string(&value)
-}
-
-/// A JSON object from `(key, value)` pairs, rendered through the one serialiser this repo
-/// has (`json::to_json_string`, RFC 8259) rather than a fourth hand-rolled escaper.
-fn json_object(fields: &[(&str, crate::json::Parsed)]) -> crate::json::Parsed {
-    crate::json::Parsed::Object(
-        fields
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), 0, v.clone()))
-            .collect(),
-    )
-}
-
-/// Whatever the program printed since the last call.
-///
-/// Only a browser build captures print — the session's state captures it under the `wasm`
-/// feature (`Stores::output`).  Natively the output goes to stdout as it always does, so this
-/// is empty and the JSON field is present-but-empty rather than absent: one shape for the
-/// page to read whichever build served it.
-fn take_output() -> String {
-    let mut out = with_session(|s| {
-        s.and_then(|sess| sess.state.database.output.as_mut().map(std::mem::take))
-            .unwrap_or_default()
-    });
-    out.push_str(&crate::page::take_trace());
-    out
-}
-
-/// The pump the JS driver calls (per animation frame): drain every pending
-/// `host_input` frame, apply the `D!:`-tagged debug ones to the session (routing
-/// non-`D!:` messages back as program input is the browser driver's job), and
-/// emit each `D:` reply over the host output for the server relay.  No-op when no
-/// session is active.
-pub fn pump() {
-    with_session(|s| {
-        let Some(sess) = s else {
+    /// The pump the JS driver calls (per animation frame): drain every pending
+    /// `host_input` frame, apply the `D!:`-tagged debug ones to the session (routing
+    /// non-`D!:` messages back as program input is the browser driver's job), and
+    /// emit each `D:` reply over the host output for the server relay.  No-op when no
+    /// session is active.
+    pub fn pump(&mut self) {
+        let Some(sess) = self.session.as_mut() else {
             return;
         };
         loop {
@@ -568,7 +571,41 @@ pub fn pump() {
                 crate::interp::live_dispatch::wasm_host_log(&format!("{reply}\n"));
             }
         }
-    });
+    }
+
+    /// The writer route's C-ABI client (`loft_debug_start`): a debugger over `program_src`,
+    /// handed to the page as a pointer it passes to `loft_debug_pump` — null when the program
+    /// does not compile.
+    #[must_use]
+    pub fn open_raw(program_src: &str) -> *mut Debugger {
+        let mut dbg = Debugger::new();
+        if dbg.start_reporting(program_src).is_err() {
+            return std::ptr::null_mut();
+        }
+        Box::into_raw(Box::new(dbg))
+    }
+
+    /// `loft_debug_pump`'s step on the debugger `dbg` [`Self::open_raw`] answered.
+    ///
+    /// # Safety
+    /// `dbg` is null or a pointer `open_raw` answered, used by one caller at a time.
+    pub unsafe fn pump_raw(dbg: *mut Debugger) {
+        // SAFETY: as the caller promises.
+        if let Some(dbg) = unsafe { dbg.as_mut() } {
+            dbg.pump();
+        }
+    }
+}
+
+/// A JSON object from `(key, value)` pairs, rendered through the one serialiser this repo
+/// has (`json::to_json_string`, RFC 8259) rather than a fourth hand-rolled escaper.
+fn json_object(fields: &[(&str, crate::json::Parsed)]) -> crate::json::Parsed {
+    crate::json::Parsed::Object(
+        fields
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), 0, v.clone()))
+            .collect(),
+    )
 }
 
 #[cfg(test)]

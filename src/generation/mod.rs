@@ -9065,13 +9065,14 @@ extern crate loft;"
                  loft::live_dispatch::wasm_host_log(\"\\n\");\n    \
                  i32::from(r == \"PAUSE n=40 STEP m=42 DONE=true\")\n}}\n\
                  \n// @PLN98 P3.4 — the interactive browser debug CLIENT: `loft_debug_start`\n\
-                 // parses the embedded program into an interpreter session; the JS driver\n\
-                 // then calls `loft_debug_pump` per frame to apply relayed `D!:` control\n\
-                 // frames (host_input) and emit `D:` replies (host output).\n\
-                 #[unsafe(no_mangle)]\npub extern \"C\" fn loft_debug_start() -> i32 {{\n    \
-                 i32::from(loft::wasm_debug::start(LOFT_SRC))\n}}\n\
-                 \n#[unsafe(no_mangle)]\npub extern \"C\" fn loft_debug_pump() {{\n    \
-                 loft::wasm_debug::pump();\n}}\n"
+                 // parses the embedded program into a debugger and answers its handle (null\n\
+                 // when it does not compile); the JS driver passes it to `loft_debug_pump`\n\
+                 // per frame to apply relayed `D!:` control frames (host_input) and emit\n\
+                 // `D:` replies (host output).\n\
+                 #[unsafe(no_mangle)]\npub extern \"C\" fn loft_debug_start() -> *mut loft::wasm_debug::Debugger {{\n    \
+                 loft::wasm_debug::Debugger::open_raw(LOFT_SRC)\n}}\n\
+                 \n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn loft_debug_pump(dbg: *mut loft::wasm_debug::Debugger) {{\n    \
+                 unsafe {{ loft::wasm_debug::Debugger::pump_raw(dbg) }};\n}}\n"
             )
         } else {
             writeln!(

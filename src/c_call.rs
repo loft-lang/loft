@@ -306,7 +306,7 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
             crate::extensions::put_slot(&mut table, idx, std::sync::Arc::new(binding));
         }
     }
-    std::sync::Arc::make_mut(&mut state.database.wired).c_bindings = table;
+    crate::extensions::wired_mut(&mut state.database).c_bindings = table;
 }
 
 /// A scalar `#c` argument popped at its loft type's own width: a boolean or a plain enum fills
@@ -339,8 +339,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     use crate::keys::{DbRef, Str};
 
     let idx = stores.lib_idx;
-    let Some(binding) = stores
-        .wired
+    let Some(binding) = crate::extensions::wired(stores)
         .c_bindings
         .get(usize::from(idx))
         .cloned()

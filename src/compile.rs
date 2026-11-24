@@ -403,8 +403,7 @@ fn build_const_vectors(
 /// that says less is still better than one that says nothing.
 fn stub_symbol_now(stores: &crate::database::Stores) -> String {
     let idx = stores.lib_idx;
-    stores
-        .wired
+    crate::extensions::wired(stores)
         .stubs
         .get(usize::from(idx))
         .cloned()
@@ -506,7 +505,7 @@ fn register_native_stubs(state: &mut State, data: &Data) {
         state.static_fn(sym, stub);
         if let Some(&idx) = state.library_names.get(sym) {
             crate::extensions::put_slot(
-                &mut std::sync::Arc::make_mut(&mut state.database.wired).stubs,
+                &mut crate::extensions::wired_mut(&mut state.database).stubs,
                 idx,
                 sym.to_string(),
             );
@@ -519,7 +518,7 @@ fn register_native_stubs(state: &mut State, data: &Data) {
             state.static_fn(&dest, stub);
             if let Some(&idx) = state.library_names.get(&dest) {
                 crate::extensions::put_slot(
-                    &mut std::sync::Arc::make_mut(&mut state.database.wired).stubs,
+                    &mut crate::extensions::wired_mut(&mut state.database).stubs,
                     idx,
                     dest.clone(),
                 );

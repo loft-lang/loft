@@ -170,16 +170,95 @@ pub fn compile_and_run(files_json: &str) -> String {
 /// Persistent game session that survives across frame yields.
 /// The `State` is BOXED: `execute_argv` stores raw pointers into the `State` itself (its
 /// bytecode and library, in the parallel context), and the session is moved twice after
-/// that — into this struct, then into the page's game session (`crate::page`).  A box moves, its contents do not —
+/// that — into this struct, then into its [`Game`].  A box moves, its contents do not —
 /// the pattern `live_dispatch::bootstrap_core` already follows.  The definition table needs
 /// no such care: the `State` co-owns it.
 pub(crate) struct GameSession {
     state: Box<crate::interp::state::State>,
 }
 
-/// `f` over the page's game session (`crate::page`).
-fn with_game<R>(f: impl FnOnce(&mut Option<GameSession>) -> R) -> R {
-    crate::page::with(|p| f(&mut p.game.borrow_mut()))
+/// `f` over a game's session slot.
+fn with_game<R>(
+    slot: &mut Option<GameSession>,
+    f: impl FnOnce(&mut Option<GameSession>) -> R,
+) -> R {
+    f(slot)
+}
+
+/// `@PLN226` — a page's game: the program it started and runs frame by frame, and the world
+/// snapshot staged for the next program it starts (@PLN18 08-S6).  The page holds the handle and
+/// passes it to every call (`@FR-C-Boundary`): two games on one page never meet, and nothing is
+/// kept per thread.
+///
+/// ```js
+/// const game = new Game();
+/// let r = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: src }])));
+/// while (r.running) { await nextFrame(); r = JSON.parse(game.resume_frame()); }
+/// ```
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+#[derive(Default)]
+pub struct Game {
+    session: Option<GameSession>,
+    stage: Option<String>,
+}
+
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+impl Game {
+    /// A game with nothing started.
+    #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen(constructor))]
+    #[must_use]
+    pub fn new() -> Game {
+        Game::default()
+    }
+
+    /// Start the program in `files_json` (`[{name, content}]`), ending this game's previous
+    /// one: parse, compile, execute until the first frame yield.  JSON
+    /// `{"ok":true,"running":true}`, `{"ok":true,"running":false,"output":"…"}` when it ran to
+    /// its end, or `{"ok":false,"error":"…"}`.
+    pub fn start(&mut self, files_json: &str) -> String {
+        let stage = self.stage.take();
+        start_on(&mut self.session, stage, files_json)
+    }
+
+    /// Run the next frame.  JSON `{"running":true}` (with `"output"` when the frame printed),
+    /// `{"running":false,"output":"…"}` when the program finished, or
+    /// `{"running":false,"error":"…"}` when it crashed.
+    pub fn resume_frame(&mut self) -> String {
+        resume_on(&mut self.session)
+    }
+
+    /// End the running program and close its window.
+    pub fn stop(&mut self) {
+        dispose(&mut self.session);
+    }
+
+    /// Stage `snapshot` (`swap_export` of another game) for the next program this game starts:
+    /// its `swap_world` restores it — the browser's form of the native `LOFT_RESUME`.
+    pub fn stage_swap(&mut self, snapshot: &str) {
+        self.stage = Some(snapshot.to_string());
+    }
+
+    /// The running program's world, for another game to take over (`stage_swap`).
+    pub fn swap_export(&mut self) -> String {
+        export_on(&mut self.session)
+    }
+
+    /// May the program in `files_json` take over this game's world?
+    pub fn swap_check(&mut self, files_json: &str) -> String {
+        check_on(&mut self.session, files_json)
+    }
+}
+
+/// End a game's running program and close its window.
+fn dispose(slot: &mut Option<GameSession>) {
+    if slot.is_some() {
+        #[cfg(feature = "wasm")]
+        {
+            let args = js_sys::Array::new();
+            host_call_raw("gl_destroy_window", &args);
+        }
+        *slot = None;
+    }
 }
 
 /// The program's own file among the page's: the first, by name, that is neither the stdlib
@@ -201,23 +280,11 @@ fn page_files(
     std::sync::Arc::new(all_files.iter().cloned().collect())
 }
 
-/// Start a game session: parse, compile, execute until the first frame yield.
-/// Returns JSON `{"ok":true}` on success or `{"ok":false,"error":"..."}` on failure.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn compile_and_start(files_json: &str) -> String {
+/// [`Game::start`] on a game's session `slot`, handing the program the `stage`d world.
+fn start_on(slot: &mut Option<GameSession>, stage: Option<String>, files_json: &str) -> String {
     #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
-    // Dispose previous session.
-    with_game(|gs| {
-        if gs.is_some() {
-            #[cfg(feature = "wasm")]
-            {
-                let args = js_sys::Array::new();
-                host_call_raw("gl_destroy_window", &args);
-            }
-            *gs = None;
-        }
-    });
+    dispose(slot);
 
     let files = match parse_files_json(files_json) {
         Ok(f) => f,
@@ -265,12 +332,13 @@ pub fn compile_and_start(files_json: &str) -> String {
             return Err(p.diagnostics.to_string());
         }
         // Boxed BEFORE any pointer is taken, so the pointers `execute_argv` keeps survive the
-        // session being moved into the page (see `GameSession`).
+        // session being moved into its game (see `GameSession`).
         let mut state = Box::new(State::new(p.database));
         // The page captures what the program prints, and the program reads the page's files
         // while its first frame runs.
         state.database.output = Some(String::new());
         state.database.page_files = Some(page_files(&all_files));
+        crate::engine_host::stage_swap(&mut state.database, stage);
         let mut data = p.data;
         byte_code(&mut state, &mut data);
         crate::interp::wasm_gl::register_wgl_natives(&mut state);
@@ -286,7 +354,7 @@ pub fn compile_and_start(files_json: &str) -> String {
         Ok(Ok(mut session)) => {
             let yielded = session.state.database.frame_yield;
             if yielded {
-                with_game(|gs| *gs = Some(session));
+                *slot = Some(session);
                 "{\"ok\":true,\"running\":true}".to_string()
             } else {
                 let out = take_output(&mut session);
@@ -300,20 +368,16 @@ pub fn compile_and_start(files_json: &str) -> String {
             format!("{{\"ok\":false,\"error\":{}}}", json_str(&diag))
         }
         Err(_panic) => {
-            with_game(|gs| *gs = None);
+            *slot = None;
             "{\"ok\":false,\"error\":\"internal panic\"}".to_string()
         }
     }
 }
 
-/// Resume execution after a frame yield.  Returns JSON:
-/// `{"running":true}` — yielded again, call on next requestAnimationFrame
-/// `{"running":false,"output":"..."}` — program finished
-/// `{"running":false,"error":"..."}` — program crashed
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn resume_frame() -> String {
+/// [`Game::resume_frame`] on a game's session `game`.
+fn resume_on(game: &mut Option<GameSession>) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        with_game(|slot| {
+        with_game(game, |slot| {
             let Some(session) = slot.as_mut() else {
                 return "{\"running\":false}".to_string();
             };
@@ -345,7 +409,7 @@ pub fn resume_frame() -> String {
     match result {
         Ok(json) => json,
         Err(_panic) => {
-            with_game(|gs| *gs = None);
+            *game = None;
             #[cfg(feature = "wasm")]
             {
                 let args = js_sys::Array::new();
@@ -516,7 +580,8 @@ fn run_pipeline(all_files: &[(String, String)]) -> (String, bool, Vec<AssertResu
     let asserts = std::mem::take(&mut state.database.assert_results);
     let had_fatal = state.database.had_fatal;
     let mut output = state.database.output.take().unwrap_or_default();
-    output.push_str(&crate::page::take_trace());
+    #[cfg(feature = "wasm")]
+    output.push_str(&std::mem::take(&mut *state.database.par_trace.borrow_mut()));
     (diag, had_fatal, asserts, output)
 }
 
@@ -529,7 +594,10 @@ fn take_output(session: &mut GameSession) -> String {
         .as_mut()
         .map(std::mem::take)
         .unwrap_or_default();
-    out.push_str(&crate::page::take_trace());
+    #[cfg(feature = "wasm")]
+    out.push_str(&std::mem::take(
+        &mut *session.state.database.par_trace.borrow_mut(),
+    ));
     out
 }
 
@@ -564,12 +632,11 @@ pub fn set_par_trace_workers(on: bool) {
 ///
 /// @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
 /// that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
-/// next run's `swap_world` reads through the converter: keyed collections and references
+/// next game's `swap_world` reads through the converter: keyed collections and references
 /// survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
 /// before.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_export() -> String {
-    with_game(|gs| {
+fn export_on(slot: &mut Option<GameSession>) -> String {
+    with_game(slot, |gs| {
         gs.as_mut().map_or_else(String::new, |session| {
             let Some((root, kt)) = crate::engine_host::world_root(&session.state.database) else {
                 return String::new();
@@ -591,16 +658,15 @@ pub fn swap_export() -> String {
 
 /// @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
 /// browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
-/// it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
+/// it BEFORE `Game::start`, which disposes the running instance, so a refused change
 /// leaves the running build serving.  The program is parsed and scope-checked, not run, and
 /// the parked run is not touched.
 ///
 /// Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
 /// the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
 /// program that does not compile or a world it cannot take over.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_check(files_json: &str) -> String {
-    let world = with_game(|gs| {
+fn check_on(slot: &mut Option<GameSession>, files_json: &str) -> String {
+    let world = with_game(slot, |gs| {
         gs.as_mut().and_then(|session| {
             let (root, kt) = crate::engine_host::world_root(&session.state.database)?;
             session

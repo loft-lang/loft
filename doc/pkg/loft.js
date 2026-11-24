@@ -1,6 +1,223 @@
 /* @ts-self-types="./loft.d.ts" */
 
 /**
+ * `@PLN226` — a page's debugger: the debug session over the program it started.  The page
+ * holds the handle and passes it to every call (`@FR-C-Boundary`): two debuggers on one page
+ * never meet, and nothing is kept per thread.
+ *
+ * A doc page (@PLN149 step 8) holds the source the reader is editing and drives it through
+ * [`Self::start`] and [`Self::command`] — set a breakpoint, pause, read the frame, evaluate
+ * an expression against it, resume; the writer route's relay feeds the same grammar through
+ * [`Self::pump`], so the two drive one implementation.
+ *
+ * ```js
+ * const dbg = new Debugger();
+ * JSON.parse(dbg.start(source));            // {"ok":true} | {"ok":false,"error":"…"}
+ * JSON.parse(dbg.command('bp 4'));          // {"replies":[…],"output":"…"}
+ * ```
+ */
+export class Debugger {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DebuggerFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_debugger_free(ptr, 0);
+    }
+    /**
+     * Apply one debug command to the live session.
+     *
+     * Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced
+     * and whatever the program printed while it ran.  The two travel together because a
+     * `run` or a `resume` produces both, and a page fetching them separately could paint a
+     * pause before the output that led to it.
+     *
+     * The grammar is [`Self::replies`]': `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
+     * `eval <expr>`, `fns`.
+     * @param {string} cmd
+     * @returns {string}
+     */
+    command(cmd) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(cmd, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.debugger_command(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * A debugger with no program yet.
+     */
+    constructor() {
+        const ret = wasm.debugger_new();
+        this.__wbg_ptr = ret;
+        DebuggerFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Start a debug session over `source`, replacing this debugger's previous one.
+     *
+     * Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
+     * page that offers to run the code in front of the reader has to say why it will not.
+     *
+     * A bare script (top-level statements, no `fn main`) is desugared exactly as
+     * `compile_and_run` desugars it, so the two entries accept the same inputs.
+     * @param {string} source
+     * @returns {string}
+     */
+    start(source) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.debugger_start(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) Debugger.prototype[Symbol.dispose] = Debugger.prototype.free;
+
+/**
+ * `@PLN226` — a page's game: the program it started and runs frame by frame, and the world
+ * snapshot staged for the next program it starts (@PLN18 08-S6).  The page holds the handle and
+ * passes it to every call (`@FR-C-Boundary`): two games on one page never meet, and nothing is
+ * kept per thread.
+ *
+ * ```js
+ * const game = new Game();
+ * let r = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: src }])));
+ * while (r.running) { await nextFrame(); r = JSON.parse(game.resume_frame()); }
+ * ```
+ */
+export class Game {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        GameFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_game_free(ptr, 0);
+    }
+    /**
+     * A game with nothing started.
+     */
+    constructor() {
+        const ret = wasm.game_new();
+        this.__wbg_ptr = ret;
+        GameFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Run the next frame.  JSON `{"running":true}` (with `"output"` when the frame printed),
+     * `{"running":false,"output":"…"}` when the program finished, or
+     * `{"running":false,"error":"…"}` when it crashed.
+     * @returns {string}
+     */
+    resume_frame() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.game_resume_frame(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Stage `snapshot` (`swap_export` of another game) for the next program this game starts:
+     * its `swap_world` restores it — the browser's form of the native `LOFT_RESUME`.
+     * @param {string} snapshot
+     */
+    stage_swap(snapshot) {
+        const ptr0 = passStringToWasm0(snapshot, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.game_stage_swap(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Start the program in `files_json` (`[{name, content}]`), ending this game's previous
+     * one: parse, compile, execute until the first frame yield.  JSON
+     * `{"ok":true,"running":true}`, `{"ok":true,"running":false,"output":"…"}` when it ran to
+     * its end, or `{"ok":false,"error":"…"}`.
+     * @param {string} files_json
+     * @returns {string}
+     */
+    start(files_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.game_start(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * End the running program and close its window.
+     */
+    stop() {
+        wasm.game_stop(this.__wbg_ptr);
+    }
+    /**
+     * May the program in `files_json` take over this game's world?
+     * @param {string} files_json
+     * @returns {string}
+     */
+    swap_check(files_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.game_swap_check(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * The running program's world, for another game to take over (`stage_swap`).
+     * @returns {string}
+     */
+    swap_export() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.game_swap_export(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) Game.prototype[Symbol.dispose] = Game.prototype.free;
+
+/**
  * Run a loft program supplied as a JSON array of `{name, content}` file objects.
  *
  * Returns a JSON string: `{"output": "...", "diagnostics": [...], "success": true|false}`.
@@ -35,164 +252,6 @@ export function compile_and_run(files_json) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
-}
-
-/**
- * Start a game session: parse, compile, execute until the first frame yield.
- * Returns JSON `{"ok":true}` on success or `{"ok":false,"error":"..."}` on failure.
- * @param {string} files_json
- * @returns {string}
- */
-export function compile_and_start(files_json) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.compile_and_start(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * Apply one debug command to the live session.
- *
- * Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced and
- * whatever the program printed while it ran.  The two travel together because a `run` or a
- * `resume` produces both, and a page fetching them separately could paint a pause before
- * the output that led to it.
- *
- * The grammar is [`command`]'s: `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
- * `eval <expr>`, `fns`.
- * @param {string} cmd
- * @returns {string}
- */
-export function debug_command(cmd) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(cmd, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.debug_command(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * Start a debug session over `source`, replacing any previous one.
- *
- * Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
- * page that offers to run the code in front of the reader has to say why it will not.
- *
- * A bare script (top-level statements, no `fn main`) is desugared exactly as
- * `compile_and_run` desugars it, so the two entries accept the same inputs.
- * @param {string} source
- * @returns {string}
- */
-export function debug_start(source) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.debug_start(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * Resume execution after a frame yield.  Returns JSON:
- * `{"running":true}` — yielded again, call on next requestAnimationFrame
- * `{"running":false,"output":"..."}` — program finished
- * `{"running":false,"error":"..."}` — program crashed
- * @returns {string}
- */
-export function resume_frame() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.resume_frame();
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
- * browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
- * it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
- * leaves the running build serving.  The program is parsed and scope-checked, not run, and
- * the parked run is not touched.
- *
- * Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
- * the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
- * program that does not compile or a world it cannot take over.
- * @param {string} files_json
- * @returns {string}
- */
-export function swap_check(files_json) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.swap_check(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * Export the registered world of the PARKED (frame-yielded) run; "" when no run is parked
- * or no world was registered.
- *
- * @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
- * that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
- * next run's `swap_world` reads through the converter: keyed collections and references
- * survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
- * before.
- * @returns {string}
- */
-export function swap_export() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.swap_export();
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * Stage a snapshot for the next run's `swap_world` (the browser analog of
- * the native LOFT_RESUME env).
- * @param {string} snapshot
- */
-export function swap_stage(snapshot) {
-    const ptr0 = passStringToWasm0(snapshot, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    wasm.swap_stage(ptr0, len0);
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -377,6 +436,13 @@ function __wbg_get_imports() {
         "./loft_bg.js": import0,
     };
 }
+
+const DebuggerFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_debugger_free(ptr, 1));
+const GameFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_game_free(ptr, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

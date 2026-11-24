@@ -24,6 +24,16 @@ the last release with an Intel Mac bundle.
 
 ### May need a change in your code
 
+**A page that runs loft holds its game and its debugger.**  The browser bundle (`pkg/loft.js`)
+hands a page an object to keep and call, where it had loose functions that shared one hidden
+session: `const game = new Game(); game.start(files); game.resume_frame()` in place of
+`compile_and_start(files)` and `resume_frame()`, `game.stage_swap(snapshot)`,
+`game.swap_export()` and `game.swap_check(files)` in place of `swap_stage`, `swap_export` and
+`swap_check`, and `const dbg = new Debugger(); dbg.start(source); dbg.command(cmd)` in place of
+`debug_start` and `debug_command`.  Each call answers the same JSON as before, and two games on
+one page no longer share a session.  A page of your own that imports the old names needs these
+lines changed; the gallery and the documentation pages are.
+
 **A format hole with a spec checks its name like any other hole.**  `"{qx:.6}"` is read exactly as
 `"{qx}"` is: a name nobody declared is reported as unknown, and a name bound inside a block that
 has ended is reported as out of scope.  Before, the `:` of the spec let such a hole slip past both

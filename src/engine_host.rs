@@ -296,6 +296,9 @@ pub(crate) struct EngineCtl {
     swap: SwapPhase,
     /// The snapshot root registered by `swap_world`: (record, known_type).
     world_root: Option<(DbRef, u16)>,
+    /// The world snapshot the page staged for this program's `swap_world` (`wasm_entry::Game`).
+    #[cfg(host_fs)]
+    swap_stage: Option<String>,
     /// The registered world's layout sidecar, when it goes over as an image.
     #[cfg(not(target_arch = "wasm32"))]
     world_layout: Option<String>,
@@ -471,6 +474,12 @@ fn with_kernel_ctl<R>(
 ) -> Option<R> {
     let EngineCx { kernel, ctl, .. } = e;
     kernel.as_mut().map(|k| f(k, ctl))
+}
+
+/// Hand the program the world snapshot its page staged, for its `swap_world` to restore.
+#[cfg(host_fs)]
+pub(crate) fn stage_swap(stores: &mut Stores, snapshot: Option<String>) {
+    stores.engine.ctl.swap_stage = snapshot;
 }
 
 /// The world the program registered with `swap_world`, if any: its root and its known type.
@@ -2600,10 +2609,10 @@ pub mod browser {
             return;
         }
         stores.engine.ctl.world_root = Some((w, kt));
-        let resumed = match crate::wasm::swap_stage_take() {
+        let resumed = match stores.engine.ctl.swap_stage.take() {
             // @PLN196 step 8 — a world handed over as a store image loads through the
             // converter, as the native swap's does.  The page checked this build against the
-            // world before it disposed the old one (`swap_check`), so a refusal here is
+            // world before it disposed the old one (`Game::swap_check`), so a refusal here is
             // unexpected; it is reported and the run starts fresh.
             Some(snap) if snap.starts_with(crate::wasm::SWAP_IMAGE_MARKER) => {
                 let mut lines = snap.lines().skip(1);

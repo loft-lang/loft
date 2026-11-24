@@ -245,7 +245,9 @@ unsafe extern "C" fn hosted_handover(
     n: u32,
 ) -> u32 {
     // SAFETY: the `Stores` the bridge call was handed, live for the call.
-    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| s.host_state);
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     if state.is_null() {
         return 0;
     }
@@ -417,7 +419,7 @@ pub(crate) fn interpreter_for(
     if gen_ref.store_nr != crate::database::COROUTINE_STORE {
         return None;
     }
-    let state = stores.host_state;
+    let state = stores.host_state.cast::<crate::state::State>();
     assert!(
         !state.is_null(),
         "an interpreted generator was advanced from compiled code outside a call from the \
@@ -502,7 +504,9 @@ pub(crate) unsafe extern "C" fn host_call_ref(
     let args = unsafe { std::slice::from_raw_parts(args, n) };
     let closure = unsafe { (*closure).dbref };
     // SAFETY: the `Stores` the bridge call was handed, or null on a worker of the library.
-    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| s.host_state);
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     let result = if state.is_null() {
         // A compiled library's own `par` worker: no interpreter runs on this thread, so one
         // is made over the worker's stores for the call.

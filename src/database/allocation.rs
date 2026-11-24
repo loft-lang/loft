@@ -3427,6 +3427,7 @@ impl Stores {
             claim_log: None,
             read_refs: None,
             wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
@@ -3434,6 +3435,8 @@ impl Stores {
             web: crate::web_bytes::WebCx::default(),
             #[cfg(host_fs)]
             page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
             #[cfg(feature = "op-census")]
             tap: worker_tap,
             run: super::RunDiagnostics::default(),

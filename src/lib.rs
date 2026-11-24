@@ -553,7 +553,6 @@ pub mod stdlib_sources;
 // `host_fs`, not `feature = "wasm"`: `--html` reaches the same host bridges
 // over raw `loft_io` imports, and this module is where the two transports are
 // told apart (loft#851).  Its wasm-bindgen half stays behind the feature.
-pub mod page;
 #[cfg(host_fs)]
 pub mod wasm;
 pub mod wasm_assets;

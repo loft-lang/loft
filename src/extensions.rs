@@ -207,16 +207,44 @@ pub struct WiredNatives {
     native: Vec<Option<NativeSlot>>,
     #[cfg(feature = "native-extensions")]
     shared: Vec<Option<SharedSlot>>,
-    /// loft#715 — the bridge symbol each shared slot dispatches to, so a fault raised while
-    /// the bridge is on the stack can NAME it ([`crate::call_frames::shared_bridge_label`]).
-    #[cfg(feature = "native-extensions")]
-    pub(crate) labels: Vec<Option<String>>,
     /// loft#1189 — the `#native` symbol each panicking stub stands for (`compile.rs`), so the
     /// panic of a missing native names it.
     pub(crate) stubs: Vec<Option<String>>,
     /// @PLN24 arc B — the `#c` binding each `#c` declaration's index calls (`c_call::register`).
     #[cfg(feature = "native-extensions")]
     pub(crate) c_bindings: Vec<Option<std::sync::Arc<crate::c_call::CBinding>>>,
+}
+
+impl WiredNatives {
+    /// The table of a program that wired nothing yet.
+    const EMPTY: WiredNatives = WiredNatives {
+        #[cfg(feature = "native-extensions")]
+        native: Vec::new(),
+        #[cfg(feature = "native-extensions")]
+        shared: Vec::new(),
+        stubs: Vec::new(),
+        #[cfg(feature = "native-extensions")]
+        c_bindings: Vec::new(),
+    };
+}
+
+/// The natives `stores`' program wired (`Stores::wired`, held there without its type).
+pub(crate) fn wired(stores: &crate::database::Stores) -> &WiredNatives {
+    static EMPTY: WiredNatives = WiredNatives::EMPTY;
+    stores.wired.downcast_ref().unwrap_or(&EMPTY)
+}
+
+/// The program's wired natives to change: its own copy, made when the table is shared (a
+/// `par` worker still reads the one it was handed) or not made yet.
+pub(crate) fn wired_mut(stores: &mut crate::database::Stores) -> &mut WiredNatives {
+    let own = std::sync::Arc::get_mut(&mut stores.wired).is_some_and(|w| w.is::<WiredNatives>());
+    if !own {
+        let copy = wired(stores).clone();
+        stores.wired = std::sync::Arc::new(copy);
+    }
+    std::sync::Arc::get_mut(&mut stores.wired)
+        .and_then(|w| w.downcast_mut::<WiredNatives>())
+        .expect("the program's own wired-natives table")
 }
 
 /// Put `v` at `lib_idx`, growing the table to it.
@@ -628,7 +656,7 @@ pub fn wire_native_fns_for(
 
         // Store the bridge and signature for runtime dispatch.
         put_slot(
-            &mut std::sync::Arc::make_mut(&mut state.database.wired).native,
+            &mut wired_mut(&mut state.database).native,
             lib_idx,
             (FnPtr(bridge), std::sync::Arc::new(sig)),
         );
@@ -1095,14 +1123,17 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
     {
         // loft#715 — with each slot, the symbol it dispatches to, so a fault raised while
         // the bridge is on the stack can NAME it.
-        let table = std::sync::Arc::make_mut(&mut state.database.wired);
-        for (sym, lib_idx, ptr, sig) in &wired {
+        let table = wired_mut(&mut state.database);
+        for (_, lib_idx, ptr, sig) in &wired {
             put_slot(
                 &mut table.shared,
                 *lib_idx,
                 (FnPtr(*ptr), std::sync::Arc::new(sig.clone())),
             );
-            put_slot(&mut table.labels, *lib_idx, sym.clone());
+        }
+        let labels = std::sync::Arc::make_mut(&mut state.database.bridge_labels);
+        for (sym, lib_idx, ..) in &wired {
+            put_slot(labels, *lib_idx, sym.clone());
         }
     }
     for (sym, ..) in &wired {
@@ -1120,10 +1151,13 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
         .collect();
     if !dests.is_empty() {
         {
-            let table = std::sync::Arc::make_mut(&mut state.database.wired);
-            for (idx, dest, ptr, sig) in &dests {
+            let table = wired_mut(&mut state.database);
+            for (idx, _, ptr, sig) in &dests {
                 put_slot(&mut table.shared, *idx, (*ptr, std::sync::Arc::clone(sig)));
-                put_slot(&mut table.labels, *idx, dest.clone());
+            }
+            let labels = std::sync::Arc::make_mut(&mut state.database.bridge_labels);
+            for (idx, dest, ..) in &dests {
+                put_slot(labels, *idx, dest.clone());
             }
         }
         for (_, dest, ..) in &dests {
@@ -1222,8 +1256,7 @@ fn shared_store_dispatch_raw(
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
     let outer_bridge = std::mem::replace(&mut stores.in_bridge, lib_idx.wrapping_add(1));
-    let Some((FnPtr(bridge_ptr), sig)) = stores
-        .wired
+    let Some((FnPtr(bridge_ptr), sig)) = wired(stores)
         .shared
         .get(usize::from(lib_idx))
         .cloned()
@@ -1363,7 +1396,7 @@ fn shared_store_dispatch_raw(
     };
     // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
     let host = if crate::state::hosted_verify_enabled() {
-        unsafe { (*stores_ptr).host_state }
+        unsafe { (*stores_ptr).host_state.cast::<crate::state::State>() }
     } else {
         std::ptr::null_mut()
     };
@@ -1381,7 +1414,7 @@ fn shared_store_dispatch_raw(
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
     // `@PLN206 P7` — the routine handed itself over to the interpreter (`State::accept_handover`):
     // it answers nothing, and the static call continues as the interpreter's frame.
-    let state = unsafe { (*stores_raw).host_state };
+    let state = unsafe { (*stores_raw).host_state.cast::<crate::state::State>() };
     if !state.is_null() && unsafe { (*state).pending_handover.is_some() } {
         unsafe { (*stores_raw).in_bridge = outer_bridge };
         return;
@@ -1536,8 +1569,7 @@ fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate:
     // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the owning
     // cdylib registered, resolved at wiring — a symbol without one is reported there
     // (loft#886) and never wired, so its stub stays in place.
-    let Some((FnPtr(bridge_ptr), sig)) = stores
-        .wired
+    let Some((FnPtr(bridge_ptr), sig)) = wired(stores)
         .native
         .get(usize::from(lib_idx))
         .cloned()
@@ -1586,15 +1618,15 @@ mod dispatch_cache_tests {
     fn a_library_index_names_its_own_programs_native() {
         let mut first = WiredNatives::default();
         let mut second = WiredNatives::default();
-        put_slot(&mut first.labels, 300, "first_bridge".to_string());
-        put_slot(&mut second.labels, 300, "second_bridge".to_string());
+        put_slot(&mut first.stubs, 300, "first_bridge".to_string());
+        put_slot(&mut second.stubs, 300, "second_bridge".to_string());
         let worker = std::sync::Arc::new(first.clone());
-        assert_eq!(first.labels[300].as_deref(), Some("first_bridge"));
-        assert_eq!(second.labels[300].as_deref(), Some("second_bridge"));
-        assert_eq!(worker.labels[300].as_deref(), Some("first_bridge"));
-        assert_eq!(first.labels.get(301).cloned().flatten(), None);
+        assert_eq!(first.stubs[300].as_deref(), Some("first_bridge"));
+        assert_eq!(second.stubs[300].as_deref(), Some("second_bridge"));
+        assert_eq!(worker.stubs[300].as_deref(), Some("first_bridge"));
+        assert_eq!(first.stubs.get(301).cloned().flatten(), None);
         assert_eq!(
-            first.labels.len(),
+            first.stubs.len(),
             301,
             "one slot past the highest index, no more"
         );

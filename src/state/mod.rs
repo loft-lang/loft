@@ -1764,7 +1764,8 @@ impl State {
             // pointer derived from the same `State` the call-back uses, never through a
             // `&mut Stores` held across it.
             let state: *mut State = self;
-            let outer = unsafe { std::mem::replace(&mut (*state).database.host_state, state) };
+            let outer =
+                unsafe { std::mem::replace(&mut (*state).database.host_state, state.cast()) };
             raw(unsafe { &raw mut (*state).database }, &mut stack);
             unsafe { (*state).database.host_state = outer };
         } else {

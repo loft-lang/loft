@@ -1428,8 +1428,8 @@ pub fn get_topic_sources() -> Vec<TopicSource> {
 ///
 /// The page is a loft program; this is what lets a reader DRIVE it — run it, stop it on a
 /// line, and evaluate expressions against the frame it stopped in, in their own browser.
-/// The behaviour is `doc/loft-panel.js` over the two wasm entries (`debug_start`,
-/// `debug_command`); this is the markup it binds to, plus the page's source for it to run.
+/// The behaviour is `doc/loft-panel.js` over the wasm module's `Debugger` (`start`,
+/// `command`); this is the markup it binds to, plus the page's source for it to run.
 ///
 /// The panel ships `hidden` and the script reveals it, so a reader without JavaScript or
 /// without the wasm bundle sees the page exactly as before rather than a dead widget.

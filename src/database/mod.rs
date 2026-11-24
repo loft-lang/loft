@@ -572,13 +572,18 @@ pub struct Stores {
     /// a compiled library's call back into it (`HostTable::call_ref`); null outside one.  Set
     /// and restored around the call by `State::invoke_native`, so a nested bridge call leaves
     /// the outer one reachable.
-    pub host_state: *mut crate::state::State,
+    /// Untyped, as the core layer names no interpreter type: the readers cast it back.
+    pub host_state: *mut std::ffi::c_void,
     /// `@PLN226` (loft#2227) — the records ONE bridge call claims in its pinned argument
     /// store: armed by `extensions::claim_log_begin`, noted by the claim and resize callbacks.
     pub(crate) claim_log: Option<(u16, Vec<u32>)>,
     /// `@PLN226` — the natives this program wired, by library index (`extensions::wire_*`):
-    /// shared by `Arc` with the `par` workers, which read it and never write it.
-    pub(crate) wired: std::sync::Arc<crate::extensions::WiredNatives>,
+    /// shared by `Arc` with the `par` workers, which read it and never write it.  Held without
+    /// naming its type (the core layer names no higher one): `extensions::wired` reads it.
+    pub(crate) wired: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    /// loft#715 — the bridge symbol each shared-library slot dispatches to, so a fault raised
+    /// while the bridge is on the stack can NAME it (`call_frames::shared_bridge_label`).
+    pub(crate) bridge_labels: std::sync::Arc<Vec<Option<String>>>,
     /// `@PLN226` — this context's index-walk hints (`btree::WalkHints`).
     pub(crate) bt_hints: crate::btree::WalkHints,
     /// `@PLN226` — the crash context of the interpreter that runs on these stores
@@ -598,6 +603,10 @@ pub struct Stores {
     /// the page's run lasts; `None` outside one.
     #[cfg(host_fs)]
     pub(crate) page_files: Option<std::sync::Arc<std::collections::HashMap<String, String>>>,
+    /// The `par` worker tracer's lines (`LOFT_TRACE_PAR_WORKERS`), read with the program's
+    /// output by the page that runs it (`par_pool::WorkerTrace::report`).
+    #[cfg(feature = "wasm")]
+    pub(crate) par_trace: std::cell::RefCell<String>,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -753,7 +762,7 @@ pub struct Stores {
     /// `resolve_path`, the single home every file-op site routes through.
     pub program_relative: bool,
     /// FY.1: When true, the interpreter loop yields back to the caller.
-    /// Set by `gl_swap_buffers` in WASM mode; cleared by `resume_frame`.
+    /// Set by `gl_swap_buffers` in WASM mode; cleared by `Game::resume_frame`.
     pub frame_yield: bool,
     /// `@FR-R-DispatchStop` — the interpreter's lean dispatch loop tests THIS after every op
     /// instead of each rare event that ends it: a runtime error ([`Stores::raise_runtime_error`]),
@@ -913,6 +922,7 @@ impl Clone for Stores {
             claim_log: None,
             read_refs: None,
             wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
@@ -920,6 +930,8 @@ impl Clone for Stores {
             web: crate::web_bytes::WebCx::default(),
             #[cfg(host_fs)]
             page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1786,7 +1798,8 @@ impl Stores {
             host_state: std::ptr::null_mut(),
             claim_log: None,
             read_refs: None,
-            wired: std::sync::Arc::default(),
+            wired: std::sync::Arc::new(()),
+            bridge_labels: std::sync::Arc::default(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
@@ -1794,6 +1807,8 @@ impl Stores {
             web: crate::web_bytes::WebCx::default(),
             #[cfg(host_fs)]
             page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),

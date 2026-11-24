@@ -12,7 +12,7 @@
      (tests/engine_host_connector.rs) — keep them in step. -->
 <html><head><meta charset="utf-8"><title>kernel swap</title></head>
 <body><script type="module">
-import init, { compile_and_start, resume_frame, swap_check, swap_export, swap_stage } from './pkg/loft.js';
+import init, { Game } from './pkg/loft.js';
 import { createHost } from './loft-rt.js';
 
 const { host } = createHost();
@@ -64,7 +64,7 @@ host.onSend = (msg) => {
 };
 let rejected = false;
 // A build whose layout change the converter refuses: checked BEFORE the running instance is
-// disposed (`swap_check`), so the running build keeps serving.
+// disposed (`Game.swap_check`), so the running build keeps serving.
 let refusedLayout = '';
 let swapped = false;
 let lastAtSwap = -1;
@@ -84,26 +84,27 @@ host.onBuildPush = (blob) => {
     return;
   }
   const files = JSON.stringify([{ name: 'main.loft', content: m[2] }]);
-  const check = JSON.parse(swap_check(files));
+  const check = JSON.parse(game.swap_check(files));
   if (!check.ok) {
     refusedLayout = check.error; // keep serving the running build
     return;
   }
   if (swapped) return;
   // THE SWAP: export the world out of the parked A, stage it, adopt the
-  // living socket, boot B (as received over the wire).
-  const snap = swap_export();
+  // living socket, boot B (as received over the wire) on the same game.
+  const snap = game.swap_export();
   if (!snap) throw new Error('SWAP-FAIL no world snapshot from build A');
   lastAtSwap = sends.v1.length ? sends.v1[sends.v1.length - 1] : -1;
-  swap_stage(snap);
+  game.stage_swap(snap);
   host.ws_adopt_next(0);
-  const r = JSON.parse(compile_and_start(files));
+  const r = JSON.parse(game.start(files));
   if (!r.ok || !r.running) throw new Error('SWAP-FAIL build B did not start: ' + JSON.stringify(r));
   swapped = true;
 };
 
 await init();
-let result = JSON.parse(compile_and_start(JSON.stringify([{ name: 'main.loft', content: TEMPLATE('v1') }])));
+const game = new Game();
+let result = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: TEMPLATE('v1') }])));
 if (!result.ok || !result.running) {
   throw new Error('SWAP-FAIL build A did not start: ' + JSON.stringify(result));
 }
@@ -113,7 +114,7 @@ if (!result.ok || !result.running) {
 const deadline = Date.now() + deadlineMs;
 for (;;) {
   await new Promise(r => setTimeout(r, 5));
-  const fr = JSON.parse(resume_frame());
+  const fr = JSON.parse(game.resume_frame());
   if (fr.error) throw new Error('SWAP-CRASH ' + fr.error);
   if (!fr.running) throw new Error('SWAP-FAIL the client run ended: ' + JSON.stringify(fr));
   // The verdict: every clause met.

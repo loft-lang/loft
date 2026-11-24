@@ -776,21 +776,6 @@ pub fn host_ws_close(id: i32) {
 // `swap_world` consumes the stage), and hands B the living WebSocket via the
 // loft-rt adoption hook.  These are the two wasm-side halves.
 
-// Consumed by the browser kernel's `swap_world`, which exists only in the wasm-bindgen bundle.
-// Both other builds that compile this module — a native `--all-features` one and `--html`
-// (loft#851) — see it dead, and that is the cfg, not rot.
-#[cfg_attr(not(all(target_arch = "wasm32", feature = "wasm")), allow(dead_code))]
-pub(crate) fn swap_stage_take() -> Option<String> {
-    crate::page::with(|p| p.swap_stage.borrow_mut().take())
-}
-
 /// The first line of a world snapshot handed over as a store image: then the base64 of its
 /// layout sidecar and the base64 of the image, one line each (@PLN196 step 8 in the browser).
 pub(crate) const SWAP_IMAGE_MARKER: &str = "LOFT-IMAGE";
-
-/// Stage a snapshot for the next run's `swap_world` (the browser analog of
-/// the native LOFT_RESUME env).
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_stage(snapshot: &str) {
-    crate::page::with(|p| *p.swap_stage.borrow_mut() = Some(snapshot.to_string()));
-}
