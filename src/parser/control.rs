@@ -630,9 +630,7 @@ fn null_paths(data: &crate::data::Data, code: &Value) -> Option<bool> {
         Value::Block(bl) if bl.name == FORWARD_CALL => None,
         Value::Block(bl) if is_block_divergent(&bl.operators) => Some(false),
         Value::Block(bl) => null_paths(data, bl.operators.last()?),
-        Value::If(_, then_b, else_b) => {
-            Some(null_paths(data, then_b)? | null_paths(data, else_b)?)
-        }
+        Value::If(_, then_b, else_b) => Some(null_paths(data, then_b)? | null_paths(data, else_b)?),
         other => is_halt_call(data, other).then_some(false),
     }
 }

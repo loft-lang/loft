@@ -211,3 +211,61 @@ fn a_null_arm_beside_a_value_arm_keeps_both_interpret() {
 fn a_null_arm_beside_a_value_arm_keeps_both_native_c() {
     assert_null_arm_cases("--native-c");
 }
+
+/// loft#2627 — a local bound under ONE name in two sibling blocks, each time a view of a
+/// different value, keeps one dep list (its last-parsed bind's).  The interpreter's rebind
+/// read that list to ask "does the right-hand side read a view of `b`?", answered no, and
+/// freed `b` before `b = Ex { items: [it] }` copied out of `it`.  Each program prints its
+/// hand-computed answer; the interpreter answered `new null []` (the `if` form) or garbage
+/// integers (the `match`-capture form).
+const SIBLING_VIEW_CASES: [(&str, &str, &str); 2] = [
+    (
+        "if",
+        "struct In2627 { name: text, ops: vector<integer> }\n\
+         struct Ex2627 { items: vector<In2627>, tp: text }\n\
+         fn mk2627(s: text) -> Ex2627 { Ex2627 { items: [In2627 { name: s, ops: [1, 2, 3] }], tp: \"orig\" } }\n\
+         fn f(other: Ex2627, c: boolean) -> Ex2627 {\n  b = mk2627(\"first\");\n  if c {\n    it = b.items[0];\n    it.ops += [4];\n    b = Ex2627 { items: [it], tp: \"new\" };\n  }\n  if c {\n    it = other.items[0];\n    println(\"second {it.name}\");\n  }\n  b\n}\n\
+         fn main() { r = f(mk2627(\"other\"), true); println(\"{r.tp} {r.items[0].name} {r.items[0].ops}\"); }\n",
+        "second other\nnew first [1,2,3,4]",
+    ),
+    (
+        "match",
+        "struct Blk2627 { name: text, ops: vector<integer> }\n\
+         enum Nd2627 { NBlock { block: vector<Blk2627> }, NInt { n: integer } }\n\
+         struct Ex2627 { code: Nd2627, tp: text }\n\
+         fn ex2627(c: Nd2627, t: text) -> Ex2627 { Ex2627 { code: c, tp: t } }\n\
+         fn f(code: Nd2627) -> Ex2627 {\n  b = ex2627(Nd2627::NBlock { block: [Blk2627 { name: \"first\", ops: [1, 2, 3] }] }, \"orig\");\n  match b.code {\n    NBlock { block } => {\n      bl = block[0];\n      n = len(bl.ops);\n      bl.ops = bl.ops[0..n - 1] + [70, 80];\n      b = ex2627(Nd2627::NBlock { block: [bl] }, \"new\");\n    },\n    _ => {}\n  }\n  match code {\n    NBlock { block } => {\n      bl = block[0];\n      println(\"second {bl.name}\");\n    },\n    _ => {}\n  }\n  b\n}\n\
+         fn main() {\n  r = f(Nd2627::NBlock { block: [Blk2627 { name: \"other\", ops: [9] }] });\n  match r.code { NBlock { block } => println(\"{r.tp} {block[0].name} {block[0].ops}\"), _ => println(\"other\") }\n}\n",
+        "second other\nnew first [1,2,70,80]",
+    ),
+];
+
+fn assert_sibling_view_cases(backend: &str) {
+    for (tag, src, want) in SIBLING_VIEW_CASES {
+        let probe = write_probe(
+            &format!("2627_{tag}_{}", backend.trim_start_matches('-')),
+            src,
+        );
+        let (ok, stdout, stderr) = run(backend, &probe);
+        let _ = fa::remove_file(&probe);
+        assert!(
+            ok,
+            "[2627 {tag}/{backend}] must run cleanly\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(
+            stdout.trim(),
+            want,
+            "[2627 {tag}/{backend}]\nstderr:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_view_bound_twice_under_one_name_keeps_its_base_interpret() {
+    assert_sibling_view_cases("--interpret");
+}
+
+#[test]
+fn a_view_bound_twice_under_one_name_keeps_its_base_native_c() {
+    assert_sibling_view_cases("--native-c");
+}
