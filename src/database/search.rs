@@ -585,7 +585,7 @@ impl Stores {
             && value.store_nr != u16::MAX
             && !self.is_stack_store(value.store_nr)
             && self.allocations[value.store_nr as usize].live
-            && !self.allocations[value.store_nr as usize].read_only
+            && !self.allocations[value.store_nr as usize].is_locked()
             && !self.allocations[value.store_nr as usize].is_free_protected()
         {
             self.free(value);
@@ -859,7 +859,7 @@ impl Stores {
             && src.store_nr != u16::MAX
             && !self.is_stack_store(src.store_nr)
             && self.allocations[src.store_nr as usize].live
-            && !self.allocations[src.store_nr as usize].read_only
+            && !self.allocations[src.store_nr as usize].is_locked()
             && !self.allocations[src.store_nr as usize].is_free_protected()
         {
             self.free(src);

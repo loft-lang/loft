@@ -198,7 +198,11 @@ fn spawn_build(
 /// a halt.
 #[cfg(not(target_arch = "wasm32"))]
 fn rebuild_start(rc: &mut RebuildCx, layout: Option<&str>) -> bool {
-    rebuild_start_tier(rc, layout, std::env::var("LOFT_LIVE_SHIP").is_ok_and(|v| v == "1"))
+    rebuild_start_tier(
+        rc,
+        layout,
+        std::env::var("LOFT_LIVE_SHIP").is_ok_and(|v| v == "1"),
+    )
 }
 
 /// Start a rebuild, of the shipped tier (`--ship`, the speed the game ships at) when `ship`,

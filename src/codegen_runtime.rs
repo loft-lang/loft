@@ -1830,7 +1830,7 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
         && src.store_nr != u16::MAX
         && !stores.is_stack_store(src.store_nr)
         && stores.allocations[src.store_nr as usize].live
-        && !stores.allocations[src.store_nr as usize].read_only
+        && !stores.allocations[src.store_nr as usize].is_locked()
         && !stores.allocations[src.store_nr as usize].is_free_protected()
     {
         stores.free(&src);

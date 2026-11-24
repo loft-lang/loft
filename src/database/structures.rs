@@ -2356,7 +2356,7 @@ impl Stores {
         if v_rec == 0 {
             return false;
         }
-        if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
+        if store.is_foreign() || store.is_locked() || !crate::keys::keep_range_enabled() {
             let span = store.bytes_of(v_rec)[from..to].to_vec();
             self.clear_vector_release(db);
             if n > 0 {
@@ -2402,7 +2402,7 @@ impl Stores {
                 if store.is_foreign() {
                     store.release_foreign();
                 }
-                if !store.read_only {
+                if !store.is_locked() {
                     store.make_foreign(db.rec, db.pos, span);
                     return;
                 }
@@ -2440,7 +2440,7 @@ impl Stores {
                 if store.is_foreign() {
                     store.release_foreign();
                 }
-                if !store.read_only {
+                if !store.is_locked() {
                     store.make_foreign(db.rec, db.pos, span);
                     return;
                 }
@@ -2489,7 +2489,7 @@ impl Stores {
         // `bridge_args_done` frees it.
         let cloned = returns_ref
             && pin.is_some()
-            && self.allocations[store_nr as usize].read_only
+            && self.allocations[store_nr as usize].is_locked()
             && !self.allocations[store_nr as usize].is_file_backed();
         if cloned {
             let from = store_nr;
@@ -2592,7 +2592,7 @@ impl Stores {
             || answer.is_null()
             || answer.rec == 0
             || answer.store_nr != args.store_nr
-            || self.store(&answer).read_only
+            || self.store(&answer).is_locked()
         {
             return answer;
         }
@@ -2676,7 +2676,7 @@ impl Stores {
         };
         if (args.minted && !returns_ref) || args.cloned {
             self.free(&base);
-        } else if !args.copies.is_empty() && !self.store(&base).read_only {
+        } else if !args.copies.is_empty() && !self.store(&base).is_locked() {
             let store = self.store_mut(&base);
             for (_, copy) in &args.copies {
                 let rec = store.collection_rec(copy.rec, copy.pos);

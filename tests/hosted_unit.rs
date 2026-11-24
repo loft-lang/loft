@@ -667,3 +667,27 @@ fn a_library_function_named_like_a_stdlib_native_builds_as_a_hosted_unit() {
     assert_eq!(got, want, "the hosted unit answers as the interpreter does");
     let _ = fa::remove_dir_all(&lib);
 }
+
+/// A hosted unit works on the interpreter's own `Store` structs, so the byte that says a store
+/// is locked must mean the same on both sides: the C writes the lock's KIND there
+/// (`LOFT_RO_*`, read back for its locked-write advice), and the interpreter reads the same
+/// values (`Store::RO_*`).  Held as a `bool` on the Rust side, a constant's kind 2 was
+/// undefined behaviour that a release build read as "not locked", so the strict-store check
+/// reported the unit's constant store as never freed.
+#[test]
+fn the_lock_byte_names_the_same_kinds_in_the_interpreter_and_the_c() {
+    let header = fa::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c/loft_rt.h"),
+    )
+    .expect("loft_rt.h");
+    let define = |name: &str| -> u8 {
+        header
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("#define {name} ")))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is defined in loft_rt.h"))
+    };
+    assert_eq!(define("LOFT_RO_LOCK"), loft::store::Store::RO_LOCK);
+    assert_eq!(define("LOFT_RO_CONST"), loft::store::Store::RO_CONST);
+    assert_eq!(define("LOFT_RO_FOREIGN"), loft::store::Store::RO_FOREIGN);
+}

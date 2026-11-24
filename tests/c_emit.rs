@@ -2902,7 +2902,7 @@ int main(int argc, char **argv) {
     let before = fa::read(&rust_file).expect("read");
     let words = {
         let store = Store::open_read_surface(&rust_file).expect("a read surface");
-        assert!(store.read_only, "a read surface is locked");
+        assert!(store.is_locked(), "a read surface is locked");
         store.capacity_words()
     };
     assert_eq!(

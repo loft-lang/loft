@@ -770,7 +770,7 @@ impl Stores {
             && (data.store_nr as usize) < self.allocations.len()
             && !self.is_stack_store(data.store_nr)
             && self.allocations[data.store_nr as usize].live
-            && !self.allocations[data.store_nr as usize].read_only
+            && !self.allocations[data.store_nr as usize].is_locked()
             && !self.allocations[data.store_nr as usize].is_free_protected()
         {
             self.free(data);
@@ -2187,7 +2187,7 @@ impl Stores {
         // store, an incomplete walk, and one carrying a durable `.dmeta`
         // sidecar whose recorded length and CRC must not be truncated behind
         // its back, so every case this must not touch says no inside that call.
-        if store.is_file_backed() && !store.read_only {
+        if store.is_file_backed() && !store.is_locked() {
             store.reclaim_tail();
         }
         store.live = false;
@@ -2887,7 +2887,7 @@ impl Stores {
         // Pick the scratch store: a read-only/exposed source needs a separate writable
         // home (claiming into it would panic and could move its buffer, invalidating the
         // exposed view).  `database(1)` hands back a fresh owned store.
-        let scratch_store = if self.store(hash_ref).read_only {
+        let scratch_store = if self.store(hash_ref).is_locked() {
             self.database(1).store_nr
         } else {
             hash_ref.store_nr
@@ -2942,7 +2942,7 @@ impl Stores {
         // Pick the scratch store: a read-only/exposed source needs a separate writable
         // home (claiming into it would panic and could move its buffer, invalidating the
         // exposed view).  `database(1)` hands back a fresh owned store.
-        let scratch_store = if self.store(hash_ref).read_only {
+        let scratch_store = if self.store(hash_ref).is_locked() {
             self.database(1).store_nr
         } else {
             hash_ref.store_nr
@@ -3133,7 +3133,7 @@ impl Stores {
             self.free(scratch);
             return;
         }
-        if store.read_only || store.is_free_protected() {
+        if store.is_locked() || store.is_free_protected() {
             return;
         }
         // Offset 4 of the header — the rec-nr vector.  Read before the header
@@ -3538,7 +3538,7 @@ impl Stores {
             && let Ok([src, dst]) = self
                 .allocations
                 .get_disjoint_mut([rec.store_nr as usize, to.store_nr as usize])
-            && !dst.read_only
+            && !dst.is_locked()
         {
             let src: &Store = src;
             for &(off, size) in plan {
@@ -3609,7 +3609,7 @@ impl Stores {
             return false;
         }
         let vstore = &self.allocations[vec.store_nr as usize];
-        if vstore.read_only
+        if vstore.is_locked()
             || vstore.is_foreign()
             || vstore.shadow_armed()
             || self.allocations[src.store_nr as usize].is_foreign()
@@ -3769,7 +3769,7 @@ impl Stores {
             return false;
         }
         let vstore = &self.allocations[vec.store_nr as usize];
-        if vstore.read_only || vstore.is_foreign() || vstore.shadow_armed() {
+        if vstore.is_locked() || vstore.is_foreign() || vstore.shadow_armed() {
             return false;
         }
         let vec_rec = vstore.collection_rec(vec.rec, vec.pos);
@@ -4886,7 +4886,7 @@ impl Stores {
             // store is never that store's root at `1@8`, and its known type is the host's.
             if !s.live
                 || s.pinned
-                || s.read_only
+                || s.is_locked()
                 || s.is_file_backed()
                 || s.is_foreign()
                 || s.known_type != tp
@@ -6690,7 +6690,7 @@ impl Stores {
             if !s.live {
                 return Err("store is free");
             }
-            if s.read_only || s.is_borrowed() {
+            if s.is_locked() || s.is_borrowed() {
                 return Err("store is read-only or borrowed");
             }
             if s.known_type == u16::MAX {

@@ -271,7 +271,7 @@ pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]
         let store = keys::store(db, stores);
         let vec_rec = store.collection_rec(db.rec, db.pos);
         if vec_rec != 0
-            && !store.read_only
+            && !store.is_locked()
             && let Ok(count) =
                 u32::try_from(i64::from(store.get_u32_raw(vec_rec, 4)).saturating_add(extra))
             && *store.addr::<i32>(vec_rec, 0) >= checked_vec_cap(count, elem_size) as i32

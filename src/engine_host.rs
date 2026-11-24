@@ -2187,10 +2187,12 @@ fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String
                 artifact.to_string()
             };
             let fast = artifact == "fast";
-            if fast && !crate::live_rebuild::rebuild_is_ship(
+            if fast
+                && !crate::live_rebuild::rebuild_is_ship(
                     &mut ctl.rebuild,
                     ctl.world_layout.as_deref(),
-                ) {
+                )
+            {
                 // The speed a developer measures must be the speed the game ships at.
                 eprintln!(
                     "loft-swap: full speed takes the shipped build — `rebuild fast` first, then `swap fast`"

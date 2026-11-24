@@ -2250,7 +2250,7 @@ impl State {
             && src.store_nr != u16::MAX
             && !self.database.is_stack_store(src.store_nr)
             && self.database.allocations[src.store_nr as usize].live
-            && !self.database.allocations[src.store_nr as usize].read_only
+            && !self.database.allocations[src.store_nr as usize].is_locked()
             && !self.database.allocations[src.store_nr as usize].is_free_protected()
         {
             self.database.free(&src);
