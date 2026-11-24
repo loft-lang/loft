@@ -7,7 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**ACTIVE** — [loft-lang/plans#227](https://github.com/loft-lang/plans/issues/227).
+**Finished 2026-11-25**; it reaches `main` through loft#2634, and
+[loft-lang/plans#227](https://github.com/loft-lang/plans/issues/227) is closed.  The design is
+[THREADING.md](../THREADING.md) § the page the C backend builds and decision
+[C3](../DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially); this file is the record.
 
 | Phase | State |
 |---|---|
@@ -16,7 +19,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 | P2 | done: `loft_pool_start`, `loft_pool_run`, the dispatch in `loft_par_run` (`src/c/loft_keyed.h`) |
 | P3 | done: `loftCPool` (`doc/loft-thread.js`); copies before decodes (`loft-wasi.js`, `loft-deliver.js`, `loft-web.js`) |
 | P4 | done: `c_driver::WasmHost::ThreadedPage`, chosen in `--html` when the unit calls `loft_par_run` |
-| P5 | done locally; CI: the `browser-threads` workflow installs the sysroot |
+| P5 | done: `html-thread-proof.sh` passed all four claims on CI (loft#2634's second run: 4 workers, fallback and `--no-threads` correct, the matrix as the interpreter); the `browser-threads` job links the page with wasi-sdk's own clang (`make wasi-sdk`) |
 
 ## Goal
 
@@ -116,6 +119,12 @@ Done when `tests/wasm/html-thread-proof.sh` passes on the C page:
 - `tests/wasm/html-thread-proof.sh` builds the C page (it no longer needs nightly) and keeps its
   four claims.
 - The `browser-threads` workflow installs the threads sysroot (`make wasi-threads-sysroot`, cached).
+
+## Documentation
+
+- [x] Decision C3 (`DESIGN_DECISIONS_PLATFORM.md`), its record in `DESIGN_DECISIONS-history.md`.
+- [x] `THREADING.md` § the page the C backend builds; `WASM.md` and `HTML_EXPORT.md` § threads.
+- [x] `CHANGELOG.md`: a page runs `par` on Web Workers.
 
 ## Not in this plan
 

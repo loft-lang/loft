@@ -247,7 +247,7 @@ rayon thread through `loft_rayon_start_worker` (`src/wasm_threads.rs`, host half
 in `doc/loft-thread.js`).  Both browser bundles — `loft --html` and the
 wasm-bindgen gallery — link that same runtime.
 
-**A page the C backend builds** (@C3, [plans/227](plans/227-par-on-c-pages.md)) has no rayon:
+**A page the C backend builds** ([@C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)) has no rayon:
 its module is built for `wasm32-wasip1-threads`, and its threads are the WASI libc's
 (`pthread_create` → the page's `wasi.thread-spawn` → a Worker that instantiates the same module
 on the same memory).  The page starts them as a pool before the program runs

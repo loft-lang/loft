@@ -27,8 +27,8 @@ the last release with an Intel Mac bundle.
 gone, and compiling a loft program needs no Rust toolchain.  `--native-rust` and
 `LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`.  The second line of `loft --version`
 and the `loft test` summary name the C compiler a native build uses, or say there is none.  A page
-built with `--html` runs `par` on one thread, so `--threads` is refused there (`--no-threads` asks
-for what every page does).  `loft introspect --show-rust` and `--rust-out` and the REPL's `:rust`
+built with `--html` that runs `par` needs WASI's threads library to use more than one thread:
+`make wasi-threads-sysroot` installs it (see New).  `loft introspect --show-rust` and `--rust-out` and the REPL's `:rust`
 are gone: `--native-emit <file.c>` writes the C a program compiles to.  `loft cache warm` no longer
 takes `--runtime` or `--no-runtime`.
 
@@ -61,6 +61,13 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 (`qx = if … { … } else { … }`).
 
 ### New
+
+**A page runs `par` on Web Workers.**  A page built with `--html` whose program runs a `par` loop
+spreads it over a pool of Web Workers, started before the program runs, when the page is served
+cross-origin isolated (the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`
+headers).  Without them, or when the build finds no WASI threads library (`make
+wasi-threads-sysroot` installs one, and the build says when it is missing), every `par` runs on
+the page's own thread, with the same answers.  `--threads` and `--no-threads` force the choice.
 
 **Libraries run compiled, with no Rust toolchain.**  A library a program `use`s is compiled
 through C the first time it runs, and later runs pick the build up; the interpreter calls into
