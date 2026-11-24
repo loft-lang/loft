@@ -63,6 +63,7 @@ scripts/lib_audit.sh	--help
 scripts/lib_warning_scan.py	--help
 scripts/licence_census.py	--help
 scripts/lint_sweep.py	--help
+scripts/null_text_matrix.py	--help
 scripts/nullable_road.py	--help
 scripts/op_census.py	--help
 scripts/own_sweep.py	--help

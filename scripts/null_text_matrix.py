@@ -202,7 +202,7 @@ def main():
     d = Path(a.suite) / "rules/layout/L-Null-Text"
     d.mkdir(parents=True, exist_ok=True)
     for place, (decls, body) in PLACES.items():
-        (d / f"null-text-through-{place}.loft").write_text(cell(place, decls, body, pending))
+        (d / f"null-text-through-{place}.loft").write_text(cell(place, decls, body, pending), encoding="utf-8")
     print(f"{len(PLACES)} cells × {len(VALUES)} values in {d}")
 
 
