@@ -932,16 +932,39 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
 
 // `Parser::is_copied_place`: a value read out of a place — a variable, a text field read off one,
 // any projection rooted at a container variable — rather than built fresh.
-// Is `n` the block a `.map(…)` or `.filter(…)` call answers — a "Vector comprehension" ending
-// in its `_map_result_N` / `_filter_result_N`?
+// Is `n` the block a `.map(…)` or `.filter(…)` call over a LOCAL answers — a "Vector
+// comprehension" ending in its `_map_result_N` / `_filter_result_N`, its `_map_vec_N` /
+// `_filter_vec_N` set from a bare variable?  (Rust's result reaches `lower_vec_copy_bind` as a
+// copied place only then: a literal receiver, a call's, a slice's do not.)
 fn method_comprehension(vars: el_vars::Vars, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdBlock { block } => block[0].name == "Vector comprehension" && len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) {
-      NdVar { n: rv } => starts_with(el_vars::name_of(vars, rv), "_map_result") || starts_with(el_vars::name_of(vars, rv), "_filter_result"),
+      NdVar { n: rv } => (starts_with(el_vars::name_of(vars, rv), "_map_result") || starts_with(el_vars::name_of(vars, rv), "_filter_result")) && receiver_is_local(vars, block[0].operators),
       _ => false
     },
     _ => false
   }
+}
+
+// Is the comprehension's walked vector (`_map_vec_N` / `_filter_vec_N`) set from a bare local?
+fn receiver_is_local(vars: el_vars::Vars, ops: vector<ir::Node>) -> boolean {
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdSet { var: sv, inner } => {
+        snm = el_vars::name_of(vars, sv);
+        if starts_with(snm, "_map_vec") || starts_with(snm, "_filter_vec") {
+          return el_ir::unspan(inner) is NdVar;
+        }
+      },
+      NdInsert { items } => {
+        if receiver_is_local(vars, items) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
 }
 
 pub fn copied_place(e: el::El, n: ir::Node) -> boolean {
@@ -2091,7 +2114,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // (A `.map(…)` / `.filter(…)` answers its `_map_result_N` / `_filter_result_N` — a copied
   // place — so a vector bind of one is `lower_vec_copy_bind`'s copy: `copy_bound`.)
-  if op == "=" && v >= 0 && el_types::base(x.tp) is TyVector && method_comprehension(vars, x.code) {
+  // (The method spelling alone: `map(nums, f)` reaches the bind as a value, not a place.)
+  method_call = match e.p.nodes[rhs!] { SMember { call } => call, _ => false };
+  if op == "=" && v >= 0 && method_call && el_types::base(x.tp) is TyVector && method_comprehension(vars, x.code) {
     el_vars::mark_copy_bound(vars, v, "lower_vec_copy_bind");
   }
   if op == "=" {
