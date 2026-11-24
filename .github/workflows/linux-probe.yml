@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       filter:
-        description: 'cargo-nextest filterset, e.g. `binary(native) or binary(n2_cdylib)`.'
+        description: 'cargo-nextest filterset, e.g. `binary(native)`.'
         required: false
         default: ''
       run:
@@ -52,7 +52,7 @@ env:
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
   # The standing filter a push runs; a dispatch's `filter` replaces it.
   STANDING_FILTER: >-
-    binary(native) or binary(n2_cdylib) or binary(n3_use_native) or binary(native_loader)
+    binary(native) or binary(n3_use_native) or binary(native_loader)
     or binary(native_abi_contract) or binary(package_layout)
 
 jobs:

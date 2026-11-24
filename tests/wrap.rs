@@ -8,7 +8,6 @@ use loft::compile::byte_code;
 use loft::compile::show_code;
 use loft::data::Data;
 use loft::file_access as fa;
-use loft::generation::Output;
 #[cfg(debug_assertions)]
 use loft::log_config::LogConfig;
 use loft::parser::Parser;
@@ -38,25 +37,6 @@ use common::cached_default;
 /// (e.g. two `cargo test` invocations at once) is the caller's responsibility.
 static WRAP_LOCK: Mutex<()> = Mutex::new(());
 
-/// The `rustc` the toolchain proxy would run from this directory, resolved ONCE.  A rustup
-/// proxy pays its own start per call — 0.16 s of a 0.2 s attempt on a dev box — and
-/// `wasm_dir` spawns one per docs file, so the proxy alone was most of the test's time and
-/// the speed gate read it as a regression.  Without rustup the plain name is the answer.
-fn rustc_path() -> &'static str {
-    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| {
-        loft::platform::process::harness_command("rustup")
-            .args(["which", "rustc"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "rustc".to_string())
-    })
-}
-
 /// Files in `tests/docs/` that `dir` must not run.
 ///
 /// Empty, and staying empty is the point: every page the site publishes is a
@@ -69,158 +49,6 @@ fn rustc_path() -> &'static str {
 /// wrong place to solve that: a library's guide belongs in the library, where
 /// its own CI runs it.  Both moved out (@PLN149 step 9), and the list emptied.
 const SUITE_SKIP: &[&str] = &[];
-
-/// Docs files skipped in `--native-wasm` mode.  An entry carries the open issue
-/// that explains it and the condition that removes it (TESTING.md § Every skip
-/// says why, how it runs instead, and when it ends).
-const WASM_SKIP: &[&str] = &[
-    // (empty) `19-threading.loft` sat here as "the WASM threading model differs"
-    // long after it compiled and ran green under wasmtime.
-];
-
-/// Compile a `.loft` file to a WebAssembly binary via the loft codegen + rustc, then
-/// optionally run it with `wasmtime`.
-///
-/// Skips silently (returns `Ok`) if the `wasm32-wasip2` target is not installed or if
-/// `rustc` is not found.  Runs the wasm with `wasmtime` if it is in PATH; otherwise
-/// only verifies that compilation succeeds.
-fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
-    let stem = fa::file_stem(entry).unwrap_or_default().replace('-', "_");
-    println!("wasm  {entry:?}");
-
-    // Parse
-    let source = fa::read_to_string(entry)?;
-    let expected = expected_warnings(&source);
-    let (exp_errors, exp_ann_warns) = expected_annotations(&source);
-    let mut p = Parser::new();
-    let (data, db) = cached_default();
-    p.data = data;
-    p.data.limits = loft::limits::Limits::from_annotations(&source);
-    p.database = db;
-    // Honour `// @ARGS: --lib <dir>` — same logic as `run_test`.
-    p.lib_dirs
-        .extend(common::corpus::args_lib_dirs(&source, entry));
-    let start_def = p.data.definitions();
-    p.parse(&entry.to_string_lossy(), false);
-    for l in p.diagnostics.lines() {
-        println!("{l}");
-    }
-    // Run the check whenever the file DECLARES something, not only when the parser said
-    // something.  Gating on `!p.diagnostics.is_empty()` was the second way an expectation
-    // went inert: a file whose diagnostics disappeared entirely never reached
-    // `check_diagnostics`, so its `@EXPECT_ERROR` lines were not merely unmatched — they
-    // were never looked at (loft#929).
-    if !p.diagnostics.is_empty()
-        || !expected.is_empty()
-        || !exp_errors.is_empty()
-        || !exp_ann_warns.is_empty()
-    {
-        check_diagnostics(
-            &p.diagnostics.lines(),
-            &expected,
-            &exp_errors,
-            &exp_ann_warns,
-            true,
-        )?;
-    }
-    scopes::check(&mut p.data, &mut p.database);
-    let mut state = State::new(p.database);
-    byte_code(&mut state, &mut p.data);
-    let end_def = p.data.definitions();
-    let main_nr = p.data.def_nr("n_main");
-    let entry_defs: Vec<u32> = if main_nr < end_def {
-        vec![main_nr]
-    } else {
-        (start_def..end_def).collect()
-    };
-
-    // Generate Rust source
-    let tmp_rs = std::env::temp_dir().join(format!("loft_wasm_{stem}.rs"));
-    {
-        let mut f = fa::create(&tmp_rs)?;
-        let mut out = Output::new(&p.data, &state.database);
-        out.output_native_reachable(&mut f, start_def, end_def, &entry_defs)?;
-    }
-
-    // Compile for wasm32-wasip2
-    let tmp_wasm = std::env::temp_dir().join(format!("loft_wasm_{stem}.wasm"));
-    let mut cmd = loft::platform::process::harness_command(rustc_path());
-    cmd.arg("--edition=2024")
-        .arg("--target")
-        .arg("wasm32-wasip2")
-        .arg("--crate-type")
-        .arg("bin")
-        .arg("-O")
-        .arg("-o")
-        .arg(&tmp_wasm)
-        .arg(&tmp_rs);
-    // Look for a wasm32-wasip2 loft rlib next to the test binary's deps
-    // (only present if the user ran `cargo build --target wasm32-wasip2` first).
-    let wasm_rlib = std::env::current_exe().ok().and_then(|exe| {
-        // Walk up from target/debug/deps to target/, then into wasm32-wasip2/debug/
-        let target_dir = exe.parent()?.parent()?.parent()?;
-        let rlib_dir = target_dir.join("wasm32-wasip2").join("debug");
-        fa::read_dir(&rlib_dir)
-            .ok()?
-            .into_iter()
-            .find(|e| {
-                let s = e.file_name().unwrap_or_default();
-                s.starts_with("libloft") && s.ends_with(".rlib")
-            })
-            .map(|e| (e.os_spelling(), rlib_dir))
-    });
-    if let Some((rlib, deps_dir)) = wasm_rlib {
-        cmd.arg("--extern")
-            .arg(format!("loft={}", rlib.display()))
-            .arg("-L")
-            .arg(&deps_dir);
-    }
-    let compile_out = cmd.output();
-    let _ = fa::remove_file(&tmp_rs);
-    let compile_out = match compile_out {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("  rustc not found — skipping wasm test for {stem}");
-            return Ok(());
-        }
-        Err(e) => return Err(e),
-    };
-    if !compile_out.status.success() {
-        let stderr = String::from_utf8_lossy(&compile_out.stderr);
-        // wasm32-wasip2 target not installed → skip gracefully
-        if stderr.contains("target may not be installed") || stderr.contains("can't find crate") {
-            println!("  wasm32-wasip2 target or loft wasm rlib not available — skipping {stem}");
-            let _ = fa::remove_file(&tmp_wasm);
-            return Ok(());
-        }
-        eprintln!("rustc (wasm) failed for {stem}:\n{stderr}");
-        let _ = fa::remove_file(&tmp_wasm);
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-
-    // Run with wasmtime if available
-    match loft::platform::process::harness_command("wasmtime")
-        .arg(&tmp_wasm)
-        .status()
-    {
-        Ok(s) => {
-            let _ = fa::remove_file(&tmp_wasm);
-            if !s.success() {
-                eprintln!("wasmtime failed for {stem} (exit {:?})", s.code());
-                return Err(Error::from(std::io::ErrorKind::Other));
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("  wasmtime not found — compiled ok, skipping run for {stem}");
-            let _ = fa::remove_file(&tmp_wasm);
-        }
-        Err(e) => {
-            let _ = fa::remove_file(&tmp_wasm);
-            return Err(e);
-        }
-    }
-    Ok(())
-}
 
 /// Run every `.loft` file in `tests/docs/` in alphabetical order, skipping
 /// files listed in `SUITE_SKIP` (known broken; tracked as open issues).
@@ -358,33 +186,6 @@ fn reference() -> std::io::Result<()> {
             continue;
         }
         run_test(entry, false, true)?;
-    }
-    Ok(())
-}
-
-/// Compile every `.loft` file in `tests/docs/` to WebAssembly (wasm32-wasip2),
-/// skipping files listed in `WASM_SKIP`.
-///
-/// Skips silently if `rustc` is not in PATH or the `wasm32-wasip2` target is not
-/// installed.  Runs the resulting `.wasm` with `wasmtime` if it is in PATH; otherwise
-/// only verifies compilation succeeds.
-// @speed 1.2
-#[test]
-fn wasm_dir() -> std::io::Result<()> {
-    let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
-        .into_iter()
-        .map(|e| e.os_spelling())
-        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-        .collect();
-    files.sort();
-    for entry in files {
-        let name = fa::file_name(&entry).unwrap_or_default();
-        if WASM_SKIP.contains(&name.as_str()) {
-            println!("skip {entry:?} (wasm skip list — see WASM_SKIP)");
-            continue;
-        }
-        run_wasm_test(&entry)?;
     }
     Ok(())
 }

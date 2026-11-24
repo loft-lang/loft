@@ -371,7 +371,7 @@ jobs:
       #
       #    Shard 2 had LESS work and took LONGER.  Parallelism is a property of the
       #    TEST MIX, not of the runner: splitting scattered the single-slot
-      #    `heavy-serial` group (n2_cdylib, n3_parity, n3_use_native, multiplayer_v2/v3,
+      #    `heavy-serial` group (n3_parity, n3_use_native, multiplayer_v2/v3,
       #    wasm_debug_relay — see .config/nextest.toml) across shards while `native`,
       #    its biggest member, went to the other one.  The shard left holding the most
       #    serial constraints and the least work became the long pole.  Net result:
@@ -1348,7 +1348,7 @@ jobs:
       - name: Native suites, static link
         run: >
           cargo nextest run --profile ci --no-fail-fast
-          -E '(binary(native) or binary(n2_cdylib) or binary(n3_use_native) or binary(n3_parity)) and not test(/native_scripts_/)'
+          -E '(binary(native) or binary(n3_use_native) or binary(n3_parity)) and not test(/native_scripts_/)'
 
   # Doc-index hygiene (plan-37) — `make index` + broken `@`-tag / markdown-link
   # checks.  Extracted from the per-platform `Test` job because it is whole-repo

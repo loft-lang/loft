@@ -141,21 +141,22 @@ Decided 2026-07-15, amended 2026-09-25 — [record](DESIGN_DECISIONS-history.md#
 
 ## C102 — a release binary says nothing when it falls back to the interpreter
 
-**Decision.** A run without a usable `rustc` falls back to the interpreter silently; the
+**Decision.** A run without a usable C compiler falls back to the interpreter silently; the
 explanation prints only when native was explicitly asked for (`--native`), and stays in `--help`
 and the release `QUICKSTART.md`.  Every fallback still records `native_fallback_reason`, which
-`LOFT_REQUIRE_NATIVE=1` turns into a hard error.  A source checkout without `rustc` still explains
-itself, because there the message is actionable.  The developer's own moments name a missing
-`rustc` instead of staying silent: the second line of `loft --version`, the `loft test` summary
-(which otherwise suggests `loft test --native`), and the next steps of `loft new --native`.
-**Why.** Someone who downloaded a release chose
-not to install a toolchain, so "install Rust and rebuild" on a run that succeeds is noise, not a
-warning; gating on a per-user marker file was rejected because a fresh container has no `~/.loft`.
+`LOFT_REQUIRE_NATIVE=1` turns into a hard error.  A source checkout without a C compiler still
+explains itself, because there the message is actionable.  The developer's own moments name a
+missing C compiler instead of staying silent: the second line of `loft --version`
+(`c_driver::native_toolchain`) and the `loft test` summary (which otherwise suggests `loft test
+--native`).  **Why.** Someone who downloaded a release chose not to install a toolchain, so
+"install a compiler" on a run that succeeds is noise, not a warning; gating on a per-user marker
+file was rejected because a fresh container has no `~/.loft`.
 
-**Revisit when.** No trigger recorded.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
-**Holds at:** `src/main.rs`'s fallback arms; `native_lib::NO_RUSTC`;
-`tests/exit_codes.rs::a_missing_rustc_falls_back_quietly_except_where_asked` and
-`::a_missing_rustc_is_named_where_the_developer_looks`.
+**Revisit when.** No trigger recorded.  Decided 2026-07-24 for `rustc`; the native toolchain is the
+C compiler since the rustc writer retired (`@C170`) — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
+**Holds at:** `src/main.rs`'s fallback arm (`BuildError::NoCompiler`); `c_driver::native_toolchain`;
+`tests/exit_codes.rs::a_missing_c_compiler_falls_back_to_the_interpreter_unless_native_is_required`
+and `::a_missing_c_compiler_is_named_where_the_developer_looks`.
 
 ## C106 — `#c` has ONE arity ceiling for both backends, and it was raised rather than lowered
 

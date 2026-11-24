@@ -1672,15 +1672,63 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-/// @C102 — the moments that belong to a developer name a missing `rustc`, while a program run
-/// stays silent (the test above): `loft --version` says which toolchain native would use, the
-/// `loft test` summary names what would let it exercise native (not `loft test --native`,
-/// which cannot help there); `loft new --native` scaffolds a C part and names no rustc.  `PATH`
-/// is an empty directory, so `rustc` is not found.  The control cells run where this machine has
-/// a `rustc` on its real `PATH` — each must then NOT name the missing tool, or a message that
-/// always prints would pass.
+/// @C102 — no C compiler never stops a run: `--native` interprets instead and says why (native
+/// was asked for), with the program's own answer; `LOFT_REQUIRE_NATIVE=1` turns the fallback into
+/// a refusal.  `PATH` is an empty directory and `CC`/`LOFT_CC` are unset.
 #[test]
-fn a_missing_rustc_is_named_where_the_developer_looks() {
+fn a_missing_c_compiler_falls_back_to_the_interpreter_unless_native_is_required() {
+    let tmp = std::env::temp_dir().join(format!("loft_c102_fb_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let empty = tmp.join("empty");
+    fa::create_dir_all(&empty).expect("empty PATH dir");
+    let prog = tmp.join("p.loft");
+    fa::write(&prog, "fn main() { println(\"answer {6 * 7}\"); }\n").expect("program");
+    let run = |require: bool| {
+        let mut c = loft::platform::process::harness_command(loft_bin());
+        c.arg("--native")
+            .arg(&prog)
+            .current_dir(&tmp)
+            .env("PATH", empty.as_os_str())
+            .env_remove("CC")
+            .env_remove("LOFT_CC")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120");
+        if require {
+            c.env("LOFT_REQUIRE_NATIVE", "1");
+        }
+        c.output().expect("run loft")
+    };
+    let out = run(false);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        out.status.success() && stdout.contains("answer 42"),
+        "--native without a C compiler still answers\n{stdout}{stderr}"
+    );
+    assert!(
+        stderr.contains("running interpreted instead"),
+        "--native asked for native, so the fallback says why\n{stderr}"
+    );
+    let required = run(true);
+    assert!(
+        !required.status.success(),
+        "LOFT_REQUIRE_NATIVE=1 refuses the fallback\n{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+/// @C102 — the moments that belong to a developer name a missing C compiler, while a program
+/// run stays silent (the test above): `loft --version` says which toolchain native would use,
+/// and the `loft test` summary names what would let it exercise native (not `loft test
+/// --native`, which cannot help there); `loft new --native` scaffolds a C part and adds no
+/// toolchain line.  `PATH` is an empty directory and `CC`/`LOFT_CC` are unset, so no C compiler
+/// runs.  The control cells run where this machine has one on its real `PATH` — each must then
+/// NOT name the missing tool, or a message that always prints would pass.
+#[test]
+fn a_missing_c_compiler_is_named_where_the_developer_looks() {
     let tmp = std::env::temp_dir().join(format!("loft_c102_dev_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
     let empty = tmp.join("empty");
@@ -1693,22 +1741,24 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
     )
     .expect("test file");
     let real_path = std::env::var_os("PATH").unwrap_or_default();
-    let have_rustc = loft::platform::process::harness_command("rustc")
+    let have_cc = loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
-    let run = |args: &[&str], cwd: &std::path::Path, no_rustc: bool| {
+    let run = |args: &[&str], cwd: &std::path::Path, no_cc: bool| {
         let mut c = loft::platform::process::harness_command(loft_bin());
         c.args(args)
             .current_dir(cwd)
             .env(
                 "PATH",
-                if no_rustc {
+                if no_cc {
                     empty.as_os_str()
                 } else {
                     real_path.as_os_str()
                 },
             )
+            .env_remove("CC")
+            .env_remove("LOFT_CC")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TIMEOUT", "120");
         let out = c.output().expect("run loft");
@@ -1718,7 +1768,7 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
             String::from_utf8_lossy(&out.stderr)
         )
     };
-    let hint = loft::native_lib::NO_RUSTC;
+    let hint = "no C compiler";
 
     let version = run(&["--version"], &tmp, true);
     let mut lines = version.lines();
@@ -1726,10 +1776,11 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
         lines.next().is_some_and(|l| l.starts_with("loft ")),
         "--version: the first line is still the version alone\n{version}"
     );
-    assert_eq!(
-        lines.next(),
-        Some(format!("native: {hint}").as_str()),
-        "--version: the second line names the missing rustc\n{version}"
+    assert!(
+        lines
+            .next()
+            .is_some_and(|l| l.starts_with("native: ") && l.contains(hint)),
+        "--version: the second line names the missing C compiler\n{version}"
     );
 
     let suite_s = suite.to_str().expect("utf-8 temp path");
@@ -1737,39 +1788,29 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
     assert!(
         tested.contains(&format!("native not exercised: {hint}"))
             && !tested.contains("loft test --native"),
-        "loft test: the summary names the missing rustc, not a command that cannot help\n{tested}"
+        "loft test: the summary names the missing C compiler, not a command that cannot help\n{tested}"
     );
 
-    // @PLN225 — `loft new --native` scaffolds a C part, which needs no rustc: no rustc line.
+    // `loft new --native` scaffolds a C part; its next steps add no toolchain line.
     let created = run(&["new", "--native", "c102lib"], &tmp, true);
     assert!(
         created.contains("c/c102lib.c") && !created.contains(hint),
-        "loft new --native: a C part, and no rustc line\n{created}"
-    );
-    let plain = run(&["new", "c102plain"], &tmp, true);
-    assert!(
-        plain.contains("Next steps:") && !plain.contains(hint),
-        "loft new without --native has no Rust to build: no rustc line\n{plain}"
+        "loft new --native: a C part, and no toolchain line\n{created}"
     );
 
-    if have_rustc {
+    if have_cc {
         let version = run(&["--version"], &tmp, false);
         assert!(
             version
                 .lines()
                 .nth(1)
-                .is_some_and(|l| l.starts_with("native: rustc ")),
-            "control: with rustc, --version names it\n{version}"
+                .is_some_and(|l| l.starts_with("native: ") && !l.contains(hint)),
+            "control: with a C compiler, --version names it\n{version}"
         );
         let tested = run(&["--tests", suite_s], &tmp, false);
         assert!(
             tested.contains("native not exercised: loft test --native") && !tested.contains(hint),
-            "control: with rustc, the summary points at loft test --native\n{tested}"
-        );
-        let created = run(&["new", "--native", "c102lib2"], &tmp, false);
-        assert!(
-            created.contains("Next steps:") && !created.contains(hint),
-            "control: with rustc, loft new --native has nothing to add\n{created}"
+            "control: with a C compiler, the summary points at loft test --native\n{tested}"
         );
     }
     let _ = fa::remove_dir_all(&tmp);

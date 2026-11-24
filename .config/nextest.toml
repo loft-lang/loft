@@ -116,7 +116,7 @@ html-wasm-serial = { max-threads = 1 }
 # it is which chain is CRITICAL:
 #
 #   serial chain, all 7 members (macOS):  288s  [native 240 + n3_parity 20 +
-#                                                n3_use_native 14 + n2_cdylib 9 +
+#                                                n3_use_native 14 +
 #                                                relay 5 + v2/v3 <1]
 #   general pool:                        ~1662s at ~2 effective threads ≈ 831s
 #
@@ -173,7 +173,7 @@ filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir)
 test-group = '@global'
 
 [[profile.default.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native)'
+filter = 'binary(native) + binary(n3_parity) + binary(n3_use_native)'
 test-group = 'heavy-wide'
 
 [[profile.default.overrides]]
@@ -204,7 +204,7 @@ filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir)
 test-group = '@global'
 
 [[profile.ci.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native)'
+filter = 'binary(native) + binary(n3_parity) + binary(n3_use_native)'
 test-group = 'heavy-wide'
 
 # No per-test raise for the corpus runners: `loft_suite` and `native_scripts` are CHUNKED
@@ -291,7 +291,7 @@ filter = 'binary(html_wasm)'
 test-group = 'html-wasm-serial'
 
 [[profile.sanitizer.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
+filter = 'binary(native) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
 # @PLN-speed — the profile `scripts/test_speed.py` runs under.
@@ -360,5 +360,5 @@ filter = '(binary(native) & (test(/^native_scripts_[0-9]+$/) | test(=native_dir)
 test-group = '@global'
 
 [[profile.fast.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
+filter = 'binary(native) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-wide'
