@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function answering a `match` whose arms are its parameter and a call for a
+// fresh record (recursive, or declared above) borrows the parameter on pass 1, as Rust's does.
+// Prints: 3 7 7
+
+enum N { A, Sp { inner: N }, I { n: integer }, V { n: integer } }
+fn un(n: N) -> N { match n { Sp { inner } => un(inner), _ => n } }
+fn fresh(k: integer) -> N { V { n: k } }
+fn a1(n: N) -> N { match n { Sp { inner: _ } => fresh(7), _ => n } }
+fn a2(n: N) -> N { match n { Sp { inner: _ } => later(7), _ => n } }
+fn later(k: integer) -> N { I { n: k } }
+fn var_of(n: N) -> integer { match un(n) { V { n: nr } => nr, _ => -1 } }
+fn val(n: N) -> integer { match n { V { n: v } => v, I { n: v } => v, _ => -1 } }
+fn main() { println("{var_of(Sp { inner: V { n: 3 } })} {val(a1(Sp { inner: A }))} {val(a2(Sp { inner: A }))}"); }
