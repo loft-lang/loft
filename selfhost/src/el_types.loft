@@ -1308,6 +1308,7 @@ pub fn type_key_name(e: el::El, t: ir::TypeT) -> text {
     TyReference { n } => if n >= 0 && type_var(e, t) < 0 && el::def(e, n).def_type != el::DT_ENUM_VALUE { el::def(e, n).name } else { "" },
     TyEnum { n } => if n >= 0 && type_var(e, t) < 0 { el::def(e, n).name } else { "" },
     TyVector { inner } => if is_unknown(inner) { "vector" } else { n = type_key_name(e, inner); if n == "" { "" } else { "vector<{n}>" } },
+    TyIterator { step } => { n = type_key_name(e, step); if n == "" { "" } else { "iterator<{n}>" } },
     TyTuple { elems } => {
       parts: vector<text> = [];
       for m in elems {

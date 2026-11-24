@@ -824,6 +824,24 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SLambda { at: _ } => el_ex_closure::lambda_expr(e, vars, n),
     SDestructure { places, e: de } => el_ex_object::destructure_assign(e, vars, places, de),
     SParallel { items } => el_ex_pattern::parallel_expr(e, vars, items),
+    // `parse_vector_parse` (`vector<T>.parse(text)`): refused, but its text is read and the
+    // element's `vector<T>` / `main_vector<T>` registered past the `)` first, as Rust's
+    // `vector_def` does on both passes — every later definition keeps Rust's number.
+    SVectorParse { at: vpa, elem: vpe, args: vpargs } => {
+      for vpx in vpargs {
+        _ = expression(e, vars, vpx);
+      }
+      vpd = el::def_nr(e, vpe);
+      if vpd >= 0 {
+        vpt = if el::def(e, vpd).def_type == el::DT_STRUCT { ir::TyReference { n: vpd, dep: [] } } else { el_types::without_deps(el::def(e, vpd).returned[0] ?? ir::TyUnknown { n: 0 }) };
+        vpn = el_types::elem_name(e, vpt);
+        if vpn != "" && el::def_nr(e, "main_vector<{vpn}>") < 0 {
+          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el_ex_object::past_call(e, vpa)), true);
+        }
+      }
+      el::refuse(e, "an expression form: {syn_kind(e, n)}");
+      ex(ir::NdNull, ir::TyUnknown { n: 0 })
+    },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })

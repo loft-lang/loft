@@ -2279,6 +2279,8 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
       if n == "" { n = registration_name(e, inner); }
       if n == "" { "" } else { "vector<{n}>" }
     },
+    // (A generator handle, which `elem_name` does not spell: `iterator<…>`.)
+    TyIterator { step: _ } => el_types::type_key_name(e, t),
     _ => el_types::elem_name(e, t)
   }
 }
