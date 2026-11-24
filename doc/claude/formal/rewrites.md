@@ -295,7 +295,6 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
 | `(R-StickySum)` | `R-StickySum` c |
-| `(R-StreamWalk)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-TableHandle)` | `R-TableHandle` c |
 | `(R-Tabulate)` | `R-Tabulate` c |
@@ -311,7 +310,6 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-VecCopy)` | `R-VecCopy` ir |
 | `(R-Version)` | `R-Version` c · `/nest` c |
 | `(R-View)` | `R-View` c |
-| `(R-ViewReturn)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-WorkBuffer)` | `R-WorkBuffer` parse · `/onward` parse · `/result` parse |
 | `(R-WorkPark)` | `R-WorkPark` c |
 | `(R-WorkView)` | not counted — unbuilt: no code; the C's (R-TextBorrow) format clause covers the shape |
@@ -4236,54 +4234,6 @@ header write, every store-content replacement classified; the writer's sharing p
 `src/c/body/table_handle.rs` (`places`, `FnWriter::table_handle`), the four emission sites in
 `src/c/body/keyed.rs`, `loft_hh` in `src/c/loft_hash.h`, `loft_h_reshaped` in
 `src/c/loft_store.h`.  Design: `bench/portal/analysis/table-handle.md`.
-
-### A vector its caller walks once is never built
-
-```
-  (R-StreamWalk)  `v = P(a…); for i in 0..len(v) { … }` — a call of a function P that
-                  answers `vector<T>` for a record T, bound to a local that the next
-                  statement mentioning it walks once by index — runs as P's STREAM TWIN
-                  with the walk's body as its closure: P's own body runs, and each append
-                  it would have made hands the values it would have stored in the fields
-                  the body reads to the body, at that append.  No vector, no record and no
-                  text of an element is built.  Admitted when: P's result vector is
-                  mentioned only by its buffer's plumbing, by its appends (a mint, a set of
-                  each field from a value, a finish) and by `return`; every field the body
-                  reads is set by every append and is an `integer`, `float`, `single` or
-                  `text`, whose round trip through the store answers the value stored; the
-                  body mentions the vector, the index and the element only as `v[i]?` read
-                  for a field; nothing in it leaves the walk (`break`, `continue`,
-                  `return`, `yield`); P and the body are QUIET — every write lands in a
-                  place the function owns (a local borrowing only what it owns, a buffer
-                  it is handed to write), every call is of a quiet function, every
-                  function value dispatches only to quiet functions without captures; and
-                  neither the body nor a statement between the call and the walk writes a
-                  variable the call reads or a local borrowing from one.  The local is
-                  otherwise mentioned only by its null init and frees.  Native release
-                  build only.
-```
-
-**In words.** The plain form runs P to its end — a buffer refilled, a record claimed and a
-text copied in per element — and then reads each element back once.  The twin interleaves
-P's steps with the body's, which can change a value only if one side sees the other's
-progress.  P is quiet, so it reports, prints and writes nothing the body can read; the
-body is quiet and writes nothing the call reads, so P reads at each step what it would
-have read before the body ever ran — and P reaches data only through its arguments, which
-is why the arguments and every view of them are what the body must leave alone.  The
-values handed over are the values the append would have stored, and each admitted field
-kind reads back what was stored, so the body reads the same values in the same order.  A
-field the body does not read is not handed over, so the twin need not compute it.  The
-call moves down to the walk, past statements that write nothing it reads.  The twin is
-emitted without loop hoists, since a header it held across its loop would not survive a
-body that grows a store.
-
-**BUILT** (`generation::stream_walk` the plan, `generation::stream_walk_emit` the twins and
-the walks; `LOFT_NO_STREAM_WALK=1`, `LOFT_TRACE_STREAM_WALK=1`).  zttext's
-`flow_layout_full` (`slice_runs` walked by `token_width` and twice by `place_line`):
-**4.60× → 2.98× of Rust**, hash unchanged.  Not admitted yet: a walk by `for e in v`, a
-narrow integer, enum, boolean or character field, a body that reads the index, a walk
-that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft`
-(`@falsify-tier: ship`), pin `tests/stream_walk.rs`.
 
 ### A keyed insert writes the entry its key names
 
@@ -8485,43 +8435,6 @@ dispatch's tuple mode in `emit.rs`; `fnref::dispatch_arms` narrowed to the recor
 `value_record::rewrite_program` leaves the arms; `LOFT_NO_FNREF_VALUE`, `LOFT_TRACE_VALUEREC`;
 guard `loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
 `bench/portal/analysis/over-9x.md` § zttext).
-
-### A lookup's found entry is answered as a view the caller reads in place
-
-```
-  (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
-                 that the parser materialises (a buffer minted, V deep-copied into it
-                 — `return e.value` for `e` an element of a parameter's vector) is
-                 given a TWIN that answers (address, owned): a materialised exit
-                 answers V's address and `false`, every other exit the store it
-                 built and `true`.  A call takes the twin, and its caller mints no
-                 buffer and frees the result only when owned, when ALL of:
-                 (1) F writes no store but those it minted itself, calls no user
-                     function, and names its buffer only in its materialised exits;
-                 (2) the call's arguments are variables or reads — the stores V
-                     lies in are held by the caller across the call's statement;
-                 (3) the WINDOW — the statements after the call in its block —
-                     writes no store and calls no user function, and reads the
-                     result only through getters that copy (a tag, a scalar, a
-                     text);
-                 (4) the result's variable is bound once and named only in the
-                     window; the buffer only in its prep, the call and its frees.
-                 Every exit keeps the ownership it had, so a built result (a
-                 not-found literal) is freed as before.
-```
-
-**In words.**  `(R-ReturnField)` answers a field of an OWNED local as its store at a position
-and declines a parameter, because a view of a parameter's record dangles the moment the
-caller frees or grows that record.  Here the referent is the caller's own argument and the
-result is read only in the statements right after the call, which change nothing, so the
-dangling window is empty by construction.  The twin decides per call site, so a caller that
-holds the result longer, or writes in between (the guard's `text_then_clear`), keeps the
-copy.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy and
-its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
-ownership question it raised is settled by @C122 and @C139: a representation is the
-compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
-`LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
-`src/generation/view_return.rs`; guard `loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft`.
 
 ### A decoded text or byte string is a view into the frame
 

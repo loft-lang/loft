@@ -4,14 +4,14 @@
 
 //! The WHOLE-PROGRAM plan (@PLN200 B3.1): the decisions a compiled target makes once per
 //! program, because each asks every call site — which records return by value
-//! (`@FR-R-ValueRecord`), which locals keep their fields apart (`@FR-R-Apart`), which views
-//! decode in place (`@FR-R-DecodeView`) and which vectors stream (`@FR-R-StreamWalk`).  An
+//! (`@FR-R-ValueRecord`), which locals keep their fields apart (`@FR-R-Apart`) and which views
+//! decode in place (`@FR-R-DecodeView`).  An
 //! emitter computes it with [`plan_program`] before the first function and reads it while it
 //! writes; the Rust writer holds it as `Output::plan`.
 
 use crate::data::{Data, Value};
 use crate::database::Stores;
-use crate::lower::{apart_records, apart_value, decode_structure, decode_view, stream_walk};
+use crate::lower::{apart_records, apart_value, decode_structure, decode_view};
 use crate::opt::value_records::layout::ValueRecords;
 use crate::opt::value_records::{dead_buffers, value_records};
 use std::collections::{HashMap, HashSet};
@@ -33,11 +33,9 @@ pub struct ProgramPlan {
     pub dv: decode_view::DvPlan,
     /// `@FR-R-DecodeView`'s structure clause, over the region [`Self::dv`] admitted.
     pub ps: decode_structure::PsPlan,
-    /// `@FR-R-StreamWalk`: the vectors a caller walks once, streamed.
-    pub sw: stream_walk::SwPlan,
 }
 
-/// Plan `data`'s program.  `reachable` is the set the emitter writes; `library` is a
+/// Plan `data`'s program.  `library` is a
 /// library artifact's generation, whose dispatches can end in a call back to the interpreter;
 /// `emit_live` is a build that ships the live tier, which keeps every call on the function a
 /// flip reaches and so takes none of the twin plans.
@@ -45,7 +43,6 @@ pub struct ProgramPlan {
 pub fn plan_program(
     data: &Data,
     stores: &Stores,
-    reachable: &HashSet<u32>,
     library: bool,
     emit_live: bool,
 ) -> ProgramPlan {
@@ -111,8 +108,6 @@ pub fn plan_program(
         // `@FR-R-DecodeView`'s structure clause rides on the region the view clause
         // admitted: its roots, its frame parameters and its view types.
         plan.ps = decode_structure::plan(data, stores, &plan.dv);
-        // `@FR-R-StreamWalk` — a vector its caller walks once, streamed.
-        plan.sw = stream_walk::plan(data, reachable);
     }
     plan
 }

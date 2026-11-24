@@ -1689,7 +1689,7 @@ impl Parser {
         };
         // A producer whose result depends on one of its own parameters answers a VIEW of it
         // (`fn item(b: Bag, i: integer) -> Item { b.items[i]! }`): it builds nothing, and the
-        // copy a call of it may cost is the call's (`(R-ViewReturn)`), paid however the caller
+        // copy a call of it may cost is the call's, paid however the caller
         // reads the result — answering the record once does not remove it.
         let library_producer = |g: u32| -> bool {
             let def = data.def(g);
