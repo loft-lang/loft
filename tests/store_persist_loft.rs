@@ -2173,31 +2173,39 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         }
         let base = base.expect("five representations");
 
-        // The controls for the claim above.  Negative: same order, same seed,
-        // the same live bytes — so the harness is deterministic and the differences
-        // below are attributable rather than noise.
-        assert!(
-            !images[0].is_empty(),
-            "{backend}: the persist printed no live digest"
-        );
-        assert_eq!(
-            images[0], images[1],
-            "{backend}: two identical runs must store identical live bytes, or \
-             nothing measured here can be attributed to anything"
-        );
-        // Positive: each lever really does reach the stored bytes, so the
-        // invariance above is a statement about data surviving a CHANGED
-        // representation — not about nothing having changed.
-        for (i, lever) in [
-            (2, "insertion order"),
-            (3, "insertion order"),
-            (4, "the bucket seed"),
-        ] {
-            assert_ne!(
-                images[0], images[i],
-                "{backend}: {lever} did not reach the stored live bytes, so the \
-                 digest's invariance across it proves nothing"
+        // The controls for the claim above, read off the live digest — the
+        // interpreter's instrument (`Stores::live_digest`; the C writes no such line,
+        // DEBUG_STORES.md).  The levers are the script's and the layout is the one
+        // both runtimes write (the C's five images measured byte-equal to the
+        // interpreter's), so the C leg keeps the invariance, the injuries and the
+        // round trip, and the controls are taken where the instrument is.
+        if backend == "--interpret" {
+            // Negative: same order, same seed, the same live bytes — so the harness
+            // is deterministic and the differences below are attributable rather
+            // than noise.
+            assert!(
+                !images[0].is_empty(),
+                "{backend}: the persist printed no live digest"
             );
+            assert_eq!(
+                images[0], images[1],
+                "{backend}: two identical runs must store identical live bytes, or \
+                 nothing measured here can be attributed to anything"
+            );
+            // Positive: each lever really does reach the stored bytes, so the
+            // invariance above is a statement about data surviving a CHANGED
+            // representation — not about nothing having changed.
+            for (i, lever) in [
+                (2, "insertion order"),
+                (3, "insertion order"),
+                (4, "the bucket seed"),
+            ] {
+                assert_ne!(
+                    images[0], images[i],
+                    "{backend}: {lever} did not reach the stored live bytes, so the \
+                     digest's invariance across it proves nothing"
+                );
+            }
         }
 
         // Each injury must move the numbers — the proof the digest can fail.
