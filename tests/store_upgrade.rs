@@ -2292,3 +2292,60 @@ fn cell_a_qualified_type_whose_field_changed_is_still_refused() {
         );
     }
 }
+
+/// `@FR-L-Null-Text` × `@FR-S-Format` — an image written while a null text was stored as a
+/// record holding one NUL byte still reads every such slot as null.  The image is
+/// `tests/golden/images/null-text-n0` (`tests/golden/images/null-text.loft`): a nullable and a
+/// plain field, a nested field, a vector element and a hash, sorted and index key, each null,
+/// beside `""` and a present text — seven NUL records, one per place.  Read whole, on the
+/// interpreter and on the C:
+///   fields, element    -> `N N '' 'a' N 7 | 'a' N ''`
+///   hash lookups       -> the null key finds 1, `""` 2, `b` 3
+///   sorted and index   -> walked null first: `N '' 'b'`
+/// and the reading leaves the image's bytes as they were.
+#[test]
+fn cell_an_image_holding_the_nul_record_reads_null() {
+    let images =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/images/null-text-n0");
+    let reader = r#"struct NT { k: text, v: integer }
+struct NS { k: text, v: integer }
+struct NI { k: text, v: integer }
+struct NInner { t: text?, n: integer }
+struct NRoot {
+  opt: text?, plain: text, empty: text, here: text, inner: NInner,
+  elems: vector<text?>, h: hash<NT[k]>, s: sorted<NS[k]>, i: index<NI[k]>
+}
+fn show(t: text?) -> text { if t == null { "N" } else { "'" + t + "'" } }
+fn main() {
+  e = "";
+  r = NRoot { opt: e, plain: e, empty: e, here: e, inner: NInner { t: e, n: 0 }, elems: [], h: [], s: [], i: [] };
+  if !store_load(r, "a.store") { println("not loaded"); return; }
+  nt: text? = null;
+  b = "b";
+  out = "{show(r.opt)} {show(r.plain)} {show(r.empty)} {show(r.here)} {show(r.inner.t)} {r.inner.n} |";
+  for x in r.elems { out += " {show(x)}"; }
+  out += " | {r.h[nt].v ?? -1}{r.h[e].v ?? -1}{r.h[b].v ?? -1} |";
+  for x in r.s { out += " {show(x.k)}"; }
+  out += " |";
+  for x in r.i { out += " {show(x.k)}"; }
+  println(out);
+}
+"#;
+    let expect = "N N '' 'a' N 7 | 'a' N '' | 123 | N '' 'b' | N '' 'b'\n";
+    let dir = cell_dir("nul_record");
+    for name in ["root.store", "root.store.dschema"] {
+        let to = name.replacen("root", "a", 1);
+        loft::file_access::write(dir.join(to), loft::file_access::read(images.join(name)).unwrap())
+            .unwrap();
+    }
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    for mode in [&["--interpret"][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(code == 0 && out == expect, "{mode:?}: ({code})\n{out}\n{err}");
+    }
+    assert!(store_bytes(&dir) == before, "reading the image changed it");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
