@@ -966,6 +966,20 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   // The first pass's `if` is a placeholder: its arms are read off the syntax.
   // An arm may answer a whole vector parameter too (`materialize_vector_arms_into`): copied
   // into the buffer where the arm ends, the body borrowing the parameters its arms answer.
+  // (A `match` tail is a `scalar_match` block ending in its `if` chain: on the second pass the
+  // chain's arms are delivered as an `if` tail's, the block kept around them.)
+  mwrap: ir::Block? = null;
+  if !e.first_pass && !param {
+    match tail {
+      NdBlock { block: mtb } => {
+        if mtb[0].name == "scalar_match" && len(mtb[0].operators) > 0 && el_ir::unspan(mtb[0].operators[-1]!) is NdIf {
+          mwrap = mtb[0];
+          tail = el_ir::unspan(mtb[0].operators[-1]!);
+        }
+      },
+      _ => {}
+    }
+  }
   arms = !param && (if e.first_pass { syntax_deliverable_arms(e, vars, tail_syntax(e, vars.body)) } else { tail is NdIf && deliverable_arms(e, vars, tail) });
   if !param && !arms {
     return null;
@@ -1065,8 +1079,16 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   // parameter, which a call arm already builds into and a local arm is.)
   vb = el_ex_null::vector_buffer(e, vars);
   dbuf = if vb >= 0 && vb != rb { vb } else { rb };
-  bl.operators[-1] = deliver_arms(e, vars, tail, dbuf, rec);
+  delivered = deliver_arms(e, vars, tail, dbuf, rec);
   answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
+  if mwrap != null {
+    mb = mwrap!;
+    // (The block keeps the type its join gave it, the arms' own store named: Rust's does.)
+    mb.operators[-1] = el_ir::respan(mb.operators[-1]!, delivered);
+    bl.operators[-1] = el_ir::respan(bl.operators[-1], ir::NdBlock { block: [mb] });
+  } else {
+    bl.operators[-1] = delivered;
+  }
   bl.result = [if result is TyOptional { ir::TyOptional { inner: answered } } else { answered }];
   ir::NdBlock { block: [bl] }
 }

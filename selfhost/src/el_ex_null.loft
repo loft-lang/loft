@@ -1604,7 +1604,15 @@ pub fn int_arm_union(e: el::El, a: ir::TypeT, b: ir::TypeT) -> ir::TypeT? {
 // element temp typed by its content).  The caller restores `expect_node` / `expect`.
 pub fn arm_expect(e: el::El, vars: el_vars::Vars, arm: integer, expected: ir::TypeT) {
   // (A type variable's element is no record yet: Rust's temp keeps the bare reference.)
-  rec = !(expected is TyOptional) && match el_types::base(expected) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
+  rec_elem = match el_types::base(expected) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
+  rec = !(expected is TyOptional) && rec_elem;
+  // (Under an expected `vector<T>?` the arm's literal of records keeps its element temp bare.)
+  if expected is TyOptional && rec_elem {
+    bt = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
+    if bt >= 0 && e.p.nodes[bt] is SVecLit {
+      vars.bare_literal = bt;
+    }
+  }
   if !rec {
     return;
   }
