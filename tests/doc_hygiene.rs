@@ -2430,49 +2430,71 @@ fn diagnostics_spell_types_as_the_author_wrote_them() {
     );
 }
 
-/// `src/ir_schema_gen.rs` must be what `selfhost/src/ir.loft` generates.
-///
-/// The generated file IS the store layout — record sizes, field byte offsets, the `Node`
-/// discriminants that `data_store.rs` mirrors in its baked `DISC_*` constants — and it
-/// carries a `DO NOT EDIT — regenerate` header that nothing enforced. It drifted: `Key`
-/// gained a `start` field in loft#812, the generated file was updated to match, `ir.loft`
-/// — the source — was not, and the next regeneration silently dropped the field and took
-/// `KEY_STRIDE` from 24 to 16. A wrong layout is not a build error; it is a wrong byte
-/// offset, found later and elsewhere.
-///
-/// Shells out to the same script a person runs, so the gate and the tool cannot drift.
-/// The script SKIPS (exit 0, with a line saying so) when there is no built `loft` to
-/// regenerate with, or no `python3`; that line is surfaced here, because a check that
-/// quietly did not run must not read as a check that passed.
+/// `src/ir_schema_gen.rs` registers the compiler IR's types in a store, and the store LAYOUT is
+/// derived from it: record sizes, field byte offsets, the `Node` discriminants
+/// `data_store.rs`'s baked `DISC_*` constants mirror.  Its source is `selfhost/src/ir.loft`, and
+/// the two drift silently — a wrong store layout is a wrong byte offset, not a build error.  So
+/// every type the file registers is compared with the type the parser builds from `ir.loft`, by
+/// name: its size, each field's name, offset and content type, each enum's variants.  Edit the
+/// two together.
 #[test]
 fn ir_schema_gen_matches_its_loft_source() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out =
-        match loft::platform::process::harness_command(root.join("scripts/ir_schema_check.sh"))
-            .current_dir(root)
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!(
-                    "SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})"
-                );
-                return;
-            }
+    use loft::database::{Parts, Stores};
+    fn render(s: &Stores, tp: u16) -> String {
+        let t = &s.types[tp as usize];
+        let name = |i: u16| s.types.get(i as usize).map_or_else(|| format!("#{i}"), |t| t.name.clone());
+        let fields = |f: &[loft::database::Field]| {
+            f.iter()
+                .map(|f| format!("{}@{}:{}", f.name, f.position, name(f.content)))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if stdout.starts_with("SKIP ") {
-        eprintln!(
-            "SKIP ir_schema_gen_matches_its_loft_source: {}",
-            stdout.trim()
-        );
-        return;
+        let parts = match &t.parts {
+            Parts::Struct(f) => format!("struct {{{}}}", fields(f)),
+            Parts::EnumValue(v, f) => format!("variant {v} {{{}}}", fields(f)),
+            Parts::Enum(v) => format!(
+                "enum [{}]",
+                v.iter().map(|(t, n)| format!("{n}:{}", name(*t))).collect::<Vec<_>>().join(", ")
+            ),
+            Parts::Vector(e) => format!("vector<{}>", name(*e)),
+            Parts::Array(e) => format!("array<{}>", name(*e)),
+            Parts::ChildRec(e) => format!("child_rec<{}>", name(*e)),
+            other => format!("{other:?}"),
+        };
+        format!("{} size {} {parts}", t.name, s.size(tp))
+    }
+    let mut generated = Stores::new();
+    let base = generated.types.len();
+    loft::ir_schema_gen::register_ir_schema(&mut generated);
+    let mut p = loft::parser::Parser::new();
+    p.parse_dir("default", true, false).expect("the standard library parses");
+    p.parse("selfhost/src/ir.loft", false);
+    let parsed = &p.database;
+    let mut differ = Vec::new();
+    for tp in base..generated.types.len() {
+        let tp = tp as u16;
+        let want = render(&generated, tp);
+        let name = &generated.types[tp as usize].name;
+        match parsed.types.iter().position(|t| &t.name == name) {
+            None => differ.push(format!("{name}: registered, but ir.loft has no such type")),
+            Some(at) => {
+                let got = render(parsed, at as u16);
+                if got != want {
+                    differ.push(format!("registered: {want}\n  ir.loft:    {got}"));
+                }
+            }
+        }
     }
     assert!(
-        out.status.success(),
-        "the generated IR schema does not match its source:\n{}{}",
-        stdout,
-        String::from_utf8_lossy(&out.stderr),
+        generated.types.len() - base > 40,
+        "expected the IR's types, saw {}",
+        generated.types.len() - base
+    );
+    assert!(
+        differ.is_empty(),
+        "src/ir_schema_gen.rs and selfhost/src/ir.loft disagree on {} type(s):\n{}",
+        differ.len(),
+        differ.join("\n")
     );
 }
 
