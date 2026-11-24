@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<T>?` result answering a dense local that views another local copies it in
+// where present; one answering an element of a local is answered as read, the body the buffer's `?`.
+// Prints: [11,22,33] [11,22,33]
+
+fn b5(k: integer) -> vector<integer>? { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e }
+fn c6(k: integer) -> vector<integer>? { vv = [[11, 22, 33], [44, 55]]; vv[0] }
+fn main() { println("{b5(1)} {c6(1)}"); }
