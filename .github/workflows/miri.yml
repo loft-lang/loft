@@ -748,17 +748,6 @@ jobs:
       # nextest (not `cargo test`): matches the other sanitizer jobs — skips
       # doctests, emits the JUnit report, and isolates each test in its own
       # process (a cleaner poison signal, no cross-test arena carryover).
-      # `loft_suite` runs scripts that `use` a library with a NATIVE cdylib, and a
-      # cdylib built against a different `libloft.rlib` is not loadable.  This job
-      # restores a cached `target/` and never rebuilt them, so `register_native_stubs`
-      # panicked mid-`execute_argv` — and under LOFT_POISON the freed records that
-      # unwind left behind read back as 0xDEADBEEF, turning a stale artefact into a
-      # SIGSEGV that looks exactly like the arena use-after-free this gate hunts
-      # (loft#920).  The local gate has always rebuilt them first; so does this one now,
-      # and the poison sweep is green over the same corpus with them current.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
       - name: Poison sweep (LOFT_POISON=1, interpreter corpus)
         env:
           LOFT_POISON: '1'
@@ -819,12 +808,9 @@ jobs:
       # and its exit leaks lived there unseen.  Each corpus program is compiled and run with
       # LOFT_POISON=1 (a freed record reads 0xDEADBEEF) and LOFT_NATIVE_LEAK_CHECK=1, which
       # makes `tests/native.rs` fail a program that leaves a store at exit — the warning alone
-      # exits 0.  The generated crates link this build's libloft.rlib, so it is built here.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
-      - name: Build the loft binary and runtime rlib
-        run: cargo build --release --bin loft --lib
+      # exits 0.
+      - name: Build the loft binary
+        run: cargo build --release --bin loft
 
       - name: Poison + leak sweep (--native corpus)
         env:
@@ -1092,9 +1078,6 @@ jobs:
       # never written, a release walk over a slot just minted, a raw record whose header a write
       # overran — fails loudly and deterministically.  The free-side twin is the `poison` job
       # above.  Both backends: half of what this found was native-only (the par workers).
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
       - name: Poison-claim sweep (LOFT_POISON_CLAIM=1, both backends)
         env:
           LOFT_POISON_CLAIM: '1'
@@ -1172,11 +1155,7 @@ jobs:
       # checked read reports.
       #
       # Same lean surface as the poison job, and for the same reasons: native / wasm / html
-      # tests spawn separate binaries that never reach this path, and `library_suite` needs
-      # cdylibs a cached `target/` did not build.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
+      # tests spawn separate binaries that never reach this path.
       - name: Stack-shadow sweep (LOFT_VERIFY_STACK=1, interpreter corpus)
         env:
           LOFT_VERIFY_STACK: '1'
@@ -1277,8 +1256,7 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ./.github/actions/windows-gcc
 
-      # Nightly is needed for `-Zsanitizer=address` on the GENERATED native binary,
-      # and it must build the runtime rlib TOO — see the build step below for why.
+      # Nightly was needed for `-Zsanitizer=address` on the GENERATED native binary.
       - name: Install Rust stable + nightly
         uses: dtolnay/rust-toolchain@stable
       - uses: dtolnay/rust-toolchain@nightly
@@ -1297,33 +1275,20 @@ jobs:
           key: ubuntu-native-asan-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-native-asan-cargo-
 
-      # Built with NIGHTLY, the same toolchain the sweep compiles the generated crate
-      # with.  An rlib is SVH-locked to one rustc, so the generated crate can only
-      # `extern crate loft` against an rlib built by the SAME compiler: the job used to
-      # build the rlib on stable and compile against it on nightly, which worked only
-      # while the two rustcs happened to agree on crate metadata.  They stopped —
-      # stable 1.97.1 vs nightly 1.99.0 — and every run failed `E0514: found crate
-      # `loft` compiled by an incompatible version of rustc`, on any diff.  A toolchain
-      # roll must not be able to redden a gate that exists to catch codegen bugs.
-      #
-      # (loft's own auto-rebuild does not save this, and the reason is loft#706: its
-      # staleness check compares the rustc that built the loft BINARY with the current
-      # one, not the rustc that built the RLIB it is about to link.  Those are the same
-      # build normally, so when they diverge loft sees nothing to do and hands rustc an
-      # incompatible rlib.  Build them together and the question never arises.)
-      - name: Build loft host binary + runtime rlib
+      # ⚠ LOFT_NATIVE_ASAN (below) belonged to the retired rustc writer; the C backend does
+      # not read it, so this sweep compiles and runs the corpus WITHOUT a sanitizer until the
+      # C backend has its own ASan switch.
+      - name: Build the loft host binary
         env:
           RUSTUP_TOOLCHAIN: nightly
-        run: cargo build --release --bin loft --lib
+        run: cargo build --release --bin loft
 
       # @PLN54 S6 — loft's `--native` codegen emits Rust that accesses the store by
       # raw pointer; a codegen bug producing an out-of-bounds / use-after-free store
       # access runs SILENT today because `--native` is a separate, uninstrumented
       # process the in-process interpreter `asan` job cannot see.  LOFT_NATIVE_ASAN=1
       # makes loft compile the generated binary with `-Zsanitizer=address` (nightly),
-      # so that class is caught.  ASan tolerates linking the generated crate against
-      # the uninstrumented libloft.rlib (no -Zbuild-std needed, unlike TSan).  The
-      # curated corpus is the store-heavy shapes (vectors/structs/enums/collections/
+      # so that class is caught.  The curated corpus is the store-heavy shapes (vectors/structs/enums/collections/
       # text/match) + the 131/132 UAF regression scripts — the exact class ASan
       # catches.  detect_leaks=0: the interpreter has known live-at-exit allocations
       # (S4 owns that triage).  Validated locally + a raw-pointer-OOB positive control
@@ -1391,18 +1356,10 @@ jobs:
           key: ubuntu-valgrind-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-valgrind-cargo-
 
-      # The binary the release ships, plus the runtime rlib its native half links: the
-      # sweep compiles each tests/docs document with `--native` against libloft.rlib and
-      # hands the compiled program to memcheck.  Built together so the rlib is from the
-      # same rustc as the binary (the native-asan job above records why).
-      - name: Build loft release binary + runtime rlib
-        run: cargo build --release --bin loft --lib
-
-      # A script that `use`s a library with a native cdylib needs that cdylib built
-      # against THIS rlib, or it panics before it runs anything (loft#920) — and a run
-      # that never allocates cannot be seen to leak.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
+      # The binary the release ships: the sweep compiles each tests/docs document with
+      # `--native` and hands the compiled program to memcheck.
+      - name: Build the loft release binary
+        run: cargo build --release --bin loft
 
       # `scripts/valgrind-sweep.sh` is the release's `M-valgrind` gate as one command
       # (RELEASE.md § Memory safety): every script and document under memcheck, on the
@@ -1522,13 +1479,12 @@ jobs:
 
       # Four heavy gates whose `#[ignore]` reason names this job: each needs rustc per
       # program or a long poison run, so they sit over the PR ceiling, and until they ran
-      # here nothing ran them at all.  `--native` links the canonical
-      # `target/release/libloft.rlib`, which `cargo test` does not produce, so build it
-      # first (as ci.yml's test job does).  The fuzzing leg rebuilds the lib with an extra
-      # feature, so it runs last.
-      - name: Build the native link rlib
+      # here nothing ran them at all.  The tests that spawn `target/release/loft` need it
+      # built first.  The fuzzing leg rebuilds the lib with an extra feature, so it runs
+      # last.
+      - name: Build the release loft binary
         if: ${{ !cancelled() }}
-        run: cargo build --release --lib --bin loft
+        run: cargo build --release --bin loft
 
       - name: Leak, cross-mode — both backends leak-free
         if: ${{ !cancelled() }}
@@ -1747,21 +1703,6 @@ jobs:
       # `build_script_build` for exactly this, drowning the real
       # toolchain-churn signal the matrix exists to catch.
       #
-      # `--skip a_private_scope_end_hook_in_a_library_runs`: the SAME exclusion the
-      # asan and asan-leak jobs already carry for this test, for the same reason and
-      # not a new one (loft#855).  It spawns loft to BUILD a library cdylib, which
-      # links `libloft.rlib` — and this job only ever runs `cargo test`, which builds
-      # the lib into `deps/` for the test binaries and never produces the rlib that
-      # `native_lib::find_loft_rlib` looks for.  So the spawned build dies on
-      # "libloft.rlib not found for this build" before it can execute a single loft
-      # op: an ENVIRONMENT result, not toolchain drift, which is all this matrix
-      # exists to detect.  Adding `cargo build --release --lib` does NOT fix it —
-      # measured: it clears "not found" and then fails `E0463: can't find crate for
-      # libloading`, because `cargo test` and `cargo build --lib` unify features
-      # differently, so the uplifted rlib's dependency set is not the one in `deps/`.
-      # The sibling `a_delegating_producer_binds_its_companion_cleanly` PASSES here
-      # and so is deliberately NOT skipped — a skip for a green test would cost
-      # coverage and buy nothing.
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.tc.outputs.toolchain }}
@@ -1770,7 +1711,6 @@ jobs:
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip fill_rs_up_to_date --skip n9_generated_fill_matches_src
           --skip native_rs_functions_up_to_date --skip library_suite
-          --skip a_private_scope_end_hook_in_a_library_runs
 
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -1828,14 +1768,13 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # `make index` runs `target/release/loft --ship` (it exits 1
-      # with "host loft binary missing" otherwise), and that native compile
-      # links `target/release/libloft.rlib` — so build BOTH the binary and the
-      # canonical lib.  This job previously relied on a CACHED binary and so
+      # with "host loft binary missing" otherwise), so build the binary.
+      # This job previously relied on a CACHED binary and so
       # failed `make index` whenever the cache missed cold (a latent bug the
       # run_id cache-key change exposed, NOT the rpc-ghost); building it
       # explicitly makes the leg cache-independent.
-      - name: Build host loft binary + lib (required by `make index`)
-        run: cargo build --release --lib --bin loft
+      - name: Build host loft binary (required by `make index`)
+        run: cargo build --release --bin loft
       - name: Index hygiene (broken @-tags + markdown links)
         run: cargo nextest run --profile ci --test index_hygiene
 
