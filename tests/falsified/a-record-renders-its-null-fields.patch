@@ -1,9 +1,9 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index ae4b9a150..dad670ebf 100644
+index f7c2b26aa..e1a196235 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -1665,10 +1665,7 @@ impl ShowDb<'_> {
-                         Self::write_close(s, "}");
+@@ -1920,10 +1920,7 @@ impl ShowDb<'_> {
+                         self.write_close(s, "}");
                          return;
                      }
 -                    // `@FR-F-Render` — a plain enum's null is the `0xFF` discriminant (`0` reads
@@ -14,7 +14,7 @@ index ae4b9a150..dad670ebf 100644
                          "null"
                      } else if known {
                          &vals[v as usize - 1].1
-@@ -1903,7 +1900,7 @@ impl ShowDb<'_> {
+@@ -2158,7 +2155,7 @@ impl ShowDb<'_> {
          // pretty output, every non-empty struct should multi-line.
          let complex =
              self.pretty && (self.json || self.stores.types[self.known_type as usize].complex);
@@ -23,7 +23,7 @@ index ae4b9a150..dad670ebf 100644
          // TODO reference to an object inside a field instead of the object itself, show the key
          s.push('{');
          // JSON pretty mode opens the body with a newline + indent
-@@ -1930,8 +1927,19 @@ impl ShowDb<'_> {
+@@ -2185,8 +2182,19 @@ impl ShowDb<'_> {
      /// `write_fields` would emit — every field but the ones [`Self::is_shown_field`]
      /// leaves out.  Used by `write_struct` so the JSON-pretty open-brace newline only
      /// fires when there's something inside.
@@ -45,7 +45,7 @@ index ae4b9a150..dad670ebf 100644
      }
  
      /// `@FR-F-Render-Fields` (@C143) — a record renders EVERY field it declares, a null one as
-@@ -1948,9 +1956,9 @@ impl ShowDb<'_> {
+@@ -2203,9 +2211,9 @@ impl ShowDb<'_> {
  
      fn write_fields(&self, s: &mut String, fields: &[Field], indent: u16, complex: bool) {
          let mut first = true;
@@ -57,7 +57,7 @@ index ae4b9a150..dad670ebf 100644
                  continue;
              }
              if first {
-@@ -2664,10 +2672,17 @@ impl ShowDb<'_> {
+@@ -2968,10 +2976,17 @@ impl ShowDb<'_> {
          s.push_str(" {");
          let mut first = true;
          for fld in fields {
@@ -77,10 +77,10 @@ index ae4b9a150..dad670ebf 100644
                  s.push(',');
              }
 diff --git a/src/database/structures.rs b/src/database/structures.rs
-index c1b65ff91..eabf36648 100644
+index 469b26892..e4839dc69 100644
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -3094,7 +3094,7 @@ impl Stores {
+@@ -3535,7 +3535,7 @@ impl Stores {
          // default is the FIELD's question, not the type's, and
          // [`Self::write_absent_value`] is where that question is answered.
          if matches!(parsed, crate::json::Parsed::Null) {

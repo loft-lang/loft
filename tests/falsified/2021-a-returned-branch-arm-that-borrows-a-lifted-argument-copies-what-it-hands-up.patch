@@ -1,8 +1,8 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
-index ca364aae9..bd8b1bfdf 100644
+index aa6b9c9d2..4d5fd4c61 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
-@@ -840,7 +840,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
+@@ -874,7 +874,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
          && !crate::keys::keyed_view_displaced_free()
          && only_null_or_borrowed(data, d_nr, v);
      let owned_ref = (function.owns_displaced_store(v, value, data)
@@ -11,7 +11,7 @@ index ca364aae9..bd8b1bfdf 100644
          && (!is_hidden_buf_arg || entry_w.is_some())
          && !keyed_view;
      let frees_displaced = owned_ref
-@@ -1054,7 +1054,8 @@ fn re_arm(
+@@ -1119,7 +1119,8 @@ fn re_arm(
              // answered — a view into another store its exit release then freed
              // (`@FR-H-FreeTwice`, O-Buffer's `class = pick(class, c)`).
              // `LOFT_NO_BUFFER_FRESH_COPY=1` keeps the plain bind.
@@ -289,10 +289,10 @@ index 3869f82d4..a4165d170 100644
  
  /// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1142a26e0..dd16c9b0f 100644
+index 6e75f2d65..f37f28d6f 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -7342,46 +7342,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7494,46 +7494,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
      })
  }
  
@@ -338,4 +338,4 @@ index 1142a26e0..dd16c9b0f 100644
 -
  // ── `LOFT_TRACE_BIND` — the strict comparison's binds layer (1b-compare.md) ──
  
- std::thread_local! {
+ /// Is `LOFT_TRACE_BIND` set?
