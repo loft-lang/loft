@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I66 — Bytecode VM / executor: printing to the host's stdout and stderr
 
 //! Printing to the host's stdout and stderr, and the answer to a closed stdout: the
 //! interpreter and the C runtime's host calls both reach these, so the backends cannot answer a

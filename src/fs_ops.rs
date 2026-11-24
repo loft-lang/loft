@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I66 — Bytecode VM / executor: the file-system operations a program reaches
 
 //! The file-system operations a program reaches, on the real file system or, under `host_fs`
 //! (the interpreter built for the browser), through the host bridge: one home for the

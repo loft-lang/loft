@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I84 — Coroutine runtime / yield codec: a hosted C unit's generators
 
 //! A generator a hosted C unit runs, held by the interpreter as a coroutine handle: the
 //! [`LoftCoroutine`] trait such a generator implements, the per-run table of live handles

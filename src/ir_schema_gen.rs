@@ -3,6 +3,7 @@
 // with the type ir.loft declares: an edit to one is an edit to both.
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I63 — Store-resident IR: the schema of the IR's types
 //
 //! The store schema for the compiler IR (@PLN11 arc A): registers every
 //! IR struct/enum as `Stores` type records so the IR can live in a store and
