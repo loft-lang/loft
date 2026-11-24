@@ -666,6 +666,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       delivered = branch_view_return(e, vars, code, rb);
       view_answer = delivered != null && !e.first_pass;
     }
+    if delivered == null {
+      delivered = param_join_return(e, vars, code);
+    }
     if delivered != null {
       code = delivered!;
       // A literal an earlier `return` answers is built into the buffer here too
@@ -2484,6 +2487,101 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
   bl.operators[-1] = copy!;
   bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb])];
   ir::NdBlock { block: [bl] }
+}
+
+// `classify_ret_promotion`'s `MergeAttr` over a record BRANCH tail whose leaves are visible
+// parameters (one at least), record literals (each built in its own work ref — the first pass's
+// placeholder `null`) and the null sentinel: nothing is delivered into the buffer, the tail is
+// answered as it stands and the result borrows the parameters.  Null for any other tail.
+pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? {
+  d = e.context;
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  tail = el_ir::unspan(el_ir::last(bl.operators));
+  match tail {
+    NdBlock { block: mb } => if mb[0].name == "scalar_match" && len(mb[0].operators) > 0 { tail = el_ir::unspan(el_ir::last(mb[0].operators)); },
+    _ => {}
+  }
+  if !(tail is NdIf) {
+    return null;
+  }
+  ps: vector<integer> = [];
+  for arm in el_ex_deliver::branch_arms(tail, []) {
+    leaf = el_ir::unspan(join_leaf(arm));
+    ok = match leaf {
+      NdVar { n: lv } => vars.vars[lv].argument && !hidden_param(e, vars, lv),
+      NdBlock { block: lb } => lb[0].name == "Object" || lb[0].name == "EnumUnitLit",
+      NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+      NdNull => e.first_pass,
+      _ => false
+    };
+    if !ok {
+      return null;
+    }
+    match leaf {
+      NdVar { n: pv } => { if !ps.contains(pv) { ps += [pv]; } },
+      _ => {}
+    }
+  }
+  if len(ps) == 0 {
+    return null;
+  }
+  ret = el::def(e, d).returned[0];
+  dep = el_types::deps(ret);
+  for p in ps {
+    a = attr_nr(el::def(e, d), el_vars::name_of(vars, p));
+    if a >= 0 && !dep.contains(a) {
+      dep += [a];
+    }
+  }
+  e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep)];
+  if !e.first_pass {
+    bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), ps)];
+    // (An arm ending in a VARIANT literal is typed as the result's enum, as the join types it —
+    // the literal's own block keeps its variant.)
+    if el_types::struct_enum_def(ret) >= 0 {
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], enum_arms(e, el_ir::unspan(bl.operators[-1]), el_types::without_deps(el_types::base(ret))));
+    }
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// The branch `n` with every arm block on the way to a variant literal typed `et`.
+fn enum_arms(e: el::El, n: ir::Node, et: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: enum_arms(e, inner, et) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: enum_arms(e, t, et), f: enum_arms(e, f, et) },
+    NdBlock { block } => {
+      b = block[0];
+      if b.name == "Object" || b.name == "EnumUnitLit" || len(b.operators) == 0 {
+        return n;
+      }
+      vd = match el_types::base(b.result[0] ?? ir::TyVoid) { TyReference { n: rn } => rn, _ => -1 };
+      if b.name == "scalar_match" {
+        b.operators[-1] = enum_arms(e, b.operators[-1]!, et);
+        return ir::NdBlock { block: [b] };
+      }
+      if vd >= 0 && el::def(e, vd).def_type == el::DT_ENUM_VALUE {
+        b.result = [et];
+        b.operators[-1] = enum_arms(e, b.operators[-1]!, et);
+      }
+      ir::NdBlock { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// The value an arm ends in, through its blocks — stopping at a record literal, whose own block
+// ends in its work ref.
+fn join_leaf(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => join_leaf(inner),
+    NdBlock { block } => if block[0].name == "Object" || block[0].name == "EnumUnitLit" || len(block[0].operators) == 0 { n } else { join_leaf(block[0].operators[-1]!) },
+    NdInsert { items } => if len(items) > 0 { join_leaf(items[-1]!) } else { n },
+    _ => n
+  }
 }
 
 // `ref_return`'s copy leg for a BRANCH tail (`classify_ret_promotion` refuses to rename a
