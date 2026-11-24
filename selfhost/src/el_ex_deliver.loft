@@ -251,6 +251,19 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       return ir::NdBlock { block: [rbl] };
     }
   }
+  // (…and onto the call buffer a `vector<T>?` body's trailing `return v` reads, `v` bound from
+  // that call: the `return` taken off, the body the bare declared `τ?`.)
+  if ba < 0 && !e.first_pass && result is TyOptional {
+    qbl = match code { NdBlock { block } => block[0], _ => return code };
+    qtail = if len(qbl.operators) > 0 { el_ir::unspan(qbl.operators[-1]) } else { ir::NdNull };
+    qlv = match qtail { NdReturn { inner: qli } => match el_ir::unspan(qli) { NdVar { n: qln } => qln, _ => -1 }, NdVar { n: qln2 } => qln2, _ => -1 };
+    qref = if qlv >= 0 && !vars.vars[qlv].argument { call_buffer_of(e, vars, qbl.operators, qlv) } else { -1 };
+    if qref >= 0 && vars.vars[qref].argument {
+      qbl.operators[-1] = el_ir::respan(qbl.operators[-1], ir::NdVar { n: qlv });
+      qbl.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+      return ir::NdBlock { block: [qbl] };
+    }
+  }
   if ba < 0 {
     if !e.first_pass {
       el::refuse(e, "a function returning a vector whose buffer is renamed");
@@ -282,11 +295,41 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     return delivered!;
   }
   if result is TyOptional {
+    // A body ending in a `return` that hands a call the buffer (`one_buffer_chain`) has
+    // delivered already: the body is typed as the declared result.
+    cbl = match code { NdBlock { block } => block[0], _ => return code };
+    ctail = if len(cbl.operators) > 0 { el_ir::unspan(cbl.operators[-1]) } else { ir::NdNull };
+    if match ctail { NdReturn { inner: cri } => chain_answers(el_ir::unspan(cri), rb), _ => false } {
+      if !e.first_pass {
+        cbl.result = [el::def(e, d).returned[0] ?? result];
+        return ir::NdBlock { block: [cbl] };
+      }
+      return code;
+    }
+    // A trailing `return v` of a local bound from a call that builds into a buffer of its own:
+    // the `return` taken off, the buffer renamed onto that call's `__ref_N` on the first pass —
+    // the local is the caller's vector then — and the body answers it as the declared `τ?`.
+    rlv = match ctail { NdReturn { inner: rli } => match el_ir::unspan(rli) { NdVar { n: rln } => if !vars.vars[rln].argument { rln } else { -1 }, _ => -1 }, _ => -1 };
+    rcref = if rlv >= 0 { call_buffer_of(e, vars, cbl.operators, rlv) } else { -1 };
+    if rlv >= 0 && rcref >= 0 && el_ex_copy::returns_in(cbl.operators[0..len(cbl.operators) - 1]) == el_ex_copy::null_returns_in(e, cbl.operators[0..len(cbl.operators) - 1]) {
+      cbl.operators[-1] = el_ir::respan(cbl.operators[-1], ir::NdVar { n: rlv });
+      if e.first_pass {
+        if !vars.vars[rcref].argument && attr_nr(el::def(e, d), "__retbuf") >= 0 {
+          rename_onto(e, vars, rb, rcref);
+        }
+        return ir::NdBlock { block: [cbl] };
+      }
+      if vars.vars[rcref].argument {
+        cbl.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+        return ir::NdBlock { block: [cbl] };
+      }
+    }
     // A literal tail of a `vector<T>?` takes the buffer as a plain vector's does (`Rename` onto
     // the literal's own `__vdb_N`) — not cleared at the head — where every early exit is a
     // `return null`; the body is the bare `vector<T>?`.
     olit = tail_syntax(e, vars.body);
-    lit_syntax = olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false };
+    // (A trailing `return [items]` is that literal tail: its `return` was taken off above.)
+    lit_syntax = (olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false }) || trailing_literal_return(e, vars.body);
     if e.first_pass {
       oret = el::def(e, d).returned[0];
       if lit_syntax && !el_types::deps(oret).contains(ba) {
@@ -1152,6 +1195,29 @@ fn arm_defines(n: ir::Node, v: integer) -> boolean {
     },
     NdSet { var } => var == v,
     NdInsert { items } => { for it in items { if arm_defines(it, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// The `__ref_N` buffer of the call local `v` is bound from (`v = f(…, __ref_N)`) among `ops`, or -1.
+fn call_buffer_of(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, v: integer) -> integer {
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdSet { var, inner } => {
+        if var == v {
+          return match el_ir::unspan(inner) { NdCall { args } => match el_ir::unspan(args[-1] ?? ir::NdNull) { NdVar { n: cr } => if starts_with(el_vars::name_of(vars, cr), "__ref_") { cr } else { -1 }, _ => -1 }, _ => -1 };
+        }
+      },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// A `one_buffer_chain` block answering buffer `w`.
+fn chain_answers(n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdBlock { block } => block[0].name == "one_buffer_chain" && len(block[0].operators) > 0 && el_ir::unspan(block[0].operators[-1]!) == ir::NdVar { n: w },
     _ => false
   }
 }

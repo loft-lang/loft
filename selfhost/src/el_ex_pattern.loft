@@ -2576,14 +2576,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
     // `parse_item`'s variant join (`@FR-C-Var`): items that are variants of one struct enum
     // make the element that enum.
+    // (One variant alone makes the enum the element as well: `[Vn { rs: 4 }]` is a
+    // `vector<W>`.)
     pe = el_ex_deliver::variant_parent(e, in_t);
     if pe >= 0 {
-      for x in xs {
-        // (A later item typed as the enum itself — a unit variant, a value of it — joins too.)
-        if (el_ex_deliver::variant_parent(e, x.tp) == pe || el_types::struct_enum_def(x.tp) == pe && !(x.tp is TyOptional)) && !el_types::is_equal(e, in_t, x.tp) {
-          in_t = ir::TyEnum { n: pe, is_ref: true, dep: [] };
-        }
-      }
+      in_t = ir::TyEnum { n: pe, is_ref: true, dep: [] };
     }
   }
   if el_types::is_unknown(in_t) {
