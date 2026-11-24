@@ -12,6 +12,7 @@ mod apart;
 mod apart_value;
 mod chain;
 pub(crate) mod cold;
+mod decode_view;
 mod deferred;
 mod files;
 mod generator;
@@ -260,6 +261,10 @@ pub(crate) struct FnWriter<'a> {
     /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
     /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
     field_view: bool,
+    /// `@FR-R-DecodeView`: this body's part of the plan — a `__dv` twin's or a root's
+    /// (`decode_view.rs`) — and the statement its lazy holder is writing as itself.
+    dv: Option<decode_view::DvBody>,
+    dv_bypass: usize,
     /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
@@ -909,6 +914,8 @@ impl<'a> FnWriter<'a> {
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
+            dv: None,
+            dv_bypass: 0,
             nk_skip: None,
             ap_buf: None,
             ap_views: std::collections::HashSet::new(),
@@ -5128,6 +5135,10 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-DecodeView`: a span local's holder, placed on its slice guard's fallback only.
+        if self.dv.is_some() && self.dv_stmt(v, ind)? {
+            return Ok(());
+        }
         // `@FR-R-SameRead`'s filed clause: what the previous statement filed reaches this one
         // only when it is a lookup's binding; every other statement forgets it (a line marker
         // is no statement).
@@ -6469,13 +6480,18 @@ impl<'a> FnWriter<'a> {
             && self.lazy_vector(r, "OpGetVectorNullable").is_none()
             && !matches!(r.unspan(), Value::Call(_, ra) if ra.first().is_some_and(|v| self.split_tab_of(v).is_some()))
         {
+            let span = self.dv_text_spare(r, fld);
             let fld = Self::literal(fld, "field")?;
             let before = self.pending.len();
             let r = self.expr(r, ind)?;
             if self.pending.len() != before {
                 return Err("a borrowed text would view a temporary".into());
             }
-            let view = format!("loft_get_text(cx, {}, {fld})", as_ref(r)?);
+            // `@FR-R-DecodeView`: a span text field views the frame's bytes.
+            let view = match span {
+                Some(spare) => format!("loft_dv_text(cx, {}, {fld}, {spare})", as_ref(r)?),
+                None => format!("loft_get_text(cx, {}, {fld})", as_ref(r)?),
+            };
             return self.borrowed_assign(var, x, &view, ind);
         }
         let before = self.pending.len();
@@ -8075,6 +8091,10 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(place, kind_of(c)))
             }
             Value::Call(d, args) => {
+                // `@FR-R-DecodeView`: a span field's write, a span text's read.
+                if let Some(e) = self.dv_operator(*d, args, ind)? {
+                    return Ok(e);
+                }
                 // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
                 if let Some(e) = self.apv_operator(self.cx.data.def(*d).name(), v, args, ind)? {
                     return Ok(e);
@@ -8714,6 +8734,11 @@ impl<'a> FnWriter<'a> {
             // which takes it as its buffers (`expr` answered them at that argument).
             if self.apr_twin_call(d, args) {
                 mask |= super::APR_BIT;
+            }
+            // `@FR-R-DecodeView`: a region function called from a twin or a root is its `__dv`
+            // twin, with whatever other variant this call takes.
+            if self.dv_call(d) {
+                mask |= super::DV_BIT;
             }
         }
         let tr_named = tr_name.is_some();

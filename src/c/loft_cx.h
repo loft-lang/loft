@@ -312,6 +312,9 @@ struct loft_cx {
     size_t uo_at;
     loft_ref uo_from;
     int uo_scratch;
+    /* the frame a decode region's spans read (`@FR-R-DecodeView`, `loft_dv_text`), named by the
+     * region's root for the length of its call */
+    loft_ref dv_frame;
     uint16_t *ur_tp;
     uint16_t *ur_old;
     uint16_t *ur_ver;
@@ -364,6 +367,7 @@ static loft_cx loft_main_cx = {
     .vc_own = LOFT_VC_LIVE,
     .uo_from = { 0xFFFF, 0, 0, 0 },
     .uo_scratch = -1,
+    .dv_frame = { 0xFFFF, 0, 0, 0 },
     .srv_parked = { -1, 0 },
     .srv_ev_kind = -1,
     .srv_ev_cid = -1,
@@ -383,6 +387,7 @@ static void loft_cx_fresh(loft_cx *cx) {
     {
         loft_ref r = { 0xFFFF, 0, 0, 0 };
         cx->uo_from = r;
+        cx->dv_frame = r;
     }
     cx->uo_scratch = -1;
 #ifdef LOFT_HOSTED

@@ -363,6 +363,8 @@ pub(crate) struct Cx<'a> {
     vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
     apr: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
     ap2: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_value::ApartPlan>>,
+    dv: std::cell::OnceCell<std::rc::Rc<crate::lower::decode_view::DvPlan>>,
+    ps: std::cell::OnceCell<std::rc::Rc<crate::lower::decode_structure::PsPlan>>,
 }
 
 /// The memos [`Cx::hoist_memo`] keeps.
@@ -417,15 +419,31 @@ pub(crate) const VF_BIT: u64 = 1 << 56;
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
 /// passes a value that may be null).  The first [`NN_PARAMS`] parameters can be named, so the
-/// mask ends at bit 54, below every named twin bit — one bit more and parameter 24 would read
-/// as `RG_BIT`.
+/// mask ends at bit 53, below every named twin bit — one bit more and parameter 23 would read
+/// as `DV_BIT`.
 pub(crate) const NN_SHIFT: u32 = 32;
-pub(crate) const NN_PARAMS: usize = 23;
+pub(crate) const NN_PARAMS: usize = 22;
 pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
 const _: () = assert!(
-    NN_MASK & (RG_BIT | VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT)
+    NN_MASK
+        & (DV_BIT
+            | RG_BIT
+            | VF_BIT
+            | DS_BIT
+            | AP_BIT
+            | KH_BIT
+            | APV_BIT
+            | APR_BIT
+            | NK_BIT
+            | INV_BIT)
         == 0
 );
+
+/// The mask bit of a `__dv` twin (`@FR-R-DecodeView`): a function of a decode region written
+/// again over the twin layout — a text or byte-string field of a view type may hold a span of
+/// the root's frame (`body/decode_view.rs`).  Every call a twin or a root makes to a region
+/// function takes it, with whatever other variant the call takes.
+pub(crate) const DV_BIT: u64 = 1 << 54;
 
 /// The mask bit of a `__rg` twin (`@FR-R-RangedCall`): the function written again with its
 /// integer parameters seeded within `[-L, L]` (`opt::ranged_call::param_seeds`), called where
@@ -512,6 +530,8 @@ impl<'a> Cx<'a> {
             vr_ptr: std::cell::RefCell::new(std::collections::HashMap::new()),
             apr: std::cell::OnceCell::new(),
             ap2: std::cell::OnceCell::new(),
+            dv: std::cell::OnceCell::new(),
+            ps: std::cell::OnceCell::new(),
         }
     }
 
@@ -551,6 +571,43 @@ impl<'a> Cx<'a> {
                     self.data,
                     self.stores,
                     &value_fns,
+                ))
+            })
+            .clone()
+    }
+
+    /// `@FR-R-DecodeView`'s plan for the program (`lower::decode_view::plan`): the roots that
+    /// name their frame, the region written again as `__dv` twins, and the view types' span
+    /// words.  Empty for an OPEN unit (no whole-program rewrite, NATIVE.md § Optimisation
+    /// tiers), under `LOFT_NO_DECODE_VIEW=1`, and when a region function is also an
+    /// `@FR-R-Apart` instance 2 twin, which would need a twin of a twin.
+    pub(crate) fn dv_plan(&self) -> std::rc::Rc<crate::lower::decode_view::DvPlan> {
+        self.dv
+            .get_or_init(|| {
+                use crate::lower::decode_view::{DvPlan, plan};
+                if self.data.open_world || self.open {
+                    return std::rc::Rc::new(DvPlan::default());
+                }
+                let dv = plan(self.data, self.stores);
+                let ap2 = self.ap2_plan();
+                std::rc::Rc::new(if dv.region.iter().any(|d| ap2.twins.contains_key(d)) {
+                    DvPlan::default()
+                } else {
+                    dv
+                })
+            })
+            .clone()
+    }
+
+    /// `@FR-R-DecodeView`'s structure clause, over the region [`Self::dv_plan`] admitted:
+    /// the producers' shape and walk twins, the consumers, the roots read at a position.
+    pub(crate) fn ps_plan(&self) -> std::rc::Rc<crate::lower::decode_structure::PsPlan> {
+        self.ps
+            .get_or_init(|| {
+                std::rc::Rc::new(crate::lower::decode_structure::plan(
+                    self.data,
+                    self.stores,
+                    &self.dv_plan(),
                 ))
             })
             .clone()
@@ -1542,6 +1599,7 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
         & !DS_BIT
         & !VF_BIT
         & !RG_BIT
+        & !DV_BIT
         & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
@@ -1558,11 +1616,15 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
     let vf = if mask & VF_BIT == 0 { "" } else { "__vf" };
     let rg = if mask & RG_BIT == 0 { "" } else { "__rg" };
+    let dv = if mask & DV_BIT == 0 { "" } else { "__dv" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}", c_name(data, d))
+        format!(
+            "{}{dv}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}",
+            c_name(data, d)
+        )
     } else {
         format!(
-            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}",
+            "{}{dv}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}",
             c_name(data, d)
         )
     }
@@ -2199,6 +2261,9 @@ fn emit_unit_with(
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy.set(reachable_has(data, &all, is_lazy_native));
+    // `@FR-R-DecodeView`: both clauses' plans before the first body, so every body reads the
+    // same decisions (and their traces print once, in order).
+    let _ = cx.ps_plan();
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
@@ -3678,6 +3743,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         & !DS_BIT
         & !VF_BIT
         & !RG_BIT
+        & !DV_BIT
         & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature — a
@@ -3890,7 +3956,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     }
     // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
     // without it when the writer declines it.
-    let site = if mask == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept {
+    // A root of `@FR-R-DecodeView` keeps its decoded values in the store, where their span
+    // words are: it takes no transient site.
+    let dv_root = mask & DV_BIT == 0 && cx.dv_plan().roots.contains_key(&d);
+    let site = if mask == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept && !dv_root {
         body::transient::site_plan(cx, d)
     } else {
         None
@@ -3902,6 +3971,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .param_decls(param_decls.clone())
             .places(places)
             .transient(tf)
+            .decode_view(mask & DV_BIT != 0)
             .write()
         {
             Ok(b) => {
@@ -3938,6 +4008,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .append_twin(mask & AP_BIT != 0)
             .destination(mask & DS_BIT != 0)
             .version_fast(mask & VF_BIT != 0)?
+            .decode_view(mask & DV_BIT != 0)
             .write()
     };
     let body = match tried {
@@ -3986,7 +4057,26 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
-    Ok((sig, framed(cx, d, &name, &params, ret, &body, &storage)))
+    // `@FR-R-DecodeView`: a root names its frame for the length of its call.
+    let dv_frame = cx
+        .dv_plan()
+        .roots
+        .get(&d)
+        .filter(|_| mask & DV_BIT == 0)
+        .map(|&b| body::var_name(vars.name(b), b));
+    Ok((
+        sig,
+        framed(
+            cx,
+            d,
+            &name,
+            &params,
+            ret,
+            &body,
+            &storage,
+            dv_frame.as_deref(),
+        ),
+    ))
 }
 
 /// The shape an `__inv` twin takes a scalar input in (`@FR-R-Inputs`' scalar clause): the
@@ -5324,6 +5414,7 @@ fn framed(
     ret: CType,
     body: &str,
     storage: &str,
+    dv_frame: Option<&str>,
 ) -> String {
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
@@ -5386,6 +5477,15 @@ fn framed(
             .collect()
     };
     let call = format!("{name}__fr({})", args.join(", "));
+    // `@FR-R-DecodeView`: the frame a root's spans read, named for the call and given back
+    // after it.
+    let (dv_enter, dv_leave) = match dv_frame {
+        Some(b) => (
+            format!("    loft_ref dvo = cx->dv_frame;\n    cx->dv_frame = {b};\n"),
+            "    cx->dv_frame = dvo;\n".to_string(),
+        ),
+        None => (String::new(), String::new()),
+    };
     // The frame's name as `--native`'s `cr_call_push` and the interpreter spell it: a plain
     // function by its source name, a method by its definition name (`t_4Tick_go`).
     let frame_name = if def.name().starts_with("n_") {
@@ -5422,10 +5522,12 @@ fn framed(
         )
     };
     if ret == CType::Void {
-        format!("{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n")
+        format!(
+            "{push}{dv_enter}    {call};\n{dv_leave}{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n"
+        )
     } else {
         format!(
-            "{push}    {} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n",
+            "{push}{dv_enter}    {} r = {call};\n{dv_leave}{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n",
             held(ret)
         )
     }

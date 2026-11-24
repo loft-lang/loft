@@ -7676,6 +7676,101 @@ static loft_text loft_text_from_byte_range(loft_cx *cx, loft_ref v, int64_t lo, 
     return out;
 }
 
+/* `@FR-R-DecodeView` (@C141) — a text or byte-string field of a decoded enum value held as a SPAN
+ * of the frame it was decoded from.  The span word is the record's last eight bytes: two 32-bit
+ * words, the length and then the start plus one under the top bit, so a span word is never the
+ * owned form's 0 0 and no 64-bit value is formed to hold it.  The span's own field holds
+ * nothing, so a release frees nothing for it, and a copy of the record's bytes carries the
+ * word.  The frame is `cx->dv_frame`, named by the region's root for the length of its call. */
+typedef struct { uint32_t n, at; } loft_dvs;
+
+/* The bytes of byte vector `b` and their number, read as loft_vec_slice reads its source. */
+static const unsigned char *loft_dv_bytes(loft_cx *cx, loft_ref b, uint32_t *n) {
+    *n = 0;
+    if (b.store_nr == 0xFFFF || b.rec == 0 || b.pos == 0) return 0;
+    loft_store_t *s = loft_store_of(cx, b);
+    uint32_t r = loft_collection_rec(cx, s, b.rec, b.pos);
+    if (r == 0) return 0;
+    *n = (uint32_t) loft_vec_len(cx, b);
+    return loft_elem_base(cx, s, r);
+}
+
+/* The span word of `[lo, lo + n)`, or none (`at` 0) when it does not fit one. */
+static loft_dvs loft_dv_word(uint32_t lo, uint32_t n) {
+    loft_dvs w = { 0, 0 };
+    if (lo >= 0x7FFFFFFEu) return w;
+    w.n = n;
+    w.at = 0x80000000u | (lo + 1);
+    return w;
+}
+
+/* The span word of `b[lo..hi]` under loft_vec_slice's clamps, or none — the owned slice is then
+ * built, as it always was. */
+static loft_dvs loft_dv_span(loft_cx *cx, loft_ref b, int64_t lo, int64_t hi) {
+    loft_dvs none = { 0, 0 };
+    if (b.store_nr == 0xFFFF || b.rec == 0 || b.pos == 0) return none;
+    int64_t len = loft_vec_len(cx, b);
+    if (lo < 0) lo = 0;
+    if (lo > len) lo = len;
+    if (hi < lo) hi = lo;
+    if (hi > len) hi = len;
+    return loft_dv_word((uint32_t) lo, (uint32_t) (hi - lo));
+}
+
+/* Write span word `w` into record `rec`: its field at `off` holds nothing of its own. */
+static void loft_dv_put(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare, loft_dvs w) {
+    if (rec.rec == 0) return;
+    loft_store_t *s = loft_store_of(cx, rec);
+    if (LOFT_WRITE_REFUSED(s)) return;
+    loft_set_u32(cx, s, rec.rec, rec.pos + off, 0);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare, w.n);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare + 4, w.at);
+}
+
+/* The owned form of a span field: its span word cleared, so no read takes a stale one. */
+static void loft_dv_clear(loft_cx *cx, loft_ref rec, uint32_t spare) {
+    if (rec.rec == 0) return;
+    loft_store_t *s = loft_store_of(cx, rec);
+    if (LOFT_WRITE_REFUSED(s)) return;
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare, 0);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare + 4, 0);
+}
+
+/* A decoded text written as a span of the frame `b`, under loft_text_from_byte_range's bounds,
+ * when its bytes are UTF-8 — the condition that makes the span the text the owned form holds
+ * (`@FR-R-DecodeView` (5)).  Answers whether it was written; the caller builds the owned text
+ * otherwise. */
+static int loft_dv_span_text(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare, loft_ref b, int64_t lo, int64_t hi) {
+    if (rec.rec == 0) return 0;
+    uint32_t n32;
+    const unsigned char *p = loft_dv_bytes(cx, b, &n32);
+    int64_t n = n32;
+    if (p == 0 || n == 0) return 0;
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo) return 0;
+    loft_dvs w = loft_dv_word((uint32_t) lo, (uint32_t) (hi - lo));
+    if (w.at == 0 || !loft_utf8_valid(cx, p + lo, (size_t) (hi - lo))) return 0;
+    loft_dv_put(cx, rec, off, spare, w);
+    return 1;
+}
+
+/* A text field of a decoded record: the frame's bytes when it holds a span, else its own. */
+static loft_str loft_dv_text(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare) {
+    if (rec.rec == 0) return loft_null_text(cx);
+    loft_store_t *s = loft_store_of(cx, rec);
+    uint32_t at = loft_u32(cx, s, rec.rec, rec.pos + spare + 4);
+    if (at & 0x80000000u) {
+        uint32_t lo = (at & 0x7FFFFFFFu) - 1, n = loft_u32(cx, s, rec.rec, rec.pos + spare), len;
+        const unsigned char *p = loft_dv_bytes(cx, cx->dv_frame, &len);
+        /* Checked when the span was written, and the frame is not written while one lives
+         * (`@FR-R-DecodeView` (1)). */
+        if (p != 0 && lo <= len && n <= len - lo) return loft_lit(cx, (const char *) p + lo, n);
+        return loft_lit(cx, "", 0);
+    }
+    return loft_store_str(cx, s, loft_u32(cx, s, rec.rec, rec.pos + off));
+}
+
 /* `@FR-R-Transient`: the scalar elements of store vector `src` copied into transient vector `d`,
  * each `size` bytes. */
 static void loft_ta_vec_copy(loft_cx *cx, loft_ta_vec *d, loft_ref src, uint32_t size) {
