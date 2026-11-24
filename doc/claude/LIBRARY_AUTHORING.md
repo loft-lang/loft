@@ -225,7 +225,7 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    `git -C ../loft-libs-<chunk> worktree add --detach <scratch>/<chunk> origin/main`.  Never the
    sibling checkout itself: another agent may have uncommitted work there.
 2. **Loft — the one under development**: this tree's `target/release/loft`, not the installed
-   one.  `make check-rlib` first when native runs are part of it.
+   one.
 3. **Dependencies — only what `loft.toml` declares**, resolved from the registry at the declared
    version (`loft install` in the package directory).  A dependency you are changing in the same
    arc gets an explicit `--lib <its worktree>` for that run.  `advice[undeclared-dependency]`

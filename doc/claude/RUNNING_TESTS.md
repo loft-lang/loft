@@ -12,7 +12,6 @@ wrong: [RUN_BOUNDS.md](RUN_BOUNDS.md).
 
 | Question | Section |
 |---|---|
-| Is my tree ready for a suite run? | [Before the suite](#before-the-suite-make-check-rlib-one-second) |
 | How do I start a run and wait for it? | [Agent](#-if-you-are-an-agent-run-the-blocking-form-and-let-the-harness-background-it) · [human](#preferred-shape-human-at-a-terminal--background--peek--wait) · [`make ci`](#waiting-for-make-ci) |
 | Which tests does a command run? | [What a test run selects](#what-a-test-run-selects-find_problemssh) |
 | One test, fast | [Running the Tests](#running-the-tests) |
@@ -25,37 +24,6 @@ After a change expected to touch many tests, do NOT iterate "run → see one fai
 re-run → see the next failure": each cycle pays the compile and test-startup cost and finds one
 failure.  Run one `--no-fail-fast` pass and read all the failures once —
 [One-pass-find-all-problems workflow](#one-pass-find-all-problems-workflow) is how.
-
-### Before the suite: `make check-rlib` (one second)
-
-The tests link a built `libloft.rlib`, and **nothing in an ordinary edit loop rebuilds one**.
-`cargo build --bin loft` refreshes the binary and leaves every rlib behind, so a session that
-iterates on the compiler with `--bin loft` drifts, and the drift is invisible until a gate runs.
-
-There are **three** of them, one per link target, and they drift independently — refreshing
-one does nothing for the other two:
-
-| rlib | linked by | cure |
-|---|---|---|
-| `target/release/libloft.rlib` | `--native`, the cdylib tests | `cargo build --release --lib` |
-| `target/loft/html/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `loft cache warm`, or `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html` |
-| `target/wasm32-wasip2/release/libloft.rlib` | the wasm library suite | `cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random` |
-
-A stale rlib does not fail like a compile error.  It surfaces minutes into a run as a handful of
-tests failing for what look like unrelated reasons — `libloft.rlib not found for this build`, a
-cdylib mtime that did not advance, a `--html` build panicking — each naming a file that is
-present when you go and look.
-
-`make ci` and `find_problems.sh` build what the selected tests link, so they need no
-pre-flight.  **A bare `cargo test --release` builds none of them**, so check before one — BEFORE
-the suite, because afterwards the check can only tell you the cycle was wasted:
-
-```bash
-make check-rlib          # all three, each with its own cure; skips a target that isn't installed
-```
-
-The general rule, for this and every instrument: ask what it did NOT refresh.  A partial
-refresh that reports its successes misleads more than one that refreshes nothing.
 
 ### Waiting for `make ci`
 

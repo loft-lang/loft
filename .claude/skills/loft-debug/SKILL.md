@@ -191,9 +191,9 @@ printf '%s\n' \
    tmpfs `/tmp` on Linux). Native tests flake under `find_problems`' parallelism.
    Confirm any native failure **serially**
    (`cargo test --release --test <bin> <name> -- --test-threads=1`) before trusting it.
-5. **Stale `libloft.rlib`.** After changing `loft-ffi*/` or the `loft` crate's runtime
-   code, run `make check-rlib` (the 1s pre-flight) before native tests — it says whether
-   the rlib the native tests link is current; a stale one is a wave of false failures.
+5. **A stale build.** After changing the `loft` crate's runtime code, rebuild the binary the
+   native tests spawn (`cargo build --release --bin loft`) before trusting them; a stale one
+   is a wave of false failures.
 
 Pattern: a sudden wave of native-compile/link failures right after a rebase / dep /
 toolchain change is almost always 2–5, not a regression. Rebuild fully + re-run

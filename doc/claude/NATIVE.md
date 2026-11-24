@@ -62,7 +62,7 @@ Three tiers, and the split is deliberate (owner's rule, 2026-09-08):
 | tier | what runs it | prelude | rustc |
 |---|---|---|---|
 | **semantics** | `--native`, the test runner's native corpus and fixtures | named frames, live/debug channel | `-O` or none — the compile is the cost that matters |
-| **performance** | `bench/stats.py`, `scripts/native_ratio.sh`, `bench/run_bench.sh`, a consumer's `--ship` bench | lean | `src/native_release_args.txt` |
+| **performance** | `bench/stats.py`, `bench/run_bench.sh`, a consumer's `--ship` bench | lean | `src/native_release_args.txt` |
 | **shipped** | `--ship` on every compiled target; a library's C unit is built `-O3`, the C ship tier (`c::hosted::build_artifact`) | lean | `src/native_release_args.txt`: `-C opt-level=3 -C codegen-units=1 -C llvm-args=-align-loops=64` |
 
 **`--ship` is the build a program ships as**, on whichever target the run names: the host
@@ -459,7 +459,6 @@ Validation:
   baseline guard + @P203 regression guard +
   `pre_eval_walkers_unspan` structural guard (see Walker convention
   below).
-- `scripts/p09_fast_gate.sh` is the ~4-second human-driven gate.
 
 #### Walker convention — always `.unspan()` before matching `Value::*`
 

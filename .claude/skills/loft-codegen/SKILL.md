@@ -272,8 +272,7 @@ the checklist:
    (`cargo build --bin loft`, then `target/debug/loft --interpret | --native | introspect |
    --native-emit …` — its `--native-rust` links the `deps/` rlib the same build wrote; `make iter
    TEST=…` for one test).  One release build per fix, at the end, never one per hypothesis:
-   it refreshes `target/release/libloft.rlib`, which only the `cargo test --release` native
-   suites link, and `make check-rlib` says whether it is due.
+   it refreshes `target/release/loft`, which the tests that spawn the release binary run.
 3. **One heavy job at a time** — a build, a gate (`ci-run.sh start`), the corpus census, a
    `cargo test` of many binaries, `make falsify` (one dev build against the installed main, two
    against a `REF`), the drop gate (every core for an hour); beside one another they slow every
