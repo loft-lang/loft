@@ -153,73 +153,7 @@ pub(crate) fn loft_source_tree() -> Option<std::path::PathBuf> {
     }
 }
 
-/// loft#706 — does this rustc stderr say the compile failed because a crate it had to
-/// LINK could not be resolved or was built by a different rustc, rather than because
-/// loft's generated code is wrong?
-///
-/// The distinction is what makes healing safe: only a toolchain/cache failure may
-/// trigger a runtime rebuild + retry, so a genuine codegen bug still surfaces loudly
-/// instead of costing the user a minute of rebuild first.
-///
-/// * `E0514` — "compiled by an incompatible version of rustc" (rlibs are SVH-locked to
-///   one rustc, so this is the post-`rustup update` case, and the case where the rlib
-///   and the loft binary simply came from different builds);
-/// * `E0460` — "possibly newer version of crate" (the same staleness, seen through a
-///   transitive dep);
-/// * `E0463` — "can't find crate" (a distributed bundle ships no rlib).
-///
-/// Both halves must match: the bare code is not enough, because `E0463` also fires for
-/// a user's own missing `--lib` package, which no rebuild of loft's runtime can fix.
-#[must_use]
-pub(crate) fn crate_resolution_failure(stderr: &str) -> bool {
-    (stderr.contains("E0460") || stderr.contains("E0463") || stderr.contains("E0514"))
-        && (stderr.contains("rand_core")
-            || stderr.contains("possibly newer version of crate")
-            || stderr.contains("compiled by an incompatible version")
-            || stderr.contains("can't find crate"))
-}
 
-/// Rebuild loft's native runtime rlib (and binary) from `tree` with the user's
-/// current rustc, so `--native` keeps working after a `rustc` change instead of
-/// falling back to the interpreter.  rlibs are SVH-locked to one rustc, so a
-/// `rustup update` strands the cached rlib; this recompiles it against the live
-/// rustc.  Prints why the wait happens and how long it took.  Returns whether the
-/// rebuild succeeded.  Honours `LOFT_NO_AUTO_REBUILD` (skip → `false`) for CI /
-/// users who prefer the interpreter fallback over an implicit `cargo` build.
-pub(crate) fn rebuild_runtime(tree: &std::path::Path, reason: &str) -> bool {
-    if env::var_os("LOFT_NO_AUTO_REBUILD").is_some() {
-        return false;
-    }
-    eprintln!(
-        "loft: native runtime out of date ({reason}).\n\
-         Rebuilding it with your rustc — a one-time cost after a rustc change: loft \
-         compiles its own runtime crate so your program's generated code can link \
-         against it (typically under a minute; longer from a cold build).\n\
-         Set LOFT_NO_AUTO_REBUILD=1 to skip this and run on the interpreter instead."
-    );
-    let start = std::time::Instant::now();
-    let ran = Spawn::new(Program::search("cargo"))
-        .args(["build", "--release", "--lib", "--bin", "loft"])
-        .cwd(&PathText::from_os(tree))
-        .status();
-    match ran {
-        Ok(s) if s.success() => {
-            eprintln!(
-                "loft: native runtime rebuilt in {:.0}s — continuing natively.",
-                start.elapsed().as_secs_f64()
-            );
-            true
-        }
-        Ok(_) => {
-            eprintln!("loft: native runtime rebuild failed (see cargo output above).");
-            false
-        }
-        Err(e) => {
-            eprintln!("loft: could not run cargo to rebuild the native runtime ({e}).");
-            false
-        }
-    }
-}
 
 /// @PLN100 Slice 1 — a wasm "shape" loft's own runtime rlib (`libloft.rlib`) is
 /// built in: a (triple × feature-set) pair.  `--html` and `--native-wasm` each
@@ -554,208 +488,10 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     }
 }
 
-/// @PLN117 — the `rustc` a `--html` wasm is compiled with.
-///
-/// Plain `rustc` normally; with an atomics sysroot (a threaded page) it is
-/// nightly's, plus the flags that build shared-memory wasm.  Both are forced by
-/// the same fact: that sysroot's rlibs were produced by nightly, and an rlib
-/// links only with the compiler that built it.
-pub(crate) fn wasm_rustc(atomics_sysroot: Option<&std::path::Path>) -> Spawn {
-    let Some(sysroot) = atomics_sysroot else {
-        return Spawn::new(Program::search("rustc"));
-    };
-    Spawn::new(Program::search("rustup"))
-        .args(["run", "nightly", "rustc"])
-        .arg("--sysroot")
-        .arg(sysroot)
-        .args(WASM_THREAD_FLAGS)
-}
 
-/// @PLN117 — assemble the atomics-compiled sysroot the threaded `--html` link
-/// needs, and return its root.
-///
-/// `-Z build-std` recompiles std with wasm atomics, but that is a *cargo* flag
-/// and `--html` links with `rustc` directly (one loft copy, shared with the wasm
-/// bridge crates — the reason it does not go through cargo).  The two meet here:
-/// [`WasmRuntimeShape::HtmlThreads`]'s cargo build leaves the atomics std beside
-/// loft's rlib, and copying those rlibs into the layout rustc expects turns them
-/// into a `--sysroot` the direct link can use.  Without it the link fails outright
-/// (*"--shared-memory is disallowed by std … not compiled with 'atomics'"*), so
-/// the failure mode is loud, never a silently single-threaded page.
-///
-/// `profile_dir` is what [`ensure_loft_runtime_rlib`] returned for that shape.
-/// Copies only what is missing or has changed size, so repeat builds are cheap.
-pub(crate) fn ensure_atomics_sysroot(profile_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    // Every layout's dep dirs, not `<profile>/deps` alone.  Under the per-unit layout
-    // cargo adopted on 2026-07-29 that directory does not exist, `read_dir` returned
-    // ENOENT, and the sysroot silently did not get assembled — which does NOT fail the
-    // link outright as the doc comment above promises.  It drops `--html --threads` back
-    // to the default rustc, and the nightly-built rlib then fails to link against it
-    // with `E0514 ... compiled by an incompatible version of rustc`: an error naming the
-    // wrong subject entirely, two steps from its cause.
-    let deps = dep_search_dirs(profile_dir);
-    // Candidate roots, in order.  #619: the derived one is the DEV layout
-    // (`<target-dir>/<triple>/release` -> `<target-dir>/sysroot`) and stays
-    // first so a repo build is unchanged.  In an INSTALLED layout the same
-    // derivation lands on `<prefix>/share/loft`, which is root-owned — the
-    // assembly failed there and `--html --threads` fell back to a
-    // single-threaded page.  The sysroot is a pure CACHE (copies of rlibs that
-    // are already installed), so a user-writable fallback is enough; nothing
-    // has to be shipped in it.
-    let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(target_dir) = profile_dir.parent().and_then(std::path::Path::parent) {
-        roots.push(target_dir.join("sysroot"));
-    }
-    roots.push(user_cache_sysroot_dir());
-    let mut last_err = None;
-    for sysroot in roots {
-        match assemble_atomics_sysroot(&deps, &sysroot) {
-            Ok(()) => return Some(sysroot),
-            Err(e) => last_err = Some(e),
-        }
-    }
-    if let Some(e) = last_err {
-        eprintln!(
-            "loft: could not assemble the wasm atomics sysroot ({e}) — \
-             `--html --threads` cannot link a shared-memory bundle without it."
-        );
-    }
-    None
-}
 
-/// `~/.loft/wasm-atomics-sysroot`, honouring `LOFT_HOME` like the rest of loft's
-/// user state.  Falls back to the temp dir when there is no home at all, so an
-/// unusual environment degrades to a rebuild-per-run rather than a failure.
-fn user_cache_sysroot_dir() -> std::path::PathBuf {
-    std::env::var_os("LOFT_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(std::env::temp_dir)
-        .join(".loft")
-        .join("wasm-atomics-sysroot")
-}
 
-/// Copy the atomics-compiled rlibs from `deps` into the `lib/rustlib/<triple>/lib`
-/// layout `rustc --sysroot` expects, under `sysroot`.
-///
-/// Copies only what is missing or has changed size, so repeat builds are cheap.
-fn assemble_atomics_sysroot(
-    dep_dirs: &[std::path::PathBuf],
-    sysroot: &std::path::Path,
-) -> std::io::Result<()> {
-    let lib_dir = sysroot
-        .join("lib")
-        .join("rustlib")
-        .join("wasm32-unknown-unknown")
-        .join("lib");
-    crate::file_access::create_dir_all(&lib_dir)?;
-    let mut read_any = false;
-    // The files this build provides.  The sysroot is a pure cache of them, so anything else in
-    // `lib_dir` is a previous toolchain's (a restored CI cache, a nightly update) and goes below.
-    let mut provided: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for deps in dep_dirs {
-        let Ok(entries) = crate::file_access::read_dir(deps) else {
-            continue;
-        };
-        read_any = true;
-        for entry in entries {
-            let src = entry.os_spelling();
-            if crate::file_access::extension(&src).is_none_or(|e| e != "rlib") {
-                continue;
-            }
-            // The `.rmeta` beside it comes too.  A toolchain that stops embedding full
-            // metadata in the rlib leaves a STUB there, and rustc then refuses the
-            // sysroot with "only metadata stub found for `rlib` dependency `std` —
-            // please provide path to the corresponding .rmeta file with full metadata".
-            // What follows is not a link error but a resolution one: the prelude import
-            // cannot resolve, so `String`, `Ok`, `to_string`, `i32::from` and the `todo!`
-            // macro all go missing at once and the failure reads as eighteen unrelated
-            // codegen faults in the generated program.  `--native` learned this already
-            // (loft#1030's rlib/rmeta pairing); the threaded browser sysroot had not.
-            //
-            // Paired by IDENTITY — the same `lib<name>-<hash>` stem, not merely a
-            // neighbour in the directory — so a stale `.rmeta` from another build cannot
-            // be adopted by a fresh rlib.
-            copy_sibling_rmeta(&src, &lib_dir)?;
-            if let Some(meta) =
-                crate::file_access::file_name(crate::file_access::with_extension(&src, "rmeta"))
-            {
-                provided.insert(meta);
-            }
-            let Some(name) = crate::file_access::file_name(&src) else {
-                continue;
-            };
-            provided.insert(name.clone());
-            // loft's own rlibs stay out: the link names them with `--extern` and
-            // `-L dependency=`, and a third copy on the sysroot search path is how
-            // rustc ends up reporting multiple candidates for one crate.
-            if name.starts_with("libloft") {
-                continue;
-            }
-            let dst = lib_dir.join(name);
-            let same = crate::file_access::metadata(&dst)
-                .ok()
-                .zip(crate::file_access::symlink_metadata(&entry).ok())
-                .is_some_and(|(a, b)| a.len() == b.len());
-            if !same {
-                crate::file_access::copy(&src, &dst)?;
-            }
-        }
-    }
-    if !read_any {
-        // Loud, and naming the first place looked in: an unassembled sysroot degrades
-        // the link to the default rustc rather than failing there, so a silent Ok here
-        // surfaces later as someone else's error.
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!(
-                "no readable dependency directory for the atomics std (looked in {})",
-                dep_dirs
-                    .first()
-                    .map_or_else(|| "nowhere".to_string(), |d| d.display().to_string())
-            ),
-        ));
-    }
-    // A crate a previous toolchain built — another `libcore-<hash>` beside this one — is a
-    // second candidate for one crate, and rustc picking it failed the link with "only metadata
-    // stub found for `rlib` dependency `core`" after a nightly update (CI's cache, restored
-    // from a run on the older nightly, held it).
-    for entry in crate::file_access::read_dir(&lib_dir)? {
-        let path = entry.os_spelling();
-        let stale = crate::file_access::extension(&path)
-            .is_some_and(|e| e == "rlib" || e == "rmeta")
-            && crate::file_access::file_name(&path).is_some_and(|n| !provided.contains(&n));
-        if stale {
-            crate::file_access::remove_file(&path)?;
-        }
-    }
-    Ok(())
-}
 
-/// Copy the `.rmeta` that belongs to `rlib` into `lib_dir`, if one is beside it.
-///
-/// Identity, not proximity: the metadata file must share the rlib's exact
-/// `lib<name>-<hash>` stem.  Absent is fine — a toolchain that still embeds full
-/// metadata in the rlib writes no separate `.rmeta`, and the sysroot is complete
-/// without it.
-fn copy_sibling_rmeta(rlib: &std::path::Path, lib_dir: &std::path::Path) -> std::io::Result<()> {
-    let meta = crate::file_access::with_extension(rlib, "rmeta");
-    let Some(name) = crate::file_access::file_name(&meta) else {
-        return Ok(());
-    };
-    if !crate::file_access::is_file(&meta) {
-        return Ok(());
-    }
-    let dst = lib_dir.join(name);
-    let same = crate::file_access::metadata(&dst)
-        .ok()
-        .zip(crate::file_access::metadata(&meta).ok())
-        .is_some_and(|(a, b)| a.len() == b.len());
-    if !same {
-        crate::file_access::copy(&meta, &dst)?;
-    }
-    Ok(())
-}
 
 /// [`loft::native_lib::dependency_dirs`]: every directory rustc must search for loft's
 /// transitive rlibs, under either cargo layout.
@@ -763,10 +499,6 @@ pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathB
     loft::native_lib::dependency_dirs(lib_dir)
 }
 
-/// [`loft::native_lib::deps_dir_of`].
-pub(crate) fn deps_dir_of(lib_dir: &std::path::Path) -> std::path::PathBuf {
-    loft::native_lib::deps_dir_of(lib_dir)
-}
 
 /// Parse every `target/<profile>/build/*/output` file and extract
 /// `cargo:rustc-link-search=native=<path>` directives, returning the
@@ -1517,23 +1249,6 @@ pub(crate) fn cache_safe_to_execute(path: &std::path::Path) -> bool {
     crate::platform::is_private_to_owner(&lmd, true)
 }
 
-/// P254 — companion check for the cache directory itself.
-/// Same shape as `cache_safe_to_execute` but applied to the
-/// directory: symlink rejected; on Unix, owner-uid match and
-/// no group/other bits required.  Used at cache-write time —
-/// if the directory exists with weak permissions, we tighten
-/// it via `tighten_cache_dir` before writing.
-#[must_use]
-pub(crate) fn cache_dir_safe(dir: &std::path::Path) -> bool {
-    let lmd = match crate::file_access::symlink_metadata(dir) {
-        Ok(md) => md,
-        Err(_) => return false,
-    };
-    if lmd.file_type().is_symlink() {
-        return false;
-    }
-    crate::platform::is_private_to_owner(&lmd, false)
-}
 
 /// P254 — set the cache directory's mode to `0o700` on Unix.
 /// No-op on non-Unix (NTFS / ReFS use ACLs that the parent
@@ -1779,40 +1494,6 @@ pub(crate) fn lib_path_env(data: &crate::data::Data) -> Option<std::ffi::OsStrin
     std::env::join_paths(dirs).ok()
 }
 
-/// @PLN195 — `--install-libs` / `loft build --install`: every library file the program
-/// links, placed in the per-user root by version — `~/.loft/lib/<package>-<version>/` (moved
-/// by `LOFT_HOME`), where any dynamic program built against that version finds it.  Two
-/// versions of one library sit side by side there.  Returns the directories written.
-pub(crate) fn install_libraries(
-    data: &crate::data::Data,
-) -> Result<Vec<std::path::PathBuf>, String> {
-    let root = std::env::var_os("LOFT_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(dirs::home_dir)
-        .ok_or("no home directory to install into")?
-        .join(".loft")
-        .join("lib");
-    let mut written = Vec::new();
-    for (pkg_dir, fallback_name, lib) in package_libraries_by_package(data) {
-        let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
-        let package = manifest
-            .as_ref()
-            .and_then(|m| m.name.clone())
-            .unwrap_or(fallback_name);
-        let version = manifest
-            .and_then(|m| m.version)
-            .unwrap_or_else(|| "0".to_string());
-        let dir = root.join(format!("{package}-{version}"));
-        crate::file_access::create_dir_all(dir.as_path()).map_err(|e| e.to_string())?;
-        let Some(file) = crate::file_access::file_name(lib.as_path()) else {
-            continue;
-        };
-        crate::file_access::copy(lib.as_path(), dir.join(file).as_path())
-            .map_err(|e| format!("{}: {e}", lib.display()))?;
-        written.push(dir);
-    }
-    Ok(written)
-}
 
 /// Every library file the program needs beside it at run time, resolved the way the link
 /// resolved it: each native package's library under a dynamic link (`resolve_native_lib`),
