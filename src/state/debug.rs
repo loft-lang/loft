@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I66 — Bytecode VM / executor
 
-use super::{STRING_NULL, State};
+use super::State;
 use crate::data::{Attribute, Context, Data, DefType, Definition, Deps, I32, IntegerSpec, Type};
 use crate::fill::OPERATORS;
 use crate::keys::{DbRef, Key};
@@ -1299,7 +1299,7 @@ impl State {
             Type::Float => format!("{}", self.code::<f64>()),
             Type::Text(_) => {
                 let s = self.code_str();
-                if s == STRING_NULL {
+                if crate::text_null::is_null(s) {
                     "null".to_string()
                 } else {
                     format!("\"{}\"", crate::compile::escape_text(s))
@@ -1980,7 +1980,7 @@ impl State {
                         None => {
                             return format!(" -> <raw:{:#x}>[{}]", s.ptr as usize, self.stack_pos);
                         }
-                        Some(s) if s == STRING_NULL => "null".to_string(),
+                        Some(s) if crate::text_null::is_null(s) => "null".to_string(),
                         Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                     }
                 } // text
@@ -2063,7 +2063,7 @@ impl State {
                 let s = self.string();
                 match s.try_str() {
                     None => format!("<raw:{:#x}>", s.ptr as usize),
-                    Some(s) if s == STRING_NULL => "null".to_string(),
+                    Some(s) if crate::text_null::is_null(s) => "null".to_string(),
                     Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                 }
             }

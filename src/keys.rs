@@ -187,6 +187,20 @@ pub struct Str {
 }
 
 impl Str {
+    /// The null text as a view (`crate::text_null`).
+    #[inline]
+    #[must_use]
+    pub fn null() -> Str {
+        Str::new(crate::text_null::null_str())
+    }
+
+    /// Is this view the null text?
+    #[inline]
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        crate::text_null::is_null(self.str())
+    }
+
     #[must_use]
     pub fn new(v: &str) -> Str {
         Str {
@@ -515,8 +529,8 @@ fn float_cmp(v1: f64, v2: f64) -> Ordering {
 #[inline]
 fn text_key_cmp(a: &str, b: &str) -> Ordering {
     let (an, bn) = (
-        a == crate::store::STRING_NULL,
-        b == crate::store::STRING_NULL,
+        crate::text_null::is_null(a),
+        crate::text_null::is_null(b),
     );
     if an || bn {
         return bn.cmp(&an);
@@ -4870,7 +4884,7 @@ pub fn long_hash(value: i64, seed: u64) -> u64 {
 #[must_use]
 pub fn str_hash(value: &str, seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
-    hasher.write_str(value);
+    hasher.write_str(crate::text_null::digest_text(value));
     hasher.finish()
 }
 
@@ -4894,7 +4908,7 @@ pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     for k in key {
         match k {
             Content::Long(l) => hasher.write_i64(*l),
-            Content::Str(s) => hasher.write_str(s.str()),
+            Content::Str(s) => hasher.write_str(crate::text_null::digest_text(s.str())),
             _ => (),
         }
     }
@@ -4908,7 +4922,7 @@ fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHash
         1 => hasher.write_i64(s.get_int(r.rec, p)),
         2 => hasher.write_i64(s.get_long(r.rec, p)),
         3 | 4 => (),
-        6 => hasher.write_str(s.get_str(s.get_u32_raw(r.rec, p))),
+        6 => hasher.write_str(crate::text_null::digest_text(s.get_str(s.get_u32_raw(r.rec, p)))),
         // Narrow-integer key storage (Parts::Int / IntRaw / Short / ShortRaw / Byte).
         // Each yields an i64 view so the hash matches `get_key`'s
         // Content::Long(i64) reconstruction at the lookup site.

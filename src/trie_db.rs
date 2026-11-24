@@ -99,7 +99,7 @@ pub(crate) fn tree_bytes(b: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// is filed in the tree's [`rt::SLOT`] instead of the tree: first in a walk, found by an
 /// exact lookup, and in no prefix slice — a null text begins with nothing (`@FR-E-NullArg`).
 fn is_null_key(b: &[u8]) -> bool {
-    b == crate::store::STRING_NULL.as_bytes()
+    crate::text_null::is_null_bytes(b)
 }
 
 /// The record in the null slot of `tree`, `0` when none (or no tree).

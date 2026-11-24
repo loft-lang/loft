@@ -292,9 +292,9 @@ impl State {
     /// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
     /// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
     pub(crate) fn hold_native_text_yield(&mut self, gen_ref: DbRef, text: String) -> Str {
-        if text == STRING_NULL {
+        if crate::text_null::is_null(&text) {
             self.release_native_text_yield(gen_ref);
-            return Str::new(STRING_NULL);
+            return Str::null();
         }
         let y = &mut self.native_text_yields;
         let at = if let Some(i) = y
@@ -2360,7 +2360,7 @@ impl State {
                 std::ptr::read_unaligned(src)
             };
             // Skip null sentinel and static text (pointer lives in text_code).
-            let is_null = str_val.ptr == STRING_NULL.as_ptr() || str_val.len == 0;
+            let is_null = str_val.is_null() || str_val.len == 0;
             if !is_null && !self.is_in_text_code(str_val.ptr) {
                 let owned = str_val.str().to_owned();
                 let new_str = Str::new(owned.as_str());
@@ -2773,7 +2773,7 @@ impl State {
             // Text Str sentinel: use STRING_NULL ("\0") so that the ptr is non-null
             // and conv_bool_from_text / append_text / str() don't crash on ptr=0.
             v if v == std::mem::size_of::<Str>() as u32 => {
-                self.put_stack(Str::new(STRING_NULL));
+                self.put_stack(Str::null());
             }
             _ => {
                 // @PLAN53 cluster 2 / S4 (R4): push the value_size zero bytes as
@@ -6725,7 +6725,7 @@ impl State {
                 // value.  Compared against the same renderer that produced it, so the two
                 // cannot drift the way a hand-written `"\0"` literal here would.
                 if matches!(inner.base(), Type::Text(_))
-                    && rendered == loft_text_literal(STRING_NULL)
+                    && rendered == loft_text_literal(crate::text_null::null_str())
                 {
                     return "null".to_string();
                 }

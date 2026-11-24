@@ -196,7 +196,7 @@ pub fn text_timeline_summary() {
 
 impl State {
     pub fn conv_text_from_null(&mut self) {
-        self.put_stack(Str::new(super::STRING_NULL));
+        self.put_stack(Str::null());
     }
 
     pub fn string_from_code(&mut self) {
@@ -317,7 +317,7 @@ impl State {
             (
                 d.as_ptr() as usize,
                 d.capacity(),
-                crate::keys::pln25_dn1_enabled() && d.as_str() == super::STRING_NULL,
+                crate::keys::pln25_dn1_enabled() && crate::text_null::is_null(d),
             )
         };
         if is_null {
@@ -467,7 +467,7 @@ impl State {
             (
                 d.as_ptr() as usize,
                 d.capacity(),
-                crate::keys::pln25_dn1_enabled() && d.as_str() == super::STRING_NULL,
+                crate::keys::pln25_dn1_enabled() && crate::text_null::is_null(d),
             )
         };
         if is_null {
@@ -787,7 +787,7 @@ impl State {
         let src = self.code::<u16>();
         let arg = self.code::<u8>();
         let step = self.code::<i32>();
-        if self.local_text(src, arg).str() != crate::state::STRING_NULL {
+        if !self.local_text(src, arg).is_null() {
             self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
         }
     }

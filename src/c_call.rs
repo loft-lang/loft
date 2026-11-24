@@ -534,7 +534,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 #[must_use]
 fn c_text(raw: u64) -> String {
     if raw == 0 {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_str().to_string();
     }
     let p = raw as *const std::ffi::c_char;
     // SAFETY: the declaration says this symbol returns `char *`, and that

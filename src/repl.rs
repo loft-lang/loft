@@ -1379,8 +1379,9 @@ fn render_capture(
         // byte IS the absence, and quoting it renders a literal that looks like a
         // one-character string — worse than declining, because it claims a value.
         Type::Text(_) => {
-            let s = state.get_stack::<crate::keys::Str>().str().to_string();
-            if s == crate::interp::state::STRING_NULL {
+            let v = state.get_stack::<crate::keys::Str>();
+            let s = v.str().to_string();
+            if v.is_null() {
                 *captured = Some(Captured::Scalar(ScalarValue::Text(s)));
                 return Some("null".to_string());
             }

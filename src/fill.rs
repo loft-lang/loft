@@ -1316,7 +1316,7 @@ fn cast_text_from_bool<const F: bool>(s: &mut State) {
     let new_value = if v_v1 == 1 {
         "true"
     } else if v_v1 == 255 {
-        "\0"
+        crate::text_null::null_str()
     } else {
         "false"
     };
@@ -3185,7 +3185,7 @@ fn const_text_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn conv_text_from_null<const F: bool>(s: &mut State) {
-    let new_value = Str::new(crate::state::STRING_NULL);
+    let new_value = Str::null();
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3200,7 +3200,7 @@ fn length_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
     let new_value = {
         let __t = v_v1.str();
-        if __t == crate::state::STRING_NULL {
+        if crate::text_null::is_null(__t) {
             0
         } else {
             __t.chars().count() as i64
@@ -3220,7 +3220,7 @@ fn size_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
     let new_value = {
         let __t = v_v1.str();
-        if __t == crate::state::STRING_NULL {
+        if crate::text_null::is_null(__t) {
             0
         } else {
             __t.len() as i64
@@ -3249,7 +3249,7 @@ fn length_character_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn conv_bool_from_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str() != crate::state::STRING_NULL;
+    let new_value = !crate::text_null::is_null(v_v1.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3532,11 +3532,11 @@ fn cast_text_from_enum<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_enum_tp = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, u8>();
-    let new_value = Str::new(if v_v1 == 0 || v_v1 == 255 {
-        "\0"
+    let new_value = if v_v1 == 0 || v_v1 == 255 {
+        Str::null()
     } else {
-        s.database.enum_val(v_enum_tp, v_v1)
-    });
+        Str::new(s.database.enum_val(v_enum_tp, v_v1))
+    };
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -4290,7 +4290,7 @@ fn get_text<const F: bool>(s: &mut State) {
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
-            Str::new(crate::state::STRING_NULL)
+            Str::null()
         } else {
             let store = s.database.store(&db);
             Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(v_fld))))

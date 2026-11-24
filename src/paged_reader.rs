@@ -1554,7 +1554,7 @@ pub fn trie_find_rec<P: PageProvider>(
         return 0;
     }
     // A null key is filed in the slot ahead of the tree (`@FR-Col-Trie`), never in it.
-    if !src.v1 && key.as_bytes() == crate::store::STRING_NULL.as_bytes() {
+    if !src.v1 && crate::text_null::is_null(key) {
         return src.null_rec();
     }
     let raw = key.as_bytes().to_vec();

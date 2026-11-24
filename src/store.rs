@@ -6174,7 +6174,7 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn text_is_null(&self, rec: u32, pos: u32) -> bool {
-        self.get_str(self.get_u32_raw(rec, pos)) == STRING_NULL
+        crate::text_null::is_null(self.get_str(self.get_u32_raw(rec, pos)))
     }
 
     /// The store's DATA span — its buffer's address and its size in words — for a loop that
@@ -6191,11 +6191,11 @@ impl Store {
     #[inline]
     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
         if rec == 0 || rec > i32::MAX as u32 {
-            return STRING_NULL;
+            return crate::text_null::null_str();
         }
         let len = self.get_u32_raw(rec, 4);
         if (len / 8) + rec > self.size {
-            return STRING_NULL;
+            return crate::text_null::null_str();
         }
         unsafe {
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(

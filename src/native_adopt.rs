@@ -300,7 +300,7 @@ impl crate::coroutine_host::LoftCoroutine for HostedGen {
                 let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
                 String::from_utf8_lossy(b).into_owned()
             }
-            _ => crate::store::STRING_NULL.to_string(),
+            _ => crate::text_null::null_str().to_string(),
         }
     }
 
@@ -463,7 +463,7 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
     if v.len() < std::mem::size_of::<crate::keys::Str>() {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_str().to_string();
     }
     let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
     s.str().to_string()

@@ -440,6 +440,7 @@ mod radix_tree;
 pub mod rust_spelling;
 mod spatial;
 pub mod store;
+pub mod text_null;
 pub mod store_budget;
 pub mod text_calls;
 pub mod trie_db;

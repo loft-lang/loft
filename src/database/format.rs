@@ -1068,7 +1068,7 @@ impl Stores {
     pub fn os_variable(&mut self, name: &str) -> String {
         std::env::var_os(name)
             .and_then(|s| s.into_string().ok())
-            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
+            .unwrap_or_else(|| crate::text_null::null_str().to_string())
     }
 
     /**

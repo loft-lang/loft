@@ -186,7 +186,7 @@ fn OpConstFalse() -> boolean;
 // null stays a null.  The word itself would be a present text no reader can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
 #cold
-#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"\\0\"}} else {{\"false\"}}"
+#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{crate::text_null::null_str()}} else {{\"false\"}}"
 #loft"s.push_bool_text(v1);"
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
@@ -1104,12 +1104,12 @@ fn OpConstText(_value: const text) -> text;
 #rust"s.string_from_code();"
 #loft"s.string_from_code(); #arm guard(sp <= top - 8): tmp0 = crt::peek_u8(cbase, ip); crt::stack_str_held(stk, sp, cbase, ip + 1, tmp0); ip += tmp0 + 1; sp += 16;"
 fn OpConvTextFromNull() -> text;
-#rust"Str::new(crate::state::STRING_NULL)"
+#rust"Str::null()"
 #loft"s.push_null_text();"
 // @FR-L-Null-Text — the absent text is stored as the `STRING_NULL` bytes, and a reader tests
 // the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> __word;
-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
+#rust"{{ let __t = @v1; if crate::text_null::is_null(__t) {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
 #loft"if v1 == null {{ 0 }} else {{ len(v1!) }} #arm crt::view_length(stk, v1_pos)"
 /// Number of characters (Unicode code points) in the text — the human
 /// count, as in every mainstream language. For a byte length (bounds checks, the
@@ -1122,7 +1122,7 @@ pub fn len(self: text) -> integer {
 // @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
 fn OpSizeText(v1: text) -> __word;
 #cold
-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
+#rust"{{ let __t = @v1; if crate::text_null::is_null(__t) {{ 0 }} else {{ __t.len() as i64 }} }}"
 #loft"if v1 == null {{ 0 }} else {{ v1!.size() }} #arm crt::view_size(stk, v1_pos)"
 /// Number of bytes in the text. This is the bound for byte-positioned
 /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
@@ -1140,7 +1140,7 @@ pub fn len(self: character) -> integer {
 #pure
 
 fn OpConvBoolFromText(v1: text) -> boolean;
-#rust"@v1 != crate::state::STRING_NULL"
+#rust"!crate::text_null::is_null(@v1)"
 #loft"v1 != null #arm crt::view_some(stk, v1_pos)"
 // Plan-04 Phase B: positional init-op; writes an empty String at
 // the frame slot `stack_pos - pos`.  Does not advance the eval stack.
@@ -1226,7 +1226,7 @@ fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 // The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
-#rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
+#rust"if @v1 == 0 || @v1 == 255 {{Str::null()}} else {{Str::new(s.database.enum_val(@enum_tp, @v1))}}"
 #loft"s.push_enum_text(v1, enum_tp);"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
@@ -1448,7 +1448,7 @@ fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_short(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
-#rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
+#rust"{{let db = @v1; if db.rec == 0 {{ Str::null() }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
 #loft"s.put_field_text(v1, fld); #arm if v1.rec == 0 {{ crt::stack_str_null(stk, sp); }} else {{ crt::stack_str_of_field(stk, sp, v1.store_nr, v1.rec, v1.pos, fld); }} sp += 16;"
 fn OpSetInt(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
