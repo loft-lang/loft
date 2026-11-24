@@ -2209,16 +2209,18 @@ pub fn variant_literal_def(e: el::El, n: integer) -> integer {
 }
 
 // The first pass of a struct literal: its field values read, for the locals they make.
-pub fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer) {
+pub fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer, holder: integer = -1) {
   match e.p.nodes[n] {
-    SStructLit { name, fields } => { first_pass_fields(e, vars, el::def_nr(e, name), fields); },
+    SStructLit { name, fields } => { first_pass_fields(e, vars, el::def_nr(e, name), fields, holder: holder); },
     _ => {}
   }
 }
 
 // A struct literal's field values read on the first pass: a collection field's literal is built
 // in the field, so only its items are read — it is no vector value of its own.
-pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>) {
+// `holder`: the element temp of the vector literal this record is an item of, which the
+// field literal's own element temp borrows (`parent_tp.depend()`); -1 elsewhere.
+pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, holder: integer = -1) {
   for fi in fields {
     match e.p.nodes[fi] {
       SFieldInit { name: fname, e: fe } => {
@@ -2237,7 +2239,10 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               // its temporary by that number.
               if len(items) > 0 {
                 // (`is_field`: a reference into the field's store, never freed itself.)
-                fpe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                // (Typed by the field's element, `unique_elm_var`'s `parent_tp.content()`: a
+                // struct enum's `ref(T)`, the bare reference for a scalar.)
+                fet = empty_elm_type(e, at, holder);
+                fpe = el_vars::create_unique(vars, "elm", el_types::with_deps(fet, if holder >= 0 { [holder] } else { [] }));
                 el_vars::set_skip_free(vars, fpe, "parse_vector_inner");
                 // (A literal that fills the field names its vector's row on this pass, ahead
                 // of the struct that holds it; an empty one names nothing.)
@@ -2468,7 +2473,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     if sd >= 0 {
       recs += [it];
       if e.first_pass {
-        literal_field_exprs(e, vars, it);
+        literal_field_exprs(e, vars, it, holder: elm);
       }
       xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
     } else if el_ex_place::vec_lit_len(e, it) > 0 || (e.p.nodes[it] is SVecLit && (el_types::base(nested_want) is TyVector || len([for oi in items if el_ex_place::vec_lit_len(e, oi) > 0 { oi }]) > 0)) {
