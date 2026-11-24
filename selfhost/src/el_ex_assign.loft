@@ -932,6 +932,18 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
 
 // `Parser::is_copied_place`: a value read out of a place — a variable, a text field read off one,
 // any projection rooted at a container variable — rather than built fresh.
+// Is `n` the block a `.map(…)` or `.filter(…)` call answers — a "Vector comprehension" ending
+// in its `_map_result_N` / `_filter_result_N`?
+fn method_comprehension(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => block[0].name == "Vector comprehension" && len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) {
+      NdVar { n: rv } => starts_with(el_vars::name_of(vars, rv), "_map_result") || starts_with(el_vars::name_of(vars, rv), "_filter_result"),
+      _ => false
+    },
+    _ => false
+  }
+}
+
 pub fn copied_place(e: el::El, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdVar { n: _ } => true,
@@ -2076,6 +2088,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   };
   if op == "=" && v >= 0 && (!amp_bind || text_val) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && text_val && text_place {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
+  }
+  // (A `.map(…)` / `.filter(…)` answers its `_map_result_N` / `_filter_result_N` — a copied
+  // place — so a vector bind of one is `lower_vec_copy_bind`'s copy: `copy_bound`.)
+  if op == "=" && v >= 0 && el_types::base(x.tp) is TyVector && method_comprehension(vars, x.code) {
+    el_vars::mark_copy_bound(vars, v, "lower_vec_copy_bind");
   }
   if op == "=" {
     ux = el_ex_tuple::unbox_tuple_element(e, vars, x);
