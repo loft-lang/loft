@@ -217,9 +217,9 @@ impl Stores {
     /// Rewrite the (type-shared) descriptor nodes for a keyed collection into an array-shaped node
     /// the reader can walk: hash/radix/index → `FlatArray` (its data record is looked up per
     /// instance in `flat`); `sorted` → an in-place `Vector` (already an inline, key-ordered vector,
-    /// `sorted_finish` maintains it on every `+=`). `ordered` is left unsupported.
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
-    fn rewrite_iterated(desc: &mut crate::database::LayoutDesc) {
+    /// `sorted_finish` maintains it on every `+=`). `ordered` is left unsupported.  The C backend
+    /// writes the same rewritten descriptor into a page's unit (`src/c/deliver.rs`).
+    pub(crate) fn rewrite_iterated(desc: &mut crate::database::LayoutDesc) {
         use crate::database::{Iterated, LayoutNode};
         for node in desc.nodes.values_mut() {
             let replacement = match node {

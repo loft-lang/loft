@@ -66,6 +66,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
+    include_str!("loft_deliver_web.h"),
     include_str!("loft_web_page.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
@@ -240,6 +241,11 @@ pub(crate) struct Cx<'a> {
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every type a `deliver` walks (`loft_dlv{tp}`, `deliver.rs`).
     deliver_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// A page's delivery descriptors (`loft_dlvd{tp}`): each delivered or exposed type's layout
+    /// descriptor as JSON, its keyed collections rewritten to the arrays they are flattened to.
+    deliver_descs: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
+    /// A page's flatten walkers (`loft_dlk{tp}`), by type: the body of each.
+    deliver_flats: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
@@ -465,6 +471,8 @@ impl<'a> Cx<'a> {
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            deliver_descs: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            deliver_flats: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_sigs_buf: std::cell::RefCell::new(std::collections::BTreeSet::new()),

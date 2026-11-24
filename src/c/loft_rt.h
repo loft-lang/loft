@@ -6122,8 +6122,9 @@ static void loft_dlv_text(loft_cx *cx, loft_text *o, loft_ref r) {
 
 typedef const char *(*loft_dlv_fn)(loft_cx *cx, loft_text *o, loft_ref r);
 
-/* `deliver(tag, value)` on the loopback host: the bytes, or why the layout cannot carry them. */
-static void loft_deliver(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn f, loft_ref r) {
+/* `deliver(tag, value)` on the loopback host: the bytes, or why the layout cannot carry them.
+ * A page's host is `loft_deliver_page` (loft_deliver_web.h). */
+static void loft_deliver_loopback(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn f, loft_ref r) {
     loft_text o = { 0, 0, 0 };
     const char *e = f(cx, &o, r);
     if (e) printf("deliver tag=%lld type=%s error=%s\n", (long long) tag, name, e);
