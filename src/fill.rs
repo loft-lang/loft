@@ -11,10 +11,6 @@
 // Byte-for-byte equality of this file with that regeneration is enforced by
 // `tests/issues.rs::fill_rs_up_to_date` and `::n9_generated_fill_matches_src`,
 // so hand-edits fail CI — edit the `#rust` template in default/*.loft instead.
-//
-// The SAME templates feed native code generation (`src/generation/`): there the
-// `s.<method>` calls below are rewritten to their `stores.*` / `*_runtime`
-// equivalents by `src/generation/calls.rs::substitute_template_body`.
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]

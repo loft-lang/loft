@@ -57,7 +57,7 @@ pub fn ok(self: FileResult) -> boolean {
 }
 #pure
 // Maps a runtime FS_* result code (from OpDelete / OpMoveFile / OpMkdir / OpMkdirAll)
-// to a FileResult variant. The codes are fixed in codegen_runtime.rs (shared by
+// to a FileResult variant. The codes are fixed in src/fs_ops.rs (shared by
 // both backends); an unknown code falls through to Other.
 fn fs_result(code: integer) -> FileResult {
   match code {
