@@ -438,7 +438,7 @@ answer after it: leave out what that runner cannot host — `test(/native_script
 corpus fills its temp disk) and a test that runs `target/release/loft` by path, which this
 job never builds (`package_layout`).  `linux-probe` restores the Linux leg's cache read-only — a cache only a push to `main` saves,
 so it starts cold whenever that one has been evicted — and runs the tests the way `ci.yml`'s
-Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
+Test job does (dev profile, the `ci` nextest profile, the release binary built first), so its
 answer is that leg's answer for the tests it selects.  GitHub dispatches a workflow by name
 only once the file is on `main`; before that, a push of the commit to the probe's own branch
 (`linux-probe`, `windows-probe`) runs its standing probes — for `linux-probe`, every test
@@ -726,7 +726,7 @@ same way: the storm makers six wide, then the victims alone under `ci-victims` �
 one cap.  One at a time the storm makers were a 716 s chain the cap cut; six wide, 313 s.
 A per-change run (PR, push, the local curated run) leaves out every `mod rust_writer` test
 (`ci_test_filter.py nightly`), `wasm_debug_relay`'s Rust-writer page among them, so its
-victims pass holds the two multiplayer suites and the local run builds no wasm rlib.
+victims pass holds the two multiplayer suites.
 
 ## The schedule is not a clock — the release gate (2026-09-04)
 
@@ -795,8 +795,7 @@ an hour and a half of wall clock for a release that happens monthly.
 ## Each leg builds only the binaries it runs
 
 **Rule: a test leg builds the test binaries it runs and nothing else — one compile of the
-crate, no release build — restores no `target/`, and builds no wasm runtime its binaries
-do not use.**  Of a leg's wall, the test phase was a third and the rest was build: every
+crate, no release build — and restores no `target/`.**  Of a leg's wall, the test phase was a third and the rest was build: every
 leg compiled all 445 test binaries and ran its share, compiled the crate a second time in
 release because twenty-two binaries spawned `target/release/loft` (and skipped silently
 without it), restored a whole `target/` that made the build no faster (the dependencies
@@ -804,9 +803,8 @@ are half a minute of a cold build; the rest is loft and its test crates, which c
 every commit), and warmed two wasm runtime rlibs for each of the two binaries whether or
 not a test of the leg ran a page (the measurements: [the history companion § Where a test
 leg's minutes went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).  Every test
-spawns the loft its own build made (`CARGO_BIN_EXE_loft`), whose `--native` links the
-rlib beside it in `deps/`; a test that wants the release binary is a test of the release
-row, not of the gate.
+spawns the loft its own build made (`CARGO_BIN_EXE_loft`); a test that wants the release
+binary is a test of the release row, not of the gate.
 
 What `ci.yml` does:
 
@@ -817,19 +815,14 @@ What `ci.yml` does:
   — every other `tests/*.rs`, the unit tests, the bin targets' tests — is packed into
   `rest-a/b/c` by the measured seconds in `scripts/ci_shards.tsv`, a test that takes the
   whole runner (`threads-required`) counted four times, since nothing runs beside it.  The
-  binaries that need a wasm runtime are packed together into `rest-a`, which starts the pack
-  with the measured cost of building those runtimes so it is handed that much less.  The
   `Shard` step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest
   passes take them, so the build and the run select one set.  `ci_test_filter.py` composes
   the SAME filterset for every leg (its shard argument is accepted and selects nothing);
   a single-slot group's member on a rest leg still runs in its one slot there.
   `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
-- The wasm target and the runtime rlibs are built on the legs with a binary that uses
-  them (`ci_shards.py html` / `wasi`): the html and wasi shapes SIDE BY SIDE in one step
-  (`loft cache warm --runtime <shape>`, each a 1m45 release build of the crate for one
-  target that does not saturate the runner alone), and the warm-up proper runs
-  `--no-runtime` — a leg whose binaries use no runtime builds none, where every leg built
-  both, twice, before.
+- The wasm32-unknown-unknown target is installed on the legs with a binary that drives a
+  `--html` page (`ci_shards.py html`): the html tests skip without it.  `--html` and
+  `--native-wasm` compile through the C and clang, so no leg builds a wasm runtime.
 - The build is `cargo test --no-run` with the leg's targets, not `cargo build`: nextest
   runs the TEST artefacts, and for `--lib` that is the crate compiled once more as its
   unit-test harness, which a `cargo build --lib` does not make — the test step then spent

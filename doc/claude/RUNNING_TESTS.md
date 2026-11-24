@@ -94,24 +94,21 @@ when nextest is on `PATH` (it parallelises per test rather than per binary), and
 `cargo test --release --no-fail-fast`.  The choice is logged at launch, so a change in suite
 speed can be tied to it.
 
-**Rebuild step.**  Before the tests it rebuilds, in parallel, the artefacts they link: the
-sibling and fixture cdylibs under `lib/*/native/` and `tests/lib/*/native/`, the dev
-`libloft.rlib` beside the test-profile `loft`, and — only when a selected binary needs them —
-the release `libloft.rlib` with `target/release/loft` and the two wasm rlibs.  It decides by
-READING the selected test sources, not by the subject's name; the curated and full runs need
-everything.  A stale cdylib otherwise shows up as `cannot find function X in crate
-loft_*_native` and a dozen unrelated failures.  `make test`, `make quick`, `make ci` and
-`make run-tests` run the same step through the `rebuild-native-cdylibs` target.
+**Rebuild step.**  Before the tests it builds what they run: the dev library, then — only when
+a selected binary spawns it — `target/release/loft`, then the library's unit tests alone.  It
+decides by READING the selected test sources, not by the subject's name; the curated and full
+runs need the release binary.  A library's compiled part is a hosted C unit loft builds on
+first use, so nothing else is rebuilt here.  `make test`, `make quick`, `make ci` and
+`make run-tests` build the release binaries through the `rebuild-native-cdylibs` target.
 
 Each step's time prints live and collects in `/tmp/loft_timings.<id>.txt`; `--wait` and the
 foreground run end with a `=== Wall-clock timing summary ===` block that names what it skipped
 and why, so a regressing step is named rather than "the suite is slow":
 
 ```
-  cdylib lib/graphics/native                        1.910s
-  cdylib lib/imaging/native                         0.885s
-  ...
-  wasm32 rlib                                       0.588s
+  dev library                                       0.910s
+  release loft binary                               0.885s
+  library unit tests                                0.154s
   (rebuild_native_cdylibs total wall-clock)         1.949s
   cargo nextest run --release --no-fail-fast …    313.479s
 ```

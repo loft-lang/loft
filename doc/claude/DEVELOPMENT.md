@@ -565,19 +565,18 @@ process name ([CLAUDE.md § Key commands](../../CLAUDE.md)).  When this box cann
 reliably, run the same gate on GitHub: `gh workflow run ci.yml --ref <branch> -f
 os=ubuntu-latest` ([CI_BUDGET.md § When the local gate is unreliable](CI_BUDGET.md)).
 
-Keep the **installed** loft current: a stale one builds consumer libraries against an old rlib.
-`make install-user-fast` (native only) or `make install-user` (everything) install into
-`~/.local` without root, and check that `command -v loft` is the binary just installed.
+Keep the **installed** loft current: a stale one answers for an old source tree.
+`make install-user` installs the binary, the standard library and the components into
+`~/.local` without root, and checks that `command -v loft` is the binary just installed.
 
 #### Common pitfalls
 
 | Pitfall | What fails | Cure |
 |---|---|---|
 | `cargo clippy` without `-D warnings`, or only one variant | CI denies warnings, and runs the `--all-targets --all-features` variant too | both variants, with `-D warnings` |
-| Stale wasm rlib | `--html` / `html_wasm` tests fail with rustc errors citing an older source | `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random` — never `--features wasm`, whose bundle imports from `__wbindgen_placeholder__` |
 | `#[cfg(feature = "X")]` on an entry of a registration table | registration order shifts, and tests crash with "index out of bounds" | keep every entry, gate only what it includes |
 | New files with crypto or FFI constants | pedantic lints (`unreadable_literal`, `many_single_char_names`, `cast_lossless`) | `#[allow(clippy::…)]` on the function or constant |
-| A new operator or builtin | `index/target_surface.json` drifts and `make ci` fails a guard no targeted suite shows | `make surface-gen`, after rebuilding the wasm rlib |
+| A new operator or builtin | `index/target_surface.json` drifts and `make ci` fails a guard no targeted suite shows | `make surface-gen` (it builds the wasm32 runtime it probes) |
 
 ### Remote CI
 
