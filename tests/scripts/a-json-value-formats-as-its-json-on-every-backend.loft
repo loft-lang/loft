@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `JsonValue` in a JSON format (`:j`, `:#j`) is the JSON it holds — standalone, or as a field
+// of a record, at the record's indent — and plainly it renders as any other enum.  The C writes
+// the same text as the interpreter.
+// Axes this file MOVES:  the format (`:j`, `:#j`, plain); where the value sits (standalone, a
+//                        record's field); the JSON kinds (null, booleans, number, text, empty and
+//                        nested containers).
+// Axes it HOLDS FIXED:   the value comes from `json_parse`.
+// Hand-computed: RFC 8259 compact text in document order; the pretty form indents two spaces.
+
+struct Wj { tag: text, body: JsonValue }
+
+fn test_a_json_value_in_a_json_format_is_its_json() {
+  o = json_parse(`{{"n":null,"t":true,"f":false,"x":1.5,"e":"ab","ea":[],"eo":{{}},"d":{{"a":[{{"b":[[1]]}}]}}}}`);
+  assert("{o:j}" == `{{"n":null,"t":true,"f":false,"x":1.5,"e":"ab","ea":[],"eo":{{}},"d":{{"a":[{{"b":[[1]]}}]}}}}`, "compact: {o:j}");
+  a = json_parse(`[1,"two",null]`);
+  assert("{a:j}" == `[1,"two",null]`, "array: {a:j}");
+}
+
+fn test_a_json_value_field_is_its_json_inside_the_record() {
+  w = Wj { tag: "t", body: json_parse(`{{"key":1,"v":[1,2]}}`) };
+  assert("{w:j}" == `{{"tag":"t","body":{{"key":1,"v":[1,2]}}}}`, "nested: {w:j}");
+  assert("{w:#j}" == "{{\n  \"tag\": \"t\",\n  \"body\": {{\n    \"key\": 1,\n    \"v\": [\n      1,\n      2\n    ]\n  }}\n}}", "pretty: {w:#j}");
+}
+
+fn test_a_json_value_renders_plainly_as_an_enum() {
+  a = json_parse(`[1,"two"]`);
+  assert("{a}" == `JArray {{items:[JInteger {{value:1}},JString {{value:"two"}}]}}`, "plain: {a}");
+}

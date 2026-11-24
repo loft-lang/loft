@@ -2970,6 +2970,11 @@ fn unit_defines(
     let json_tree = reached.iter().any(|&d| {
         let n = data.def(d).name();
         n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
+    }) || cx.show_types.borrow().iter().any(|&t| {
+        stores
+            .types
+            .get(t as usize)
+            .is_some_and(|t| t.name == "JsonValue")
     });
     let parses = !cx.parse_types.borrow().is_empty()
         || reached

@@ -7,6 +7,11 @@
 // Axes this file MOVES:  which lazy native is reached without a bind (error, faults, clear, fail).
 // Axes it HOLDS FIXED:   one hash collection, never bound to a source.
 // Hand-computed: "" / 0 / false / "boom" with 1 fault.
+//
+// @falsified-at: 84c8db997 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
 
 struct Pz { id: integer, n: text }
 
