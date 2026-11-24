@@ -314,3 +314,42 @@ fn a_self_tail_return_in_an_arm_releases_the_frame_once_interpret() {
 fn a_self_tail_return_in_an_arm_releases_the_frame_once_native_c() {
     assert_tail_return_in_arm("--native-c");
 }
+
+/// loft#2630 — a `for` over the name of a local the function returns: the return-buffer
+/// rename makes that local the hidden parameter on pass 2, and a parameter never "ends", so the
+/// loop kept the spelling on pass 2 alone and every later bind of the name split there only —
+/// the rename onto the split binding grew the signature on pass 2 (an H5 panic, both
+/// backends).  The loop decides on pass 1 for both passes.
+const LOOP_OVER_A_RETURNED_LOCAL: &str = "struct Rg { lo: integer, hi: integer }\n\
+enum Nd { NCall { nm: text, args: vector<Nd> }, NInt { n: integer } }\n\
+fn rng(c: Nd) -> Rg? {\n\
+  match c {\n\
+    NInt { n } => Rg { lo: n, hi: n },\n\
+    NCall { nm, args } => {\n\
+      if nm == \"add\" { a = rng(args[0]); b = rng(args[1]); if a == null || b == null { return null; } return Rg { lo: a!.lo + b!.lo, hi: a!.hi + b!.hi }; }\n\
+      if nm == \"and\" { hi = 0 - 1; for a in args { r = rng(a); if r != null && (hi < 0 || r!.hi < hi) { hi = r!.hi; } } return if hi < 0 { null } else { Rg { lo: 0, hi: hi } }; }\n\
+      if nm == \"narrow\" { a = rng(args[0]); return if a != null && a!.lo > 0 { a } else { null }; }\n\
+      null\n\
+    },\n\
+    _ => null\n\
+  }\n\
+}\n\
+fn main() { r = rng(Nd::NCall { nm: \"narrow\", args: [Nd::NInt { n: 3 }] }); println(\"{r!.lo}\"); }\n\
+";
+
+#[test]
+fn a_loop_over_a_returned_locals_name_parses_alike_on_both_passes() {
+    for backend in ["--interpret", "--native-c"] {
+        let probe = write_probe(
+            &format!("2630_{}", backend.trim_start_matches('-')),
+            LOOP_OVER_A_RETURNED_LOCAL,
+        );
+        let (ok, stdout, stderr) = run(backend, &probe);
+        let _ = fa::remove_file(&probe);
+        assert!(
+            ok && !stderr.contains("H5"),
+            "[2630/{backend}] must compile and run\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(stdout.trim(), "3", "[2630/{backend}]\nstderr:\n{stderr}");
+    }
+}
