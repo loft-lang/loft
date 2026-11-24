@@ -402,8 +402,8 @@ fn issue684_subcommand_still_works_as_first_positional() {
 // ── W1.1: --html produces a self-contained HTML file ──────────────────────
 
 /// W1.1: `--html` must produce a valid HTML file with embedded WASM.
-/// Requires the `wasm32-unknown-unknown` rustup target — skipped in CI
-/// environments where the target is not installed.
+/// Requires the C's wasm toolchain (a clang that links a WASI program) — skipped where
+/// there is none.
 #[test]
 fn w1_1_html_export_produces_file() {
     let dir = std::env::temp_dir();
@@ -421,8 +421,8 @@ fn w1_1_html_export_produces_file() {
     let _ = fa::remove_file(&src);
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
-    if stderr.contains("wasm32-unknown-unknown") && stderr.contains("not be installed") {
-        eprintln!("SKIP: wasm32-unknown-unknown target not installed");
+    if loft::platform::wasm_c_toolchain().triple.is_none() {
+        eprintln!("SKIP: no wasm32 C toolchain");
         return;
     }
     assert!(

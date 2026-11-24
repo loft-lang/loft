@@ -248,7 +248,6 @@ native_checkpoints	6.7
 native_ext	0.2
 native_loader	1.4
 native_no_silent_stub	2.7
-native_rlib_refresh	2.9
 native_source_key	30.9
 native_yield_channel	4.4
 nested_field	25.7

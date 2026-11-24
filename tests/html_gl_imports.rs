@@ -34,12 +34,9 @@ fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// A clang that links a WASI program: the C's wasm route a page is built through.
 fn wasm32_installed() -> bool {
-    loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
-        .unwrap_or(false)
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 fn repo_root() -> PathBuf {

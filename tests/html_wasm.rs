@@ -46,20 +46,11 @@ fn which(cmd: &str) -> Option<PathBuf> {
     }
 }
 
+/// Can this machine build a page: a clang that links a WASI program (the C's wasm route)?  A
+/// test that needs one skips rather than fails without it — a machine that cannot
+/// cross-compile says nothing about the code under test.
 fn wasm32_target_installed() -> bool {
-    rustup_target_installed("wasm32-unknown-unknown")
-}
-
-/// Is `triple` an installed rustup target on this machine?  A test that needs one
-/// skips rather than fails without it — a machine that cannot cross-compile says
-/// nothing about the code under test.
-fn rustup_target_installed(triple: &str) -> bool {
-    loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .is_some_and(|s| s.lines().any(|l| l == triple))
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 /// Can this machine build a C page (`--native-c --html`)?  Says why not, for the skip line.
