@@ -5978,7 +5978,7 @@ fn set_native_holds(idx: usize, holds: u32) {
 /// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`,
 /// loft#1708).  A handle naming no live generator takes nothing.  Answers the handle.
 #[must_use]
-pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
+pub fn coroutine_retain(gen_ref: DbRef, _stores: &Stores) -> DbRef {
     let live = NATIVE_COROUTINES.with(|c| native_coroutine_live(&c.borrow(), gen_ref));
     if live {
         NATIVE_COROUTINE_HOLDS.with(|h| {
@@ -6288,7 +6288,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
 
 /// Test whether a native coroutine has been exhausted (its slot freed).
 #[must_use]
-pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
+pub fn coroutine_is_exhausted(gen_ref: DbRef, _stores: &Stores) -> bool {
     NATIVE_COROUTINES.with(|c| {
         let coroutines = c.borrow();
         !native_coroutine_live(&coroutines, gen_ref)
@@ -6305,13 +6305,13 @@ pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
 pub struct CoroutineHost {
     pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
     pub alloc: fn(Box<dyn LoftCoroutine>) -> DbRef,
-    pub retain: fn(DbRef) -> DbRef,
+    pub retain: fn(DbRef, &Stores) -> DbRef,
     pub free: fn(DbRef, &mut Stores),
     pub next_i64: fn(DbRef, &mut Stores) -> i64,
     pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
     pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
     pub next_text: fn(DbRef, &mut Stores) -> String,
-    pub exhausted: fn(DbRef) -> bool,
+    pub exhausted: fn(DbRef, &Stores) -> bool,
 }
 
 impl CoroutineHost {

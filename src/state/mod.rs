@@ -1734,7 +1734,7 @@ impl State {
         let mut stack = self.stack_cur;
         stack.pos = 8 + self.stack_pos;
         // PKG.5: set library index for auto-marshal dispatch.
-        crate::extensions::set_current_lib_idx(call);
+        self.database.lib_idx = call;
         let f = self.library[call as usize];
         if let Some(raw) = crate::extensions::shared_dispatch_raw(f) {
             // @PLN199 C2 — a compiled library may call back into this interpreter (a function
@@ -1742,9 +1742,9 @@ impl State {
             // pointer derived from the same `State` the call-back uses, never through a
             // `&mut Stores` held across it.
             let state: *mut State = self;
-            let outer = crate::extensions::enter_host_state(state);
+            let outer = unsafe { std::mem::replace(&mut (*state).database.host_state, state) };
             raw(unsafe { &raw mut (*state).database }, &mut stack);
-            crate::extensions::leave_host_state(outer);
+            unsafe { (*state).database.host_state = outer };
         } else {
             f(&mut self.database, &mut stack);
         }
@@ -2646,7 +2646,7 @@ impl State {
     #[must_use]
     pub fn coroutine_exhausted(&self, gen_ref: &DbRef) -> bool {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref);
+            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref, &self.database);
         }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return true; // null iterator is exhausted
@@ -2671,7 +2671,7 @@ impl State {
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_retain(gen_ref);
+            return crate::codegen_runtime::coroutine_retain(gen_ref, &self.database);
         }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()

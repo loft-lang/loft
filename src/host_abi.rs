@@ -98,7 +98,7 @@ pub struct HostTable {
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 7;
+pub const HOST_ABI: u32 = 8;
 
 /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
 /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set

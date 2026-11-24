@@ -343,7 +343,7 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     use crate::c_signature::CArg;
     use crate::keys::{DbRef, Str};
 
-    let idx = crate::call_frames::current_lib_idx();
+    let idx = stores.lib_idx;
     let binding = {
         let guard = C_BINDINGS
             .lock()

@@ -395,8 +395,8 @@ fn build_const_vectors(
 /// are the ones with no console to re-run under `LOFT_STUB_DEBUG=1`: a browser bundle, and a
 /// released binary.  loft#1189 spent its investigation on exactly that message.
 ///
-/// `State::static_call` already publishes the index it is about to dispatch
-/// (`extensions::set_current_lib_idx`), so the stub can read it back and look the symbol up
+/// `State::invoke_native` already publishes the index it is about to dispatch
+/// (`Stores::lib_idx`), so the stub can read it back and look the symbol up
 /// here.  A process-global is right for THIS map where it was wrong for the stub SET: the set
 /// decides what a wiring pass may replace, and two compiles racing there skipped each other's
 /// symbols, while this map only renders a message.  Two States can still land different symbols
@@ -417,8 +417,7 @@ fn remember_stub_symbol(idx: u16, sym: &str) {
 ///
 /// Never fails and never blocks the report: an unknown index answers a description rather than
 /// a name, because a message that says less is still better than one that says nothing.
-fn stub_symbol_now() -> String {
-    let idx = crate::extensions::current_lib_idx();
+fn stub_symbol_now(idx: u16) -> String {
     let Some(map) = STUB_SYMBOLS.get() else {
         return format!("<library index {idx}>");
     };
@@ -514,7 +513,7 @@ fn register_native_stubs(state: &mut State, data: &Data) {
         // presents as a missing library. The give-away is a `BUG (#306)` / strict-store line
         // earlier in the run, and a crash site that MOVES between builds.
         let stub: fn(&mut Stores, &mut DbRef) = {
-            |_stores: &mut Stores, _db: &mut DbRef| {
+            |stores: &mut Stores, _db: &mut DbRef| {
                 panic!(
                     "native function {} not loaded. Either (a) its library's native cdylib is \
                      missing or stale — commonly built against a different libloft.rlib; \
@@ -525,7 +524,7 @@ fn register_native_stubs(state: &mut State, data: &Data) {
                      if the run is green with LOFT_POISON unset, or an earlier line reports \
                      a `BUG` refusal of a store free / a strict-store violation, it is (b) — re-run with \
                      `LOFT_STRICT_STORES=1` to name the access and the free.",
-                    stub_symbol_now()
+                    stub_symbol_now(stores.lib_idx)
                 );
             }
         };

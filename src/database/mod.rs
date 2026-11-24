@@ -560,6 +560,22 @@ pub struct Stores {
     pub hosted_cx: crate::host_abi::HostedContexts,
     /// `@PLN226` — the store-lifetime detectors' records of this run (`keys::StoreChecks`).
     pub(crate) checks: crate::keys::StoreChecks,
+    /// `@PLN226` — the library index of the native call in flight, set by
+    /// `State::invoke_native`: the only way a `fn(&mut Stores, &mut DbRef)` handler learns
+    /// WHICH binding it serves (the `#c` and native auto-dispatchers, a missing native's stub).
+    pub lib_idx: u16,
+    /// `@PLN226` (loft#715) — `lib_idx + 1` while a shared-library bridge call is on this
+    /// `Stores`' stack, 0 otherwise: a fault raised inside one names the bridge
+    /// ([`crate::call_frames::shared_bridge_label`]).
+    pub in_bridge: u16,
+    /// `@PLN226` (@PLN199 C2) — the interpreter running the bridge call on this `Stores`, for
+    /// a compiled library's call back into it (`HostTable::call_ref`); null outside one.  Set
+    /// and restored around the call by `State::invoke_native`, so a nested bridge call leaves
+    /// the outer one reachable.
+    pub host_state: *mut crate::state::State,
+    /// `@PLN226` (loft#2227) — the records ONE bridge call claims in its pinned argument
+    /// store: armed by `extensions::claim_log_begin`, noted by the claim and resize callbacks.
+    pub(crate) claim_log: Option<(u16, Vec<u32>)>,
     /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
     pub(crate) run: RunDiagnostics,
     /// `@PLN226` — the render in progress (`format::RenderState`).
@@ -862,6 +878,10 @@ impl Clone for Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1687,6 +1707,10 @@ impl Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),

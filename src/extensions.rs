@@ -1249,30 +1249,6 @@ fn shared_store_dispatch_dest_raw(
     shared_store_dispatch_raw(stores_raw, stack);
 }
 
-std::thread_local! {
-    /// @PLN199 C2 — the interpreter running the shared-bridge call on this thread, for a
-    /// compiled library's call back into it (`HostTable::call_ref`).  Null outside one.
-    static HOST_STATE: std::cell::Cell<*mut crate::state::State> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-/// Record `state` as the interpreter a bridge call on this thread may call back into, and
-/// answer the one it replaces, which [`leave_host_state`] restores — so a nested bridge call
-/// (a callback that calls the library again) leaves the outer one reachable.
-pub fn enter_host_state(state: *mut crate::state::State) -> *mut crate::state::State {
-    HOST_STATE.with(|c| c.replace(state))
-}
-
-/// Restore the interpreter [`enter_host_state`] replaced.
-pub fn leave_host_state(prev: *mut crate::state::State) {
-    HOST_STATE.with(|c| c.set(prev));
-}
-
-/// The interpreter running the current bridge call on this thread, or null.
-pub(crate) fn host_state() -> *mut crate::state::State {
-    HOST_STATE.with(std::cell::Cell::get)
-}
-
 /// [`shared_store_dispatch`] through a raw store pointer, the entry `State::invoke_native`
 /// takes (@PLN199 C2).  No `&mut Stores` stays alive across the bridge call: the bridge may
 /// call back into the interpreter, which reaches the same `Stores` through its `State`.  The
@@ -1288,13 +1264,13 @@ fn shared_store_dispatch_raw(
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let lib_idx = crate::call_frames::current_lib_idx();
+    let lib_idx = stores.lib_idx;
     // loft#715 — mark that a bridge call is on the stack.  A fault raised from
     // here is a BRIDGE fault, and it used to read exactly like a program fault:
     // `Cannot add to none-structure '<type>'` names a type, never the library
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
-    let outer_bridge = crate::call_frames::enter_shared_bridge(lib_idx);
+    let outer_bridge = std::mem::replace(&mut stores.in_bridge, lib_idx.wrapping_add(1));
     let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&SHARED_SIG_CACHE, &SHARED_SIGS, lib_idx)
     else {
         panic!("no shared signature for lib_idx {lib_idx}")
@@ -1431,7 +1407,7 @@ fn shared_store_dispatch_raw(
     };
     // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
     let host = if crate::state::hosted_verify_enabled() {
-        host_state()
+        unsafe { (*stores_ptr).host_state }
     } else {
         std::ptr::null_mut()
     };
@@ -1449,9 +1425,9 @@ fn shared_store_dispatch_raw(
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
     // `@PLN206 P7` — the routine handed itself over to the interpreter (`State::accept_handover`):
     // it answers nothing, and the static call continues as the interpreter's frame.
-    let state = host_state();
+    let state = unsafe { (*stores_raw).host_state };
     if !state.is_null() && unsafe { (*state).pending_handover.is_some() } {
-        crate::call_frames::leave_shared_bridge(outer_bridge);
+        unsafe { (*stores_raw).in_bridge = outer_bridge };
         return;
     }
     // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
@@ -1558,7 +1534,7 @@ fn shared_store_dispatch_raw(
             }
         }
     }
-    crate::call_frames::leave_shared_bridge(outer_bridge);
+    unsafe { (*stores_raw).in_bridge = outer_bridge };
 }
 
 /// The attribute count a shared-bridge call marshals without allocating
@@ -1594,19 +1570,12 @@ fn write_fn_ref(d_nr: i64, closure: crate::keys::DbRef) -> [u8; FN_REF_SIZE] {
 
 /// Generic auto-marshal dispatcher. Called via `OpStaticCall` for all
 /// auto-wired native functions. Reads signature from `NATIVE_SIGS` using
-/// the library index stored in the bytecode (passed via the stack frame).
-///
-/// Since `Call = fn(&mut Stores, &mut DbRef)` doesn't receive the library
-/// index, we use CURRENT_LIB_IDX (set by a patched static_call).
-///
-/// Actually — `State::static_call()` doesn't pass the library index to
-/// the Call function. We need a different mechanism.
-///
-/// Solution: use a thread-local that `static_call` sets before invoking.
+/// the library index of the call: `Call = fn(&mut Stores, &mut DbRef)` does not
+/// receive it, so `State::invoke_native` records it in `Stores::lib_idx` first.
 #[cfg(feature = "native-extensions")]
 fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
-    // Read the current library index from the thread-local.
-    let lib_idx = crate::call_frames::current_lib_idx();
+    // The library index `State::invoke_native` set for this call.
+    let lib_idx = stores.lib_idx;
 
     // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the owning
     // cdylib registered, resolved at wiring — a symbol without one is reported there
@@ -1704,26 +1673,19 @@ mod dispatch_cache_tests {
 /// ref arg's store (or store 0), calls the bridge, and writes the tagged
 /// return back to the stack.  Replaces the ~98-arm `dispatch_call` for any
 /// symbol whose cdylib was built with `#[loft_native]`.
-/// Call a `loft_ffi::LoftBridgeFn` with `args`, `stores` installed as `CURRENT_STORES` for the
-/// call's `ffi_claim` / resize callbacks and cleared again however the call ends.
+/// Call a `loft_ffi::LoftBridgeFn` with `args`; the handle `ls` is given `stores` above its
+/// store number ([`ffi_handle_stores`]) for the call's `ffi_claim` / resize callbacks.
 #[cfg(feature = "native-extensions")]
 fn call_bridge(
     stores: &mut crate::database::Stores,
     bridge_ptr: *const (),
     cx: Option<crate::c_libs::CxFns>,
-    ls: LoftStore,
+    mut ls: LoftStore,
     args: &[loft_ffi::LoftValue],
 ) -> loft_ffi::LoftValue {
     use loft_ffi::LoftValue;
-    struct StoresGuard;
-    impl Drop for StoresGuard {
-        fn drop(&mut self) {
-            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
-        }
-    }
     let stores_ptr: *mut crate::database::Stores = stores;
-    CURRENT_STORES.with(|c| c.set(stores_ptr));
-    let _guard = StoresGuard;
+    ls.ctx._opaque = (ls.ctx._opaque as usize | (stores_ptr as usize) << 16) as *mut ();
 
     let mut ret = LoftValue::VOID;
     // `@PLN226` — a component's bridge takes this `Stores`' context of that component first.
@@ -1852,11 +1814,11 @@ fn dispatch_via_bridge(
     // only what this call claimed there is deleted: log it.
     let pinned_answer = returns_ref && call.as_ref().is_some_and(|c| !c.minted);
     if pinned_answer {
-        claim_log_begin(store_nr);
+        claim_log_begin(stores, store_nr);
     }
     let ret = call_bridge(stores, bridge_ptr, sig.cx, ls, args);
     let claimed = if pinned_answer {
-        claim_log_end()
+        claim_log_end(stores)
     } else {
         Vec::new()
     };
@@ -2018,42 +1980,38 @@ fn bridge_ref_handle(
 //
 // Ungated on purpose, unlike the `ffi_*` callbacks below that read it: it is also
 // the backing store for [`native_call`], which generated code links on a target
-// that has no `dlopen` and therefore no `native-extensions` (loft#967).
+// that has no `dlopen` and therefore no `native-extensions` (loft#967).  The interpreter's
+// own bridge calls carry their `Stores` in the handle ([`ffi_handle_stores`]); this cell is
+// the rustc writer's, and goes with it (@PLN225).
 std::thread_local! {
     pub(crate) static CURRENT_STORES: std::cell::Cell<*mut crate::database::Stores> =
         const { std::cell::Cell::new(std::ptr::null_mut()) };
 }
 
-// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
-// answer and its scratch, never anything an argument held before the call.  Armed by the
-// call's set-up only when its answer is a heap value built in that store; read back by
-// `Stores::own_bridge_answer`, which deletes exactly these after copying the answer out.
-// Ungated like `CURRENT_STORES`: compiled code's callbacks (`native_call`) write it too.
-std::thread_local! {
-    static CLAIM_LOG: std::cell::RefCell<Option<(u16, Vec<u32>)>> =
-        const { std::cell::RefCell::new(None) };
-}
-
 /// Start logging the claims made in store `store_nr` until [`claim_log_end`].
-pub(crate) fn claim_log_begin(store_nr: u16) {
-    CLAIM_LOG.with(|l| *l.borrow_mut() = Some((store_nr, Vec::new())));
+///
+/// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
+/// answer and its scratch, never anything an argument held before the call.  Armed by the
+/// call's set-up only when its answer is a heap value built in that store; read back by
+/// `Stores::own_bridge_answer`, which deletes exactly these after copying the answer out.
+pub(crate) fn claim_log_begin(stores: &mut crate::database::Stores, store_nr: u16) {
+    stores.claim_log = Some((store_nr, Vec::new()));
 }
 
 /// Stop logging and hand back what was claimed (empty when nothing was armed).
-pub(crate) fn claim_log_end() -> Vec<u32> {
-    CLAIM_LOG.with(|l| {
-        l.borrow_mut()
-            .take()
-            .map(|(_, recs)| recs)
-            .unwrap_or_default()
-    })
+pub(crate) fn claim_log_end(stores: &mut crate::database::Stores) -> Vec<u32> {
+    stores
+        .claim_log
+        .take()
+        .map(|(_, recs)| recs)
+        .unwrap_or_default()
 }
 
 /// A claim of `rec` in `store_nr`, or the resize of `old` into `rec`: a resize moves a record
 /// the call claimed to its new number, and one it did not claim (an argument's) stays out.
-fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
-    CLAIM_LOG.with(|l| {
-        if let Some((nr, recs)) = l.borrow_mut().as_mut()
+fn claim_log_note(stores: &mut crate::database::Stores, store_nr: u16, old: Option<u32>, rec: u32) {
+    {
+        if let Some((nr, recs)) = stores.claim_log.as_mut()
             && *nr == store_nr
         {
             match old {
@@ -2067,7 +2025,20 @@ fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
                 }
             }
         }
-    });
+    }
+}
+
+/// `@PLN226` — the `Stores` a bridge call's handle carries above its store number
+/// (`call_bridge`), as the C host carries its context (`loft_ffi_handle`).  Bit 16 is
+/// [`CTX_RETURN_STORE`]: the pointer's lowest bit, zero in an aligned `Stores`.
+#[cfg(feature = "native-extensions")]
+fn ffi_handle_stores<'a>(ctx: LoftStoreCtx) -> &'a mut crate::database::Stores {
+    const _: () = assert!(
+        usize::BITS == 64,
+        "the store handle carries a 48-bit pointer"
+    );
+    // SAFETY: `call_bridge` set it from the live `&mut Stores` for the call's length.
+    unsafe { &mut *((ctx._opaque as usize >> 16 & !1) as *mut crate::database::Stores) }
 }
 
 /// C-ABI callback: allocate `words` 8-byte words in the store identified by ctx.
@@ -2077,13 +2048,10 @@ fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
 unsafe extern "C" fn ffi_claim(ctx: LoftStoreCtx, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            let store = &mut stores.allocations[store_nr as usize];
-            let rec = store.claim(words);
-            claim_log_note(store_nr, None, rec);
-            rec
-        })
+        let stores = ffi_handle_stores(ctx);
+        let rec = stores.allocations[store_nr as usize].claim(words);
+        claim_log_note(stores, store_nr, None, rec);
+        rec
     }))
     .unwrap_or(0)
 }
@@ -2095,13 +2063,10 @@ unsafe extern "C" fn ffi_claim(ctx: LoftStoreCtx, words: u32) -> u32 {
 unsafe extern "C" fn ffi_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            let store = &mut stores.allocations[store_nr as usize];
-            let to = store.resize(rec, words);
-            claim_log_note(store_nr, Some(rec), to);
-            to
-        })
+        let stores = ffi_handle_stores(ctx);
+        let to = stores.allocations[store_nr as usize].resize(rec, words);
+        claim_log_note(stores, store_nr, Some(rec), to);
+        to
     }))
     .unwrap_or(rec)
 }
@@ -2112,20 +2077,13 @@ unsafe extern "C" fn ffi_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 
 unsafe extern "C" fn ffi_reload(ctx: LoftStoreCtx, out_ptr: *mut *mut u8, out_size: *mut u32) {
     let store_nr = ctx._opaque as usize as u16;
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &*c.get() };
-            let store = &stores.allocations[store_nr as usize];
-            unsafe {
-                *out_ptr = store.base_ptr();
-                *out_size = store.capacity_words();
-            }
-        });
+        let store = &ffi_handle_stores(ctx).allocations[store_nr as usize];
+        unsafe {
+            *out_ptr = store.base_ptr();
+            *out_size = store.capacity_words();
+        }
     }));
 }
-
-pub use crate::call_frames::{current_lib_idx, set_current_lib_idx};
-
-pub use crate::call_frames::current_shared_bridge;
 
 /// C-ABI callback: adopt a cdylib's byte block as a read-only `vector<u8>` (@PLN174 F5,
 /// [`adopt_foreign_block`]).  The null ref if the adoption panics: the block stays the
@@ -2140,18 +2098,15 @@ unsafe extern "C" fn ffi_foreign(
     release: unsafe extern "C" fn(*mut u8, usize, usize),
 ) -> loft_ffi::LoftRef {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            adopt_foreign_block(
-                stores,
-                ctx._opaque as usize,
-                ptr,
-                len,
-                cap,
-                elem_size,
-                release,
-            )
-        })
+        adopt_foreign_block(
+            ffi_handle_stores(ctx),
+            ctx._opaque as usize,
+            ptr,
+            len,
+            cap,
+            elem_size,
+            release,
+        )
     }))
     .unwrap_or(loft_ffi::LoftRef {
         store_nr: 0,
@@ -2372,7 +2327,7 @@ pub mod native_call {
                 let stores = unsafe { &mut *c.get() };
                 let store = &mut stores.allocations[store_nr as usize];
                 let rec = store.claim(words);
-                super::claim_log_note(store_nr, None, rec);
+                super::claim_log_note(stores, store_nr, None, rec);
                 rec
             })
         }))
@@ -2386,7 +2341,7 @@ pub mod native_call {
                 let stores = unsafe { &mut *c.get() };
                 let store = &mut stores.allocations[store_nr as usize];
                 let to = store.resize(rec, words);
-                super::claim_log_note(store_nr, Some(rec), to);
+                super::claim_log_note(stores, store_nr, Some(rec), to);
                 to
             })
         }))
@@ -2488,7 +2443,7 @@ pub mod native_call {
             // loft#2227 — a heap answer pinned to an argument's store: log what the call
             // claims there, for [`Self::answer`].
             if returns_ref && !args.minted {
-                super::claim_log_begin(args.store_nr);
+                super::claim_log_begin(stores, args.store_nr);
             }
             Self {
                 cell,
@@ -2508,7 +2463,7 @@ pub mod native_call {
             is_vec: bool,
             tp: u16,
         ) -> crate::keys::DbRef {
-            let claimed = super::claim_log_end();
+            let claimed = super::claim_log_end(stores);
             if db.is_null() {
                 self.returns_ref.set(false);
             }
@@ -2548,11 +2503,11 @@ pub mod native_call {
     impl Drop for BridgeGuard<'_> {
         fn drop(&mut self) {
             if let Some(args) = self.args.take() {
-                // An answer never asked for (`Self::answer`) leaves no log armed behind.
-                let _ = super::claim_log_end();
                 // SAFETY: generated code holds no other live borrow of the stores across a
                 // local's drop (the same cell discipline `FnRefBufGuard` relies on).
                 let stores = unsafe { &mut *self.cell.get() };
+                // An answer never asked for (`Self::answer`) leaves no log armed behind.
+                let _ = super::claim_log_end(stores);
                 stores.bridge_args_done(&args, self.returns_ref.get());
             }
         }

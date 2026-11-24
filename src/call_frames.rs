@@ -274,12 +274,6 @@ impl Drop for NamedCallGuard {
     }
 }
 
-thread_local! {
-    /// loft#715 — `lib_idx + 1` while a shared-library bridge call is on this thread's
-    /// stack, 0 otherwise.  Read by [`current_shared_bridge`] on the fault path.
-    static IN_SHARED_BRIDGE: Cell<u16> = const { Cell::new(0) };
-}
-
 /// loft#715 — library slot → the bridge symbol it dispatches to.  Populated once
 /// at wiring; read only when a fault is raised while a bridge call is on the
 /// stack, so a bridge fault stops reading like a program fault.
@@ -299,20 +293,8 @@ pub fn label_shared_bridges(labels: impl Iterator<Item = (u16, String)>) {
     }
 }
 
-/// A shared-library bridge call on slot `lib_idx` starts on this thread.  One `Cell` write.
-#[inline]
-pub fn enter_shared_bridge(lib_idx: u16) -> u16 {
-    IN_SHARED_BRIDGE.with(|c| c.replace(lib_idx.wrapping_add(1)))
-}
-
-/// The bridge call on this thread has returned; `outer` is what [`enter_shared_bridge`]
-/// answered, the bridge a call back into the interpreter was made from (@PLN199 C2), or 0.
-#[inline]
-pub fn leave_shared_bridge(outer: u16) {
-    IN_SHARED_BRIDGE.with(|c| c.set(outer));
-}
-
-/// loft#715 — the bridge symbol currently being dispatched on this thread, if any.
+/// loft#715 — the bridge symbol a `Stores` is dispatching to, given its `in_bridge` mark
+/// (`lib_idx + 1`, or 0 outside any bridge call).
 ///
 /// A fault raised while a shared-library bridge is on the stack is a BRIDGE
 /// fault, but it surfaced with the same words as a program fault: `Cannot add to
@@ -322,10 +304,9 @@ pub fn leave_shared_bridge(outer: u16) {
 /// never started.  Appending this turns "a type is wrong somewhere" into "this
 /// library's bridge passed something this loft cannot use".
 #[must_use]
-pub fn current_shared_bridge() -> Option<String> {
+pub fn shared_bridge_label(marked: u16) -> Option<String> {
     #[cfg(feature = "native-extensions")]
     {
-        let marked = IN_SHARED_BRIDGE.with(Cell::get);
         if marked == 0 {
             return None;
         }
@@ -339,26 +320,10 @@ pub fn current_shared_bridge() -> Option<String> {
         ))
     }
     #[cfg(not(feature = "native-extensions"))]
-    None
-}
-
-thread_local! {
-    /// The library index of the static call in flight, set by `State::static_call()`.
-    static CURRENT_LIB_IDX: Cell<u16> = const { Cell::new(0) };
-}
-
-/// The library index of the static call in flight — the only way a
-/// `Call = fn(&mut Stores, &mut DbRef)` handler learns WHICH binding it is
-/// serving. Read by the `#c` dispatcher for the same reason the
-/// native auto-dispatcher reads it.
-#[must_use]
-pub fn current_lib_idx() -> u16 {
-    CURRENT_LIB_IDX.with(Cell::get)
-}
-
-/// Set the current library index for auto-dispatch. Called from `State::static_call()`.
-pub fn set_current_lib_idx(idx: u16) {
-    CURRENT_LIB_IDX.with(|c| c.set(idx));
+    {
+        let _ = marked;
+        None
+    }
 }
 
 /// One eval-TOS / frame-reserve advance step.
