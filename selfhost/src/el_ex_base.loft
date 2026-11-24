@@ -2656,6 +2656,23 @@ pub fn body_width32(e: el::El, d: integer) -> boolean {
 // `Parser::count_type` (`@FR-W-Count`, `@FR-W-Lit`): the type of a plain integer literal and of
 // every count or counter the compiler makes itself — the regime's `i32` (`IntegerSpec::i32`, its
 // width forced to 4) in a file under the 32-bit regime, else the `signed32` template.
+// `Function::start_loop`: this loop's number, `loops.len() - 1` once it is pushed.  Pass 2's
+// `loops` still holds pass 1's, so its numbers continue after them (`_par_mat_l2` beside pass
+// 1's `_par_mat_l0` in a function of two loops).
+pub fn start_loop(e: el::El, vars: el_vars::Vars) -> integer {
+  base = 0;
+  if !e.first_pass {
+    for lp in e.loops_p1 {
+      if lp / 65536 == e.context {
+        base = lp % 65536;
+      }
+    }
+  }
+  n = base + vars.loops_started;
+  vars.loops_started += 1;
+  n
+}
+
 pub fn count_type(e: el::El) -> ir::TypeT {
   if el_types::regime32(e) {
     return ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 4 } };

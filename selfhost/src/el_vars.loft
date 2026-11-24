@@ -163,6 +163,8 @@ pub struct Vars {
   // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
   // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
   pub loop_made: vector<integer>,
+  // `Function::start_loop`'s count on this pass: the loops begun so far.
+  pub loops_started: integer = 0,
   // `ended_spelling`: per open loop, the spelling to give back to its ended binding.
   pub loop_spellings: vector<LoopSpelling>,
   // The subject node of a tuple member an assignment writes (`v[i].1 += 5`): its element is

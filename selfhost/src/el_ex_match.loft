@@ -388,10 +388,12 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     el::refuse(e, "a `for` with no body");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // A `par` loop over anything but a vector is materialised into one first
-  // (`materialise_iter_for_par`, `materialise_keyed_for_par`): refused by name, as are a
-  // destructure and a filter.
-  if par != null && (len(binds) > 1 || filter != null || e.p.nodes[source] is SRange) {
+  // (`parse_for`'s `start_loop`, after the `in`: the loop's number.)
+  loop_nr = el_ex_base::start_loop(e, vars);
+  // A `par` loop over a keyed collection, an iterator or a text is materialised into a vector
+  // first (`materialise_keyed_for_par`, `materialise_iter_for_par`): refused by name, as are a
+  // destructure and a filter; a range is materialised below (`par_range`).
+  if par != null && (len(binds) > 1 || filter != null) {
     el::refuse(e, "a `par` loop that destructures, filters or walks a range");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -423,6 +425,13 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[source] is SRange {
+    if par != null {
+      if rev {
+        el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return par_range(e, vars, h, source, par!, loop_nr);
+    }
     return el_ex_pattern::range_for(e, vars, h, source, rev: rev);
   }
   match e.p.nodes[source] {
@@ -575,7 +584,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     var_tp = ir::TyReference { n: td, dep: [vec] };
   }
   if par != null {
-    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
+    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp, loop_nr: loop_nr }, par!, body!);
   }
   // A function value's walk: the loop variable is the function type borrowing the walked vector.
   fn_walk = el_types::base(elem) is TyFunction && !rev && par == null;
@@ -1058,6 +1067,50 @@ pub fn yield_is_fresh(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT
 // `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
 // build a "Vector comprehension" block answering it — the walk's start as Rust's value form
 // lays it out.
+// `materialise_iter_for_par` for a range: the identity comprehension `[for e in lo..hi { e }]`
+// fills `_par_mat_l<loop>` (its index `_par_mat_index_l<loop>` declared and unused — the walk
+// steps the range's own `i#index` — its loop variable `_par_mat_e_l<loop>`, then the element
+// temp, `_comp_N` and the store), and the vector `par` loop runs over it, that fill standing
+// where a vector's hoist would.  Pass 1 mints the vector alone.
+fn par_range(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, par: integer, loop_nr: integer) -> Ex {
+  rwo = el_ex_pattern::range_walk(e, vars, h.id, source);
+  if rwo == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  rw = rwo!;
+  int_t = el_ex_base::count_type(e);
+  mat = el_vars::add_variable(vars, "_par_mat_l{loop_nr}", ir::TyVector { inner: int_t, dep: [] });
+  el_vars::set_defined(vars, mat);
+  x = ex(ir::NdNull, ir::TyVector { inner: int_t, dep: [] });
+  if !e.first_pass {
+    mi = el_vars::add_variable(vars, "_par_mat_index_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, mi);
+    me = el_vars::add_variable(vars, "_par_mat_e_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, me);
+    celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [mat] });
+    comp = el_vars::create_unique(vars, "comp", int_t);
+    el_vars::set_defined(vars, comp);
+    r = el_ex_base::vector_rows(e, int_t, source, false);
+    if r == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r!.main_def, dep: [] });
+    el_vars::set_var_type(vars, mat, ir::TyVector { inner: int_t, dep: [db] });
+    el_vars::set_var_type(vars, celm, ir::TyReference { n: el::def_nr(e, "integer"), dep: [db] });
+    dest = ir::NdVar { n: mat };
+    steps = [el_ir::v_set(me, el_ir::v_block(rw.steps, int_t, "Iter range")), el_ir::v_set(comp, ir::NdVar { n: me }), el_ir::cl(e, el_ex_pattern::push_op(int_t), el_ex_pattern::push_args(e, vars, int_t, dest, ir::NdVar { n: comp }))];
+    items = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r!.main_known }]),
+      el_ir::v_set(mat, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r!.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ] + (if len(el_ex_pattern::range_init(rw)) > 1 { [ir::NdInsert { items: el_ex_pattern::range_init(rw) }] } else { el_ex_pattern::range_init(rw) }) + [el_ir::v_loop(steps, "For comprehension")];
+    // (A range start of more than one statement — a bound held in `_range_end_N` — stays a
+    // group of its own.)
+    x = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
+  }
+  el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: x, vec: mat, elem: int_t, var_tp: int_t, loop_nr: loop_nr }, par, h.body)
+}
+
 pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
   built = comprehension_into(e, vars, v, n, as_value: true);
@@ -1327,6 +1380,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     SComprehension { binds: bs, source: sc, filter: fl, body: bd } => { binds = bs; source = sc; filter = fl; body = bd; },
     _ => {}
   }
+  el_ex_base::start_loop(e, vars);
   // The destination's element temp, minted on both passes as the literal path mints it.
   celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
   // (`is_field`: into a field the element is a reference into the field's store — never freed.)
@@ -4365,6 +4419,7 @@ fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
 // scalar; a function value, a record or text element and a callee with hidden parameters are
 // refused by name.  The first pass answers the result's type alone, as Rust's does.
 pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_map");
   }
@@ -4499,6 +4554,7 @@ fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
 // `Parser::parse_filter`: as `map_call`, the element kept where the predicate holds
 // (`if pred(elm) null else continue`), then pushed as it is.
 pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_filter");
   }
@@ -4601,6 +4657,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
 // `Parser::parse_reduce`: `v.reduce(init, f)` folds in place — the accumulator set to `init`,
 // then `acc = f(acc, elm)` for each element — in a "reduce" block answering it.
 pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_reduce");
   }
