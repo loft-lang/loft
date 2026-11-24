@@ -47,16 +47,33 @@ use el_ex_bind;
 // (`vars.lambdas`, on both passes), and on the first pass its definition `n___lambda_<fn>_<N>`
 // and, where it captures a name, its closure record `__closure_<fn>_<N>` — the body is never
 // elaborated, the refusal stands.
+// `Data::ensure_tuple_defs`: the `__tuple<…>` record of every tuple `t` holds, inner first.
+fn ensure_tuple_defs(e: el::El, t: ir::TypeT, pos: ir::Position) {
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        ensure_tuple_defs(e, m, pos);
+      }
+      _ = el_types::tuple_def(e, elems, pos);
+    },
+    TyVector { inner } => ensure_tuple_defs(e, inner, pos),
+    TyRefVar { inner } => ensure_tuple_defs(e, inner, pos),
+    TyOptional { inner } => ensure_tuple_defs(e, inner, pos),
+    _ => {}
+  }
+}
+
 fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text) -> Ex {
   if e.context < 0 || body == null {
     el::refuse(e, why);
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  outer = el::def(e, e.context).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  nm = "n___lambda_{bare}_{vars.lambdas}";
-  rec_nm = "__closure_{bare}_{vars.lambdas}";
+  root = el::lambda_root(el::def(e, e.context).name);
+  lk = el::lambda_take(e, root);
+  nm = "n___lambda_{root}_{lk}";
+  rec_nm = "__closure_{root}_{lk}";
   vars.lambdas += 1;
+  vars.lambda_recs += [rec_nm];
   if e.first_pass && el::def_nr(e, nm) < 0 {
     own: vector<text> = names;
     for pn in params {
@@ -65,13 +82,23 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
         _ => {}
       }
     }
-    captures = len(captured_names(e, vars, body!, own)) > 0;
+    cnames = captured_names(e, vars, body!, own);
     ld = el::add_def(e, nm, el::pos_at(e, at), el::DT_FUNCTION);
-    if captures {
+    if len(cnames) > 0 {
       end = match e.p.nodes[body!] { SBlock { end: be } => be, _ => 0 };
-      rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
+      rpos = el::pos_at(e, end + 1);
+      rd = el::add_def(e, rec_nm, rpos, el::DT_STRUCT);
       e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
       e.b.data.definitions[ld].closure_record = rd;
+      // `synthesize_closure_record` registers each capture's tuple records as it lays the
+      // capture's field out (`ensure_tuple_defs`), so they keep Rust's numbers though the
+      // lambda is refused.
+      for cn in cnames {
+        cv = el_vars::var(vars, cn);
+        if cv >= 0 {
+          ensure_tuple_defs(e, el_vars::tp(vars, cv), rpos);
+        }
+      }
     }
   }
   el::refuse(e, why);
@@ -185,11 +212,17 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if len(caps) > 0 && holds_lambda(e, body!) {
         return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: around another lambda");
       }
-      outer = el::def(e, e.context).name;
-      bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-      nm = "__lambda_{bare}_{vars.lambdas}";
-      rec_nm = "__closure_{bare}_{vars.lambdas}";
+      // (`next_lambda_name`: numbered in the enclosing FUNCTION's sequence, a lambda inside a
+      // lambda as its sibling — `__lambda_f_1` beside `__lambda_f_0`.)
+      root = el::lambda_root(el::def(e, e.context).name);
+      lk = el::lambda_take(e, root);
+      nm = "__lambda_{root}_{lk}";
+      rec_nm = "__closure_{root}_{lk}";
       vars.lambdas += 1;
+      vars.lambda_recs += [rec_nm];
+      if ret != null && !e.declared_lambdas.contains("n_{nm}") {
+        e.declared_lambdas += ["n_{nm}"];
+      }
       ctx = e.context;
       tvs = e.type_vars;
       e.type_vars = [];
@@ -557,9 +590,8 @@ fn forward_capture(e: el::El, vars: el_vars::Vars, c: text) -> boolean {
   if e.context < 0 {
     return false;
   }
-  outer = el::def(e, e.context).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  rd = el::def_nr(e, "__closure_{bare}_{vars.lambdas}");
+  froot = el::lambda_root(el::def(e, e.context).name);
+  rd = el::def_nr(e, "__closure_{froot}_{el::lambda_peek(e, froot)}");
   if rd < 0 {
     return false;
   }
@@ -687,6 +719,26 @@ pub fn differs_in_absence(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::Ty
       _ => false
     }
   }
+}
+
+// `Function::rebind_views_another_base` (`@FR-B-Scope`, loft#2627): does a bind after `nr`'s
+// block ended VIEW a different value than the ended binding did — both name a base in their
+// deps, and the two dep sets share none?  Then it is another binding, of its own type.
+pub fn views_another_base(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::TypeT) -> boolean {
+  if vars.vars[nr].argument || vars.annotated.contains(nr) {
+    return false;
+  }
+  old = el_types::deps(el_vars::tp(vars, nr));
+  new = el_types::deps(t);
+  if len(old) == 0 || len(new) == 0 {
+    return false;
+  }
+  for d in old {
+    if new.contains(d) {
+      return false;
+    }
+  }
+  true
 }
 
 // `Parser::rebind_names`: the spelling `old` is bound under …

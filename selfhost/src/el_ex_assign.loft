@@ -236,8 +236,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       return ex(ir::NdNull, ir::TyVoid);
     }
   }
+  // (An empty `{ }` returns before `parse_block_inner`'s loop, which is what moves the line on
+  // to the `}`: a statement after it on that line still takes its marker.)
   if len(stmts) == 0 {
-    close_line(e, n);
     return ex(el_ir::v_block([], ir::TyVoid, "empty block"), ir::TyVoid);
   }
   t = ir::TyVoid;
@@ -402,6 +403,21 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       return ex(el_ir::v_block(l, result, "block"), result);
     }
   }
+  // loft#1494: a value block whose tail reads a vector OUT OF a local it defines
+  // (`{ b = BoxF { … }; b.items }`) hands its consumer a view into a store it frees on the way
+  // out: the tail is copied into a local of its own first (`materialize_collection_value`).
+  if context != "return from block" && el_types::base(t) is TyVector && !(t is TyOptional) && len(l) > 1 {
+    froot = field_tail_root(e, l[-1]);
+    if froot >= 0 && !vars.vars[froot].argument && defines_var(l[0..len(l) - 1], froot) {
+      m = el_ex_call::materialize_collection(e, vars, l[-1], t);
+      l[-1] = m.code;
+      // (The first pass keeps the tail's own borrow — the record it reads through — as Rust's
+      // pass-1 value does; the second answers the copy.)
+      if !e.first_pass {
+        t = m.tp;
+      }
+    }
+  }
   // A function body that ends in a jump is typed as its declared result, and so is a
   // generator's: what it answers is the iterator its `yield`s feed, not its last statement.
   if context == "return from block" && t is TyNever && !(result is TyVoid) && !el_types::is_unknown(result) {
@@ -434,6 +450,18 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       if g != null {
         l = l[..-1] + [g!];
         discharged = true;
+      } else if !e.first_pass && el_convert::narrowing_store(el_types::base(t), el_types::base(result)) && el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result) != null {
+        // (`@FR-W-Store`, asked by `convert` before the fit.)
+        l = l[..-1] + [el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result)!];
+        converted = true;
+      } else if !e.first_pass && el_convert::narrowing_int(el_types::base(t), el_types::base(result)) && !el_convert::value_fits(e, vars, l[-1] ?? ir::NdNull, el_types::base(result)) {
+        // (`convert` asks the narrowing before its equal-types accept: a `u32` result guards a
+        // value it may not hold, `@FR-I-Narrow-U32`.)
+        u = el_convert::into_u32_with_default(e, l[-1] ?? ir::NdNull, el_types::base(result));
+        if u != null && !(result is TyOptional) {
+          l = l[..-1] + [u!];
+          converted = true;
+        }
       }
       t = result;
     } else {
@@ -588,6 +616,36 @@ pub fn branch_terminals(n: ir::Node, out: vector<integer>) {
   }
 }
 
+// `field_place`: the local a projection of fields (and constant- or variable-indexed elements)
+// is rooted at — the path not empty — else -1.
+fn field_tail_root(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetField" && len(args) == 3 && el_ir::unspan(args[1]!) is NdInt {
+        return match el_ir::unspan(args[0]!) { NdVar { n: v } => v, _ => field_tail_root(e, args[0]!) };
+      }
+      if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(args) == 3 && (el_ir::unspan(args[2]!) is NdInt || el_ir::unspan(args[2]!) is NdVar) {
+        return match el_ir::unspan(args[0]!) { NdVar { n: v } => v, _ => field_tail_root(e, args[0]!) };
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// `block_defines_var`: a statement among `l` binds `v`.
+fn defines_var(l: vector<ir::Node>, v: integer) -> boolean {
+  for op in l {
+    match el_ir::unspan(op) {
+      NdSet { var } => { if var == v { return true; } },
+      NdInsert { items } => { if defines_var(items, v) { return true; } },
+      _ => {}
+    }
+  }
+  false
+}
+
 // The loop of `parse_block_inner` meets the closing `}` too: a later line moves the parser's
 // line on there (the marker it writes is the one the close removes), so a statement after the
 // `}` on that same line — an `else` block's — gets none.
@@ -665,10 +723,11 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
   match e.p.nodes[n] {
-    SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
+    SInt { v } => ex(ir::NdInt { n: v }, count_type(e)),
     SLong { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
     SWide { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
-    SFloat { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
+    // `@FR-W-Lit`: a plain decimal literal is a `single` under the 32-bit regime.
+    SFloat { v } => if el_types::regime32(e) { ex(ir::NdSingle { f: v as single }, ir::TySingle) } else { ex(ir::NdFloat { f: v }, ir::TyFloat) },
     SDouble { v } => ex(ir::NdFloat { f: v }, ir::TyFloat),
     SSingle { v } => ex(ir::NdSingle { f: v }, ir::TySingle),
     SChar { c } => ex(el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: c }]), ir::TyCharacter),
@@ -747,7 +806,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           el_schema::make_vector_def(e, tail_elem, enm, el::pos_at(e, eat), true, narrow_early: false);
         }
       }
-      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n).x }
+      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n, hinted: vars.bare_literal != n).x }
     },
     SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),
@@ -765,6 +824,24 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SLambda { at: _ } => el_ex_closure::lambda_expr(e, vars, n),
     SDestructure { places, e: de } => el_ex_object::destructure_assign(e, vars, places, de),
     SParallel { items } => el_ex_pattern::parallel_expr(e, vars, items),
+    // `parse_vector_parse` (`vector<T>.parse(text)`): refused, but its text is read and the
+    // element's `vector<T>` / `main_vector<T>` registered past the `)` first, as Rust's
+    // `vector_def` does on both passes — every later definition keeps Rust's number.
+    SVectorParse { at: vpa, elem: vpe, args: vpargs } => {
+      for vpx in vpargs {
+        _ = expression(e, vars, vpx);
+      }
+      vpd = el::def_nr(e, vpe);
+      if vpd >= 0 {
+        vpt = if el::def(e, vpd).def_type == el::DT_STRUCT { ir::TyReference { n: vpd, dep: [] } } else { el_types::without_deps(el::def(e, vpd).returned[0] ?? ir::TyUnknown { n: 0 }) };
+        vpn = el_types::elem_name(e, vpt);
+        if vpn != "" && el::def_nr(e, "main_vector<{vpn}>") < 0 {
+          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el_ex_object::past_call(e, vpa)), true);
+        }
+      }
+      el::refuse(e, "an expression form: {syn_kind(e, n)}");
+      ex(ir::NdNull, ir::TyUnknown { n: 0 })
+    },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
@@ -855,6 +932,41 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
 
 // `Parser::is_copied_place`: a value read out of a place — a variable, a text field read off one,
 // any projection rooted at a container variable — rather than built fresh.
+// Is `n` the block a `.map(…)` or `.filter(…)` call over a LOCAL answers — a "Vector
+// comprehension" ending in its `_map_result_N` / `_filter_result_N`, its `_map_vec_N` /
+// `_filter_vec_N` set from a bare variable?  (Rust's result reaches `lower_vec_copy_bind` as a
+// copied place only then: a literal receiver, a call's, a slice's do not.)
+fn method_comprehension(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => block[0].name == "Vector comprehension" && len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) {
+      NdVar { n: rv } => (starts_with(el_vars::name_of(vars, rv), "_map_result") || starts_with(el_vars::name_of(vars, rv), "_filter_result")) && receiver_is_local(vars, block[0].operators),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// Is the comprehension's walked vector (`_map_vec_N` / `_filter_vec_N`) set from a bare local?
+fn receiver_is_local(vars: el_vars::Vars, ops: vector<ir::Node>) -> boolean {
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdSet { var: sv, inner } => {
+        snm = el_vars::name_of(vars, sv);
+        if starts_with(snm, "_map_vec") || starts_with(snm, "_filter_vec") {
+          return el_ir::unspan(inner) is NdVar;
+        }
+      },
+      NdInsert { items } => {
+        if receiver_is_local(vars, items) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
 pub fn copied_place(e: el::El, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdVar { n: _ } => true,
@@ -2000,6 +2112,13 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if op == "=" && v >= 0 && (!amp_bind || text_val) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && text_val && text_place {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
+  // (A `.map(…)` / `.filter(…)` answers its `_map_result_N` / `_filter_result_N` — a copied
+  // place — so a vector bind of one is `lower_vec_copy_bind`'s copy: `copy_bound`.)
+  // (The method spelling alone: `map(nums, f)` reaches the bind as a value, not a place.)
+  method_call = match e.p.nodes[rhs!] { SMember { call } => call, _ => false };
+  if op == "=" && v >= 0 && method_call && el_types::base(x.tp) is TyVector && method_comprehension(vars, x.code) {
+    el_vars::mark_copy_bound(vars, v, "lower_vec_copy_bind");
+  }
   if op == "=" {
     ux = el_ex_tuple::unbox_tuple_element(e, vars, x);
     if ux != null {
@@ -2650,10 +2769,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
 // `@FR-B-Scope`, loft#1700: does this bind, after `old`'s block ended, start a binding of its own
 // — a loop's variable at any type; a known type its old binding refuses, that the first pass
 // could not type it against yet (`rebind_split_unforced`), or (an undeclared bind only) that
-// differs from it only in absence?  The new binding (`rebind_after_block`, named by the token
+// differs from it only in absence or views another base (`views_another_base`)?  The new binding (`rebind_after_block`, named by the token
 // `tok` ends at), or `old`.  The plain bind and the declared one both ask (Rust's two sites).
 pub fn split_ended_bind(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, tok: integer, plain: boolean) -> integer {
-  if el_vars::was_loop_var(vars, old) || (!el_types::is_unknown(t) && (el_ex_closure::retype_refused(e, vars, old, t) || el_ex_closure::rebind_split_unforced(e, vars, old, t, tok) || (plain && el_ex_closure::differs_in_absence(e, vars, old, t)))) {
+  if el_vars::was_loop_var(vars, old) || (!el_types::is_unknown(t) && (el_ex_closure::retype_refused(e, vars, old, t) || el_ex_closure::rebind_split_unforced(e, vars, old, t, tok) || (plain && el_ex_closure::differs_in_absence(e, vars, old, t)) || (plain && el_ex_closure::views_another_base(e, vars, old, t)))) {
     return el_ex_closure::rebind_after_block(e, vars, old, t, tok);
   }
   old

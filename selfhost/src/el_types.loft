@@ -229,6 +229,14 @@ pub fn uint4(spec: ir::IntegerSpec) -> boolean {
   spec.forced_size == 4 && spec.min >= 0 && spec.max > 2147483647
 }
 
+// The first value a NULLABLE narrow integer's row stores (`Stores::byte`/`short` with `nullable`):
+// a signed range that fills its width gives its lowest code to the null.
+pub fn nullable_start(spec: ir::IntegerSpec) -> integer {
+  w = narrow_width(spec);
+  full = (w == 1 && spec.max - spec.min + 1 == 256) || (w == 2 && spec.max - spec.min + 1 == 65536);
+  if spec.min < 0 && full { spec.min + 1 } else { spec.min }
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
     // (A 64-bit literal's own type, `IntegerSpec::wide`, is the plain integer's element too.)
@@ -247,7 +255,7 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     // the enum's records, null the zero tag.
     // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
     // stored as the scalar it is, null its sentinel.
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: ons } => if elem_name(e, inner) == "integer" { "integer?" } else if narrow_width(ons) > 0 { "{elem_name(e, inner)}?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     // A function value is named as its type is spelled (`fn(integer) -> integer`).
@@ -482,6 +490,16 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         return depended(e, n, deps);
       }
       dl: vector<text> = if attach { deps } else { [] };
+      // `width32_name` (`@FR-W-Name`): in a file under the 32-bit regime a plain `integer` is an
+      // `i32` and a plain `float` a `single`; `integer limit(…)` names its own range, and the
+      // standard library's own definitions keep their machine width.
+      if member == "" && !e.default && e.width32_files.contains(e.file) {
+        if name == "integer" && limit == null {
+          name = "i32";
+        } else if name == "float" {
+          name = "single";
+        }
+      }
       if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(dl) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
@@ -1257,5 +1275,51 @@ pub fn type_owns_hook(e: el::El, t: ir::TypeT, h: text, path: vector<integer>) -
     },
     TyIterator { step: _ } => h == "OpDrop",
     _ => false
+  }
+}
+
+// Is the body being read in a file under the 32-bit regime (`Data::width32`)?
+pub fn regime32(e: el::El) -> boolean {
+  len(e.width32_files) > 0 && e.width32_files.contains(e.file)
+}
+
+// `Parser::width32_int`: an integer type 32-bit by declaration (`IntegerSpec::is_width32`),
+// nullable or not.  A plain `integer` reports the i32 bounds while it holds 64 bits, so it is
+// not one.
+pub fn width32_int(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyInteger { spec } => spec.max <= 2147483647 && (if spec.forced_size != 0 { spec.forced_size <= 4 } else { !(spec.min == -2147483647 && spec.max == 2147483647) }),
+    _ => false
+  }
+}
+
+// Rust's `Type::name` (the key spelling, not a message's): "" where this port is not sure of
+// it, so a caller registers nothing rather than a wrong name.
+pub fn type_key_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => { n = type_key_name(e, inner); if n == "" { "" } else { "{n}?" } },
+    TyInteger { spec } => if narrow_width(spec) == 0 && spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) { "integer" } else { "" },
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    // (A variant's record is no key here: a literal of variants may still join to its enum.)
+    TyReference { n } => if n >= 0 && type_var(e, t) < 0 && el::def(e, n).def_type != el::DT_ENUM_VALUE { el::def(e, n).name } else { "" },
+    TyEnum { n } => if n >= 0 && type_var(e, t) < 0 { el::def(e, n).name } else { "" },
+    TyVector { inner } => if is_unknown(inner) { "vector" } else { n = type_key_name(e, inner); if n == "" { "" } else { "vector<{n}>" } },
+    TyIterator { step } => { n = type_key_name(e, step); if n == "" { "" } else { "iterator<{n}>" } },
+    TyTuple { elems } => {
+      parts: vector<text> = [];
+      for m in elems {
+        mn = type_key_name(e, m);
+        if mn == "" {
+          return "";
+        }
+        parts += [mn];
+      }
+      "({join(parts, ", ")})"
+    },
+    _ => ""
   }
 }

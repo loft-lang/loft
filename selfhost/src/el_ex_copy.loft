@@ -35,7 +35,11 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
   }
-  if el_expressions::branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
+  // (`leaving_branch`: a branch or a block — not a literal's `Object` — that holds a `return` is
+  // copied arm by arm too, the exit building into the buffer itself.)
+  ln = el_ir::unspan(n);
+  leaving = (ln is NdIf || match ln { NdBlock { block: lb } => lb[0].name != "Object", _ => false }) && returns_in([ln]) > 0;
+  if leaving || el_expressions::branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
     match n {
       NdSpan { pos, inner } => {
         ci = copy_arms(e, vars, inner, rb, td, owned);
@@ -772,7 +776,9 @@ pub fn record_result(result: ir::TypeT) -> boolean {
 }
 
 // `returned_params` over the early exits alone (an `Insert` ending in its `return`): a
-// parameter the body appends into the buffer elsewhere (`b += v`) is published by none.
+// parameter the body appends into the buffer elsewhere (`b += v`) is published by none, and
+// neither is a whole parameter an exit copies in (`return xs`) — only one whose FIELD it
+// copies (`return s.vals`, loft#1625) still borrows it.
 pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
   r: vector<integer> = [];
   for op in ops {
@@ -780,7 +786,7 @@ pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Nod
     match el_ir::unspan(op) {
       NdInsert { items } => {
         if len(items) > 0 && el_ir::unspan(items[-1]!) is NdReturn {
-          found = returned_params(e, vars, items, buf);
+          found = returned_params(e, vars, items, buf, whole: false);
         } else {
           found = early_returned_params(e, vars, items, buf);
         }
@@ -789,7 +795,7 @@ pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Nod
       NdBlock { block: eb } => {
         eops = eb[0].operators;
         if len(eops) > 0 && el_ir::unspan(eops[-1]) is NdReturn {
-          found = returned_params(e, vars, eops, buf);
+          found = returned_params(e, vars, eops, buf, whole: false);
         } else {
           found = early_returned_params(e, vars, eops, buf);
         }
@@ -805,14 +811,14 @@ pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Nod
   r
 }
 
-pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
+pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer, whole: boolean = true) -> vector<integer> {
   r: vector<integer> = [];
   for op in ops {
     match el_ir::unspan(op) {
       NdCall { def_nr, args } => {
         if len(args) == 3 && el::def(e, def_nr).name == "OpAppendVector" && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
           match el_ir::unspan(args[1]) {
-            NdVar { n } => { if vars.vars[n].argument && !r.contains(n) && (el_types::base(el_vars::tp(vars, n)) is TyVector) { r += [n]; } },
+            NdVar { n } => { if whole && vars.vars[n].argument && !r.contains(n) && (el_types::base(el_vars::tp(vars, n)) is TyVector) { r += [n]; } },
             // (A field of a parameter, `return s.vals`, borrows the parameter.)
             NdCall { def_nr: rfd } => {
               fr = place_root(e, el_ir::unspan(args[1]));
@@ -826,7 +832,7 @@ pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
       },
       _ => {}
     }
-    for x in returned_params(e, vars, el_ir::children(op), buf) {
+    for x in returned_params(e, vars, el_ir::children(op), buf, whole: whole) {
       if !r.contains(x) {
         r += [x];
       }
@@ -906,6 +912,59 @@ pub fn local_vector_returns(vars: el_vars::Vars, ops: vector<ir::Node>) -> integ
   r
 }
 
+// The `return`s in `ops` answering a top-level vector constant's view (`return NUMS`).
+pub fn const_view_returns(e: el::El, ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => {
+        if el_ex_base::calls(e, el_ir::unspan(inner), "OpConstRef") {
+          r += 1;
+        }
+      },
+      _ => {}
+    }
+    r += const_view_returns(e, el_ir::children(op));
+  }
+  r
+}
+
+// The `return`s in `ops` that already answer the buffer `buf` (a `return` the statement itself
+// delivered: clear, append, `return buf`).
+pub fn buffer_returns(ops: vector<ir::Node>, buf: integer) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => {
+        if el_ir::unspan(inner) == ir::NdVar { n: buf } {
+          r += 1;
+        }
+      },
+      _ => {}
+    }
+    r += buffer_returns(el_ir::children(op), buf);
+  }
+  r
+}
+
+// The constant views in `ops` a `return` statement already copied into `buf`
+// (`OpAppendVector(buf, OpConstRef(…), …)`).
+pub fn const_view_deliveries(e: el::El, ops: vector<ir::Node>, buf: integer) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name == "OpAppendVector" && len(args) == 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: buf } && calls(e, el_ir::unspan(args[1]!), "OpConstRef") {
+          r += 1;
+        }
+      },
+      _ => {}
+    }
+    r += const_view_deliveries(e, el_ir::children(op), buf);
+  }
+  r
+}
+
 pub fn literal_returns(ops: vector<ir::Node>) -> integer {
   r = 0;
   for op in ops {
@@ -970,6 +1029,21 @@ pub fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // by name.
 // `Parser::var_views_local`: does `v` borrow, through its deps and the stores minted for it
 // (`__vdb_N`, `__ref_N`: walked through), a local that is no parameter?
+// `Parser::var_views_an_argument` (loft#1482): a local whose own borrows name a parameter — a
+// call that hands its argument back (`buf = keep(v)`).  Renamed onto the buffer, the caller
+// would adopt a view of its own argument: it takes `Bind`, copied in.
+pub fn views_an_argument(vars: el_vars::Vars, v: integer) -> boolean {
+  if v < 0 || v >= len(vars.vars) || vars.vars[v].argument {
+    return false;
+  }
+  for d in el_types::deps(el_vars::tp(vars, v)) {
+    if d >= 0 && d < len(vars.vars) && vars.vars[d].argument {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
   work: vector<integer> = [v];
   at = 0;

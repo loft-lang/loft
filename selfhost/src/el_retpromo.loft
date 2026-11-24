@@ -1,0 +1,1252 @@
+// The return-promotion classifier — src/parser/control.rs `classify_ret_promotion` and the
+// candidate list `ref_return` asks it about — run as a post-pass over a finished function body.
+//
+// Rust decides how each value a function hands back reaches its caller with ONE ladder per
+// candidate local: the local already is a parameter (`MergeAttr`), it can BE the hidden return
+// buffer (`Rename`), it keeps its store and is copied into the buffer (`Bind`), the function
+// grows a buffer argument (`Grow`), or one of the `Skip*` rungs declines.  This module computes
+// that verdict at each site where Rust's `ref_return` asks — the body's tail (`BlockTail`) and,
+// later, each mid-body `return` — and reports it as the route line
+// `classify_ret_promotion=<verdict>`, spelled as Rust's `Debug`, so the gate compares the two
+// verdicts site by site.  Nothing here changes what the body lowers to: the delivery code reads
+// its own rules until the verdicts agree, and then reads these.
+use ir;
+use syntax::*;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_ex_copy;
+use el_ex_null;
+use el_ex_deliver;
+use el_trace;
+use el_length;
+
+// `RetSite`: where the candidate's value leaves the function.
+pub const BLOCK_TAIL = 0;
+pub const MID_RETURN = 1;
+
+// `RetPromoCtx`, the facts every rung reads besides the candidate.
+pub struct Ctx {
+  site: integer,
+  ret: ir::TypeT,
+  // The variable carrying the site's value (`site_value_ref`): a bare local tail.
+  site_value: integer,
+  is_plain_fn: boolean,
+  // The attribute names as Rust's ladder reads them at this site (`attr_names`): on the first
+  // pass the return buffer is still `__retbuf` until a `Rename` verdict renames it — this
+  // post-pass runs after the port's own lowering already did — and on the second pass the
+  // names the first pass left.
+  names: vector<text>,
+  // The body's syntax node: on the first pass this port has lowered no statement yet (they are
+  // read on the second), so the rungs that read the body read its syntax there.
+  body: integer,
+  // The site's value: its syntax node and (second pass) its lowered node.
+  tail_syn: integer,
+  tail_ir: ir::Node,
+}
+
+// The post-pass entry: report the verdicts of the body `code`, whose closing `}` is token
+// `end_tok`, when the state trace is on (the gate's run).  Asked on both passes, as Rust asks.
+pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end_tok: integer) {
+  // (Rust traces the program's files only: a library function's body is never reported, also
+  // where this port elaborates it under the program's source.)
+  // (A generic TEMPLATE is no function the ladder places: Rust asks on its instances only.)
+  if !el_trace::on() || e.source == el::STD_SOURCE || e.context < 0 || el::def(e, e.context).source == el::STD_SOURCE || el::def(e, e.context).def_type == el::DT_GENERIC {
+    return;
+  }
+  ret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+  if !heap_return(ret) {
+    return;
+  }
+  ctx = Ctx {
+    site: MID_RETURN,
+    ret: ret,
+    site_value: -1,
+    is_plain_fn: el::def(e, e.context).def_type == el::DT_FUNCTION && !el::def(e, e.context).name.contains("__lambda"),
+    names: start_names(e),
+    body: body,
+    tail_syn: -1,
+    tail_ir: ir::NdNull,
+  };
+  // The return deps as the ladder starts from them: on the first pass without the buffer, which
+  // the port's own lowering already added where Rust's `Rename` / `Bind` will add it.
+  ba = buffer_attr(e);
+  dep: vector<integer> = [for d0 in el_types::deps(ret) if !(e.first_pass && d0 == ba) { d0 }];
+  pass = if e.first_pass { 1 } else { 2 };
+  // Step 3 — each mid-body `return`, in source order (Rust asks while it parses them, so their
+  // renames and deps reach the sites after them).
+  ir_returns = ir_returns_of(code, []);
+  for rn in returns_of(e, body, []) {
+    rv = match e.p.nodes[rn] { SJump { e: je } => je ?? -1, _ => -1 };
+    if rv < 0 {
+      continue;
+    }
+    inner: ir::Node? = if !e.first_pass && rn#index < len(ir_returns) { ir_returns[rn#index] } else { null };
+    ls = return_candidates(e, vars, ctx, rv, inner);
+    if len(ls) == 0 {
+      continue;
+    }
+    at = match e.p.nodes[rn] { SJump { at: ja } => ja, _ => 0 };
+    rpos = el::pos_at(e, at);
+    ctx.tail_syn = rv;
+    ctx.tail_ir = inner ?? ir::NdNull;
+    so = classify_site(e, vars, code, ls, ctx, dep);
+    for v in so.shown {
+      eprintln("state {pass} {rpos.line}:{rpos.pos} route {v}");
+    }
+    ctx.names = so.names;
+    dep = so.dep;
+  }
+  if ends_in_return_statement(e, body) {
+    return;
+  }
+  // Step 4 — the body tail of a RECORD result: `classify_reference_delivery` decides how it is
+  // delivered and which locals the ladder is asked about.
+  if !(el_types::base(ret) is TyVector) {
+    record_tail(e, vars, code, body, end_tok, ctx, dep);
+    return;
+  }
+  // Step 1 — the body tail of a VECTOR result.
+  tail = last_operator(code);
+  if tail == null {
+    return;
+  }
+  tls = tail_candidates(vars, tail!);
+  if len(tls) == 0 {
+    return;
+  }
+  pos = el::pos_at(e, end_tok + 1);
+  ctx.site = BLOCK_TAIL;
+  ctx.site_value = match el_ir::unspan(tail!) { NdVar { n } => n, _ => -1 };
+  ctx.tail_syn = last_statement(e, body);
+  ctx.tail_ir = tail!;
+  so = classify_site(e, vars, code, tls, ctx, dep);
+  for v in so.shown {
+    eprintln("state {pass} {pos.line}:{pos.pos} route {v}");
+  }
+}
+
+// What one site's walk leaves for the next: its verdicts, and the names and deps after them.
+pub struct SiteOut {
+  shown: vector<text>,
+  names: vector<text>,
+  dep: vector<integer>,
+}
+
+// The `return` statements of a body, in source order — not those of a lambda inside it.
+fn returns_of(e: el::El, n: integer, out: vector<integer>) -> vector<integer> {
+  r = out;
+  if n < 0 || e.p.nodes[n] is SLambda {
+    return r;
+  }
+  match e.p.nodes[n] {
+    SJump { kind } => {
+      if kind == "return" {
+        r += [n];
+        return r;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    r = returns_of(e, c, r);
+  }
+  r
+}
+
+// The `NdReturn` values of a lowered body, in order (the second pass's).
+fn ir_returns_of(n: ir::Node, out: vector<ir::Node>) -> vector<ir::Node> {
+  r = out;
+  match n {
+    NdSpan { inner } => { r = ir_returns_of(inner, r); },
+    NdReturn { inner } => { r += [inner]; },
+    NdBlock { block } => { for o in block[0].operators { r = ir_returns_of(o, r); } },
+    NdLoop { block } => { for o in block[0].operators { r = ir_returns_of(o, r); } },
+    NdInsert { items } => { for o in items { r = ir_returns_of(o, r); } },
+    NdIf { t, f } => { r = ir_returns_of(f, ir_returns_of(t, r)); },
+    NdSet { inner } => { r = ir_returns_of(inner, r); },
+    _ => {}
+  }
+  r
+}
+
+// `parse_return`'s candidates for the value at syntax node `rv` (its lowered value `inner` on
+// the second pass): a returned call's work refs (`collect_hidden_ref_args`), a vector result's
+// borrowed parameters (`borrowed_param_deps`), a record result's own local.  A record that views
+// a local — copied into a fresh work ref first — waits for step 4.
+fn return_candidates(e: el::El, vars: el_vars::Vars, ctx: Ctx, rv: integer, inner: ir::Node?) -> vector<integer> {
+  // A returned CALL: its value's type deps — the callee's result deps through its parameters to
+  // this call's arguments (`ls`) — and its hidden buffer arguments.
+  ic = if inner == null { ir::NdNull } else { call_of(inner!) ?? ir::NdNull };
+  if ic is NdCall {
+    deps = call_result_deps(e, ic);
+    refs = hidden_ref_args(e, inner!);
+    if el_types::base(ctx.ret) is TyVector {
+      own = deps;
+      for w in refs {
+        if !own.contains(w) {
+          own += [w];
+        }
+      }
+      site = [for w in own if starts_with(el_vars::name_of(vars, w), "__ref_") || starts_with(el_vars::name_of(vars, w), "__rref_") { w }];
+      if len(site) > 0 {
+        return site;
+      }
+      return if len(own) > 0 && len([for w in own if vars.vars[w].argument && !starts_with(el_vars::name_of(vars, w), "__") { w }]) == len(own) { own } else { [] };
+    }
+    // (A record: the deps, or — where the type names none — the call's work refs.)
+    return if len(deps) > 0 { deps } else { refs };
+  }
+  v = match e.p.nodes[rv] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+  if v < 0 || v >= len(vars.vars) {
+    return [];
+  }
+  if el_types::base(ctx.ret) is TyVector {
+    return if vars.vars[v].argument && !starts_with(el_vars::name_of(vars, v), "__") { [v] } else { [] };
+  }
+  if el_ex_copy::views_a_local(vars, v) {
+    return [];
+  }
+  [v]
+}
+
+// `collect_hidden_ref_args`: the variables a call hands to its callee's hidden heap parameters,
+// through a block's or an insert's last operator.
+fn hidden_ref_args(e: el::El, n: ir::Node) -> vector<integer> {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      r: vector<integer> = [];
+      if def_nr < 0 {
+        return r;
+      }
+      for a in el::def(e, def_nr).attributes {
+        if a.hidden && heap_return(a.typedef[0] ?? ir::TyVoid) {
+          match el_ir::unspan(args[a#index] ?? ir::NdNull) {
+            NdVar { n: hv } => { r += [hv]; },
+            _ => {}
+          }
+        }
+      }
+      r
+    },
+    NdBlock { block } => if len(block[0].operators) > 0 { hidden_ref_args(e, block[0].operators[-1]!) } else { [] },
+    NdInsert { items } => if len(items) > 0 { hidden_ref_args(e, items[-1]!) } else { [] },
+    _ => []
+  }
+}
+
+// `ref_return`'s candidate walk: the site's own locals, then every local their types' deps reach
+// (transitively: those may only be merged, never placed), each asked once, in that order; the
+// return deps accumulate as the verdicts are applied, which later rungs read (`bound_already`).
+fn classify_site(e: el::El, vars: el_vars::Vars, code: ir::Node, ls: vector<integer>, ctx: Ctx, dep_in: vector<integer>) -> SiteOut {
+  out: vector<text> = [];
+  expanded = ls;
+  direct = len(ls);
+  // `copies_into_buffer` (loft#1482): a direct candidate that views an argument is copied into
+  // the buffer, which severs the borrow — its deps are not walked into the return.
+  bv = buffer_attr(e);
+  buf_v = if bv >= 0 { el_vars::var(vars, ctx.names[bv] ?? "") } else { -1 };
+  copied: vector<integer> = [for c in ls if (el_ex_copy::views_an_argument(vars, c) && !el_ex_deliver::marked_vector_borrow(vars, c) && bv >= 0 && buf_v != c) || jo_delivered(e, vars, c, ctx) { c }];
+  at = 0;
+  while at < len(expanded) {
+    v = expanded[at];
+    at += 1;
+    if v < 0 || v >= len(vars.vars) || copied.contains(v) {
+      continue;
+    }
+    for d in el_types::deps(el_vars::tp(vars, v)) {
+      if d >= 0 && d < len(vars.vars) && !expanded.contains(d) {
+        expanded += [d];
+      }
+    }
+  }
+  dep = dep_in;
+  names = ctx.names;
+  for v in expanded {
+    if v < 0 || v >= len(vars.vars) {
+      continue;
+    }
+    verdict = classify(e, vars, code, v, v#index >= direct, dep, ctx);
+    out += ["classify_ret_promotion={verdict.shown}"];
+    // The `Bind` leg of a RECORD result copies the tail into the buffer
+    // (`materialize_return_into`): its route per delivered leaf.
+    if starts_with(verdict.shown, "Bind ") && verdict.shown.contains("substitute: false") && record_def(e, ctx.ret) >= 0 {
+      for mr in materialize_routes(e, ctx) {
+        out += ["materialize_return_into={mr}"];
+      }
+    }
+    if verdict.dep >= 0 && !dep.contains(verdict.dep) {
+      dep += [verdict.dep];
+    }
+    // A `Rename` gives the buffer attribute the local's name for every later candidate.
+    if starts_with(verdict.shown, "Rename ") && verdict.dep >= 0 {
+      ctx.names[verdict.dep] = el_vars::name_of(vars, v);
+      names = ctx.names;
+    }
+  }
+  SiteOut { shown: out, names: names, dep: dep }
+}
+
+// The attribute names a site starts from (`Ctx::names`).
+fn start_names(e: el::El) -> vector<text> {
+  r: vector<text> = [];
+  ba = buffer_attr(e);
+  for a in el::def(e, e.context).attributes {
+    r += [if e.first_pass && a#index == ba { "__retbuf" } else { a.name }];
+  }
+  r
+}
+
+// A verdict as Rust's `Debug` spells it, and the attribute it adds to the return deps (or -1).
+pub struct Verdict {
+  shown: text,
+  dep: integer,
+}
+
+fn says(shown: text, dep: integer) -> Verdict {
+  Verdict { shown: shown, dep: dep }
+}
+
+fn b(x: boolean) -> text {
+  if x { "true" } else { "false" }
+}
+
+// `classify_ret_promotion_inner`, rung by rung in Rust's order (the order is load-bearing).
+pub fn classify(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer, transitive: boolean, dep: vector<integer>, ctx: Ctx) -> Verdict {
+  n = el_vars::name_of(vars, v);
+  // (`jo_arm_skip`: a marked vector borrow the join pre-pass delivers into the buffer itself.)
+  if jo_delivered(e, vars, v, ctx) {
+    return says("SkipDelivered", -1);
+  }
+  // `@FR-F-Ret` — a work ref of ANOTHER record type is never the return's buffer.
+  if work_ref_of_another_record(e, vars, v, ctx.ret) {
+    return says("SkipInnerRef", -1);
+  }
+  buf_attr = buffer_attr(e);
+  // (The buffer's variable under the name the ladder sees it by: `__retbuf` before a rename.)
+  buf_var = if buf_attr >= 0 { el_vars::var(vars, ctx.names[buf_attr] ?? "") } else { -1 };
+  if buf_attr >= 0 && buf_var < 0 {
+    buf_var = el_vars::var(vars, el::def(e, e.context).attributes[buf_attr]!.name);
+  }
+  // (`jo_arm_skip`, the join pre-pass's delivered bindings — `SkipDelivered` — is not carried.)
+  // (`work_ref_of_another_record` — `SkipInnerRef` for a record of another type — not carried.)
+  // A constant's anchor is copied into the buffer, never renamed onto it.
+  if starts_with(n, "_const_view_") && buf_attr >= 0 {
+    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: false }}", -1);
+  }
+  is_work_ref = starts_with(n, "__ref_") || starts_with(n, "__rref_");
+  // An attribute has nothing left to place: the return borrows it.
+  a = name_index(ctx.names, n);
+  if a >= 0 {
+    chain = ctx.site == MID_RETURN && is_work_ref && !transitive && el::def(e, e.context).attributes[a]!.hidden;
+    return says("MergeAttr {{ a: {a}, chain_site: {b(chain)} }}", a);
+  }
+  for c in e.captures {
+    if c.name == n {
+      return says("SkipCaptured", -1);
+    }
+  }
+  reassigned = el_ex_copy::child_allocs(e, vars, code, v) >= 2;
+  if reassigned && !(!is_work_ref && ctx.is_plain_fn && ctx.site == BLOCK_TAIL && el_types::base(ctx.ret) is TyVector) {
+    return says("SkipReassigned", -1);
+  }
+  if transitive {
+    return says("MergeOnly", -1);
+  }
+  // The site value adopts `v` (its deps name it): only then may a work ref other than the
+  // site's own be placed.
+  adopts = ctx.site_value >= 0 && el_types::deps(el_vars::tp(vars, ctx.site_value)).contains(v);
+  if is_work_ref && ctx.site_value >= 0 && ctx.site_value != v && !adopts {
+    return says("SkipInnerRef", -1);
+  }
+  vector_ret = el_types::base(ctx.ret) is TyVector;
+  bound_already = buf_attr >= 0 && dep.contains(buf_attr);
+  // #425 — the return value is a field of this candidate (`return d.value`): renaming `d` would
+  // hand the container to the caller.  (The A1b subject is not carried.)
+  returns_own_field = own_field_base(e, vars, code, ctx) == v;
+  // A vector local bound to a branch join, rebound from a call into its own buffer inside a
+  // loop or a branch, bound from a fresh call, or rebound by a call reading itself, is REBOUND,
+  // not built into: it cannot carry the rename.  (`branch_sunk_vectors`: not carried.)
+  bound_to_vector_join = el_types::base(ctx.ret) is TyVector && (if e.first_pass {
+    syn_bound_to_branch(e, ctx.body, n) || syn_call_rebound_nested(e, ctx.body, n, false) || syn_bound_from_fresh_call(e, ctx.body, n) || syn_rebound_reading_itself(e, ctx.body, n)
+  } else {
+    bound_to_branch(code, v) || call_rebound_nested(e, vars, code, v, false) || bound_from_fresh_call(e, vars, code, v) || rebound_reading_itself(e, code, v)
+  });
+  views_local = vector_ret && (el_ex_copy::views_a_local(vars, v) || defined_by_projection(e, vars, code, ctx, v, n));
+  views_argument = el_ex_copy::views_an_argument(vars, v) && !el_ex_deliver::marked_vector_borrow(vars, v);
+  literal_backing = starts_with(n, "__vdb_");
+  vt = el_types::base(el_vars::tp(vars, v));
+  wrong_shape = heap_return(el_types::base(ctx.ret)) && !literal_backing && !el_types::is_unknown(vt) && !el_types::is_equal(e, vt, el_types::without_deps(el_types::base(ctx.ret)));
+  declared_in_loop = !is_work_ref && el_ex_null::made_in_loop(e, vars, v);
+  nullable_vector_local = !is_work_ref && vector_ret && (el_vars::tp(vars, v) is TyOptional || starts_with(n, "__ncc_"));
+  allow_rename = !(bound_already || nullable_vector_local || wrong_shape || reassigned || declared_in_loop || returns_own_field || bound_to_vector_join || views_local || views_argument || (ctx.site == MID_RETURN && vector_ret));
+  lambda_reserved = !ctx.is_plain_fn && heap_return(el_types::base(ctx.ret)) && name_index(ctx.names, "__retbuf") >= 0 && el_vars::var(vars, "__retbuf") >= 0;
+  rb = name_index(ctx.names, "__retbuf");
+  if allow_rename && !lambda_reserved && rb >= 0 {
+    return says("Rename {{ buf_attr: {rb}, chain_site: {b(ctx.site == MID_RETURN && is_work_ref)} }}", rb);
+  }
+  // loft#1078 / loft#2292 — a record buffer the tail's delivered leaves READ: the re-mint would
+  // destroy the copy's source.  (Read off the lowered tail: the second pass.)
+  record_ret = match el_types::base(ctx.ret) { TyReference { n: _ } => true, TyEnum { is_ref } => is_ref, _ => false };
+  if record_ret && !e.first_pass && buf_attr >= 0 && buf_var >= 0 && buf_var != v {
+    lt = last_operator(code);
+    if lt != null && delivered_leaf_reads(e, lt!, buf_var) {
+      return says("SkipJoinArm", -1);
+    }
+  }
+  if (ctx.is_plain_fn || lambda_reserved) && heap_return(el_types::base(ctx.ret)) && buf_attr >= 0 && buf_var != v {
+    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: {b(is_work_ref)} }}", -1);
+  }
+  if nullable_vector_local && !ctx.is_plain_fn && buf_attr < 0 {
+    return says("AwaitReservedBuffer", -1);
+  }
+  says("Grow", -1)
+}
+
+// `ret_promo_base` of a return the ladder places: a record, a vector or a struct enum.
+fn heap_return(t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// `Parser::return_buffer`'s attribute: the hidden heap parameter the result is delivered in.
+fn buffer_attr(e: el::El) -> integer {
+  for a in el::def(e, e.context).attributes {
+    if a.hidden && !a.work_buffer && heap_return(a.typedef[0] ?? ir::TyVoid) {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// The index of `n` among `names`, or -1.
+fn name_index(names: vector<text>, n: text) -> integer {
+  for x in names {
+    if x == n {
+      return x#index;
+    }
+  }
+  -1
+}
+
+// `attr_names.get(n)`: the attribute named `n`, or -1.
+fn attr_index(e: el::El, n: text) -> integer {
+  for a in el::def(e, e.context).attributes {
+    if a.name == n {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// The last operator of a body block, through its spans.
+fn last_operator(code: ir::Node) -> ir::Node? {
+  match code {
+    NdSpan { inner } => last_operator(inner),
+    NdBlock { block } => if len(block[0].operators) > 0 { block[0].operators[-1] } else { null },
+    _ => null
+  }
+}
+
+// The candidates a tail offers (`ls`): a bare local, for now.
+fn tail_candidates(vars: el_vars::Vars, tail: ir::Node) -> vector<integer> {
+  match el_ir::unspan(tail) {
+    NdVar { n } => if n >= 0 && n < len(vars.vars) { [n] } else { [] },
+    _ => []
+  }
+}
+
+// Does the body block's last statement read `return …`?
+fn ends_in_return_statement(e: el::El, body: integer) -> boolean {
+  match e.p.nodes[body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]!] {
+        SStmt { e: se } => se != null && match e.p.nodes[se!] { SJump { kind } => kind == "return", _ => false },
+        SJump { kind } => kind == "return",
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// `var_bound_to_branch`: `v` is set from an `if` (through a block's or an insert's last operator).
+fn bound_to_branch(op: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(op) {
+    NdSet { var, inner } => var == v && rhs_is_branch(inner),
+    NdInsert { items } => { for o in items { if bound_to_branch(o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if bound_to_branch(o, v) { return true; } } false },
+    _ => false
+  }
+}
+
+fn rhs_is_branch(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _ } => true,
+    NdBlock { block } => len(block[0].operators) > 0 && rhs_is_branch(block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && rhs_is_branch(items[-1]!),
+    _ => false
+  }
+}
+
+// `var_call_rebound_nested`: inside a loop or a branch, `v` is set from a call that is handed a
+// vector work ref of its own (`__ref_N`).
+fn call_rebound_nested(e: el::El, vars: el_vars::Vars, op: ir::Node, v: integer, nested: boolean) -> boolean {
+  match el_ir::unspan(op) {
+    NdSet { var, inner } => {
+      if var != v || !nested {
+        return false;
+      }
+      match el_ir::unspan(inner) {
+        NdCall { args } => {
+          for a in args {
+            match el_ir::unspan(a) {
+              NdVar { n: bv } => { if bv >= 0 && bv < len(vars.vars) && el_types::base(el_vars::tp(vars, bv)) is TyVector && starts_with(el_vars::name_of(vars, bv), "__ref_") { return true; } },
+              _ => {}
+            }
+          }
+          false
+        },
+        _ => false
+      }
+    },
+    NdLoop { block } => { for o in block[0].operators { if call_rebound_nested(e, vars, o, v, true) { return true; } } false },
+    NdIf { t, f } => call_rebound_nested(e, vars, t, v, true) || call_rebound_nested(e, vars, f, v, true),
+    NdBlock { block } => { for o in block[0].operators { if call_rebound_nested(e, vars, o, v, nested) { return true; } } false },
+    NdInsert { items } => { for o in items { if call_rebound_nested(e, vars, o, v, nested) { return true; } } false },
+    _ => false
+  }
+}
+
+// `var_bound_from_fresh_call`: `v` is set from a call of a function answering a vector that is
+// handed no work ref — the call makes the store.
+fn bound_from_fresh_call(e: el::El, vars: el_vars::Vars, op: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(op) {
+    NdSet { var, inner } => {
+      if var != v {
+        return false;
+      }
+      match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if def_nr < 0 || starts_with(el::def(e, def_nr).name, "Op") || !(el_types::base(el::def(e, def_nr).returned[0] ?? ir::TyVoid) is TyVector) {
+            return false;
+          }
+          for a in args {
+            match el_ir::unspan(a) {
+              NdVar { n: bv } => { if bv >= 0 && bv < len(vars.vars) && starts_with(el_vars::name_of(vars, bv), "__ref_") { return false; } },
+              _ => {}
+            }
+          }
+          true
+        },
+        _ => false
+      }
+    },
+    NdLoop { block } => { for o in block[0].operators { if bound_from_fresh_call(e, vars, o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if bound_from_fresh_call(e, vars, o, v) { return true; } } false },
+    NdIf { t, f } => bound_from_fresh_call(e, vars, t, v) || bound_from_fresh_call(e, vars, f, v),
+    NdInsert { items } => { for o in items { if bound_from_fresh_call(e, vars, o, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// `var_rebound_reading_itself`: `v` is set from a (non-operator) call one of whose arguments
+// reads `v`.
+fn rebound_reading_itself(e: el::El, op: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(op) {
+    NdSet { var, inner } => {
+      if var != v {
+        return false;
+      }
+      match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if def_nr < 0 || starts_with(el::def(e, def_nr).name, "Op") {
+            return false;
+          }
+          for a in args {
+            if el_ir::reads_var(a, v) {
+              return true;
+            }
+          }
+          false
+        },
+        _ => false
+      }
+    },
+    NdLoop { block } => { for o in block[0].operators { if rebound_reading_itself(e, o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if rebound_reading_itself(e, o, v) { return true; } } false },
+    NdIf { t, f } => rebound_reading_itself(e, t, v) || rebound_reading_itself(e, f, v),
+    NdInsert { items } => { for o in items { if rebound_reading_itself(e, o, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// ---- The body rungs over the syntax, for the first pass ------------------------------------
+
+// The function a call names when it is a user function answering a vector (one that takes a
+// hidden vector buffer: Rust's `own_buffer` work ref), or -1.
+fn vector_callee(e: el::El, call: integer) -> integer {
+  match e.p.nodes[call] {
+    SCall { f } => {
+      if f == null {
+        return -1;
+      }
+      match e.p.nodes[f!] {
+        SName { name: fname, member } => {
+          if member != "" {
+            return -1;
+          }
+          d = el::def_nr(e, "n_{fname}");
+          if (d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector) { d } else { -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// An assignment to the plain local `name` (`=` or an append `+=`), its value node, or -1.
+fn assigns(e: el::El, n: integer, name: text, ops: vector<text>) -> integer {
+  match e.p.nodes[n] {
+    SAssign { op, target, e: av } => {
+      if av == null || !ops.contains(op) {
+        return -1;
+      }
+      match e.p.nodes[target] { SName { name: tn, member } => if tn == name && member == "" { av! } else { -1 }, _ => -1 }
+    },
+    // (A typed bind `name: τ = …` is an `=`.)
+    SLet { name: ln, e: lv } => if ln == name && lv != null && ops.contains("=") { lv! } else { -1 },
+    _ => -1
+  }
+}
+
+fn stmt_expr(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] { SStmt { e: se } => se ?? -1, _ => n }
+}
+
+// `var_bound_to_branch` over the syntax: `name = if …` / `name = match …`, through the blocks
+// only (not into a loop or a branch).
+fn syn_bound_to_branch(e: el::El, n: integer, name: text) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SBlock { stmts } => {
+      for st in stmts {
+        x = stmt_expr(e, st);
+        if x >= 0 {
+          av = assigns(e, x, name, ["="]);
+          if av >= 0 && (e.p.nodes[av] is SIf || e.p.nodes[av] is SMatch) {
+            return true;
+          }
+          if e.p.nodes[x] is SBlock && syn_bound_to_branch(e, x, name) {
+            return true;
+          }
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `var_call_rebound_nested` over the syntax: inside a loop or a branch, `name` is set (or
+// appended to) from a call of a function that answers a vector.
+fn syn_call_rebound_nested(e: el::El, n: integer, name: text, nested: boolean) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SBlock { stmts } => { for st in stmts { if syn_call_rebound_nested(e, st, name, nested) { return true; } } false },
+    SStmt { e: se } => se != null && syn_call_rebound_nested(e, se!, name, nested),
+    SFor { body: fb } => fb != null && syn_call_rebound_nested(e, fb!, name, true),
+    SWhile { body: wb } => wb != null && syn_call_rebound_nested(e, wb!, name, true),
+    SIf { then: it, other: io } => syn_call_rebound_nested(e, it, name, true) || (io != null && syn_call_rebound_nested(e, io!, name, true)),
+    SMatch { arms } => { for ar in arms { match e.p.nodes[ar] { SArm { body: ab } => { if ab != null && syn_call_rebound_nested(e, ab!, name, true) { return true; } }, _ => {} } } false },
+    SAssign { e: _ } => {
+      av = assigns(e, n, name, ["=", "+="]);
+      nested && av >= 0 && vector_callee(e, av) >= 0
+    },
+    _ => false
+  }
+}
+
+// `var_rebound_reading_itself` over the syntax: `name = f(… name …)` for a function `f`.
+fn syn_rebound_reading_itself(e: el::El, n: integer, name: text) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SBlock { stmts } => { for st in stmts { if syn_rebound_reading_itself(e, st, name) { return true; } } false },
+    SStmt { e: se } => se != null && syn_rebound_reading_itself(e, se!, name),
+    SFor { body: fb } => fb != null && syn_rebound_reading_itself(e, fb!, name),
+    SWhile { body: wb } => wb != null && syn_rebound_reading_itself(e, wb!, name),
+    SIf { then: it, other: io } => syn_rebound_reading_itself(e, it, name) || (io != null && syn_rebound_reading_itself(e, io!, name)),
+    SAssign { e: _ } => {
+      av = assigns(e, n, name, ["="]);
+      if av < 0 {
+        return false;
+      }
+      match e.p.nodes[av] {
+        SCall { f, args } => f != null && match e.p.nodes[f!] { SName { name: cn, member } => member == "" && el::def_nr(e, "n_{cn}") >= 0, _ => false } && mentions(e, args, name),
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+fn mentions(e: el::El, ns: vector<integer>, name: text) -> boolean {
+  for x in ns {
+    match e.p.nodes[x] {
+      SName { name: mn, member } => { if mn == name && member == "" { return true; } },
+      _ => {}
+    }
+  }
+  false
+}
+
+// The call a lowered value is, through spans, a block's and an insert's last operator.
+fn call_of(n: ir::Node) -> ir::Node? {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: _ } => el_ir::unspan(n),
+    NdBlock { block } => if len(block[0].operators) > 0 { call_of(block[0].operators[-1]!) } else { null },
+    NdInsert { items } => if len(items) > 0 { call_of(items[-1]!) } else { null },
+    _ => null
+  }
+}
+
+// A call's result deps as variables: each attribute the callee's result depends on, read as the
+// variable this call hands it (an argument that is itself a call answers that call's deps).
+fn call_result_deps(e: el::El, call: ir::Node) -> vector<integer> {
+  r: vector<integer> = [];
+  match call {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 {
+        return r;
+      }
+      for d in el_types::deps(el::def(e, def_nr).returned[0] ?? ir::TyVoid) {
+        a = args[d] ?? ir::NdNull;
+        match el_ir::unspan(a) {
+          NdVar { n: av } => { if !r.contains(av) { r += [av]; } },
+          _ => {
+            ic = call_of(a) ?? ir::NdNull;
+            if ic is NdCall {
+              for x in call_result_deps(e, ic) {
+                if !r.contains(x) {
+                  r += [x];
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// ---- Step 4: `classify_reference_delivery` at a record result's body tail -------------------
+
+fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end_tok: integer, ctx: Ctx, dep: vector<integer>) {
+  // (A tuple result is no record delivery: its boxed `__tuple<…>` record has its own road.)
+  rd = record_def(e, ctx.ret);
+  if rd < 0 || starts_with(el::def(e, rd).name, "__tuple<") {
+    return;
+  }
+  pos = el::pos_at(e, end_tok + 1);
+  pass = if e.first_pass { 1 } else { 2 };
+  tail = last_operator(code);
+  syn = last_statement(e, body);
+  ws: vector<integer> = [];
+  shown = "";
+  // `MaterializeView` (the lowering's verdict, which it reports itself): the view is copied into
+  // a fresh work ref of the result's type — `materialize_return_into`'s routes — and the ladder is
+  // asked about that work ref.
+  if vars.mv_tail {
+    w = last_work_ref_of(e, vars, ctx.ret);
+    pass1 = if e.first_pass { 1 } else { 2 };
+    ctx.site = BLOCK_TAIL;
+    ctx.tail_syn = syn;
+    ctx.tail_ir = tail ?? ir::NdNull;
+    for mr in materialize_routes(e, ctx) {
+      eprintln("state {pass1} {pos.line}:{pos.pos} route materialize_return_into={mr}");
+    }
+    if w >= 0 {
+      ctx.site_value = w;
+      so = classify_site(e, vars, code, [w], ctx, dep);
+      for v in so.shown {
+        eprintln("state {pass1} {pos.line}:{pos.pos} route {v}");
+      }
+    }
+    return;
+  }
+  if !e.first_pass && tail != null {
+    t = el_ir::unspan(tail!);
+    c = call_of(t) ?? ir::NdNull;
+    v = match t { NdVar { n } => n, _ => -1 };
+    if v >= 0 && v < len(vars.vars) {
+      // `return_views_local` / `ls_can_be_record_buffer` copy a view (`MaterializeView`, which
+      // this port's lowering reports itself); any other local is renamed onto the buffer.
+      if el_ex_copy::views_a_local(vars, v) || !record_shaped(e, vars, v, ctx.ret) {
+        return;
+      }
+      ws = [v];
+    } else if c is NdCall {
+      ws = call_result_deps(e, c);
+      if len(ws) == 0 {
+        ws = hidden_ref_args(e, c);
+      }
+      if len(ws) == 0 {
+        return;
+      }
+    } else {
+      // A record literal (`Object`) built into the buffer through its own work ref, the second
+      // pass's `__ref_p2_N` (`BuildIntoBuffer`); one that does not write the buffer is `AsIs`.
+      match t {
+        NdBlock { block } => {
+          if block[0].name == "Object" {
+            ba = buffer_attr(e);
+            bv = if ba >= 0 { el_vars::var(vars, ctx.names[ba] ?? "") } else { -1 };
+            w = last_literal_ref(vars);
+            shown = if w >= 0 && bv >= 0 && el_ir::reads_var(t, bv) { "BuildIntoBuffer({el_vars::name_of(vars, w)},{ctx.names[ba] ?? ""})" } else { "AsIs" };
+          }
+        },
+        _ => {}
+      }
+    }
+  } else if e.first_pass && syn >= 0 {
+    match e.p.nodes[syn] {
+      SName { name, member } => {
+        v1 = if member == "" { el_vars::var(vars, name) } else { -1 };
+        if v1 < 0 || el_ex_copy::views_a_local(vars, v1) || !record_shaped(e, vars, v1, ctx.ret) {
+          return;
+        }
+        ws = [v1];
+      },
+      // (A literal tail asks no delivery on the first pass.)
+      _ => { return; }
+    }
+  }
+  if len(ws) > 0 {
+    shown = "Rename({[for w in ws { el_vars::name_of(vars, w) }].join(",")})";
+  }
+  if shown == "" {
+    return;
+  }
+  eprintln("state {pass} {pos.line}:{pos.pos} route classify_reference_delivery={shown}");
+  if len(ws) == 0 {
+    return;
+  }
+  ctx.site = BLOCK_TAIL;
+  ctx.site_value = match el_ir::unspan(tail ?? ir::NdNull) { NdVar { n } => n, _ => -1 };
+  ctx.tail_syn = syn;
+  ctx.tail_ir = tail ?? ir::NdNull;
+  so = classify_site(e, vars, code, ws, ctx, dep);
+  for v in so.shown {
+    eprintln("state {pass} {pos.line}:{pos.pos} route {v}");
+  }
+}
+
+// `ls_can_be_record_buffer`: the local has the record result's own type (an unknown one passes).
+fn record_shaped(e: el::El, vars: el_vars::Vars, v: integer, ret: ir::TypeT) -> boolean {
+  vt = el_types::without_deps(el_types::base(el_vars::tp(vars, v)));
+  el_types::is_unknown(vt) || el_types::is_equal(e, vt, el_types::without_deps(el_types::base(ret)))
+}
+
+// The body block's last statement's expression (its syntax), or -1.
+fn last_statement(e: el::El, body: integer) -> integer {
+  match e.p.nodes[body] {
+    SBlock { stmts } => if len(stmts) > 0 { stmt_expr(e, stmts[-1]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// The work ref a lowered record literal is built in: the first `__ref_` variable its block sets.
+fn literal_work_ref(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        match el_ir::unspan(o) {
+          NdSet { var } => { if var >= 0 && var < len(vars.vars) && starts_with(el_vars::name_of(vars, var), "__ref_") { return var; } },
+          _ => {}
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// ---- Step 2: the remaining rungs -----------------------------------------------------------
+
+// `jo_arm_skip` (the `LOFT_JOIN_OWN` pre-pass): for a vector result with a return buffer, a
+// marked vector borrow among the site's locals is delivered arm by arm into the buffer.
+fn jo_delivered(e: el::El, vars: el_vars::Vars, v: integer, ctx: Ctx) -> boolean {
+  if !(el_types::base(ctx.ret) is TyVector) || len(env_variable("LOFT_NO_JOIN_OWN")) > 0 {
+    return false;
+  }
+  ba = buffer_attr(e);
+  if ba < 0 {
+    return false;
+  }
+  bv = el_vars::var(vars, ctx.names[ba] ?? "");
+  v != bv && el_ex_deliver::marked_vector_borrow(vars, v)
+}
+
+// The record definition a heap type names (a variant's is its enum's), or -1.
+fn record_def(e: el::El, t: ir::TypeT) -> integer {
+  d = match el_types::base(t) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+  if d < 0 {
+    return -1;
+  }
+  dt = el::def(e, d).def_type;
+  if dt == el::DT_ENUM_VALUE {
+    return el::def(e, d).parent;
+  }
+  if dt == el::DT_STRUCT || dt == el::DT_ENUM { d } else { -1 }
+}
+
+fn work_ref_of_another_record(e: el::El, vars: el_vars::Vars, v: integer, ret: ir::TypeT) -> boolean {
+  vd = record_def(e, el_vars::tp(vars, v));
+  rd = record_def(e, ret);
+  vd >= 0 && rd >= 0 && vd != rd && starts_with(el_vars::name_of(vars, v), "__ref_") && !vars.vars[v].argument && len(env_variable("LOFT_NO_RET_TYPE_MATCH")) == 0
+}
+
+// `return_field_base_var` of the site's value: the local whose field (or tuple member) the tail
+// reads — through a block's last operator, nested field reads.  The second pass reads the IR,
+// the first the tail's syntax (`d.value`).
+fn own_field_base(e: el::El, vars: el_vars::Vars, code: ir::Node, ctx: Ctx) -> integer {
+  if ctx.site != BLOCK_TAIL {
+    return -1;
+  }
+  if e.first_pass {
+    t = last_statement(e, ctx.body);
+    return if t >= 0 { syn_field_base(e, vars, t) } else { -1 };
+  }
+  lt = last_operator(code);
+  if lt == null { -1 } else { field_base_var(e, lt!) }
+}
+
+fn field_base_var(e: el::El, n: ir::Node) -> integer {
+  gf = el::def_nr(e, "OpGetField");
+  match el_ir::unspan(n) {
+    NdReturn { inner } => field_base_var(e, inner),
+    NdTupleGet { var } => var,
+    NdBlock { block } => if len(block[0].operators) > 0 { field_base_var(e, block[0].operators[-1]!) } else { -1 },
+    NdInsert { items } => if len(items) > 0 { field_base_var(e, items[-1]!) } else { -1 },
+    NdCall { def_nr, args } => {
+      if def_nr != gf {
+        return -1;
+      }
+      match el_ir::unspan(args[0] ?? ir::NdNull) {
+        NdVar { n: bv } => bv,
+        NdCall { def_nr: bd } => if bd == gf { field_base_var(e, args[0]!) } else { -1 },
+        NdBlock { block: bb } => {
+          r = field_base_var(e, args[0]!);
+          if r >= 0 { r } else if len(bb[0].operators) > 0 { match el_ir::unspan(bb[0].operators[-1]!) { NdVar { n: w } => w, _ => -1 } } else { -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+fn syn_field_base(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SMember { e: me, call } => {
+      if call || me == null {
+        return -1;
+      }
+      match e.p.nodes[me!] {
+        SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 },
+        SMember { e: _ } => syn_field_base(e, vars, me!),
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// `var_defined_by_projection`: some bind of `v` reads a field or an element of a LOCAL (not a
+// parameter, not a literal's backing) — `e = vv[0]`.
+fn defined_by_projection(e: el::El, vars: el_vars::Vars, code: ir::Node, ctx: Ctx, v: integer, name: text) -> boolean {
+  if e.first_pass {
+    return syn_defined_by_projection(e, vars, ctx.body, name);
+  }
+  ir_defined_by_projection(e, vars, code, v)
+}
+
+fn ir_defined_by_projection(e: el::El, vars: el_vars::Vars, n: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdSet { var, inner } => (var == v && borrows_local(e, vars, inner)) || ir_defined_by_projection(e, vars, inner, v),
+    NdInsert { items } => { for o in items { if ir_defined_by_projection(e, vars, o, v) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if ir_defined_by_projection(e, vars, o, v) { return true; } } false },
+    NdIf { t, f } => ir_defined_by_projection(e, vars, t, v) || ir_defined_by_projection(e, vars, f, v),
+    _ => false
+  }
+}
+
+// `expr_borrows_local`: a field or an element read rooted at a local that is no parameter and
+// no literal's backing store (or at a call's result).
+fn borrows_local(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  gf = el::def_nr(e, "OpGetField");
+  gv = el::def_nr(e, "OpGetVector");
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if def_nr != gf && def_nr != gv {
+        return false;
+      }
+      match el_ir::unspan(args[0] ?? ir::NdNull) {
+        NdVar { n: bv } => bv >= 0 && bv < len(vars.vars) && !vars.vars[bv].argument && !starts_with(el_vars::name_of(vars, bv), "__vdb_"),
+        NdCall { def_nr: bd } => if bd == gf || bd == gv { borrows_local(e, vars, args[0]!) } else { true },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+fn syn_defined_by_projection(e: el::El, vars: el_vars::Vars, n: integer, name: text) -> boolean {
+  if n < 0 || e.p.nodes[n] is SLambda {
+    return false;
+  }
+  av = assigns(e, n, name, ["="]);
+  if av >= 0 && syn_projects_local(e, vars, av) {
+    return true;
+  }
+  for c in el_length::children(e, n) {
+    if syn_defined_by_projection(e, vars, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// A field or an element read (`x.f`, `x[i]`) rooted at a local that is no parameter.
+fn syn_projects_local(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
+  base = match e.p.nodes[n] {
+    SMember { e: me, call } => if call || me == null { -1 } else { me! },
+    SIndex { e: ie } => ie ?? -1,
+    _ => -1
+  };
+  if base < 0 {
+    return false;
+  }
+  match e.p.nodes[base] {
+    SName { name, member } => {
+      if member != "" {
+        return false;
+      }
+      bv = el_vars::var(vars, name);
+      bv >= 0 && !vars.vars[bv].argument
+    },
+    _ => syn_projects_local(e, vars, base)
+  }
+}
+
+// `delivered_leaf_reads`: does a value the delivery copies out of `tail` read `var` — through an
+// `if`'s arms, a block's (not a literal's, not a re-minting one's) and an insert's last operator.
+fn delivered_leaf_reads(e: el::El, tail: ir::Node, var: integer) -> boolean {
+  remint = el::def_nr(e, "OpDatabase");
+  match el_ir::unspan(tail) {
+    NdIf { t, f } => delivered_leaf_reads(e, t, var) || delivered_leaf_reads(e, f, var),
+    NdBlock { block } => {
+      bl = block[0];
+      mints = len([for o in bl.operators if match el_ir::unspan(o) { NdCall { def_nr } => def_nr == remint, _ => false } { 1 }]) > 0;
+      if bl.name != "Object" && !mints {
+        if len(bl.operators) > 0 { delivered_leaf_reads(e, bl.operators[-1]!, var) } else { false }
+      } else {
+        el_ir::reads_var(tail, var)
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { delivered_leaf_reads(e, items[-1]!, var) } else { false },
+    _ => el_ir::reads_var(tail, var)
+  }
+}
+
+// `var_bound_from_fresh_call` over the syntax: `name` is set from a call of a function that
+// answers a vector without a hidden buffer of its own (the call makes the store).
+fn syn_bound_from_fresh_call(e: el::El, n: integer, name: text) -> boolean {
+  if n < 0 || e.p.nodes[n] is SLambda {
+    return false;
+  }
+  av = assigns(e, n, name, ["="]);
+  if av >= 0 {
+    match e.p.nodes[av] {
+      SCall { f } => {
+        if f != null {
+          match e.p.nodes[f!] {
+            SName { name: cn, member } => {
+              d = el::def_nr(e, "n_{cn}");
+              if member == "" && d >= 0 && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector && len([for a in el::def(e, d).attributes if a.hidden { 1 }]) == 0 {
+                return true;
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  for c in el_length::children(e, n) {
+    if syn_bound_from_fresh_call(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// The second pass's last record literal work ref (`__ref_p2_N`, the highest numbered).
+fn last_literal_ref(vars: el_vars::Vars) -> integer {
+  r = -1;
+  for x in vars.vars {
+    if starts_with(el_vars::name_of(vars, x#index), "__ref_p2_") {
+      r = x#index;
+    }
+  }
+  r
+}
+
+// ---- Step 4: `materialize_return_into`'s route per delivered leaf ---------------------------
+
+// The routes the copy of the site's value into the buffer takes: `arms` for a branch that can
+// leave (holds a `return`), whose arm is `null`, descending into each arm; `whole` for a leaf.
+// The second pass reads the lowered value, the first its syntax.
+fn materialize_routes(e: el::El, ctx: Ctx) -> vector<text> {
+  if e.first_pass {
+    return if ctx.tail_syn >= 0 { syn_materialize(e, ctx.tail_syn, []) } else { [] };
+  }
+  ir_materialize(ctx.tail_ir, [])
+}
+
+fn ir_materialize(n: ir::Node, out: vector<text>) -> vector<text> {
+  r = out;
+  match n {
+    NdReturn { inner } => { return ir_materialize(inner, r); },
+    NdSpan { inner } => {
+      t = el_ir::unspan(n);
+      if ir_arms(t) {
+        r += ["arms"];
+        return ir_materialize(t, r);
+      }
+    },
+    _ => {}
+  }
+  t = el_ir::unspan(n);
+  if !ir_arms(t) {
+    r += ["whole"];
+    return r;
+  }
+  r += ["arms"];
+  match t {
+    NdIf { t: a, f: b } => { r = ir_materialize(b, ir_materialize(a, r)); },
+    NdBlock { block } => { if len(block[0].operators) > 0 { r = ir_materialize(block[0].operators[-1]!, r); } },
+    NdInsert { items } => { if len(items) > 0 { r = ir_materialize(items[-1]!, r); } },
+    _ => {}
+  }
+  r
+}
+
+// `leaving_branch || arms_yield_null`: a branch (not a record literal) holding a `return`, or an
+// `if` with a `null` arm.
+fn ir_arms(t: ir::Node) -> boolean {
+  branch = match t { NdIf { cond: _ } => true, NdBlock { block } => block[0].name != "Object", NdInsert { items: _ } => true, _ => false };
+  if !branch {
+    return false;
+  }
+  if holds_return(t) {
+    return true;
+  }
+  match t { NdIf { t: a, f: b } => el_ir::unspan(a) is NdNull || el_ir::unspan(b) is NdNull, _ => false }
+}
+
+fn holds_return(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdReturn { inner: _ } => true,
+    NdIf { cond, t, f } => holds_return(cond) || holds_return(t) || holds_return(f),
+    NdBlock { block } => { for o in block[0].operators { if holds_return(o) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if holds_return(o) { return true; } } false },
+    NdInsert { items } => { for o in items { if holds_return(o) { return true; } } false },
+    NdSet { inner } => holds_return(inner),
+    _ => false
+  }
+}
+
+fn syn_materialize(e: el::El, n: integer, out: vector<text>) -> vector<text> {
+  r = out;
+  match e.p.nodes[n] {
+    SJump { kind, e: je } => { if kind == "return" && je != null { return syn_materialize(e, je!, r); } },
+    SStmt { e: se } => { if se != null { return syn_materialize(e, se!, r); } },
+    _ => {}
+  }
+  if !syn_arms(e, n) {
+    r += ["whole"];
+    return r;
+  }
+  r += ["arms"];
+  match e.p.nodes[n] {
+    SIf { then: it, other: io } => {
+      r = syn_materialize(e, block_value(e, it), r);
+      if io != null {
+        r = syn_materialize(e, block_value(e, io!), r);
+      }
+    },
+    SMatch { arms } => {
+      for ar in arms {
+        match e.p.nodes[ar] { SArm { body: ab } => { if ab != null { r = syn_materialize(e, block_value(e, ab!), r); } }, _ => {} }
+      }
+    },
+    SBlock { stmts: _ } => { r = syn_materialize(e, block_value(e, n), r); },
+    _ => {}
+  }
+  r
+}
+
+fn syn_arms(e: el::El, n: integer) -> boolean {
+  branch = e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SBlock;
+  if !branch {
+    return false;
+  }
+  if len(returns_of(e, n, [])) > 0 {
+    return true;
+  }
+  match e.p.nodes[n] {
+    SIf { then: it, other: io } => e.p.nodes[block_value(e, it)] is SNull || (io != null && e.p.nodes[block_value(e, io!)] is SNull),
+    _ => false
+  }
+}
+
+// A block's value: its last statement's expression (a non-block node is its own value).
+fn block_value(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SBlock { stmts } => if len(stmts) > 0 { stmt_expr(e, stmts[-1]!) } else { n },
+    _ => n
+  }
+}
+
+// The work ref `materialize_view_return` mints for a record result: the highest numbered `__ref_N`
+// typed as the result's record.
+fn last_work_ref_of(e: el::El, vars: el_vars::Vars, ret: ir::TypeT) -> integer {
+  rd = record_def(e, ret);
+  r = -1;
+  for x in vars.vars {
+    n = el_vars::name_of(vars, x#index);
+    if starts_with(n, "__ref_") && !starts_with(n, "__ref_p") && record_def(e, el_vars::tp(vars, x#index)) == rd {
+      r = x#index;
+    }
+  }
+  r
+}
