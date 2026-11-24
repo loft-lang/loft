@@ -755,23 +755,20 @@ Each is recorded as `rewrites.md` last stated it.
 
 ### `(R-FoldCompare)`
 
-```
-  (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
-                 one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
-                 to_uppercase }, where the fold's value has that ONE mention (a
-                 synthesised temporary, or a local whose every binding is such a
-                 fold or `fold + literal` and whose every other mention is a text
-                 VALUE read as an operand of such a P), is answered WITHOUT
-                 building the folded text: over the span P inspects, F is applied
-                 byte by byte while every byte of that span and of the other
-                 operand is ASCII; the FIRST non-ASCII byte met in either operand
-                 takes the written form (the fold built, P applied) for that
-                 evaluation.  A `+ literal` on the folded operand is compared as
-                 the fold followed by the literal.  The other operand is read as
-                 written.  Any other mention of the fold — a bind read elsewhere,
-                 a return, a link, a capture, a non-text-value op — declines.
-```
-```
+      (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
+                     one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
+                     to_uppercase }, where the fold's value has that ONE mention (a
+                     synthesised temporary, or a local whose every binding is such a
+                     fold or `fold + literal` and whose every other mention is a text
+                     VALUE read as an operand of such a P), is answered WITHOUT
+                     building the folded text: over the span P inspects, F is applied
+                     byte by byte while every byte of that span and of the other
+                     operand is ASCII; the FIRST non-ASCII byte met in either operand
+                     takes the written form (the fold built, P applied) for that
+                     evaluation.  A `+ literal` on the folded operand is compared as
+                     the fold followed by the literal.  The other operand is read as
+                     written.  Any other mention of the fold — a bind read elsewhere,
+                     a return, a link, a capture, a non-text-value op — declines.
 
 **In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
 exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases
@@ -797,30 +794,28 @@ fold's block is neither lifted nor built; guard
 `loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
 the operand clause below.
 
-```
-  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
-                 that is never built, when ALL of:
-                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
-                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
-                 (2) every other mention of x is an operand of an admitted P, or x's
-                     own release;
-                 (3) s holds at every such P the value it held at the binding: no
-                     path from the binding to a P writes s — no assignment, no
-                     append, no `&s` hand-off, no call handed s's work buffer;
-                 (4) the binding and every P that reads x lie in one activation
-                     of one function, and that function is not a generator.
-                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
-                 on the fast path the ASCII test spans the inspected bytes of
-                 s and of l as well as the fold's own operand.  The written form,
-                 taken from the first non-ASCII byte, builds F'(s) + l at most
-                 ONCE per binding of x (a frame slot filled on first use), so no
-                 run builds it more often than the program as written.
-                 Declines, keeping x built: a second binding; any other mention —
-                 a return, a format, a store, an append, `len`/`size`, an index, a
-                 call argument, a capture, a link `&x`; an s that is a field or an
-                 element (a store write between binding and P could change it); a
-                 non-literal l; a generator.
-```
+      (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
+                     that is never built, when ALL of:
+                     (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
+                         fold, l a text LITERAL, s a text PARAMETER or LOCAL;
+                     (2) every other mention of x is an operand of an admitted P, or x's
+                         own release;
+                     (3) s holds at every such P the value it held at the binding: no
+                         path from the binding to a P writes s — no assignment, no
+                         append, no `&s` hand-off, no call handed s's work buffer;
+                     (4) the binding and every P that reads x lie in one activation
+                         of one function, and that function is not a generator.
+                     Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
+                     on the fast path the ASCII test spans the inspected bytes of
+                     s and of l as well as the fold's own operand.  The written form,
+                     taken from the first non-ASCII byte, builds F'(s) + l at most
+                     ONCE per binding of x (a frame slot filled on first use), so no
+                     run builds it more often than the program as written.
+                     Declines, keeping x built: a second binding; any other mention —
+                     a return, a format, a store, an append, `len`/`size`, an index, a
+                     call argument, a capture, a link `&x`; an s that is a field or an
+                     element (a store write between binding and P could change it); a
+                     non-literal l; a generator.
 
 **In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
 the rule already removes; reading it as the pair it was built from removes the text and
@@ -836,13 +831,11 @@ once — `LOFT_ALLOC_SITES` counts one build).
 
 ### `(R-Leaf)`
 
-```
-  (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
-                 bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
-                 buffer guard: it cannot recurse, cannot reach stack_trace / assert /
-                 panic, and cannot sit between the frame that pushed a buffer and
-                 the one that releases it.  The live-flip check stays.
-```
+      (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
+                     bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
+                     buffer guard: it cannot recurse, cannot reach stack_trace / assert /
+                     panic, and cannot sit between the frame that pushed a buffer and
+                     the one that releases it.  The live-flip check stays.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch
@@ -851,17 +844,15 @@ and loses only the innermost frame NAME from the chain.  Switch
 
 ### `(R-LeafChain)`
 
-```
-  (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
-                 emitted as a leaf is: every user function it reaches, transitively,
-                 has a loft body, none of them lies on a cycle, and none calls a
-                 fn-ref, runs `parallel` or yields.  A native user-level callee
-                 (no loft body) makes the tree opaque, so the caller keeps its frame —
-                 except a store BRACKET the compiler emits around an argument
-                 (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
-                 which sets a store flag and calls no loft code.
-                 The named tiers keep every non-leaf frame.
-```
+      (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
+                     emitted as a leaf is: every user function it reaches, transitively,
+                     has a loft body, none of them lies on a cycle, and none calls a
+                     fn-ref, runs `parallel` or yields.  A native user-level callee
+                     (no loft body) makes the tree opaque, so the caller keeps its frame —
+                     except a store BRACKET the compiler emits around an argument
+                     (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
+                     which sets a store flag and calls no loft code.
+                     The named tiers keep every non-leaf frame.
 
 **In words.** @PLN157 queue row 11.  Such a function cannot be re-entered while it runs, so
 the depth cap needs no entry for it: a recursion that passes through it is still counted at
@@ -874,43 +865,39 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
 
 ### `(R-LitDiv)`
 
-```
-  (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
-                 as one sentinel test and the plain operator — `if x == MIN { MIN }
-                 else { x / k }` — which is the guarded template's exact value: the
-                 null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
-                 a null operand, and the literal rules out the first two at
-                 generation time.  It needs no proof of the dividend, which is what
-                 lets it fire on an arithmetic result the proof never trusts; the
-                 template's fault note is dropped with it, since it fires only when
-                 the result is the sentinel while neither operand is.
-```
+      (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
+                     as one sentinel test and the plain operator — `if x == MIN { MIN }
+                     else { x / k }` — which is the guarded template's exact value: the
+                     null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
+                     a null operand, and the literal rules out the first two at
+                     generation time.  It needs no proof of the dividend, which is what
+                     lets it fire on an arithmetic result the proof never trusts; the
+                     template's fault note is dropped with it, since it fires only when
+                     the result is the sentinel while neither operand is.
 
 ### `(R-RebindBuffer)`
 
 #### A rebind hands the displaced store to the call
 
-```
-  (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
-                 direct call that answers a FRESH store (`Own::Owned`) through a
-                 hidden buffer local `b` — a compiler local nothing but this call and
-                 its scope-exit free names — ADOPTS the result and hands `x`'s
-                 previous store to `b`, the buffer of the call's next execution,
-                 instead of exchanging the result into `x`'s store
-                 (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
-                 exchange: the result has a store of its own (not null, not `x`'s),
-                 `x` held one, `b` is null or IS the result's store (so no live
-                 buffer is dropped), and `x`'s store is not the caller's entry buffer
-                 (a return-buffer local).  Static conditions: `x` is not an argument
-                 (the return-buffer attribute with its entry witness excepted), not
-                 captured, not never-free, not witnessed, not a coroutine field; the
-                 rebind sits inside a loop (the handed store is a buffer only if the
-                 call runs again); and no local borrowing `x`'s or `b`'s store is named
-                 at or after the top-level statement holding the rebind.  At its
-                 release `b` PARKS the store it holds where the exchange would have
-                 parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
-                 function leaves behind for the next mint are the exchange's.
-```
+      (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
+                     direct call that answers a FRESH store (`Own::Owned`) through a
+                     hidden buffer local `b` — a compiler local nothing but this call and
+                     its scope-exit free names — ADOPTS the result and hands `x`'s
+                     previous store to `b`, the buffer of the call's next execution,
+                     instead of exchanging the result into `x`'s store
+                     (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
+                     exchange: the result has a store of its own (not null, not `x`'s),
+                     `x` held one, `b` is null or IS the result's store (so no live
+                     buffer is dropped), and `x`'s store is not the caller's entry buffer
+                     (a return-buffer local).  Static conditions: `x` is not an argument
+                     (the return-buffer attribute with its entry witness excepted), not
+                     captured, not never-free, not witnessed, not a coroutine field; the
+                     rebind sits inside a loop (the handed store is a buffer only if the
+                     call runs again); and no local borrowing `x`'s or `b`'s store is named
+                     at or after the top-level statement holding the rebind.  At its
+                     release `b` PARKS the store it holds where the exchange would have
+                     parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
+                     function leaves behind for the next mint are the exchange's.
 
 **In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
 two stores' contents so that `c` kept its slot — a check of both stores' flags, the swap,
@@ -932,15 +919,13 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
 
 #### An emptied text keeps its buffer
 
-```
-  (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
-                 `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
-                 text, the buffer's capacity kept — rather than binding a fresh empty
-                 `String`.  The value is the empty text either way; only the
-                 capacity differs, which no program can observe (R-Escape).  A first
-                 bind (the declaration), a text PARAMETER passed by value, a generator
-                 field and a narrow-encoded local keep the fresh `String`.
-```
+      (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
+                     `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
+                     text, the buffer's capacity kept — rather than binding a fresh empty
+                     `String`.  The value is the empty text either way; only the
+                     capacity differs, which no program can observe (R-Escape).  A first
+                     bind (the declaration), a text PARAMETER passed by value, a generator
+                     field and a narrow-encoded local keep the fresh `String`.
 
 **In words.**  A work text — a call's text result buffer, a format's work text, an
 accumulator — is emptied once per use and refilled.  Bound to a fresh `String` each time,
@@ -958,29 +943,27 @@ reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
 
 #### A vector its caller walks once is never built
 
-```
-  (R-StreamWalk)  `v = P(a…); for i in 0..len(v) { … }` — a call of a function P that
-                  answers `vector<T>` for a record T, bound to a local that the next
-                  statement mentioning it walks once by index — runs as P's STREAM TWIN
-                  with the walk's body as its closure: P's own body runs, and each append
-                  it would have made hands the values it would have stored in the fields
-                  the body reads to the body, at that append.  No vector, no record and no
-                  text of an element is built.  Admitted when: P's result vector is
-                  mentioned only by its buffer's plumbing, by its appends (a mint, a set of
-                  each field from a value, a finish) and by `return`; every field the body
-                  reads is set by every append and is an `integer`, `float`, `single` or
-                  `text`, whose round trip through the store answers the value stored; the
-                  body mentions the vector, the index and the element only as `v[i]?` read
-                  for a field; nothing in it leaves the walk (`break`, `continue`,
-                  `return`, `yield`); P and the body are QUIET — every write lands in a
-                  place the function owns (a local borrowing only what it owns, a buffer
-                  it is handed to write), every call is of a quiet function, every
-                  function value dispatches only to quiet functions without captures; and
-                  neither the body nor a statement between the call and the walk writes a
-                  variable the call reads or a local borrowing from one.  The local is
-                  otherwise mentioned only by its null init and frees.  Native release
-                  build only.
-```
+      (R-StreamWalk)  `v = P(a…); for i in 0..len(v) { … }` — a call of a function P that
+                      answers `vector<T>` for a record T, bound to a local that the next
+                      statement mentioning it walks once by index — runs as P's STREAM TWIN
+                      with the walk's body as its closure: P's own body runs, and each append
+                      it would have made hands the values it would have stored in the fields
+                      the body reads to the body, at that append.  No vector, no record and no
+                      text of an element is built.  Admitted when: P's result vector is
+                      mentioned only by its buffer's plumbing, by its appends (a mint, a set of
+                      each field from a value, a finish) and by `return`; every field the body
+                      reads is set by every append and is an `integer`, `float`, `single` or
+                      `text`, whose round trip through the store answers the value stored; the
+                      body mentions the vector, the index and the element only as `v[i]?` read
+                      for a field; nothing in it leaves the walk (`break`, `continue`,
+                      `return`, `yield`); P and the body are QUIET — every write lands in a
+                      place the function owns (a local borrowing only what it owns, a buffer
+                      it is handed to write), every call is of a quiet function, every
+                      function value dispatches only to quiet functions without captures; and
+                      neither the body nor a statement between the call and the walk writes a
+                      variable the call reads or a local borrowing from one.  The local is
+                      otherwise mentioned only by its null init and frees.  Native release
+                      build only.
 
 **In words.** The plain form runs P to its end — a buffer refilled, a record claimed and a
 text copied in per element — and then reads each element back once.  The twin interleaves
@@ -1008,27 +991,25 @@ that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-el
 
 #### A lookup's found entry is answered as a view the caller reads in place
 
-```
-  (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
-                 that the parser materialises (a buffer minted, V deep-copied into it
-                 — `return e.value` for `e` an element of a parameter's vector) is
-                 given a TWIN that answers (address, owned): a materialised exit
-                 answers V's address and `false`, every other exit the store it
-                 built and `true`.  A call takes the twin, and its caller mints no
-                 buffer and frees the result only when owned, when ALL of:
-                 (1) F writes no store but those it minted itself, calls no user
-                     function, and names its buffer only in its materialised exits;
-                 (2) the call's arguments are variables or reads — the stores V
-                     lies in are held by the caller across the call's statement;
-                 (3) the WINDOW — the statements after the call in its block —
-                     writes no store and calls no user function, and reads the
-                     result only through getters that copy (a tag, a scalar, a
-                     text);
-                 (4) the result's variable is bound once and named only in the
-                     window; the buffer only in its prep, the call and its frees.
-                 Every exit keeps the ownership it had, so a built result (a
-                 not-found literal) is freed as before.
-```
+      (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
+                     that the parser materialises (a buffer minted, V deep-copied into it
+                     — `return e.value` for `e` an element of a parameter's vector) is
+                     given a TWIN that answers (address, owned): a materialised exit
+                     answers V's address and `false`, every other exit the store it
+                     built and `true`.  A call takes the twin, and its caller mints no
+                     buffer and frees the result only when owned, when ALL of:
+                     (1) F writes no store but those it minted itself, calls no user
+                         function, and names its buffer only in its materialised exits;
+                     (2) the call's arguments are variables or reads — the stores V
+                         lies in are held by the caller across the call's statement;
+                     (3) the WINDOW — the statements after the call in its block —
+                         writes no store and calls no user function, and reads the
+                         result only through getters that copy (a tag, a scalar, a
+                         text);
+                     (4) the result's variable is bound once and named only in the
+                         window; the buffer only in its prep, the call and its frees.
+                     Every exit keeps the ownership it had, so a built result (a
+                     not-found literal) is freed as before.
 
 **In words.**  `(R-ReturnField)` answers a field of an OWNED local as its store at a position
 and declines a parameter, because a view of a parameter's record dangles the moment the
@@ -1047,38 +1028,36 @@ compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN
 
 #### A dying temporary's elements move into the append that consumes them
 
-```
-  (R-MoveAppend) in `for f in call(…) { V += [f] }` where the call MINTS its result
-                 (a borrowed-view return declines), the loop variable's ONLY use
-                 after its binding is that one append (a read after it, a second
-                 append, an append under a further loop all decline), V is an owned
-                 local plain vector of a PLAIN STRUCT element never rebound in the
-                 function, and the call's hidden buffer serves nothing else — the
-                 buffer is PLACED as a record inside V's own `__vdb` store at the
-                 loop (V is in scope there, so its store exists on every path), the
-                 append relocates the element's bytes and ZEROES the source when
-                 source and destination share that store (anything else keeps the
-                 deep copy, which is always correct), and the buffer's free is a
-                 record-level release — the deep walk of what the loop did not
-                 move, then the record's block — inside the store that lives on.
-                 Three lifetime conditions bound the placement.  (1) The placed
-                 record dies WITH ITS HOST STORE: the release is injected before
-                 EVERY free of the host `__vdb` — the early dead-after-last-read
-                 site as much as scope end, since a later store can recycle a dead
-                 host's slot and a deferred release then deletes a record inside
-                 whatever owns it — and the buffer attr's own scope-end free is
-                 the null-guarded backstop that covers an ADOPTED `__retbuf` host,
-                 which no in-function site frees.  Between host deaths an
-                 enclosing loop REUSES the placement (the callee's entry clear
-                 resets its length).  (2) A host store CLEARED whole re-arms the
-                 guard: `OpDatabase`'s reuse arm reclaims the placement with the
-                 clear, so the buffer var is nulled at that site or the next call
-                 delivers into unclaimed bytes.  (3) The buffer's type must be V's
-                 ELEMENT's own wrapper — the lookup is by name, and a struct named
-                 like a stdlib type variable finds the GENERIC template whose
-                 field still carries the typevar, which a record-level walk
-                 misreads (such a name declines the pairing).
-```
+      (R-MoveAppend) in `for f in call(…) { V += [f] }` where the call MINTS its result
+                     (a borrowed-view return declines), the loop variable's ONLY use
+                     after its binding is that one append (a read after it, a second
+                     append, an append under a further loop all decline), V is an owned
+                     local plain vector of a PLAIN STRUCT element never rebound in the
+                     function, and the call's hidden buffer serves nothing else — the
+                     buffer is PLACED as a record inside V's own `__vdb` store at the
+                     loop (V is in scope there, so its store exists on every path), the
+                     append relocates the element's bytes and ZEROES the source when
+                     source and destination share that store (anything else keeps the
+                     deep copy, which is always correct), and the buffer's free is a
+                     record-level release — the deep walk of what the loop did not
+                     move, then the record's block — inside the store that lives on.
+                     Three lifetime conditions bound the placement.  (1) The placed
+                     record dies WITH ITS HOST STORE: the release is injected before
+                     EVERY free of the host `__vdb` — the early dead-after-last-read
+                     site as much as scope end, since a later store can recycle a dead
+                     host's slot and a deferred release then deletes a record inside
+                     whatever owns it — and the buffer attr's own scope-end free is
+                     the null-guarded backstop that covers an ADOPTED `__retbuf` host,
+                     which no in-function site frees.  Between host deaths an
+                     enclosing loop REUSES the placement (the callee's entry clear
+                     resets its length).  (2) A host store CLEARED whole re-arms the
+                     guard: `OpDatabase`'s reuse arm reclaims the placement with the
+                     clear, so the buffer var is nulled at that site or the next call
+                     delivers into unclaimed bytes.  (3) The buffer's type must be V's
+                     ELEMENT's own wrapper — the lookup is by name, and a struct named
+                     like a stdlib type variable finds the GENERIC template whose
+                     field still carries the typevar, which a record-level walk
+                     misreads (such a name declines the pairing).
 
 **In words.** @PLN157 § V-j.  The deep copy's cost was never the bytes: each appended
 element re-CLAIMED its inner vectors in the destination's store, copied them, and freed
@@ -1100,31 +1079,29 @@ free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
 
 #### A `for` statement runs fast under a fault flag, and as written when it faults
 
-```
-  (R-FaultFlag)  a `for` statement whose every node is a literal, a local, a `Set` of a
-                 scalar local nothing takes the address of, a block, an `if`, a loop, a
-                 `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
-                 template touches no state once its recoverable raise is taken out, and
-                 which holds a DISCHARGE ON A RECURRENCE — one whose tested value
-                 depends, through the statement's assignments, on a local its result
-                 is written into — runs a fast copy first.  In it a
-                 `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
-                 `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
-                 flag instead of raising.  Each fault form answers exactly the exact form's
-                 value while the flag stays clear.  An integer operator keeps its checked
-                 form: its null tests are branches the processor predicts, off the value
-                 path, and a flag computed per operator measured slower (`02_sum_loop`
-                 1.81× → 2.24×).  A store READ (a getter or length, by name) and a call to a
-                 loft function whose own body passes the walk without a raise are admitted
-                 in a statement that writes no store.
-                 After the copy a set flag restores every written local declared before the
-                 statement and runs the statement as written, so a fault is answered and
-                 reported once, by the exact statement.  The copy is skipped under
-                 `--dev-soft-halt` (an overflow REPORTS there) and at a site that has rerun
-                 8 times.  Inside the copy a constant range of 1 to 64 rounds over a body
-                 free of loops, `break`, `continue` and `return`, of at most 48 nodes, is
-                 unrolled, the counters left where the loop leaves them.
-```
+      (R-FaultFlag)  a `for` statement whose every node is a literal, a local, a `Set` of a
+                     scalar local nothing takes the address of, a block, an `if`, a loop, a
+                     `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
+                     template touches no state once its recoverable raise is taken out, and
+                     which holds a DISCHARGE ON A RECURRENCE — one whose tested value
+                     depends, through the statement's assignments, on a local its result
+                     is written into — runs a fast copy first.  In it a
+                     `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
+                     `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
+                     flag instead of raising.  Each fault form answers exactly the exact form's
+                     value while the flag stays clear.  An integer operator keeps its checked
+                     form: its null tests are branches the processor predicts, off the value
+                     path, and a flag computed per operator measured slower (`02_sum_loop`
+                     1.81× → 2.24×).  A store READ (a getter or length, by name) and a call to a
+                     loft function whose own body passes the walk without a raise are admitted
+                     in a statement that writes no store.
+                     After the copy a set flag restores every written local declared before the
+                     statement and runs the statement as written, so a fault is answered and
+                     reported once, by the exact statement.  The copy is skipped under
+                     `--dev-soft-halt` (an overflow REPORTS there) and at a site that has rerun
+                     8 times.  Inside the copy a constant range of 1 to 64 rounds over a body
+                     free of loops, `break`, `continue` and `return`, of at most 48 nodes, is
+                     unrolled, the counters left where the loop leaves them.
 
 **In words.** A discharge or a checked operator compiles to a select or a branch on a loop's
 critical path, and a select in a constant loop's body keeps LLVM from unrolling it, so one
@@ -1143,24 +1120,22 @@ admission and each decline with its reason.  Sites: `generation/fault_flag.rs`
 
 #### A mint group outside any held header binds its own
 
-```
-  (R-GroupPush)  a mint GROUP — OpPreAllocVector(P, n, size) · n × (e = OpNewRecord(P)
-                 · writes into e · OpFinishRecord(P, e)) — over a bare-variable plain
-                 vector P (the (R-Mint) shape) whose path holds NO record-push header
-                 where it stands, whose every mint qualifies under (R-PushRec), and
-                 whose every OTHER statement up to the n-th finish is one the header
-                 admission lets through (an in-place set, a store-free builder, a
-                 § V-d fresh delivery, a nested mint on another path) with P never
-                 rebound and never minted or reserved outside the count, binds a
-                 push header of its own right after its reservation and emits its
-                 mints and finishes through it (R-PushRec), the header dying at the
-                 n-th finish; every read of P inside the group stays a store read.
-                 The reservation STAYS — it is what gives the header its capacity —
-                 and a growth inside the group is (R-Refresh)'s.  A builder that may
-                 write a store, a mint or finish on P nested where the count cannot
-                 see it, and a group that runs out before its n-th finish each keep
-                 the templates, which resolve per element and are always right.
-```
+      (R-GroupPush)  a mint GROUP — OpPreAllocVector(P, n, size) · n × (e = OpNewRecord(P)
+                     · writes into e · OpFinishRecord(P, e)) — over a bare-variable plain
+                     vector P (the (R-Mint) shape) whose path holds NO record-push header
+                     where it stands, whose every mint qualifies under (R-PushRec), and
+                     whose every OTHER statement up to the n-th finish is one the header
+                     admission lets through (an in-place set, a store-free builder, a
+                     § V-d fresh delivery, a nested mint on another path) with P never
+                     rebound and never minted or reserved outside the count, binds a
+                     push header of its own right after its reservation and emits its
+                     mints and finishes through it (R-PushRec), the header dying at the
+                     n-th finish; every read of P inside the group stays a store read.
+                     The reservation STAYS — it is what gives the header its capacity —
+                     and a growth inside the group is (R-Refresh)'s.  A builder that may
+                     write a store, a mint or finish on P nested where the count cannot
+                     see it, and a group that runs out before its n-th finish each keep
+                     the templates, which resolve per element and are always right.
 
 **In words.** @PLN157.  `(R-PushRec)` gave the header to a mint INSIDE a loop
 that holds one; every other append — a literal group at function level, a group inside a
@@ -1183,28 +1158,26 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
 
 #### A return buffer refills the store a rebind released
 
-```
-  (R-RefillBuffer) on `--native`, the store `(H-SwapRebind)` releases — holding the
-                 rebound variable's previous value, a root of its own type that
-                 nothing references — is KEPT instead of freed (one at a time; a
-                 second release frees the first).  A function's hidden return buffer
-                 whose every mint is the buffer's null-check prologue or a bare
-                 `OpDatabase`, each heading a literal group that writes every field
-                 (`(R-CompleteWrite)`'s coverage) of a REFILLABLE type — every field
-                 owns no heap, or is a vector whose elements own none — mints with
-                 `OpDatabaseRefill`: a null buffer takes the kept store of the same
-                 type as it stands, and the group's zero of each vector field empties
-                 that vector in place (`clear_vector`) for the fill that follows.
-                 Every other mint is fresh and the empty is a no-op on it.  A text, a
-                 keyed collection, a nested record that owns heap, a mint the walk
-                 cannot see the group of, and a `par` worker's stores decline.
-                 THE IN-PLACE CLAUSE: an empty followed by a repeat literal of the
-                 same field (`n` copies of one scalar, `(R-PushFill)`'s form) is one
-                 overwrite when the kept vector holds exactly `n` elements of that
-                 width — every element written, the length already `n`, so the
-                 answer is the empty-and-fill's; any other length, a foreign or
-                 locked vector, empties and fills.
-```
+      (R-RefillBuffer) on `--native`, the store `(H-SwapRebind)` releases — holding the
+                     rebound variable's previous value, a root of its own type that
+                     nothing references — is KEPT instead of freed (one at a time; a
+                     second release frees the first).  A function's hidden return buffer
+                     whose every mint is the buffer's null-check prologue or a bare
+                     `OpDatabase`, each heading a literal group that writes every field
+                     (`(R-CompleteWrite)`'s coverage) of a REFILLABLE type — every field
+                     owns no heap, or is a vector whose elements own none — mints with
+                     `OpDatabaseRefill`: a null buffer takes the kept store of the same
+                     type as it stands, and the group's zero of each vector field empties
+                     that vector in place (`clear_vector`) for the fill that follows.
+                     Every other mint is fresh and the empty is a no-op on it.  A text, a
+                     keyed collection, a nested record that owns heap, a mint the walk
+                     cannot see the group of, and a `par` worker's stores decline.
+                     THE IN-PLACE CLAUSE: an empty followed by a repeat literal of the
+                     same field (`n` copies of one scalar, `(R-PushFill)`'s form) is one
+                     overwrite when the kept vector holds exactly `n` elements of that
+                     width — every element written, the length already `n`, so the
+                     answer is the empty-and-fill's; any other length, a foreign or
+                     locked vector, empties and fills.
 
 **In words.** The `(R-LoopRecord)` shape across a call.  A builder called in a loop,
 `c = mul(a, c)`, minted a store for its result every call, claimed its vector and filled
@@ -1227,30 +1200,28 @@ fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 
 
 #### A pooled buffer's texts are refilled in their slots
 
-```
-  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
-                 minted once per activation by a zero-filling OpDatabase and
-                 released before every later call by OpClear(b, tp) (the
-                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
-                 emitted, and the call goes to the callee's REFILL TWIN, whose
-                 text sets into its own return buffer refill the slot: the
-                 slot's block is written over when the new text fits its claim
-                 (len + 8 ≤ 8 × the block's header words), released and claimed
-                 anew when it does not, claimed when the slot is 0; a null text
-                 releases the slot's block.  Admitted where (a) tp's heap is
-                 TEXT ONLY — every heap slot of the type, nested inline records
-                 flattened, is a text (no collection, no reference, no enum
-                 payload that owns heap); (b) the callee builds its result as a
-                 record LITERAL into its own buffer on EVERY exit — `return b`,
-                 or a block whose value is b — the literal writing every text
-                 slot of tp exactly once, and nothing else in the callee names
-                 the buffer; and (c) b is named by nothing but its pool
-                 statement, this call's buffer argument and its releases, and
-                 the result bound from the call is only READ (a reading OpGet*,
-                 the source of a copy that keeps its source).  Where the site
-                 would call an `__inv` or `__rg` twin it releases first instead,
-                 in the pool statement's order.
-```
+      (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
+                     minted once per activation by a zero-filling OpDatabase and
+                     released before every later call by OpClear(b, tp) (the
+                     (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
+                     emitted, and the call goes to the callee's REFILL TWIN, whose
+                     text sets into its own return buffer refill the slot: the
+                     slot's block is written over when the new text fits its claim
+                     (len + 8 ≤ 8 × the block's header words), released and claimed
+                     anew when it does not, claimed when the slot is 0; a null text
+                     releases the slot's block.  Admitted where (a) tp's heap is
+                     TEXT ONLY — every heap slot of the type, nested inline records
+                     flattened, is a text (no collection, no reference, no enum
+                     payload that owns heap); (b) the callee builds its result as a
+                     record LITERAL into its own buffer on EVERY exit — `return b`,
+                     or a block whose value is b — the literal writing every text
+                     slot of tp exactly once, and nothing else in the callee names
+                     the buffer; and (c) b is named by nothing but its pool
+                     statement, this call's buffer argument and its releases, and
+                     the result bound from the call is only READ (a reading OpGet*,
+                     the source of a copy that keeps its source).  Where the site
+                     would call an `__inv` or `__rg` twin it releases first instead,
+                     in the pool statement's order.
 
 **In words.**  A pooled buffer's release walk frees every text the previous result held, and
 the callee then claims a fresh block for every text of the new one: per call, one walk and
@@ -1297,23 +1268,21 @@ and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the b
 live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
 `tests/refill_text.rs`.
 
-```
-  (R-RefillText), the collection clause: a function whose hidden return buffer b is
-                 a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
-                 vector<E>, E a record of scalars and texts — KEEPS b's elements
-                 where the mint keeps b (refill_keeps, the test OpDatabaseRefill
-                 asks): the entry sets the length to 0 and keeps K, the old length,
-                 in place of the releasing clear; a text set into an element the
-                 build appended refills the block its slot owns when the slot is
-                 under K and claims past it; and every exit releases the texts of
-                 the kept slots [len, K) the call did not reuse.  Admitted where the
-                 buffer is cleared once, at entry; every append mints its element
-                 with OpNewRecord, emitted without the prefill (R-CompleteWrite);
-                 and every other mention of b, its field views and its appended
-                 elements is a reservation, a length, an element read, an
-                 append's finish, an element's own set or read, the field's zero,
-                 a self-replace, a release or a return.
-```
+      (R-RefillText), the collection clause: a function whose hidden return buffer b is
+                     a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
+                     vector<E>, E a record of scalars and texts — KEEPS b's elements
+                     where the mint keeps b (refill_keeps, the test OpDatabaseRefill
+                     asks): the entry sets the length to 0 and keeps K, the old length,
+                     in place of the releasing clear; a text set into an element the
+                     build appended refills the block its slot owns when the slot is
+                     under K and claims past it; and every exit releases the texts of
+                     the kept slots [len, K) the call did not reuse.  Admitted where the
+                     buffer is cleared once, at entry; every append mints its element
+                     with OpNewRecord, emitted without the prefill (R-CompleteWrite);
+                     and every other mention of b, its field views and its appended
+                     elements is a reservation, a length, an element read, an
+                     append's finish, an element's own set or read, the field's zero,
+                     a self-replace, a release or a return.
 
 **In words.**  The same invariant, one level down: a text slot read by the refill holds 0 or
 a block that slot owns.  Slots under the length at entry are live elements, which own their
@@ -1335,16 +1304,14 @@ return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (th
 text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
 with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
 
-```
-  (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
-                 for heap only vector fields of plain elements (no text, no
-                 collection, no linked group in an element; no other heap field —
-                 Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
-                 buffer with elements that own no heap, the release is not emitted
-                 and the plain callee is called.  Admitted under (c) without its
-                 "only READ": the buffer named by nothing but its pool statement,
-                 the call's buffer argument and its releases, the result bound once.
-```
+      (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
+                     for heap only vector fields of plain elements (no text, no
+                     collection, no linked group in an element; no other heap field —
+                     Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
+                     buffer with elements that own no heap, the release is not emitted
+                     and the plain callee is called.  Admitted under (c) without its
+                     "only READ": the buffer named by nothing but its pool statement,
+                     the call's buffer argument and its releases, the result bound once.
 
 **In words.**  The refilling callee keeps a live buffer (`refill_keeps`) and empties each
 vector field where it stands; the release before the call freed exactly the vectors it would
@@ -1363,35 +1330,33 @@ Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_dec
 
 ### `(R-BoundedNest)`'s guarded nest (the bare `R-BoundedNest`)
 
-```
-  (R-BoundedNest) an innermost counted loop whose body is ONE accumulate over
-                 `?`-discharged element reads — `acc = acc + term`, the term a
-                 chain of `+`, `-`, `*` and negation over literals, the loop's
-                 counters, variables the loop does not write, and reads
-                 `v[chain]?` of `integer` vectors — runs with the processor's
-                 PLAIN operators when a guard, evaluated once at the loop's
-                 entry, proves that no operation in it can fault: the range's
-                 ends are not the sentinel and the trip count is positive; no
-                 invariant is the sentinel; every vector read has a known
-                 element bound (no stored null); and the MAGNITUDE BOUND of every
-                 chain and of `|acc| + trips × bound(term)` — literals by value,
-                 counters by the larger range end, reads by their vector's bound,
-                 `+`/`-` summing and `*` multiplying, each step checked — fits
-                 the type.  A bound that fits means every true intermediate
-                 fits, so the plain operator answers exactly what the checked
-                 template would; otherwise the checked loop runs, unchanged.
-                 An element bound is a fact about VALUES, taken once at the
-                 outermost loop whose body neither writes the vector (an element
-                 or field set through it, an append, a rebind of its root) nor
-                 hands it to a call — never at the nest's own prelude.
-                 When every read's chain names the counter at most ONCE (so it
-                 is affine, and its extremes over the range are its values at
-                 the two ends), the guard also requires both ends in [0, len)
-                 for every read; then each read is one load through the held
-                 base with no bounds test and no null select — the element
-                 bound has already ruled out a stored null.  A read outside the
-                 range at either end declines the nest whole.
-```
+      (R-BoundedNest) an innermost counted loop whose body is ONE accumulate over
+                     `?`-discharged element reads — `acc = acc + term`, the term a
+                     chain of `+`, `-`, `*` and negation over literals, the loop's
+                     counters, variables the loop does not write, and reads
+                     `v[chain]?` of `integer` vectors — runs with the processor's
+                     PLAIN operators when a guard, evaluated once at the loop's
+                     entry, proves that no operation in it can fault: the range's
+                     ends are not the sentinel and the trip count is positive; no
+                     invariant is the sentinel; every vector read has a known
+                     element bound (no stored null); and the MAGNITUDE BOUND of every
+                     chain and of `|acc| + trips × bound(term)` — literals by value,
+                     counters by the larger range end, reads by their vector's bound,
+                     `+`/`-` summing and `*` multiplying, each step checked — fits
+                     the type.  A bound that fits means every true intermediate
+                     fits, so the plain operator answers exactly what the checked
+                     template would; otherwise the checked loop runs, unchanged.
+                     An element bound is a fact about VALUES, taken once at the
+                     outermost loop whose body neither writes the vector (an element
+                     or field set through it, an append, a rebind of its root) nor
+                     hands it to a call — never at the nest's own prelude.
+                     When every read's chain names the counter at most ONCE (so it
+                     is affine, and its extremes over the range are its values at
+                     the two ends), the guard also requires both ends in [0, len)
+                     for every read; then each read is one load through the held
+                     base with no bounds test and no null select — the element
+                     bound has already ruled out a stored null.  A read outside the
+                     range at either end declines the nest whole.
 
 **In words.**  @PLN157's guarded plain nest, the admissible successor @C120 names: the
 integer closure is not taken (R-Counter) because an overflow's null must propagate on both
@@ -1420,25 +1385,23 @@ select), `vector::abs_bound_i64`.
 
 ### `(R-Header)`'s function clause (`R-Header/function`)
 
-```
-  The FUNCTION clause: a body that reads a
-                 vector PARAMETER twice or more through an element address, and
-                 leaves that parameter as it found it — never rebinds it, never
-                 hands it to a native that is not a reader, never frees it, and
-                 hands it (or a heap value that may name its store: a parameter, a
-                 view, a link — never a local's own fresh store or a work buffer)
-                 only to callees of which the same holds at that position, a
-                 recursive call answering for itself — binds its header once at
-                 entry, and every read in the body, loops included, serves from it;
-                 in a twin body that already receives the parameter's header (the
-                 twin clause's `__ih_k`) that header IS the binding, never a second
-                 lookup.  Growth of OTHER stores is no concern of a header (its record and
-                 length are the vector's own), so a body that builds its result
-                 beside the reads keeps them; only a BASE would need the store's
-                 memory still, and the clause binds none — a loop inside that is
-                 growth-free derives its base off the held header.
-                 
-```
+      The FUNCTION clause: a body that reads a
+                     vector PARAMETER twice or more through an element address, and
+                     leaves that parameter as it found it — never rebinds it, never
+                     hands it to a native that is not a reader, never frees it, and
+                     hands it (or a heap value that may name its store: a parameter, a
+                     view, a link — never a local's own fresh store or a work buffer)
+                     only to callees of which the same holds at that position, a
+                     recursive call answering for itself — binds its header once at
+                     entry, and every read in the body, loops included, serves from it;
+                     in a twin body that already receives the parameter's header (the
+                     twin clause's `__ih_k`) that header IS the binding, never a second
+                     lookup.  Growth of OTHER stores is no concern of a header (its record and
+                     length are the vector's own), so a body that builds its result
+                     beside the reads keeps them; only a BASE would need the store's
+                     memory still, and the clause binds none — a loop inside that is
+                     growth-free derives its base off the held header.
+                     
 
 - **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
   `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
@@ -1449,38 +1412,36 @@ select), `vector::abs_bound_i64`.
 
 ### `(R-Header)`'s kept clause (`R-Header/kept`)
 
-```
-  (R-Header), the KEPT clause: a vector field p.f of a plain-record PARAMETER p
-                 that a body never rebinds is KEPT by that body when everything
-                 in it that could change the field's header — its record or its
-                 length — is one of: (a) a record append to p.f itself (the
-                 OpNewRecord … OpFinishRecord group) as a statement outside any
-                 loop; (b) a statement that is a call to a loft function, or
-                 the assignment of one; nothing else.  A store-free op, a scalar
-                 setter and a heap-free record copy change no header; any other
-                 writer mentions no variable that may name p's record or the
-                 vector — p, a variable whose type reaches p's record type, a
-                 vector of the field's element type — unless it is its own
-                 store's; a call that is not a statement leaves every such
-                 argument untouched (the function clause's question); no `CallRef`,
-                 `par` or `yield`, and nothing it calls can lock or unlock a
-                 store (the header carries the lock).  A kept field the body
-                 READS — a walk, an element, a length, or a call that hands p to
-                 a function keeping the field at that position — has ONE holder:
-                 bound at entry where the body HANDS IT DOWN to a callee's kept
-                 twin and the reads it serves, as emitted, are two or more;
-                 received from the caller by `&mut` in the body's KEPT TWIN.  Every read
-                 serves from the holder; after each op of (a) and each call of
-                 (b) the holder is derived again, except a call to the callee's
-                 kept twin, which hands the holder down and so keeps it current
-                 itself.  No base is kept: a claim anywhere may move the store's
-                 memory, never a record number or a length.  A body some rewrite
-                 emits a RUN of statements in — the hand-over's rotate, an
-                 element-first build, `(R-Apart)`, a stream walk — keeps nothing:
-                 the run is emitted outside the statements a holder is refreshed
-                 after.  A kept call takes the ranged form of the kept twin
-                 (`__rg__kh`) where `(R-RangedCall)` admits it.
-```
+      (R-Header), the KEPT clause: a vector field p.f of a plain-record PARAMETER p
+                     that a body never rebinds is KEPT by that body when everything
+                     in it that could change the field's header — its record or its
+                     length — is one of: (a) a record append to p.f itself (the
+                     OpNewRecord … OpFinishRecord group) as a statement outside any
+                     loop; (b) a statement that is a call to a loft function, or
+                     the assignment of one; nothing else.  A store-free op, a scalar
+                     setter and a heap-free record copy change no header; any other
+                     writer mentions no variable that may name p's record or the
+                     vector — p, a variable whose type reaches p's record type, a
+                     vector of the field's element type — unless it is its own
+                     store's; a call that is not a statement leaves every such
+                     argument untouched (the function clause's question); no `CallRef`,
+                     `par` or `yield`, and nothing it calls can lock or unlock a
+                     store (the header carries the lock).  A kept field the body
+                     READS — a walk, an element, a length, or a call that hands p to
+                     a function keeping the field at that position — has ONE holder:
+                     bound at entry where the body HANDS IT DOWN to a callee's kept
+                     twin and the reads it serves, as emitted, are two or more;
+                     received from the caller by `&mut` in the body's KEPT TWIN.  Every read
+                     serves from the holder; after each op of (a) and each call of
+                     (b) the holder is derived again, except a call to the callee's
+                     kept twin, which hands the holder down and so keeps it current
+                     itself.  No base is kept: a claim anywhere may move the store's
+                     memory, never a record number or a length.  A body some rewrite
+                     emits a RUN of statements in — the hand-over's rotate, an
+                     element-first build, `(R-Apart)`, a stream walk — keeps nothing:
+                     the run is emitted outside the statements a holder is refreshed
+                     after.  A kept call takes the ranged form of the kept twin
+                     (`__rg__kh`) where `(R-RangedCall)` admits it.
 
 **The kept clause, in words.**  L7 (`bench/portal/analysis/worklist.md`): lane 17's
 `slope_path_with_undo` walks `m.m_chunks` four times a step in four callees
@@ -1520,32 +1481,28 @@ most, geomean −0.6 %.
 
 ### `(R-RecPtr)`'s index clause (`R-RecPtr/index`)
 
-```
-  THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
-                 `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
-                 header AND element base the frame holds, with IDX a repeatable
-                 expression (pure operators and discharges): IDX is evaluated once,
-                 before the statement, and when it is in range of the header's length
-                 r is the vector's own record at `8 + IDX * size` and its address
-                 `base + IDX * size`; out of range — past the end, below zero, null —
-                 the binding runs as written, reading the named index, and the record
-                 `?` builds is resolved as any view's.  That record lives in a store of
-                 its own, so no text field of r is served by the base's span.  
-```
+      THE INDEX CLAUSE: where the binding is `r = v[IDX]?` —
+                     `{ t = v[IDX]; if t { t } else { ?'s record } }` — over a path whose
+                     header AND element base the frame holds, with IDX a repeatable
+                     expression (pure operators and discharges): IDX is evaluated once,
+                     before the statement, and when it is in range of the header's length
+                     r is the vector's own record at `8 + IDX * size` and its address
+                     `base + IDX * size`; out of range — past the end, below zero, null —
+                     the binding runs as written, reading the named index, and the record
+                     `?` builds is resolved as any view's.  That record lives in a store of
+                     its own, so no text field of r is served by the base's span.  
 
 ### `(R-RecPtr)`'s nested clause (`R-RecPtr/nested`)
 
-```
-  THE NESTED CLAUSE: a VECTOR field of r — `r.items`, or through
-                 inline sub-records `r.pos.items` at the summed offset — read by
-                 a length (`len`, OpLengthVector) or an element read (OpGetVector,
-                 OpGetVectorNullable, the element clause's write) takes its header
-                 through the address: the field's vector record one load at it,
-                 the length one read of that record, at each use, so a write to
-                 the field before the read is seen.  The null address holds the
-                 absent vector.  A view whose only uses are such reads takes its
-                 address on this clause alone when two reads share the one store
-                 resolution the address costs, or one under the base clause, where
-                 the address is free; that use enters the verdict before its
-                 growth, free and rebind conditions, as the text clause's does.
-```
+      THE NESTED CLAUSE: a VECTOR field of r — `r.items`, or through
+                     inline sub-records `r.pos.items` at the summed offset — read by
+                     a length (`len`, OpLengthVector) or an element read (OpGetVector,
+                     OpGetVectorNullable, the element clause's write) takes its header
+                     through the address: the field's vector record one load at it,
+                     the length one read of that record, at each use, so a write to
+                     the field before the read is seen.  The null address holds the
+                     absent vector.  A view whose only uses are such reads takes its
+                     address on this clause alone when two reads share the one store
+                     resolution the address costs, or one under the base clause, where
+                     the address is free; that use enters the verdict before its
+                     growth, free and rebind conditions, as the text clause's does.

@@ -11,10 +11,11 @@ holds: a vector header derived once for a loop, a record scalar read once, a vie
 taken at its binding, a stdlib wrapper emitted as its op, a callee handed the values its caller
 already holds, a loop tested at its bottom.  Each is a REWRITE — the program's observable
 behaviour is unchanged.  ONE rule states one fact, whichever phase applies it: the IR phase
-(parser and scope pass — both backends run the result), the NATIVE generator
-(`src/generation/`), or the INTERPRETER's bytecode generator and runtime (`src/state/`).
-`(R-Phase)` names the three and the oracle each has; a rule says which phase applies it when
-it is not the native generator, the default for the rules that name no phase.
+(parser and scope pass — both backends run the result), the C generator (`src/c/`), or the
+INTERPRETER's bytecode generator and runtime (`src/state/`).  `(R-Phase)` names the three and
+the oracle each has; a rule says which phase applies it when it is not the C generator, the
+default for the rules that name no phase.  The rules only the retired rustc writer applied are
+recorded in [rewrites-history.md § Retired with the rustc writer](rewrites-history.md#retired-with-the-rustc-writer-pln225-r5).
 The runtime-side units of the same arc (the per-allocation and per-record
 bookkeeping, the append path) are not rewrites and are not here; the IR lowerings
 both backends share (the fused scalar append, append in place) belong to the
@@ -86,14 +87,14 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  two ordinary builds differ by 15 % at identical instruction counts.
   (R-Phase)      every rule is APPLIED BY one phase, and the phase decides its oracle:
                  the IR phase (both backends run the rewritten IR — the switch A/B is
-                 the oracle, BOTH-BACKEND CLAUSE), the native generator (the interpreter
-                 is the oracle), or the interpreter's generator / runtime (native is
+                 the oracle, BOTH-BACKEND CLAUSE), the C generator (the interpreter
+                 is the oracle), or the interpreter's generator / runtime (the C is
                  the oracle, INTERPRETER CLAUSE).  One FACT may be applied by two
-                 phases — native's generator and the interpreter's generator each
+                 phases — the C's generator and the interpreter's generator each
                  dropping a reservation the append repeats — and is then one rule with
                  a clause per phase, never two rules.  The applied-by is MEASURED: the
                  census credits each admission to its phase (`parse`, `ir`, `interp`,
-                 `c`, `native`), and `bench/portal/rule_phases.tsv` holds, per census
+                 `c`), and `bench/portal/rule_phases.tsv` holds, per census
                  name, the phases that applied it over the benches
                  (`scripts/rule_phases.py`, which also derives where the rule is
                  decided), rendered as `## Applied by` below — the one place this
@@ -171,7 +172,6 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 - `ir`: the scope pass, which both backends run
 - `interp`: the interpreter's bytecode generator
 - `c`: the C writer
-- `native`: the rustc writer
 
 | rule | applied by |
 |---|---|
@@ -1251,7 +1251,7 @@ Guard `tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
 
 **The wrapped form's step-1 spelling (the C).**  `(i + 1) % n` at such a read is written
 `i == n - 1 ? 0 : i + 1` — the same value, since `0 <= i < n`.  gcc keeps the `%` as a 64-bit
-division on every turn; clang and rustc already turn it into a wrapping counter, which this
+division on every turn; clang already turns it into a wrapping counter, which this
 spelling leaves them free to keep (`i + 1 < n ? i + 1 : 0` cost clang 5 % more instructions).
 graphics `fill_polygon` (`pc_pts[(i + 1) % pc_n ?? 0]?`, one wrap per edge), ship lane: gcc
 485 → 325 µs (−33 %), clang unchanged, the hash unchanged.  A larger step keeps the `%`: `i + c`
@@ -1400,7 +1400,7 @@ many lifts share how many variables).
 `opt::lift_reuse`, the last rewrite of `close_program`: it renumbers each admitted lift onto
 the first lift of its shared variable (`Value::renumber_frame_var`, the variable table's
 deps in tandem), drops the renumbered lifts' entry initialisations — the shared variable's
-own stays at the top level, where the rustc writer declares it — and lays the frame out
+own stays at the top level — and lays the frame out
 again.  It sees a
 tuple lift only on a closed program (`(R-ValueRecord)` runs there); an open one's lifts are
 record references and decline.  Guard
@@ -2669,12 +2669,8 @@ loop to close the block.  Switch `LOFT_NO_LAZY_SPLIT`; trace `LOFT_TRACE_LAZY_SP
 The falsifier is the emission pin with the value cells beside it — there is no assumption
 to re-derive at run time, so `(R-Switch)`'s second form applies: cells
 `tests/scripts/157-lazy-split.loft` s1–s21 (falsified by dropping the trailing piece:
-`s1 3 7 ab|cde|` for `s1 4 6 ab|cde||f`), pins `tests/lazy_split.rs`.  Sites:
-`hoist::lazy_splits`, `hoist::lazy_split_block`, `Output::lazy_split_reader`,
-`Output::lazy_split_borrows`, the bind in `Output::output_set`, the element read in
-`LazySplitNextEmitter`, the length test in `IntCompareEmitter`, the pre-eval exemption
-in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
-`codegen_runtime::lazy_split`.
+`s1 3 7 ab|cde|` for `s1 4 6 ab|cde||f`), pins `tests/lazy_split.rs`.  Sites: `opt::lazy_split` the gate, the C's reader in
+`src/c/body.rs` and `loft_rt.h` (`rule_tags.py sites @FR-R-LazySplit` lists every one).
 
 ### A split bound to a name is a table of its pieces
 
@@ -2727,11 +2723,8 @@ Switch `LOFT_NO_SPLIT_TABLE`; trace `LOFT_TRACE_SPLIT_TABLE` (each table admitte
 declined with its reason, and whether the buffer is minted).  The interpreter keeps the
 vector and is the oracle; `LOFT_NO_SPLIT_TABLE=1` is the same-build oracle on native.
 Cells `tests/scripts/158-split-table.loft`; pins `tests/split_table.rs`.  Sites:
-`hoist::split_tables`, `Output::split_table_of`, the bind and the alias bind in
-`Output::output_set`, the element read in `LazySplitNextEmitter`, the length in
-`HoistedLengthEmitter`, the pre-eval exemption in `Output::collect_pre_evals_inner`, the
-null decl in `Output::emit_null_dbref`, the header exclusion in
-`Output::bind_loop_headers`, `codegen_runtime::split_table_get`.
+`hoist::split_tables` the gate, the C's table in `src/c/body.rs` and `loft_rt.h`
+(`rule_tags.py sites @FR-R-SplitTable` lists every one).
 
 ### A walk of texts borrows each element
 
@@ -2824,12 +2817,11 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  frame that nothing else names but its declaration and its releases,
                  BORROWS the work text as the format clause's local borrows its
                  format — under the same conditions on the local — and, holding no
-                 store's bytes, is read in place by a store write
-                 (`Output::text_value_unborrowed`).  A release emits no code on
-                 native, so an early exit's does not end the text.  The rustc
-                 writer's alone: its premise — the call's answer IS the work text
-                 it was handed — is that writer's calling convention, so the C and
-                 the interpreter keep the copy.
+                 store's bytes, is read in place by a store write.  No backend
+                 applies this clause (`opt::store_text_borrow` decides it): its
+                 premise — the call's answer IS the work text it was handed — is
+                 no backend's calling convention, so the C and the interpreter
+                 keep the copy.
                  OPERAND CLAUSE: a text read `OpGetText(R, f)` that is an operand
                  of a text VALUE op — or a `text` argument of a call that runs no
                  store write (F-ParamText) and hands no store place to a `&`
@@ -3002,8 +2994,7 @@ and refills, so the local can be a `&str` into it for as long as nothing refills
 is what the clause's conditions secure: the work text is the format's own, so only the
 format refills it, and each run of the format rebinds the local — the old borrow is dead by
 then, unless the format reads the local itself (refused) or another variable took the
-borrow over (refused).  rustc checks the same borrow, so on native a wrong admission is a
-refused compile rather than a wrong answer.  The C holds such a local as a `loft_str` view of
+borrow over (refused).  The C holds such a local as a `loft_str` view of
 the work text (`work_view_bind` in `c/body.rs`; markdown `render_inline` −28 %, `slugify`
 −18 %): there no checker stands behind the analysis, so a wrong admission answers wrong, and
 `tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft` holds the uses that
@@ -3171,7 +3162,7 @@ Decided and applied in the scope pass, after `(R-SliceArg)`'s range clause and o
 slice-block test (`slice_text::admit`), so every backend runs it: on the interpreter the
 `slice_into` probe (@PLN211) runs 10 292 → 7 536 instructions a pass, −26.8 %; cbor's
 `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on the C
-ship lane; rustc's writer, which filled a temporary, now slices into the field too.  Switch
+ship lane.  Switch
 `LOFT_NO_SLICE_INTO`, trace `LOFT_TRACE_SLICE_INTO`; cells
 `tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Site: `slice_into::rewrite`
 (the scope pass).
@@ -3226,8 +3217,8 @@ for every script that cuts a field out of a line — the regex consumer's
 slice.  The parameter's bytes are the caller's for the whole frame, so the one condition that
 makes a borrow of them wrong is the local escaping the frame or being written, which is what
 (R-TextBorrow)'s reading already decides; the rule is that clause with a slice as one more
-source.  rustc checks the same borrow, so a wrong admission — a slice of a local that is
-appended to while the borrow lives — is a refused compile, never a wrong answer; the planted
+source.  No borrow checker stands behind the C's view, so a wrong admission — a slice of a
+local that is appended to while the borrow lives — answers wrong; the planted
 defect that widens the source to any text variable turns the emission pins red (2 of 3) while
 every cell's VALUE holds.  Switch `LOFT_NO_SLICE_BORROW` (this clause alone;
 `LOFT_NO_TEXT_BORROW` keeps the copy everywhere); trace `LOFT_TRACE_TEXT_BORROW=1`
@@ -3485,8 +3476,8 @@ it decodes, and copied the bytes through a slice on the stack — facts the site
 compile time, and a reload that stalled on the bytes just written.  The decode is the
 generic one's, arm for arm, so the answer cannot differ; what moved is when it is decided.
 
-**BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
-guard `loft-suite/rules/rewrites/R-TypedRead/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
+**BUILT** in the C (`src/c/body/files.rs`, runtime `loft_io.h`; `rule_tags.py sites
+@FR-R-TypedRead` lists the sites; guard `loft-suite/rules/rewrites/R-TypedRead/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
 **The float clause** (C, @PLN219).  `OpReadFile(f, OpCreateStack(t), 8, float)` into a float
 local `t` is typed the same way: the eight bytes in the file's byte order, decoded as the
@@ -3528,9 +3519,8 @@ not search: a second `File` variable declines even when it is another file, sinc
 parameters may name one record.  The holder is a guard value whose drop writes the record, so
 no way out of the loop is a case the generator enumerates.
 
-**BUILT** (`generation::file_hold::held_file` the gate, `Output::begin_file_hold` /
-`end_file_hold` the loop's block, `ops::file_ops::ReadFileEmitter` the read, runtime
-`codegen_runtime::FileCursor`; `LOFT_NO_FILE_HOLD=1`).  The falsifier is
+**BUILT** (`lower::file_hold` the gate, `src/c/body/files.rs` the loop's block and the read,
+runtime the held cursor in `loft_io.h`; `LOFT_NO_FILE_HOLD=1`).  The falsifier is
 `LOFT_HOIST_VERIFY=1`: every held read and the drop assert that the record still says what
 it said when the hold began.  The reader that stands behind a one-statement helper
 (`read_one(bf)`) is in the loop by `(R-InlineLeaf)`'s reader clause, on the builds that run
@@ -3600,8 +3590,8 @@ it, and nothing the plan admits changes it (a push is no admitted mention), so a
 parameter has the layout its twin assumes.  A read out of range reports exactly what the store
 path reports (`Stores::index_or_raise_runtime`, the one definition) and answers null; `v[i]?`
 answers null quietly.  The fallback costs the rewrite, never a value: a mention the gate does
-not name keeps its whole component in the store, and an apart value is a distinct Rust type,
-so a mention the emitter fails to rewrite is a `rustc` type error.  A build that ships the live
+not name keeps its whole component in the store, and an apart value is a distinct C type,
+so a mention the emitter fails to rewrite is a type error in the generated C.  A build that ships the live
 tier has no plan, since a twin's call would run the native body of a function flipped to the
 interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
 loop in them plans a header, a base or an address on a variable the apart value replaced.
@@ -3621,12 +3611,10 @@ the end, an index out of range reported or, for `v[i]?`, null — and its loops 
 push header or base on it: the loop verdict (`Output::compute_loop_hoist`) drops every path
 rooted at it, and a loop whose only growth was such a vector grows no store.
 
-**BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
-regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
-`ap_set_f64` / `ap_store_f64`; instance 3: `lower::apart_vector::roles` the gate, runtime
-`codegen_runtime::ApVec`; instance 4: `generation::apart_records::plan` the gate,
-`generation::apart_records_emit` the owners, the `__apr` twins and the boundary, runtime
-`codegen_runtime::AprVec`, `Stores::apart_write_fresh` and `Stores::rotate_from_parts`;
+**BUILT** (`opt::apart` the gate, `src/c/body/apart_value.rs` the twins, the regions and the
+boundary; instance 3: `lower::apart_vector::roles` the gate, runtime `loft_apvec`
+(`loft_keyed.h`); instance 4: `lower::apart_records::plan` the gate, `src/c/body/apart.rs` the
+owners, the `__apr` twins and the boundary; `rule_tags.py sites @FR-R-Apart` lists every site;
 `LOFT_NO_APART=1` all, `LOFT_NO_APART_VECTOR=1` instance 3, `LOFT_NO_APART_RECORDS=1`
 instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`: 43.8 →
 25.6 µs (−41.7 %, ≈ 1.9× the Rust twin); `reload_and_record` −3.0 %.  The hand price's 16.6
@@ -3742,8 +3730,8 @@ and panics where the two differ (a typed lookup sabotaged to hash the wrong valu
 the native run of the cells, panics under the verify naming both answers, and passes
 under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
 `tests/keyed_fast_paths.rs::a_hash_lookup_by_one_integer_key_takes_the_typed_entry`.
-Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
-`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
+Sites: the C's keyed lookup (`src/c/body/keyed.rs`, `loft_keys.h`), `hash::find_long` on the
+interpreter.  The APPEND half is `(R-KeyedEntry)`
 below, for an element that owns no heap.
 
 **The removal clause.**  An LRU's eviction, `c.nodes[old] = null`, found the record by its key
@@ -3848,8 +3836,7 @@ the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
 entry and panics where the two differ.  Decided and applied in the IR, for every backend
 (`opt::keyed_entry::rewrite_program`): the values staged into temporaries, then `B =
 keyed_entry_ints(c, tp, fld, k₁, …)` or `keyed_entry_text(…)` — stdlib declarations, one
-`OpStaticCall` on the interpreter, `Stores::keyed_entry_long_at`'s inline walk on rustc,
-`loft_keyed_entry_ints` on the C — then the other fields written into `B`.  A text key is
+`OpStaticCall` on the interpreter, `loft_keyed_entry_ints` on the C — then the other fields written into `B`.  A text key is
 read at the probe, so the IR admits one only when it is a literal or a variable no later
 value rebinds.  Cells
 `loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`,
@@ -4116,7 +4103,7 @@ need no proof, and `product` is multiplicative and is not this.
 **Both backends (@PLN180 § Kernels).**  The reduction is now decided in the scope pass
 (`loop_kernels::rewrite`), where it replaces the whole loop by ONE call of the loop kernel
 `vector_sum_int(v, acc)` — an ordinary stdlib function, reached by the interpreter through its
-single native-call operator and by `--native` through `codegen_runtime`, whose body is this
+single native-call operator and by the C through `loft_vector_sum_int` (`loft_rt.h`), whose body is this
 clause (the plain blocks through `vector::sum_blocks_i64`, then the checked add).  The
 interpreter stops dispatching every element: bench 14's `sum` went from 1,174,380 ns/op to
 4,830 against native's 4,300 (273× → 1.1×).  Admitted narrower than the native shape: the loop
@@ -4289,8 +4276,8 @@ frame is the pool read once more: a forwarder with a loop of its own, reached th
 function value and handed the sentinel, runs every leaf call down the null road, a store per
 call; lent one, it mints one, as its direct call does.  The buffers do not climb: a
 function value called once per activation of its frame mints once per activation, as the
-null road did.  Switch `LOFT_NO_FNREF_WORK_BUFFER=1` (the sentinel again); sites
-`codegen_runtime::FnRefWork`, the dispatch arm in `generation/emit.rs`, `Output::fnref_work`.
+null road did.  Switch `LOFT_NO_FNREF_WORK_BUFFER=1` (the sentinel again); sites: `rule_tags.py sites
+@FR-R-WorkBuffer`.
 Guard `tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-own-store.loft`; pin
 `tests/work_buffer.rs`.
 
@@ -4600,7 +4587,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  (`Definition::no_prefill`), the IR keeps `OpDatabase` and
                  `OpNewRecord`, and each backend reads the fact where it writes
                  the mint — the interpreter's code generator emits the twin
-                 opcode (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C their
+                 opcode (`OpDatabaseNP`, `OpNewRecordNP`), the C its
                  no-prefill mint, which still zeroes the element's bytes: the group
                  writes every FIELD, not a type's padding, and a persisted image
                  holds the same bytes on every backend (`Stores::record_new_np`,
@@ -4608,9 +4595,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  copy into a field of an element a group builds is flagged
                  `COPY_FRESH_DEST`, whose null source every runtime writes as the
                  field type's default walk (`Stores::copy_null_into`, the C's
-                 default image) — flagged whether the rule is on or off, because
-                 rustc's record push mints its element without the prefill either
-                 way.  The oracles: the switch (`LOFT_NO_COMPLETE_WRITE=1`) and
+                 default image) — flagged whether the rule is on or off.  The oracles: the switch (`LOFT_NO_COMPLETE_WRITE=1`) and
                  `LOFT_POISON_CLAIM` (a field read before any write reads poison).
 
   (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
@@ -5147,12 +5132,14 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  shares its body but not its frequency (an error report, a growth
                  step, a watch/verify hook, the off-fast-path re-derivation) is
                  OUTLINED as its own `#[cold]` `#[inline(never)]` function.  The
-                 split changes no observable behaviour; what it protects is rustc's
-                 SIZE decision — a generic `#[inline]` body that carries its cold
-                 half loses the inline at every call site, and the whole fast path
-                 pays a call for a compare and a load.  `#[inline(never)]` on the
-                 cold half is load-bearing, not a hint: without it rustc folds the
-                 halves back together.  So is `#[cold]`: it is the branch weight
+                 split changes no observable behaviour; what it protects is the
+                 compiler's SIZE decision (rustc's for the interpreter's runtime,
+                 the C compiler's for `loft_rt.h`) — an inlinable body that carries
+                 its cold half loses the inline at every call site, and the whole
+                 fast path pays a call for a compare and a load.  `#[inline(never)]`
+                 (`LOFT_NOINLINE` in the C) on the cold half is load-bearing, not a
+                 hint: without it the compiler folds the halves back together.  So
+                 is `#[cold]` (`LOFT_COLD`, `LOFT_COLD_PATH()`): it is the branch weight
                  that keeps the fast path's test a plain branch — without it LLVM
                  may turn that test into flag arithmetic paid on every element,
                  and which form it picks then moves with unrelated code nearby.
@@ -5243,9 +5230,8 @@ twin re-found it inside `get_elem_hoisted`/`vec_set_hoisted` (7.2 % + 3.2 % of t
 `loft_planet` profile, out of line at all 1,302 call sites of one program); the
 always-off watch hook cost 1.6 % of a real program the same way.  No switch — this is
 a layout discipline, not a semantics rewrite, so (R-Switch) does not apply; the checks
-are the two instruments: `scripts/native_call_census.py` (which fast-path symbols
-still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
-`#[inline]` functions rustc declined — an `#[inline]` function with an out-of-line
+are the instrument: `scripts/inline_audit.py` (which
+`#[inline]` functions rustc declined in the loft binary — an `#[inline]` function with an out-of-line
 symbol and self time is the candidate).  The fold clause's cells are
 `loft-suite/rules/rewrites/R-Cold/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
 that drops the from-the-end resolution: `--native` fails e1, the verifier names index −2),
@@ -7937,7 +7923,7 @@ The interpreter moves as before and is the reference.
 **In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
 call, to hand back a record `default_style` had already answered in registers (the fn-ref
 result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
-in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
+in the emitted binary (the generator writes the `match`), so the admission
 `(R-ValueRecord)` proves per function lifts to the signature.  A library artifact is the
 exception: a value the script hands in names a callee the artifact does not carry, and the
 `_ =>` arm calls it back in the interpreter (`HostTable::call_ref`), which takes and answers
@@ -8007,8 +7993,8 @@ keeps every use one that reads.  (5) is the one way a span and a copy can differ
 A run-time tag in the field ("owned or span?") was the other representation.  It is
 declined here because every `text` field read in every program would test it (@C125).
 
-**Instance 1, built** (`src/generation/decode_view.rs` decides, `decode_view_emit.rs`
-writes).  The twin layout is the record itself: an ENUM whose every text- or
+**Instance 1, built** (`src/lower/decode_view.rs` decides; `rule_tags.py sites
+@FR-R-DecodeView` lists the sites).  The twin layout is the record itself: an ENUM whose every text- or
 byte-string-carrying variant leaves the record's last eight bytes free keeps the span there —
 the frame's bytes `[lo, lo + n)` under the sign bit, `0` for the owned form — with the field
 itself null, so a release frees nothing for it and a copy or a shallow move carries the word
@@ -8016,7 +8002,7 @@ with the record's bytes.  A variant minted as a record of its own is the variant
 has no such room: a region that mints one declines.
 - The ROOT is a function whose one byte-vector parameter B (not `&`, no other parameter but
   numbers, texts and hidden buffers) it hands to a call answering a decoded value; it names B
-  as the frame for the length of its call (`codegen_runtime::DvFrame`).  (1) is the read-only
+  as the frame for the length of its call.  (1) is the read-only
   walk: B and every parameter it is handed to may be read for a length, read under a getter,
   sliced or text-run, and handed to a region call — anything else, an element address outside
   a getter included, declines.  (2) and (3) are the region's closure: every loft function a
@@ -8088,8 +8074,8 @@ what escapes, so a value the program keeps costs what it costs today — the rul
 a kept value is a built one.  A value inspected more than once is the case of
 `(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.
 
-**Instance 1 of the structure clause, built** (`src/generation/decode_structure.rs` and
-`decode_structure_scan.rs` decide, `decode_structure_emit.rs` writes).  It rides on the view
+**Instance 1 of the structure clause, built** (`src/lower/decode_structure.rs` and
+`decode_structure_scan.rs` decide).  It rides on the view
 clause's roots, region and frame.  The POSITION of a value is the scalar arguments of the
 decoder call that answers it: `decode(b).value` is `read_value(b, 0, 0).value`, a map entry's
 key is `read_value(b, p, d + 1).value` for the `p` the loop handed that call.  The frame does
@@ -8178,7 +8164,8 @@ birth in the source: when the drop takes exactly what the append added, both ord
 same vector, so the oldest entry's vectors take the newest one's elements and the slots rotate
 instead of shifting.
 
-**The rotate clause, as built** (`src/generation/hand_over.rs`, `Stores::rotate_into`).  The
+**The rotate clause, as built** (`src/lower/hand_over.rs`, the C's rotate in `src/c/body/apart.rs`,
+`Stores::rotate_into` on the interpreter).  The
 site is the append group (`OpNewRecord` · a FRESH `OpCopyRecord` · `OpFinishRecord`), S, and
 `if K < len(h.F) { g(h, len(h.F) - K) }` where `g`'s body is null inits, early returns
 PROVED false at `n = 1, len = K >= 1`, ONE `(R-Compact)` keep `[n, len)` of its first
@@ -8329,8 +8316,8 @@ trace and falsifiers apply, plus the cells named here.  Priced in
 - **The split-table verdict, for `(R-TextBorrow)`.**  A `Set(t, split(…))` whose `t` is a
   split table `(R-SplitTable)` lowered is not a store write, and neither is the mint or a
   free of the buffer the table leaves dead.  **BUILT** for the walk: `borrowed_text_walks`
-  reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/generation/
-  hoist.rs`), every other statement judged unchanged; guard
+  reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/opt/hoist.rs`),
+  every other statement judged unchanged; guard
   `loft-suite/rules/rewrites/R-TextBorrow/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
   cell is the one a dangling borrow fails.  Still PROPOSED: `(R-Header)`'s loop clause
   admitting by the same verdict.
@@ -8381,8 +8368,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 ### D-phase-5 (OPEN, @PLN211) — `(R-ValueRecord)`'s view-leaf clause is the writers' alone
 - **Violates:** `R-Phase` (one place: a work-removing rule applied in the IR unless a stated
   reason keeps it in a writer — the IR pass carries flat records only)
-- **Where:** `value_record::body_shape` declines a view in a result position; `lower::plan`
-  (rustc) and `c::FnWriter::value_records` (the C) each compute `opt::value_records` with its
+- **Where:** `value_record::body_shape` declines a view in a result position; `c::FnWriter::value_records` (the C) computes `opt::value_records` with its
   view leaves (`ViewPlan`, keyed by node address) and deliver the reference themselves
 - **Effect:** the interpreter returns the record through its buffer for those functions; the
   plan is computed by each writer.  On the benches 3 functions (`R-ValueRecord/view`), drawing's

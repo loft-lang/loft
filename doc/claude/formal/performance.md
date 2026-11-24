@@ -71,9 +71,9 @@ through @PLN158's census; the median is taken over that population, never over o
 library's table.  A synthetic benchmark program (`bench/01`–`11`) measures the ENGINE and
 is read as that — informational, outside the median — because nobody's program is a
 recursive Fibonacci.  The drawing library is the first library measured: on that day its
-fourteen routines read a median of 2.01×, with six at or over 3×.  A per-routine bar in
-`bench/ratio_oracle.tsv` is a ratchet DOWN toward 3×, recorded where a routine starts above
-it, and never a licence to stay there.  The release clause is the owner's (C136): every optimisation also moves code a
+fourteen routines read a median of 2.01×, with six at or over 3×.  A routine's bar is read off
+`bench/stats.py`'s C ship lane against its Rust twin; it is a ratchet DOWN toward 3× where a
+routine starts above it, and never a licence to stay there.  The release clause is the owner's (C136): every optimisation also moves code a
 release has to hold still, so the release takes the cut where the remaining excess is
 large, and the 3× work continues after it.  The work toward the cut is not restricted to
 low-risk changes: optimising is inherently unstable, and that is accepted while it runs.

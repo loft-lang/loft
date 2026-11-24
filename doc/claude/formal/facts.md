@@ -78,8 +78,8 @@ and the boundaries are decided; a new analysis is a new `kind`, not a new walk.
 
 | kind | direction, flow | key | domain | read by |
 |---|---|---|---|---|
-| `writes` | MAY, UP | parameter path, result buffer, any other store | none < in-place scalar write < element write < length change (push, clear, truncate) < rebind or free | the header verdict, `(R-Inputs)`, `(R-TextBorrow)`'s tested clause, `(R-StreamWalk)` |
-| `mints` | MAY, UP | function | the stores a call creates: kept local, freed, answered | `(R-RetAdopt)`, `(R-MoveAppend)` |
+| `writes` | MAY, UP | parameter path, result buffer, any other store | none < in-place scalar write < element write < length change (push, clear, truncate) < rebind or free | the header verdict, `(R-Inputs)`, `(R-TextBorrow)`'s tested clause |
+| `mints` | MAY, UP | function | the stores a call creates: kept local, freed, answered | `(R-RetAdopt)` |
 | `observable` | MAY, UP | function | output, file, socket, clock, random, an impure native, a yield, a `par` | `(R-PureReuse)`, `(R-SharedCall)` |
 | `fault` | MAY, UP | function | may report: checked overflow, an index fault, `??`'s panic, the call-depth cap | `(R-SharedCall)` totality, `@C120` |
 | `reads` | MAY, UP | parameter path | the vectors a call indexes, the fields it reads | `(R-Inputs)`'s `__inv` |
