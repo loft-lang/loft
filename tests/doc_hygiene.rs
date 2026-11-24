@@ -3177,6 +3177,7 @@ fn page_is_exempt(name: &str) -> bool {
         // the page's own runtime shim — which a reader meets as a running program, not as
         // documentation.
         "brick-buster.html"
+        | "crystal-editor.html"
         | "playground.html"
         | "gallery-run.html"
         | "kernel-differential.html"
