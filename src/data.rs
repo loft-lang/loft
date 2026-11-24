@@ -486,23 +486,12 @@ pub enum Value {
     FnRefDnr(u16),
     /// Parallel { arm1; arm2; } — each arm runs concurrently.
     Parallel(Vec<Value>),
-    /// Plan 09 phase 00 step 0.7 — codegen-internal "raw expression"
-    /// passthrough.
+    /// A "raw expression": a pre-emitted expression string a code
+    /// generator would splice in verbatim.
     ///
-    /// Holds a pre-emitted Rust expression string that emits verbatim
-    /// when reached by `output_code_inner`.  Used exclusively by
-    /// fn-ref dispatch in `src/generation/emit.rs` to inject
-    /// pre-evaluated `let _farg_N` bindings as synthetic arg `Value`s
-    /// into per-arm calls that route through `emit_op` /
-    /// `output_call_user_fn`.
-    ///
-    /// **Not produced by the parser.**  Created only during native
-    /// code generation, lives only on the codegen stack, and is
-    /// consumed by `output_code_inner` which writes its string
-    /// directly to the writer with no further transformation.  Other
-    /// walkers (scopes.rs liveness, pre_eval.rs, parser passes) never
-    /// see this variant — the catch-all `_ =>` arms in those walkers
-    /// suffice as a defensive default.
+    /// **Not produced by the parser** nor by any pass; the walkers
+    /// (scopes.rs liveness, pre_eval.rs, parser passes) cover it with
+    /// their catch-all `_ =>` arms.
     RawExpr(String),
 }
 
@@ -3950,8 +3939,8 @@ mod tuple_stack_layout_tests {
 /// target of a detach, so [`crate::variables::owns_literal_backing_store`] is what separates
 /// the two spellings of one call.
 ///
-/// One home, read by BOTH displacement frees — `generation::dispatch`'s `owned_ref_reassign`
-/// and `state::codegen`'s `owned_ref` — because a shape one backend excludes and the other
+/// One home, read by BOTH displacement frees through `Function::owns_displaced_store` — the
+/// C's `displacing_rebind` and `state::codegen`'s `owned_ref` — because a shape one backend excludes and the other
 /// does not is the divergence @FR-O-NoDiverge forbids.  The native gate already names the
 /// shape it wants in prose (*"a fresh-store-producing rhs"*); a sentinel call is not one, and
 /// this is that sentence made checkable.
@@ -4988,9 +4977,8 @@ impl Definition {
     /// known (`State::fn_call_ref`).  One home for the count, so the two sides of that ABI
     /// cannot disagree about what a buffer is.
     /// @PLN10 Phase A — a USER function returning text with no hidden work buffer ("nwb"):
-    /// on `--native` it returns an owned `String` (`generation::def_returns_owned_text`),
-    /// and through the shared-store bridge it needs the caller's destination
-    /// (`Parser::crosses_text_bridge`).  One home, so the two cannot disagree.
+    /// through the shared-store bridge it needs the caller's destination
+    /// (`Parser::crosses_text_bridge`).
     #[must_use]
     pub fn returns_bufferless_text(&self) -> bool {
         // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
@@ -5053,12 +5041,9 @@ impl Definition {
     ///   DEPS_INVENTORY corpus probe found zero of these) → conservatively
     ///   borrowed (never free a maybe-borrowed source), with a debug scream.
     ///
-    /// This collapses the three structurally-identical derivations that used to
-    /// live separately (interp `state/codegen.rs` ×2, native
-    /// `generation/dispatch.rs` ×1) into one fact — see
-    /// [STABILITY_REDFLAGS](../doc/claude/STABILITY_REDFLAGS.md) Cluster A (A.4).
-    /// Both backends translate the SAME answer, so they cannot diverge on the
-    /// out-of-range / hidden-only edge.
+    /// One fact for every reader — see
+    /// [STABILITY_REDFLAGS](../doc/claude/STABILITY_REDFLAGS.md) Cluster A (A.4) —
+    /// so the backends cannot diverge on the out-of-range / hidden-only edge.
     #[must_use]
     pub fn returns_borrowed_view(&self) -> bool {
         let attrs = self.attributes();
@@ -6153,9 +6138,7 @@ pub struct Data {
     pub wasm_bridge_packages: Vec<(String, String)>,
     /// lib_plan-29 W1c: WASM bridge routes — loft `#native` symbol
     /// (e.g. `n_load_png`) → `(crate_name, bridge_fn)`.  Read by
-    /// `src/generation/mod.rs::output_native_direct_call` for the
-    /// `wasm_browser=true` path; replaces the hard-coded `WASM_BRIDGE_FNS`
-    /// const.
+    /// `host_imports` and `extensions`.
     pub wasm_bridge_routes: HashMap<String, (String, String)>,
     /// lib_plan-29 W2: absolute paths to per-library JS host-imports
     /// files (resolved from `[wasm.bridge].host_js` relative to each
@@ -9436,7 +9419,7 @@ impl Data {
 
     /// The marker that separates a bound HOLDER's method namespace from a concrete type's
     /// (loft#1153).  `#` cannot occur in a loft identifier, so no user type can produce it, and
-    /// `generation::sanitize` maps it before anything reaches Rust.
+    /// `opt::names::rust_fn_ident` maps it before any name is emitted.
     const HOLDER_MARK: &'static str = "#g";
 
     /// The largest parameter count (receiver included) a bound-method stub is probed for.
@@ -14889,7 +14872,7 @@ impl Data {
             Type::Iterator(_, _) => "Iterator",
             Type::Keys => "&[Key]",
             // @PLN25: `Optional(τ)` shares its base's Rust type (sentinel storage) — mirrors
-            // the `generation::rust_type` twin. Missing this panicked the native bridge
+            // the `rust_spelling::rust_type` twin. Missing this panicked the native bridge
             // generator on an `integer?`/`text?` attribute.
             Type::Optional(inner) => return self.rust_type(inner, context),
             _ => panic!("Incorrect type {}", tp.name(self)),

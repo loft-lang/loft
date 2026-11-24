@@ -6,8 +6,8 @@
 //! this program (`artifact_matches_layout`), routing a library's calls to the bodies it
 //! carries ([`mark_exports`], [`probe_and_mark_exports`]), and the [`HOST_TABLE`] through
 //! which the artifact reaches this interpreter (its coroutines and function values).
-//! Building an artifact is the Rust writer's (`native_lib`); the key both use is
-//! `opt::native_key`.
+//! Building an artifact is the C backend's (`c::hosted::build_artifact`); the key both use
+//! is `opt::native_key`.
 
 use crate::data::Data;
 use crate::database::Stores;

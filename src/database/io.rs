@@ -518,14 +518,9 @@ impl Stores {
         }
     }
 
-    // Native + `wasm32-wasip2` (WASI filesystem via `--dir` preopens).
-    // @P334 fix (2026-05-29): widen the active-impl cfg from
-    // `not(target_arch = "wasm32")` to also include `target_os = "wasi"`
-    // — std::fs works under wasip2 (proven by OpReadFile/OpWriteFile
-    // at codegen_runtime.rs which were already feature-gated, not
-    // target-gated).  Without this, get_file's wasm-unknown stub
-    // short-circuited every exists()/file() under wasip2 → the
-    // world_load assert in lib/hex_world failed → `wasm unreachable`.
+    // Native + `wasm32-wasip2` (WASI filesystem via `--dir` preopens): std::fs works under
+    // wasip2, so this implementation covers `target_os = "wasi"` too (@P334) — the
+    // wasm-unknown stub would answer every exists()/file() there as missing.
     #[cfg(not(host_fs))]
     pub fn get_file(&mut self, file: &DbRef) -> bool {
         if file.rec == 0 {

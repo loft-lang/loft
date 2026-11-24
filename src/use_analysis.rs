@@ -1888,7 +1888,7 @@ pub fn elision_plans(d_nr: u32, code: &Value, function: &Function, data: &Data) 
 //
 // This classification is consumed by DEFAULT-ON codegen: `ownership_of` (below) is
 // the one fact every own-vs-borrow site reads instead of re-deriving — interp
-// `state/codegen.rs`, native `generation/dispatch.rs`, gated `join_own_enabled`. The
+// `state/codegen.rs`, native `c/body.rs`, gated `join_own_enabled`. The
 // `ownership_*` tests + the @PLN89 differential oracle validate it. Design study:
 // `doc/claude/plans/85-store-lifetime-retirement/over-free-class-study.md`
 // (§ Three chokepoints).
@@ -3591,8 +3591,8 @@ fn view_roots(data: &Data, arg: &Value, join_arm_buffers: bool) -> Option<Vec<u1
     // and leaves a bare local unwrapped, which is why `pick(q, …)` was clean while
     // `pick(b.s, …)` leaked. Reading through it is safe because the bracket is emitted
     // from the SLOT list this returns — neither backend matches the argument value
-    // again (`state/codegen.rs` builds its own `Var`, `generation/dispatch.rs` renders
-    // `var_<name>`), so a span can never reach the emit.
+    // again (`state/codegen.rs` builds its own `Var`, the C renders the slot's local), so a
+    // span can never reach the emit.
     match arg.unspan() {
         Value::Var(v) => Some(vec![*v]),
         Value::Null => Some(Vec::new()),
@@ -3711,7 +3711,7 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// What blocks them is a disagreement one layer down, and it is `@FR-O-Proxy`'s named
 /// hazard in the ALLOCATE direction: the interpreter's materialise arm
 /// (`state/codegen.rs`, @PLN130 F1) fires on the deps PROXY — empty deps plus
-/// [`crate::generation::container_element_base`] — while the free sweep reads the ORACLE.
+/// [`projection_container_var`] — while the free sweep reads the ORACLE.
 /// A `par` body's element bind is typed without a dep and classifies `Borrowed`, so it sits
 /// in the gap: adding the spellings makes the arm allocate a store the sweep then declines
 /// to free. Measured on `loft-suite/attic/scripts/1040-generic-par-worker-in-generic-fn.loft` — three
@@ -3728,13 +3728,12 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// and are excluded, because they GROW that store rather than read it — a chain rooted at one
 /// is a construction, and the readers below ask which container an existing view came out of.
 ///
-/// One list, four readers, because the alternative is measured rather than hypothetical: a
+/// One list, many readers, because the alternative is measured rather than hypothetical: a
 /// list SHORT by `OpGetRecord` left `pick(h[k], …)` without a witness, so the caller kept the
 /// conservative never-free answer and leaked one record per call at every keyed kind (hash /
-/// sorted / index, both backends).  The four readers are this bracket's
-/// [`view_root_slots`], the parser's `Parser::projection_root_mut` (which inline container
-/// needs a name), `scopes::base_container_var` and `generation::container_element_base` (@PLN130
-/// F2 — which container a view reads out of).  They ask different questions of the same shape;
+/// sorted / index, both backends).  Among them are this bracket's [`view_root_slots`], the
+/// parser's `Parser::projection_root_mut` (which inline container needs a name) and
+/// [`projection_container_var`] (@PLN130 F2 — which container a view reads out of).  They ask different questions of the same shape;
 /// keeping the shape in one place is what stops the answers drifting apart.
 ///
 /// `OpRefFromChildRec` is the child record a struct field names — an out-of-line field's value
@@ -3772,11 +3771,9 @@ pub fn is_projection_op(data: &Data, d_nr: u32) -> bool {
 /// `tests/scripts/85-store-lifetime-return-field-of-local`.  Every caller then leaves the
 /// binding exactly as it is rather than guessing.
 ///
-/// Two readers had this loop byte-for-byte — `scopes::base_container_var` and
-/// `generation::container_element_base`, each documented as "mirroring" the other — and the
-/// mirror is what the peel above had to be written into twice to work at all: the walk that
-/// NAMES a view to materialise and the emitter that COPIES it must agree, or the compiler
-/// reports a copy it did not make.
+/// The walk that NAMES a view to materialise (`scopes::base_container_var`) and the lowering
+/// that COPIES it (`bind_lowering::first_arm`) both read this one loop: they must agree, or
+/// the compiler reports a copy it did not make.
 #[must_use]
 pub fn projection_container_var(data: &Data, value: &Value) -> Option<u16> {
     projection_container_place(data, value).map(|(v, _)| v)

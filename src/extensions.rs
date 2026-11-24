@@ -282,7 +282,7 @@ struct SharedSig {
 }
 
 /// @PLN11 Arc N — the **shared-store** bridge's slot
-/// (`native_lib::generate_shared_cdylib_lib_rs`): library index → (bridge fn ptr,
+/// (a hosted unit's `loft_shared_<name>`, `c::hosted`): library index → (bridge fn ptr,
 /// signature).  Written by `wire_shared_native_fns`, read by `shared_store_dispatch`.
 /// Apart from [`NativeSlot`] because the ABI differs (a `*mut Stores` + `LibArg` bridge, not
 /// the `LoftStore`/raw-ptr marshalling).
@@ -1924,7 +1924,7 @@ fn bridge_heap_answer(
 
 /// Wrap a returned `loft_ffi::LoftRef` (direct vector record) in the indirect header layout
 /// the interpreter expects (mirror of `dispatch_call`'s nested `push_loft_ref`, for the bridge
-/// path).  A record's handle is the answer itself (`codegen_runtime::from_loft_record`).
+/// path).  A record's handle is the answer itself (the C's `loft_ffi_record_answer`).
 #[cfg(feature = "native-extensions")]
 fn bridge_ref_handle(
     stores: &mut crate::database::Stores,
@@ -1932,7 +1932,7 @@ fn bridge_ref_handle(
 ) -> crate::keys::DbRef {
     // A null answer is loft's null, whatever store it names: claiming a header there wrapped
     // it as an empty vector in a store the call never handed over (STORE_MODEL.md D19i — the C
-    // answers `loft_ref_null()`, the Rust writer `codegen_runtime::from_loft_ref`'s null).
+    // answers `loft_ref_null()`).
     if r.is_null() {
         return crate::keys::DbRef::NULL;
     }

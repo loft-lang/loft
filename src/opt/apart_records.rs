@@ -3,7 +3,7 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 //! `@FR-R-Apart`, instance 4 — a record of RECORD VECTORS built in a frame and handed to the
 //! functions that copy it into a collection, held as one byte buffer per field
-//! (`codegen_runtime::AprVec`) in the element's own layout.  The store meets it once, at the
+//! (the C's `loft_apr_push`) in the element's own layout.  The store meets it once, at the
 //! BOUNDARY: the copy of an append group, which writes the bytes into the blocks of the
 //! appended element (`Stores::apart_write_fresh`) or, under `(R-HandOver)`'s rotate clause,
 //! into the oldest element's (`Stores::rotate_from_parts`).

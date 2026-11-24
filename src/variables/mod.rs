@@ -1992,7 +1992,7 @@ impl Function {
     /// alive, so this was an `@FR-O-NoDiverge` divergence as well as a wrong answer.
     ///
     /// Two channels answer "which link names this local": a HEAP link's own dep list, read
-    /// the way `generation::hoist::link_targets` reads it, and — for a SCALAR link, which
+    /// the way `opt::body_writes::link_targets` reads it, and — for a SCALAR link, which
     /// carries no dep — `Variable::amp_linked_by`, recorded on the target at the `&` bind.
     /// The walk is transitive and runs to a fixpoint, because a link may name a link.  It
     /// only ever EXTENDS a range, so a local nothing links to is untouched and ordinary slot
@@ -5803,21 +5803,17 @@ impl Function {
     /// capture-time `DbRef`, @FR-L-CapHeap); and the assignment is not a DETACH, which
     /// displaces a store without claiming to have owned it (`is_null_sentinel_detach`).
     ///
-    /// Enforces @FR-O-NoDiverge: this was two predicates, `state/codegen.rs`'s `owned_ref` and
-    /// `generation/dispatch.rs`'s `owned_ref_reassign`, each carrying the other's list
-    /// "verbatim" by hand — and each time one gained a kind or a veto the other had to be found
-    /// and taught it (the keyed kinds, the vector destination, the override veto, the detach:
-    /// four such rounds are in their history).  What stays per backend is only what IS per
+    /// Enforces @FR-O-NoDiverge: one predicate for `state/codegen.rs`'s `owned_ref` and the C's
+    /// `displacing_rebind`, rather than two lists kept in step by hand.  What stays per backend is only what IS per
     /// backend: the interpreter excludes the hidden buffer ARGUMENT (the caller owns that
-    /// store), native asks that the Rust local be already declared, that the right-hand side
-    /// produce a store, and that a retbuf-attr local carry an entry-buffer witness.
+    /// store), native asks that the right-hand side produce a store, and that a retbuf-attr local carry an entry-buffer witness.
     #[must_use]
     pub fn owns_displaced_store(&self, v: u16, value: &Value, data: &Data) -> bool {
         // A bare `null` is a pass's LET-GO, never a user's write (`a = null` reaches the IR as
         // `OpNullRefSentinel()`): the local hands its record on — `(R-HostStore)` writes it
         // after `OpAdoptChildRec` gave the record to a field — and displaces nothing it owns.
-        // The C and Rust emitters free only on a store-producing right-hand side, so this is
-        // the interpreter agreeing with them (`@FR-O-NoDiverge`).  `LOFT_NULL_LETGO_FREES=1`
+        // The C emitter frees only on a store-producing right-hand side, so this is the
+        // interpreter agreeing with it (`@FR-O-NoDiverge`).  `LOFT_NULL_LETGO_FREES=1`
         // reads it as a rebind again, which restores the re-free of a store already let go.
         (!matches!(value.unspan(), Value::Null) || crate::keys::null_letgo_frees())
             && self.owns_its_binding(v, value, data)
@@ -6409,7 +6405,7 @@ impl Function {
     ///
     /// Deliberately a separate predicate from [`owns_store`](Self::owns_store) rather
     /// than a widening of it.  `owns_store` answers who owes the FREE and is shared with
-    /// `generation::dispatch` so parser and codegen cannot drift (loft#664); changing what
+    /// the C backend (`c::body::generator`) so parser and codegen cannot drift (loft#664); changing what
     /// it means changes the free path.  This one asks only whether in-place REUSE is
     /// licensed, and the two answers differ for exactly one population: a captured heap
     /// local still owns its store, so `owns_store` is true, while a closure record built

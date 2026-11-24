@@ -119,7 +119,7 @@ static int loft_ffi_copy_changed(loft_cx *cx, loft_ref a, uint32_t pin, uint32_t
 #define loft_ffi_copy_changed(cx, a, pin, rec) 0
 #endif
 
-/* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
+/* A heap answer as loft holds it: a
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
 static loft_ref loft_ffi_vector_answer(loft_cx *cx, loft_ffi_ref r) {
     if (r.rec == 0 && r.pos == 0) return loft_ref_null(cx);

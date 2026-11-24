@@ -4924,8 +4924,8 @@ impl Store {
 
     /// @PLN174 F5 — the `(rec, pos)` slot that names this store's foreign bytes: the
     /// HANDLE a `DbRef` into the store points at.  A bridge answers a foreign vector as
-    /// the bare [`FOREIGN_REC`], and the two consumers of a bridge's ref return
-    /// (`extensions::bridge_push_ref`, `codegen_runtime::from_loft_ref`) push this handle
+    /// the bare [`FOREIGN_REC`], and the consumer of a bridge's ref return
+    /// (`extensions::bridge_push_ref`) pushes this handle
     /// instead of claiming a header record in a store that is now locked.  `None` for an
     /// ordinary store.
     #[must_use]

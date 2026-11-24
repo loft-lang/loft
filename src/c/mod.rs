@@ -355,8 +355,7 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
-    /// `@FR-R-GuardFree`'s verdicts, shared with the Rust generator: which frames need the
-    /// fn-ref buffer mark (`framed`).
+    /// `@FR-R-GuardFree`'s verdicts: which frames need the fn-ref buffer mark (`framed`).
     pub(crate) guard_free: std::cell::RefCell<crate::opt::frame_calls::GuardFree>,
     /// `vr_ptr_params`'s answers, per function.
     vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
@@ -2701,19 +2700,6 @@ fn c_libraries(
     out
 }
 
-/// A package's name and version as its manifest states them — the directory's name and `0`
-/// where it states none, as the Rust writer's bind table spells them.
-/// What the host resolves about each of the program's C libraries for the loft-written C
-/// writer, one entry per `data.c_libraries` — the answers [`c_libraries`] and [`bound_by`] take
-/// from the file system and the toolchain while they write (a `[c] shim`'s archive is built
-/// here, as `c_libraries` builds it), carried in the program image (`ImageCLib`).
-/// What the Rust writer asks the interpreter and the toolchain while it writes a unit, answered
-/// for the loft-written C writer and carried in the program image (@PLN91 strand 12,
-/// `ir_store::bundle_facts`), each only for a program whose code calls what needs it: the
-/// reflection table (`reflect::table_of`), the TLS lines of a unit that fetches over a URL
-/// (`fetch_defines`, `tls::unit_lines`), and for a lazy binding every keyed collection's SQL plan
-/// (`FnWriter::sql_plan`'s `derive_select` answers) and the lazy drivers
-/// (`Data::lazy_fetch_drivers`).
 /// A constant's store as the unit writes it (`Cx::const_code`): its word count, trailing zero
 /// words left off, and the words as `Nu, Nu, …`.
 #[must_use]
@@ -4729,8 +4715,8 @@ enum AnswerStore {
 
 /// The statements after a library native's call (`call`): the answer read in its C shape,
 /// `post` run (the copies a foreign argument took going), and the loft value returned — a text
-/// owned, a heap answer behind its header (`codegen_runtime::from_loft_ref` /
-/// `from_loft_record`), a narrow integer widened with its null kept.
+/// owned, a heap answer behind its header (`loft_ffi_vector_answer` /
+/// `loft_ffi_record_answer`), a narrow integer widened with its null kept.
 fn library_answer(
     body: &mut String,
     def: &crate::data::Definition,
@@ -4754,7 +4740,7 @@ fn library_answer(
             );
         }
         // A vector answer behind its header, a record as it is: the conversion
-        // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
+        // `loft_ffi_vector_answer` / `loft_ffi_record_answer` make.
         tp if ffi_ret == "loft_ffi_ref" => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
             let convert = if matches!(tp.base(), Type::Vector(_, _)) {

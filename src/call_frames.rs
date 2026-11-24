@@ -5,10 +5,9 @@
 //! What a generated program is running: the loft frames on its shadow call stack, and whether
 //! it is inside a lazy store's driver.
 //!
-//! Generated code pushes and pops the frames (`cr_call_push` / `cr_call_pop`, re-exported by
-//! `codegen_runtime` under the paths emitted Rust names) on the `Stores` it runs over; a fault
-//! report reads them there, which is why this sits in the core layer with the stores and the
-//! error renderer rather than with the rest of the native runtime (@PLN191).
+//! Generated code pushes and pops the frames (`cr_call_push` / `cr_call_pop`) on the `Stores`
+//! it runs over; a fault report reads them there, which is why this sits in the core layer with
+//! the stores and the error renderer (@PLN191).
 
 use std::cell::UnsafeCell;
 
@@ -262,7 +261,7 @@ impl Drop for CallGuard<'_> {
 /// from the release `libloft` — measured on fib(40) (331 M calls) 15.2 s with the drop inlined
 /// and 9.8 s called, 7.5 s together with [`cr_call_site`] out of line (loft#2009).  The two
 /// tiers want opposite answers for one body, so each tier names its own guard and the emitter
-/// picks it (`generation/mod.rs`, where the push is chosen).
+/// picks it.
 pub struct NamedCallGuard<'a>(pub &'a UnsafeCell<Stores>);
 
 impl Drop for NamedCallGuard<'_> {

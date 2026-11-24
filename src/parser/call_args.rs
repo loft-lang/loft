@@ -1160,10 +1160,10 @@ impl Parser {
                     // reference never reaches its conversion at all.  This one picks its
                     // variable by NAME, so it has to ask.
                     //
-                    // Hand over the BARE variable, not a wrapper.  Both backends already
-                    // forward a `RefVar` argument into a `RefVar` parameter without a
-                    // deref (`codegen.rs` OpVarRef; `generation/calls.rs` `var_x`), and
-                    // both recognise that shape only as a literal `Value::Var` — wrapped
+                    // Hand over the BARE variable, not a wrapper.  The interpreter already
+                    // forwards a `RefVar` argument into a `RefVar` parameter without a
+                    // deref (`codegen.rs` OpVarRef), and recognises that shape only as a
+                    // literal `Value::Var` — wrapped
                     // in a block or an `Insert` the generic path runs instead and re-derefs.
                     // The per-call clear is not lost: a promoted buffer is cleared by the
                     // function preamble, once per invocation, and promotion only happens

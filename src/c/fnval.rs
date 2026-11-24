@@ -357,8 +357,8 @@ impl Cx<'_> {
     }
 
     /// The arm calling `d`: its visible parameters in order, the value's closure, a text
-    /// result's work buffer made for the call and released after it, and a return buffer as
-    /// `--native`'s dispatch hands one (`generation::emit`, PLAN51 V-c): the null sentinel for a
+    /// result's work buffer made for the call and released after it, and a return buffer as a
+    /// fn-ref dispatch hands one (PLAN51 V-c): the null sentinel for a
     /// record or a work buffer — the callee mints its own store — and, for a vector return, a
     /// vector store made for the call, kept when the result IS it and freed otherwise
     /// (`State::fn_return`'s rule, loft#1179).

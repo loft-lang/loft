@@ -2705,13 +2705,9 @@ impl Parser {
             // P236: when the body's tail is a `Value::If(...)` (or
             // `match`, which lowers to nested `If`) and the function
             // returns a heap-owned reference, unify the branches'
-            // work-refs so all paths share one return slot.  Without
-            // this, native codegen drops the if/else's value and
-            // returns the typed null sentinel.  See `unify_if_branches_work_refs`
-            // for the full rationale.  Wrap in `Value::Return(...)` so
-            // the existing `Return(If(...))` native codegen at
-            // `src/generation/emit.rs:166-182` emits
-            // `return if cond { ... } else { ... }` correctly.
+            // work-refs so all paths share one return slot (see
+            // `unify_if_branches_work_refs`), and wrap the tail in
+            // `Value::Return(...)` so it returns the chosen branch's value.
             // `base`, because the question is whether the RETURN is heap-shaped, and a
             // nullable one is: `S?` holds the same record as `S` (@FR-L-Null, layout(τ) =
             // layout(τ?)).  Asked bare, every `τ?` tail kept a work-ref per arm plus a
@@ -11523,11 +11519,6 @@ impl Parser {
     /// `??`); the interpreter, which keeps the value on its stack, is correct in all of
     /// them — an accept/reject divergence.
     ///
-    /// A `match` on a TEXT subject only *appeared* to work: freeing the subject copy emits
-    /// an `OpFreeText` after the value, which incidentally trips `has_trailing_void` in
-    /// `generation::emit`, which materialises the block.  The subject's type has nothing to
-    /// do with the arm temporary's lifetime — that is what makes it a proxy, not the fact.
-    ///
     /// Rewriting each arm leaf to `Set(q, leaf)` yields exactly the shape the `if` TAIL
     /// already emits (`*var_q = …;` per arm), which native compiles.  Returns `true` when
     /// it rewrote `code`, which is then a VOID branch of `Set`s.
@@ -14578,9 +14569,7 @@ impl Parser {
             // rather than answering quietly.
             //
             // The message names `break` and NOT a bare `return;` because only `break` is a
-            // working cure — `detect_lazy_for` (generation/coroutine.rs) rejects a `return`
-            // outright, so such a generator falls back to the eager buffer, whose factory
-            // cannot emit a mid-body return either (its type is `Box<dyn LoftCoroutine>`).
+            // working cure.
             if !self.first_pass && matches!(r_type, Type::Iterator(_, _)) {
                 diagnostic!(
                     self.lexer,

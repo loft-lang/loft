@@ -422,8 +422,7 @@ impl CoroutineHost {
 /// The table a library cdylib's copy forwards to: its host's (`forward_coroutines`), or null.
 /// Read only by [`free_native_coroutine`], which the runtime itself reaches from inside a
 /// cdylib (`OpFreeRef`, a generator's `drop_stores`).  Every other entry point is reached
-/// from generated code, which in a library cdylib calls the host's table directly
-/// (`native_lib::HOST_INIT_SRC`'s `__coro`): a test here, even a relaxed load out of line,
+/// from generated code, which in a library cdylib calls the host's table directly: a test here, even a relaxed load out of line,
 /// cost a whole-program generator loop 8 % (measured; the emitted program was identical).
 /// A relaxed load: the slot is written once, by the library's `loft_shared_init`, before any
 /// of its code runs — an acquire load per advance (`OnceLock::get`) cost a whole-program

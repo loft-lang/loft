@@ -5,21 +5,20 @@
 //! The types a compiled library artifact and the process that loads it share: the argument
 //! slot of a bridge call ([`LibArg`]), the table the host hands the artifact at load
 //! ([`HostTable`]), the id tables the artifact fills from it ([`IdTable`]) and the symbol
-//! that records the layout it was built for.  Both sides link this exact code, so its layout
-//! is the contract.  Part of the runtime a compiled unit links; the interpreter fills the
-//! table (`native_adopt::HOST_TABLE`) and the Rust writer names these types in what it emits
-//! (`loft::native_lib::…`, re-exported there).
+//! that records the layout it was built for.  Their layout is the contract: the interpreter
+//! fills the table (`native_adopt::HOST_TABLE`), and a hosted C unit is written against the
+//! offsets `c::hosted::defines` takes from these types.
 
 use crate::database::Stores;
 
 /// @PLN11 Arc N — a uniform 16/24-byte argument/return slot for the
-/// **shared-store** native-library bridge (`native_lib::generate_shared_cdylib_lib_rs`).
+/// **shared-store** native-library bridge (a hosted unit's `loft_shared_<name>`, `c::hosted`).
 ///
 /// The bridge knows each slot's type from the function signature, so no tag is
 /// needed: a scalar reads/writes `.scalar` (an `i64`, or float bits, or `0/1` for
 /// bool), a `vector`/`reference` reads/writes `.dbref`.  `#[repr(C)]` so the
-/// interpreter and the generated cdylib — **both linking this exact type from
-/// libloft** — agree on layout with no marshalling.
+/// interpreter and the hosted C unit (which reads its offsets from `c::hosted::defines`)
+/// agree on layout with no marshalling.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LibArg {
@@ -72,9 +71,8 @@ pub struct HostTable {
     /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
     /// arguments at `args`, in the interpreter running this bridge call, writing its result
     /// into `ret` (`State::call_back`).
-    /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
-    /// `codegen_runtime` forwards to once installed, so a generator handle means the same
-    /// frame on both sides.
+    /// @PLN199 D2 — the host's coroutine table, handed to the artifact so a generator handle
+    /// means the same frame on both sides.
     pub coroutines: crate::coroutine_host::CoroutineHost,
     pub call_ref: unsafe extern "C" fn(
         stores: *mut Stores,

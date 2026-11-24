@@ -3996,10 +3996,9 @@ impl Parser {
             }
         };
         let def = self.data.def(self.context);
-        // The SAME filter the two marshallers use (`c_call::register` and
-        // `generation::output_c_direct_call`). It has to be: they derive the
-        // slot assignment from this list, so a list that differs here would
-        // check one binding and call another.
+        // The SAME filter the interpreter's marshaller uses (`c_call::register`).
+        // It has to be: it derives the slot assignment from this list, so a list
+        // that differs here would check one binding and call another.
         let params: Vec<crate::data::Type> = def
             .attributes()
             .iter()

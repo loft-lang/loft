@@ -732,7 +732,7 @@ static int loft_rotate_into(loft_cx *cx, loft_ref vec, loft_ref src, uint32_t si
     return 1;
 }
 
-/* `@FR-R-Apart` instance 2 (codegen_runtime::ap_get_f64 / ap_set_f64 / ap_store_f64): a record
+/* `@FR-R-Apart` instance 2 (lower/apart_value.rs): a record
  * of fixed-length `vector<float>` fields held as a C struct, one `double[N]` per field, while
  * it travels between the functions that build it, read and write its elements and hand it on.
  * An element answers what the C's store path answers: an index from the end, and an index out
@@ -767,7 +767,7 @@ static loft_ref loft_ap_store(loft_cx *cx, loft_ref buf, uint32_t bytes, uint16_
     return buf;
 }
 
-/* `@FR-R-Apart` instance 3 (codegen_runtime::ApVec): a `vector<float>` local that never leaves
+/* `@FR-R-Apart` instance 3 (opt/apart_vector.rs): a `vector<float>` local that never leaves
  * its function — its first 64 elements inline, the rest in a spill (a text buffer, so the frame's
  * epilogue frees it with its texts).  Each operation answers what the C's store path answers for
  * the vector it stands for: an empty vector at its init, an index from the end, and an index out
@@ -819,7 +819,7 @@ static inline void loft_apv_set_at(loft_cx *cx, loft_apvec *v, int64_t i, double
     loft_apv_set(cx, v, i, x);
 }
 
-/* `@FR-R-Apart` instance 4 (codegen_runtime::AprVec): one field of a record of record vectors
+/* `@FR-R-Apart` instance 4 (opt/apart_records.rs): one field of a record of record vectors
  * held apart is the bytes of its elements, `esize` each, in the element's store layout — a text
  * buffer, so the frame's epilogue frees it with its texts.  Clearing keeps the capacity: a value
  * rebuilt every iteration allocates nothing once it has grown.  A pushed element starts as zeros

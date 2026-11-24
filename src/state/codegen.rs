@@ -1173,9 +1173,7 @@ impl State {
                 self.record_store_span(from, var_nr);
                 Type::Void
             }
-            // Phase 09 phase 00 step 0.7 — RawExpr is created only by native
-            // codegen (`src/generation/emit.rs` fn-ref dispatch); bytecode
-            // codegen never produces it.
+            // RawExpr is never produced for bytecode codegen.
             ValueType::RawExpr => panic!(
                 "Value::RawExpr is native-codegen-internal; not reachable from bytecode codegen"
             ),
@@ -2868,8 +2866,7 @@ impl State {
             // COPYING it — adopting would move `sb`'s store into `md`, then
             // `md`'s owned `OpFreeRef` would kill `sb` (#496 interp clobber:
             // `md = sa; if c { md = sb }`).  The `Var` case falls through to the
-            // #306 whole-struct copy below.  (Native's join-own in
-            // `generation/dispatch.rs` never reaches a bare-Var RHS either.)
+            // #306 whole-struct copy below.
             // @PLN157 § V-g — an elided bind keeps the view; its minted arm is
             // released by identity at scope exit, so nothing is materialised here.
             if let ReArm::Join { d_nr, base } = rb.arm {
@@ -3082,7 +3079,7 @@ impl State {
                         self.code_add(slot_offset);
                     }
                     // Cluster-A A.4: ONE return-ownership query, shared with
-                    // the native backend (`generation/dispatch.rs`).  Hidden-only
+                    // the native backend (`c/body.rs`).  Hidden-only
                     // deps (ref_return-promoted buffer attrs) read as NOT
                     // borrowed — either canonical (same-store no-op gate in
                     // OpCopyRecord) or fresh S1, paired with the post-call
@@ -3242,7 +3239,7 @@ impl State {
                         // ?? K { x: 9 })` — whose hoisted argument still named c's store: the
                         // re-init wiped it and the copy read back the type's ZERO, on
                         // `--interpret` only, where `--native`'s runtime same-store passthrough
-                        // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly — one
+                        // answered correctly — one
                         // question, two decoders, and the decoders are the two BACKENDS
                         // (@FR-O-NoDiverge, `formal/ownership-history.md` D-own-41).
                         //
@@ -4317,12 +4314,12 @@ impl State {
             }
         }
         // Cluster-A A.4: ONE return-ownership query, shared with the native
-        // backend (`generation/dispatch.rs`).  Hidden-only deps are either
+        // backend (`c/body.rs`).  Hidden-only deps are either
         // canonical (same-store no-op gate handles) or fresh S1 (0x8000 safely
         // frees, paired with caller_hidden_args reset below).
         // loft#981/#982 — a borrowed-view return is not always a borrow; the bracket
-        // above decides per execution.  Same fact, same three emitters (the sibling
-        // reassignment path here, and native `generation/dispatch.rs`).
+        // above decides per execution.  Same fact, same emitters (the sibling
+        // reassignment path here, and native `c/body.rs`).
         #[cfg(not(feature = "wasm"))]
         let tp_with_free =
             if crate::use_analysis::call_return_frees_source(stack.data, stack.def_nr, value) {
@@ -4683,8 +4680,7 @@ impl State {
                     // OpVarFnRef (20B) which overruns the 8-byte value slot and
                     // imbalances the eval stack — a garbage d_nr plus a corrupted
                     // FOLLOWING store (silent under a normal build; a generate_call
-                    // width assert under debug-assertions).  Mirrors native's
-                    // fn-ref-element projection (`generation/calls.rs`) and the
+                    // width assert under debug-assertions).  Mirrors the
                     // TupleGet Integer arm; the d_nr is the first 8 bytes of the
                     // element slot, so `OpVarInt` at its offset reads exactly it.
                     let offsets = crate::data::element_stack_offsets_in(
@@ -6345,8 +6341,7 @@ impl State {
             // `&` has no store to free.
             // The question is about the LINK, not about how the link was INTRODUCED:
             // `@FR-B-Ref-Uniform` says a `&τ` variable is used exactly like a τ variable,
-            // and the native twin (`generation/dispatch.rs`) already asks only the inner
-            // type and the ownership.  Gated on `is_argument`, a `&` LOCAL bind
+            // so only the inner type and the ownership are asked.  Gated on `is_argument`, a `&` LOCAL bind
             // (`pd = &d; pd = S { n: 2 }`) installed the fresh store through the link and
             // orphaned the one it displaced — a leak on the interpreter, and one more
             // reason the two backends answered this shape differently (loft#1371).

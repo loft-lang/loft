@@ -3,8 +3,7 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-LazySplit` — the `for piece in text.split(c)` loops that take their pieces straight
-//! from the text.  Here, in `opt`, because both compiled writers ask it (the Rust writer and
-//! the C backend); moved from `generation::hoist`, which re-exports it.
+//! from the text.  Here, in `opt`, with the other analyses the C backend asks.
 
 use crate::data::{Block, Data, Value};
 use crate::ir_shape::{as_var, call_named, split_call};
@@ -31,7 +30,7 @@ pub struct LazySplit {
 /// declined loop keeps the vector, which is always correct:
 ///
 /// - the call is the STANDARD LIBRARY's `split(self: text, separator: character)`, whose
-///   pieces `codegen_runtime::lazy_split` reproduces;
+///   pieces the lazy walk reproduces;
 /// - the separator is a character CONSTANT other than the null character — a null
 ///   separator compares equal to a NUL inside the text, which the iterator does not model;
 /// - the `For` block and its loop have exactly the shape the parser gives a forward walk of

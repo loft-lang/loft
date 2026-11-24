@@ -7074,14 +7074,14 @@ impl Parser {
             // whose container is a field DbRef (a vector inside an enum payload) has
             // no container VARIABLE to depend on, so a dep-only test read it as
             // owning.  `owns_store` is the one predicate that answers it, shared with
-            // `generation::dispatch` so parser and codegen cannot drift (loft#664).
+            // the C backend so parser and codegen cannot drift (loft#664).
             // @FR-L-CapHeap (loft#1447) — in-place reuse of the slot's store is licensed
             // only while this local is the store's SOLE holder.  A closure record built
             // over it is a second holder, and `(L-CapHeap)` says that record answers the
             // value it was BUILT with — so re-minting the same store here would make it
             // answer the rebind.  Asked as its own predicate rather than by widening
             // `owns_store`, which answers the FREE question and is shared with
-            // `generation::dispatch`.  The `else if` below carries the same term, so a
+            // the C backend.  The `else if` below carries the same term, so a
             // captured local ROUTES to the fresh-buffer arm instead of falling between the
             // two — without it the field initialisers write into uninitialised storage,
             // which is the failure that branch's own comment describes.

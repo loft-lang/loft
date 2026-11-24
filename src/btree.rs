@@ -1473,7 +1473,7 @@ pub fn arena(data: &DbRef, stores: &[Store]) -> u32 {
 }
 
 /// The `(start, finish)` cursor pair a walk of `from ..(=) till` starts from — the contract
-/// `State::iterate` and `codegen_runtime::OpIterate` share, in RECORDS (@FR-Col-Order-Sign:
+/// `State::iterate` and the C's `loft_ix_iterate` share, in RECORDS (@FR-Col-Order-Sign:
 /// a descending key reverses in the comparator, never here).
 ///
 /// * forward — `start` the record before the lowest in range (0 = from the first: the

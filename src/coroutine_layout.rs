@@ -10,9 +10,8 @@
 //! `next_into(stores, &mut [i64])` channel as `T`'s slots flattened into
 //! *transport* form: each scalar slot inline as one `i64`; each reference
 //! slot as its full absolute `DbRef` packed across two `i64`s.  The producer
-//! (`generation/coroutine.rs`) derives the flatten-walk from `T` directly; the
-//! consumer (`generation/ops/coroutine.rs`) receives the same kind list as
-//! extra `OpCoroutineNext` args (the interpreter ignores them — it reads only
+//! derives the flatten-walk from `T` directly; the consumer receives the same
+//! kind list as extra `OpCoroutineNext` args (the interpreter ignores them — it reads only
 //! `gen` + `value_size`).  Because *both* lists come from [`tuple_kinds`] over
 //! the *same* `T`, the two ends agree by construction — no runtime shape tag,
 //! no per-shape codec template.
@@ -86,10 +85,7 @@ impl YieldSlot {
             // collections that already yield correctly on their own, so the refusal was a
             // deviation rather than a decision.
             //
-            // This is the third site of one list: `generation/coroutine.rs` and
-            // `parser/collections.rs` were folded onto `is_dbref` when the ORIGINAL
-            // short-list bug was fixed, and `classify` is the residual that fix recorded and
-            // left behind.
+            // `parser/collections.rs` asks the same `is_dbref`.
             _ if crate::data::is_dbref(tp) => Some(YieldSlot::Ref),
             // A function is a (u32, DbRef) pair still served by the dedicated fn-ref
             // channel; a nested tuple would need recursion the walk does not yet do.
@@ -236,8 +232,8 @@ fn channel_0_carries(tp: &Type) -> bool {
 ///
 /// The eager collector runs the whole loop up front and reads the buffer afterwards, so it
 /// may only hold values carried BY VALUE.  A store handle pushed once per iteration aliases
-/// the work record the next iteration overwrites — the unsoundness the struct/vector
-/// loop-body refusal in `generation/emit.rs` already names.  A tuple asks the same question
+/// the work record the next iteration overwrites — the unsoundness of a struct or vector
+/// carried in the loop body.  A tuple asks the same question
 /// one level in: `(integer, integer)` packs into flat slots and is sound, while
 /// `(integer, P)` carries a [`YieldSlot::Ref`] and is not.
 #[must_use]

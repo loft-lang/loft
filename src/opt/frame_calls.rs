@@ -56,9 +56,8 @@ pub fn calls_a_frame(data: &Data, code: &Value) -> bool {
     })
 }
 
-/// `@FR-R-GuardFree`'s verdicts, per definition, for the unit being written.  The Rust and the
-/// C generators each hold one and read the same answer: whether a frame needs the fn-ref
-/// buffer guard (`codegen_runtime::FnRefBufGuard`, the C's `loft_nfnrefs` mark and
+/// `@FR-R-GuardFree`'s verdicts, per definition, for the unit being written.  The C generator
+/// holds one: whether a frame needs the fn-ref buffer guard (the `loft_nfnrefs` mark and
 /// `loft_fnref_release`).
 #[derive(Default)]
 pub struct GuardFree {

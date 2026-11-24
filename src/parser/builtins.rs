@@ -610,11 +610,9 @@ impl Parser {
             let pname = self.data.attr_name(worker_d_nr, i);
             let ptype = self.data.def(worker_d_nr).attributes()[i].typedef.clone();
             // Preserve the `hidden` flag — a struct/text worker's `__retbuf` out-param is
-            // hidden, and the native par codegen (generation/ops/parallel.rs) detects the
-            // per-element return buffer to ALLOCATE + PASS by filtering on `attr.hidden`.
-            // A mirrored-but-unhidden `__retbuf` is skipped there, so the dispatcher calls
-            // the wrapper WITHOUT the buffer ("takes 3 arguments but 2 were supplied" native;
-            // "8 < 12" interp).
+            // hidden, and the par dispatch finds the per-element return buffer to ALLOCATE +
+            // PASS by `attr.hidden`.  A mirrored-but-unhidden `__retbuf` is skipped, so the
+            // dispatcher calls the wrapper WITHOUT the buffer ("8 < 12" interp).
             let src_hidden = self.data.def(worker_d_nr).attributes()[i].hidden;
             let a = self
                 .data

@@ -373,8 +373,7 @@ pub(crate) fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(St
 }
 
 /// The `[library] native` stem of the package at `pkg_dir` and its resolved cdylib — the file
-/// a library artifact that calls the package links (`native_lib::native_pkg_cabi_link_args`) and needs
-/// loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
+/// a library artifact that calls the package links and needs loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
 /// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
 /// falling back to the crate name.  `None` when the cdylib cannot be resolved
 /// ([`crate::extensions::resolve_native_lib`] already printed why).

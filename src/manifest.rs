@@ -308,8 +308,7 @@ pub struct Manifest {
     /// `wasm32-unknown-unknown` rlib and links it via `--extern`.
     pub wasm_bridge_crate: Option<String>,
     /// lib_plan-29 W1c: loft `#native` symbol → bridge `pub fn` name from
-    /// `[wasm.bridge.routes]`.  Read by `src/generation/mod.rs::output_
-    /// native_direct_call` (replaces the hard-coded `WASM_BRIDGE_FNS`).
+    /// `[wasm.bridge.routes]`, copied into `Data::wasm_bridge_routes`.
     pub wasm_bridge_routes: Vec<(String, String)>,
     /// lib_plan-29 W2: per-library JS host-imports file from
     /// `[wasm.bridge] host_js = "..."` (path relative to the package

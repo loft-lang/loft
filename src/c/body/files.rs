@@ -165,7 +165,7 @@ impl FnWriter<'_> {
         }
     }
 
-    /// `@FR-R-FileHold`'s typed read, as native's (`generation::ops::file_ops::int_read_shape`):
+    /// `@FR-R-FileHold`'s typed read:
     /// `(width, signed)` when `OpReadFile(f, OpCreateStack(v), n, tp)` lands a fixed-width
     /// integer whole in an integer local — `n` a literal equal to the width, `integer` and
     /// `long` eight bytes signed, a byte or short type signed by its range, a four-byte type

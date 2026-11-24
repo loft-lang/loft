@@ -627,12 +627,8 @@ pub struct Stores {
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
     /// that definition isn't a constant.  Populated by
-    /// `compile::build_const_vectors` (interpreter path) or by the
-    /// `init()` function emitted by `src/generation/` (native path).
-    /// Mirrors `State.const_refs` so native code's
-    /// `stores.const_ref_at_runtime(d_nr)` accessor (called via the
-    /// substituted `OpConstRef` template — see
-    /// `src/generation/calls.rs`) resolves from any function context
+    /// `compile::build_const_vectors`.  Mirrors `State.const_refs` so
+    /// [`Self::const_ref_at_runtime`] resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
     /// The records of the constant store that hold a long text (`gen_text`, a text of 256
@@ -842,7 +838,7 @@ pub struct Stores {
     /// When non-empty, `os_arguments()` returns these instead of raw `std::env::args`.
     pub user_args: Vec<String>,
     /// `@FR-R-DecodeView` — the byte frame the running decode region's spans read: set by a
-    /// region's root for the length of its call (`codegen_runtime::DvFrame`), null outside one.
+    /// region's root for the length of its call, null outside one.
     pub dv_frame: DbRef,
     /// Monotonic timestamp captured at `Stores::new()`.  Used by `ticks()` to return
     /// microseconds elapsed since program start; cloned into worker Stores unchanged so
@@ -1946,26 +1942,11 @@ impl Stores {
         Some(full)
     }
 
-    /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`.
-    /// Used by native codegen, which has `&mut Stores` (via
-    /// `unsafe { &mut *cell.get() }`) but no `&mut State`.  The
-    /// native template rewriter in `src/generation/calls.rs`
-    /// translates `s.raise(...)` → `stores.raise_runtime(...)` so
-    /// the same `default/01_code.loft` annotations work in both
-    /// contexts.  The `_runtime` suffix is mandatory: a plain
-    /// `stores.raise(` would let a second pass of the substring-
-    /// based substitution match `s.raise(` inside the just-
-    /// produced output and accumulate `stor` prefixes
-    /// (observed: `storestorestores.raise(`).  Sibling helpers
-    /// follow the same convention (`*_runtime` rename).
+    /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`, for code that has
+    /// `&mut Stores` but no `&mut State` (the `*_runtime` helpers, store allocation).
     ///
-    /// **Position is `None` for the native path today** — native
-    /// doesn't have a bytecode pc → Position lookup table.  Phase 4g
-    /// (backtrace + polish) will thread codegen-time positions
-    /// through.  For now native diagnostics omit `--> file:line:col`
-    /// (rendered as just `error: <kind detail>` without the
-    /// location header).  Better than today's `cannot find value 's'`
-    /// rustc compile error from the s.raise call.
+    /// **Position is `None`**: there is no bytecode pc to look one up by, so the diagnostic
+    /// omits `--> file:line:col` (rendered as just `error: <kind detail>`).
     ///
     /// Production-vs-development split mirrors `State::raise` per
     /// @C66`:
@@ -2250,11 +2231,7 @@ impl Stores {
 
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_get_or_raise`.  Same body, calls
-    /// `self.raise_runtime(...)` on OOB.  Native template rewriter
-    /// translates `s.vec_get_or_raise(...)` →
-    /// `stores.vec_get_or_raise_runtime(...)`.  The `_runtime`
-    /// suffix avoids substring-collision with the substitutor —
-    /// see `raise_runtime` for the explanation.
+    /// `self.raise_runtime(...)` on OOB.
     #[must_use]
     #[inline]
     pub fn vec_get_or_raise_runtime(
@@ -2291,8 +2268,7 @@ impl Stores {
     /// elements: negative counts from the end, and only a STILL-out-of-range index is out
     /// of bounds, which raises `NegativeIndex` or `IndexOutOfBounds` and answers `None`.
     /// Kept byte-for-byte with `State::vec_get_or_raise` because a divergence here is a
-    /// different program, not a different speed; `vec_get_or_raise_runtime` and the
-    /// `@FR-R-Apart` element helpers (`codegen_runtime::ap_get_f64`) share it.
+    /// different program, not a different speed; `vec_get_or_raise_runtime` shares it.
     pub fn index_or_raise_runtime(&mut self, index: i64, len: u32) -> Option<u32> {
         let normalized = if index < 0 {
             index + i64::from(len)
@@ -3643,15 +3619,8 @@ impl Stores {
         self.string_from_const_store(rec, pos)
     }
 
-    /// Native-side accessor for `const_refs[d_nr]` used via the
-    /// `#rust"s.const_ref_at(@d_nr as usize)"` template substitution
-    /// (see `src/generation/calls.rs` — pattern `s.const_ref_at(`
-    /// rewrites to `stores.const_ref_at_runtime(`).  The `_runtime`
-    /// suffix breaks the substring chain that would otherwise let the
-    /// substitution accumulate `stor` prefixes when `OpConstRef` is
-    /// nested inside another opcode template (e.g. `OpGetVector` →
-    /// `OpConstRef`).  Same trick used for `raise_runtime`,
-    /// `vec_get_or_raise_runtime`, etc.  @P275 fix.
+    /// `const_refs[d_nr]` for code that only has `&mut Stores` — the counterpart of
+    /// `State::const_ref_at`.  @P275.
     #[must_use]
     pub fn const_ref_at_runtime(&self, d_nr: usize) -> DbRef {
         self.const_refs[d_nr]

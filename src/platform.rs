@@ -786,9 +786,9 @@ pub fn native_strip_symbols() -> bool {
 }
 
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
-/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
-/// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
-/// library's loft functions beside its native crate only on the C-ABI link.
+/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by
+/// `opt::native_key` and by the parser, which compiles a library's loft functions beside its
+/// native crate only on the C-ABI link.
 #[must_use]
 pub fn native_cabi_link() -> bool {
     !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
@@ -1227,14 +1227,11 @@ pub fn existing_lib_beside(dir: &std::path::Path, name: &str, os: LibOs) -> Opti
 /// built binary working if the package moves. ELF has no equivalent problem —
 /// its `SONAME` is only set when asked — so this is empty off macOS.
 ///
-/// **Every artifact loft publishes by rename needs this**, not only the `cc`-built
-/// shim: `native_lib` compiles a package cdylib to `<stem>.building` and renames
-/// it the same way. That one went years recording
-/// `/Users/…/native-auto/loft_auto_<hash>.building` — the temp stem with an
-/// absolute build directory in it — which stayed invisible because those cdylibs
-/// are `dlopen`ed BY PATH, and a path load ignores the install name. It would have
-/// surfaced the first time one was resolved through `@rpath` or simply moved. The
-/// flag is cheap and the failure is silent, so it goes on both.
+/// **Every artifact loft publishes by rename needs this** — the `cc`-built shim and a
+/// compiled component (`c::component`) alike.  An artifact `dlopen`ed BY PATH ignores
+/// the install name, so a wrong one stays invisible until the artifact is resolved
+/// through `@rpath` or moved.  The flag is cheap and the failure is silent, so it goes
+/// on every one.
 #[must_use]
 pub fn install_name_args(final_file_name: &str, os: LibOs) -> Vec<String> {
     if os == LibOs::Macos {
@@ -2467,7 +2464,7 @@ pub fn stages_dlls_beside_binary() -> bool {
 /// DLL names its imports by module name, with no RPATH to say where they live, and the loader
 /// takes an import from the modules already loaded or from its search path (the `.exe`'s
 /// directory, the system directories, `PATH`).  A host that loads a library artifact loads
-/// the native packages it links first (`native_lib::load_linked_packages`).  Elsewhere the
+/// the native packages it links first (`opt::native_key::load_linked_packages`).  Elsewhere the
 /// artifact carries an RPATH to the package's library.
 #[must_use]
 pub fn loads_library_dependencies_first() -> bool {
@@ -3532,8 +3529,7 @@ pub fn wasm_host_log(msg: &str) {
     let _ = msg;
 }
 
-/// macOS's native `main`: the program runs on its
-/// [`NATIVE_MAIN_STACK`](crate::codegen_runtime::NATIVE_MAIN_STACK) thread, as everywhere,
+/// macOS's native `main`: the program runs on a large-stack thread (`MAIN_STACK`), as everywhere,
 /// and the MAIN thread runs its run loop — AppKit makes and drives a window on the main thread
 /// only, so a library's window code is sent to the main queue (`dispatch_sync_f`, as graphics' C
 /// shim does), which that run loop drains on the main thread.  (`dispatch_main` would not do: it

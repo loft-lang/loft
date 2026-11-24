@@ -851,8 +851,8 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // per-run witness.
     // @FR-O-Proxy asks free — the pre-Set free of the store `v` is displacing.  The
     // fact-reading half is `Function::owns_displaced_store`, the ONE spelling both
-    // backends read (@FR-O-NoDiverge; its native twin is `generation/dispatch.rs`'s
-    // `owned_ref_reassign`).  What this side adds is the interpreter's own: the hidden
+    // backends read (@FR-O-NoDiverge; the C's twin is `displacing_rebind`).  What this
+    // side adds is the interpreter's own: the hidden
     // buffer ARGUMENT is excluded, because the caller owns that store.
     // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
     // which no free below may release: every one of them is guarded by the entry
