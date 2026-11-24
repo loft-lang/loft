@@ -17,10 +17,18 @@ client THROUGH an engine_host server over WebSockets — breakpoint → pause �
 resume — verified by `wasm_debug_relay::agent_debugs_a_browser_wasm_client_through_the_server_relay`;
 the one-shared-heap invariant (compiled ↔ interpreted agree) is confirmed on wasm (Probe 2).
 
+**2026-11-24 — the `--html --debug` client retired with the rustc writer (@PLN225 R4).** The
+client was the writer's page; a page built through the C has no debug channel, so
+`--html --debug[=name]` is refused at the build (`html_wasm::html_debug_is_refused`), and a
+program is debugged with `loft debug <file>`.  `html_debug_tier_runs_on_wasm` and
+`wasm_debug_relay::agent_debugs_a_browser_wasm_client_through_the_server_relay` went with it.
+The doc-page panel (the interpreter's wasm build) keeps the browser `bp` / `run` / `eval` /
+`resume` session.
+
 > **Where it lives now (the living reference).** The primitive: `src/live_dispatch.rs`. The browser
-> client: `src/wasm_debug.rs`. The server relay: `src/engine_host.rs`. The frame-eval primitive:
-> `State::eval_frame_reenter` (`src/state/mod.rs`). Guards: `tests/wasm_debug_relay.rs`,
-> `tests/html_wasm.rs`, `tests/rpc.rs`, `tests/debugger.rs`. Non-plan follow-ups (multi-file embedded
+> session of a doc page: `src/wasm_debug.rs`. The server relay: `src/engine_host.rs`. The frame-eval
+> primitive: `State::eval_frame_reenter` (`src/state/mod.rs`). Guards: `tests/wasm_entry.rs`,
+> `tests/html_wasm.rs` (the `--html --debug` refusal), `tests/rpc.rs`, `tests/debugger.rs`. Non-plan follow-ups (multi-file embedded
 > source; the tier-wide default-lean release flip) are tracked separately, not here.
 
 `subject:loft` · design-doc-first (Design Protocol 1). Consumers: the `@PLN16` debugger, the game /
