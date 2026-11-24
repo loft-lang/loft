@@ -4298,13 +4298,7 @@ fn c_binding_result(
     }
 }
 
-/// The body of a `#native` function whose library is not loaded: the panic the interpreter's
-/// stub raises (`compile.rs`), then the result's null for a caller that is past it.
-/// The runtime function behind a native of an `in_binary` library — one whose natives live in
-/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
-/// each one the C programs reach.
-/// The page's C twin of a web-library native (`loft_web_page.h`), as `web_browser.rs` is the
-/// Rust writer's.
+/// The page's C twin of a web-library native (`loft_web_page.h`).
 fn page_web_native(native: &str) -> Option<&'static str> {
     Some(match native {
         "n_http_do" => "loft_wp_http_do",
@@ -4337,6 +4331,9 @@ fn page_web_native(native: &str) -> Option<&'static str> {
 /// that keeps the runtime's uncalled helpers quiet.
 const RUNTIME_END: &str = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
 
+/// The runtime function behind a native of an `in_binary` library — one whose natives live in
+/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
+/// each one the C programs reach.
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),

@@ -400,12 +400,12 @@ unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
 /// handed only through such a call.
 pub(crate) const HOST_COROUTINES: crate::coroutine_host::CoroutineHost =
     crate::coroutine_host::CoroutineHost {
-        alloc_held: crate::coroutine_host::CoroutineHost::HERE.alloc_held,
-        alloc: crate::coroutine_host::CoroutineHost::HERE.alloc,
+        alloc_held: crate::coroutine_host::alloc_coroutine_held,
+        alloc: crate::coroutine_host::alloc_coroutine,
         retain: host_coroutine_retain,
         free: host_coroutine_free,
         next_i64: host_coroutine_next_i64,
-        next_into: crate::coroutine_host::CoroutineHost::HERE.next_into,
+        next_into: crate::coroutine_host::coroutine_next_into,
         next_dbref: host_coroutine_next_dbref,
         next_text: host_coroutine_next_text,
         exhausted: host_coroutine_exhausted,
@@ -430,7 +430,7 @@ pub(crate) fn interpreter_for(
 
 pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::coroutine_host::CoroutineHost::HERE.next_i64)(gen_ref, stores);
+        return crate::coroutine_host::coroutine_next_i64(gen_ref, stores);
     };
     // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
     let yielded = st.advance_for_native(gen_ref);
@@ -444,7 +444,7 @@ pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i6
 
 pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::coroutine_host::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
+        return crate::coroutine_host::coroutine_next_dbref(gen_ref, stores);
     };
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
@@ -457,7 +457,7 @@ pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> 
 
 pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::coroutine_host::CoroutineHost::HERE.next_text)(gen_ref, stores);
+        return crate::coroutine_host::coroutine_next_text(gen_ref, stores);
     };
     // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
     let yielded = st.advance_for_native(gen_ref);
@@ -472,21 +472,21 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
 pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_exhausted(&gen_ref),
-        None => (crate::coroutine_host::CoroutineHost::HERE.exhausted)(gen_ref, stores),
+        None => crate::coroutine_host::coroutine_is_exhausted(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_retain(gen_ref),
-        None => (crate::coroutine_host::CoroutineHost::HERE.retain)(gen_ref, stores),
+        None => crate::coroutine_host::coroutine_retain(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.free_coroutine(&gen_ref),
-        None => (crate::coroutine_host::CoroutineHost::HERE.free)(gen_ref, stores),
+        None => crate::coroutine_host::free_native_coroutine(gen_ref, stores),
     }
 }
 

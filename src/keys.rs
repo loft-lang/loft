@@ -599,19 +599,6 @@ pub fn copy_dump_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_COPY_DUMP"))
 }
 
-/// `LOFT_NO_BRIDGE_ORPHAN_FREE=1` — @PLN118 arc F opt-out / differential switch. The shared-store
-/// bridge frees a FALLBACK destination record it allocated
-/// itself when the inner fn ignored the retbuf and returned a fresh store (a struct-literal return
-/// does) — otherwise that record is orphaned across the interp↔cdylib boundary, one leaked store
-/// per call. Setting this reproduces the pre-fix leak (the arc-D "second implementation to flip
-/// to" + the differential leak oracle's positive control). Default OFF (the fix is active). One
-/// cached env read; the free itself only fires when the fallback was allocated.
-#[must_use]
-pub fn bridge_orphan_free_disabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NO_BRIDGE_ORPHAN_FREE"))
-}
-
 /// `LOFT_REPORT_COPIES=1` (or the `--report-copies` CLI flag) — @PLN90 Step 5. The USER-FACING
 /// copy report: the *unbound* structure copies (Avoidable + Forced) with a source location, the
 /// copied type, and a fix hint, plus a rollup + the ranked Avoidable worklist. Enables the
