@@ -1893,10 +1893,6 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [w, x.code])];
     return;
   }
-  if stack {
-    el::refuse(e, "a rendered operand appended to a promoted text buffer");
-    return;
-  }
   if x.tp is TyOptional {
     el::refuse(e, "a nullable concatenation operand");
     return;
@@ -1922,7 +1918,14 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     x = ex(ir::NdVar { n: held }, el_types::base(x.tp));
   }
   render: vector<ir::Node> = [];
-  el_ex_call::append_data(e, render, acc, x.code, x.tp);
+  // (Onto a promoted `&text` accumulator through the `Stack` ops, `append_data`'s `stack` arm.)
+  // (A character there is `OpAppendStackCharacter`, the concatenation's own op: a format
+  // string's render keeps `OpAppendCharacter`.)
+  if stack && el_types::base(x.tp) is TyCharacter {
+    render += [el_ir::cl(e, "OpAppendStackCharacter", [w, x.code])];
+  } else {
+    el_ex_call::append_spec(e, render, acc, x.code, x.tp, stack, el_ex_call::plain_fmt());
+  }
   if e.first_pass {
     for op in render {
       list += [op];
@@ -1944,7 +1947,7 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     el::refuse(e, "a concatenation operand of this type");
     return;
   }
-  step = el_ir::v_if(is_null, el_ir::cl(e, "OpAppendText", [w, el_ir::cl(e, "OpConvTextFromNull", [])]), el_ir::v_block(render, ir::TyVoid, "concat operand"));
+  step = el_ir::v_if(is_null, el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [w, el_ir::cl(e, "OpConvTextFromNull", [])]), el_ir::v_block(render, ir::TyVoid, "concat operand"));
   list += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [w]), step, ir::NdNull)];
 }
 

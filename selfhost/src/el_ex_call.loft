@@ -1779,6 +1779,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [el_ir::cl(e, "OpNullRefSentinel", [])];
       continue;
     }
+    // …and to a text parameter, declared `text` or `text?`, the text null (`convert`'s
+    // `OpConvTextFromNull`; the dense spelling is the `(N-Store)` warning, not a refusal).
+    if at is TyNull && el_types::base(pt) is TyText {
+      conv += [el_ir::cl(e, "OpConvTextFromNull", [])];
+      continue;
+    }
     // `@FR-W-Call`, the argument's side: a 64-bit caller hands a regime callee its argument at
     // the callee's width.
     wa = width32_call_argument(e, arg, at, pt, d);

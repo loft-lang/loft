@@ -1957,10 +1957,6 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       }
       return ex(el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: v }, x.code]), ir::TyVoid);
     }
-    if stack {
-      el::refuse(e, "a rendered append to a promoted text buffer");
-      return ex(ir::NdNull, ir::TyVoid);
-    }
     parts: vector<ir::Node> = [];
     el_ex_vector::concat_operand(e, vars, parts, v, x);
     return ex(ir::NdInsert { items: parts }, ir::TyVoid);
