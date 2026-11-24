@@ -372,3 +372,52 @@ fn a_witnessed_local_keeps_every_base_it_views() {
         );
     }
 }
+
+/// loft#2627, `@FR-B-Scope` — a name bound in two sibling blocks, each time to a view of a
+/// DIFFERENT value, is two bindings, each typed with its own base.  One variable kept the
+/// last bind's dep list only, so the first `bl` read as a view of `code`, and a rebind of `b`
+/// released the store `bl` still viewed (the interpreter answered garbage).
+#[test]
+fn a_name_bound_in_two_sibling_blocks_to_two_bases_is_two_bindings() {
+    let src = "struct Blk2627b { name: text, ops: vector<integer> }\n\
+               enum Nd2627b { NBlock { block: vector<Blk2627b> }, NInt { n: integer } }\n\
+               struct Ex2627b { code: Nd2627b, tp: text }\n\
+               fn f2627b(b: Ex2627b, code: Nd2627b) -> integer {\n\
+               \x20 r = 0;\n\
+               \x20 match b.code { NBlock { block } => { bl = block[0]; r += len(bl.ops); }, _ => {} }\n\
+               \x20 match code { NBlock { block } => { bl = block[0]; r += len(bl.ops) * 10; }, _ => {} }\n\
+               \x20 r\n\
+               }\n\
+               fn main() {\n\
+               \x20 e = Ex2627b { code: Nd2627b::NBlock { block: [Blk2627b { name: \"a\", ops: [1, 2] }] }, tp: \"t\" };\n\
+               \x20 assert(f2627b(e, Nd2627b::NBlock { block: [Blk2627b { name: \"b\", ops: [3] }] }) == 12, \"twelve\");\n\
+               }\n";
+    let table = var_table_of("2627b", src, "n_f2627b");
+    let rows: Vec<&str> = table
+        .lines()
+        .filter(|l| {
+            l.split_whitespace()
+                .nth(2)
+                .is_some_and(|n| n == "bl" || n.starts_with("bl#"))
+        })
+        .collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "two bindings of `bl`, one per block:\n{table}"
+    );
+    let capture_of = |row: &str| -> String {
+        row.split("deps=[")
+            .nth(1)
+            .unwrap_or("")
+            .split('(')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_ne!(
+        capture_of(rows[0]),
+        capture_of(rows[1]),
+        "each `bl` views its own match's capture:\n{table}"
+    );
+}
