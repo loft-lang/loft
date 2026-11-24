@@ -235,12 +235,16 @@ pub fn byte_code_from(
         {
             continue;
         }
-        // loft#665 piece 3 — publish which definition is being generated, so an
-        // internal panic in codegen names the user's function rather than only a
-        // compiler source line (loft#662 reported `codegen.rs:2955`, which told the
-        // reporter nothing about their program).
-        crate::crash_report::note_compile_pos(data.def(d_nr).position());
-        state.def_code(d_nr, data, program_store);
+        // loft#665 piece 3 — an internal panic in codegen names the user's function rather
+        // than only a compiler source line (loft#662 reported `codegen.rs:2955`, which told
+        // the reporter nothing about their program).
+        let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.def_code(d_nr, data, program_store);
+        }));
+        if let Err(payload) = generated {
+            crate::crash_report::compile_panicked(data.def(d_nr).position(), &*payload);
+            std::panic::resume_unwind(payload);
+        }
     }
     drop(own_memo);
     drop(param_writes);

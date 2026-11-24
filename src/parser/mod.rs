@@ -967,6 +967,10 @@ pub struct Parser {
     /// ([`Parser::read_manifest`]), each once — the parse's own (`@FR-C-Own`).  A cell, because
     /// a manifest is read from helpers that see the parser through `&`.
     manifest_errors: std::cell::RefCell<Vec<crate::manifest::ManifestError>>,
+    /// The source line the parse is on, for the report of an internal panic (`parse_file`).
+    compile_pos: Option<crate::lexer::Position>,
+    /// A parse is running: a nested one (an import) leaves the panic report to it.
+    parsing: bool,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -2343,6 +2347,8 @@ impl Parser {
             auto_use_catalog_ambiguous: None,
             reported_manifest_errors: Vec::new(),
             manifest_errors: std::cell::RefCell::default(),
+            compile_pos: None,
+            parsing: false,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -2693,9 +2699,29 @@ impl Parser {
         }
     }
 
+    /// Parse the lexer's file ([`Self::parse_file_body`]).  loft#665 piece 3 — a panic inside
+    /// it is reported at the line the parse was on (`crash_report::compile_panicked`), so an
+    /// internal error points at the user's line instead of a compiler source file; a nested
+    /// parse (an import) leaves the report to the outermost.
+    fn parse_file(&mut self) {
+        if self.parsing {
+            self.parse_file_body();
+            return;
+        }
+        self.parsing = true;
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.parse_file_body()));
+        self.parsing = false;
+        if let Err(payload) = ran {
+            if let Some(pos) = self.compile_pos {
+                crate::crash_report::compile_panicked(&pos, &*payload);
+            }
+            std::panic::resume_unwind(payload);
+        }
+    }
+
     /// Parse data from the current lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn parse_file(&mut self) {
+    fn parse_file_body(&mut self) {
         let start_def = self.data.definitions();
         self.parse_file_directives(true);
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured

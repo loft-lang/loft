@@ -5446,6 +5446,7 @@ fn start_repl() -> ! {
     };
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
+    loft::crash_report::quiet_panics();
     let code = match loft::repl::run_repl(&ctx, stdin.lock(), &mut stderr) {
         Ok(()) => 0,
         Err(e) => {
@@ -5663,6 +5664,7 @@ fn run_file_debugger() -> ! {
     };
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
+    loft::crash_report::quiet_panics();
     let code = match loft::repl::run_file_debug_as(
         &stdlib,
         &lib_dirs,
@@ -7828,29 +7830,9 @@ fn main() {
     // A memory bound beside the time bound, but only when asked for: an explicit
     // `LOFT_MEMORY_LIMIT` caps an ordinary run too (`store_budget::apply_env_limit_if_set`).
     loft::store_budget::apply_env_limit_if_set();
-    // Plan-07 phase 1 step 1.20 / phase 3 — chain a Rust panic hook
-    // that surfaces the loft source position of the offending pc
-    // before the default panic message.  Reads the per-thread snapshot
-    // published by `State::execute_argv` via `crash_report`.
-    //
-    // It prints a position only when a recorded span COVERS the pc, and
-    // otherwise says nothing.  The line renders exactly like a position the
-    // reader can act on, so there is nothing to mark it a guess — and the span
-    // table is sparse, so an inherited answer names whatever statement happened
-    // to be wrapped last.  It sent a `#lock` write on line 8 to line 7, and,
-    // with nothing preceding it in the user's file, to a stdlib file the program
-    // never mentions (loft#1262).  A wrapped construct — a call, an arithmetic
-    // fault site — still resolves, which is the case this exists for.
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let (pc, _op, _fn_d_nr) = loft::crash_report::last_context();
-        if pc != u32::MAX
-            && let Some(pos) = loft::crash_report::source_loc_for_pc(pc)
-        {
-            eprintln!("  at {}:{}:{}", pos.file, pos.line, pos.pos);
-        }
-        prev_hook(info);
-    }));
+    // Plan-07 phase 1 step 1.20 / phase 3 — an interpreter that panics names the loft
+    // source position of the op it was dispatching (`State::dispatch`).
+    loft::crash_report::tell_panic_positions();
     let argv: Vec<String> = env::args_os()
         .skip(1)
         .map(|a| a.to_str().unwrap_or("").to_string())

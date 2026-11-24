@@ -4,8 +4,7 @@
 //
 // Minimal crash reporter: installs a SIGSEGV / SIGABRT / SIGBUS
 // signal handler that prints the last-executed opcode, bytecode
-// position, and function name from a thread-local context marker
-// updated by the interpreter's execute loop.
+// position, and source position of every running interpreter.
 //
 // Goal: when the interpreter crashes inside an opcode that corrupts
 // memory (heap overflow, stack overflow, use-after-free), the
@@ -14,93 +13,209 @@
 // process just aborts with no context.
 //
 // Usage: call [`install`] once near program start (or at test
-// harness init).  The interpreter's execute loop calls
-// [`set_context`] before each opcode dispatch to publish the
-// current PC / function / op-name.  On a crash the handler reads
-// that context and prints a one-line diagnostic to stderr before
-// the default handler runs.
+// harness init).  Each interpreter keeps its crash context in its
+// `Stores` ([`CrashCx`]): the full dispatch loop writes the op per
+// dispatch, the lean loop registers where it keeps its position
+// ([`LeanSource`]).  A running dispatch loop enters its context into
+// a table of atomic slots ([`register`]); on a crash the handler
+// reports every context in that table — it cannot know, and never
+// asks, which thread crashed (`@FR-C-Boundary`).
 //
 // Design notes:
 //
 // - Async-signal safety: signal handlers are extremely restricted —
 //   we cannot call `format!`, `println!`, or allocate.  We format
-//   directly into a thread-local `[u8; N]` buffer and write it with
-//   `libc::write(STDERR_FILENO, ...)`.  Everything is
-//   reentrant/async-signal-safe.
-// - Thread-local context: each thread publishes its own context.
-//   On crash we read the local thread's context only; worker threads
-//   get their own trace.
+//   directly into a fixed `[u8; N]` buffer on the stack and write it
+//   with `libc::write(STDERR_FILENO, ...)`.  The handler reads only
+//   atomics and a published `OnceLock`.
+// - A panic is not a signal: the interpreter and the compile steps
+//   catch their own panics and add the loft position they know
+//   (`State::dispatch`, [`compile_panicked`]), so no position is ever
+//   looked up by thread.
 // - No allocation: the buffer is fixed-size; the fields are all
 //   fixed-width types (u32 pc, u16 op code) or a `&'static str`
-//   (the op name, which is a compile-time constant from the
-//   interpreter's opcode table).
+//   (the op name, from the published opcode table).
 
 #![allow(clippy::module_name_repetitions)]
 
-use std::cell::Cell;
-use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
-thread_local! {
-    /// Last opcode dispatched on this thread.  (pc, op_name_ptr, op_name_len).
-    /// Updated by [`set_context`] from the interpreter's inner loop.
-    static LAST_CTX: Cell<Ctx> = const { Cell::new(Ctx::EMPTY) };
+/// A program's fault-site spans: the first pc of a construct → its position and its end pc.
+pub type Spans = BTreeMap<u32, (crate::lexer::Position, u32)>;
 
-    /// The labels that go with [`LAST_CTX`]: constant for a dispatch loop, so they are
-    /// written when the loop starts ([`set_dispatch_names`]) rather than with every op.
-    static LAST_NAMES: Cell<Names> = const { Cell::new(Names::EMPTY) };
-
-    /// `@FR-R-DispatchPublish` — where a running lean dispatch loop keeps the op it is on: a
-    /// pointer to the position it publishes for the allocator anyway (`Stores::alloc_pc`) and
-    /// one to its bytecode, registered once per loop by [`LeanSource`].  A reader derives the
-    /// op from them instead of the loop writing a context per op.
-    static LEAN_SRC: Cell<LeanSrc> = const { Cell::new(LeanSrc::NONE) };
-
-    /// Plan-07 phase 1 step 1.20 / phase 3 — pc → source-position table
-    /// snapshot for the running interpreter.  `State::execute_argv`
-    /// publishes a clone here on entry so the panic hook (a process-wide
-    /// non-allocating-restricted callback) can resolve the offending
-    /// pc to `file:line:col` when a Rust panic fires inside a loft
-    /// runtime fault (panic builtin, arithmetic overflow, future
-    /// div-by-zero kinds).  `None` outside the execute window.
-    static SOURCE_SPANS: std::cell::RefCell<Option<std::sync::Arc<std::collections::BTreeMap<u32, (crate::lexer::Position, u32)>>>> = const { std::cell::RefCell::new(None) };
-}
-
-// On non-Unix platforms the signal-handler consumer is compiled
-// out, so the fields look unread to rustc.  The thread-local
-// `set_context` writes still happen (and the tests read them),
-// so `#[allow(dead_code)]` is correct here for both targets.
+/// The op a context was dispatching.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct Ctx {
-    /// `u32::MAX` until an op has been dispatched on this thread.
+    /// `u32::MAX` until an op has been dispatched in this context.
     pc: u32,
     fn_d_nr: u32,
     /// The full opcode — `255 + ext` for a two-byte one, never the escape byte alone.
     op_code: u16,
 }
 
-impl Ctx {
-    const EMPTY: Ctx = Ctx {
-        pc: u32::MAX,
-        fn_d_nr: u32::MAX,
-        op_code: 0,
-    };
+/// `@PLN226` — one interpreter's crash context: the op it dispatches, the lean loop's
+/// registration it derives that op from, its fault-site spans and its store-trace names.
+/// Owned by the interpreter's `Stores` (`Stores::crash`, `@FR-C-Own`): the store layer's own
+/// fault reports read it there.  A fatal-signal report, which runs with no context in hand,
+/// reads it through the table of running interpreters ([`register`]), never by asking which
+/// thread runs (`@FR-C-Boundary`) — so the words that report reads are atomics.
+pub struct CrashCx {
+    pc: AtomicU32,
+    fn_d_nr: AtomicU32,
+    op_code: AtomicU32,
+    /// `@FR-R-DispatchPublish` — a running lean dispatch loop's position, bytecode and length
+    /// ([`LeanSource`]); null when no lean loop runs.
+    lean_pc: AtomicPtr<u32>,
+    lean_code: AtomicPtr<*const u8>,
+    lean_len: AtomicPtr<u32>,
+    /// The fault-site spans, and the same table for the fatal-signal report.
+    spans: Option<Arc<Spans>>,
+    spans_at: AtomicPtr<Spans>,
+    /// The store-lifetime instruments' names (`store_trace::PcNames`).
+    pub(crate) pc_names: Option<Arc<crate::store_trace::PcNames>>,
+    /// The slot of [`RUNNING`] this context holds, `usize::MAX` when none.
+    slot: AtomicUsize,
 }
 
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct Names {
-    op_name: &'static str,
-    fn_name: &'static str,
+impl Default for CrashCx {
+    fn default() -> Self {
+        CrashCx {
+            pc: AtomicU32::new(u32::MAX),
+            fn_d_nr: AtomicU32::new(u32::MAX),
+            op_code: AtomicU32::new(0),
+            lean_pc: AtomicPtr::new(std::ptr::null_mut()),
+            lean_code: AtomicPtr::new(std::ptr::null_mut()),
+            lean_len: AtomicPtr::new(std::ptr::null_mut()),
+            spans: None,
+            spans_at: AtomicPtr::new(std::ptr::null_mut()),
+            pc_names: None,
+            slot: AtomicUsize::new(usize::MAX),
+        }
+    }
 }
 
-impl Names {
-    const EMPTY: Names = Names {
-        op_name: "",
-        fn_name: "",
-    };
+impl Clone for CrashCx {
+    /// A new context (a worker's `Stores`) has dispatched nothing yet.
+    fn clone(&self) -> Self {
+        CrashCx::default()
+    }
+}
+
+impl CrashCx {
+    /// The op `pc` (`op_code`, in function `fn_d_nr`) is about to dispatch: the full loop's
+    /// per-op publish, twelve bytes.
+    #[inline]
+    pub fn set_dispatch(&self, pc: u32, op_code: u16, fn_d_nr: u32) {
+        self.pc.store(pc, Ordering::Relaxed);
+        self.op_code.store(u32::from(op_code), Ordering::Relaxed);
+        self.fn_d_nr.store(fn_d_nr, Ordering::Relaxed);
+    }
+
+    /// The op this context is dispatching: derived from a running lean loop's registration, or
+    /// the one the full loop wrote.
+    fn current(&self) -> Ctx {
+        let pc = self.lean_pc.load(Ordering::Relaxed);
+        if pc.is_null() {
+            return Ctx {
+                pc: self.pc.load(Ordering::Relaxed),
+                fn_d_nr: self.fn_d_nr.load(Ordering::Relaxed),
+                op_code: self.op_code.load(Ordering::Relaxed) as u16,
+            };
+        }
+        let code = self.lean_code.load(Ordering::Relaxed);
+        let len = self.lean_len.load(Ordering::Relaxed);
+        // SAFETY: registered by the running loop, which keeps all three alive and in place
+        // until its `LeanSource` drops (see `LeanSource::register`).
+        let (pc, base, len) = unsafe {
+            (
+                pc.read_volatile(),
+                code.read_volatile(),
+                len.read_volatile(),
+            )
+        };
+        // SAFETY: `base` holds `len` bytes — the cache `State::edit_code` keeps.
+        let byte = |at: u32| (at < len).then(|| unsafe { *base.add(at as usize) });
+        let op_code = match byte(pc) {
+            Some(255) => 255 + u16::from(byte(pc + 1).unwrap_or(0)),
+            Some(b) => u16::from(b),
+            None => u16::MAX,
+        };
+        Ctx {
+            pc,
+            fn_d_nr: u32::MAX,
+            op_code,
+        }
+    }
+
+    /// The last-dispatched op: `(pc, op_code, fn_d_nr)`, `pc` `u32::MAX` before the first.
+    /// Used by debug sentinels (the `put_stack`/`get_stack` DbRef-bounds check) and the
+    /// store layer's fault reports to say which op was executing.
+    #[must_use]
+    pub fn last_context(&self) -> (u32, u16, u32) {
+        let ctx = self.current();
+        (ctx.pc, ctx.op_code, ctx.fn_d_nr)
+    }
+
+    /// The name of the op being dispatched, or `""` if no table has been published yet.
+    ///
+    /// The signal handler is not the only reader that needs this.  A runtime invariant
+    /// breach reported from deep inside the store layer — `BUG (#306)`, a strict-store
+    /// violation — has a `pc` and nothing else, and a bare `pc` is a position in the WHOLE
+    /// bytecode stream (stdlib included) that no tool a reader has in hand can resolve.
+    /// Naming the op turns "something freed store 0" into "this op freed store 0", which is
+    /// the difference between a report and a lead (loft#920).
+    #[must_use]
+    pub fn last_op_name(&self) -> &'static str {
+        op_name_of(self.current().op_code)
+    }
+
+    /// Plan-07 phase 1 step 1.20 / phase 3 — the interpreter's fault-site spans, so a fault
+    /// can print `at file:line:col` for the offending pc.  `None` clears them.
+    pub fn set_spans(&mut self, spans: Option<Arc<Spans>>) {
+        let at = spans
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |s| Arc::as_ptr(s).cast_mut());
+        self.spans_at.store(at, Ordering::Release);
+        self.spans = spans;
+    }
+
+    /// Plan-07 phase 1 step 1.20 / phase 3 — the source position of the construct that
+    /// CONTAINS `pc`.
+    ///
+    /// `None` when no spans are set or no recorded span covers `pc`.  Answering `None` is the
+    /// point: the table is sparse, so most pcs have a nearest preceding entry that belongs to
+    /// an unrelated earlier statement, and rendering that as `at file:line:col` sends a reader
+    /// to a line the fault is not on with nothing to mark it a guess (loft#1262).  A caller
+    /// that wants the approximate answer, and can present it as one, calls
+    /// [`Self::nearest_source_loc_for_pc`].
+    ///
+    /// Spans nest, so the walk is backwards and the first covering entry is the innermost —
+    /// the most precise position available.
+    #[must_use]
+    pub fn source_loc_for_pc(&self, pc: u32) -> Option<crate::lexer::Position> {
+        self.spans.as_ref().and_then(|m| {
+            m.range(..=pc)
+                .rev()
+                .find(|(_, (_, end))| *end > pc)
+                .map(|(_, (p, _))| *p)
+        })
+    }
+
+    /// The nearest span recorded at or before `pc`, with the pc it was recorded at.
+    ///
+    /// This is the approximate reading, and a caller must present it as one — the distance
+    /// between the two pcs is how much to trust it.  Use it only where a rough location beats
+    /// none; where the output looks like an exact position, [`Self::source_loc_for_pc`] is the
+    /// one that can be trusted.
+    #[must_use]
+    pub fn nearest_source_loc_for_pc(&self, pc: u32) -> Option<(u32, crate::lexer::Position)> {
+        self.spans
+            .as_ref()
+            .and_then(|m| m.range(..=pc).next_back().map(|(at, (p, _))| (*at, *p)))
+    }
 }
 
 /// Opcode number → name, published once per process by [`set_op_names`].
@@ -138,95 +253,152 @@ fn op_name_of(op: u16) -> &'static str {
         .unwrap_or("")
 }
 
-/// The name of the opcode that was dispatching on this thread, or `""` if no table has
-/// been published yet.
-///
-/// The signal handler is not the only reader that needs this. A runtime invariant
-/// breach reported from deep inside the store layer — `BUG (#306)`, a strict-store
-/// violation — has a `pc` and nothing else, and a bare `pc` is a position in the WHOLE
-/// bytecode stream (stdlib included) that no tool a reader has in hand can resolve.
-/// Naming the op turns "something freed store 0" into "this op freed store 0", which is
-/// the difference between a report and a lead (loft#920).
-#[must_use]
-pub fn last_op_name() -> &'static str {
-    let op = current_ctx().op_code;
-    OP_NAMES
-        .get()
-        .and_then(|v| v.get(op as usize).copied())
-        .unwrap_or("")
-}
-
 #[derive(Clone, Copy)]
 struct LeanSrc {
-    pc: *const u32,
-    code: *const *const u8,
-    len: *const u32,
+    pc: *mut u32,
+    code: *mut *const u8,
+    len: *mut u32,
 }
 
-impl LeanSrc {
-    const NONE: LeanSrc = LeanSrc {
-        pc: std::ptr::null(),
-        code: std::ptr::null(),
-        len: std::ptr::null(),
-    };
-}
-
-/// `@FR-R-DispatchPublish` — a lean dispatch loop's registration, alive for exactly the loop:
-/// built before its first op, dropped on every way out (a return, a break, an unwind), when it
-/// publishes the last op into [`LAST_CTX`] — so a reader after the loop still finds it — and
-/// restores the registration it replaced, which is how a nested loop leaves its caller's.
+/// `@FR-R-DispatchPublish` — a lean dispatch loop's registration in its context's
+/// [`CrashCx`], alive for exactly the loop: built before its first op, dropped on every way out
+/// (a return, a break, an unwind), when it publishes the last op into the context — so a reader
+/// after the loop still finds it — and restores the registration it replaced, which is how a
+/// nested loop leaves its caller's.
 pub struct LeanSource {
+    cx: *const CrashCx,
     prev: LeanSrc,
 }
 
 impl LeanSource {
     /// Register the loop's op position and its bytecode's cached base and length
-    /// (`@FR-R-CodeBase`).  All three are fields of the running `State`, which does not move
-    /// while its loop runs; they are read at report time, so code written during the loop is
-    /// read as written.
+    /// (`@FR-R-CodeBase`) in `cx`.  All three are fields of the running `State`, which does
+    /// not move while its loop runs; they are read at report time, so code written during the
+    /// loop is read as written.
     #[must_use]
-    pub fn register(pc: *const u32, code: *const *const u8, len: *const u32) -> LeanSource {
-        let prev = LEAN_SRC.with(|c| c.replace(LeanSrc { pc, code, len }));
-        LeanSource { prev }
+    pub fn register(
+        cx: &CrashCx,
+        pc: *const u32,
+        code: *const *const u8,
+        len: *const u32,
+    ) -> LeanSource {
+        let prev = LeanSrc {
+            pc: cx.lean_pc.swap(pc.cast_mut(), Ordering::Relaxed),
+            code: cx.lean_code.swap(code.cast_mut(), Ordering::Relaxed),
+            len: cx.lean_len.swap(len.cast_mut(), Ordering::Relaxed),
+        };
+        LeanSource { cx, prev }
     }
 }
 
 impl Drop for LeanSource {
     fn drop(&mut self) {
-        let last = current_ctx();
-        LAST_CTX.with(|c| c.set(last));
-        LEAN_SRC.with(|c| c.set(self.prev));
+        // SAFETY: the context is a field of the `Stores` of the `State` whose loop built this,
+        // which outlives the loop and does not move while it runs.
+        let cx = unsafe { &*self.cx };
+        let last = cx.current();
+        cx.set_dispatch(last.pc, last.op_code, last.fn_d_nr);
+        cx.lean_pc.store(self.prev.pc, Ordering::Relaxed);
+        cx.lean_code.store(self.prev.code, Ordering::Relaxed);
+        cx.lean_len.store(self.prev.len, Ordering::Relaxed);
     }
 }
 
-/// The op this thread is dispatching: derived from a running lean loop's registration, or the
-/// context the full loop and [`set_context`] write.
-fn current_ctx() -> Ctx {
-    let src = LEAN_SRC.with(Cell::get);
-    if src.pc.is_null() {
-        return LAST_CTX.with(Cell::get);
+/// How many interpreters a fatal-signal report can name at once.
+const SLOTS: usize = 64;
+
+/// `@PLN226` — the running interpreters' crash contexts, for the fatal-signal report: a slot
+/// per running dispatch loop, each one atomic word (`@FR-C-Publish`), taken by compare-and-swap
+/// when the loop starts ([`register`]) and given back when it ends.  The report names every
+/// interpreter in the table; it never asks which thread crashed (`@FR-C-Boundary`).
+static RUNNING: [AtomicPtr<CrashCx>; SLOTS] =
+    [const { AtomicPtr::new(std::ptr::null_mut()) }; SLOTS];
+
+/// A context's place in [`RUNNING`], given back on drop.
+pub struct Running {
+    cx: *const CrashCx,
+}
+
+/// Enter `cx` into the table of running interpreters, for the fatal-signal report.  `None`
+/// when it is already there (a nested loop of the same interpreter) or the table is full.
+#[must_use]
+pub fn register(cx: &CrashCx) -> Option<Running> {
+    if cx.slot.load(Ordering::Relaxed) != usize::MAX {
+        return None;
     }
-    // SAFETY: registered by the running loop on this thread, which keeps both alive and in
-    // place until its `LeanSource` drops (see `LeanSource::register`).
-    let (pc, base, len) = unsafe {
-        (
-            src.pc.read_volatile(),
-            src.code.read_volatile(),
-            src.len.read_volatile(),
-        )
-    };
-    // SAFETY: `base` holds `len` bytes — the cache `State::edit_code` keeps.
-    let byte = |at: u32| (at < len).then(|| unsafe { *base.add(at as usize) });
-    let op_code = match byte(pc) {
-        Some(255) => 255 + u16::from(byte(pc + 1).unwrap_or(0)),
-        Some(b) => u16::from(b),
-        None => u16::MAX,
-    };
-    Ctx {
-        pc,
-        fn_d_nr: u32::MAX,
-        op_code,
+    let me = std::ptr::from_ref(cx).cast_mut();
+    for (at, slot) in RUNNING.iter().enumerate() {
+        if slot
+            .compare_exchange(
+                std::ptr::null_mut(),
+                me,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            cx.slot.store(at, Ordering::Relaxed);
+            return Some(Running { cx });
+        }
     }
+    None
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        // SAFETY: the context outlives the loop that registered it (see [`register`]).
+        let cx = unsafe { &*self.cx };
+        let at = cx.slot.swap(usize::MAX, Ordering::Relaxed);
+        if let Some(slot) = RUNNING.get(at) {
+            slot.store(std::ptr::null_mut(), Ordering::Release);
+        }
+    }
+}
+
+/// Whether an interpreter that panics prints `at file:line:col` for the op it was
+/// dispatching (`State::dispatch`).  The CLI asks for it ([`tell_panic_positions`]); a test
+/// binary or an embedder, whose panics are its own to report, does not.
+static PANIC_POSITIONS: AtomicBool = AtomicBool::new(false);
+
+/// Plan-07 phase 1 step 1.20 / phase 3 — an interpreter that panics names the loft source
+/// position of the op it was dispatching, after the panic's own message.  It prints a position
+/// only when a recorded span COVERS the pc, and otherwise says nothing: the span table is
+/// sparse, so an inherited answer names whatever statement happened to be wrapped last
+/// (loft#1262).
+pub fn tell_panic_positions() {
+    PANIC_POSITIONS.store(true, Ordering::Relaxed);
+}
+
+/// Did the CLI ask for panic positions ([`tell_panic_positions`]), and not for quiet
+/// ([`quiet_panics`])?
+#[must_use]
+pub fn panic_positions() -> bool {
+    PANIC_POSITIONS.load(Ordering::Relaxed) && !QUIET.load(Ordering::Relaxed)
+}
+
+/// Whether the process keeps panic reports to itself ([`quiet_panics`]).
+static QUIET: AtomicBool = AtomicBool::new(false);
+
+/// Keep Rust's raw `thread panicked at …` report, and the loft position after it, off stderr
+/// for the rest of the process.  For the CLI's REPL and file debugger, which catch a program's
+/// runtime panic and report it cleanly, so the raw report is noise.
+///
+/// A panic hook is the process's, and can know only the process, never the session a panic
+/// came from (`@FR-C-Boundary`): so quiet is asked for by a process that is nothing but the
+/// session — the CLI, before its session starts.  A REPL run inside another process (a test,
+/// an embedder) keeps the raw report, which that process's own harness owns; swapping the hook
+/// per session would silence its unrelated threads for the duration.
+pub fn quiet_panics() {
+    QUIET.store(true, Ordering::Relaxed);
+    static INSTALL: OnceLock<()> = OnceLock::new();
+    INSTALL.get_or_init(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET.load(Ordering::Relaxed) {
+                previous(info);
+            }
+        }));
+    });
 }
 
 /// Used by the installer to ensure we only install once per process.
@@ -314,177 +486,79 @@ pub fn crash_file_path() -> Option<String> {
     CRASH_FILE.get().map(|c| c.display.clone())
 }
 
-/// Update the per-thread context just before an opcode dispatches.
-///
-/// Call this AT MOST ONCE per opcode.  The inner loop overhead is
-/// a single thread-local store (one atomic-less write on most
-/// platforms) so the hot path stays cheap.
-#[inline]
-pub fn set_context(
-    pc: u32,
-    op_code: u16,
-    op_name: &'static str,
-    fn_d_nr: u32,
-    fn_name: &'static str,
-) {
-    LAST_CTX.with(|c| {
-        c.set(Ctx {
-            pc,
-            fn_d_nr,
-            op_code,
-        });
-    });
-    LAST_NAMES.with(|c| c.set(Names { op_name, fn_name }));
-}
-
-/// The labels a dispatch loop's [`set_dispatch`] calls go with, set once as the loop starts.
-pub fn set_dispatch_names(op_name: &'static str, fn_name: &'static str) {
-    LAST_NAMES.with(|c| c.set(Names { op_name, fn_name }));
-}
-
-/// [`set_context`] for a dispatch loop: the per-op fields only, twelve bytes, the labels
-/// having been set by [`set_dispatch_names`].  It runs once per interpreted op.
-#[inline]
-pub fn set_dispatch(pc: u32, op_code: u16, fn_d_nr: u32) {
-    LAST_CTX.with(|c| {
-        c.set(Ctx {
-            pc,
-            fn_d_nr,
-            op_code,
-        });
-    });
-}
-
-/// Read the last-dispatched opcode context on this thread.
-/// Returns (pc, op_code, fn_d_nr).  Used by debug sentinels (e.g.
-/// the `put_stack`/`get_stack` DbRef-bounds check) to report which
-/// op was executing when a stack value turned out to be corrupt.
-#[must_use]
-#[allow(dead_code)]
-pub fn last_context() -> (u32, u16, u32) {
-    let ctx = current_ctx();
-    (ctx.pc, ctx.op_code, ctx.fn_d_nr)
-}
-
-/// Plan-07 phase 1 step 1.20 / phase 3 — publish a snapshot of the
-/// current `State::source_spans` so the panic hook can look up
-/// `at file:line:col` for the offending pc.  Pass `None` to clear.
-pub fn set_source_spans(
-    spans: Option<std::sync::Arc<std::collections::BTreeMap<u32, (crate::lexer::Position, u32)>>>,
-) {
-    SOURCE_SPANS.with(|s| {
-        *s.borrow_mut() = spans;
-    });
-}
-
-/// Plan-07 phase 1 step 1.20 / phase 3 — the source position of the construct
-/// that CONTAINS `pc`, from the current thread's published span snapshot.
-///
-/// `None` when no snapshot is active or no recorded span covers `pc`.  Answering
-/// `None` is the point: the table is sparse, so most pcs have a nearest preceding
-/// entry that belongs to an unrelated earlier statement, and rendering that as
-/// `at file:line:col` sends a reader to a line the fault is not on with nothing to
-/// mark it a guess (loft#1262).  A caller that wants the approximate answer, and
-/// can present it as one, calls [`nearest_source_loc_for_pc`].
-///
-/// Spans nest, so the walk is backwards and the first covering entry is the
-/// innermost — the most precise position available.
-#[must_use]
-pub fn source_loc_for_pc(pc: u32) -> Option<crate::lexer::Position> {
-    SOURCE_SPANS.with(|s| {
-        let borrow = s.borrow();
-        borrow.as_ref().and_then(|m| {
-            m.range(..=pc)
-                .rev()
-                .find(|(_, (_, end))| *end > pc)
-                .map(|(_, (p, _))| *p)
-        })
-    })
-}
-
-/// The nearest span recorded at or before `pc`, with the pc it was recorded at.
-///
-/// This is the approximate reading, and a caller must present it as one — the
-/// distance between the two pcs is how much to trust it.  Use it only where a
-/// rough location beats none; where the output looks like an exact position,
-/// [`source_loc_for_pc`] is the one that can be trusted.
-#[must_use]
-pub fn nearest_source_loc_for_pc(pc: u32) -> Option<(u32, crate::lexer::Position)> {
-    SOURCE_SPANS.with(|s| {
-        let borrow = s.borrow();
-        borrow
-            .as_ref()
-            .and_then(|m| m.range(..=pc).next_back().map(|(at, (p, _))| (*at, *p)))
-    })
-}
-
-thread_local! {
-    /// The loft source position the compiler is currently working on.
-    ///
-    /// A signal handler cannot allocate, so the SIGSEGV path above resolves its
-    /// position from a pc.  A PANIC handler runs on the normal stack and may
-    /// allocate freely, which is what lets this one carry a real `Position`.
-    static COMPILE_POS: RefCell<Option<crate::lexer::Position>> = const { RefCell::new(None) };
-}
-
-/// Publish the loft source position the compiler is currently working on, so an
-/// internal panic can point at the USER's program instead of at a compiler
-/// source file (loft#665 piece 3).
-///
-/// Called at two chokepoints — per source line while parsing, and per definition
-/// while generating code — rather than at the thousands of individual `assert!` /
-/// `unwrap` sites, which is the only reason this is one mechanism instead of a
-/// spray that would be silently incomplete the moment anyone adds an assert.
-pub fn note_compile_pos(pos: &crate::lexer::Position) {
-    COMPILE_POS.with(|p| {
-        if let Ok(mut slot) = p.try_borrow_mut() {
-            *slot = Some(*pos);
-        }
-    });
-}
-
-/// Forget the current compile position — call once compilation is done, so a
-/// RUNTIME panic is not misattributed to the last line that was compiled.
-pub fn clear_compile_pos() {
-    COMPILE_POS.with(|p| {
-        if let Ok(mut slot) = p.try_borrow_mut() {
-            *slot = None;
-        }
-    });
-}
-
 /// The prefix that marks a panic as a program past one of the compiler's hard limits, not as a
-/// compiler fault: the hook renders it as an ordinary error at the definition's position.
+/// compiler fault.
 const LIMIT_MARK: &str = "loft limit: ";
 
 /// Stop compiling: the program at `pos` passes a hard limit of the compiler, described by
 /// `message`.  For a limit a pass meets after the parser, where no diagnostics list is in hand
-/// (the 64 KiB stack frame, `crate::limits`).  Under the CLI's panic hook the program sees one
-/// `error:` and exit 1; elsewhere the panic message carries the same text.
+/// (the 64 KiB stack frame, `crate::limits`).  Under the CLI's panic hook
+/// ([`install_panic_hook`]) the program sees one `error:` and exit 1; elsewhere a panic carries
+/// the same text.
 ///
 /// # Panics
-/// Always: the panic is how the refusal leaves a pass that has no diagnostics list.
+/// Outside the CLI: the panic is how the refusal leaves a pass that has no diagnostics list.
 pub fn limit_exceeded(pos: &crate::lexer::Position, message: &str) -> ! {
-    note_compile_pos(pos);
+    if PANIC_HOOK_INSTALLED.load(Ordering::Relaxed) {
+        render_at(crate::diagnostics::Level::Error, message, pos);
+        std::process::exit(1);
+    }
     panic!("{LIMIT_MARK}{message}")
 }
 
-#[must_use]
-pub fn compile_pos() -> Option<crate::lexer::Position> {
-    COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| *b))
+/// loft#665 piece 3 — a compile step that panicked at `pos` in the user's program: under the
+/// CLI's panic hook ([`install_panic_hook`]), say so as a loft diagnostic at that position,
+/// after the Rust-side report the hook printed.  Called by the compile steps that catch their
+/// own panics (`Parser::guarded`, `compile::byte_code`) with the position they were at — a
+/// position is the compile's own, never looked up by thread (`@FR-C-Boundary`).
+pub fn compile_panicked(pos: &crate::lexer::Position, payload: &(dyn std::any::Any + Send)) {
+    if !PANIC_HOOK_INSTALLED.load(Ordering::Relaxed) || crate::call_frames::in_lazy_driver() {
+        return;
+    }
+    let detail = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "internal error".to_string());
+    let msg = format!(
+        "internal compiler error — please report this program at \
+         https://github.com/loft-lang/loft/issues\n  {detail}"
+    );
+    render_at(crate::diagnostics::Level::Fatal, &msg, pos);
 }
 
-/// Render an internal compiler panic as a loft diagnostic pointing at the user's
-/// source, then defer to the previous hook for the Rust-side detail.
+/// Print `msg` as a diagnostic of `level` at `pos`, in the CLI's error mode.
+fn render_at(level: crate::diagnostics::Level, msg: &str, pos: &crate::lexer::Position) {
+    let mut diags = crate::diagnostics::Diagnostics::new();
+    diags.add_at(level, msg, pos.file.as_str(), pos.line, pos.pos);
+    let mode = crate::diagnostic_render::ErrorMode::from_cli_and_env(None);
+    if matches!(mode, crate::diagnostic_render::ErrorMode::Pretty) {
+        let loader = crate::diagnostic_render::FileSourceLoader::new();
+        eprint!(
+            "{}",
+            crate::diagnostic_render::render_pretty_all(
+                &diags,
+                &loader,
+                crate::diagnostic_render::ColorMode::Auto,
+            )
+        );
+    } else {
+        for entry in diags.entries() {
+            eprintln!("{}", entry.to_string_compact());
+        }
+    }
+}
+
+/// The CLI's panic hook: a closed stdout ends the run quietly, a fault inside a lazy driver is
+/// not announced, and everything else gets the Rust report.  It also arms the loft-side
+/// report of a compile step's panic ([`compile_panicked`]) and of a hard limit
+/// ([`limit_exceeded`]).
 ///
-/// A compiler-internal invariant that breaks is still something the USER
-/// triggered with a specific program, and until now they were shown only
-/// `thread 'main' panicked at src/state/codegen.rs:2955` naming a generated
-/// symbol and an argument count they never wrote (loft#662).  Nothing in that
-/// says which line of their program to look at, or that a bug report is wanted.
-///
-/// Wrapping the hook rather than replacing it keeps the Rust location and
-/// backtrace, which are what make the report actionable.
+/// A compiler-internal invariant that breaks is still something the USER triggered with a
+/// specific program, and `thread 'main' panicked at src/state/codegen.rs:2955` alone names a
+/// generated symbol and an argument count they never wrote (loft#662).  Wrapping the hook
+/// rather than replacing it keeps the Rust location and backtrace, which are what make the
+/// report actionable; the compile step that caught the panic adds the user's line.
 pub fn install_panic_hook() {
     if PANIC_HOOK_INSTALLED.swap(true, Ordering::SeqCst) {
         return;
@@ -507,58 +581,6 @@ pub fn install_panic_hook() {
         // correctly answered null would look like a program that fell over.
         if crate::call_frames::in_lazy_driver() {
             return;
-        }
-        if let Some(pos) = compile_pos() {
-            let detail = info
-                .payload()
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| info.payload().downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "internal error".to_string());
-            let limit = detail.strip_prefix(LIMIT_MARK);
-            let at = info
-                .location()
-                .map_or_else(String::new, |l| format!(" [{}:{}]", l.file(), l.line()));
-            let msg = limit.map_or_else(
-                || {
-                    format!(
-                        "internal compiler error — please report this program at \
-                         https://github.com/loft-lang/loft/issues\n  {detail}{at}"
-                    )
-                },
-                str::to_string,
-            );
-            let mut diags = crate::diagnostics::Diagnostics::new();
-            diags.add_at(
-                if limit.is_some() {
-                    crate::diagnostics::Level::Error
-                } else {
-                    crate::diagnostics::Level::Fatal
-                },
-                &msg,
-                pos.file.as_str(),
-                pos.line,
-                pos.pos,
-            );
-            let mode = crate::diagnostic_render::ErrorMode::from_cli_and_env(None);
-            if matches!(mode, crate::diagnostic_render::ErrorMode::Pretty) {
-                let loader = crate::diagnostic_render::FileSourceLoader::new();
-                eprint!(
-                    "{}",
-                    crate::diagnostic_render::render_pretty_all(
-                        &diags,
-                        &loader,
-                        crate::diagnostic_render::ColorMode::Auto,
-                    )
-                );
-            } else {
-                for entry in diags.entries() {
-                    eprintln!("{}", entry.to_string_compact());
-                }
-            }
-            if limit.is_some() {
-                std::process::exit(1);
-            }
         }
         prev(info);
     }));
@@ -585,111 +607,49 @@ pub fn install(program: &'static str) {
     crate::platform::on_fatal_signal(report_fatal);
 }
 
-/// The op and function labels a crash report prints: the opcode's own name when the table
-/// reached us, else the dispatch loop's label — never just the number, which names nothing —
-/// and the function's label, or `(?)`.
-fn context_labels(op_code: u16) -> (&'static str, &'static str) {
-    let labels = LAST_NAMES.with(Cell::get);
+/// The op label a crash report prints: the opcode's own name when the table reached us, else
+/// the dispatch loop's — never just the number, which names nothing.
+fn op_label(op_code: u16) -> &'static str {
     let named = op_name_of(op_code);
-    let op = if named.is_empty() {
-        labels.op_name
+    if named.is_empty() {
+        "(opcode dispatch)"
     } else {
         named
-    };
-    let func = if labels.fn_name.is_empty() {
-        "(?)"
-    } else {
-        labels.fn_name
-    };
-    (op, func)
+    }
 }
 
 /// The fatal-signal report, called INSIDE the signal handler (`platform::on_fatal_signal`)
-/// with the signal's name.  Async-signal-safe: reads the thread-local context and writes a
-/// diagnostic to stderr (and the crash file) from a fixed buffer; the default handler then
-/// takes over (which produces a core dump if `ulimit -c` is set).
+/// with the signal's name.  Names every running interpreter ([`RUNNING`]) — one, unless `par`
+/// workers or a host run beside the program — by its last op and position.  Async-signal-safe:
+/// it reads atomics and writes a diagnostic to stderr (and the crash file) from a fixed buffer;
+/// the default handler then takes over (which produces a core dump if `ulimit -c` is set).
 fn report_fatal(sig_name: &'static str) {
-    // Read the context.  If the interpreter wasn't running, EMPTY
-    // fields produce a "no context" message — still useful to
-    // confirm the signal fired.
-    let ctx = current_ctx();
-    let (op_label, fn_label) = context_labels(ctx.op_code);
-    // Plan-07 phase 3 — try to resolve the offending pc to a loft
-    // source position.  This is technically not async-signal-safe
-    // (`RefCell::try_borrow` reads a counter that another borrow
-    // could be mutating mid-signal), but in practice the
-    // SOURCE_SPANS RefCell is mutated only once per `execute_argv`
-    // entry — a microsecond window — and `try_borrow` returns Err
-    // (we then skip the source-loc print) instead of panicking on
-    // a conflict.  Worst case: the crash report omits the source
-    // line, which is the same as the pre-phase-3 behaviour.
-    // The span AND the pc it was recorded at.  The lookup is "the last span at or
-    // before pc", which is only the crash site when a span actually covers that pc
-    // — and the table is sparse (one entry per statement, and none at all for
-    // regions no statement produced).  Unqualified, it reported loft#806's fault
-    // at `default/05_coroutine.loft:18:27`, a stdlib line the program never calls,
-    // and sent the reader there.  Carrying the DISTANCE turns a confident wrong
-    // answer into a reading that says how much to trust it: `+0` is the statement,
-    // `+3121` is "the nearest thing recorded, three thousand bytes back".
-    let source_loc = SOURCE_SPANS.with(|s| {
-        s.try_borrow().ok().and_then(|borrow| {
-            borrow
-                .as_ref()
-                .and_then(|m| m.range(..=ctx.pc).next_back())
-                .map(|(at, (p, _))| (*at, *p))
-        })
-    });
     let program = PROGRAM.get().copied().unwrap_or("loft");
     // Build message into a fixed-size buffer, async-signal-safe.
-    let mut buf = [0u8; 768];
+    let mut buf = [0u8; 4096];
     let mut w = Writer::new(&mut buf);
     let _ = w.str("\n=== loft crash (");
     let _ = w.str(program);
     let _ = w.str(") ");
     let _ = w.str(sig_name);
-    let _ = w.str(" caught ===\n  last op:  ");
-    if ctx.pc == u32::MAX {
-        let _ = w.str("(none — crash outside interpreter)\n");
-    } else {
-        let _ = w.str(op_label);
-        let _ = w.str(" (op=");
-        let _ = w.u32(u32::from(ctx.op_code));
-        let _ = w.str(")\n  pc:       ");
-        let _ = w.u32(ctx.pc);
-        let _ = w.str("\n  fn:       ");
-        let _ = w.str(fn_label);
-        // The lean loop does not track the function (`LeanSource`); the `at:` line
-        // below names it.
-        if ctx.fn_d_nr != u32::MAX {
-            let _ = w.str(" (d_nr=");
-            let _ = w.u32(ctx.fn_d_nr);
-            let _ = w.str(")");
+    let _ = w.str(" caught ===\n");
+    let mut told = 0;
+    for slot in &RUNNING {
+        let cx = slot.load(Ordering::Acquire);
+        if cx.is_null() {
+            continue;
         }
-        let _ = w.str("\n");
-        // Plan-07 phase 3 — emit `at file:line:col` when the source
-        // span lookup succeeded.  Truncate file path to fit; the
-        // user can still grep for it.
-        if let Some((span_pc, pos)) = source_loc.as_ref() {
-            let _ = w.str("  at:      ");
-            let _ = w.str(pos.file.as_str());
-            let _ = w.str(":");
-            let _ = w.u32(pos.line);
-            let _ = w.str(":");
-            let _ = w.u32(pos.pos);
-            // How far the crashing pc is PAST the statement this line describes.
-            // Zero means the line is the site; anything large means the table had
-            // nothing nearer and the line is a lower bound, not an answer.
-            let gap = ctx.pc.saturating_sub(*span_pc);
-            if gap == 0 {
-                let _ = w.str("\n");
-            } else {
-                let _ = w.str("  (nearest span, pc+");
-                let _ = w.u32(gap);
-                let _ = w.str(" — NOT necessarily this line)\n");
-            }
-        } else {
-            let _ = w.str("  at:      (no source span covers this pc)\n");
+        if told > 0 {
+            let _ = w.str("  ---\n");
         }
+        // SAFETY: a context stays in the table only while its loop runs (`Running`), and the
+        // report reads its atomics alone: the owning thread may be mid-op, never mid-free.
+        report_context(&mut w, unsafe { &*cx });
+        told += 1;
+    }
+    if told == 0 {
+        // Still useful: it confirms the signal fired.
+        let _ = w.str("  last op:  (none — crash outside interpreter)\n");
     }
     let _ = w.str("===\n");
     let bytes = w.as_bytes();
@@ -711,6 +671,66 @@ fn report_fatal(sig_name: &'static str) {
     }
     // SA_RESETHAND → the default handler fires next, producing the
     // core dump and terminating the process.
+}
+
+/// One running interpreter's lines in the fatal-signal report: its last op, pc and function,
+/// and the source position of that op.
+fn report_context(w: &mut Writer, cx: &CrashCx) {
+    let ctx = cx.current();
+    let _ = w.str("  last op:  ");
+    if ctx.pc == u32::MAX {
+        let _ = w.str("(none yet)\n");
+        return;
+    }
+    let _ = w.str(op_label(ctx.op_code));
+    let _ = w.str(" (op=");
+    let _ = w.u32(u32::from(ctx.op_code));
+    let _ = w.str(")\n  pc:       ");
+    let _ = w.u32(ctx.pc);
+    let _ = w.str("\n  fn:       (?)");
+    // The lean loop does not track the function (`LeanSource`); the `at:` line below names it.
+    if ctx.fn_d_nr != u32::MAX {
+        let _ = w.str(" (d_nr=");
+        let _ = w.u32(ctx.fn_d_nr);
+        let _ = w.str(")");
+    }
+    let _ = w.str("\n");
+    // Plan-07 phase 3 — the span AND the pc it was recorded at.  The lookup is "the last span
+    // at or before pc", which is only the crash site when a span actually covers that pc — and
+    // the table is sparse (one entry per statement, and none at all for regions no statement
+    // produced).  Unqualified, it reported loft#806's fault at `default/05_coroutine.loft:18:27`,
+    // a stdlib line the program never calls, and sent the reader there.  Carrying the DISTANCE
+    // turns a confident wrong answer into a reading that says how much to trust it: `+0` is
+    // the statement, `+3121` is "the nearest thing recorded, three thousand bytes back".
+    let spans = cx.spans_at.load(Ordering::Acquire);
+    // SAFETY: the table the context holds (`CrashCx::spans`) while it runs.
+    let source_loc = (!spans.is_null())
+        .then(|| unsafe { &*spans })
+        .and_then(|m| m.range(..=ctx.pc).next_back())
+        .map(|(at, (p, _))| (*at, *p));
+    // Plan-07 phase 3 — emit `at file:line:col` when the source span lookup succeeded.
+    // Truncate file path to fit; the user can still grep for it.
+    if let Some((span_pc, pos)) = source_loc.as_ref() {
+        let _ = w.str("  at:      ");
+        let _ = w.str(pos.file.as_str());
+        let _ = w.str(":");
+        let _ = w.u32(pos.line);
+        let _ = w.str(":");
+        let _ = w.u32(pos.pos);
+        // How far the crashing pc is PAST the statement this line describes.  Zero means the
+        // line is the site; anything large means the table had nothing nearer and the line is
+        // a lower bound, not an answer.
+        let gap = ctx.pc.saturating_sub(*span_pc);
+        if gap == 0 {
+            let _ = w.str("\n");
+        } else {
+            let _ = w.str("  (nearest span, pc+");
+            let _ = w.u32(gap);
+            let _ = w.str(" — NOT necessarily this line)\n");
+        }
+    } else {
+        let _ = w.str("  at:      (no source span covers this pc)\n");
+    }
 }
 
 // `Writer` and its methods are pure Rust, so the fatal-signal report can format without
@@ -795,18 +815,32 @@ mod tests {
 
     #[test]
     fn context_updates() {
-        set_context(10, 7, "OpVarInt", 42, "main");
-        LAST_CTX.with(|c| {
-            let ctx = c.get();
-            assert_eq!(ctx.pc, 10);
-            assert_eq!(ctx.op_code, 7);
-            assert_eq!(ctx.fn_d_nr, 42);
-        });
-        LAST_NAMES.with(|c| {
-            let names = c.get();
-            assert_eq!(names.op_name, "OpVarInt");
-            assert_eq!(names.fn_name, "main");
-        });
+        let cx = CrashCx::default();
+        assert_eq!(cx.last_context().0, u32::MAX, "nothing dispatched yet");
+        cx.set_dispatch(10, 7, 42);
+        assert_eq!(cx.last_context(), (10, 7, 42));
+    }
+
+    /// A running interpreter holds a slot of the table the fatal-signal report reads, once
+    /// however deeply its loops nest, and gives it back when its loop ends.
+    #[test]
+    fn a_running_context_holds_one_slot_while_it_runs() {
+        let cx = CrashCx::default();
+        let held = |cx: &CrashCx| {
+            RUNNING
+                .iter()
+                .filter(|s| std::ptr::eq(s.load(Ordering::Relaxed), cx))
+                .count()
+        };
+        let outer = register(&cx).expect("a free slot");
+        assert_eq!(held(&cx), 1);
+        assert!(
+            register(&cx).is_none(),
+            "a nested loop takes no second slot"
+        );
+        assert_eq!(held(&cx), 1);
+        drop(outer);
+        assert_eq!(held(&cx), 0, "the slot is given back");
     }
 
     #[test]
@@ -880,7 +914,10 @@ mod tests {
         // A nested pair: the inner construct sits inside the outer one.
         spans.insert(100, (at(40), 200));
         spans.insert(120, (at(50), 130));
-        set_source_spans(Some(Arc::new(spans)));
+        let mut cx = CrashCx::default();
+        cx.set_spans(Some(Arc::new(spans)));
+        let source_loc_for_pc = |pc| cx.source_loc_for_pc(pc);
+        let nearest_source_loc_for_pc = |pc| cx.nearest_source_loc_for_pc(pc);
 
         // Inside a span — its first pc, its middle, its last — is the position.
         assert_eq!(source_loc_for_pc(5).unwrap().line, 10);
@@ -913,53 +950,11 @@ mod tests {
         let (recorded_at, pos) = nearest_source_loc_for_pc(45).expect("nearest");
         assert_eq!((recorded_at, pos.line), (20, 20));
         assert!(nearest_source_loc_for_pc(4).is_none());
-
-        // Cleanup so other tests don't see this snapshot.
-        set_source_spans(None);
     }
 
     #[test]
     fn source_loc_lookup_returns_none_when_no_snapshot() {
-        // Ensure the thread-local is unset at the start.
-        set_source_spans(None);
-        assert!(source_loc_for_pc(42).is_none());
-    }
-
-    /// loft#665 piece 3 — the compile position an internal panic reports.  It must
-    /// be publishable, readable, and above all CLEARABLE: a runtime panic that
-    /// still saw a stale compile position would point the user at whatever line
-    /// happened to compile last, which is worse than saying nothing.
-    #[test]
-    fn compile_pos_round_trips_and_clears() {
-        clear_compile_pos();
-        assert!(compile_pos().is_none(), "starts unset");
-
-        let pos = crate::lexer::Position {
-            file: "prog.loft".into(),
-            line: 12,
-            pos: 5,
-        };
-        note_compile_pos(&pos);
-        let got = compile_pos().expect("published position is readable");
-        assert_eq!((got.file.as_str(), got.line, got.pos), ("prog.loft", 12, 5));
-
-        // A later position replaces the earlier one — the report wants where the
-        // compiler IS, not where it started.
-        let later = crate::lexer::Position {
-            file: "prog.loft".into(),
-            line: 30,
-            pos: 1,
-        };
-        note_compile_pos(&later);
-        assert_eq!(compile_pos().unwrap().line, 30);
-
-        // Handing off to the runtime drops it, so a runtime panic is not
-        // misattributed to the last line compiled.
-        clear_compile_pos();
-        assert!(
-            compile_pos().is_none(),
-            "cleared at the compile/run boundary"
-        );
+        assert!(CrashCx::default().source_loc_for_pc(42).is_none());
     }
 
     /// loft#820 — the op-name table costs 256 `Box::leak`s, so it may be built

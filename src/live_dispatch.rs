@@ -214,7 +214,10 @@ fn bootstrap_core(
         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
         const_refs: std::sync::Arc::new(state.const_refs.clone()),
     }));
-    crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
+    state
+        .database
+        .crash
+        .set_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
 
     // Resolve the generated fn table against the bootstrap world.
     let mut fns = Vec::with_capacity(fn_names.len());

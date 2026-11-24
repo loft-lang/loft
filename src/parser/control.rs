@@ -1108,9 +1108,9 @@ impl Parser {
                 }
                 l.push(Value::Line(line));
                 self.line = line;
-                // loft#665 piece 3 — publish where the compiler is, so an internal
-                // panic points at the user's line instead of a compiler source file.
-                crate::crash_report::note_compile_pos(self.lexer.pos());
+                // loft#665 piece 3 — where the parse is, so an internal panic points at the
+                // user's line instead of a compiler source file (`parse_file`).
+                self.compile_pos = Some(*self.lexer.pos());
             }
             if self.lexer.has_token(";") {
                 continue;

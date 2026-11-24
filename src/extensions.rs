@@ -214,6 +214,8 @@ pub struct WiredNatives {
     /// loft#1189 — the `#native` symbol each panicking stub stands for (`compile.rs`), so the
     /// panic of a missing native names it.
     pub(crate) stubs: Vec<Option<String>>,
+    /// @PLN24 arc B — the `#c` binding each `#c` declaration's index calls (`c_call::register`).
+    pub(crate) c_bindings: Vec<Option<std::sync::Arc<crate::c_call::CBinding>>>,
 }
 
 /// Put `v` at `lib_idx`, growing the table to it.

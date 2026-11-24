@@ -66,8 +66,7 @@ handlers' install.
 
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
-| `C_BINDINGS` (`c_call.rs`) | library index → `#c` binding — **locked and cloned on every interpreted `#c` call** | set before the run; read by every thread | a program's table in a process global | a `State` table set before the run, read-only after (`C-Boundary`) | none |
-| `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | same; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
+| `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | a program's table in a process global; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
 | `NATIVE_REGISTRY`, `BRIDGE_REGISTRY`, `CX_BRIDGES`, `LOADED_LIBS`, `REFUSED_LIBS`, `LOAD_LOCK` (`c_libs.rs`) | what `dlopen` loaded and registered | loaders, wiring | a library is opened once per process | an append-only table published once per entry; `LOAD_LOCK` stays — an open must not run twice | — |
 | `DEP_HEADERS` (`c_shim.rs`) | dependency headers per package for shim builds | one compile thread per program | a program's data in a process global | a `Data` field | none |
 | `PLACEMENT` (`lib_placement/dispatch.rs`) | placed-library workers; **held across the whole call** | main, workers, arms | the wire has one request slot per placed worker | a slot or a worker per caller context (`C-Boundary`) | a placed library's own global state becomes one per caller context; its calls run side by side |
@@ -103,8 +102,9 @@ All are off unless a `LOFT_*` switch arms them.
 
 ## Open work
 
-The locks marked **not needed**, and the hot ones, go first: `C_BINDINGS` (every `#c` call),
-`store_budget` (every allocation under a ceiling).  Then the
+The locks marked **not needed**, and the hot ones, go first: `store_budget` (every allocation
+under a ceiling), then `DECLARED_LIBS` and `LIB_SYMBOLS` (a program's tables that test threads
+replace).  Then the
 compile session that takes the `Data` memos (`PassCell`, `ScopedCell`) and the per-program
 globals of the compiler.  The logger and the tallies follow the per-thread-then-merged form once
 the order of their lines is agreed.  @PLN226 P4b carries them.

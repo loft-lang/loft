@@ -1859,9 +1859,9 @@ impl Stores {
         // Each free resolved to its function, source position and the variable it released
         // (`store_trace`), so the two sites can be read without `introspect`.
         let at = |pc: u32| {
-            let by = crate::store_trace::freed_variable(pc)
+            let by = crate::store_trace::freed_variable(&self.crash, pc)
                 .map_or_else(String::new, |v| format!(" by {v}"));
-            format!("{}{by}", crate::store_trace::site(pc))
+            format!("{}{by}", crate::store_trace::site(&self.crash, pc))
         };
         // The names cost a table per compile, so only `LOFT_REFREE_FAILS=1` builds it.
         let names = if crate::keys::refree_names() {
@@ -1987,24 +1987,27 @@ impl Stores {
             // with the distance back to the entry, because unlabelled it reads as an
             // exact position and the map is sparse enough to be several statements
             // out — inside the stdlib, a different file entirely (loft#1262).
-            let at = crate::crash_report::nearest_source_loc_for_pc(self.alloc_pc).map_or_else(
-                || format!("pc={}", self.alloc_pc),
-                |(recorded_at, p)| {
-                    let back = self.alloc_pc.saturating_sub(recorded_at);
-                    let how_near = if back == 0 {
-                        String::new()
-                    } else {
-                        format!(", nearest span pc-{back}")
-                    };
-                    format!(
-                        "{}:{}:{} (pc={}{how_near})",
-                        p.file, p.line, p.pos, self.alloc_pc
-                    )
-                },
-            );
+            let at = self
+                .crash
+                .nearest_source_loc_for_pc(self.alloc_pc)
+                .map_or_else(
+                    || format!("pc={}", self.alloc_pc),
+                    |(recorded_at, p)| {
+                        let back = self.alloc_pc.saturating_sub(recorded_at);
+                        let how_near = if back == 0 {
+                            String::new()
+                        } else {
+                            format!(", nearest span pc-{back}")
+                        };
+                        format!(
+                            "{}:{}:{} (pc={}{how_near})",
+                            p.file, p.line, p.pos, self.alloc_pc
+                        )
+                    },
+                );
             // The opcode is exact, so print both: the line orients the reader, the op
             // says what actually ran.
-            let op = crate::crash_report::last_op_name();
+            let op = self.crash.last_op_name();
             let op = if op.is_empty() {
                 String::new()
             } else {
@@ -2686,6 +2689,7 @@ impl Stores {
         if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3151,6 +3155,7 @@ impl Stores {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3423,6 +3428,7 @@ impl Stores {
             read_refs: None,
             wired: self.wired.clone(),
             bt_hints: crate::btree::WalkHints::default(),
+            crash: crate::crash_report::CrashCx::default(),
             #[cfg(feature = "op-census")]
             tap: worker_tap,
             run: super::RunDiagnostics::default(),
@@ -5236,8 +5242,8 @@ impl Stores {
             return;
         };
         let src_oob = src.and_then(|s| self.first_oob_text(s, tp));
-        let (pc, _op, _d) = crate::crash_report::last_context();
-        let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
+        let (pc, _op, _d) = self.crash.last_context();
+        let line = self.crash.source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
         if self
             .run

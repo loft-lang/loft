@@ -3517,7 +3517,7 @@ impl State {
                 if !(db.store_nr == u16::MAX
                     || (db.store_nr as usize) < self.database.allocations.len())
                 {
-                    let (op_pc, op_code, fn_d_nr) = crate::crash_report::last_context();
+                    let (op_pc, op_code, fn_d_nr) = self.database.crash.last_context();
                     panic!(
                         "get_stack<DbRef>: OOB store_nr={} (allocations.len()={}) \
                          rec={} pos={} code_pos={} — corrupt DbRef on interpreter stack \
@@ -3601,7 +3601,7 @@ impl State {
                 });
                 // @PLN118 arc E — the READING op is the one currently dispatching (this
                 // pop happens inside its handler); `last_context` holds its opcode byte.
-                let (_rpc, read_op, _fd) = crate::crash_report::last_context();
+                let (_rpc, read_op, _fd) = self.database.crash.last_context();
                 let read_op_str = op_name(read_op);
                 // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
                 // copy reading a stale SUB-reference: the copy is incomplete and the source
@@ -3814,7 +3814,7 @@ impl State {
             .range(..=self.code_pos)
             .next_back()
             .map_or(0, |(_, &v)| v);
-        let (pc, op, _fn_d_nr) = crate::crash_report::last_context();
+        let (pc, op, _fn_d_nr) = self.database.crash.last_context();
         let ty = std::any::type_name::<T>();
         match state {
             SlotState::Unwritten => {
@@ -4075,7 +4075,7 @@ impl State {
                 if !(db.store_nr == u16::MAX
                     || (db.store_nr as usize) < self.database.allocations.len())
                 {
-                    let (op_pc, op_code, fn_d_nr) = crate::crash_report::last_context();
+                    let (op_pc, op_code, fn_d_nr) = self.database.crash.last_context();
                     panic!(
                         "put_stack<DbRef>: OOB store_nr={} (allocations.len()={}) \
                          rec={} pos={} code_pos={} — corrupt DbRef being pushed \
@@ -4195,8 +4195,8 @@ impl State {
         if self.published_spans.is_none() {
             self.published_spans = Some(Arc::new(self.source_spans.clone()));
         }
-        crate::crash_report::set_source_spans(self.published_spans.clone());
-        crate::store_trace::publish(self.pc_names.clone());
+        self.database.crash.set_spans(self.published_spans.clone());
+        self.database.crash.pc_names.clone_from(&self.pc_names);
     }
 
     // ── @PLN16 debugger ──────────────────────────────────────────────────────
@@ -7580,10 +7580,6 @@ impl State {
                 def.position().line,
             )
         }));
-        // loft#665 piece 3 — compilation is over, so drop the compile position: a
-        // RUNTIME panic must not be attributed to whatever line was compiled last.
-        // The runtime has its own, better attribution (pc -> source span).
-        crate::crash_report::clear_compile_pos();
         // Same rule for a `par` worker's halt: this run starts owing nothing to the last
         // one.  A halt recorded by a worker whose parent never reached the dispatch-loop
         // check below (a panic unwound past it) would otherwise be raised here, against a
@@ -7768,6 +7764,34 @@ impl State {
         }
     }
 
+    /// Run the program's dispatch loop ([`Self::dispatch_ops`]) as a running interpreter: in
+    /// the table the fatal-signal report reads (`crash_report::register`), and, when the CLI
+    /// asked for it (`crash_report::tell_panic_positions`), naming the source position of the
+    /// op a panic left from, after the panic's own message.  The position is this
+    /// interpreter's own (`@FR-C-Boundary`): a nested loop of the same interpreter leaves both
+    /// to the outer one.
+    fn dispatch(&mut self, data: &Data) -> Dispatch {
+        let Some(running) = crate::crash_report::register(&self.database.crash) else {
+            return self.dispatch_ops(data);
+        };
+        let ran =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_ops(data)));
+        drop(running);
+        ran.unwrap_or_else(|payload| {
+            if crate::crash_report::panic_positions() {
+                let crash = &self.database.crash;
+                let (pc, _, _) = crash.last_context();
+                // Only a span that COVERS the pc is a position (loft#1262).
+                if pc != u32::MAX
+                    && let Some(pos) = crash.source_loc_for_pc(pc)
+                {
+                    eprintln!("  at {}:{}:{}", pos.file, pos.line, pos.pos);
+                }
+            }
+            std::panic::resume_unwind(payload)
+        })
+    }
+
     /// Run the bytecode from `code_pos` until the entry function returns or the run is
     /// suspended — a frame yield, a debugger pause, a halt the lean loop hands back — on the
     /// loop the run needs: the lean register loop, the lean loop with the CPU profiler's hook
@@ -7779,7 +7803,7 @@ impl State {
         clippy::too_many_lines,
         reason = "the dispatch loops, moved as they were"
     )]
-    fn dispatch(&mut self, data: &Data) -> Dispatch {
+    fn dispatch_ops(&mut self, data: &Data) -> Dispatch {
         #[cfg(debug_assertions)]
         let mut step: u64 = 0;
         // loft#919 — read the ceiling once, outside the loop: the guard runs on every
@@ -7838,7 +7862,6 @@ impl State {
             || uaf_gen_on
             || cfg!(debug_assertions)
             || cfg!(feature = "stack_align_guard"));
-        crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
         // `@FR-R-DispatchStop` — after each op the lean loop tests ONE flag, which every rare
         // event that ends or diverts it sets where it happens; the cold path below does what
         // the per-op tests did.  The end of the run needs no test of its own: a halt and the
@@ -7861,6 +7884,7 @@ impl State {
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let _published = crate::crash_report::LeanSource::register(
+                &self.database.crash,
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
                 std::ptr::addr_of!(self.code_len),
@@ -7946,7 +7970,7 @@ impl State {
                     u16::from(op)
                 };
                 let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
+                self.database.crash.set_dispatch(op_pos_rt, opcode, fn_d_nr);
             }
             #[cfg(debug_assertions)]
             {

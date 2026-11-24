@@ -581,6 +581,9 @@ pub struct Stores {
     pub(crate) wired: std::sync::Arc<crate::extensions::WiredNatives>,
     /// `@PLN226` — this context's index-walk hints (`btree::WalkHints`).
     pub(crate) bt_hints: crate::btree::WalkHints,
+    /// `@PLN226` — the crash context of the interpreter that runs on these stores
+    /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
+    pub crash: crate::crash_report::CrashCx,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -897,6 +900,7 @@ impl Clone for Stores {
             read_refs: None,
             wired: self.wired.clone(),
             bt_hints: crate::btree::WalkHints::default(),
+            crash: crate::crash_report::CrashCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1754,6 +1758,7 @@ impl Stores {
             read_refs: None,
             wired: std::sync::Arc::default(),
             bt_hints: crate::btree::WalkHints::default(),
+            crash: crate::crash_report::CrashCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),
