@@ -239,6 +239,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
         staged = true;
       }
     }
+    literal_route(e, n, "literal_into_place=apart(build_apart:release_before_call)");
     abandon_work_refs(vars, ref_mark, p2_mark);
     // Its own store is typed as the definition answers (`returned`): a variant's is its enum.
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
@@ -388,6 +389,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // The watch fired: this attempt — its staging included — is abandoned and the literal built
   // apart in a `__ref_p2_N` of its own, then bound.
   if watch_hit {
+    literal_route(e, n, "literal_into_place=apart(build_apart:rebuild_watch)");
     vars.own_buffer_hit = false;
     // (The function's RETURNED local, renamed onto the hidden buffer, takes the plain local's
     // bind: the literal built apart, each collection field copied in, the local bound to it.)
@@ -483,7 +485,22 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     ops = guarded;
   }
   staged += ops;
+  literal_route(e, n, "literal_into_place=in_place(local)");
   ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// `literal_into_place`, as Rust's trace prints it at the end of a record literal written into a
+// local: built in place, or parsed again built apart and why — on the second pass, where Rust's
+// destination hint is taken.  (Rust's per-field notes on an in-place build are not printed here
+// yet: the route gate counts that as the same kind.)
+fn literal_route(e: el::El, n: integer, route: text) {
+  if !el_trace::on() || e.first_pass {
+    return;
+  }
+  lat = match e.p.nodes[n] { SStructLit { at: la } => la, _ => -1 };
+  if lat >= 0 {
+    el_trace::route_after_literal(e, lat, route);
+  }
 }
 
 // Is there, anywhere in `n`, a call of a loft function whose arguments read `v`?
