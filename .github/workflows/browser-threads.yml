@@ -1,7 +1,8 @@
 # @PLN117 — the browser-threading gates, run where they cannot rot.
 #
-# `par` on Web Worker threads is proven by five HEADLESS BROWSER gates
-# (tests/wasm/*.sh).  They need what a normal CI job does not have: a nightly
+# `par` on Web Worker threads is proven by four HEADLESS BROWSER gates on the
+# wasm-bindgen bundle (tests/wasm/par-*.sh); two more check `loft --html` pages
+# (html-thread-proof, html-unavailable-builtin).  They need what a normal CI job does not have: a nightly
 # toolchain with rust-src (the threaded build rebuilds std with wasm atomics),
 # a threaded wasm bundle, a COOP/COEP host, and a real chromium.  That is why
 # they live in their own workflow instead of ci.yml.
@@ -83,8 +84,8 @@ jobs:
     # @windows-exempt: platform-free — runs in a headless browser, which is the platform under test
     name: par on Web Workers
     runs-on: ubuntu-latest
-    # Two std rebuilds with atomics (the wasm-bindgen bundle, then the --html
-    # sysroot) dominate; the five gates themselves are minutes.
+    # The std rebuild with atomics for the wasm-bindgen bundle dominates; the
+    # gates themselves are minutes.
     timeout-minutes: 90
 
     # CALIBRATION.  A GitHub runner has 4 vCPUs against this project's 24-core
@@ -167,6 +168,8 @@ jobs:
       # The C backend's wasm toolchain: `--html` builds with clang for wasm32-wasi (the
       # same packages ci.yml's Test job installs).  No warning fallback here: without it the
       # two `--html` gates refuse the build, so a missing package fails at this step instead.
+      # The `--html` page is unthreaded (the C backend's wasm build); html-thread-proof.sh
+      # checks its `par` value, and Web Worker threading is the wasm-bindgen bundle's gates'.
       - name: Install the C backend's wasm toolchain
         run: >
           timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
@@ -223,7 +226,7 @@ jobs:
       - name: Build the threaded wasm bundle
         run: make wasm-mt
 
-      - name: Run the five gates
+      - name: Run the gates
         run: scripts/par_gates.sh --ci
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'

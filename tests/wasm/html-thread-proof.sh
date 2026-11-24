@@ -2,20 +2,25 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# @PLN117 (@C3) — headless gate for the INTEGRAL half of browser threading: a
-# `loft --html` page, which embeds its wasm as base64 in a plain <script> and
-# knows nothing about wasm-bindgen, runs `par` on real Web Worker threads.
+# @PLN117 (@C3) — headless gate for a `loft --html` page that uses `par`: the page,
+# which embeds its wasm as base64 in a plain <script> and knows nothing about
+# wasm-bindgen, computes what the interpreter computes.
 #
-# Four claims, each measured rather than assumed:
-#   1. `loft --html` on a par-using program emits a threaded bundle and the page
-#      dispatches `par` across >= 2 distinct workers.
-#   2. It computes the same value as the interpreter.
-#   3. The SAME bundle on a host without cross-origin isolation falls back to one
-#      worker and still computes that value (arc D — never breaks).
-#   4. `--no-threads` produces an unthreaded bundle that also computes it.
+# Two claims, each measured rather than assumed:
+#   1. `loft --html` on a par-using program builds a page that computes the same
+#      value as the interpreter, also on a host without cross-origin isolation.
+#   2. `--no-threads` builds a page that computes it too.
 #
-# Requires: a built loft, python3, a headless-capable chromium, and (for the
-# threaded build) nightly + rust-src.  Exits 0 on pass, 1 on fail.
+# RETIRED: the threaded half (the page dispatching `par` over >= 2 Web Workers, and
+# falling back to one on a host without isolation).  The page is built through the C
+# backend, whose wasm build is unthreaded; the threaded page existed only on the
+# rustc writer's route, which rebuilt std with atomics on nightly, and that route is
+# gone.  Threaded `par` in the browser is still proven on the wasm-bindgen bundle
+# by the other four gates (par-thread-proof, par-memory-proof, par-scaling-bench,
+# par-ui-responsive).
+#
+# Requires: a built loft, the C backend's wasm toolchain, python3 and a
+# headless-capable chromium.  Exits 0 on pass, 1 on fail.
 #
 #   tests/wasm/html-thread-proof.sh
 set -u
@@ -30,9 +35,6 @@ CHROME="$(command -v chromium || command -v chromium-browser || command -v googl
 trap 'rm -rf "$WORK" "$REPORT"' EXIT
 if [ ! -x "$LOFT" ]; then echo "SKIP: no $LOFT — run 'cargo build --release' first"; exit 0; fi
 if ! command -v "$CHROME" >/dev/null 2>&1; then echo "SKIP: no headless chromium"; exit 0; fi
-if ! rustup run nightly rustc --version >/dev/null 2>&1; then
-  echo "SKIP: no nightly toolchain — the threaded browser build rebuilds std with atomics"; exit 0
-fi
 
 cp tests/wasm/html-thread-proof.html "$WORK/driver.html"
 cat > "$WORK/par.loft" <<'LOFT'
@@ -57,16 +59,15 @@ echo "== reference (interpreter) par_sum=$REF =="
 [ -n "$REF" ] || { echo "FAIL: interpreter produced no par_sum"; exit 1; }
 
 echo "== building pages =="
-# The threaded export rebuilds std with atomics on a cold tree; 15 minutes is
-# plenty on this box and not on a 4-vCPU runner, so it rides WAIT_SCALE too.
-BUILD_TIMEOUT=$(( 900 * ${WAIT_SCALE:-1} ))
+# A page build is a C compile for wasm32; the bound rides WAIT_SCALE like every wait.
+BUILD_TIMEOUT=$(( 300 * ${WAIT_SCALE:-1} ))
 # Keep the build output.  Discarding both streams cost a nightly diagnosis on
 # 2026-07-31: the gate reported only "loft --html (threaded) failed" and threw
 # away the `error[E0514]: found crate `loft` compiled by an incompatible version
 # of rustc` underneath it, so the CI log named the symptom and nothing else.  A
 # gate that hides the error it exists to detect is worse than no gate: it reports
 # a regression with no way to act on it.  Quiet on success, the whole thing on
-# failure — the last 40 lines, because a rustc failure's useful part is the end.
+# failure — the last 40 lines, because a compiler failure's useful part is the end.
 build_page() {  # $1 = label, $2 = output html, and any further args
   local label="$1" out="$2"; shift 2
   local log="$WORK/build-$label.log"
@@ -78,7 +79,7 @@ build_page() {  # $1 = label, $2 = output html, and any further args
     exit 1
   fi
 }
-build_page threaded "$WORK/threaded.html" "$WORK/par.loft"
+build_page default "$WORK/default.html" "$WORK/par.loft"
 build_page no-threads "$WORK/sequential.html" --no-threads "$WORK/par.loft"
 
 run() {  # $1 = server script, $2 = port, $3 = page, $4 = seconds to wait
@@ -96,28 +97,22 @@ run() {  # $1 = server script, $2 = port, $3 = page, $4 = seconds to wait
   head -1 "$REPORT"
 }
 
-echo "== threaded page, cross-origin-isolated host =="
-T="$(run tests/wasm/coi-server.py "$PORT" threaded.html 20)"; echo "  $T"
+echo "== default page, cross-origin-isolated host =="
+T="$(run tests/wasm/coi-server.py "$PORT" default.html 20)"; echo "  $T"
 echo "== same page, host WITHOUT cross-origin isolation =="
-F="$(run tests/wasm/html-plain-server.py "$PLAIN_PORT" threaded.html 20)"; echo "  $F"
+F="$(run tests/wasm/html-plain-server.py "$PLAIN_PORT" default.html 20)"; echo "  $F"
 echo "== --no-threads page =="
 S="$(run tests/wasm/coi-server.py "$PORT" sequential.html 18)"; echo "  $S"
 
 fail=0
 value_of() { echo "$1" | grep -oP 'par_sum=\K\d+'; }
-workers_of() { echo "$1" | grep -oP 'distinct_workers=\K\d+'; }
 
-dw="$(workers_of "$T")"
-[ "${dw:-0}" -ge 2 ] 2>/dev/null \
-  || { echo "FAIL: threaded page dispatched over ${dw:-no} workers, expected >= 2"; fail=1; }
 [ "$(value_of "$T")" = "$REF" ] \
-  || { echo "FAIL: threaded value $(value_of "$T") != interpreter $REF"; fail=1; }
-[ "$(workers_of "$F")" = "1" ] \
-  || echo "WARN: non-isolated host reported distinct_workers=$(workers_of "$F"), expected 1"
+  || { echo "FAIL: default page value $(value_of "$T") != interpreter $REF"; fail=1; }
 [ "$(value_of "$F")" = "$REF" ] \
-  || { echo "FAIL: non-isolated fallback value $(value_of "$F") != interpreter $REF"; fail=1; }
+  || { echo "FAIL: non-isolated host value $(value_of "$F") != interpreter $REF"; fail=1; }
 [ "$(value_of "$S")" = "$REF" ] \
   || { echo "FAIL: --no-threads value $(value_of "$S") != interpreter $REF"; fail=1; }
 
-[ $fail -eq 0 ] && echo "PASS: loft --html threaded par over $dw workers; fallback + --no-threads correct; par_sum=$REF"
+[ $fail -eq 0 ] && echo "PASS: loft --html par page correct on both hosts; --no-threads correct; par_sum=$REF"
 exit $fail
