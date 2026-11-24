@@ -6369,10 +6369,12 @@ impl Parser {
                         && let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists)
                     {
                         value = Value::Var(o);
-                        sinks.place_notes.push(format!("{field}:copied_first"));
+                        if self.state_trace_on() {
+                            sinks.place_notes.push(format!("{field}:copied_first"));
+                        }
                         false
                     } else {
-                        if primed {
+                        if primed && self.state_trace_on() {
                             sinks.place_notes.push(format!("{field}:element_primed"));
                         }
                         !primed
@@ -6383,7 +6385,9 @@ impl Parser {
                     false
                 } else if let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists) {
                     value = Value::Var(o);
-                    sinks.place_notes.push(format!("{field}:copy_staged"));
+                    if self.state_trace_on() {
+                        sinks.place_notes.push(format!("{field}:copy_staged"));
+                    }
                     false
                 } else {
                     true
@@ -6392,7 +6396,9 @@ impl Parser {
                 false
             };
             if staged {
-                sinks.place_notes.push(format!("{field}:staged"));
+                if self.state_trace_on() {
+                    sinks.place_notes.push(format!("{field}:staged"));
+                }
                 let tmp = self.vars.work_refs(&exp_tp, &mut self.lexer);
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);

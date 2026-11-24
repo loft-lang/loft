@@ -161,7 +161,7 @@ PREFIX ?= /usr/local
 # the ancestor is writable and nothing extra runs.  Empty = run the copies directly.
 SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$$d" ]; do d=$$(dirname "$$d"); done; if [ -w "$$d" ]; then echo ""; else echo "sudo"; fi)
 
-.PHONY: check-wasm-threads wasi-threads-sysroot check-no-threading par-gates gate ci-miri all doctor install install-user install-native install-user-fast install-artifacts install-main install-main-build components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads wasi-threads-sysroot wasi-sdk check-no-threading par-gates gate ci-miri all doctor install install-user install-native install-user-fast install-artifacts install-main install-main-build components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -1550,6 +1550,17 @@ wasi-threads-sysroot:
 	mkdir -p "$$d" && \
 	curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$$v/wasi-sysroot-$$v.0.tar.gz" \
 	  | tar xz -C "$$d" && rm -rf "$$d/wasi-sysroot" && mv "$$d/wasi-sysroot-$$v.0" "$$d/wasi-sysroot"
+
+# The whole wasi-sdk of the same release: its clang, wasm-ld and compiler builtins beside the
+# sysroot they were built with.  A distribution's older clang can fail to link that sysroot's
+# threads libc, and loft then builds the page unthreaded; `LOFT_WASM_CC=<dir>/bin/clang` with
+# `WASI_SDK_PATH=<dir>` names this one.
+wasi-sdk:
+	@d="$$HOME/.loft/toolchains"; v=$(WASI_SDK_VERSION); \
+	if [ -x "$$d/wasi-sdk/bin/clang" ]; then exit 0; fi; \
+	mkdir -p "$$d" && \
+	curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$$v/wasi-sdk-$$v.0-x86_64-linux.tar.gz" \
+	  | tar xz -C "$$d" && rm -rf "$$d/wasi-sdk" && mv "$$d/wasi-sdk-$$v.0-x86_64-linux" "$$d/wasi-sdk"
 
 wasm-mt:
 	RUSTFLAGS='$(WASM_MT_RUSTFLAGS)' RUSTC=$(NIGHTLY_RUSTC) \
