@@ -39,9 +39,11 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FALSIFIED = ROOT / "tests/falsified"
-# A receipt cut while the standard library's compiled bodies were a generated Rust file may
-# carry a hunk of that file, which no longer exists: left out (`falsify.sh` leaves out the same).
-GENERATED = "src/compiled_stdlib_gen.rs"
+# A receipt may carry a hunk of retired source (tests/falsified_retired_paths.txt: the generated
+# compiled stdlib, the rustc writer): left out (`falsify.sh` leaves out the same).
+RETIRED = [l.strip() for l in (ROOT / "tests/falsified_retired_paths.txt").read_text().splitlines()
+           if l.strip() and not l.startswith("#")]
+EXCLUDES = [f"--exclude={p}" for p in RETIRED]
 
 
 def git(*args, cwd=ROOT, check=True):
@@ -52,7 +54,7 @@ def git(*args, cwd=ROOT, check=True):
 
 
 def applies(patch, cwd=ROOT):
-    return git("apply", "--check", f"--exclude={GENERATED}", str(patch),
+    return git("apply", "--check", *EXCLUDES, str(patch),
                cwd=cwd, check=False).returncode == 0
 
 
@@ -118,7 +120,7 @@ def refresh(patch, write=True):
             # enough — every removed line of the defect must still match exactly, and the
             # score that follows fails a patch that lands somewhere it does not belong.
             for how in (["--3way"], ["-C1"]):
-                if git("apply", *how, f"--exclude={GENERATED}", str(patch),
+                if git("apply", *how, *EXCLUDES, str(patch),
                        cwd=wt, check=False).returncode == 0:
                     break
                 git("checkout", "--", ".", cwd=wt, check=False)

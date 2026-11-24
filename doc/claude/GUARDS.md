@@ -273,10 +273,13 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   so the patch is that commit's source diff reversed.  It stays runnable only while the tree
   still resembles the fix, and `falsify.sh` exits 3 when it no longer applies — detected, where
   a dangling sha reports nothing.  A patch that no longer applies still RECORDS the defect.
-- **An older patch's hunk of `src/compiled_stdlib_gen.rs` is skipped.**  That generated file is
-  gone (the standard library's compiled bodies are a C unit built at run time); a receipt cut
-  while it existed may still hold a hunk of it, which all three readers leave out
-  (`falsify.sh --patch`, `receipts_ci.py`, `doc_hygiene::every_patch_receipt_still_applies`).
+- **A hunk of retired source is skipped.**  `tests/falsified_retired_paths.txt` lists the source
+  that is gone (the generated compiled stdlib, the rustc writer); all three readers leave those
+  hunks out (`falsify.sh --patch`, `receipts_ci.py`,
+  `doc_hygiene::every_patch_receipt_still_applies`).  A receipt whose EVERY hunk is retired would
+  apply as nothing and score nothing, so it is not kept: the patch is deleted and its guard's
+  `@falsified-by:` line says `none` and why, beside the `@falsified-at:` control that stays as
+  the record.  The guard itself still runs on the backends it names.
 - **Its channels must agree with the ref control's.**  A reverted commit that fixed two things
   reintroduces two, and a receipt moving the WRONG channel looks like proof.  So each patch
   receipt is re-scored, and recorded only when its channel signature matches; otherwise the

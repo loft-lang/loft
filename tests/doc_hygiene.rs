@@ -212,7 +212,7 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
 /// receipt).  Each must still `git apply --check`; a stale one is re-derived at the current
-/// tree and re-scored.  A hunk of the retired generated `src/compiled_stdlib_gen.rs` is left
+/// tree and re-scored.  A hunk of retired source (`tests/falsified_retired_paths.txt`) is left
 /// out, as `falsify.sh` and `receipts_ci.py` leave it out.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
@@ -230,11 +230,20 @@ fn every_patch_receipt_still_applies() {
         !patches.is_empty(),
         "no patch receipts found — the path is wrong, not the tree"
     );
+    // Hunks of retired source are left out, as `falsify.sh` and `receipts_ci.py` leave them out.
+    let retired_src = fa::read_to_string(root.join("tests/falsified_retired_paths.txt"))
+        .expect("cannot read tests/falsified_retired_paths.txt");
+    let retired: Vec<&str> = retired_src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
     let stale: std::collections::BTreeSet<String> = patches
         .iter()
         .filter(|p| {
             !loft::platform::process::harness_command("git")
-                .args(["apply", "--check", "--exclude=src/compiled_stdlib_gen.rs"])
+                .args(["apply", "--check"])
+                .args(retired.iter().map(|r| format!("--exclude={r}")))
                 .arg(p)
                 .current_dir(&root)
                 .output()

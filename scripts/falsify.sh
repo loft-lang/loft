@@ -296,10 +296,16 @@ locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
   fi
 }
 
-# A receipt cut while the standard library's compiled bodies were a generated Rust file may
-# carry a hunk of that file, which no longer exists: `git apply` leaves it out, as
+# A receipt may carry a hunk of retired source (tests/falsified_retired_paths.txt: the
+# generated compiled stdlib, the rustc writer): `git apply` leaves those hunks out, as
 # `receipts_ci.py` and `doc_hygiene::every_patch_receipt_still_applies` do.
-GENERATED_STDLIB=src/compiled_stdlib_gen.rs
+RETIRED_EXCLUDES=()
+RETIRED_PATHSPECS=()
+while IFS= read -r line; do
+  case "$line" in ''|'#'*) continue ;; esac
+  RETIRED_EXCLUDES+=("--exclude=$line")
+  RETIRED_PATHSPECS+=(":(exclude)$line")
+done < "$(cd "$(dirname "$0")/.." && pwd)/tests/falsified_retired_paths.txt"
 
 # `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
 # back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
@@ -581,7 +587,7 @@ elif [ ! -x "$TGT/debug/loft" ]; then
       # A patch receipt is checked before it is trusted.  One records the fix as it was, so it
       # applies to the tree it was cut against and drifts out as that tree moves — refusing here
       # is the receipt telling you it has gone stale, which a dangling sha never gets to do.
-      ( cd "$WT" && git apply --exclude="$GENERATED_STDLIB" "$PATCH_ABS" ) || {
+      ( cd "$WT" && git apply "${RETIRED_EXCLUDES[@]}" "$PATCH_ABS" ) || {
         echo "the recorded patch no longer applies to HEAD: $PATCHFILE" >&2
         echo "  The receipt still RECORDS the defect, but it can no longer be re-run here." >&2
         echo "  Re-derive it against a tree it applies to, or score the guard by hand." >&2
@@ -758,7 +764,7 @@ elif [ $falsified_any -eq 1 ]; then
     new="$pdir/.$pbase.patch.new"
     kept=no
     if [ -s "$pdir/$pbase.patch" ]; then kept=yes; fi
-    git -C "$ROOT" diff -R "$SHA" -- src/ default/ lib/ ":(exclude)$GENERATED_STDLIB" \
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ lib/ "${RETIRED_PATHSPECS[@]}" \
       > "$new" 2>/dev/null || true
     plines=$(wc -l < "$new" 2>/dev/null || echo 0)
     # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit

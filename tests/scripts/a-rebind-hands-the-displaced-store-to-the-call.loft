@@ -14,14 +14,8 @@
 // values hand-computed.  `tests/rebind_buffer.rs` pins which rebinds take the form and runs
 // every cell under the native leak check.
 //
-// @falsified-by: tests/falsified/a-rebind-hands-the-displaced-store-to-the-call.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
-//   CHANNEL: an assertion, on --native.  WITNESS: the patch hands the displaced store on AND
-//   still frees it, so b9's temporary takes the freed slot and `c` reads `[9,9,9,9]` (every
-//   other cell passes; `LOFT_STRICT_STORES=1 LOFT_POISON=1` crashes on the corrupt reference).
-//   HOLDS: every assertion passes on both trees with `LOFT_NO_REBIND_BUFFER=1`.  A second
-//   planted defect (2026-10-04), dropping the run-time test against the caller's entry
-//   buffer, fails b6 (`b6(2) got [2,4,6,8]`) and under strict stores reports `USE AFTER FREE
-//   … killed by the free of var___ref_1`.
+// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
+//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 struct M { m: vector<float> }
 
