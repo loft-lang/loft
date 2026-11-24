@@ -858,7 +858,13 @@ build touches the ready file — or rolls back.  `swap_world` restores a handed-
 through `store_load`, so a changed layout converts (`loft_upgrade.h`); its call site supplies
 the world type's sidecar and JSON render (`swap_world_call`).  The live tier — a flip, a live
 edit, a breakpoint's eval — runs the interpreter inside the program, which a C build has not
-got: `live_flip` answers false, and the edit loop runs interpreted.  All of it on every host
+got: `live_flip` answers false, and the edit loop runs interpreted.  A development game moves
+between the two with its world (`engine_host::swap_start`'s comment): `swap fast` from the
+interpreter into the shipped build `rebuild fast` made (`--ship`; refused for a semantics
+build, whose speed is not the one a game ships at), `swap dev` from the C back to the program
+interpreted again (`loft_sw_dev_next`: the driver, `--interpret`, the libraries and the source
+from `LOFT_LIVE_*`); a build at full speed carries `LOFT_LIVE_SHIP=1`, so its own rebuilds stay
+shipped (`tests/engine_host_kernel.rs` `a_dev_game_switches_to_full_speed_and_back`).  All of it on every host
 with sockets (`loft_sock.h`: POSIX and Windows), the swap and the rebuild on POSIX only; a
 Windows listener does not share its port, as `platform::bind_tcp_handover` binds there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
 socket a process leaves open, discarding what the peer had not read
