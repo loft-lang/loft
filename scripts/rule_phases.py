@@ -12,13 +12,12 @@ Why
 ---
 `formal/rewrites.md` `(R-Phase)`: every rule is APPLIED BY one phase, and the phase decides its
 oracle.  Prose beside a rule goes stale; the census does not.  `scripts/rewrite_census.py` writes
-every bench program with both compiled writers and `LOFT_REWRITE_CENSUS_FN` set, which credits
-each admission to the phase that made it — `parse`, `ir` (the scope pass), `interp` (the
-interpreter's bytecode generator), `c` and `native` (the two writers) — and this module turns
-that into `bench/portal/rule_phases.tsv`, one row per census name (`R-<Entry>` or
-`R-<Entry>/<clause>`):
+every bench program with the C writer and `LOFT_REWRITE_CENSUS_FN` set, which credits each
+admission to the phase that made it — `parse`, `ir` (the scope pass), `interp` (the
+interpreter's bytecode generator) and `c` (the C writer) — and this module turns that into
+`bench/portal/rule_phases.tsv`, one row per census name (`R-<Entry>` or `R-<Entry>/<clause>`):
 
-    name  applied-by  programs  parse  ir  interp  c  native
+    name  applied-by  programs  parse  ir  interp  c
 
 *applied-by* is the set of phases whose admissions are not zero over the bench programs.
 `make rewrite-census` fails when a name's applied-by set CHANGES — a rule that moved phase, or
@@ -45,15 +44,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "bench" / "portal" / "rule_phases.tsv"
 # The phases, in the order the compiler runs them.  The first three run once per program
-# whatever writer follows, so both writers' runs report the same counts for them.
-PHASES = ("parse", "ir", "interp", "c", "native")
+# whatever writer follows.
+PHASES = ("parse", "ir", "interp", "c")
 SHARED = ("parse", "ir", "interp")
 
 
 def aggregate(results):
     """`results`: `(program, writer, {(phase, rule): admissions})` per census run →
     `{name: (Counter{phase: admissions}, {program, …})}`.  A shared phase is taken from each
-    program once (both writers' runs carry it), a writer's phase from that writer's run."""
+    program once, a writer's phase from that writer's run."""
     shared = {}
     out = collections.defaultdict(lambda: (collections.Counter(), set()))
     for program, writer, split in results:
@@ -160,7 +159,6 @@ PHASE_WORDS = {
     "ir": "the scope pass, which both backends run",
     "interp": "the interpreter's bytecode generator",
     "c": "the C writer",
-    "native": "the rustc writer",
 }
 
 

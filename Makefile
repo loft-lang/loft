@@ -676,9 +676,9 @@ runtime-surface:  ## What emitted Rust names in the loft crate, over the corpus,
 gap-report:  ## Where one routine's distance to its Rust twin lives: own code, inlined runtime, called runtime, loft lines, declines (ARGS="--bench 17 --fn c_slope_path")
 	cargo build --release --lib --bin loft -q
 	python3 scripts/gap_report.py $(ARGS)
-interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
-	cargo build --release --lib --bin loft -q
-	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
+interp-gap:  ## Where the interpreter still moves data the C backend no longer does, per bench routine (a report; ARGS="--only 14,16")
+	cargo build --release --bin loft -q
+	cargo build --release --bin loft -q --features op-census --target-dir target/op-census
 	python3 scripts/interp_gap.py $(ARGS)
 worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal), re-timed quickly (ARGS="--axis interp|native", "--list")
 	cargo build --release --bin loft -q
