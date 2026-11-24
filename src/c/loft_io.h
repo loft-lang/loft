@@ -439,11 +439,20 @@ static char *loft_case_clash(loft_cx *cx, const char *full) {
         DIR *d = opendir(existing);
         if (d) {
             char *best = 0;
+            int unspellable = 0;
             size_t mn = strlen(missing);
             struct dirent *e;
             while ((e = readdir(d)) != 0) {
                 size_t en = strlen(e->d_name);
                 if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+                /* `@FR-Path-Utf8` — the name does not exist as spelled, so an entry that SHOWS as
+                 * it is one whose real name is not text: the spelling reaches no file. */
+                if (!unspellable && !loft_utf8_valid(cx, (const unsigned char *) e->d_name, en)) {
+                    loft_text shown = { 0, 0, 0 };
+                    loft_push_lossy(cx, &shown, e->d_name, en);
+                    unspellable = shown.len == mn && memcmp(shown.p, missing, mn) == 0;
+                    loft_text_free(cx, &shown);
+                }
                 if ((en != mn || memcmp(e->d_name, missing, mn) != 0) && loft_name_fold_eq(cx, e->d_name, en, missing, mn)
                     && (!best || strcmp(e->d_name, best) < 0)) {
                     free(best);
@@ -453,6 +462,13 @@ static char *loft_case_clash(loft_cx *cx, const char *full) {
                 }
             }
             closedir(d);
+            if (unspellable) {
+                loft_push_char(cx, &why, '`');
+                loft_push_cstr(cx, &why, missing);
+                loft_push_cstr(cx, &why, "` is how loft shows a name that is not valid text, and names no file");
+                free(best);
+                best = 0;
+            }
 #endif
             if (best) {
                 loft_push_char(cx, &why, '`');
@@ -1217,6 +1233,30 @@ static void loft_dir_name_push(loft_cx *cx, char ***names, size_t *n, size_t *ca
     memcpy((*names)[(*n)++], name, len + 1);
 }
 
+/* `@FR-Path-Utf8` — the directories a listing has already reported as holding a name that is not
+ * text (`file_access::log_once`): FNV-1a hashes of their paths, each slot claimed once and
+ * lock-free.  Past the 64 slots a directory is reported again — a repeated line, never a
+ * missing one. */
+static uint64_t loft_unspellable_said[64];
+
+static int loft_unspellable_first(loft_cx *cx, const char *dir) {
+    (void) cx;
+    uint64_t h = UINT64_C(1469598103934665603);
+    for (const unsigned char *c = (const unsigned char *) dir; *c; c++) h = (h ^ *c) * UINT64_C(1099511628211);
+    if (h == 0) h = 1;
+    for (size_t i = 0; i < sizeof loft_unspellable_said / sizeof *loft_unspellable_said; i++) {
+        uint64_t held;
+        LOFT_PUB_GET(loft_unspellable_said[i], held);
+        if (held == h) return 0;
+        if (held == 0) {
+            uint64_t expect = 0;
+            if (LOFT_PUB_CAS(loft_unspellable_said[i], expect, h)) return 1;
+            if (expect == h) return 0;
+        }
+    }
+    return 1;
+}
+
 static char **loft_dir_names(loft_cx *cx, const char *dir, size_t *n) {
     char **names = 0;
     size_t cap = 0;
@@ -1225,8 +1265,16 @@ static char **loft_dir_names(loft_cx *cx, const char *dir, size_t *n) {
     DIR *d = opendir(dir);
     if (!d) return 0;
     struct dirent *e;
-    while ((e = readdir(d)) != 0) loft_dir_name_push(cx, &names, n, &cap, e->d_name);
+    int unspellable = 0;
+    while ((e = readdir(d)) != 0) {
+        unspellable |= !loft_utf8_valid(cx, (const unsigned char *) e->d_name, strlen(e->d_name));
+        loft_dir_name_push(cx, &names, n, &cap, e->d_name);
+    }
     closedir(d);
+    /* `@FR-Path-Utf8` — one line names the directory that holds such a name, as the
+     * interpreter's listing says it. */
+    if (unspellable && loft_unspellable_first(cx, dir))
+        fprintf(stderr, "loft: `%s` holds a name that is not valid text; it is listed with U+FFFD in its place, and no path can name it (formal/paths.md)\n", dir);
 #elif defined(_WIN32)
     size_t dl = strlen(dir);
     char *pattern = (char *) malloc(dl + 3);
