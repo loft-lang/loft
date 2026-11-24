@@ -1640,6 +1640,11 @@ pub fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer 
       if nm == "OpVectorRef" && len(args) == 2 {
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => heap_def(inner), _ => -1 };
       }
+      // A keyed collection's record found by its key (`h[k]`, `OpGetRecord(h, <type>, n, keys…)`):
+      // the collection's element record.
+      if nm == "OpGetRecord" && len(args) >= 2 {
+        return el_types::keyed_elem(el_types::base(place_type(e, vars, args[0])));
+      }
       -1
     },
     _ => -1
@@ -1656,6 +1661,11 @@ pub fn place_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT {
       nm = el::def(e, def_nr).name;
       if (nm == "OpGetVector" && len(args) == 3) || (nm == "OpVectorRef" && len(args) == 2) {
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => inner, _ => ir::TyVoid };
+      }
+      // (A keyed lookup's record, `h[k]`: the collection's element.)
+      if nm == "OpGetRecord" && len(args) >= 2 {
+        kd = el_types::keyed_elem(el_types::base(place_type(e, vars, args[0])));
+        return if kd >= 0 { ir::TyReference { n: kd, dep: [] } } else { ir::TyVoid };
       }
       if nm == "OpGetField" && len(args) == 3 {
         rd = heap_def(el_types::base(place_type(e, vars, args[0])));

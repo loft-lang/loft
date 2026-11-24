@@ -132,6 +132,9 @@ fn vector_of_vectors(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
 }
 
 pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
+  // (An anonymous `{ f: … }` item is a literal of the field's element struct, `parse_object`'s
+  // expected record.)
+  el_ex_pattern::name_items(e, n, p.tp);
   // (An append that pushes names the field's vector row on the first pass, ahead of the struct
   // that holds it — as a literal that fills the field does.)
   if e.first_pass && match e.p.nodes[n] { SVecLit { items: ai } => len(ai) > 0, _ => false } {

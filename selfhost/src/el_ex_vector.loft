@@ -901,6 +901,12 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
     _ => {}
   }
   el_d = el_types::keyed_elem(ct);
+  // (An anonymous `{ f: … }` item is a literal of the collection's record.)
+  if el_d >= 0 {
+    for nit in items {
+      el_ex_pattern::name_anonymous(e, nit, ir::TyReference { n: el_d, dep: [] });
+    }
+  }
   elm = -1;
   // A bare record onto a keyed FIELD (`d.h += K { … }`) is no vector literal: the field route
   // mints its element on the second pass only, with no `is_field` mark (`unique_elm_var` with no

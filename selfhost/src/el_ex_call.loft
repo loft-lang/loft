@@ -1557,7 +1557,7 @@ fn constant_arg_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node, pt: ir::Type
   param = el_types::without_deps(el_types::base(pt));
   tmp = el_vars::create_unique(vars, "__blk_val", param);
   el_vars::set_defined(vars, tmp);
-  b = el_ex_bind::vec_copy_bind(e, vars, tmp, ex(arg, param));
+  b = el_ex_bind::vec_copy_bind(e, vars, tmp, ex(arg, param), owned_field: true);
   match b.code {
     NdInsert { items } => el_ir::v_block(items + [ir::NdVar { n: tmp }], el_vars::tp(vars, tmp), "Vector"),
     _ => arg
@@ -2611,7 +2611,16 @@ pub fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer,
     },
     _ => {}
   }
+  // (…and a bare variant there is the left enum's: `level == Fatal`, `Fatal` a used library's.)
+  keep_hint = vars.enum_hint;
+  if e.p.nodes[r] is SName {
+    match el_types::base(a.tp) {
+      TyEnum { n: hn, is_ref } => { if !is_ref { vars.enum_hint = hn; } },
+      _ => {}
+    }
+  }
   b = el_ex_assign::expression(e, vars, r);
+  vars.enum_hint = keep_hint;
   vars.lit_hint_node = -1;
   x = el_ex_null::builtin_op(e, vars, op, a, b);
   x.tp = arith_type(e, vars, op, a, b, x.tp);

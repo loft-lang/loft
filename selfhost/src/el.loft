@@ -186,6 +186,9 @@ pub struct El {
   pub private: hash<PrivateImport[key]>,
   pub pending: vector<PendingImport>,
   pub loading: vector<integer>,
+  // @PLN187 (@C140) the NAME-ONLY types: not `pub`, but named by a `pub` signature of their own
+  // file (`api_surface::name_only_defs`) — they pass on to an importer, which may name them
+  pub name_only: vector<integer>,
   // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
   pub adopted: vector<integer>,
   // The standard library's `#loft"…"` operator templates, by definition (`create.loft` writes
@@ -273,6 +276,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     private: [],
     pending: [],
     loading: [],
+    name_only: [],
     adopted: [],
     loft_ops: []
   }
@@ -469,7 +473,7 @@ fn is_private_import(el: El, source: integer, key: text, d: integer) -> boolean 
 // unresolved stub.  (A name-only type, not `pub` but named by a `pub` signature, is refused
 // where a library declares one: `name_only_types`.)
 fn passes_on(el: El, d: integer) -> boolean {
-  def(el, d).pub_visible || def(el, d).def_type == DT_UNKNOWN
+  def(el, d).pub_visible || def(el, d).def_type == DT_UNKNOWN || el.name_only.contains(d)
 }
 
 // `Data::exported_names`: every key of `lib` that passes on, with its definition.
