@@ -3723,13 +3723,26 @@ use #count instead"
     /// sibling block's `t = "a"` to it — a loop variable it had not bound yet — and refused
     /// the bind as a type change.
     pub(crate) fn ended_spelling(
-        &self,
+        &mut self,
         src_id: &str,
         prior: u16,
         for_var: u16,
     ) -> Option<(String, u16)> {
-        (src_id != "_" && prior != u16::MAX && prior != for_var && self.binding_ended(prior))
-            .then(|| (src_id.to_string(), prior))
+        let ended =
+            src_id != "_" && prior != u16::MAX && prior != for_var && self.binding_ended(prior);
+        // The same answer on both passes (loft#2630): pass 2 may read `prior` differently —
+        // a block local the return-buffer rename made the hidden parameter reads as an
+        // argument there, which never ends — and a loop that kept the spelling on one pass
+        // and not on the other split every later bind of the name on that pass alone.  Pass 1
+        // decides, keyed by the loop's own variable (one per loop on both passes).
+        let key = (self.context, for_var);
+        let ended = if self.first_pass {
+            self.loop_spelling_kept.insert(key, ended);
+            ended
+        } else {
+            self.loop_spelling_kept.get(&key).copied().unwrap_or(ended)
+        };
+        ended.then(|| (src_id.to_string(), prior))
     }
 
     /// The spelling [`Self::ended_spelling`] kept, given back after the loop's body.
