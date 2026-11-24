@@ -277,7 +277,7 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
   }
 }
 
-pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
+pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: boolean = false) -> Ex {
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   // (`unique_elm_var`: an element of a record type — a template's type variable among them — is
   // typed as that type, so an instance at a scalar drops the element's borrows with it.)
@@ -329,6 +329,11 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.first_pass {
+    // (loft#1690: a copy sunk into a branch arm allocates on the second pass whatever the local
+    // holds, so its `_elm_N` is minted on this one too — `lower_vec_copy_bind`'s `in_arm` leg.)
+    if in_arm && !field_read {
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
+    }
     if field_read {
       for d in el_types::deps(el_vars::tp(vars, v)) {
         el_vars::make_independent(vars, v, d);
@@ -485,7 +490,10 @@ pub fn sink_ncc(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? 
         match bl.operators[1] {
           NdIf { cond, t, f } => {
             fa = el_ir::unspan(f);
-            if !(fa is NdVar) || !(el_types::base(el_vars::tp(vars, match fa { NdVar { n } => n, _ => 0 })) is TyVector) {
+            // (…or whose default is anything else an arm copies: a constant's view, a nested
+            // `??` whose own default copies — `mk() ?? mk() ?? NAMES` — `vec_arm_verdict`.)
+            dvar = fa is NdVar && el_types::base(el_vars::tp(vars, match fa { NdVar { n } => n, _ => 0 })) is TyVector;
+            if !dvar && sinkable_arms(e, vars, f) != 1 {
               return null;
             }
             bl.operators[1] = ir::NdIf { cond: cond, t: el_ir::v_set(v, t), f: sink_arm(e, vars, v, f, x.tp) };
@@ -500,7 +508,7 @@ pub fn sink_ncc(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? 
       }
       match bl.operators[1] {
         NdIf { cond, t, f } => {
-          bl.operators[1] = ir::NdIf { cond: cond, t: vec_copy_bind(e, vars, v, ex(t, el_types::base(el_vars::tp(vars, held)))).code, f: sink_arm(e, vars, v, f, x.tp) };
+          bl.operators[1] = ir::NdIf { cond: cond, t: vec_copy_bind(e, vars, v, ex(t, el_types::base(el_vars::tp(vars, held))), in_arm: true).code, f: sink_arm(e, vars, v, f, x.tp) };
         },
         _ => { return null; }
       }
@@ -555,9 +563,9 @@ pub fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::
         return el_ir::v_set(v, n);
       }
       // The arm a `??` takes where its subject is present copies it as present.
-      vec_copy_bind(e, vars, v, ex(n, el_types::base(el_vars::tp(vars, src)))).code
+      vec_copy_bind(e, vars, v, ex(n, el_types::base(el_vars::tp(vars, src))), in_arm: true).code
     },
-    _ => if copies_whole_vector(e, vars, n) { vec_copy_bind(e, vars, v, ex(n, el_types::base(t))).code } else { el_ir::v_set(v, n) }
+    _ => if copies_whole_vector(e, vars, n) { vec_copy_bind(e, vars, v, ex(n, el_types::base(t)), in_arm: true).code } else { el_ir::v_set(v, n) }
   }
 }
 

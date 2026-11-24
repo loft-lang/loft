@@ -622,6 +622,9 @@ pub fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, ro
   match n {
     NdReturn { inner } => match el_ir::unspan(inner) {
       NdVar { n: v } => if v != buf && !vars.vars[v].argument && (el_types::base(el_vars::tp(vars, v)) is TyVector) { ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: buf }, ir::NdVar { n: v }, ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
+      // A top-level constant's view (`return NUMS`, `is_const_view`, loft#2585): copied into the
+      // buffer, which is returned — never the write-locked constant store itself.
+      NdCall { def_nr: cd } => if el::def(e, cd).name == "OpConstRef" { ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: buf }]), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: buf }, el_ir::unspan(inner), ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
       // A fresh literal (`return [1]`) is copied into the buffer at its end — its own store
       // freed — and the block answers the buffer (`materialize_vector_arms_into`).
       NdBlock { block } => {
@@ -925,6 +928,11 @@ pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> bo
     // A vector member of a stack tuple (`b = a.0`).
     NdTupleGet { var: _ } => true,
     NdCall { def_nr, args } => {
+      // (`is_const_view`, loft#1686: a top-level vector constant's view of the write-locked
+      // constant store is read whole exactly like a bare variable — the bind copies.)
+      if el::def(e, def_nr).name == "OpConstRef" {
+        return true;
+      }
       if el::def(e, def_nr).name != "OpGetField" {
         return false;
       }

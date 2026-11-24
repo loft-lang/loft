@@ -434,6 +434,20 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
     }
   }
   kind = if d < 0 { "`{name}` is not declared" } else { "`{name}` is {el::def_type_name(el::def(e, d).def_type)}" };
+  // A vector constant (`parse_var_inner`'s constant arm, loft#1686): a view of the constant
+  // store, `OpConstRef(d)`, borrowing a skip-free `const_view` anchor of this function that is
+  // never assigned — nothing in this frame owns what it reads.
+  if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 && el_types::base(el_types::unrewritten(el::def(e, d).returned[0])) is TyVector {
+    vct = el_types::without_deps(el_types::unrewritten(el::def(e, d).returned[0]));
+    anchor = el_vars::create_unique(vars, "const_view", vct);
+    el_vars::set_skip_free(vars, anchor, "parse_constant_value");
+    return ex(el_ir::cl(e, "OpConstRef", [ir::NdInt { n: d }]), el_types::with_deps(vct, [anchor]));
+  }
+  // A constant the first pass could not type yet (its value read at file scope before what it
+  // names was complete): untyped there, resolved on the second, as a name declared below is.
+  if e.first_pass && d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && (len(el::def(e, d).code) == 0 || el_types::is_unknown(el::def(e, d).returned[0] ?? ir::TyUnknown { n: 0 })) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   // A constant: its value inlined (a scalar's or a text's).
   if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 {
     ct = el::def(e, d).returned[0];
@@ -518,7 +532,9 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
             return ex(got!, el_types::with_deps(el_types::without_deps(el_types::base(c.tp)), [e.closure_var]));
           }
           // (A keyed capture is a view of the closure record: what walks it borrows `__closure`.)
-          if keyed_kind(el_types::base(c.tp)) {
+          // (So is a vector capture: `t.depending(closure_param)` replaces the outer local's
+          // borrows — a loop or an element read over it borrows `__closure`.)
+          if keyed_kind(el_types::base(c.tp)) || el_types::base(c.tp) is TyVector {
             return ex(got!, el_types::with_deps(c.tp, [e.closure_var]));
           }
           return ex(got!, c.tp);
