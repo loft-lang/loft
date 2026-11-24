@@ -521,49 +521,38 @@ pub fn live_call_ref(
 // posts, and the pause loop (which legally holds `&mut State`) applies.
 
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    /// Breakpoint NAMES — the identity that survives reloads and re-resolution.
-    static DEBUG_BPS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// The control client that hears `D:hit` notifications.
-    static DEBUG_SUB: std::cell::Cell<i64> = const { std::cell::Cell::new(-1) };
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 use crate::live_control::debug_mailbox_drain;
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::live_control::{DebugCmd, debug_mailbox_push};
+pub use crate::live_control::{DebugCmd, DebugCx, debug_mailbox_push};
 
 /// Set a breakpoint at the entry of `name` (and flip it to the interpreter —
 /// a compiled body cannot pause).  Direct when the parked State is free;
 /// posted to the mailbox when a pause holds it (the pause loop applies and
 /// acks).  Returns false only when the fn is unknown at direct application.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_set_bp(name: &str, cid: i64) -> bool {
-    DEBUG_SUB.with(|s| s.set(cid));
+pub fn debug_set_bp(d: &mut DebugCx, name: &str, cid: i64) -> bool {
+    d.sub = cid;
     let direct = LIVE.with(|l| match l.try_borrow_mut() {
-        Ok(mut guard) => guard.as_mut().map(|live| debug_apply_bp(live, name)),
+        Ok(mut guard) => guard.as_mut().map(|live| debug_apply_bp(live, d, name)),
         Err(_) => None, // paused: the pause loop applies it
     });
     if let Some(ok) = direct {
         ok
     } else {
-        debug_mailbox_push(DebugCmd::SetBp(name.to_string(), cid));
+        debug_mailbox_push(d, DebugCmd::SetBp(name.to_string(), cid));
         true
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn debug_apply_bp(live: &mut Live, name: &str) -> bool {
+fn debug_apply_bp(live: &mut Live, d: &mut DebugCx, name: &str) -> bool {
     let d_nr = live._parser.data.def_nr(&format!("n_{name}"));
     if d_nr == u32::MAX || live.state.set_breakpoint_fn_current(d_nr).is_none() {
         return false;
     }
-    DEBUG_BPS.with(|b| {
-        let mut b = b.borrow_mut();
-        if !b.iter().any(|n| n == name) {
-            b.push(name.to_string());
-        }
-    });
+    if !d.bps.iter().any(|n| n == name) {
+        d.bps.push(name.to_string());
+    }
     set_flip_in(live, name, true);
     eprintln!("loft-debug: breakpoint at {name} (flipped to interp)");
     true
@@ -574,7 +563,7 @@ fn debug_apply_bp(live: &mut Live, name: &str) -> bool {
 /// identity must not.  A fresh `Debugger` drops the stale offsets.
 #[cfg(not(target_arch = "wasm32"))]
 fn debug_reapply_bps(st: &mut State, data: &crate::data::Data) {
-    let names = DEBUG_BPS.with(|b| b.borrow().clone());
+    let names = crate::engine_host::debug(&mut st.database).bps.clone();
     if names.is_empty() {
         return;
     }
@@ -600,19 +589,10 @@ fn debug_reapply_bps(st: &mut State, data: &crate::data::Data) {
 /// Armed by [`arm_interp_control`]: the running interpreter answers the channel.
 #[cfg(not(target_arch = "wasm32"))]
 static INTERP_CONTROL: AtomicBool = AtomicBool::new(false);
-/// A breakpoint the channel queued that the dispatch loop has not applied yet.
-#[cfg(not(target_arch = "wasm32"))]
-static INTERP_BP_PENDING: AtomicBool = AtomicBool::new(false);
 /// The program's function names (loft names, without `n_`): what a flip or a breakpoint
 /// may name.
 #[cfg(not(target_arch = "wasm32"))]
 static INTERP_FNS: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
-
-#[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    /// Breakpoints the channel asked for, already acknowledged, waiting for the loop.
-    static INTERP_QUEUED_BPS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
 
 /// Under `LOFT_DEBUG_CONTROL=1`, let the interpreter running `data`'s program answer the
 /// `D!:` channel's flips and breakpoints.  Called once, before `main` runs.
@@ -653,40 +633,36 @@ fn interp_flip(name: &str, _on: bool) -> bool {
 
 /// Queue a breakpoint for the dispatch loop; `cid` hears its hits.
 #[cfg(not(target_arch = "wasm32"))]
-fn interp_set_bp(name: &str, cid: i64) -> bool {
+fn interp_set_bp(d: &mut DebugCx, name: &str, cid: i64) -> bool {
     if !interp_known(name) {
         return false;
     }
-    DEBUG_SUB.with(|s| s.set(cid));
-    INTERP_QUEUED_BPS.with(|q| q.borrow_mut().push(name.to_string()));
-    INTERP_BP_PENDING.store(true, Ordering::Relaxed);
+    d.sub = cid;
+    d.queued.push(name.to_string());
     true
 }
 
-/// A breakpoint waits for the dispatch loop (one relaxed load).
+/// A breakpoint the channel queued waits for the dispatch loop of `stores`' program.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
-pub fn interp_bp_pending() -> bool {
-    INTERP_BP_PENDING.load(Ordering::Relaxed)
+pub fn interp_bp_pending(stores: &mut crate::database::Stores) -> bool {
+    !crate::engine_host::debug(stores).queued.is_empty()
 }
 
 /// Apply the queued breakpoints to the running State, at an op boundary.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn interp_take_bps(st: &mut State, data: &crate::data::Data) {
-    INTERP_BP_PENDING.store(false, Ordering::Relaxed);
-    let queued = INTERP_QUEUED_BPS.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    let queued = std::mem::take(&mut crate::engine_host::debug(&mut st.database).queued);
     for name in queued {
         let d_nr = data.def_nr(&format!("n_{name}"));
         if d_nr == u32::MAX || st.set_breakpoint_fn_current(d_nr).is_none() {
             eprintln!("loft-debug: breakpoint on {name} could not resolve");
             continue;
         }
-        DEBUG_BPS.with(|b| {
-            let mut b = b.borrow_mut();
-            if !b.contains(&name) {
-                b.push(name.clone());
-            }
-        });
+        let bps = &mut crate::engine_host::debug(&mut st.database).bps;
+        if !bps.contains(&name) {
+            bps.push(name.clone());
+        }
         eprintln!("loft-debug: breakpoint at {name}");
     }
 }
@@ -716,7 +692,7 @@ fn debug_pause_loop(_st: &mut State, _data: &crate::data::Data, _hit: &crate::de
 /// needing the State are applied here, where `&mut State` is legal.
 #[cfg(not(target_arch = "wasm32"))]
 fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debugger::BreakHit) {
-    let sub = DEBUG_SUB.with(std::cell::Cell::get);
+    let sub = crate::engine_host::debug(&mut st.database).sub;
     let bindings = hit
         .locals
         .iter()
@@ -731,10 +707,10 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
     );
     loop {
         crate::engine_host::debug_pump(&mut st.database.engine);
-        if interp_bp_pending() {
+        if interp_bp_pending(&mut st.database) {
             interp_take_bps(st, data);
         }
-        for cmd in debug_mailbox_drain() {
+        for cmd in debug_mailbox_drain(crate::engine_host::debug(&mut st.database)) {
             match cmd {
                 DebugCmd::Resume(cid) => {
                     crate::engine_host::debug_send(&mut st.database.engine, cid, "D:resumed");
@@ -781,7 +757,9 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                     let d_nr = data.def_nr(&format!("n_{name}"));
                     let ok = d_nr != u32::MAX && st.set_breakpoint_fn_current(d_nr).is_some();
                     if ok {
-                        DEBUG_BPS.with(|b| b.borrow_mut().push(name.clone()));
+                        crate::engine_host::debug(&mut st.database)
+                            .bps
+                            .push(name.clone());
                     }
                     crate::engine_host::debug_send(
                         &mut st.database.engine,

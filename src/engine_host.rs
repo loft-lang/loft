@@ -302,6 +302,9 @@ pub(crate) struct EngineCtl {
     /// The background build of the next instance (`live_rebuild`).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) rebuild: crate::live_rebuild::RebuildCx,
+    /// The debug channel's breakpoints, subscriber and waiting commands (`live_control`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) debug: crate::live_control::DebugCx,
 }
 
 impl Clone for EngineCx {
@@ -475,6 +478,12 @@ fn with_kernel_ctl<R>(
 #[must_use]
 pub(crate) fn world_root(stores: &Stores) -> Option<(DbRef, u16)> {
     stores.engine.ctl.world_root
+}
+
+/// The program's debug channel state (`live_control::DebugCx`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn debug(stores: &mut Stores) -> &mut crate::live_control::DebugCx {
+    &mut stores.engine.ctl.debug
 }
 
 /// The engine context a writer's typed twin reaches through its `Stores` cell.
@@ -2082,7 +2091,7 @@ static QUIT_AFTER_REPLY: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String> {
     let reply: Option<String> = match cmd.split_once(' ').map_or((cmd, ""), |(a, b)| (a, b)) {
         ("bp", name) if !name.is_empty() => {
-            let ok = crate::live_control::debug_set_bp(name, cid);
+            let ok = crate::live_control::debug_set_bp(&mut ctl.debug, name, cid);
             Some(format!("D:{} bp {name}", if ok { "ok" } else { "err" }))
         }
         ("flip", rest) => {
@@ -2091,18 +2100,24 @@ fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String
             Some(format!("D:flip {ok}"))
         }
         ("eval", name) if !name.is_empty() => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Eval(
-                name.to_string(),
-                cid,
-            ));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Eval(name.to_string(), cid),
+            );
             None // answered by the pause loop
         }
         ("resume", _) => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Resume(cid));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Resume(cid),
+            );
             None
         }
         ("reload", _) => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Reload(cid));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Reload(cid),
+            );
             None
         }
         ("apply", _) => {

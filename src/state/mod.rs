@@ -7972,7 +7972,7 @@ impl State {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if control_on && crate::live_dispatch::interp_bp_pending() {
+            if control_on && crate::live_dispatch::interp_bp_pending(&mut self.database) {
                 crate::live_dispatch::interp_take_bps(self, data);
             }
             let op_pos_rt = self.code_pos;
