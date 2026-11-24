@@ -2221,6 +2221,7 @@ impl Output<'_> {
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this
             // particular execution took the copying arm.
             crate::copy_manifest::record(
+                self.data,
                 self.def_nr,
                 var,
                 tp_nr,
@@ -2282,6 +2283,7 @@ impl Output<'_> {
             // A MAY-copy site: the branch is decided at run time, and the manifest asks
             // whether the diagnostic accounts for the site, not which arm ran.
             crate::copy_manifest::record(
+                self.data,
                 self.def_nr,
                 var,
                 tp_nr,
@@ -2329,6 +2331,7 @@ impl Output<'_> {
                  OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;
             crate::copy_manifest::record(
+                self.data,
                 self.def_nr,
                 var,
                 tp_nr,
@@ -2406,6 +2409,7 @@ impl Output<'_> {
                  OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;
             crate::copy_manifest::record(
+                self.data,
                 self.def_nr,
                 var,
                 tp_nr,
@@ -2517,6 +2521,7 @@ impl Output<'_> {
                      OpCopyRecord(cell,{src_expr}, var_{name}, {tp_lit}); }}"
                 )?;
                 crate::copy_manifest::record(
+                    self.data,
                     self.def_nr,
                     var,
                     tp_nr,
@@ -3204,10 +3209,9 @@ impl Output<'_> {
                 // required"* the moment an element was written.
                 let var_tp = variables.tp(var).base().clone();
                 match &var_tp {
-                    Type::Vector(elm_tp, _) => {
-                        let elm_name = elm_tp.name(self.data);
-                        self.data.name_type(&format!("main_vector<{elm_name}>"), 0)
-                    }
+                    Type::Vector(elm_tp, _) => self
+                        .data
+                        .name_type(&self.data.vector_wrapper_name(elm_tp), 0),
                     // P188: keyed-collection locals need an OpDatabase
                     // call against the specific keyed-collection type so
                     // the backing store is allocated and the root pointer

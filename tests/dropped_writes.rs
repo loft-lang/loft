@@ -179,7 +179,7 @@ fn each_unguarded_dropped_write_reports_once_and_a_guarded_one_never_interpreted
 
 #[test]
 fn each_unguarded_dropped_write_reports_once_and_a_guarded_one_never_native() {
-    check("--native-rust");
+    check("--native");
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn each_unguarded_dropped_write_reports_once_and_a_guarded_one_never_c() {
 /// when the window closes, so the cell asserts the ceiling.
 #[test]
 fn a_thousand_dropped_writes_at_one_place_are_rate_limited() {
-    for backend in ["--interpret", "--native-rust", "--native-c"] {
+    for backend in ["--interpret", "--native"] {
         let (_, log) = run("thousand", "for _ in 0..1000 { q.x = 9; }", backend);
         let n = count(&log, "write_dropped");
         assert!((1..=5).contains(&n), "{backend}: {n} lines\n{log}");

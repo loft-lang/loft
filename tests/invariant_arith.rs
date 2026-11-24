@@ -16,64 +16,7 @@
 //! argument through its `OpCreateStack` spelling, so a callee's overflow into a local the
 //! proof trusted answers `null` on native as it does on the interpreter.
 use loft::file_access as fa;
-use std::path::{Path, PathBuf};
-
-const CELLS: &str =
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ao-invariant-arith-cells.loft";
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    // One file per TEST: the tests run on threads of one process, so a name keyed on the
-    // pid alone would make them delete each other's emission.
-    let out = std::env::temp_dir().join(format!(
-        "loft_invariant_arith_{}_{tag}.rs",
-        std::process::id()
-    ));
-    let mut cmd =
-        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
-        .arg("--native-emit")
-        .arg(&out)
-        .arg(&src)
-        .env("LOFT_TIMEOUT", "120")
-        .env_remove("LOFT_NO_INVARIANT_HOIST")
-        .env_remove("LOFT_HOIST_VERIFY");
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let status = cmd.output().expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
-/// How many memos `b` declares (each declaration line carries the § V-ao marker), and how
-/// many uses read one.
-fn memos(b: &str) -> (usize, usize) {
-    (
-        b.matches("//@PLN157 § V-ao invariant chain").count(),
-        b.matches("{ if !__ia_").count(),
-    )
-}
+use std::path::PathBuf;
 
 /// Run `src` as a native program with `env`, answering (stdout, stderr).
 fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
@@ -87,7 +30,7 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg(&file)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_CACHE", "1")
@@ -102,154 +45,6 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
     )
-}
-
-#[test]
-fn the_tap_shape_memoises_its_invariant_part_at_the_innermost_loop() {
-    let rust = emit("tap", &[]);
-    let b = body(&rust, "n_m1");
-    // The x loop's `yy * iw + xmin` and the ch loop's `yy * 2` — one memo each, declared
-    // at the loop that spells it.  The x loop is a `R-BoundedNest` tap emitted TWICE — the
-    // plain arm and the checked `else` — so its memo is read in both; the ch loop is an
-    // innermost loop with a chain, emitted twice under its chain guard
-    // (`@FR-R-GuardedChain`, 2026-09-20), so its memo is read twice too.
-    assert_eq!(memos(b), (2, 4), "m1 memos:\n{b}");
-    // Plain since loft#1619: the counter `yy`'s end `ih` is taken once into a local the
-    // range proof ranges, so `yy * iw + xmin` is proven in range (`@FR-R-Range`) and the
-    // memo holds the processor's operators in both arms.
-    assert!(
-        b.contains("__ia_7 = (((((var_yy).wrapping_mul(var_iw))).wrapping_add(var_xmin)));"),
-        "the tap's memo evaluates `yy * iw + xmin` at its first use:\n{b}"
-    );
-    // m7: `a * b + i * 10` is invariant in the j loop (i is the outer counter) — one memo,
-    // three ops, and the i loop itself declares none.
-    let b7 = body(&rust, "n_m7");
-    assert_eq!(
-        memos(b7),
-        (1, 2),
-        "m7 memos (the j loop's body is emitted twice under its chain guard, `@FR-R-GuardedChain`):\n{b7}"
-    );
-    assert!(
-        b7.contains("//@PLN157 § V-ao invariant chain, 3 ops"),
-        "m7's memo carries the whole invariant chain:\n{b7}"
-    );
-}
-
-#[test]
-fn a_rebound_or_escaped_leaf_a_field_read_and_a_literal_chain_decline() {
-    let rust = emit("decline", &[]);
-    for (name, why) in [
-        ("n_m2", "a leaf the body rebinds"),
-        ("n_m3", "a leaf handed to a by-reference parameter"),
-        ("n_m13", "a field read is not a leaf"),
-        ("n_m15", "a leaf handed to a fn-ref call"),
-        ("n_m16", "a leaf rebound inside a nested loop"),
-    ] {
-        let b = body(&rust, name);
-        assert_eq!(
-            memos(b),
-            (0, 0),
-            "{name} ({why}) must memoise nothing:\n{b}"
-        );
-    }
-}
-
-#[test]
-fn one_chain_spelled_twice_is_one_memo_and_every_loop_shape_takes_one() {
-    let rust = emit("shapes", &[]);
-    let b8 = body(&rust, "n_m8");
-    // Two uses in the body, and the body emitted twice under its chain guard
-    // (`@FR-R-GuardedChain`, 2026-09-20): four reads of the one memo.
-    assert_eq!(memos(b8), (1, 4), "m8: one memo, two uses:\n{b8}");
-    for (name, what) in [
-        ("n_m9", "a while loop"),
-        ("n_m11", "a vector iteration"),
-        ("n_m12", "negation and the bitwise ops"),
-        ("n_m14", "parameters as leaves"),
-    ] {
-        let b = body(&rust, name);
-        assert_eq!(memos(b).0, 1, "{name} ({what}) declares one memo:\n{b}");
-    }
-    // m10's chain is the range's END: `(I-Range)` takes it once, before the first round, into
-    // the loop's end local (loft#1619), so there is nothing left to memoise.
-    let b10 = body(&rust, "n_m10");
-    assert_eq!(memos(b10).0, 0, "m10 needs no memo:\n{b10}");
-    assert!(
-        b10.contains("let mut var__range_end_1: i64 = ((var_n).wrapping_mul(4_i64));"),
-        "m10's end `n * 4` is evaluated once, before the loop:\n{b10}"
-    );
-    assert!(
-        body(&rust, "n_m12").contains("//@PLN157 § V-ao invariant chain, 4 ops"),
-        "m12's memo is the whole `((-a) & 255) | (b ^ 7)` chain"
-    );
-}
-
-#[test]
-fn the_switch_restores_the_per_use_form_and_the_verify_form_asserts_every_use() {
-    let off = emit("off", &[("LOFT_NO_INVARIANT_HOIST", "1")]);
-    assert!(!off.contains("__ia_"), "the switch leaves no memo anywhere");
-    let verify = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
-    let b = body(&verify, "n_m1");
-    assert!(
-        b.contains("assert!(__c == __ia_"),
-        "the verify form compares every use with a fresh evaluation:\n{b}"
-    );
-}
-
-const BIG: &str = "big = 4611686018427387904;";
-
-/// The overflow note (`LOFT_DEV_SOFT_HALT=1`) fires where the first evaluation stands: once
-/// for a loop that evaluates the chain three times (the per-use form notes three), never for
-/// a zero-trip loop, and once for a chain that stands after a `continue` the first iteration
-/// takes.
-#[test]
-fn the_overflow_note_fires_where_the_first_evaluation_stands() {
-    let m4 = format!(
-        "fn main() {{ {BIG} s = 0; for i in 0..3 {{ s += (big * 4 + i) ?? 7; }} println(\"s {{s}}\"); }}"
-    );
-    let m5 = format!(
-        "fn main() {{ {BIG} s = 0; n = 0; for i in 0..n {{ s += (big * 4 + i) ?? 7; }} println(\"s {{s}}\"); }}"
-    );
-    let m6 = format!(
-        "fn main() {{ {BIG} s = 0; for i in 0..2 {{ if i == 0 {{ continue; }} s += (big * 4 + i) ?? 7; }} println(\"s {{s}}\"); }}"
-    );
-    let notes = |out: &(String, String)| out.1.matches("soft-halt: integer overflow").count();
-    let halt = [("LOFT_DEV_SOFT_HALT", "1")];
-    let both = [
-        ("LOFT_DEV_SOFT_HALT", "1"),
-        ("LOFT_NO_INVARIANT_HOIST", "1"),
-    ];
-    let r = run_native("m4", &m4, &halt);
-    assert!(r.0.contains("s 21"), "m4 value:\n{}\n{}", r.0, r.1);
-    assert_eq!(
-        notes(&r),
-        1,
-        "m4: the memo notes the overflow once:\n{}",
-        r.1
-    );
-    let r = run_native("m4off", &m4, &both);
-    assert_eq!(
-        notes(&r),
-        3,
-        "m4 per-use: three evaluations, three notes:\n{}",
-        r.1
-    );
-    let r = run_native("m5", &m5, &halt);
-    assert!(r.0.contains("s 0"), "m5 value:\n{}", r.0);
-    assert_eq!(
-        notes(&r),
-        0,
-        "m5: a zero-trip loop evaluates nothing:\n{}",
-        r.1
-    );
-    let r = run_native("m6", &m6, &halt);
-    assert!(r.0.contains("s 7"), "m6 value:\n{}", r.0);
-    assert_eq!(
-        notes(&r),
-        1,
-        "m6: the first evaluation is the second iteration's:\n{}",
-        r.1
-    );
 }
 
 /// loft#1534 — a local handed to a `&integer` parameter escapes the non-sentinel proof

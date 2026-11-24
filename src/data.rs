@@ -1469,20 +1469,19 @@ impl Deps {
     /// @PLN104 — renumber FRAME-variable entries in place for a variable swap:
     /// every plain entry equal to `from` becomes `to`.  Skips the `u16::MAX`
     /// pointer/share markers (they name no frame var).  FRAME-space only: a
-    /// variable swap never relocates attribute indices, so applying this to an
-    /// attr-space list would corrupt it (debug-asserted).  Used by the text-return
-    /// retbuf renumber (`Type::renumber_frame_deps`).
+    /// variable renumber never relocates attribute indices, so an attr-space list is
+    /// left as it is — renumbering it would corrupt it.  A walk over a whole body
+    /// meets such lists (a function body's result type names its PARAMETERS), and
+    /// cannot tell them apart from frame lists itself.  Only a debug build carries the space
+    /// tag; a release build renumbers every list, which leaves an attr list as it was for a
+    /// LOCAL's renumber — a local numbers after the arguments, so no attribute index equals
+    /// it.  Used by the text-return retbuf renumber and `(R-LiftReuse)`, which renumbers
+    /// lifts, locals all (`Type::renumber_frame_deps`).
     pub fn renumber_frame(&mut self, from: u16, to: u16) {
-        // An EMPTY list has nothing to corrupt, whatever space it is tagged — a `&text`
-        // parameter's declared type carries the attribute tag into the variable table, and
-        // the retbuf renumber walks every variable's type (loft#1335).  `union` exempts the
-        // empty list for the same reason.
         #[cfg(debug_assertions)]
-        debug_assert!(
-            self.items.is_empty() || self.space != DepSpace::Attr,
-            "renumber_frame on attr-space deps ({:?})",
-            self.items
-        );
+        if self.space == DepSpace::Attr {
+            return;
+        }
         for e in &mut self.items {
             if *e != u16::MAX && *e == from {
                 *e = to;
@@ -5790,6 +5789,61 @@ impl Clone for NameOnlyCache {
     }
 }
 
+/// `@PLN226` — a pass's memo or scratch about THIS program, kept with it rather than in a
+/// thread-local: a thread-local outlived the program it was about, and the next program a
+/// process compiled read its answers by the same definition numbers and addresses (loft#2122,
+/// loft#2142).  Behind a lock, so the `Data` stays shareable with the threads that read it;
+/// each access is one short closure, never held across a call that asks again.  A clone starts
+/// EMPTY, as [`OpSetCache`] does: its definitions diverge from the original's.
+#[derive(Default)]
+pub struct PassCell<T: Default>(std::sync::Mutex<T>);
+
+impl<T: Default> Clone for PassCell<T> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<T: Default> PassCell<T> {
+    /// Run `f` on the cell's value.
+    pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        f(&mut self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+}
+
+/// A per-program memo of a pass above the core layer, held by `Data` without naming the pass's
+/// type: the core layer names no higher one (`tests/extraction_hygiene.rs`).  The pass names
+/// its type at each use, and the first use makes it `T::default()`; a clone of the `Data`
+/// starts it empty, as a [`PassCell`] does.
+#[derive(Default)]
+pub struct PassAny(std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>);
+
+impl Clone for PassAny {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PassAny {
+    /// Run `f` on the memo, made `T::default()` on first use.
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: Default + Send + 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let memo = slot.get_or_insert_with(|| Box::new(T::default()));
+        f(memo
+            .downcast_mut::<T>()
+            .expect("a pass memo is read as the one type its pass names"))
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6074,6 +6128,21 @@ pub struct Data {
     op_sets: OpSetCache,
     /// @PLN187 — the name-only types ([`Self::is_name_only`]).
     name_only: NameOnlyCache,
+    /// `@PLN226` — the range analysis's call memo (`opt::range`).
+    pub(crate) range_memo: PassAny,
+    /// `@PLN226` — the non-null analysis's answers (`opt::non_sentinel`).
+    pub(crate) nn_memo: PassAny,
+    /// `@PLN226` — the ownership oracle's definitions of the function being emitted
+    /// (`use_analysis::defs_memo_scope`).
+    pub(crate) defs_memo: PassAny,
+    /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
+    catching_up: PassCell<HashSet<u32>>,
+    /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
+    pub(crate) refill_traced: PassCell<HashSet<String>>,
+    /// How deep `ret_adopt::buffer_complete` is nested in itself.
+    pub(crate) buffer_complete_depth: PassCell<u32>,
+    /// `@PLN226` — the copy manifest of this compilation (`copy_manifest`).
+    pub(crate) copies: PassAny,
 }
 
 #[must_use]
@@ -6572,12 +6641,6 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     })
 }
 
-thread_local! {
-    /// The open instances `Data::instance_def` is catching up (`catch_up_open_instance`).
-    static CATCHING_UP: std::cell::RefCell<std::collections::HashSet<u32>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
-}
-
 impl Data {
     /// The definitions the C backend works from: each `#c_twin`'s loft body taken out, so the
     /// function is, to every pass of that backend, the `#c` binding it is there — the C routine
@@ -6795,6 +6858,13 @@ impl Data {
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
             name_only: NameOnlyCache::default(),
+            range_memo: PassAny::default(),
+            nn_memo: PassAny::default(),
+            defs_memo: PassAny::default(),
+            catching_up: PassCell::default(),
+            refill_traced: PassCell::default(),
+            buffer_complete_depth: PassCell::default(),
+            copies: PassAny::default(),
         }
     }
 
@@ -10934,7 +11004,7 @@ impl Data {
             let owner = self.type_def_nr(tp);
             self.set_parent(d, owner);
         }
-        let name = format!("main_vector<{}>", tp.name(self));
+        let name = self.vector_wrapper_name(tp);
         let d_nr = self.def_nr(&name);
         if d_nr == u32::MAX {
             let vd = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -11069,10 +11139,10 @@ impl Data {
         if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
             // Re-entrant through the field being added (`t: vector<Lst<T>>` names this very
             // instance), so an instance already being caught up is answered as it stands.
-            if self.is_open_instance(nr) && CATCHING_UP.with(|c| c.borrow_mut().insert(nr)) {
+            if self.is_open_instance(nr) && self.catching_up.with(|c| c.insert(nr)) {
                 let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
                 self.catch_up_open_instance(lexer, template, nr, &bindings);
-                CATCHING_UP.with(|c| c.borrow_mut().remove(&nr));
+                self.catching_up.with(|c| c.remove(&nr));
             }
             return nr;
         }
@@ -12909,7 +12979,68 @@ impl Data {
     /// the bytecode writer's `OpDatabase` names for it, and every other writer with it.
     #[must_use]
     pub fn owned_vector_type(&self, elm: &Type, source: u16) -> u16 {
-        self.name_type(&format!("main_vector<{}>", elm.name(self)), source)
+        self.name_type(&self.vector_wrapper_name(elm), source)
+    }
+
+    /// The name of the record that wraps a vector of `elm` in a store of its own,
+    /// `main_vector<elm>` — the one spelling every site that mints, finds or compares such a
+    /// wrapper uses.  The wrapper is global (source 0) and found by name, while a type's name
+    /// is not unique: a program may declare a `File` beside the standard library's.  So each
+    /// type inside `elm` whose name was first bound to another TYPE adds `#<its def>` (a
+    /// constant or a function of that name owns no wrapper: the library's constant `E` leaves
+    /// a program's `struct E` its plain one):
+    /// the first definition of a name (the standard library's, which is parsed first) keeps
+    /// the plain wrapper, and a later one of the same name gets its own instead of reusing a
+    /// wrapper whose element has another layout.  A name only one definition carries stays
+    /// plain, so every other wrapper is spelled as before.
+    /// Is definition `d` a type a value can have — a struct, an enum or one of its variants,
+    /// or a named type — and so a type a vector wrapper can be made for?
+    fn is_type_def(&self, d: u32) -> bool {
+        self.definitions.get(d as usize).is_some_and(|def| {
+            matches!(
+                def.def_type,
+                DefType::Struct | DefType::Enum | DefType::EnumValue | DefType::Type
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn vector_wrapper_name(&self, elm: &Type) -> String {
+        let mut name = format!("main_vector<{}>", elm.name(self));
+        // Each definition once, in the order the walk meets it: peeled through `base()` (a
+        // nullable element names the same type, @FR-N-Shape), an `Optional` node and the node
+        // inside it are the same definition.
+        let mut seen: Vec<u32> = Vec::new();
+        elm.any_node(&mut |t| {
+            if let Type::Enum(d, _, _)
+            | Type::Reference(d, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _)
+            | Type::Hash(d, _, _) = t.base()
+                && !seen.contains(d)
+                && (*d as usize) < self.definitions.len()
+                && self
+                    .def_names
+                    .first_bound(&self.definitions[*d as usize].name)
+                    // A generic's type-variable placeholder is no earlier type: its wrapper is
+                    // spelled `__typevar_<T>` already, so a user's `T` keeps the bare one.
+                    .is_some_and(|first| {
+                        first != *d
+                            && self.is_type_def(first)
+                            && !self.is_type_var_placeholder(first)
+                    })
+            {
+                seen.push(*d);
+                let _ = {
+                    use std::fmt::Write as _;
+                    write!(name, "#{d}")
+                };
+            }
+            false
+        });
+        name
     }
 
     /** Get the definition by name

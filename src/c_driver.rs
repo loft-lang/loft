@@ -34,13 +34,6 @@ pub(crate) fn c_backend_named() -> bool {
     std::env::var("LOFT_NATIVE_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("c"))
 }
 
-/// Does a WASI program link with this machine's wasm32 C toolchain?  The probe
-/// [`build_wasm`] makes before it builds, asked ahead so a default C build that cannot run
-/// here takes the rustc writer instead.
-pub(crate) fn wasm_toolchain_links() -> bool {
-    wasm_toolchain().links
-}
-
 /// `LOFT_NATIVE_BACKEND=rust`: the rustc writer is asked for instead of the C backend, as
 /// `--native-rust` asks for it.
 pub(crate) fn rust_backend_selected() -> bool {
@@ -139,7 +132,8 @@ fn cc_flags(tier: Tier) -> Vec<String> {
             .map(|a| (*a).to_string()),
     );
     // A fault in a semantics or a debug build names the frames it fired under; a shipped
-    // binary compiles the pushes away, as the Rust writer's lean tier drops its frame names.
+    // binary compiles the frame names away and keeps the call-depth cap, as the rustc writer's
+    // `--ship` builds its lean tier (`cr_call_push_lean`).
     match tier {
         Tier::Check => flags.extend(["-O1".into(), "-DLOFT_CALL_CHAIN".into()]),
         Tier::Release => flags.push("-O3".into()),
@@ -1130,6 +1124,20 @@ pub(crate) struct Built {
     pub cached: bool,
 }
 
+/// P254 — may the cached binary at `cached` run?  It must pass the cache's safety check
+/// (owner, mode, no symlink, no SUID); one that fails is reported and rebuilt over.
+fn reuse_cached(cached: &std::path::Path) -> bool {
+    if crate::native_utils::cache_safe_to_execute(cached) {
+        crate::native_utils::touch_cached_binary(cached);
+        return true;
+    }
+    eprintln!(
+        "loft: rejecting suspicious cached binary at {} (P254 — wrong owner, world-writable, symlink, or SUID); recompiling",
+        cached.display()
+    );
+    false
+}
+
 /// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path,
 /// placed as [`Placement`] says.
 /// The binary is compiled under the scratch directory and published by an atomic rename, so
@@ -1172,12 +1180,7 @@ pub(crate) fn build(
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
     // A lint compiles afresh, so its warnings are seen every time it is asked for.
     let linting = lint() != Lint::Off;
-    if !no_cache
-        && !linting
-        && fa::exists(&cached)
-        && crate::native_utils::cache_safe_to_execute(&cached)
-    {
-        crate::native_utils::touch_cached_binary(&cached);
+    if !no_cache && !linting && fa::exists(&cached) && reuse_cached(&cached) {
         return Ok(Built {
             binary: cached,
             cached: true,
@@ -1299,10 +1302,10 @@ pub(crate) fn loft_written_unit(
             ),
         )
         .map_err(|e| format!("the program image could not be written: {e}"))?;
-        // `@FR-R-CSplit` runs in a semantics build alone: a unit that keeps its functions whole
-        // (`c::functions_whole`, a shipped artefact) tells the generator so.
+        // `@FR-R-CSplit` runs in a semantics build, and in a shipped one only on request
+        // (`LOFT_C_SPLIT_SHIP`): a unit that keeps its functions whole tells the generator so.
         let mut spawn = Spawn::new(Program::os(&generator)).args([&image, &unit, &runtime]);
-        if loft::c::functions_whole() {
+        if loft::c::functions_whole() && !loft::c::split_shipped() {
             spawn = spawn.env("LOFT_NO_C_SPLIT", "1");
         }
         let out = spawn

@@ -41,9 +41,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicPtr;
 
-/// Where each package's library was loaded from, for [`unbound`] to name.
-static LOADED_FROM: std::sync::Mutex<Vec<(&'static str, PathBuf)>> =
-    std::sync::Mutex::new(Vec::new());
+/// What [`bind`] loaded, published once when it is done (before the program runs): where each
+/// package's library came from, for [`unbound`] to name, and the `__C_LIBS` names of the C
+/// libraries it loaded.  Set once, read after: no lock (LOCKS.md).
+#[derive(Default)]
+struct Bound {
+    loaded_from: Vec<(&'static str, PathBuf)>,
+    c_names: Vec<&'static str>,
+}
+static BOUND: std::sync::OnceLock<Bound> = std::sync::OnceLock::new();
 
 /// One function a program calls in a library: the exported symbol and the slot the
 /// generated code calls through.  The slot starts at a stub that binds on first use.
@@ -65,18 +71,12 @@ pub struct Library {
     pub symbols: &'static [Symbol],
 }
 
-/// The `__C_LIBS` names of the C libraries [`bind`] loaded.
-static BOUND_C: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
-
 /// @PLN197 — did [`bind`] load the C library the program's `__C_LIBS` names `name`?  Then
 /// it is open, its symbols are in `c_libs`' loaded set, and the `#c` resolver must not go
 /// looking for it by name — which would fail, since its directory is not in the binary.
 #[must_use]
 pub fn is_bound_c(name: &str) -> bool {
-    BOUND_C
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .contains(&name)
+    BOUND.get().is_some_and(|b| b.c_names.contains(&name))
 }
 
 /// Fill every slot of `libs` once, from the search order above.  A library found nowhere
@@ -87,12 +87,14 @@ pub fn bind(libs: &'static [Library]) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let dirs = search_dirs();
+        let mut bound = Bound::default();
         for lib in libs {
-            if let Err(message) = bind_one(lib, &dirs) {
+            if let Err(message) = bind_one(lib, &dirs, &mut bound) {
                 eprintln!("{message}");
                 std::process::exit(1);
             }
         }
+        let _ = BOUND.set(bound);
     });
 }
 
@@ -104,9 +106,10 @@ pub fn unbound(symbol: &str, libs: &'static [Library]) -> ! {
         .find(|l| l.symbols.iter().any(|s| s.name == symbol));
     match lib {
         Some(lib) => {
-            let from = LOADED_FROM
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            let from = BOUND
+                .get()
+                .map(|b| b.loaded_from.as_slice())
+                .unwrap_or_default()
                 .iter()
                 .find(|(p, _)| *p == lib.package)
                 .map(|(_, path)| format!(" ({})", path.display()))
@@ -165,14 +168,15 @@ fn candidates(lib: &Library, dirs: &[(PathBuf, bool)]) -> Vec<PathBuf> {
 }
 
 #[cfg(feature = "native-extensions")]
-fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)]) -> Result<(), String> {
+fn bind_one(
+    lib: &'static Library,
+    dirs: &[(PathBuf, bool)],
+    bound: &mut Bound,
+) -> Result<(), String> {
     // A row with no file is a C library linked INTO the binary (@PLN197): nothing to load,
     // only its name to mark present.
     if lib.file.is_empty() {
-        BOUND_C
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(lib.c_name);
+        bound.c_names.push(lib.c_name);
         return Ok(());
     }
     let mut refused = Vec::new();
@@ -207,22 +211,20 @@ fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)]) -> Result<(), Strin
         // A C library joins `c_libs`' loaded set too, so a `#c` symbol of its package that
         // is resolved by name (a lazy one, or the slot fallback) finds it there.
         if !lib.c_name.is_empty() && crate::c_libs::load_one(&path.to_string_lossy()) {
-            BOUND_C
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(lib.c_name);
+            bound.c_names.push(lib.c_name);
         }
-        LOADED_FROM
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((lib.package, path));
+        bound.loaded_from.push((lib.package, path));
         return Ok(());
     }
     Err(missing_library(lib, dirs, &refused))
 }
 
 #[cfg(not(feature = "native-extensions"))]
-fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)]) -> Result<(), String> {
+fn bind_one(
+    lib: &'static Library,
+    dirs: &[(PathBuf, bool)],
+    _bound: &mut Bound,
+) -> Result<(), String> {
     Err(missing_library(lib, dirs, &[]))
 }
 

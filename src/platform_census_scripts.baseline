@@ -44,7 +44,6 @@
 2 scripts/ci_failure_digest.py
 1 scripts/claim.py
 8 scripts/clippy-review.py
-1 scripts/compiled_stdlib_fresh.py
 1 scripts/disk_headroom.sh
 3 scripts/disk_janitor.sh
 4 scripts/doc-review.sh

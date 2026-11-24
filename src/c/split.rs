@@ -22,16 +22,19 @@
 //! (a `setjmp`, a preprocessor conditional, a block comment over lines, a label it cannot
 //! place) is written unsplit.
 //!
-//! It runs in every semantics build (`--native-c`, `loft test`, `--emit-c`, the C sweep) and
-//! never in a shipped one: a `--ship` unit and an ESP app keep every function whole
-//! ([`super::functions_whole`]; NATIVE.md § Optimisation tiers), so a shipped artefact's C is
-//! the C it was before the split existed.  `LOFT_C_SPLIT=<n>` sets the budget (`1` the
+//! It runs in every semantics build (`--native-c`, `loft test`, `--emit-c`, the C sweep).  A
+//! shipped unit (`--ship`, an ESP app) keeps every function whole ([`super::functions_whole`];
+//! NATIVE.md § Optimisation tiers), so its C is the C it was before the split existed, unless
+//! `LOFT_C_SPLIT_SHIP=1` asks for the parts: a build that must fit a machine's memory.  `LOFT_C_SPLIT=<n>` sets the budget (`1` the
 //! default, `0` off); `LOFT_NO_C_SPLIT=1` turns it off over any setting; `LOFT_TRACE_C_SPLIT=1`
 //! names each function over the budget, its parts and its frame size, or why it stayed whole.
 //!
-//! By default the parts are compiled by MSVC alone: the function is written both ways, the
-//! parts under `#if defined(_MSC_VER)` and the whole body under `#else` ([`everywhere`]).  The
-//! statements are the same in both, so no answer can differ.
+//! By default the function is written both ways, the parts under `#if LOFT_C_SPLIT_ABOVE > 0
+//! && <its sites> > LOFT_C_SPLIT_ABOVE` and the whole body under `#else`, so each C compiler
+//! takes the parts above its own size (loft_cc.h: MSVC 300, for its optimiser's time; gcc and
+//! clang 2000, for their memory).  `LOFT_C_SPLIT_ABOVE=<n>` or `-DLOFT_C_SPLIT_ABOVE=<n>` sets
+//! that size, `0` never.  A budget asked for ([`everywhere`]) writes the parts alone.  The
+//! statements are the same in both arms, so no answer can differ.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -39,9 +42,31 @@ use std::fmt::Write as _;
 /// Runtime-call sites per function above which `cl /O1`'s time stops being linear (@PLN212 P0).
 const DEFAULT_BUDGET: usize = 300;
 
-/// The budget the split runs under, or `None` when it is off: a shipped unit, or a switch.
-pub(crate) fn budget() -> Option<usize> {
-    if super::functions_whole()
+/// Whether a shipped unit is written with its parts too (`LOFT_C_SPLIT_SHIP=1`).  A shipped
+/// artefact keeps every function whole by default (NATIVE.md § Optimisation tiers); a build
+/// that must fit a machine's memory (the gate's tools on a GitHub runner) asks for the parts.
+pub(crate) fn split_shipped() -> bool {
+    crate::env_once!(std::env::var("LOFT_C_SPLIT_SHIP").is_ok_and(|v| v != "0"))
+}
+
+/// The unit's own `LOFT_C_SPLIT_ABOVE` (`LOFT_C_SPLIT_ABOVE=<n>` at build time), written ahead
+/// of the runtime so it overrides the per-compiler default in loft_cc.h; `None` keeps that
+/// default.  A `-DLOFT_C_SPLIT_ABOVE=<n>` on the C compiler's command line does the same for
+/// an `--emit-c` unit compiled elsewhere.
+pub(crate) fn above_define() -> Option<String> {
+    let n = std::env::var("LOFT_C_SPLIT_ABOVE")
+        .ok()?
+        .trim()
+        .parse::<usize>()
+        .ok()?;
+    Some(format!("#define LOFT_C_SPLIT_ABOVE {n}\n"))
+}
+
+/// The budget the split runs under, or `None` when it is off: a unit that keeps its functions
+/// whole (`Cx::whole`, a shipped artefact — unless `LOFT_C_SPLIT_SHIP` asks for its parts), or
+/// a switch.
+pub(crate) fn budget(whole: bool) -> Option<usize> {
+    if (whole && !split_shipped())
         || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0"))
     {
         return None;
@@ -55,11 +80,11 @@ pub(crate) fn budget() -> Option<usize> {
     })
 }
 
-/// Whether the parts are written for every C compiler: only where a budget was asked for
-/// (`LOFT_C_SPLIT=<n>`, `n > 1`, the split cells and a bisect).  By default the parts are written
-/// for MSVC alone, under `#if defined(_MSC_VER)`, with the whole function in the `#else` arm:
-/// gcc and clang stay linear on a large function, and a split costs a hot function its
-/// registers — a frame struct, its reset and two indirect calls per call (cbor `decode` 12x).
+/// Whether the parts are written alone, for every C compiler and size: only where a budget was
+/// asked for (`LOFT_C_SPLIT=<n>`, `n > 1`, the split cells and a bisect).  By default the unit
+/// carries both forms and `LOFT_C_SPLIT_ABOVE` picks one: gcc and clang stay linear in time on
+/// a large function, and a split costs a hot function its registers — a frame struct, its
+/// reset and two indirect calls per call (cbor `decode` 12x) — so they split only the giants.
 pub(crate) fn everywhere() -> bool {
     *crate::env_once!(@value bool, {
         std::env::var("LOFT_C_SPLIT")
@@ -481,14 +506,30 @@ fn label_of(bare_line: &str) -> Option<&str> {
 
 /// The written text of `<storage> <ret> <name>(<params>) { <body> }` split into parts, or
 /// `None` when it stays as it is: under the budget, or a body this pass does not split.
+/// The body as a chain of parts, and its size in runtime-call sites, which the unit compares
+/// with `LOFT_C_SPLIT_ABOVE` (loft_cc.h) to pick the parts or the whole body.
 pub(crate) fn split(
+    whole: bool,
     storage: &str,
     ret: &str,
     name: &str,
     params: &str,
     body: &str,
-) -> Option<String> {
-    split_at(budget()?, storage, ret, name, params, body)
+) -> Option<(String, usize)> {
+    let parts = split_at(budget(whole)?, storage, ret, name, params, body)?;
+    Some((parts, body_sites(body)))
+}
+
+/// A body's runtime-call sites, as [`split_at`] counts them.
+fn body_sites(body: &str) -> usize {
+    let lines: Vec<&str> = body
+        .strip_suffix('\n')
+        .unwrap_or(body)
+        .split('\n')
+        .collect();
+    statements(&lines).map_or(0, |stmts| {
+        stmts.iter().map(|s| call_sites(&s.bare_text())).sum()
+    })
 }
 
 fn split_at(
@@ -1003,13 +1044,13 @@ mod tests {
 
     #[test]
     fn a_static_slot_moves_out_under_the_functions_name() {
-        let slot = "    static LOFT_TLS loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
-                    loft_text v2_w = loft_wpark_take(&loft_wp7_1);\n";
+        let slot = "    static loft_text loft_wp7_1 = { 0, 0, 0 };\n    \
+                    loft_text v2_w = loft_wpark_take(cx, &loft_wp7_1);\n";
         let out = split(&body(slot, &read("v2_w.len"))).expect("split");
-        let moved = "static LOFT_TLS loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
+        let moved = "static loft_text n_f__fr__loft_wp7_1 = { 0, 0, 0 };\n";
         assert!(out.starts_with(moved), "{out}");
         assert!(
-            out.contains("loft_fr->v2_w = loft_wpark_take(&n_f__fr__loft_wp7_1);"),
+            out.contains("loft_fr->v2_w = loft_wpark_take(cx, &n_f__fr__loft_wp7_1);"),
             "{out}"
         );
     }

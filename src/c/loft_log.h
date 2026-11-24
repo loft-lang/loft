@@ -33,9 +33,7 @@ static struct {
     uint32_t ymd;
 } loft_lg;
 
-static int loft_had_fatal = 0;
-
-static char *loft_log_dup(const char *s, size_t n) {
+static char *loft_log_dup(loft_cx *cx, const char *s, size_t n) {
     char *d = (char *) malloc(n + 1);
     if (!d) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(d, s, n);
@@ -43,7 +41,7 @@ static char *loft_log_dup(const char *s, size_t n) {
     return d;
 }
 
-static char *loft_log_join(const char *dir, const char *rel) {
+static char *loft_log_join(loft_cx *cx, const char *dir, const char *rel) {
     size_t a = strlen(dir), b = strlen(rel);
     char *p = (char *) malloc(a + b + 2);
     if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -53,36 +51,36 @@ static char *loft_log_join(const char *dir, const char *rel) {
     return p;
 }
 
-static int loft_log_absolute(const char *p) {
+static int loft_log_absolute(loft_cx *cx, const char *p) {
     return p[0] == '/' || p[0] == '\\' || (p[0] && p[1] == ':');
 }
 
-static int loft_log_exists(const char *p) {
+static int loft_log_exists(loft_cx *cx, const char *p) {
     FILE *f = fopen(p, "rb");
     if (f) fclose(f);
     return f != 0;
 }
 
 /* The directory part of `p`, "." when it has none. */
-static char *loft_log_dirname(const char *p) {
+static char *loft_log_dirname(loft_cx *cx, const char *p) {
     const char *s = strrchr(p, '/');
 #if defined(_WIN32)
     const char *b = strrchr(p, '\\');
     if (b && (!s || b > s)) s = b;
 #endif
-    return s ? loft_log_dup(p, s == p ? 1 : (size_t) (s - p)) : loft_log_dup(".", 1);
+    return s ? loft_log_dup(cx, p, s == p ? 1 : (size_t) (s - p)) : loft_log_dup(cx, ".", 1);
 }
 
-static int64_t loft_log_mtime(const char *p) {
+static int64_t loft_log_mtime(loft_cx *cx, const char *p) {
 #if defined(LOFT_POSIX)
     struct stat st;
     return p && stat(p, &st) == 0 ? (int64_t) st.st_mtime : -1;
 #else
-    return p && loft_log_exists(p) ? 0 : -1;
+    return p && loft_log_exists(cx, p) ? 0 : -1;
 #endif
 }
 
-static int loft_log_sev(const char *v, size_t n) {
+static int loft_log_sev(loft_cx *cx, const char *v, size_t n) {
     char low[8];
     size_t i;
     if (n >= sizeof low) return -1;
@@ -95,12 +93,12 @@ static int loft_log_sev(const char *v, size_t n) {
     return -1;
 }
 
-static int loft_log_true(const char *v, size_t n) {
+static int loft_log_true(loft_cx *cx, const char *v, size_t n) {
     return (n == 1 && v[0] == '1') ||
            (n == 4 && (v[0] | 32) == 't' && (v[1] | 32) == 'r' && (v[2] | 32) == 'u' && (v[3] | 32) == 'e');
 }
 
-static uint64_t loft_log_uint(const char *v, size_t n, int *ok) {
+static uint64_t loft_log_uint(loft_cx *cx, const char *v, size_t n, int *ok) {
     uint64_t r = 0;
     size_t i;
     *ok = n > 0;
@@ -111,12 +109,12 @@ static uint64_t loft_log_uint(const char *v, size_t n, int *ok) {
     return r;
 }
 
-static void loft_log_trim(const char **s, size_t *n) {
+static void loft_log_trim(loft_cx *cx, const char **s, size_t *n) {
     while (*n && ((*s)[0] == ' ' || (*s)[0] == '\t' || (*s)[0] == '\r')) { (*s)++; (*n)--; }
     while (*n && ((*s)[*n - 1] == ' ' || (*s)[*n - 1] == '\t' || (*s)[*n - 1] == '\r')) (*n)--;
 }
 
-static void loft_log_unquote(const char **s, size_t *n) {
+static void loft_log_unquote(loft_cx *cx, const char **s, size_t *n) {
     while (*n && (*s)[0] == '"') { (*s)++; (*n)--; }
     while (*n && (*s)[*n - 1] == '"') (*n)--;
 }
@@ -124,7 +122,7 @@ static void loft_log_unquote(const char **s, size_t *n) {
 /* The defaults of `RuntimeLogConfig`, then `parse_config_str` over `text`: `[log] file / level /
  * production`, `[rotation] max_size_mb / daily / max_files`, `[rate_limit] per_site`,
  * `[levels] <file or dir/> = <level>`.  A relative `file` is the config's directory's. */
-static void loft_log_configure(const char *text, const char *conf_dir) {
+static void loft_log_configure(loft_cx *cx, const char *text, const char *conf_dir) {
     char section[32] = "";
     const char *line = text;
     size_t i;
@@ -140,13 +138,13 @@ static void loft_log_configure(const char *text, const char *conf_dir) {
         const char *end = strchr(line, '\n'), *eq;
         size_t n = end ? (size_t) (end - line) : strlen(line);
         const char *l = line;
-        loft_log_trim(&l, &n);
+        loft_log_trim(cx, &l, &n);
         line = end ? end + 1 : 0;
         if (!n || l[0] == '#') continue;
         if (l[0] == '[' && l[n - 1] == ']') {
             const char *sec = l + 1;
             size_t sn = n - 2;
-            loft_log_trim(&sec, &sn);
+            loft_log_trim(cx, &sec, &sn);
             if (sn >= sizeof section) sn = sizeof section - 1;
             memcpy(section, sec, sn);
             section[sn] = 0;
@@ -158,38 +156,38 @@ static void loft_log_configure(const char *text, const char *conf_dir) {
             size_t kn = (size_t) (eq - l), vn = n - kn - 1;
             int ok;
             uint64_t u;
-            loft_log_trim(&k, &kn);
-            loft_log_unquote(&k, &kn);
-            loft_log_trim(&v, &vn);
-            loft_log_unquote(&v, &vn);
+            loft_log_trim(cx, &k, &kn);
+            loft_log_unquote(cx, &k, &kn);
+            loft_log_trim(cx, &v, &vn);
+            loft_log_unquote(cx, &v, &vn);
 #define LOFT_KEY(s) (kn == sizeof(s) - 1 && !memcmp(k, s, kn))
             if (!strcmp(section, "log") && LOFT_KEY("file")) {
-                char *val = loft_log_dup(v, vn);
+                char *val = loft_log_dup(cx, v, vn);
                 free(loft_lg.path);
-                loft_lg.path = loft_log_absolute(val) ? loft_log_dup(val, vn) : loft_log_join(conf_dir, val);
+                loft_lg.path = loft_log_absolute(cx, val) ? loft_log_dup(cx, val, vn) : loft_log_join(cx, conf_dir, val);
                 free(val);
             } else if (!strcmp(section, "log") && LOFT_KEY("level")) {
-                int s = loft_log_sev(v, vn);
+                int s = loft_log_sev(cx, v, vn);
                 if (s >= 0) loft_lg.level = s;
             } else if (!strcmp(section, "log") && LOFT_KEY("production")) {
-                loft_lg.production = loft_log_true(v, vn);
+                loft_lg.production = loft_log_true(cx, v, vn);
             } else if (!strcmp(section, "rotation") && LOFT_KEY("max_size_mb")) {
-                u = loft_log_uint(v, vn, &ok);
+                u = loft_log_uint(cx, v, vn, &ok);
                 if (ok) loft_lg.max_size = u * 1024 * 1024;
             } else if (!strcmp(section, "rotation") && LOFT_KEY("daily")) {
-                loft_lg.daily = loft_log_true(v, vn);
+                loft_lg.daily = loft_log_true(cx, v, vn);
             } else if (!strcmp(section, "rotation") && LOFT_KEY("max_files")) {
-                u = loft_log_uint(v, vn, &ok);
+                u = loft_log_uint(cx, v, vn, &ok);
                 if (ok && u <= UINT32_MAX) loft_lg.max_files = (uint32_t) u;
             } else if (!strcmp(section, "rate_limit") && LOFT_KEY("per_site")) {
-                u = loft_log_uint(v, vn, &ok);
+                u = loft_log_uint(cx, v, vn, &ok);
                 if (ok && u <= UINT32_MAX) loft_lg.rate = (uint32_t) u;
             } else if (!strcmp(section, "levels")) {
-                int s = loft_log_sev(v, vn);
+                int s = loft_log_sev(cx, v, vn);
                 if (s >= 0) {
                     loft_lg.levels = (loft_log_level *) realloc(loft_lg.levels, (loft_lg.nlevels + 1) * sizeof *loft_lg.levels);
                     if (!loft_lg.levels) { fputs("loft: out of memory\n", stderr); abort(); }
-                    loft_lg.levels[loft_lg.nlevels].key = loft_log_dup(k, kn);
+                    loft_lg.levels[loft_lg.nlevels].key = loft_log_dup(cx, k, kn);
                     loft_lg.levels[loft_lg.nlevels].sev = s;
                     loft_lg.nlevels++;
                 }
@@ -197,39 +195,45 @@ static void loft_log_configure(const char *text, const char *conf_dir) {
 #undef LOFT_KEY
         }
     }
+    /* `--production` reaches a compiled program as `LOFT_PRODUCTION` (the driver sets it), over
+     * whatever the config says, as the interpreter's `Logger` takes the flag. */
+    {
+        const char *p = getenv("LOFT_PRODUCTION");
+        if (p && strcmp(p, "0") != 0) loft_lg.production = 1;
+    }
 }
 
-static char *loft_log_read(const char *p) {
+static char *loft_log_read(loft_cx *cx, const char *p) {
     FILE *f = fopen(p, "rb");
     loft_text t = { 0, 0, 0 };
     char buf[4096];
     size_t n;
     if (!f) return 0;
-    while ((n = fread(buf, 1, sizeof buf, f)) > 0) loft_push(&t, buf, n);
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) loft_push(cx, &t, buf, n);
     fclose(f);
-    loft_push(&t, "", 1);
+    loft_push(cx, &t, "", 1);
     return t.p;
 }
 
 /* `source_base_for`: the nearest directory above the program holding a `loft.toml`, else the
  * program's own directory, canonical where the host can say. */
-static char *loft_log_source_base(void) {
+static char *loft_log_source_base(loft_cx *cx) {
     char *dir;
 #if defined(LOFT_POSIX_HOST)
     char *real = realpath(*loft_anchor ? loft_anchor : ".", 0);
-    dir = real ? real : loft_log_dup(loft_anchor, strlen(loft_anchor));
+    dir = real ? real : loft_log_dup(cx, loft_anchor, strlen(loft_anchor));
 #else
-    dir = loft_log_dup(loft_anchor, strlen(loft_anchor));
+    dir = loft_log_dup(cx, loft_anchor, strlen(loft_anchor));
 #endif
     {
-        char *cur = loft_log_dup(dir, strlen(dir));
+        char *cur = loft_log_dup(cx, dir, strlen(dir));
         for (;;) {
-            char *toml = loft_log_join(cur, "loft.toml");
-            int found = loft_log_exists(toml);
+            char *toml = loft_log_join(cx, cur, "loft.toml");
+            int found = loft_log_exists(cx, toml);
             char *up;
             free(toml);
             if (found) { free(dir); return cur; }
-            up = loft_log_dirname(cur);
+            up = loft_log_dirname(cx, cur);
             if (!strcmp(up, cur) || !strcmp(up, ".")) { free(up); break; }
             free(cur);
             cur = up;
@@ -239,42 +243,42 @@ static char *loft_log_source_base(void) {
     return dir;
 }
 
-static void loft_log_init(void) {
+static void loft_log_init(loft_cx *cx) {
     const char *env = getenv("LOFT_LOG_CONF");
     char *text, *conf_dir;
     if (loft_lg.ready) return;
     loft_lg.ready = 1;
     if (env && *env) {
-        loft_lg.conf = loft_log_dup(env, strlen(env));
+        loft_lg.conf = loft_log_dup(cx, env, strlen(env));
     } else {
-        char *dot = loft_log_join(loft_anchor, ".loft/log.conf");
-        if (loft_log_exists(dot)) loft_lg.conf = dot;
-        else { free(dot); loft_lg.conf = loft_log_join(loft_anchor, "log.conf"); }
+        char *dot = loft_log_join(cx, loft_anchor, ".loft/log.conf");
+        if (loft_log_exists(cx, dot)) loft_lg.conf = dot;
+        else { free(dot); loft_lg.conf = loft_log_join(cx, loft_anchor, "log.conf"); }
     }
-    text = loft_log_read(loft_lg.conf);
+    text = loft_log_read(cx, loft_lg.conf);
     /* With a config, a log without `file` is `log.txt` (the default config's, relative to the
      * working directory); without one, `.loft/log.txt` beside the program. */
-    loft_lg.path = text ? loft_log_dup("log.txt", 7) : loft_log_join(loft_anchor, ".loft/log.txt");
-    conf_dir = loft_log_dirname(loft_lg.conf);
-    loft_log_configure(text ? text : "", conf_dir);
+    loft_lg.path = text ? loft_log_dup(cx, "log.txt", 7) : loft_log_join(cx, loft_anchor, ".loft/log.txt");
+    conf_dir = loft_log_dirname(cx, loft_lg.conf);
+    loft_log_configure(cx, text ? text : "", conf_dir);
     free(conf_dir);
-    loft_lg.conf_mtime = text ? loft_log_mtime(loft_lg.conf) : -1;
+    loft_lg.conf_mtime = text ? loft_log_mtime(cx, loft_lg.conf) : -1;
     if (!text) { free(loft_lg.conf); loft_lg.conf = 0; }
     free(text);
-    loft_lg.base = loft_log_source_base();
-    loft_lg.checked_us = loft_now_us();
+    loft_lg.base = loft_log_source_base(cx);
+    loft_lg.checked_us = loft_now_us(cx);
 }
 
 /* The UTC time as `YYYY-MM-DDTHH:MM:SS.mmmZ` (`utc_timestamp`), and today's date as
  * year * 10000 + month * 100 + day (`today_ymd`). */
-static uint32_t loft_log_clock(char *out) {
+static uint32_t loft_log_clock(loft_cx *cx, char *out) {
     int64_t ms;
 #if defined(LOFT_POSIX)
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
     ms = (int64_t) t.tv_sec * 1000 + t.tv_nsec / 1000000;
 #elif defined(_WIN32)
-    ms = loft_win_wall_ms();
+    ms = loft_win_wall_ms(cx);
 #else
     ms = (int64_t) time(0) * 1000;
 #endif
@@ -297,8 +301,8 @@ static uint32_t loft_log_clock(char *out) {
     }
 }
 
-static void loft_log_open(void) {
-    char *dir = loft_log_dirname(loft_lg.path);
+static void loft_log_open(loft_cx *cx) {
+    char *dir = loft_log_dirname(cx, loft_lg.path);
 #if defined(LOFT_POSIX)
     /* `create_dir_all` of the log's directory, one level at a time. */
     {
@@ -320,18 +324,18 @@ static void loft_log_open(void) {
         fseek(loft_lg.f, 0, SEEK_END);
         at = ftell(loft_lg.f);
         loft_lg.size = at > 0 ? (uint64_t) at : 0;
-        loft_lg.ymd = loft_log_clock(0);
+        loft_lg.ymd = loft_log_clock(cx, 0);
     }
 }
 
 /* `rotate`: the oldest archive deleted, each `<stem>.<i><ext>` moved up one, the log itself to
  * `<stem>.1<ext>`, and a fresh log opened. */
-static void loft_log_rotate(void) {
-    char *dir = loft_log_dirname(loft_lg.path);
+static void loft_log_rotate(loft_cx *cx) {
+    char *dir = loft_log_dirname(cx, loft_lg.path);
     const char *name = loft_lg.path + strlen(dir) + (strcmp(dir, ".") ? 1 : 0);
     const char *dot = strrchr(name, '.');
     size_t stem_n = dot && dot != name ? (size_t) (dot - name) : strlen(name);
-    char *stem = loft_log_dup(name, stem_n);
+    char *stem = loft_log_dup(cx, name, stem_n);
     const char *ext = dot && dot != name ? dot : "";
     char a[4096], b[4096];
     uint32_t i, max = loft_lg.max_files;
@@ -345,47 +349,47 @@ static void loft_log_rotate(void) {
         for (i = max > 1 ? max - 2 : 0; max > 1 && i >= 1; i--) {
             snprintf(a, sizeof a, "%s/%s.%u%s", dir, stem, (unsigned) i, ext);
             snprintf(b, sizeof b, "%s/%s.%u%s", dir, stem, (unsigned) (i + 1), ext);
-            loft_rename(a, b);
+            loft_rename(cx, a, b);
         }
         snprintf(a, sizeof a, "%s/%s.1%s", dir, stem, ext);
-        loft_rename(loft_lg.path, a);
+        loft_rename(cx, loft_lg.path, a);
     }
     free(stem);
     free(dir);
     loft_lg.size = 0;
-    loft_log_open();
+    loft_log_open(cx);
 }
 
 /* `check_reload`: at most every five seconds, a changed config is read again; a new log path
  * reopens the log. */
-static void loft_log_reload(void) {
-    int64_t now = loft_now_us(), m;
+static void loft_log_reload(loft_cx *cx) {
+    int64_t now = loft_now_us(cx), m;
     char *text, *old, *conf_dir;
     if (now - loft_lg.checked_us < 5000000) return;
     loft_lg.checked_us = now;
     if (!loft_lg.conf) return;
-    m = loft_log_mtime(loft_lg.conf);
+    m = loft_log_mtime(cx, loft_lg.conf);
     if (m == loft_lg.conf_mtime) return;
     loft_lg.conf_mtime = m;
-    text = loft_log_read(loft_lg.conf);
+    text = loft_log_read(cx, loft_lg.conf);
     if (!text) return;
-    old = loft_log_dup(loft_lg.path, strlen(loft_lg.path));
+    old = loft_log_dup(cx, loft_lg.path, strlen(loft_lg.path));
     free(loft_lg.path);
-    loft_lg.path = loft_log_dup("log.txt", 7);
-    conf_dir = loft_log_dirname(loft_lg.conf);
-    loft_log_configure(text, conf_dir);
+    loft_lg.path = loft_log_dup(cx, "log.txt", 7);
+    conf_dir = loft_log_dirname(cx, loft_lg.conf);
+    loft_log_configure(cx, text, conf_dir);
     free(conf_dir);
     free(text);
     if (strcmp(old, loft_lg.path) && loft_lg.f) {
         fclose(loft_lg.f);
         loft_lg.f = 0;
         loft_lg.size = 0;
-        loft_log_open();
+        loft_log_open(cx);
     }
     free(old);
 }
 
-static void loft_log_write(const char *s, size_t n) {
+static void loft_log_write(loft_cx *cx, const char *s, size_t n) {
     if (!loft_lg.f) return;
     fwrite(s, 1, n, loft_lg.f);
     fflush(loft_lg.f);
@@ -396,16 +400,16 @@ static const char *const loft_sev_names[] = { "INFO ", "WARN ", "ERROR", "FATAL"
 
 /* `Logger::log`: the file shown relative to the source base, filtered by its level, rate
  * limited per file and line, rotated by day and by size, written as one line. */
-static void loft_log_record(int sev, loft_str message, loft_str file, int64_t line) {
+static void loft_log_record(loft_cx *cx, int sev, loft_str message, loft_str file, int64_t line) {
     char *shown, ts[40];
     const char *base, *rel;
     size_t i, bn;
     int level;
     uint32_t today;
     loft_text out = { 0, 0, 0 };
-    loft_log_init();
-    loft_log_reload();
-    shown = loft_log_dup(file.p, file.len);
+    loft_log_init(cx);
+    loft_log_reload(cx);
+    shown = loft_log_dup(cx, file.p, file.len);
     base = loft_lg.base;
     bn = base ? strlen(base) : 0;
     rel = shown;
@@ -433,7 +437,7 @@ static void loft_log_record(int sev, loft_str message, loft_str file, int64_t li
     }
     if (sev < level) { free(shown); return; }
     if (loft_lg.rate > 0) {
-        int64_t now = loft_now_us();
+        int64_t now = loft_now_us(cx);
         loft_log_rate *e = 0;
         for (i = 0; i < loft_lg.nrates; i++)
             if (loft_lg.rates[i].line == line && !strcmp(loft_lg.rates[i].file, rel)) { e = &loft_lg.rates[i]; break; }
@@ -441,7 +445,7 @@ static void loft_log_record(int sev, loft_str message, loft_str file, int64_t li
             loft_lg.rates = (loft_log_rate *) realloc(loft_lg.rates, (loft_lg.nrates + 1) * sizeof *loft_lg.rates);
             if (!loft_lg.rates) { fputs("loft: out of memory\n", stderr); abort(); }
             e = &loft_lg.rates[loft_lg.nrates++];
-            e->file = loft_log_dup(rel, strlen(rel));
+            e->file = loft_log_dup(cx, rel, strlen(rel));
             e->line = line;
             e->window_us = now;
             e->count = 0;
@@ -451,15 +455,15 @@ static void loft_log_record(int sev, loft_str message, loft_str file, int64_t li
             if (e->suppressed > 0) {
                 char head[96];
                 int hn;
-                if (!loft_lg.f) loft_log_open();
-                loft_log_clock(ts);
+                if (!loft_lg.f) loft_log_open(cx);
+                loft_log_clock(cx, ts);
                 hn = sprintf(head, "%s %s  ", ts, loft_sev_names[sev]);
                 out.len = 0;
-                loft_push(&out, head, (size_t) hn);
-                loft_push(&out, rel, strlen(rel));
+                loft_push(cx, &out, head, (size_t) hn);
+                loft_push(cx, &out, rel, strlen(rel));
                 hn = sprintf(head, ":%lld  [suppressed %u identical messages in the last 60s]\n", (long long) line, (unsigned) e->suppressed);
-                loft_push(&out, head, (size_t) hn);
-                loft_log_write(out.p, out.len);
+                loft_push(cx, &out, head, (size_t) hn);
+                loft_log_write(cx, out.p, out.len);
             }
             e->count = 0;
             e->suppressed = 0;
@@ -468,48 +472,48 @@ static void loft_log_record(int sev, loft_str message, loft_str file, int64_t li
         if (e->count >= loft_lg.rate) { e->suppressed++; free(out.p); free(shown); return; }
         e->count++;
     }
-    if (!loft_lg.f) loft_log_open();
-    today = loft_log_clock(ts);
-    if (loft_lg.daily && loft_lg.ymd != 0 && today != loft_lg.ymd) loft_log_rotate();
+    if (!loft_lg.f) loft_log_open(cx);
+    today = loft_log_clock(cx, ts);
+    if (loft_lg.daily && loft_lg.ymd != 0 && today != loft_lg.ymd) loft_log_rotate(cx);
     loft_lg.ymd = today;
-    if (loft_lg.max_size > 0 && loft_lg.size >= loft_lg.max_size) loft_log_rotate();
+    if (loft_lg.max_size > 0 && loft_lg.size >= loft_lg.max_size) loft_log_rotate(cx);
     {
         char head[96];
         int hn = sprintf(head, "%s %s  ", ts, loft_sev_names[sev]);
         out.len = 0;
-        loft_push(&out, head, (size_t) hn);
-        loft_push(&out, rel, strlen(rel));
+        loft_push(cx, &out, head, (size_t) hn);
+        loft_push(cx, &out, rel, strlen(rel));
         hn = sprintf(head, ":%lld  ", (long long) line);
-        loft_push(&out, head, (size_t) hn);
-        loft_push(&out, message.p, message.len);
-        loft_push(&out, "\n", 1);
-        loft_log_write(out.p, out.len);
+        loft_push(cx, &out, head, (size_t) hn);
+        loft_push(cx, &out, message.p, message.len);
+        loft_push(cx, &out, "\n", 1);
+        loft_log_write(cx, out.p, out.len);
     }
     free(out.p);
     free(shown);
 }
 
-static void loft_log_info(loft_str m, loft_str f, int64_t l) { loft_log_record(LOFT_SEV_INFO, m, f, l); }
-static void loft_log_warn(loft_str m, loft_str f, int64_t l) { loft_log_record(LOFT_SEV_WARN, m, f, l); }
-static void loft_log_error(loft_str m, loft_str f, int64_t l) { loft_log_record(LOFT_SEV_ERROR, m, f, l); }
-static void loft_log_fatal(loft_str m, loft_str f, int64_t l) { loft_log_record(LOFT_SEV_FATAL, m, f, l); }
+static void loft_log_info(loft_cx *cx, loft_str m, loft_str f, int64_t l) { loft_log_record(cx, LOFT_SEV_INFO, m, f, l); }
+static void loft_log_warn(loft_cx *cx, loft_str m, loft_str f, int64_t l) { loft_log_record(cx, LOFT_SEV_WARN, m, f, l); }
+static void loft_log_error(loft_cx *cx, loft_str m, loft_str f, int64_t l) { loft_log_record(cx, LOFT_SEV_ERROR, m, f, l); }
+static void loft_log_fatal(loft_cx *cx, loft_str m, loft_str f, int64_t l) { loft_log_record(cx, LOFT_SEV_FATAL, m, f, l); }
 
 /* A halting fault in a production run (`production_logged`): logged as
  * `[<label>] <prefix><message>` at its kind's severity, and the program carries on; the run
  * exits 1 at its end.  0 outside production, where the caller halts. */
-static int loft_log_production_fault(int sev, const char *label, const char *prefix, loft_str message,
+static int loft_log_production_fault(loft_cx *cx, int sev, const char *label, const char *prefix, loft_str message,
                                      loft_str file, int64_t line) {
     loft_text m = { 0, 0, 0 };
-    loft_log_init();
+    loft_log_init(cx);
     if (!loft_lg.production) return 0;
-    loft_push(&m, "[", 1);
-    loft_push(&m, label, strlen(label));
-    loft_push(&m, "] ", 2);
-    loft_push(&m, prefix, strlen(prefix));
-    loft_push(&m, message.p, message.len);
-    loft_log_record(sev, loft_lit(m.p, m.len), file, line);
+    loft_push(cx, &m, "[", 1);
+    loft_push(cx, &m, label, strlen(label));
+    loft_push(cx, &m, "] ", 2);
+    loft_push(cx, &m, prefix, strlen(prefix));
+    loft_push(cx, &m, message.p, message.len);
+    loft_log_record(cx, sev, loft_lit(cx, m.p, m.len), file, line);
     free(m.p);
-    loft_had_fatal = 1;
+    loft_set_fatal(cx);
     return 1;
 }
 
@@ -517,14 +521,19 @@ static int loft_log_production_fault(int sev, const char *label, const char *pre
  * discarded and logged — at the first discard and then at every doubling of the count, so a
  * loop writing a locked vector a million times leaves twenty lines — and the run continues.
  * Answers 0 outside production, where the write halts. */
-static int loft_log_locked_write(void) {
+static int loft_log_locked_write(loft_cx *cx, const char *advice) {
     static uint64_t discarded = 0;
-    loft_log_init();
+    uint64_t n;
+    loft_log_init(cx);
     if (!loft_lg.production) return 0;
-    discarded++;
-    if ((discarded & (discarded - 1)) == 0) {
-        static const char m[] = "[write_to_locked_store] write to a locked store \xe2\x80\x94 unlock it with `#lock = false` before writing";
-        loft_log_record(LOFT_SEV_ERROR, loft_lit(m, sizeof m - 1), loft_lit("", 0), 0);
+    LOFT_PUB_ADD(discarded, 1, n);
+    if ((n & (n - 1)) == 0) {
+        loft_text m = { 0, 0, 0 };
+        static const char label[] = "[write_to_locked_store] ";
+        loft_push(cx, &m, label, sizeof label - 1);
+        loft_push(cx, &m, advice, strlen(advice));
+        loft_log_record(cx, LOFT_SEV_ERROR, loft_view(cx, &m), loft_lit(cx, "", 0), 0);
+        loft_text_free(cx, &m);
     }
     return 1;
 }
@@ -540,27 +549,28 @@ static int loft_log_locked_write(void) {
  * (`src/store/dump.rs`).  `-DLOFT_STORE_DUMP_PLANT` flips one byte of the first block written:
  * the positive control `scripts/store_diff.py --plant` must report. */
 #if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
-static FILE *loft_dump_file(void) {
+static FILE *loft_dump_file(loft_cx *cx) {
+    /* `@FR-C-Publish`: opened once, by the first thread that dumps (`loft_once_begin`). */
     static FILE *f = 0;
-    static int opened = 0;
-    if (!opened) {
+    static int once = 0;
+    if (loft_once_begin(&once)) {
         const char *path = getenv("LOFT_STORE_DUMP");
-        opened = 1;
         if (path && *path) f = fopen(path, "w");
+        loft_once_end(&once);
     }
     return f;
 }
-static void loft_store_dump_one(loft_store_t *s) {
+static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
     static int planted = 0;
-    FILE *f = loft_dump_file();
+    FILE *f = loft_dump_file(cx);
     if (!f || s->serial == 0) return;
-    fprintf(f, "S %s %u %u %u\n", loft_trace_name(s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
-            (unsigned) (s - loft_stores));
+    fprintf(f, "S %s %u %u %u\n", loft_trace_name(cx, s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
+            (unsigned) (s - cx->stores));
     for (uint32_t w = 0; w < s->claims.nwords; w++) {
         for (uint32_t b = 0; b < 64; b++) {
-            if (!loft_bit64_test(s->claims.bits[w], b)) continue;
+            if (!loft_bit64_test(cx, s->claims.bits[w], b)) continue;
             uint32_t rec = w * 64 + b;
-            int32_t words = loft_st_i32(s, rec, 0);
+            int32_t words = loft_st_i32(cx, s, rec, 0);
             uint32_t n = words < 1 ? 1u : (uint32_t) words, end = rec + n;
             if (end > s->size) end = s->size;
             fprintf(f, "R %u %u ", (unsigned) rec, (unsigned) n);
@@ -576,24 +586,24 @@ static void loft_store_dump_one(loft_store_t *s) {
     }
     (void) planted;
 }
-static void loft_store_dump(void) {
-    for (uint32_t nr = 0; nr < loft_nstores; nr++)
-        if (loft_stores[nr].live) loft_store_dump_one(&loft_stores[nr]);
-    if (loft_dump_file()) fflush(loft_dump_file());
+static void loft_store_dump(loft_cx *cx) {
+    for (uint32_t nr = 0; nr < cx->nstores; nr++)
+        if (cx->stores[nr].live) loft_store_dump_one(cx, &cx->stores[nr]);
+    if (loft_dump_file(cx)) fflush(loft_dump_file(cx));
 }
 #endif
 
-static void loft_leak_report(void) {
+static void loft_leak_report(loft_cx *cx) {
 #if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
-    loft_store_dump();
+    loft_store_dump(cx);
 #endif
-    loft_parks_drain();
+    loft_parks_drain(cx);
     uint32_t *kt, *count, nk = 0, i, j, total = 0;
     loft_text out = { 0, 0, 0 };
     char buf[96];
     int check = getenv("LOFT_NATIVE_LEAK_CHECK") != 0;
 #ifdef LOFT_DOUBLE_FREE
-    loft_double_free_report();
+    loft_double_free_report(cx);
 #endif
 #ifdef LOFT_STRICT_STORES
     int strict = 1;
@@ -601,11 +611,11 @@ static void loft_leak_report(void) {
     int strict = 0;
 #endif
     if (!check && !strict) return;
-    kt = (uint32_t *) calloc(loft_nstores + 1, sizeof *kt);
-    count = (uint32_t *) calloc(loft_nstores + 1, sizeof *count);
+    kt = (uint32_t *) calloc(cx->nstores + 1, sizeof *kt);
+    count = (uint32_t *) calloc(cx->nstores + 1, sizeof *count);
     if (!kt || !count) { fputs("loft: out of memory\n", stderr); abort(); }
-    for (i = 0; i < loft_nstores; i++) {
-        const loft_store_t *s = &loft_stores[i];
+    for (i = 0; i < cx->nstores; i++) {
+        const loft_store_t *s = &cx->stores[i];
         if (!s->live || s->pinned || s->read_only) continue;
         for (j = 0; j < nk && kt[j] != s->known; j++) {} /* LOFT_RAW_KNOWN: the store as it is in memory */
         if (j == nk) { kt[nk] = s->known; count[nk] = 0; nk++; } /* LOFT_RAW_KNOWN: the store as it is in memory */
@@ -624,35 +634,35 @@ static void loft_leak_report(void) {
         }
     for (i = 0; i < nk; i++) {
         if (i == 5) break;
-        if (i) loft_push(&out, ", ", 2);
+        if (i) loft_push(cx, &out, ", ", 2);
         sprintf(buf, "kt=%u ", (unsigned) kt[i]);
-        loft_push(&out, buf, strlen(buf));
-        if (kt[i] < loft_ntn) loft_push(&out, loft_tn[kt[i]], strlen(loft_tn[kt[i]]));
-        else loft_push(&out, "?", 1);
+        loft_push(cx, &out, buf, strlen(buf));
+        if (kt[i] < loft_ntn) loft_push(cx, &out, loft_tn[kt[i]], strlen(loft_tn[kt[i]]));
+        else loft_push(cx, &out, "?", 1);
         sprintf(buf, "\xc3\x97%u", (unsigned) count[i]);
-        loft_push(&out, buf, strlen(buf));
+        loft_push(cx, &out, buf, strlen(buf));
     }
     /* The headline counts stores, not type rows: one row of forty records is forty. */
     for (i = 0; i < nk; i++) total += count[i];
     if (nk > 5) {
         sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
-        loft_push(&out, buf, strlen(buf));
+        loft_push(cx, &out, buf, strlen(buf));
     }
     if (total && (check || getenv("LOFT_STRICT_STORES"))) {
-        FILE *lf = loft_fault_file();
+        FILE *lf = loft_fault_file(cx);
         if (lf) {
             char cnt[32];
             char *stores = (char *) malloc(out.len + 1);
             snprintf(cnt, sizeof cnt, "%u", (unsigned) total);
-            loft_fault_begin(lf, "leak");
-            loft_fault_field(lf, "count", cnt);
+            loft_fault_begin(cx, lf, "leak");
+            loft_fault_field(cx, lf, "count", cnt);
             if (stores) {
                 memcpy(stores, out.p, out.len);
                 stores[out.len] = 0;
-                loft_fault_field(lf, "stores", stores);
+                loft_fault_field(cx, lf, "stores", stores);
                 free(stores);
             }
-            loft_fault_end(lf);
+            loft_fault_end(cx, lf);
         }
     }
     if (total && check) {
@@ -674,16 +684,16 @@ static void loft_leak_report(void) {
     /* The interpreter's `[leak-site]` lines: the stores left, grouped by where each was made
      * (function, file and line — a C unit has no bytecode position) and by type, most first. */
     if (total) {
-        uint32_t *who = (uint32_t *) calloc(loft_nstores + 1, sizeof *who), *many = (uint32_t *) calloc(loft_nstores + 1, sizeof *many);
+        uint32_t *who = (uint32_t *) calloc(cx->nstores + 1, sizeof *who), *many = (uint32_t *) calloc(cx->nstores + 1, sizeof *many);
         uint32_t ng = 0;
         if (!who || !many) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (i = 0; i < loft_nstores; i++) {
-            const loft_store_t *s = &loft_stores[i];
+        for (i = 0; i < cx->nstores; i++) {
+            const loft_store_t *s = &cx->stores[i];
             if (!s->live || s->pinned || s->read_only) continue;
-            const loft_leak_site *a = i < loft_nsites ? &loft_sites[i] : 0;
+            const loft_leak_site *a = i < cx->nsites ? &cx->sites[i] : 0;
             for (j = 0; j < ng; j++) {
-                const loft_store_t *t = &loft_stores[who[j]];
-                const loft_leak_site *b = who[j] < loft_nsites ? &loft_sites[who[j]] : 0;
+                const loft_store_t *t = &cx->stores[who[j]];
+                const loft_leak_site *b = who[j] < cx->nsites ? &cx->sites[who[j]] : 0;
                 if (t->known == s->known && (a == 0) == (b == 0) && /* LOFT_RAW_KNOWN: the store as it is in memory */
                     (a == 0 || (a->fn == b->fn && a->file == b->file && a->line == b->line
                                 && a->cfn == b->cfn && a->cline == b->cline)))
@@ -698,8 +708,8 @@ static void loft_leak_report(void) {
                 who[j] = who[j - 1]; many[j] = many[j - 1]; who[j - 1] = a; many[j - 1] = b;
             }
         for (i = 0; i < ng; i++) {
-            const loft_store_t *s = &loft_stores[who[i]];
-            const loft_leak_site *a = who[i] < loft_nsites ? &loft_sites[who[i]] : 0;
+            const loft_store_t *s = &cx->stores[who[i]];
+            const loft_leak_site *a = who[i] < cx->nsites ? &cx->sites[who[i]] : 0;
             fprintf(stderr, "  [leak-site] %u\xc3\x97 %s (kt=%u) allocated at %s:%u in fn %s()", (unsigned) many[i],
                     LOFT_KNOWN(*s) < loft_ntn ? loft_tn[LOFT_KNOWN(*s)] : "?", (unsigned) LOFT_KNOWN(*s),
                     a && a->file ? a->file : "?", a ? (unsigned) a->line : 0u, a && a->fn ? a->fn : "?");

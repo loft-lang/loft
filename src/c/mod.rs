@@ -44,6 +44,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_os.h"),
     include_str!("loft_width.h"),
     include_str!("loft_cc.h"),
+    include_str!("loft_cx.h"),
     include_str!("loft_text.h"),
     include_str!("loft_store.h"),
     include_str!("loft_rt.h"),
@@ -65,6 +66,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
+    include_str!("loft_deliver_web.h"),
     include_str!("loft_web_page.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
@@ -75,6 +77,8 @@ const RUNTIME: &str = concat!(
     // After `windows.h`, which loft_process.h brings in on Windows.
     include_str!("loft_mapped.h"),
     include_str!("loft_engine.h"),
+    // The test ledger (`@F38`), compiled into a ledger build only.
+    include_str!("loft_ledger.h"),
     // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
     // the host side.
     "#ifdef LOFT_FFI\n",
@@ -237,6 +241,11 @@ pub(crate) struct Cx<'a> {
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every type a `deliver` walks (`loft_dlv{tp}`, `deliver.rs`).
     deliver_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// A page's delivery descriptors (`loft_dlvd{tp}`): each delivered or exposed type's layout
+    /// descriptor as JSON, its keyed collections rewritten to the arrays they are flattened to.
+    deliver_descs: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
+    /// A page's flatten walkers (`loft_dlk{tp}`), by type: the body of each.
+    deliver_flats: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
@@ -326,6 +335,8 @@ pub(crate) struct Cx<'a> {
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
     pub(crate) wasm: bool,
+    /// The unit keeps every function whole: a shipped artefact ([`UnitShape::whole`]).
+    pub(crate) whole: bool,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -443,11 +454,12 @@ impl<'a> Cx<'a> {
             c_twins: Vec::new(),
             stores,
             browser,
-            wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
-            source_lines: SOURCE_LINES.with(std::cell::Cell::get),
+            wasm: browser,
+            whole: crate::ship_tier::shipped_units(),
+            source_lines: false,
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_root: SOURCE_ROOT.with(|r| r.borrow().clone()),
+            source_root: None,
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -459,6 +471,8 @@ impl<'a> Cx<'a> {
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            deliver_descs: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            deliver_flats: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_sigs_buf: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -556,13 +570,18 @@ impl<'a> Cx<'a> {
         let Some(root) = &self.source_root else {
             return file.to_string();
         };
+        // Both spelled with `/`: on Windows the package directory arrives with the host's
+        // separator and a source position may hold either, so a bare prefix test misses and
+        // the unit names the machine's path.
+        let root = crate::file_access::portable_str(root);
         let root = root.trim_end_matches('/');
+        let file = crate::file_access::portable_str(file);
         if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
             return rest.to_string();
         }
         match file.rfind("/default/") {
             Some(at) => file[at + 1..].to_string(),
-            None => file.to_string(),
+            None => file,
         }
     }
 
@@ -1430,8 +1449,8 @@ impl<'a> Cx<'a> {
                 .zip(self.tuple_shapes(to))
                 .enumerate()
                 .map(|(i, (x, y))| match (x, y) {
-                    (CType::Int, CType::Int32) => format!("loft_n32(t.f{i})"),
-                    (CType::Int32, CType::Int) => format!("loft_w64(t.f{i})"),
+                    (CType::Int, CType::Int32) => format!("loft_n32(cx, t.f{i})"),
+                    (CType::Int32, CType::Int) => format!("loft_w64(cx, t.f{i})"),
                     (CType::Tuple(p), CType::Tuple(q)) if *p != q => {
                         format!("loft_tup{p}_as{q}(t.f{i})")
                     }
@@ -1450,7 +1469,7 @@ impl<'a> Cx<'a> {
             let call = self.show_top_call(tp, "s", "r", "2");
             let _ = writeln!(
                 out,
-                "static void loft_swap_show{tp}(loft_text *s, loft_ref r) {{ {call}; }}"
+                "static void loft_swap_show{tp}(loft_cx *cx, loft_text *s, loft_ref r) {{ {call}; }}"
             );
         }
         out.push_str(&self.deliver_code());
@@ -1473,7 +1492,7 @@ impl<'a> Cx<'a> {
     /// Each constant's store, as words, and `loft_init`, which loads them before `main` runs.
     fn const_code(&self) -> String {
         let mut out = String::new();
-        let mut init = String::from("static void loft_init(void) {\n");
+        let mut init = String::from("static void loft_init(loft_cx *cx) {\n");
         for &d in self.consts.borrow().iter() {
             let Some(r) = self.data.def(d).const_ref else {
                 continue;
@@ -1485,7 +1504,7 @@ impl<'a> Cx<'a> {
             );
             let _ = writeln!(
                 init,
-                "    loft_const{d} = loft_const_store(loft_cwords{d}, {n});"
+                "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {n});"
             );
         }
         init.push_str("}\n");
@@ -1746,6 +1765,32 @@ pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
     if def.is_stdlib() { def.name() } else { "" }
 }
 
+/// `@PLN226`: an argument list with the store context first.
+pub(crate) fn cx_args(args: &[String]) -> String {
+    std::iter::once("cx")
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `@PLN226`: a call of the C function `name` — a loft function takes the store context
+/// first; anything else (the C library's `fabs`, an operator) is called as it is.
+pub(crate) fn call_c(name: &str, args: &[String]) -> String {
+    if name.starts_with("loft_") {
+        format!("{name}({})", cx_args(args))
+    } else {
+        format!("{name}({})", args.join(", "))
+    }
+}
+
+/// `@PLN226`: a parameter list with the store context first.
+pub(crate) fn cx_params(params: &[String]) -> String {
+    std::iter::once("loft_cx *cx")
+        .chain(params.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
 /// a definition, the name is its [`runtime_name`].
 #[expect(
@@ -1757,6 +1802,9 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_assert" => Some("loft_assert"),
         "n_panic" => Some("loft_panic"),
         "n_exit" => Some("loft_exit"),
+        // The test ledger's instrumented operators (`loft_ledger.h`).
+        "n___ledger" => Some("loft_ledger"),
+        "n___ledger_div" => Some("loft_ledger_div"),
         "n_protect_store_frees" => Some("loft_protect"),
         "t_4text_to_lowercase" | "t_4text_to_uppercase" => Some("loft_unicode"),
         "t_9character_is_lowercase"
@@ -2023,6 +2071,33 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     emit_unit_for(data, stores, roots, false)
 }
 
+/// What one unit is written for — the options of ONE emission, handed down to its [`Cx`] rather
+/// than kept beside it (@PLN226): a browser page's module, a wasm32 module, a debug build's
+/// `#line`s, a shipped artefact that keeps its functions whole (an ESP app), a hosted unit's
+/// source root.
+#[derive(Default, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent options of one emission"
+)]
+pub(crate) struct UnitShape {
+    pub(crate) browser: bool,
+    pub(crate) wasm: bool,
+    pub(crate) source_lines: bool,
+    pub(crate) whole: bool,
+    pub(crate) source_root: Option<String>,
+}
+
+/// [`emit_unit`] written for `shape`.
+pub(crate) fn emit_unit_shaped(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
+    emit_unit_with(data, stores, roots, shape, None)
+}
+
 /// [`emit_unit`] for a browser page's module when `browser` (`Cx::browser`).
 ///
 /// # Errors
@@ -2033,7 +2108,11 @@ pub fn emit_unit_for(
     roots: &[u32],
     browser: bool,
 ) -> Result<String, Refusal> {
-    emit_unit_with(data, stores, roots, browser, None)
+    let shape = UnitShape {
+        browser,
+        ..UnitShape::default()
+    };
+    emit_unit_with(data, stores, roots, &shape, None)
 }
 
 /// `@PLN206 P4` — a hosted unit (`hosted.rs`) for the library functions `roots`, whose bridge
@@ -2050,16 +2129,11 @@ pub fn emit_hosted_unit(
     layout_fp: u64,
     source_root: &str,
 ) -> Result<String, Refusal> {
-    SOURCE_ROOT.with(|r| *r.borrow_mut() = Some(source_root.to_string()));
-    let unit = emit_unit_with(data, stores, roots, false, Some((export, layout_fp)));
-    SOURCE_ROOT.with(|r| *r.borrow_mut() = None);
-    unit
-}
-
-thread_local! {
-    /// Set for the length of one [`emit_hosted_unit`]: the directory a hosted unit names its
-    /// library's sources from (`Cx::source_name`).
-    static SOURCE_ROOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    let shape = UnitShape {
+        source_root: Some(source_root.to_string()),
+        ..UnitShape::default()
+    };
+    emit_unit_with(data, stores, roots, &shape, Some((export, layout_fp)))
 }
 
 #[expect(
@@ -2070,10 +2144,9 @@ fn emit_unit_with(
     data: &Data,
     stores: &Stores,
     roots: &[u32],
-    browser: bool,
+    shape: &UnitShape,
     hosted: Option<(&std::collections::HashSet<u32>, u64)>,
 ) -> Result<String, Refusal> {
-    crate::opt::non_sentinel::begin_c_generation();
     // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
     // works from the definitions with those bodies taken out.
     let bound = data.with_c_twins_bound();
@@ -2081,6 +2154,8 @@ fn emit_unit_with(
         Some((d, t)) => (d, t.clone()),
         None => (data, Vec::new()),
     };
+    // The analysis memos of the definitions this writer works from (`Data::nn_memo`).
+    crate::opt::non_sentinel::begin_c_generation(data);
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -2111,7 +2186,12 @@ fn emit_unit_with(
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
     trace_reach(data, roots, &all, &fns);
+    let browser = shape.browser;
     let mut cx = Cx::new(data, stores, browser);
+    cx.wasm |= shape.wasm;
+    cx.source_lines = shape.source_lines;
+    cx.whole |= shape.whole;
+    cx.source_root.clone_from(&shape.source_root);
     cx.c_twins = twins;
     cx.open = hosted.is_some();
     cx.frames
@@ -2155,11 +2235,16 @@ fn emit_unit_with(
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
     // The runtime is a library every unit carries whole: a helper this program does not call
-    // is no defect of it, so gcc and clang are told not to report one there — and only there,
-    // the program's own functions after it are reported.  `LOFT_C_LINT=all` lifts it.
+    // is no defect of it, and neither is a helper that takes the store context first without
+    // reading it (every runtime function does, `@PLN226`), so gcc and clang are told not to
+    // report those there — and only there, the program's own functions after it are reported.
+    // `LOFT_C_LINT=all` lifts it.
     out.push_str(
-        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#endif\n",
     );
+    if let Some(define) = split::above_define() {
+        out.push_str(&define);
+    }
     out.push_str(RUNTIME);
     out.push_str(RUNTIME_END);
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow(), cx.open));
@@ -2171,7 +2256,9 @@ fn emit_unit_with(
         out.push_str(&cx.main_vector_test());
     }
     if !cx.upgrades.borrow().is_empty() {
-        out.push_str("static const loft_ptype *loft_up_ptypes(void) { return loft_ptypes; }\n");
+        out.push_str(
+            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { (void) cx; return loft_ptypes; }\n",
+        );
     }
     if reflects {
         out.push_str(&cx.reflect_table());
@@ -2189,7 +2276,7 @@ fn emit_unit_with(
         &cx.tr_bodies(),
     ]
     .iter()
-    .any(|t| t.contains("loft_drop_closure("));
+    .any(|t| t.contains("loft_drop_closure(cx, "));
     if calls_drop {
         out.push_str(&cx.drop_code(&fns));
     }
@@ -2304,8 +2391,8 @@ fn lazy_driver_table(
         }
         let _ = writeln!(
             out,
-            "static int64_t loft_lazydrv{i}(loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ \
-             return {}(c, s, ki, kt); }}",
+            "static int64_t loft_lazydrv{i}(loft_cx *cx, loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ \
+             return {}(cx, c, s, ki, kt); }}",
             c_name(cx.data, *d)
         );
         rows.push(format!(
@@ -2534,10 +2621,13 @@ fn c_libraries(
             );
         } else if let Some(so) = hosted
             .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
-            // Linked by name where a run path finds it (`platform::c_rpath_arg`; none on
-            // Windows, which takes the archive below).
+            // Linked by name where a run path finds it (`platform::c_rpath_arg`).  Windows has
+            // none and needs none: a gcc-style linker takes the DLL by its path and records its
+            // name, and the loader answers that name with the image already in the process.
+            // MSVC's `cl` links only an import library, so it takes the archive below.
             .filter(|so| {
-                crate::platform::c_rpath_arg(so.parent()).is_some()
+                (crate::platform::c_rpath_arg(so.parent()).is_some()
+                    || !crate::platform::c_compiler_is_msvc(&crate::platform::c_unit_compiler()))
                     && crate::file_access::exists(so)
             })
         {
@@ -2853,10 +2943,8 @@ fn unit_defines(
         //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
-    // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
-    // (`LOFT_TLS`) for the threads that run loft code — a `par` loop's workers and an engine
-    // kernel's HTTP workers.  A unit with neither runs loft code on one thread, and its tables
-    // are plain statics: on macOS every thread-local access is a call (`_tlv_get_addr`).
+    // `@FR-R-NoThreads`: a unit with no `par` loop on threads and no engine kernel (whose HTTP
+    // workers are threads) runs loft code on one thread: it starts no thread and links none.
     let engine = reached
         .iter()
         .filter_map(|&d| in_binary_native(data.def(d).native()))
@@ -3008,27 +3096,27 @@ fn fetch_defines(
 
 /// `reflect_type` and `type_named` over the emitted table (`reflect.rs`, `loft_reflect.h`).
 const REFLECT_ENTRY: &str = r##"
-static loft_ref loft_reflect_type(int64_t kt) {
+static loft_ref loft_reflect_type(loft_cx *cx, int64_t kt) {
     uint16_t k = (uint16_t) kt;
-    if (k < loft_nrtypes) return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
+    if (k < loft_nrtypes) return loft_reflect_build(cx, &loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
     char b[16];
     snprintf(b, sizeof b, "#%u", (unsigned) k);
-    return loft_reflect_build(&loft_rlay, &loft_rnone, b);
+    return loft_reflect_build(cx, &loft_rlay, &loft_rnone, b);
 }
 
-static loft_ref loft_reflect_field(loft_ref value, int64_t position, int64_t kt) {
-    return loft_reflect_field_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);
+static loft_ref loft_reflect_field(loft_cx *cx, loft_ref value, int64_t position, int64_t kt) {
+    return loft_reflect_field_at(cx, &loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);
 }
 
-static loft_ref loft_reflect_field_path(loft_ref value, loft_ref path, int64_t kt) {
-    return loft_reflect_field_path_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);
+static loft_ref loft_reflect_field_path(loft_cx *cx, loft_ref value, loft_ref path, int64_t kt) {
+    return loft_reflect_field_path_at(cx, &loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);
 }
 
-static loft_ref loft_type_named(loft_str name) {
+static loft_ref loft_type_named(loft_cx *cx, loft_str name) {
     for (uint32_t k = 0; k < loft_nrtypes; k++)
         if (strlen(loft_rtypes[k].lookup) == name.len && memcmp(loft_rtypes[k].lookup, name.p, name.len) == 0)
-            return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
-    return loft_ref_null();
+            return loft_reflect_build(cx, &loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
+    return loft_ref_null(cx);
 }
 "##;
 
@@ -3072,27 +3160,66 @@ pub fn emit_program(
     // writer writes its own after emitting: the census can then set the two writers side by side.
     // What the writer admits outside any function body (a signature, the unit's analyses) is
     // the C phase's too, under no function.
+    emit_program_shaped(data, stores, expected, &UnitShape::default())
+}
+
+/// [`emit_program`] written for `shape`.
+fn emit_program_shaped(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
     let census_unit = crate::rewrite_census::InBody::enter("c", "");
-    let out = emit_program_counted(data, stores, expected);
+    let out = emit_program_counted(data, stores, expected, shape);
     drop(census_unit);
     crate::rewrite_census::write();
     out
+}
+
+/// The test ledger's site table (`@F38`, [`crate::opt::ledger_sites`]) after the program's
+/// functions, with the define that compiles `loft_ledger.h` in at the unit's top, and the
+/// line `main` arms it with before anything runs; empty for a program built without
+/// `LOFT_LEDGER`.
+fn ledger_table(data: &Data, out: &mut String) -> String {
+    if data.ledger_sites.is_empty() {
+        return String::new();
+    }
+    out.insert_str(0, "#define LOFT_LEDGER 1\n");
+    out.push_str("\nstatic const loft_lg_site loft_lg_table[] = {\n");
+    for s in &data.ledger_sites {
+        let _ = writeln!(
+            out,
+            "    {{ {}, UINT64_C(0x{:016x}), {}u, {} }},",
+            body::c_string(&s.function),
+            s.body,
+            s.ordinal,
+            s.kind
+        );
+    }
+    out.push_str("};\n");
+    format!(
+        "    loft_ledger_arm(cx, loft_lg_table, {});\n",
+        data.ledger_sites.len()
+    )
 }
 
 fn emit_program_counted(
     data: &Data,
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
 ) -> Result<String, Refusal> {
     let main = data.def_nr("n_main");
     if main >= data.definitions() {
-        return emit_tests(data, stores, expected);
+        return emit_tests(data, stores, expected, shape);
     }
     let (main, call) = program_main(data, stores, main)?;
-    let mut out = emit_unit(data, stores, &[main])?;
+    let mut out = emit_unit_shaped(data, stores, &[main], shape)?;
+    let ledger = ledger_table(data, &mut out);
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n{ledger}    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
@@ -3120,42 +3247,42 @@ fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String)
             {
                 return Err(refuse());
             }
-            let _ = write!(pre, "loft_ref loft_main_args = loft_arguments(); ");
+            let _ = write!(pre, "loft_ref loft_main_args = loft_arguments(cx); ");
             args.push("loft_main_args".to_string());
-            post.push_str("loft_free_ref(loft_main_args); ");
+            post.push_str("loft_free_ref(cx, loft_main_args); ");
             continue;
         }
         match a.typedef.base() {
             Type::Vector(elm, _) => {
-                let tp = data.name_type(&format!("main_vector<{}>", elm.name(data)), 0);
+                let tp = data.name_type(&data.vector_wrapper_name(elm), 0);
                 if tp == u16::MAX {
-                    args.push("loft_ref_null()".to_string());
+                    args.push("loft_ref_null(cx)".to_string());
                     continue;
                 }
                 let size = stores.enum_parent_size(tp);
                 let b = format!("loft_main_ret{i}");
                 let _ = write!(
                     pre,
-                    "loft_ref {b} = loft_ref_null(); loft_database_typed(&{b}, {size}, {tp}); "
+                    "loft_ref {b} = loft_ref_null(cx); loft_database_typed(cx, &{b}, {size}, {tp}); "
                 );
                 args.push(b.clone());
-                let _ = write!(post, "loft_free_ref({b}); ");
+                let _ = write!(post, "loft_free_ref(cx, {b}); ");
             }
             Type::Reference(..) | Type::Enum(_, true, _) => {
-                args.push("loft_ref_null()".to_string())
+                args.push("loft_ref_null(cx)".to_string())
             }
             Type::RefVar(t) if matches!(t.base(), Type::Text(_)) => {
                 let b = format!("loft_main_text{i}");
                 let _ = write!(pre, "loft_text {b} = {{ 0, 0, 0 }}; ");
                 args.push(format!("&{b}"));
-                let _ = write!(post, "loft_text_free(&{b}); ");
+                let _ = write!(post, "loft_text_free(cx, &{b}); ");
             }
             _ => return Err(refuse()),
         }
     }
     Ok((
         main,
-        format!("{{ {pre}{name}({}); {post}}}", args.join(", ")),
+        format!("{{ {pre}{name}({}); {post}}}", cx_args(&args)),
     ))
 }
 
@@ -3183,8 +3310,9 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
         out,
         "\nextern void __wasm_call_ctors(void);\n\
          __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
+         loft_cx *cx = &loft_main_cx;\n    \
          static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
-         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {call}\n    loft_leak_report();\n    \
+         loft_bind_tables();\n    loft_start(cx, 0, 0);\n    {}\n    {call}\n    loft_leak_report(cx);\n    \
          fflush(stdout);\n    fflush(stderr);\n}}\n\
          int main(void) {{ return 0; }}\n",
         anchor(stores),
@@ -3206,22 +3334,19 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
             why: "an app without a main".into(),
         });
     }
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            ESP_UNIT.with(|s| s.set(false));
-        }
-    }
-    ESP_UNIT.with(|s| s.set(true));
-    let _reset = Reset;
     let (main, call) = program_main(data, stores, main)?;
-    let mut out = emit_unit(data, stores, &[main])?;
+    // An app is a shipped artefact: its functions are kept whole.
+    let shape = UnitShape {
+        whole: true,
+        ..UnitShape::default()
+    };
+    let mut out = emit_unit_shaped(data, stores, &[main], &shape)?;
     let _ = write!(
         out,
-        "{ESP_ENTRY}\n    loft_esp_note(\"app\", -1);\n    loft_esp_nvs();\n    \
-         loft_esp_board();\n    loft_esp_assets();\n    loft_bind_tables();\n    \
-         loft_start(0, 0);\n    {}\n    loft_esp_note(\"main\", -1);\n    loft_esp_release();\n    {call}\n    \
-         loft_leak_report();\n    loft_esp_end(loft_had_fatal);\n}}\n",
+        "{ESP_ENTRY}\n    loft_cx *cx = &loft_main_cx;\n    loft_esp_note(cx, \"app\", -1);\n    loft_esp_nvs(cx);\n    \
+         loft_esp_board(cx);\n    loft_esp_assets(cx);\n    loft_bind_tables();\n    \
+         loft_start(cx, 0, 0);\n    {}\n    loft_esp_note(cx, \"main\", -1);\n    loft_esp_release(cx);\n    {call}\n    \
+         loft_leak_report(cx);\n    loft_esp_end(cx, loft_fatal_status(cx));\n}}\n",
         anchor(stores),
     );
     crate::rewrite_census::write();
@@ -3264,7 +3389,10 @@ __attribute__((export_name("loft_asyncify_ok"))) int32_t loft_asyncify_ok(void) 
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
 /// the program anchors there at all (`#cwd` says no).
 fn anchor(stores: &Stores) -> String {
-    format!("loft_set_anchor({});", i32::from(stores.program_relative))
+    format!(
+        "loft_set_anchor(cx, {});",
+        i32::from(stores.program_relative)
+    )
 }
 
 /// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
@@ -3715,11 +3843,11 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             true,
         ));
     }
-    let params = if params.is_empty() {
-        "void".to_string()
-    } else {
-        params.join(", ")
-    };
+    // `@PLN226`: the store context comes first in every function the unit writes.
+    let params = std::iter::once("loft_cx *cx".to_string())
+        .chain(params)
+        .collect::<Vec<_>>()
+        .join(", ");
     let name = twin_name(data, d, mask);
     let sig = format!("static {} {name}({params})", held(ret));
     // `LOFT_REWRITE_CENSUS_FN`: this body's admissions under its own name, phase `c`, so they
@@ -4003,17 +4131,17 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         match arg {
             CArg::Scalar => args.push(format!("({ct}) a{i}")),
             CArg::TextPointer => {
-                let _ = writeln!(body, "    char *s{i} = loft_cstr_own(a{i});");
+                let _ = writeln!(body, "    char *s{i} = loft_cstr_own(cx, a{i});");
                 args.push(format!("s{i}"));
                 frees.push(format!("    free(s{i});"));
             }
             // A vector crosses as its element pointer, and a count where the C signature has
             // one (@C107), exactly as the interpreter's `c_call` hands them.
             CArg::VectorPtr | CArg::VectorPtrCount => {
-                args.push(format!("({ct}) loft_cvec_ptr(a{i})"));
+                args.push(format!("({ct}) loft_cvec_ptr(cx, a{i})"));
                 if *arg == CArg::VectorPtrCount {
                     let cn = c_params.get(args.len()).copied().unwrap_or("int64_t");
-                    args.push(format!("({cn}) loft_vec_len(a{i})"));
+                    args.push(format!("({cn}) loft_vec_len(cx, a{i})"));
                 }
             }
         }
@@ -4031,10 +4159,13 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         let pkg = data.c_owner_pkg(&file).unwrap_or_default();
         (
             format!(
-                "    static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
-                 if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym({}, {}); \
-                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
-                 if (!loft_cfp) loft_c_missing_symbol({});",
+                "    static void *loft_cfs = 0;\n    \
+                 {ret_text} (*loft_cfp)({params_text});\n    \
+                 void *loft_p;\n    \
+                 LOFT_PUB_GET(loft_cfs, loft_p);\n    \
+                 if (!loft_p) {{ loft_p = loft_c_lazy_sym(cx, {}, {}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    \
+                 if (!loft_cfp) loft_c_missing_symbol(cx, {});",
                 body::c_string(&sig.symbol),
                 body::c_string(pkg),
                 body::c_string(&sig.symbol)
@@ -4047,10 +4178,13 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         (
             format!(
                 "#if defined({when})\n    \
-                 static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
-                 if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym({sym}); \
-                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
-                 if (!loft_cfp) loft_c_missing_symbol({sym});\n\
+                 static void *loft_cfs = 0;\n    \
+                 {ret_text} (*loft_cfp)({params_text});\n    \
+                 void *loft_p;\n    \
+                 LOFT_PUB_GET(loft_cfs, loft_p);\n    \
+                 if (!loft_p) {{ loft_p = loft_c_bound_sym(cx, {sym}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    \
+                 if (!loft_cfp) loft_c_missing_symbol(cx, {sym});\n\
                  #else\n    \
                  extern {ret_text} ({})({params_text});\n    \
                  {ret_text} (*const loft_cfp)({params_text}) = ({});\n\
@@ -4078,11 +4212,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         "LOFT_HOT_INLINE {} {}({})",
         held(ret),
         c_name(data, d),
-        if decl_params.is_empty() {
-            "void".to_string()
-        } else {
-            decl_params.join(", ")
-        }
+        cx_params(&decl_params)
     );
     Ok((sig_c, out))
 }
@@ -4133,7 +4263,7 @@ fn c_binding_result(
         }
         // A `char *` return is copied up to its NUL, NULL the null text (`c_call`).
         (cs::CType::Pointer { .. }, CType::Text) => {
-            let _ = writeln!(out, "    loft_text r = loft_text_from_cstr({call});");
+            let _ = writeln!(out, "    loft_text r = loft_text_from_cstr(cx, {call});");
             for f in frees {
                 let _ = writeln!(out, "{f}");
             }
@@ -4277,7 +4407,8 @@ fn in_binary_native(native: &str) -> Option<&'static str> {
 /// declared as `a<i>`.
 fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     let def = cx.data.def(d);
-    let mut params = Vec::new();
+    // `@PLN226`: the store context first, as in every function the unit writes.
+    let mut params = vec!["loft_cx *cx".to_string()];
     for (i, a) in def.attributes().iter().enumerate() {
         let c = cx
             .ctype(a.typedef.peel_link())
@@ -4336,7 +4467,7 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
             if matches!(tp, Type::Vector(_, _)) {
                 let _ = writeln!(
                     prep,
-                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0, 0 }};"
+                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec ? loft_collection_rec(cx, loft_store_of(cx, a{i}), a{i}.rec, a{i}.pos) : 0, 0 }};"
                 );
             } else {
                 let _ = writeln!(
@@ -4459,7 +4590,7 @@ fn library_native(
         } else {
             "pin".to_string()
         };
-        ffi_args.insert(0, format!("loft_ffi_store_of({store})"));
+        ffi_args.insert(0, format!("loft_ffi_store_of(cx, {store})"));
         if owned_answer {
             call_store_copy(def, &store, post.is_empty(), &mut select);
             // After the copies: their records are `post`'s to delete, never the log's.
@@ -4468,12 +4599,28 @@ fn library_native(
             } else {
                 "if (!pminted) "
             };
-            let _ = writeln!(log, "    {only}loft_ffi_log_begin({store});");
+            let _ = writeln!(log, "    {only}loft_ffi_log_begin(cx, {store});");
         }
     } else if minted {
-        log.push_str("    uint16_t ns = (uint16_t) loft_store_new();\n");
+        log.push_str("    uint16_t ns = (uint16_t) loft_store_new(cx);\n");
         ffi_params.insert(0, "loft_ffi_store".into());
-        ffi_args.insert(0, "loft_ffi_store_of(ns)".into());
+        ffi_args.insert(0, "loft_ffi_store_of(cx, ns)".into());
+    }
+    // `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps
+    // its state in a context of its own per caller context, handed to each of its symbols first
+    // (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
+    if crate::native_build::component_of(pkg_dir)
+        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
+    {
+        ffi_params.insert(0, "void *".into());
+        ffi_args.insert(
+            0,
+            format!(
+                "loft_component_cx(cx, {}, {})",
+                body::c_string(lib),
+                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
+            ),
+        );
     }
     cx.ffi_libs
         .borrow_mut()
@@ -4491,20 +4638,23 @@ fn library_native(
     let mut body = String::new();
     let _ = writeln!(
         body,
-        "    static {ffi_ret} (*fp)({}) = 0;",
+        "    static void *fp_sym = 0;\n    {ffi_ret} (*fp)({});\n    void *s_;",
         if ffi_params.is_empty() {
             "void".to_string()
         } else {
             ffi_params.join(", ")
         }
     );
+    // `@FR-C-Publish`: the symbol is published by the first thread that resolves it.
     // The build's own path for a run in place; a shipped program finds the file by name among
     // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
     // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
     // refuses the cast; every host's ABI makes the bytes the same).
     let _ = writeln!(
         body,
-        "    if (!fp) {{ void *s_ = loft_ffi_sym({}, {}, {}); memcpy(&fp, &s_, sizeof fp); }}",
+        "    LOFT_PUB_GET(fp_sym, s_);\n    \
+         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
+         memcpy(&fp, &s_, sizeof fp);",
         body::c_string(lib),
         body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())
@@ -4533,11 +4683,11 @@ fn library_native(
 /// and a `pin` minted for the call is its own already.  Writes `pn` and `cs` into `select`.
 fn call_store_copy(def: &crate::data::Definition, store: &str, plain: bool, select: &mut String) {
     let (pn, cs) = if plain {
-        (store.to_string(), "loft_ffi_call_store(pn)")
+        (store.to_string(), "loft_ffi_call_store(cx, pn)")
     } else {
         (
             "(uint16_t) pin".to_string(),
-            "pminted ? pn : loft_ffi_call_store(pn)",
+            "pminted ? pn : loft_ffi_call_store(cx, pn)",
         )
     };
     let _ = writeln!(select, "    uint16_t pn = {pn};\n    uint16_t cs = {cs};");
@@ -4585,7 +4735,7 @@ fn library_answer(
             body.push_str(post);
             let _ = writeln!(
                 body,
-                "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
+                "    return loft_text_own(cx, loft_lit(cx, t.ptr ? (const char *) t.ptr : \"\", t.len));"
             );
         }
         // A vector answer behind its header, a record as it is: the conversion
@@ -4608,15 +4758,15 @@ fn library_answer(
                 let minted_pin = if post.is_empty() {
                     String::new()
                 } else {
-                    format!("pminted ? {convert}(r) : ")
+                    format!("pminted ? {convert}(cx, r) : ")
                 };
                 let _ = writeln!(
                     body,
-                    "    loft_ref v = {minted_pin}{own}(loft_types, {answer_tp}, {convert}(r));"
+                    "    loft_ref v = {minted_pin}{own}(cx, loft_types, {answer_tp}, {convert}(cx, r));"
                 );
                 body.push_str(post);
                 // loft#2239 — the copy of a shared store the call worked in goes.
-                let _ = writeln!(body, "    loft_ffi_drop_call_store(cs, pn);");
+                let _ = writeln!(body, "    loft_ffi_drop_call_store(cx, cs, pn);");
                 let _ = writeln!(body, "    return v;");
                 return;
             }
@@ -4625,10 +4775,10 @@ fn library_answer(
                 // No answer: the store minted for it goes.
                 let _ = writeln!(
                     body,
-                    "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(m); }}"
+                    "    if (r.rec == 0 && r.pos == 0) {{ loft_ref m = {{ ns, 0, 0 }}; loft_free_ref(cx, m); }}"
                 );
             }
-            let _ = writeln!(body, "    return {convert}(r);");
+            let _ = writeln!(body, "    return {convert}(cx, r);");
         }
         // `loft_ffi::widen_i32`: a narrow answer's null is `INT32_MIN`, which a plain widening
         // would turn into an ordinary negative number.
@@ -4671,7 +4821,7 @@ fn foreign_vector_args(
     let _ = writeln!(select, "    uint32_t pin = UINT32_MAX; int pminted = 0;");
     for (i, is_vec) in heap {
         let guard = if *is_vec {
-            format!(" && !loft_ffi_is_foreign(a{i})")
+            format!(" && !loft_ffi_is_foreign(cx, a{i})")
         } else {
             String::new()
         };
@@ -4682,12 +4832,12 @@ fn foreign_vector_args(
     }
     let _ = writeln!(
         select,
-        "    if (pin == UINT32_MAX) {{ pin = loft_store_new(); pminted = 1; }}"
+        "    if (pin == UINT32_MAX) {{ pin = loft_store_new(cx); pminted = 1; }}"
     );
     for i in &vec_args {
         let _ = writeln!(
             prep,
-            "    uint32_t cp{i} = loft_ffi_is_foreign(a{i}) ? loft_ffi_copy_in(pin, a{i}) : 0;"
+            "    uint32_t cp{i} = loft_ffi_is_foreign(cx, a{i}) ? loft_ffi_copy_in(cx, pin, a{i}) : 0;"
         );
         let _ = writeln!(
             prep,
@@ -4698,22 +4848,22 @@ fn foreign_vector_args(
     for i in &vec_args {
         let _ = writeln!(
             post,
-            "    if (cp{i}) changed |= loft_ffi_copy_changed(a{i}, pin, cp{i});"
+            "    if (cp{i}) changed |= loft_ffi_copy_changed(cx, a{i}, pin, cp{i});"
         );
     }
     if heap_answer {
-        let _ = writeln!(post, "    if (!loft_stores[pin].read_only) {{");
+        let _ = writeln!(post, "    if (!cx->stores[pin].read_only) {{");
     } else {
         let _ = writeln!(
             post,
-            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0, 0 }});"
+            "    if (pminted) loft_free_ref(cx, (loft_ref) {{ (uint16_t) pin, 1, 0, 0 }});"
         );
-        let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
+        let _ = writeln!(post, "    else if (!cx->stores[pin].read_only) {{");
     }
     for i in &vec_args {
         let _ = writeln!(
             post,
-            "        if (cp{i}) loft_st_delete(&loft_stores[pin], cp{i});"
+            "        if (cp{i}) loft_st_delete(cx, &cx->stores[pin], cp{i});"
         );
     }
     let _ = writeln!(post, "    }}");
@@ -4757,12 +4907,12 @@ fn browser_import_native(
                 decl.push("uint32_t".to_string());
                 let _ = writeln!(
                     body,
-                    "    uint32_t r{i} = a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0;"
+                    "    uint32_t r{i} = a{i}.rec ? loft_collection_rec(cx, loft_store_of(cx, a{i}), a{i}.rec, a{i}.pos) : 0;"
                 );
                 args.push(format!(
-                    "r{i} ? (const {e} *) loft_elem_base(loft_store_of(a{i}), r{i}) : 0"
+                    "r{i} ? (const {e} *) loft_elem_base(cx, loft_store_of(cx, a{i}), r{i}) : 0"
                 ));
-                args.push(format!("(uint32_t) loft_vec_len(a{i})"));
+                args.push(format!("(uint32_t) loft_vec_len(cx, a{i})"));
             }
             Arg::Scalar(sc) => {
                 decl.push(sc.c().to_string());
@@ -4830,8 +4980,9 @@ fn forwarded_native(
             params.join(", ")
         }
     );
-    let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
-    let call = format!("{runtime}({})", args.join(", "));
+    // The attributes `a<i>`, after the store context `declared_params` puts first.
+    let args: Vec<String> = (0..params.len() - 1).map(|i| format!("a{i}")).collect();
+    let call = format!("{runtime}({})", cx_args(&args));
     let body = if ret == CType::Void {
         format!("    {call};\n")
     } else {
@@ -4916,12 +5067,13 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
         ));
     };
     let mut out = String::new();
-    for i in 0..params.len() {
+    // Each attribute `a<i>`; the store context `declared_params` puts first is `cx`.
+    for i in 0..params.len() - 1 {
         let _ = writeln!(out, "    (void) a{i};");
     }
     let _ = writeln!(
         out,
-        "    loft_panic(loft_lit({}, {}), loft_lit(\"\", 0), 0);",
+        "    loft_panic(cx, loft_lit(cx, {}, {}), loft_lit(cx, \"\", 0), 0);",
         body::c_string(&msg),
         msg.len()
     );
@@ -4944,7 +5096,13 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// its body otherwise.  Only where the parameter and the result are the 64-bit integers the
 /// table holds.
 fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String {
-    let [param] = params.split(", ").collect::<Vec<_>>()[..] else {
+    // The store context every emitted function takes first (@PLN226 P2a) is no parameter of the
+    // loft function: the one a classifier is of comes after it.
+    let [param] = params
+        .split(", ")
+        .filter(|q| *q != "loft_cx *cx")
+        .collect::<Vec<_>>()[..]
+    else {
         return body;
     };
     let Some(p) = param.strip_prefix("int64_t ") else {
@@ -5026,13 +5184,13 @@ fn framed(
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let mut parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    let mut parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, body);
     // `@PLN206 P7` — a body written in parts keeps no hand-over: a part's `return` leaves the
     // part, not the routine.
     let unsplit;
     let body = if parts.is_some() && body.contains("/*LOFT_SP*/") {
         unsplit = strip_safepoints(body);
-        parts = split::split(storage, &held(ret).clone(), &fr, params, &unsplit);
+        parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, &unsplit);
         unsplit.as_str()
     } else {
         body
@@ -5062,9 +5220,13 @@ fn framed(
         Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
         None => whole,
     };
+    // The parts alone where a budget was asked for; otherwise both forms, and the C compiler
+    // takes the parts above its own size (`LOFT_C_SPLIT_ABOVE`, loft_cc.h).
     let text = match parts {
-        Some(parts) if split::everywhere() => parts,
-        Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
+        Some((parts, _)) if split::everywhere() => parts,
+        Some((parts, sites)) => format!(
+            "#if LOFT_C_SPLIT_ABOVE > 0 && {sites} > LOFT_C_SPLIT_ABOVE\n{parts}#else\n{whole}#endif\n"
+        ),
         None => whole,
     };
     let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
@@ -5085,7 +5247,7 @@ fn framed(
         def.name().to_string()
     };
     let push = format!(
-        "    loft_frame_push({}, {}, {});\n",
+        "    loft_frame_push(cx, {}, {}, {});\n",
         body::c_string(&frame_name),
         body::c_string(&cx.source_name(&def.position().file)),
         def.position().line
@@ -5108,15 +5270,15 @@ fn framed(
         (push, String::new())
     } else {
         (
-            format!("{push}    size_t fm = loft_nfnrefs;\n"),
-            "    if (loft_nfnrefs != fm) loft_fnref_release(fm);\n".to_string(),
+            format!("{push}    size_t fm = cx->nfnrefs;\n"),
+            "    if (cx->nfnrefs != fm) loft_fnref_release(cx, fm);\n".to_string(),
         )
     };
     if ret == CType::Void {
-        format!("{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
+        format!("{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n")
     } else {
         format!(
-            "{push}    {} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
+            "{push}    {} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n",
             held(ret)
         )
     }
@@ -5134,17 +5296,13 @@ pub fn ship_units() {
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
 /// so the C compiler's optimiser time stays bounded.
 pub fn functions_whole() -> bool {
-    crate::ship_tier::shipped_units() || ESP_UNIT.with(std::cell::Cell::get)
+    crate::ship_tier::shipped_units()
 }
 
-thread_local! {
-    /// Set for the length of one [`emit_esp_program`]: an app is a shipped artefact.
-    static ESP_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
-    /// with their loft lines (`Cx::source_lines`).
-    static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Set for the length of one [`emit_wasm_program`]: the unit is compiled to wasm32.
-    static WASM_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// Whether a shipped unit is written with its parts all the same (`LOFT_C_SPLIT_SHIP=1`): a
+/// build that must fit a machine's memory, such as the gate's tools on a GitHub runner.
+pub fn split_shipped() -> bool {
+    split::split_shipped()
 }
 
 /// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
@@ -5158,15 +5316,11 @@ pub fn emit_wasm_program(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WASM_UNIT.with(|s| s.set(false));
-        }
-    }
-    WASM_UNIT.with(|s| s.set(true));
-    let _reset = Reset;
-    emit_program(data, stores, expected)
+    let shape = UnitShape {
+        wasm: true,
+        ..UnitShape::default()
+    };
+    emit_program_shaped(data, stores, expected, &shape)
 }
 
 /// The comment that ends a function's run of `#line` markers in a unit written with source
@@ -5187,15 +5341,11 @@ pub fn emit_program_with_source_lines(
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            SOURCE_LINES.with(|s| s.set(false));
-        }
-    }
-    SOURCE_LINES.with(|s| s.set(true));
-    let _reset = Reset;
-    emit_program(data, stores, expected)
+    let shape = UnitShape {
+        source_lines: true,
+        ..UnitShape::default()
+    };
+    emit_program_shaped(data, stores, expected, &shape)
 }
 
 /// The unit `c` with each [`LINE_RESET`] turned into `#line <the next line> "<c_path>"`, so the
@@ -5252,6 +5402,7 @@ fn emit_tests(
     data: &Data,
     stores: &Stores,
     expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
 ) -> Result<String, Refusal> {
     let tests = test_functions(data);
     if tests.is_empty() {
@@ -5260,7 +5411,7 @@ fn emit_tests(
             why: "neither a main nor a test".into(),
         });
     }
-    emit_tests_of(data, stores, &tests, expected)
+    emit_tests_shaped(data, stores, &tests, expected, shape)
 }
 
 /// The tests `tests` as one C unit whose `main` runs each in turn, or only the one its first
@@ -5276,15 +5427,26 @@ pub fn emit_tests_of(
     tests: &[u32],
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
+    emit_tests_shaped(data, stores, tests, expected, &UnitShape::default())
+}
+
+/// [`emit_tests_of`] written for `shape`.
+fn emit_tests_shaped(
+    data: &Data,
+    stores: &Stores,
+    tests: &[u32],
+    expected: &dyn Fn(&str) -> Vec<String>,
+    shape: &UnitShape,
+) -> Result<String, Refusal> {
     // A failed test `longjmp`s past its frames' frees: the unit keeps the texts they hold
     // (`LOFT_HOLD`) so the halt releases them (loft#2198).
     let mut out = format!(
         "#define LOFT_HALT_RELEASE 1\n{}",
-        emit_unit(data, stores, tests)?
+        emit_unit_shaped(data, stores, tests, shape)?
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    cx->in_test = 1;\n",
         anchor(stores)
     );
     // Each test runs in a wrapper of its own, called through a `volatile` pointer that no
@@ -5310,35 +5472,39 @@ pub fn emit_tests_of(
             | Type::Index(..)
             | Type::Radix(..)
             | Type::Trie(..)
-            | Type::Enum(_, true, _) => format!("loft_free_ref({call}());"),
-            Type::Text(_) => format!("loft_text loft_r = {call}(); loft_text_free(&loft_r);"),
-            _ => format!("{call}();"),
+            | Type::Enum(_, true, _) => format!("loft_free_ref(cx, {call}(cx));"),
+            Type::Text(_) => format!("loft_text loft_r = {call}(cx); loft_text_free(cx, &loft_r);"),
+            _ => format!("{call}(cx);"),
         };
-        let _ = writeln!(wrappers, "static void loft_test_run{i}(void) {{ {run} }}");
-        let run = format!("{{ void (*volatile loft_f)(void) = loft_test_run{i}; loft_f(); }}");
+        let _ = writeln!(
+            wrappers,
+            "static void loft_test_run{i}(loft_cx *cx) {{ {run} }}"
+        );
+        let run =
+            format!("{{ void (*volatile loft_f)(loft_cx *) = loft_test_run{i}; loft_f(cx); }}");
         if subs.is_empty() {
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    if (setjmp(loft_test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
+                "    LOFT_FRAMES_RESET();\n    loft_mark = cx->stores_allocated;\n    if (setjmp(cx->test_jmp) == 0) {{ {run} }} else {{ loft_release_stores_since(cx, loft_mark); failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
             );
         } else {
             // Passes only by failing, with one of the expected messages in its own.
             let list: Vec<String> = subs
                 .iter()
-                .map(|s| format!("loft_lit({}, {})", body::c_string(s), s.len()))
+                .map(|s| format!("loft_lit(cx, {}, {})", body::c_string(s), s.len()))
                 .collect();
             let _ = writeln!(
                 out,
-                "    LOFT_FRAMES_RESET();\n    loft_mark = loft_stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
-                 if (setjmp(loft_test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
-                 else {{ loft_release_stores_since(loft_mark); if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }} }}",
+                "    LOFT_FRAMES_RESET();\n    loft_mark = cx->stores_allocated;\n    {{ const loft_str want[] = {{ {} }};\n      \
+                 if (setjmp(cx->test_jmp) == 0) {{ {run} failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
+                 else {{ loft_release_stores_since(cx, loft_mark); if (!loft_failed_with(cx, want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }} }}",
                 list.join(", "),
                 subs.len()
             );
         }
         out.push_str("    }\n");
     }
-    out.push_str("    if (!failed) loft_leak_report();\n    return failed ? 1 : 0;\n}\n");
+    out.push_str("    if (!failed) loft_leak_report(cx);\n    return failed ? 1 : 0;\n}\n");
     // The wrappers go before `main`, which names them.
     let at = out
         .rfind("\nint main(int argc, char **argv) {")

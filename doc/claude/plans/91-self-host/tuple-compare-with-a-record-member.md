@@ -1,5 +1,7 @@
 # @PLN91 — a tuple comparison with a record member (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: its refusal no longer occurs.  Kept as the record of the subject.
+
 **The family:** "a tuple comparison with a record member" (11 sites).  Two programs are held by
 it alone: T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value (9 sites)
 and Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison (:77).

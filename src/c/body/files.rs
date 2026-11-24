@@ -37,14 +37,34 @@ impl FnWriter<'_> {
             .get(tp as usize)
             .map_or_else(|| format!("#{tp}"), |t| t.name.clone());
         let f = self.cx.deliver_type(tp);
+        let (desc, flat) = self.cx.deliver_page(tp);
         let (tag, val) = self.two("OpDeliver", &[tag, val], ind)?;
         Ok(E::new(
             format!(
-                "loft_deliver({}, {}, {f}, {})",
+                "loft_deliver(cx, {}, {}, {f}, {}, {tp}, {desc}, {flat})",
                 as_int(tag)?,
                 super::c_string(&name),
                 as_ref(val)?
             ),
+            K::Void,
+        ))
+    }
+
+    /// `expose(tag, value)` / `release(tag, value)` (`Stores::expose_value` / `release_value`):
+    /// the value's store locked read-only while the host holds it, and unlocked; on a page the
+    /// host is handed the value as `deliver` hands it, and told when it is released.
+    fn expose(&mut self, name: &str, args: [&Value; 3], ind: usize) -> Result<E, String> {
+        let [tag, val, tp] = args;
+        let (tag, val) = self.two(name, &[tag, val], ind)?;
+        let (tag, val) = (as_int(tag)?, as_ref(val)?);
+        if name == "OpRelease" {
+            return Ok(E::new(format!("loft_release(cx, {tag}, {val})"), K::Void));
+        }
+        let tp = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        let (desc, flat) = self.cx.deliver_page(tp);
+        Ok(E::new(
+            format!("loft_expose(cx, {tag}, {val}, {tp}, {desc}, {flat})"),
             K::Void,
         ))
     }
@@ -58,27 +78,16 @@ impl FnWriter<'_> {
     ) -> Result<Option<E>, String> {
         let one = |s: &mut Self, f: &str, k: K| -> Result<Option<E>, String> {
             let a = s.expr(&args[0], ind)?;
-            Ok(Some(E::new(format!("{f}({})", as_ref(a)?), k)))
+            Ok(Some(E::new(format!("{f}(cx, {})", as_ref(a)?), k)))
         };
         let path = |s: &mut Self, f: &str| -> Result<Option<E>, String> {
             let a = s.expr(&args[0], ind)?;
-            Ok(Some(E::new(format!("{f}({})", as_view(a)?), K::Int)))
+            Ok(Some(E::new(format!("{f}(cx, {})", as_view(a)?), K::Int)))
         };
         match (name, args) {
             ("OpDeliver", [tag, val, tp]) => self.deliver(tag, val, tp, ind).map(Some),
-            // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
-            // locked read-only while the host holds it, and unlocked.
-            ("OpExpose" | "OpRelease", [tag, val, _]) => {
-                let (tag, val) = self.two(name, &[tag, val], ind)?;
-                Ok(Some(E::new(
-                    format!(
-                        "((void) ({}), loft_set_store_lock({}, {}))",
-                        as_int(tag)?,
-                        as_ref(val)?,
-                        u8::from(name == "OpExpose")
-                    ),
-                    K::Void,
-                )))
+            ("OpExpose" | "OpRelease", [tag, val, tp]) => {
+                self.expose(name, [tag, val, tp], ind).map(Some)
             }
             ("OpGetFile", [_]) => one(self, "loft_get_file", K::Bool),
             ("OpSizeFile", [_]) => one(self, "loft_size_file", K::Int),
@@ -88,21 +97,21 @@ impl FnWriter<'_> {
             ("OpMkdir", [p]) => {
                 let p = self.expr(p, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_fs_mkdir({}, 0)", as_view(p)?),
+                    format!("loft_fs_mkdir(cx, {}, 0)", as_view(p)?),
                     K::Int,
                 )))
             }
             ("OpMkdirAll", [p]) => {
                 let p = self.expr(p, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_fs_mkdir({}, 1)", as_view(p)?),
+                    format!("loft_fs_mkdir(cx, {}, 1)", as_view(p)?),
                     K::Int,
                 )))
             }
             ("OpMoveFile", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_fs_move({}, {})", as_view(a)?, as_view(b)?),
+                    format!("loft_fs_move(cx, {}, {})", as_view(a)?, as_view(b)?),
                     K::Int,
                 )))
             }
@@ -114,7 +123,7 @@ impl FnWriter<'_> {
                     ("loft_truncate_file", K::Bool)
                 };
                 Ok(Some(E::new(
-                    format!("{call}({}, {})", as_ref(f)?, as_int(n)?),
+                    format!("{call}(cx, {}, {})", as_ref(f)?, as_int(n)?),
                     k,
                 )))
             }
@@ -125,7 +134,7 @@ impl FnWriter<'_> {
                 };
                 let f = self.expr(f, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_get_file_text({}, &{dest})", as_ref(f)?),
+                    format!("loft_get_file_text(cx, {}, &{dest})", as_ref(f)?),
                     K::Void,
                 )))
             }
@@ -134,7 +143,7 @@ impl FnWriter<'_> {
                 let size = self.cx.stores.size(file);
                 let (p, v) = self.two(name, args, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_get_dir({}, {}, {size})", as_view(p)?, as_ref(v)?),
+                    format!("loft_get_dir(cx, {}, {}, {size})", as_view(p)?, as_ref(v)?),
                     K::Bool,
                 )))
             }
@@ -228,7 +237,7 @@ impl FnWriter<'_> {
         let file = self.expr(&Value::Var(f), ind)?;
         self.line(
             ind,
-            &format!("{c}p = loft_fcur_hold(&{c}, {});", as_ref(file)?),
+            &format!("{c}p = loft_fcur_hold(cx, &{c}, {});", as_ref(file)?),
         );
         crate::rewrite_census::fired("R-FileHold", 1);
         // The loop takes the next index in `loops` once `loop_stmt` pushes it.
@@ -256,36 +265,37 @@ impl FnWriter<'_> {
         let fr = self.temp(CType::Ref);
         self.line(ind, &format!("{fr} = {};", as_ref(file)?));
         let value = self.expr(&Value::Var(var), ind)?;
-        let put = |n: u8, x: &str| format!("loft_put(&loft_b, (uint64_t) ({x}), {n}, loft_le);");
+        let put =
+            |n: u8, x: &str| format!("loft_put(cx, &loft_b, (uint64_t) ({x}), {n}, loft_le);");
         let ser = match (tp, self.narrow_kind(tp)) {
             (0 | 1, _) => put(8, &as_int(value)?),
-            (2, _) => put(4, &format!("loft_bits32({})", super::as_single(value)?)),
-            (3, _) => put(8, &format!("loft_bits64({})", super::as_float(value)?)),
+            (2, _) => put(4, &format!("loft_bits32(cx, {})", super::as_single(value)?)),
+            (3, _) => put(8, &format!("loft_bits64(cx, {})", super::as_float(value)?)),
             (4, _) => format!(
-                "loft_push_char(&loft_b, (char) {});",
+                "loft_push_char(cx, &loft_b, (char) {});",
                 super::as_bool(value)?
             ),
-            (5, _) => format!("loft_text_append(&loft_b, {});", as_view(value)?),
+            (5, _) => format!("loft_text_append(cx, &loft_b, {});", as_view(value)?),
             (6, _) => put(4, &super::as_char(value)?),
             (_, Some((n, _))) => put(n, &format!("(uint64_t) {}", as_int(value)?)),
             _ if self.plain_enum(tp) => format!(
-                "loft_push_char(&loft_b, (char) {});",
+                "loft_push_char(cx, &loft_b, (char) {});",
                 super::as_enum(value)?
             ),
             _ => {
                 self.cx.ser_type(tp)?;
-                format!("loft_ser{tp}(&loft_b, {}, loft_le);", as_ref(value)?)
+                format!("loft_ser{tp}(cx, &loft_b, {}, loft_le);", as_ref(value)?)
             }
         };
         self.line(ind, "{");
         self.line(ind + 1, "loft_text loft_b = { 0, 0, 0 };");
         // The byte order only where the encoding reads it (a text appends as it stands).
         if ser.contains("loft_le") {
-            self.line(ind + 1, &format!("int loft_le = loft_file_le({fr});"));
+            self.line(ind + 1, &format!("int loft_le = loft_file_le(cx, {fr});"));
         }
         self.line(ind + 1, &ser);
-        self.line(ind + 1, &format!("loft_write_file({fr}, &loft_b);"));
-        self.line(ind + 1, "loft_text_free(&loft_b);");
+        self.line(ind + 1, &format!("loft_write_file(cx, {fr}, &loft_b);"));
+        self.line(ind + 1, "loft_text_free(cx, &loft_b);");
         self.line(ind, "}");
         Ok(E::new("(void) 0", K::Void))
     }
@@ -293,6 +303,10 @@ impl FnWriter<'_> {
     /// `OpReadFile(f, OpCreateStack(v), n, tp)` (State::read_file and `dispatch_read_data`): `n`
     /// bytes from the File's next position, decoded into `v` — a text takes what arrived; any
     /// other value only all `n` bytes, and no fewer than its width, or it stays as it was.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per value kind the read decodes"
+    )]
     fn read_file(
         &mut self,
         f: &Value,
@@ -321,7 +335,7 @@ impl FnWriter<'_> {
             self.line(
                 ind,
                 &format!(
-                    "loft_fcur_read(&{c}, &{c}p, {w}, {}, &{name});",
+                    "loft_fcur_read(cx, &{c}, &{c}p, {w}, {}, &{name});",
                     i32::from(signed)
                 ),
             );
@@ -337,7 +351,7 @@ impl FnWriter<'_> {
         {
             crate::rewrite_census::fired("R-TypedRead/float", 1);
             let name = self.var(var);
-            self.line(ind, &format!("loft_fcur_readf(&{c}, &{c}p, &{name});"));
+            self.line(ind, &format!("loft_fcur_readf(cx, &{c}, &{c}p, &{name});"));
             return Ok(E::new("(void) 0", K::Void));
         }
         let (file, count) = self.two("OpReadFile", &[f, n], ind)?;
@@ -347,7 +361,7 @@ impl FnWriter<'_> {
         let text = self.cx.stores.is_text_type(tp);
         let width = self.cx.stores.binary_size(tp);
         let name = self.var(var);
-        let take = |n: u8| format!("loft_take(loft_d, {n}, loft_le)");
+        let take = |n: u8| format!("loft_take(cx, loft_d, {n}, loft_le)");
         // `@FR-R-TypedRead`: the C decodes every read at its site; the census counts the
         // rule's own domain, a fixed-width integer into an `integer` local, as native does.
         if matches!(tp, 0 | 1) || (!text && self.narrow_kind(tp).is_some()) {
@@ -358,11 +372,13 @@ impl FnWriter<'_> {
                 if !(self.shapes[var as usize] == CType::Text && self.text_held(var)) {
                     return Err("a file read into a text that is not a local".into());
                 }
-                format!("loft_text_set(&{name}, loft_lit((const char *) loft_d, (size_t) loft_n));")
+                format!(
+                    "loft_text_set(cx, &{name}, loft_lit(cx, (const char *) loft_d, (size_t) loft_n));"
+                )
             }
             (0 | 1, _) => format!("{{ uint64_t u = {}; memcpy(&{name}, &u, 8); }}", take(8)),
-            (2, _) => format!("{name} = loft_f32((uint32_t) {});", take(4)),
-            (3, _) => format!("{name} = loft_f64({});", take(8)),
+            (2, _) => format!("{name} = loft_f32(cx, (uint32_t) {});", take(4)),
+            (3, _) => format!("{name} = loft_f64(cx, {});", take(8)),
             (4, _) => format!("{name} = loft_d[0];"),
             (6, _) => format!("{name} = (uint32_t) {};", take(4)),
             (_, Some((w, signed))) => {
@@ -380,7 +396,7 @@ impl FnWriter<'_> {
             _ if self.plain_enum(tp) => format!("{name} = loft_d[0];"),
             _ => {
                 self.cx.ser_type(tp)?;
-                format!("loft_de{tp}({name}, loft_le, loft_d, (size_t) loft_n);")
+                format!("loft_de{tp}(cx, {name}, loft_le, loft_d, (size_t) loft_n);")
             }
         };
         self.line(ind, "{");
@@ -390,15 +406,15 @@ impl FnWriter<'_> {
         self.line(
             ind + 1,
             &format!(
-                "int64_t loft_n = loft_read_file_in({fr}, {nr}, {}, {width}, loft_b, sizeof loft_b, &loft_d);",
+                "int64_t loft_n = loft_read_file_in(cx, {fr}, {nr}, {}, {width}, loft_b, sizeof loft_b, &loft_d);",
                 i32::from(text)
             ),
         );
-        self.line(ind + 1, &format!("int loft_le = loft_file_le({fr});"));
+        self.line(ind + 1, &format!("int loft_le = loft_file_le(cx, {fr});"));
         let ok = if text {
             // A text is UTF-8: bytes that are not leave it as the read declared it (empty), as
             // `State::dispatch_read_data` does and as `text_from_bytes` answers for them.
-            "loft_n >= 0 && loft_utf8_valid(loft_d, (size_t) loft_n)".to_string()
+            "loft_n >= 0 && loft_utf8_valid(cx, loft_d, (size_t) loft_n)".to_string()
         } else {
             format!("loft_n >= {width} && loft_n == {nr}")
         };

@@ -182,9 +182,6 @@ help:
 	  | sed 's/^# \{0,1\}//'
 
 all:
-	@# `cargo fmt`, not `rustfmt src/*.rs`: the latter also reformats the `include!`d
-	@# generated sources cargo fmt never reaches (src/compiled_stdlib_gen.rs), which left
-	@# every `make install` with a dirty tree and a stale-stdlib test failure.
 	@cargo fmt
 	@RUSTFLAGS=-g cargo build --release
 
@@ -1446,11 +1443,9 @@ game:
 	    echo "    FAIL: target/release/libloft.rlib missing (needed for proc-macros)"; exit 1; }
 	@echo "  [5/7] compiling Brick Buster to self-contained HTML ..."
 	@$(MAKE) --no-print-directory brick-buster-pack
-	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
-	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
-	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
-	@# passes on it.
-	@./target/release/loft --native-rust --html doc/brick-buster.html \
+	@# The page builds through the C and clang (`--html`, @PLN203 C9): the rustc writer is
+	@# retired (@C170).
+	@./target/release/loft --html doc/brick-buster.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/brick-buster/25-brick-buster.loft \
 	    >/tmp/loft_game_html.log 2>&1 || { \
@@ -1508,11 +1503,9 @@ crystal-editor:
 	    echo "    FAIL: wasm rlib build — see /tmp/loft_crystal_wasm.log"; \
 	    tail -20 /tmp/loft_crystal_wasm.log; exit 1; }
 	@echo "  [4/5] compiling Crystal Editor to self-contained HTML ..."
-	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
-	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
-	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
-	@# passes on it.
-	@./target/release/loft --native-rust --html doc/crystal-editor.html \
+	@# The page builds through the C and clang (`--html`, @PLN203 C9): the rustc writer is
+	@# retired (@C170).
+	@./target/release/loft --html doc/crystal-editor.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/audience-demo/crystal_editor.loft \
 	    >/tmp/loft_crystal_html.log 2>&1 || { \
@@ -3033,11 +3026,6 @@ script-census:  ## @PLN179 the work list: every Python/bash script by what a lof
 script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (ARGS=--count prints the open number instead)
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
-
-.PHONY: compiled-stdlib
-compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
-	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
-	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
 
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)

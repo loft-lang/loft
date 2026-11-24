@@ -8,7 +8,7 @@
     scripts/rewrite_census.py --bless-unless-drop   # one run that checks and records: fails on a
                                          #   drop (writing nothing), else writes the counts
     scripts/rewrite_census.py --only 12_drawing,drawing
-    scripts/rewrite_census.py --writer c # one writer only (`rust`, `c`; default both)
+    scripts/rewrite_census.py --writer c # one writer only (`c`, the only one)
     scripts/rewrite_census.py --verbose  # also list every rise and new row
     LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
 
@@ -22,8 +22,8 @@ it, and nothing but a compiler change can move it.
 
 How
 ---
-Each program is written by BOTH compiled writers without compiling the result — as Rust
-(`--native-emit --lean`, no rustc) and as C (`--emit-c`, no C compiler), ~0.2 s each — with
+Each program is written by the C writer without compiling the result (`--emit-c`, no C
+compiler), ~0.2 s each — the rustc writer is retired (@PLN225), its old rows unjudged — with
 `LOFT_REWRITE_CENSUS` set; the compiler counts each rewrite where it is ADMITTED
 (`src/rewrite_census.rs`).  A row is per (program, writer, rule): a writer's count holds the
 admissions decided before any writer (the parse and IR phases, which both runs repeat) and that
@@ -72,10 +72,9 @@ sys.path.insert(0, str(ROOT / "bench" / "portal"))
 from portal import library_packages  # noqa: E402  (the one home of which libraries)
 import rule_phases  # noqa: E402  (the phase table, beside this script)
 
-# Each compiled writer: its name in the baseline, the source it writes, its flags.  `rust` is
-# the rustc writer (census phase `native`), `c` the C writer (phase `c`).
+# Each compiled writer: its name in the baseline, the source it writes, its flags.  `c` is the
+# C writer (phase `c`); the rustc writer is retired (@PLN225: `--native-rust` is refused).
 WRITERS = {
-    "rust": (".rs", lambda out: ["--native-rust", "--native-emit", str(out), "--lean"]),
     "c": (".c", lambda out: ["--emit-c", str(out)]),
 }
 
@@ -168,21 +167,18 @@ def rust_writer_env():
 
 
 def warm_dependencies(loft, progs):
-    """Build every library row's dependency cdylibs once, one program at a time, before the
-    parallel census.  A program whose dependency's cdylib exists calls into it; one that finds it
-    absent, or still being built by another census worker, emits those functions inline — and
-    counts their rewrites.  Run four at a time from a cold cache, WHICH program counted them was
-    a race: two admissions moved between `hex_recover` and `hex_edge` from run to run, the total
-    unchanged, and the gate failed on whichever lost them.  Warmed serially, every program sees
-    every dependency present, so the count is the program's own."""
+    """Emit every program once, one at a time, before the parallel census, so what a run builds
+    on the way — the standard library's hosted C unit (@PLN225 R1), a library's unit — is built
+    and cached before anything is counted.  Counted cold, a program also counts the rewrites of
+    the unit its run built (a census of 109110 admissions where the warm one reads 108969, on
+    the same tree), and which program builds it first is a race between the workers."""
     with tempfile.TemporaryDirectory() as tmp:
-        for name, commit, cwd, argv in progs:
-            if commit == "-":
-                continue
+        ext, flags = WRITERS["c"]
+        for _name, _commit, cwd, argv in progs:
             subprocess.run(
-                [loft, "--native-rust", "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
+                [loft, *flags(Path(tmp) / f"warm{ext}"), *argv],
                 cwd=cwd, capture_output=True, timeout=600,
-                env={**rust_writer_env(), "LOFT_REWRITE_CENSUS": ""},
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1", "LOFT_REWRITE_CENSUS": ""},
             )
 
 

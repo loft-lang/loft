@@ -1134,7 +1134,7 @@ impl Scopes<'_> {
         if !ls[1..].iter().any(|later| writes_vector(later, x, data)) {
             return;
         }
-        let wrapper = data.def_nr(&format!("main_vector<{}>", elem.name(data)));
+        let wrapper = data.def_nr(&data.vector_wrapper_name(&elem));
         let vec_def = data.def_nr(&Type::Vector(Box::new(elem.clone()), Deps::none()).name(data));
         let elem_def = data.type_def_nr(&elem);
         if [wrapper, vec_def, elem_def].contains(&u32::MAX) {

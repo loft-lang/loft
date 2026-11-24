@@ -5,10 +5,10 @@
  * compiler.  The runtime and the generator write these macros, never a raw builtin or
  * attribute.  Three compile-time modes; a mode changes speed, never a value:
  *
- *   -DLOFT_STRICT   pure ISO C11, clean under `cc -std=c11 -pedantic -Werror`: every macro
- *                   is its exact standard fallback.  The unit's floor is C11 for one feature,
- *                   `_Thread_local`; threads themselves are the host's (POSIX, Windows), never
- *                   C11's optional `<threads.h>` or `<stdatomic.h>`.
+ *   -DLOFT_STRICT   pure ISO C, clean under `cc -std=c11 -pedantic -Werror`: every macro
+ *                   is its exact standard fallback.  Threads are the host's (POSIX, Windows),
+ *                   never C11's optional `<threads.h>` or `<stdatomic.h>`; no state is a
+ *                   thread-local — a thread's own is its store context (`loft_cx.h`).
  *   (default)       gcc / clang / MSVC extensions where detected, the fallback otherwise.
  *   -DLOFT_VERIFY   the default, and every PROOF the generator relied on is checked again:
  *                   a false one aborts naming its site (the C twin of LOFT_HOIST_VERIFY=1).
@@ -19,6 +19,7 @@
  * wrapping_add is not). */
 #ifndef LOFT_CC_H
 #define LOFT_CC_H
+
 
 /* The OS the unit asks for (`LOFT_POSIX`, `LOFT_POSIX_HOST`) is `loft_os.h`'s, the unit's first
  * text: a request after a system header is not heard. */
@@ -60,23 +61,10 @@ LOFT_NORETURN void loft_android_exit(int code);
 /* `par` and `parallel { }` on threads (@PLN203 C4, `@FR-C-Arms`): POSIX threads on a POSIX
  * host, the CRT's on Windows, none under `-DLOFT_NO_POSIX` or on WASI, where a `par` loop runs
  * its rows in order — the same answer (@FR-C-Det) — and a `parallel` block its arms in order.
- * `LOFT_TLS` marks the runtime state each thread keeps its own of: the compiler's spelling of
- * it, or under `-DLOFT_STRICT` C11's `_Thread_local` — so a strict build compiled as C99, which
- * has none, runs on one thread.  Empty without threads. */
-#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32)) \
-    && (!defined(LOFT_STRICT) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))
+ * What a thread keeps of its own is its store context (`loft_cx.h`, @PLN226), made by the
+ * thread that starts it: no thread-local, so a strict build runs `par` on threads as C99 too. */
+#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
 #define LOFT_THREADS 1
-#if defined(LOFT_STRICT)
-#define LOFT_TLS _Thread_local
-#elif defined(_MSC_VER)
-#define LOFT_TLS __declspec(thread)
-#elif defined(__GNUC__) || defined(__clang__)
-#define LOFT_TLS __thread
-#else
-#define LOFT_TLS _Thread_local
-#endif
-#else
-#define LOFT_TLS
 #endif
 
 /* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin
@@ -116,6 +104,19 @@ LOFT_NORETURN void loft_android_exit(int code);
  * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */
 /* `LOFT_NOINLINE`: a function kept out of its caller — the test runner's release, whose caller
  * holds a `setjmp`, so its locals stay out of that frame. */
+/* `LOFT_C_SPLIT_ABOVE` (`@FR-R-CSplit`): the runtime-call sites above which a function written
+ * in parts is compiled as its parts, per C compiler.  MSVC's `cl /O1` grows quadratic in time
+ * above about 400; gcc and clang stay linear in time but not in memory (one 165 000-site
+ * function took `cc1 -O2` past 8.8 GB), and below that a split only costs a hot function its
+ * registers.  `-DLOFT_C_SPLIT_ABOVE=<n>` (or `LOFT_C_SPLIT_ABOVE=<n>` when loft writes the
+ * unit) sets it, `0` never.  Speed and memory only: both forms hold the same statements. */
+#ifndef LOFT_C_SPLIT_ABOVE
+#if defined(_MSC_VER) && !defined(__clang__)
+#define LOFT_C_SPLIT_ABOVE 300
+#else
+#define LOFT_C_SPLIT_ABOVE 2000
+#endif
+#endif
 /* `-DLOFT_SIZE`: a build for a small binary (an ESP-IDF app, `--native-esp`).  The hot helpers
  * are offered for inlining rather than forced: forced, every one of a program's field and
  * element accesses carries the whole helper, one-time code included (a 30-entry key table was
@@ -369,5 +370,84 @@ static inline int64_t loft_plain_div_v(int64_t a, int64_t b, int rem, const char
 #define LOFT_SHIP_MUL(a, b) ((int64_t) ((uint64_t) (a) * (uint64_t) (b)))
 #define LOFT_SHIP_NEG(a) ((int64_t) (0 - (uint64_t) (a)))
 #define LOFT_SHIP_SHL(a, b) ((int64_t) ((uint64_t) (a) << ((b) & 63)))
+
+
+/* ── Published data (`@FR-C-Publish`) ──────────────────────────────────────────────────────
+ * Data more than one thread may write: a value set lazily by whichever thread asks first (a
+ * flag read from the environment, a resolved symbol), a program-wide flag or counter, a log file
+ * opened on first use.  Each read and write goes through these: the compiler's atomics where this
+ * layer found them, one program-wide lock otherwise, and plain access in a unit without threads.
+ * A lazily set value is computed by whichever threads arrive first, each the same answer, and
+ * published once seen; anything longer than one word is set under `loft_pub_lock`. */
+#if !defined(LOFT_THREADS)
+static inline void loft_pub_lock(void) {}
+static inline void loft_pub_unlock(void) {}
+#elif defined(LOFT_GNU) || defined(LOFT_MSVC)
+#if defined(LOFT_GNU)
+static volatile int loft_pub_spin = 0;
+static inline void loft_pub_lock(void) {
+    while (__atomic_exchange_n(&loft_pub_spin, 1, __ATOMIC_ACQUIRE)) {
+    }
+}
+static inline void loft_pub_unlock(void) { __atomic_store_n(&loft_pub_spin, 0, __ATOMIC_RELEASE); }
+#else
+#include <intrin.h>
+static volatile long loft_pub_spin = 0;
+static inline void loft_pub_lock(void) {
+    while (_InterlockedExchange(&loft_pub_spin, 1)) {
+    }
+}
+static inline void loft_pub_unlock(void) { _InterlockedExchange(&loft_pub_spin, 0); }
+#endif
+#elif defined(_WIN32)
+#include <windows.h>
+static SRWLOCK loft_pub_srw = SRWLOCK_INIT;
+static inline void loft_pub_lock(void) { AcquireSRWLockExclusive(&loft_pub_srw); }
+static inline void loft_pub_unlock(void) { ReleaseSRWLockExclusive(&loft_pub_srw); }
+#else
+#include <pthread.h>
+static pthread_mutex_t loft_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
+static inline void loft_pub_lock(void) { pthread_mutex_lock(&loft_pub_mutex); }
+static inline void loft_pub_unlock(void) { pthread_mutex_unlock(&loft_pub_mutex); }
+#endif
+
+/* LOFT_PUB_GET(slot, out): read `slot` into `out`; LOFT_PUB_SET(slot, v): publish `v`;
+ * LOFT_PUB_SWAP(slot, v, out): publish `v`, `out` the value it replaced; LOFT_PUB_ADD(slot, d,
+ * out): add `d`, `out` the sum; LOFT_PUB_CAS(slot, expect, v): `v` when `slot` holds `expect`,
+ * true when it did (else `expect` reads what it held).  Without the compiler's atomics each is
+ * the lock around one word (doc/claude/LOCKS.md). */
+#if defined(LOFT_THREADS) && defined(LOFT_GNU)
+#define LOFT_PUB_CAS(slot, expect, v) \
+    __atomic_compare_exchange_n(&(slot), &(expect), (v), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+#define LOFT_PUB_GET(slot, out) ((out) = __atomic_load_n(&(slot), __ATOMIC_ACQUIRE))
+#define LOFT_PUB_SET(slot, v) __atomic_store_n(&(slot), (v), __ATOMIC_RELEASE)
+#define LOFT_PUB_SWAP(slot, v, out) ((out) = __atomic_exchange_n(&(slot), (v), __ATOMIC_SEQ_CST))
+#define LOFT_PUB_ADD(slot, d, out) ((out) = __atomic_add_fetch(&(slot), (d), __ATOMIC_SEQ_CST))
+#else
+#define LOFT_PUB_CAS(slot, expect, v) \
+    (loft_pub_lock(), ((slot) == (expect) ? ((slot) = (v), loft_pub_unlock(), 1) \
+                                         : ((expect) = (slot), loft_pub_unlock(), 0)))
+#define LOFT_PUB_GET(slot, out) (loft_pub_lock(), (out) = (slot), loft_pub_unlock())
+#define LOFT_PUB_SET(slot, v) (loft_pub_lock(), (slot) = (v), loft_pub_unlock())
+#define LOFT_PUB_SWAP(slot, v, out) (loft_pub_lock(), (out) = (slot), (slot) = (v), loft_pub_unlock())
+#define LOFT_PUB_ADD(slot, d, out) (loft_pub_lock(), (out) = ((slot) += (d)), loft_pub_unlock())
+#endif
+
+/* A value set once, by the first thread that asks (Rust's `OnceLock`): `loft_once_begin` answers
+ * 1 to the one thread that is to set it, which then calls `loft_once_end`; every other thread
+ * waits until that set is published, and any thread after it passes at once.  The wait happens at
+ * most once per value and program; nothing is held afterwards. */
+static inline int loft_once_begin(int *state) {
+    int seen;
+    LOFT_PUB_GET(*state, seen);
+    if (seen == 2) return 0;
+    int expect = 0;
+    if (LOFT_PUB_CAS(*state, expect, 1)) return 1;
+    do {
+        LOFT_PUB_GET(*state, seen);
+    } while (seen != 2);
+    return 0;
+}
+static inline void loft_once_end(int *state) { LOFT_PUB_SET(*state, 2); }
 
 #endif

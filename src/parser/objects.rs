@@ -649,8 +649,11 @@ impl Parser {
     /// ends.  Bound onto the ended variable, the one-type-per-variable check refused
     /// `if c { w = 1 } w = "x"` as a type change.
     ///
-    /// Only where that refusal would fire (the caller asks `retype_would_be_refused`), as
-    /// loft#1145's per-loop rebind does, so no program that compiles changes.  Named by the
+    /// Where that refusal would fire (the caller asks `retype_would_be_refused`), as
+    /// loft#1145's per-loop rebind does, and where the new bind VIEWS another base than the
+    /// ended one (`Function::rebind_views_another_base`, loft#2627): a dep list is part of a
+    /// binding's type, and one variable kept only the last bind's, so the earlier binding read
+    /// as a view of the later one's base and was released on that base's schedule.  Named by the
     /// statement's POSITION (reported as `w`), not by a counter: pass 1 may not know
     /// the new type yet and skip the split pass 2 makes, and a position names the same
     /// statement on both passes whichever of them splits (`w#300010`, line 3 column 10).
@@ -7784,6 +7787,7 @@ impl Parser {
             ops.push(self.copy_ref(&Value::Var(dest), &base, &ret));
             if !self.first_pass {
                 crate::copy_manifest::record(
+                    &self.data,
                     self.context,
                     dest,
                     kt,

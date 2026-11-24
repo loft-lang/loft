@@ -118,11 +118,74 @@ order the language does not define (`C-Impure`). A build with no threads (WASI, 
 microcontroller, a C build without POSIX) runs the arms in order, so there an arm that waits for a later one waits in
 vain.
 
+### Each thread's own state — the runtime's half of `C-Par` and `C-Arms`
+
+The rules above are about values; these are about what a running program keeps while its
+threads run, and they hold on every backend that runs threads (@PLN226).  Nothing is a
+thread-local: a thread's state is a value it is handed, and every crossing between threads is
+one of the points named here.
+
+```
+  (C-Own)       a thread's own state is its CONTEXT — the C runtime's `loft_cx`, the
+                interpreter's `Stores` — and a context is used by ONE thread at a time.  The thread
+                that starts a worker makes the worker's context before the thread starts; the
+                worker alone uses it until it ends, and ends it itself; the starter reads what the
+                worker left only after joining it.  Thread start and join are the only hand-overs.
+  (C-Shared)    a worker's store table is ITS OWN copy of its starter's, in which every store the
+                starter had is shared and read-only.  A context writes only the stores its own
+                table made; a shared store is never grown while workers run (a call that would
+                build into one works in a copy).  That the worker writes none is `C-Par`'s pure
+                worker, which the compiler checks and the runtime relies on.
+  (C-Adopt)     a worker's results cross back on its STARTER, after the join, one worker at a
+                time: rows taken into the starter's table with their stores (`H-Copy` for the
+                rest); everything else the worker made ends with its context.
+  (C-Nest)      a worker that starts workers is their starter: `C-Own`, `C-Shared` and `C-Adopt`
+                apply to it unchanged.  Two `par` loops that run at once — siblings in one `par`,
+                loops in two `parallel` arms, a loop nested in a worker — share no context and no
+                table; what they share is their ancestors' stores, read-only by `C-Shared`.
+  (C-Main)      state only the main thread keeps (a work buffer or record store parked between
+                calls) is plain static data that a worker never touches: every take and every
+                put asks the context first, and a worker's context, or a call bridged in from a
+                host, takes and parks nothing.
+  (C-Boundary)  state that crosses a library boundary belongs to the CALLER's context: a hosted
+                unit keeps a context per interpreter `Stores` that calls it; a component keeps one
+                of its own per caller context, made by it and handed to its every symbol first; a
+                library native's callback finds the caller's context in the store handle it was
+                given.  The context is never found by asking which thread is running.
+  (C-Publish)   data more than one thread reads and any may write — a lazily resolved symbol, a
+                lazily opened log, a program-wide flag — is, in this order of preference: owned
+                by a context; set before the first worker starts; built per thread and merged
+                after the join; one atomic word.  A lock is the last resort, and every lock is
+                listed with its reason and its lock-free alternative (LOCKS.md).
+```
+
+**In words.** A thread owns exactly what it was handed when it started, and nobody else touches
+that while it runs.  It reads its starters' stores and writes only stores it made itself;
+its results come back on the thread that started it, after that thread waited for it.  Because
+those three rules are about a starter and its workers, they repeat unchanged at every level of
+nesting, so `par` loops running at the same time in different workers or arms cannot reach each
+other's state at all.  The few things that are deliberately not per thread — the main thread's
+parked buffers, a library's per-caller state, a lazily set program-wide value — each say how a
+second thread is kept out, and a lock is the last way: [LOCKS.md](../LOCKS.md) lists each one
+that remains, why it is needed, and what would replace it.
+
+**What each costs.**  Measured against the same program with the state in thread-locals
+on arm64 macOS, the median of nine alternated runs; the numbers are in @PLN226 § Cost.
+
+| Rule | Paid where | Measured |
+|---|---|---|
+| `C-Own` | every call passes `cx` | a context argument costs what a global does (39 M calls: 0.183 s against 0.182 s) |
+| `C-Own` | a worker's context made and ended | 3 000 `par` loops of 8 rows on 4 threads: 99.6 ms against 105.8 ms — a context is 4.4 KiB, its transient arena allocated by the first transient value only |
+| `C-Boundary` | a hosted bridge call asks its `Stores` for the unit's context | 2 M stdlib calls from the interpreter: 130.3 ms against 130.3 ms |
+| `C-Boundary` | a component call looks up its context | 40 M `net` calls: 22.4 ms against 22.9 ms |
+| `C-Main` | a park take or put tests `no_park` | inside the two rows above: no difference measured |
+| — | the compile passes' memos behind a lock (`Data::PassCell`) | `--emit-c` of the corpus's largest script: 544.1 ms against 544.5 ms |
+
 ---
 
 ## Deviations
 
-OPEN: **0**.  The register is [concurrency-history.md](concurrency-history.md); conformance is shared with operational.md's D-op-1.
+OPEN: **0**.  The closed entries are in [concurrency-history.md](concurrency-history.md); conformance is shared with operational.md's D-op-1.
 
 - **Conformance is differential** — `par` is enforced across the two backends by the @PLN89
   differential oracle (D-op-1), which carries a parallel-reduction program
@@ -147,6 +210,9 @@ OPEN: **0**.  The register is [concurrency-history.md](concurrency-history.md); 
   it; a chain of three arms each waiting for the next; arms opening, writing and reading files
   at the same time; an arm building a `vector<text>`, running a `par` loop or a nested `parallel`
   block — each result read back through a file, on both backends.
+- **Loops at once (`C-Nest`)** — two `par` loops running in two `parallel` arms and a `par` loop
+  inside a `par` worker answer the sequential values on both backends, and the C build of the
+  program reports no data race under ThreadSanitizer, twenty runs in a row.
 - **Hash walk order (`C-Order`)** — `for x in h par(…)` may differ in order from `for x in h`,
   and from one run or backend to the next (the bucket walk follows the hash seed); a body that
   depends on it is outside `C-Det`.

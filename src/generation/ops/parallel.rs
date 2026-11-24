@@ -130,7 +130,7 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
         data.def(d_nr).known_type()
     } else if let Type::Vector(elem, _) = ret {
         // Mirror `Data::vector_def`'s wrapper naming exactly.
-        let wrapper = data.def_nr(&format!("main_vector<{}>", elem.name(data)));
+        let wrapper = data.def_nr(&data.vector_wrapper_name(elem));
         if wrapper == u32::MAX {
             return (0, 0);
         }

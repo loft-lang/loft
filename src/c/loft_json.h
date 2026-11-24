@@ -44,17 +44,17 @@ typedef struct loft_jv {
 } loft_jv;
 
 /* A code point onto `t` as UTF-8. */
-static void loft_jv_push_cp(loft_text *t, uint32_t cp) {
+static void loft_jv_push_cp(loft_cx *cx, loft_text *t, uint32_t cp) {
     char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
-    size_t n = loft_utf8(cp, buf);
-    if (n) loft_push(t, buf, n);
+    size_t n = loft_utf8(cx, cp, buf);
+    if (n) loft_push(cx, t, buf, n);
 }
 
-static void loft_jv_free(loft_jv *v) {
-    loft_text_free(&v->s);
+static void loft_jv_free(loft_cx *cx, loft_jv *v) {
+    loft_text_free(cx, &v->s);
     for (size_t i = 0; i < v->nkids; i++) {
-        loft_jv_free(&v->kids[i]);
-        if (v->keys) loft_text_free(&v->keys[i]);
+        loft_jv_free(cx, &v->kids[i]);
+        if (v->keys) loft_text_free(cx, &v->keys[i]);
     }
     free(v->kids);
     free(v->keys);
@@ -62,7 +62,7 @@ static void loft_jv_free(loft_jv *v) {
     memset(v, 0, sizeof *v);
 }
 
-static loft_jv *loft_jv_push(loft_jv *v, int keyed) {
+static loft_jv *loft_jv_push(loft_cx *cx, loft_jv *v, int keyed) {
     if (v->nkids == v->cap) {
         size_t n = v->cap ? v->cap * 2 : 4;
         v->kids = (loft_jv *) realloc(v->kids, n * sizeof *v->kids);
@@ -121,33 +121,33 @@ typedef struct {
     loft_jline line;
 } loft_jp;
 
-static size_t loft_jl_ws(const uint8_t *b, size_t len, size_t i) {
+static size_t loft_jl_ws(loft_cx *cx, const uint8_t *b, size_t len, size_t i) {
     while (i < len && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r')) i++;
     return i;
 }
 
-static size_t loft_jl_utf8(const uint8_t *b, size_t len, size_t i) {
+static size_t loft_jl_utf8(loft_cx *cx, const uint8_t *b, size_t len, size_t i) {
     uint8_t c = b[i];
     size_t n = c < 0x80 ? 1 : c >= 0xF0 && c <= 0xF7 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
     return i + n > len ? len : i + n;
 }
 
-static int loft_jl_hex(uint8_t c) {
+static int loft_jl_hex(loft_cx *cx, uint8_t c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
 /* The end of the line `i` is on: the lexer reads the text a line at a time (`split('\n')`). */
-static size_t loft_jl_eol(const uint8_t *b, size_t len, size_t i) {
+static size_t loft_jl_eol(loft_cx *cx, const uint8_t *b, size_t len, size_t i) {
     while (i < len && b[i] != '\n') i++;
     return i;
 }
 
 /* `read_hex4`: four hex digits at `*i`, leaving `*i` AT the fourth (the caller steps past it);
  * at a non-hex character `*i` stays on it and the answer is -1. */
-static int32_t loft_jl_hex4(const uint8_t *b, size_t eol, size_t *i) {
+static int32_t loft_jl_hex4(loft_cx *cx, const uint8_t *b, size_t eol, size_t *i) {
     int32_t v = 0;
     for (int k = 0; k < 4; k++) {
-        int d = *i < eol ? loft_jl_hex(b[*i]) : -1;
+        int d = *i < eol ? loft_jl_hex(cx, b[*i]) : -1;
         if (d < 0) return -1;
         v = (v << 4) | d;
         if (k < 3) (*i)++;
@@ -157,10 +157,10 @@ static int32_t loft_jl_hex4(const uint8_t *b, size_t eol, size_t *i) {
 
 /* `loft_jl_eol` for a position on the line `line` last answered: the same end, found once per
  * line instead of once per token. */
-static size_t loft_jl_eol_at(const uint8_t *b, size_t len, size_t i, loft_jline *line) {
+static size_t loft_jl_eol_at(loft_cx *cx, const uint8_t *b, size_t len, size_t i, loft_jline *line) {
     if (line->valid && i >= line->from && i <= line->end) return line->end;
     line->from = i;
-    line->end = loft_jl_eol(b, len, i);
+    line->end = loft_jl_eol(cx, b, len, i);
     line->valid = 1;
     return line->end;
 }
@@ -169,14 +169,14 @@ static size_t loft_jl_eol_at(const uint8_t *b, size_t len, size_t i, loft_jline 
  * quote `q`, whose line ends at `eol`: the decoded text and the cursor past the closing quote,
  * or 0 when the lexer cannot close the literal on its line.  A character literal steps past an
  * escape's last character even where a string's over-read does not. */
-static int loft_jl_quoted(const uint8_t *b, size_t eol, size_t q, uint8_t close, loft_text *out, size_t *end) {
+static int loft_jl_quoted(loft_cx *cx, const uint8_t *b, size_t eol, size_t q, uint8_t close, loft_text *out, size_t *end) {
     size_t i = q + 1;
     out->p = 0;
     out->len = out->cap = 0;
     for (;;) {
         size_t run = i;
         while (i < eol && b[i] != close && b[i] != '\\') i++;
-        if (i > run) loft_push(out, (const char *) b + run, i - run);
+        if (i > run) loft_push(cx, out, (const char *) b + run, i - run);
         if (i >= eol) break;
         if (b[i] == close) {
             *end = i + 1;
@@ -186,35 +186,35 @@ static int loft_jl_quoted(const uint8_t *b, size_t eol, size_t q, uint8_t close,
         if (i >= eol) break;
         uint8_t c = b[i];
         if (c == '"' || c == '\'' || c == '\\' || c == '`' || c == '/') {
-            loft_push(out, (const char *) &c, 1);
+            loft_push(cx, out, (const char *) &c, 1);
         } else if (c == 't') {
-            loft_push(out, "\t", 1);
+            loft_push(cx, out, "\t", 1);
         } else if (c == 'r') {
-            loft_push(out, "\r", 1);
+            loft_push(cx, out, "\r", 1);
         } else if (c == 'n') {
-            loft_push(out, "\n", 1);
+            loft_push(cx, out, "\n", 1);
         } else if (c == '0') {
-            loft_push(out, "", 1);
+            loft_push(cx, out, "", 1);
         } else if (c == 'x') {
             /* \xNN, ASCII only; the caller steps past the second digit. */
             i++;
             int ok = 0;
             if (i < eol) {
-                int d1 = loft_jl_hex(b[i]);
-                size_t j = loft_jl_utf8(b, eol, i);
+                int d1 = loft_jl_hex(cx, b[i]);
+                size_t j = loft_jl_utf8(cx, b, eol, i);
                 if (j < eol) {
                     i = j;
-                    int d2 = loft_jl_hex(b[i]);
+                    int d2 = loft_jl_hex(cx, b[i]);
                     if (d1 >= 0 && d2 >= 0 && ((d1 << 4) | d2) < 0x80) {
                         char ch = (char) ((d1 << 4) | d2);
-                        loft_push(out, &ch, 1);
+                        loft_push(cx, out, &ch, 1);
                         ok = 1;
                     }
                 } else {
                     i = j;
                 }
             }
-            if (!ok) loft_push(out, "?", 1);
+            if (!ok) loft_push(cx, out, "?", 1);
             if (i >= eol) break;
         } else if (c == 'u') {
             i++;
@@ -223,24 +223,24 @@ static int loft_jl_quoted(const uint8_t *b, size_t eol, size_t q, uint8_t close,
                 i++;
                 size_t h = i;
                 uint32_t cp = 0;
-                while (i < eol && loft_jl_hex(b[i]) >= 0) {
-                    cp = (cp << 4) | (uint32_t) loft_jl_hex(b[i]);
+                while (i < eol && loft_jl_hex(cx, b[i]) >= 0) {
+                    cp = (cp << 4) | (uint32_t) loft_jl_hex(cx, b[i]);
                     i++;
                 }
                 if (i >= eol || b[i] != '}' || i == h || i - h > 6 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
-                    loft_push(out, "?", 1);
+                    loft_push(cx, out, "?", 1);
                 } else {
-                    loft_jv_push_cp(out, cp);
+                    loft_jv_push_cp(cx, out, cp);
                 }
                 if (i >= eol) break;
             } else {
-                int32_t cp = loft_jl_hex4(b, eol, &i);
+                int32_t cp = loft_jl_hex4(cx, b, eol, &i);
                 if (cp < 0) {
-                    loft_jv_push_cp(out, 0xFFFD);
+                    loft_jv_push_cp(cx, out, 0xFFFD);
                 } else if (cp < 0xD800 || cp > 0xDFFF) {
-                    loft_jv_push_cp(out, (uint32_t) cp);
+                    loft_jv_push_cp(cx, out, (uint32_t) cp);
                 } else if (cp >= 0xDC00) {
-                    loft_jv_push_cp(out, 0xFFFD);
+                    loft_jv_push_cp(cx, out, 0xFFFD);
                 } else {
                     i++; /* past the high surrogate's fourth digit */
                     int paired = 0;
@@ -251,40 +251,40 @@ static int loft_jl_quoted(const uint8_t *b, size_t eol, size_t q, uint8_t close,
                     if (!paired) {
                         /* Over-read: the cursor is past the escape already — for a string;
                          * a character literal steps on regardless. */
-                        loft_jv_push_cp(out, 0xFFFD);
+                        loft_jv_push_cp(cx, out, 0xFFFD);
                         if (close == '"') continue;
                         if (i >= eol) break;
-                        i = loft_jl_utf8(b, eol, i);
+                        i = loft_jl_utf8(cx, b, eol, i);
                         continue;
                     }
                     i++;
-                    int32_t low = loft_jl_hex4(b, eol, &i);
+                    int32_t low = loft_jl_hex4(cx, b, eol, &i);
                     if (low >= 0xDC00 && low <= 0xDFFF) {
-                        loft_jv_push_cp(out, (uint32_t) (0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00)));
+                        loft_jv_push_cp(cx, out, (uint32_t) (0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00)));
                     } else if (low >= 0) {
-                        loft_jv_push_cp(out, 0xFFFD);
-                        loft_jv_push_cp(out, low >= 0xD800 && low <= 0xDFFF ? 0xFFFD : (uint32_t) low);
+                        loft_jv_push_cp(cx, out, 0xFFFD);
+                        loft_jv_push_cp(cx, out, low >= 0xD800 && low <= 0xDFFF ? 0xFFFD : (uint32_t) low);
                     } else {
-                        loft_jv_push_cp(out, 0xFFFD);
+                        loft_jv_push_cp(cx, out, 0xFFFD);
                     }
                 }
                 if (i >= eol) break;
             }
         } else {
-            loft_push(out, "?", 1);
+            loft_push(cx, out, "?", 1);
         }
-        i = loft_jl_utf8(b, eol, i); /* the caller's step past the escape's last character */
+        i = loft_jl_utf8(cx, b, eol, i); /* the caller's step past the escape's last character */
     }
-    loft_text_free(out);
+    loft_text_free(cx, out);
     *end = eol;
     return 0;
 }
 
 /* The token at cursor `i` (`Lexer::scan_once` in JSON mode). */
-static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i, loft_jline *line) {
+static loft_jtok loft_jl_token(loft_cx *cx, const uint8_t *b, size_t len, size_t i, loft_jline *line) {
     loft_jtok t;
     memset(&t, 0, sizeof t);
-    i = loft_jl_ws(b, len, i);
+    i = loft_jl_ws(cx, b, len, i);
     t.at = i;
     if (i >= len) {
         t.kind = LOFT_JT_END;
@@ -357,7 +357,7 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i, loft_jlin
         return t;
     }
     if (c == '"') {
-        if (loft_jl_quoted(b, loft_jl_eol_at(b, len, i, line), i, '"', &t.text, &t.end)) {
+        if (loft_jl_quoted(cx, b, loft_jl_eol_at(cx, b, len, i, line), i, '"', &t.text, &t.end)) {
             t.kind = LOFT_JT_STR;
             t.at = i + 1;
         } else {
@@ -370,9 +370,9 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i, loft_jlin
          * read as a string's, its `token_at` after the quote; none when the line ends first. */
         loft_text lit = { 0, 0, 0 };
         t.at = i + 1;
-        t.kind = loft_jl_quoted(b, loft_jl_eol_at(b, len, i, line), i, '\'', &lit, &t.end)
+        t.kind = loft_jl_quoted(cx, b, loft_jl_eol_at(cx, b, len, i, line), i, '\'', &lit, &t.end)
             ? LOFT_JT_OTHER : LOFT_JT_NONE;
-        loft_text_free(&lit);
+        loft_text_free(cx, &lit);
         return t;
     }
     if (c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == ',' || c == '-' || c == '.') {
@@ -391,45 +391,45 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i, loft_jlin
     }
     if (c == '`') {
         t.kind = LOFT_JT_OTHER;
-        t.end = loft_jl_eol_at(b, len, i, line);
+        t.end = loft_jl_eol_at(cx, b, len, i, line);
         return t;
     }
     /* An unrecognized character: consumed, and no token. */
     t.kind = LOFT_JT_NONE;
-    t.end = loft_jl_utf8(b, len, i);
+    t.end = loft_jl_utf8(cx, b, len, i);
     return t;
 }
 
-static void loft_jp_peek(loft_jp *p) {
-    loft_text_free(&p->pk.text);
-    p->pk = loft_jl_token(p->b, p->len, p->cur, &p->line);
+static void loft_jp_peek(loft_cx *cx, loft_jp *p) {
+    loft_text_free(cx, &p->pk.text);
+    p->pk = loft_jl_token(cx, p->b, p->len, p->cur, &p->line);
 }
 
 /* `Lexer::cont`: past the token at the cursor. */
-static void loft_jp_cont(loft_jp *p) {
+static void loft_jp_cont(loft_cx *cx, loft_jp *p) {
     p->cur = p->pk.end;
-    loft_jp_peek(p);
+    loft_jp_peek(cx, p);
 }
 
-static size_t loft_jp_at_token(const loft_jp *p) { return p->pk.at < p->len ? p->pk.at : p->len; }
+static size_t loft_jp_at_token(loft_cx *cx, const loft_jp *p) { return p->pk.at < p->len ? p->pk.at : p->len; }
 
-static int loft_jp_is(const loft_jp *p, char tok) { return p->pk.kind == LOFT_JT_TOK && p->pk.tok == tok; }
+static int loft_jp_is(loft_cx *cx, const loft_jp *p, char tok) { return p->pk.kind == LOFT_JT_TOK && p->pk.tok == tok; }
 
-static void loft_jp_advance_past(loft_jp *p, size_t end) {
-    while (p->pk.kind != LOFT_JT_END && p->pk.kind != LOFT_JT_NONE && loft_jp_at_token(p) < end) loft_jp_cont(p);
+static void loft_jp_advance_past(loft_cx *cx, loft_jp *p, size_t end) {
+    while (p->pk.kind != LOFT_JT_END && p->pk.kind != LOFT_JT_NONE && loft_jp_at_token(cx, p) < end) loft_jp_cont(cx, p);
 }
 
-static size_t loft_jp_after_value(const loft_jp *p) { return loft_jl_ws(p->b, p->len, p->value_end); }
+static size_t loft_jp_after_value(loft_cx *cx, const loft_jp *p) { return loft_jl_ws(cx, p->b, p->len, p->value_end); }
 
 #define LOFT_JSON_MAX_NESTING 512u
 
-static int loft_jfail(loft_jfault *f, size_t at, const char *msg) {
+static int loft_jfail(loft_cx *cx, loft_jfault *f, size_t at, const char *msg) {
     snprintf(f->msg, sizeof f->msg, "%s", msg);
     f->at = at;
     return 0;
 }
 
-static void loft_jp_path(loft_jp *p, const char *seg, size_t n) {
+static void loft_jp_path(loft_cx *cx, loft_jp *p, const char *seg, size_t n) {
     if (p->npath == p->path_cap) {
         p->path_cap = p->path_cap ? p->path_cap * 2 : 8;
         p->path = (loft_text *) realloc(p->path, p->path_cap * sizeof *p->path);
@@ -438,12 +438,12 @@ static void loft_jp_path(loft_jp *p, const char *seg, size_t n) {
     loft_text *t = &p->path[p->npath++];
     t->p = 0;
     t->len = t->cap = 0;
-    loft_push(t, seg, n);
+    loft_push(cx, t, seg, n);
 }
 
 /* `JParser::open`: a reader at the start of `text` (a leading BOM stripped, a `#!/` first line
  * skipped as the lexer skips it), and the offset its value is expected at. */
-static size_t loft_jp_open(loft_jp *p, const uint8_t *text, size_t len, int lenient) {
+static size_t loft_jp_open(loft_cx *cx, loft_jp *p, const uint8_t *text, size_t len, int lenient) {
     memset(p, 0, sizeof *p);
     if (len >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF) {
         text += 3;
@@ -453,21 +453,21 @@ static size_t loft_jp_open(loft_jp *p, const uint8_t *text, size_t len, int leni
     p->len = len;
     p->lenient = lenient;
     if (len >= 3 && text[0] == '#' && text[1] == '!' && text[2] == '/') {
-        size_t e = loft_jl_eol(text, len, 0);
+        size_t e = loft_jl_eol(cx, text, len, 0);
         p->cur = e < len ? e + 1 : len;
     }
-    loft_jp_peek(p);
-    return loft_jl_ws(text, len, 0);
+    loft_jp_peek(cx, p);
+    return loft_jl_ws(cx, text, len, 0);
 }
 
-static void loft_jp_close(loft_jp *p) {
-    loft_text_free(&p->pk.text);
-    for (size_t i = 0; i < p->npath; i++) loft_text_free(&p->path[i]);
+static void loft_jp_close(loft_cx *cx, loft_jp *p) {
+    loft_text_free(cx, &p->pk.text);
+    for (size_t i = 0; i < p->npath; i++) loft_text_free(cx, &p->path[i]);
     free(p->path);
 }
 
 /* `json_string_validate`: the offset past the closing quote, or the first error. */
-static int loft_jp_validate(const uint8_t *b, size_t len, size_t start, size_t *end, loft_jfault *f) {
+static int loft_jp_validate(loft_cx *cx, const uint8_t *b, size_t len, size_t start, size_t *end, loft_jfault *f) {
     size_t i = start + 1;
     while (i < len) {
         uint8_t c = b[i];
@@ -476,41 +476,41 @@ static int loft_jp_validate(const uint8_t *b, size_t len, size_t start, size_t *
             return 1;
         }
         if (c == '\\') {
-            if (i + 1 >= len) return loft_jfail(f, i, "unterminated escape");
+            if (i + 1 >= len) return loft_jfail(cx, f, i, "unterminated escape");
             i++;
             c = b[i];
             if (c == '"' || c == '\\' || c == '/' || c == 'b' || c == 'f' || c == 'n' || c == 'r' || c == 't') {
                 i++;
             } else if (c == 'u') {
-                if (i + 4 >= len) return loft_jfail(f, i + 1, "truncated \\uXXXX escape");
+                if (i + 4 >= len) return loft_jfail(cx, f, i + 1, "truncated \\uXXXX escape");
                 for (int k = 1; k <= 4; k++)
-                    if (loft_jl_hex(b[i + k]) < 0) return loft_jfail(f, i + 1, "invalid hex in \\uXXXX escape");
+                    if (loft_jl_hex(cx, b[i + k]) < 0) return loft_jfail(cx, f, i + 1, "invalid hex in \\uXXXX escape");
                 i += 5;
             } else {
                 /* `other as char`: the byte as a code point, so a UTF-8 lead byte reads as
                  * its Latin-1 character. */
                 char m[32], ch[4];
-                size_t n = loft_utf8(c, ch);
+                size_t n = loft_utf8(cx, c, ch);
                 snprintf(m, sizeof m, "invalid escape \\%.*s", (int) n, ch);
-                return loft_jfail(f, i, m);
+                return loft_jfail(cx, f, i, m);
             }
         } else if (c < 0x20) {
             char m[48];
             snprintf(m, sizeof m, "raw control byte 0x%x in string", c);
-            return loft_jfail(f, i, m);
+            return loft_jfail(cx, f, i, m);
         } else {
-            i = loft_jl_utf8(b, len, i);
+            i = loft_jl_utf8(cx, b, len, i);
         }
     }
-    return loft_jfail(f, start, "unterminated string");
+    return loft_jfail(cx, f, start, "unterminated string");
 }
 
 /* `JParser::scan_number`: a JSON number from the raw text at `start`. */
-static int loft_jp_scan_number(const loft_jp *p, size_t start, loft_jv *v, size_t *end, loft_jfault *f) {
+static int loft_jp_scan_number(loft_cx *cx, const loft_jp *p, size_t start, loft_jv *v, size_t *end, loft_jfault *f) {
     const uint8_t *b = p->b;
     size_t len = p->len, i = start;
     if (i < len && b[i] == '-') i++;
-    if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(f, i, "expected digit in number");
+    if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(cx, f, i, "expected digit in number");
     if (b[i] == '0') {
         i++;
     } else {
@@ -520,14 +520,14 @@ static int loft_jp_scan_number(const loft_jp *p, size_t start, loft_jv *v, size_
     if (i < len && b[i] == '.') {
         fractional = 1;
         i++;
-        if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(f, i, "expected digit after `.`");
+        if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(cx, f, i, "expected digit after `.`");
         while (i < len && b[i] >= '0' && b[i] <= '9') i++;
     }
     if (i < len && (b[i] == 'e' || b[i] == 'E')) {
         fractional = 1;
         i++;
         if (i < len && (b[i] == '+' || b[i] == '-')) i++;
-        if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(f, i, "expected digit in exponent");
+        if (i >= len || b[i] < '0' || b[i] > '9') return loft_jfail(cx, f, i, "expected digit in exponent");
         while (i < len && b[i] >= '0' && b[i] <= '9') i++;
     }
     char buf[400];
@@ -561,30 +561,30 @@ static int loft_jp_scan_number(const loft_jp *p, size_t start, loft_jv *v, size_
     return 1;
 }
 
-static int loft_jp_value(loft_jp *p, size_t at, loft_jv *v, loft_jfault *f);
+static int loft_jp_value(loft_cx *cx, loft_jp *p, size_t at, loft_jv *v, loft_jfault *f);
 
-static int loft_jp_number(loft_jp *p, loft_jv *v, loft_jfault *f) {
-    size_t start = loft_jp_at_token(p), end = 0;
-    if (!loft_jp_scan_number(p, start, v, &end, f)) return 0;
+static int loft_jp_number(loft_cx *cx, loft_jp *p, loft_jv *v, loft_jfault *f) {
+    size_t start = loft_jp_at_token(cx, p), end = 0;
+    if (!loft_jp_scan_number(cx, p, start, v, &end, f)) return 0;
     p->value_end = end;
-    loft_jp_advance_past(p, end);
+    loft_jp_advance_past(cx, p, end);
     return 1;
 }
 
 /* `JParser::take_string`: the string at the cursor, validated against JSON's grammar. */
-static int loft_jp_take_string(loft_jp *p, loft_text *out, loft_jfault *f) {
-    size_t quote = loft_jp_at_token(p) - 1, end = 0;
-    if (!loft_jp_validate(p->b, p->len, quote, &end, f)) return 0;
+static int loft_jp_take_string(loft_cx *cx, loft_jp *p, loft_text *out, loft_jfault *f) {
+    size_t quote = loft_jp_at_token(cx, p) - 1, end = 0;
+    if (!loft_jp_validate(cx, p->b, p->len, quote, &end, f)) return 0;
     p->value_end = end;
     *out = p->pk.text;
     p->pk.text.p = 0;
     p->pk.text.len = p->pk.text.cap = 0;
-    loft_jp_cont(p);
+    loft_jp_cont(cx, p);
     return 1;
 }
 
 /* `scan_bare_ident`: the bare identifier from `start`, `.`-joined segments included. */
-static size_t loft_jp_bare_ident(const uint8_t *b, size_t len, size_t start) {
+static size_t loft_jp_bare_ident(loft_cx *cx, const uint8_t *b, size_t len, size_t start) {
     size_t j = start + 1;
     for (;;) {
         while (j < len && ((b[j] >= 'a' && b[j] <= 'z') || (b[j] >= 'A' && b[j] <= 'Z') || (b[j] >= '0' && b[j] <= '9') || b[j] == '_'))
@@ -599,11 +599,11 @@ static size_t loft_jp_bare_ident(const uint8_t *b, size_t len, size_t start) {
 
 /* `JParser::word`: the bare word at the cursor in full — its value, offset, and whether a `{`
  * follows an identifier (a `Tag{…}` constructor's tag). */
-static int loft_jp_word(loft_jp *p, loft_jv *v, size_t *off) {
-    *off = loft_jp_at_token(p);
-    size_t end = loft_jp_bare_ident(p->b, p->len, *off);
+static int loft_jp_word(loft_cx *cx, loft_jp *p, loft_jv *v, size_t *off) {
+    *off = loft_jp_at_token(cx, p);
+    size_t end = loft_jp_bare_ident(cx, p->b, p->len, *off);
     p->value_end = end;
-    loft_jp_advance_past(p, end);
+    loft_jp_advance_past(cx, p, end);
     size_t n = end - *off;
     const char *w = (const char *) p->b + *off;
     if (n == 4 && memcmp(w, "null", 4) == 0) {
@@ -616,26 +616,26 @@ static int loft_jp_word(loft_jp *p, loft_jv *v, size_t *off) {
         v->b = 0;
     } else {
         v->kind = LOFT_JV_IDENT;
-        loft_push(&v->s, w, n);
+        loft_push(cx, &v->s, w, n);
     }
-    return v->kind == LOFT_JV_IDENT && loft_jp_is(p, '{');
+    return v->kind == LOFT_JV_IDENT && loft_jp_is(cx, p, '{');
 }
 
-static int loft_jp_object(loft_jp *p, loft_jv *v, loft_jfault *f);
+static int loft_jp_object(loft_cx *cx, loft_jp *p, loft_jv *v, loft_jfault *f);
 
-static int loft_jp_ident_value(loft_jp *p, loft_jv *v, loft_jfault *f) {
+static int loft_jp_ident_value(loft_cx *cx, loft_jp *p, loft_jv *v, loft_jfault *f) {
     if (p->lenient) {
         size_t off = 0;
-        if (loft_jp_word(p, v, &off)) {
+        if (loft_jp_word(cx, p, v, &off)) {
             /* `Tag{…}`: the tag, its offset, and the object as the one child. */
             v->kind = LOFT_JV_CTOR;
             v->off = off;
-            loft_jv *body = loft_jv_push(v, 0);
-            return loft_jp_object(p, body, f);
+            loft_jv *body = loft_jv_push(cx, v, 0);
+            return loft_jp_object(cx, p, body, f);
         }
         return 1;
     }
-    size_t off = loft_jp_at_token(p);
+    size_t off = loft_jp_at_token(cx, p);
     uint8_t c = off < p->len ? p->b[off] : 0;
     if (c == 'n' || c == 't' || c == 'f') {
         const char *word = c == 'n' ? "null" : c == 't' ? "true" : "false";
@@ -643,151 +643,151 @@ static int loft_jp_ident_value(loft_jp *p, loft_jv *v, loft_jfault *f) {
         if (n == strlen(word) && memcmp(p->b + off, word, n) == 0) {
             v->kind = c == 'n' ? LOFT_JV_NULL : LOFT_JV_BOOL;
             v->b = c == 't';
-            loft_jp_cont(p);
+            loft_jp_cont(cx, p);
             p->value_end = off + n;
             return 1;
         }
         char m[64];
         snprintf(m, sizeof m, "expected `%s` at offset %zu", word, off);
-        return loft_jfail(f, off, m);
+        return loft_jfail(cx, f, off, m);
     }
     char m[64];
     snprintf(m, sizeof m, "unexpected byte 0x%x at offset %zu", c, off);
-    return loft_jfail(f, off, m);
+    return loft_jfail(cx, f, off, m);
 }
 
 /* `JParser::open_array`: the array's offset, and where its first element is expected, or
  * none for `[]`, read in full. */
-static int loft_jp_open_array(loft_jp *p, size_t *start, size_t *at) {
-    *start = loft_jp_at_token(p);
-    loft_jp_cont(p);
-    if (loft_jp_is(p, ']')) {
-        size_t close = loft_jp_at_token(p);
-        loft_jp_cont(p);
+static int loft_jp_open_array(loft_cx *cx, loft_jp *p, size_t *start, size_t *at) {
+    *start = loft_jp_at_token(cx, p);
+    loft_jp_cont(cx, p);
+    if (loft_jp_is(cx, p, ']')) {
+        size_t close = loft_jp_at_token(cx, p);
+        loft_jp_cont(cx, p);
         p->value_end = close + 1;
         return 0;
     }
-    *at = loft_jl_ws(p->b, p->len, *start + 1);
+    *at = loft_jl_ws(cx, p->b, p->len, *start + 1);
     return 1;
 }
 
 /* `JParser::next_item`: 1 with `*at` set when another element follows, 0 at `]`, -1 on error. */
-static int loft_jp_next_item(loft_jp *p, size_t start, size_t *at, loft_jfault *f) {
-    size_t d = loft_jp_after_value(p);
-    if (d >= p->len) return loft_jfail(f, start, "unterminated array") - 1;
+static int loft_jp_next_item(loft_cx *cx, loft_jp *p, size_t start, size_t *at, loft_jfault *f) {
+    size_t d = loft_jp_after_value(cx, p);
+    if (d >= p->len) return loft_jfail(cx, f, start, "unterminated array") - 1;
     if (p->b[d] == ',') {
-        loft_jp_cont(p);
-        *at = loft_jl_ws(p->b, p->len, d + 1);
+        loft_jp_cont(cx, p);
+        *at = loft_jl_ws(cx, p->b, p->len, d + 1);
         return 1;
     }
     if (p->b[d] == ']') {
-        loft_jp_cont(p);
+        loft_jp_cont(cx, p);
         p->value_end = d + 1;
         return 0;
     }
     char m[64];
     snprintf(m, sizeof m, "expected `,` or `]` in array, got 0x%x", p->b[d]);
-    return loft_jfail(f, d, m) - 1;
+    return loft_jfail(cx, f, d, m) - 1;
 }
 
-static int loft_jp_array(loft_jp *p, loft_jv *v, loft_jfault *f) {
+static int loft_jp_array(loft_cx *cx, loft_jp *p, loft_jv *v, loft_jfault *f) {
     v->kind = LOFT_JV_ARRAY;
     size_t start = 0, at = 0;
-    int more = loft_jp_open_array(p, &start, &at);
+    int more = loft_jp_open_array(cx, p, &start, &at);
     while (more == 1) {
-        loft_jv *item = loft_jv_push(v, 0);
-        if (!loft_jp_value(p, at, item, f)) {
+        loft_jv *item = loft_jv_push(cx, v, 0);
+        if (!loft_jp_value(cx, p, at, item, f)) {
             char seg[24];
             snprintf(seg, sizeof seg, "%zu", v->nkids - 1);
-            loft_jp_path(p, seg, strlen(seg));
+            loft_jp_path(cx, p, seg, strlen(seg));
             return 0;
         }
-        more = loft_jp_next_item(p, start, &at, f);
+        more = loft_jp_next_item(cx, p, start, &at, f);
         if (more < 0) return 0;
     }
     return 1;
 }
 
 /* `JParser::parse_object_key`: a quoted key, or (lenient) a bare identifier key. */
-static int loft_jp_key(loft_jp *p, loft_text *name, size_t *key_at, loft_jfault *f) {
-    if (p->pk.kind == LOFT_JT_END || p->pk.kind == LOFT_JT_NONE) return loft_jfail(f, p->len, "expected object key");
+static int loft_jp_key(loft_cx *cx, loft_jp *p, loft_text *name, size_t *key_at, loft_jfault *f) {
+    if (p->pk.kind == LOFT_JT_END || p->pk.kind == LOFT_JT_NONE) return loft_jfail(cx, f, p->len, "expected object key");
     if (p->pk.kind == LOFT_JT_STR) {
-        *key_at = loft_jp_at_token(p) - 1;
-        return loft_jp_take_string(p, name, f);
+        *key_at = loft_jp_at_token(cx, p) - 1;
+        return loft_jp_take_string(cx, p, name, f);
     }
     if (p->pk.kind == LOFT_JT_IDENT && p->lenient) {
-        *key_at = loft_jp_at_token(p);
-        loft_push(name, (const char *) p->b + p->pk.at, p->pk.end - p->pk.at);
-        loft_jp_cont(p);
+        *key_at = loft_jp_at_token(cx, p);
+        loft_push(cx, name, (const char *) p->b + p->pk.at, p->pk.end - p->pk.at);
+        loft_jp_cont(cx, p);
         return 1;
     }
-    return loft_jfail(f, loft_jp_at_token(p), "expected string key in object");
+    return loft_jfail(cx, f, loft_jp_at_token(cx, p), "expected string key in object");
 }
 
 /* `JParser::member`: a member's key and its `:`, and where its value is expected. */
-static int loft_jp_member(loft_jp *p, loft_text *name, size_t *key_at, size_t *at, loft_jfault *f) {
-    if (!loft_jp_key(p, name, key_at, f)) return 0;
-    if (!loft_jp_is(p, ':')) {
-        size_t off = p->pk.kind == LOFT_JT_END || p->pk.kind == LOFT_JT_NONE ? p->len : loft_jp_at_token(p);
-        return loft_jfail(f, off, "expected `:` after object key");
+static int loft_jp_member(loft_cx *cx, loft_jp *p, loft_text *name, size_t *key_at, size_t *at, loft_jfault *f) {
+    if (!loft_jp_key(cx, p, name, key_at, f)) return 0;
+    if (!loft_jp_is(cx, p, ':')) {
+        size_t off = p->pk.kind == LOFT_JT_END || p->pk.kind == LOFT_JT_NONE ? p->len : loft_jp_at_token(cx, p);
+        return loft_jfail(cx, f, off, "expected `:` after object key");
     }
-    size_t colon = loft_jp_at_token(p);
-    loft_jp_cont(p);
-    *at = loft_jl_ws(p->b, p->len, colon + 1);
+    size_t colon = loft_jp_at_token(cx, p);
+    loft_jp_cont(cx, p);
+    *at = loft_jl_ws(cx, p->b, p->len, colon + 1);
     return 1;
 }
 
 /* `JParser::next_member`: 1 when another member follows, 0 at `}`, -1 on error. */
-static int loft_jp_next_member(loft_jp *p, size_t start, loft_jfault *f) {
-    size_t d = loft_jp_after_value(p);
-    if (d >= p->len) return loft_jfail(f, start, "unterminated object") - 1;
+static int loft_jp_next_member(loft_cx *cx, loft_jp *p, size_t start, loft_jfault *f) {
+    size_t d = loft_jp_after_value(cx, p);
+    if (d >= p->len) return loft_jfail(cx, f, start, "unterminated object") - 1;
     if (p->b[d] == ',') {
-        loft_jp_cont(p);
+        loft_jp_cont(cx, p);
         return 1;
     }
     if (p->b[d] == '}') {
-        loft_jp_cont(p);
+        loft_jp_cont(cx, p);
         p->value_end = d + 1;
         return 0;
     }
     char m[64];
     snprintf(m, sizeof m, "expected `,` or `}` in object, got 0x%x", p->b[d]);
-    return loft_jfail(f, d, m) - 1;
+    return loft_jfail(cx, f, d, m) - 1;
 }
 
 /* `JParser::open_object`: the object's offset, and whether it has a member. */
-static int loft_jp_open_object(loft_jp *p, size_t *start) {
-    *start = loft_jp_at_token(p);
-    loft_jp_cont(p);
-    if (loft_jp_is(p, '}')) {
-        size_t close = loft_jp_at_token(p);
-        loft_jp_cont(p);
+static int loft_jp_open_object(loft_cx *cx, loft_jp *p, size_t *start) {
+    *start = loft_jp_at_token(cx, p);
+    loft_jp_cont(cx, p);
+    if (loft_jp_is(cx, p, '}')) {
+        size_t close = loft_jp_at_token(cx, p);
+        loft_jp_cont(cx, p);
         p->value_end = close + 1;
         return 0;
     }
     return 1;
 }
 
-static int loft_jp_object(loft_jp *p, loft_jv *v, loft_jfault *f) {
+static int loft_jp_object(loft_cx *cx, loft_jp *p, loft_jv *v, loft_jfault *f) {
     v->kind = LOFT_JV_OBJECT;
     size_t start = 0;
-    int more = loft_jp_open_object(p, &start);
+    int more = loft_jp_open_object(cx, p, &start);
     while (more == 1) {
-        loft_jv *val = loft_jv_push(v, 1);
+        loft_jv *val = loft_jv_push(cx, v, 1);
         size_t i = v->nkids - 1, at = 0;
-        if (!loft_jp_member(p, &v->keys[i], &v->key_offs[i], &at, f)) return 0;
-        if (!loft_jp_value(p, at, val, f)) {
-            loft_jp_path(p, v->keys[i].p ? v->keys[i].p : "", v->keys[i].len);
+        if (!loft_jp_member(cx, p, &v->keys[i], &v->key_offs[i], &at, f)) return 0;
+        if (!loft_jp_value(cx, p, at, val, f)) {
+            loft_jp_path(cx, p, v->keys[i].p ? v->keys[i].p : "", v->keys[i].len);
             return 0;
         }
-        more = loft_jp_next_member(p, start, f);
+        more = loft_jp_next_member(cx, p, start, f);
         if (more < 0) return 0;
     }
     return 1;
 }
 
 /* `JParser::parse_value`: the value expected at `at`. */
-static int loft_jp_value(loft_jp *p, size_t at, loft_jv *v, loft_jfault *f) {
+static int loft_jp_value(loft_cx *cx, loft_jp *p, size_t at, loft_jv *v, loft_jfault *f) {
     switch (p->pk.kind) {
     case LOFT_JT_END:
     case LOFT_JT_NONE:
@@ -796,106 +796,99 @@ static int loft_jp_value(loft_jp *p, size_t at, loft_jv *v, loft_jfault *f) {
         if (at < p->len) {
             if (p->b[at] == '"') {
                 size_t end = 0;
-                if (loft_jp_validate(p->b, p->len, at, &end, f)) return loft_jfail(f, p->len, "unexpected end of input");
+                if (loft_jp_validate(cx, p->b, p->len, at, &end, f)) return loft_jfail(cx, f, p->len, "unexpected end of input");
                 return 0;
             }
             if (p->b[at] == '-' || (p->b[at] >= '0' && p->b[at] <= '9')) {
                 size_t end = 0;
-                if (!loft_jp_scan_number(p, at, v, &end, f)) return 0;
+                if (!loft_jp_scan_number(cx, p, at, v, &end, f)) return 0;
                 p->value_end = end;
-                loft_jp_advance_past(p, end);
+                loft_jp_advance_past(cx, p, end);
                 return 1;
             }
         }
-        return loft_jfail(f, p->len, "unexpected end of input");
+        return loft_jfail(cx, f, p->len, "unexpected end of input");
     case LOFT_JT_NUM:
-        return loft_jp_number(p, v, f);
+        return loft_jp_number(cx, p, v, f);
     case LOFT_JT_STR:
         v->kind = LOFT_JV_STR;
-        return loft_jp_take_string(p, &v->s, f);
+        return loft_jp_take_string(cx, p, &v->s, f);
     case LOFT_JT_IDENT:
-        return loft_jp_ident_value(p, v, f);
+        return loft_jp_ident_value(cx, p, v, f);
     case LOFT_JT_TOK:
-        if (p->pk.tok == '-') return loft_jp_number(p, v, f);
+        if (p->pk.tok == '-') return loft_jp_number(cx, p, v, f);
         if (p->pk.tok == '[' || p->pk.tok == '{') {
             /* `JParser::nested` (`MAX_NESTING`): the parser goes one call deeper per level, so
              * the input decides how deep, and past 512 it is refused. */
-            if (p->depth >= LOFT_JSON_MAX_NESTING) return loft_jfail(f, at, "nested more than 512 deep");
+            if (p->depth >= LOFT_JSON_MAX_NESTING) return loft_jfail(cx, f, at, "nested more than 512 deep");
             p->depth++;
-            int ok = p->pk.tok == '[' ? loft_jp_array(p, v, f) : loft_jp_object(p, v, f);
+            int ok = p->pk.tok == '[' ? loft_jp_array(cx, p, v, f) : loft_jp_object(cx, p, v, f);
             p->depth--;
             return ok;
         }
         /* fall through - a misplaced structural token */
     default: {
-        size_t off = loft_jp_at_token(p);
+        size_t off = loft_jp_at_token(cx, p);
         char m[64];
         snprintf(m, sizeof m, "unexpected byte 0x%x at offset %zu", off < p->len ? p->b[off] : 0, off);
-        return loft_jfail(f, off, m);
+        return loft_jfail(cx, f, off, m);
     }
     }
 }
 
 /* `JParser::finish`: nothing but whitespace follows the document's one value. */
-static int loft_jp_finish(const loft_jp *p, loft_jfault *f) {
-    size_t end = loft_jp_after_value(p);
+static int loft_jp_finish(loft_cx *cx, const loft_jp *p, loft_jfault *f) {
+    size_t end = loft_jp_after_value(cx, p);
     if (end == p->len) return 1;
     char m[64];
     snprintf(m, sizeof m, "unexpected trailing byte at offset %zu", end);
-    return loft_jfail(f, end, m);
+    return loft_jfail(cx, f, end, m);
 }
 
 /* `render_path`: the JSON pointer of the failing value, outermost first, `~` and `/` escaped. */
-static void loft_jp_render_path(const loft_jp *p, loft_text *out) {
+static void loft_jp_render_path(loft_cx *cx, const loft_jp *p, loft_text *out) {
     for (size_t k = p->npath; k > 0; k--) {
         const loft_text *s = &p->path[k - 1];
-        loft_push(out, "/", 1);
+        loft_push(cx, out, "/", 1);
         for (size_t i = 0; i < s->len; i++) {
-            if (s->p[i] == '~') loft_push(out, "~0", 2);
-            else if (s->p[i] == '/') loft_push(out, "~1", 2);
-            else loft_push(out, &s->p[i], 1);
+            if (s->p[i] == '~') loft_push(cx, out, "~0", 2);
+            else if (s->p[i] == '/') loft_push(cx, out, "~1", 2);
+            else loft_push(cx, out, &s->p[i], 1);
         }
     }
 }
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 /* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
  * joined by `|`. */
-static LOFT_TLS loft_text *loft_jerr = 0;
-static LOFT_TLS size_t loft_jerr_n = 0, loft_jerr_cap = 0;
 
-static void loft_jerr_clear(void) {
-    for (size_t i = 0; i < loft_jerr_n; i++) loft_text_free(&loft_jerr[i]);
-    loft_jerr_n = 0;
+static void loft_jerr_clear(loft_cx *cx) {
+    for (size_t i = 0; i < cx->jerr_n; i++) loft_text_free(cx, &cx->jerr[i]);
+    cx->jerr_n = 0;
 }
 
 /* One more error, its text taken over. */
-static void loft_jerr_take(loft_text t) {
-    if (loft_jerr_n == loft_jerr_cap) {
-        loft_jerr_cap = loft_jerr_cap ? loft_jerr_cap * 2 : 4;
-        loft_jerr = (loft_text *) realloc(loft_jerr, loft_jerr_cap * sizeof *loft_jerr);
-        if (!loft_jerr) { fputs("loft: out of memory\n", stderr); abort(); }
+static void loft_jerr_take(loft_cx *cx, loft_text t) {
+    if (cx->jerr_n == cx->jerr_cap) {
+        cx->jerr_cap = cx->jerr_cap ? cx->jerr_cap * 2 : 4;
+        cx->jerr = (loft_text *) realloc(cx->jerr, cx->jerr_cap * sizeof *cx->jerr);
+        if (!cx->jerr) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_jerr[loft_jerr_n++] = t;
+    cx->jerr[cx->jerr_n++] = t;
 }
 
-static void loft_jerr_push(loft_str msg) {
-    loft_jerr_take(loft_text_own(msg));
+static void loft_jerr_push(loft_cx *cx, loft_str msg) {
+    loft_jerr_take(cx, loft_text_own(cx, msg));
 }
 
 /* `json::parse_with`: the whole of `text` as one value; 0 with the fault and the failing
  * value's JSON pointer on an error. */
-static int loft_json_parse(const uint8_t *text, size_t len, int lenient, loft_jv *v, loft_jfault *f, loft_text *path) {
+static int loft_json_parse(loft_cx *cx, const uint8_t *text, size_t len, int lenient, loft_jv *v, loft_jfault *f, loft_text *path) {
     loft_jp p;
-    size_t at = loft_jp_open(&p, text, len, lenient);
+    size_t at = loft_jp_open(cx, &p, text, len, lenient);
     memset(v, 0, sizeof *v);
-    int ok = loft_jp_value(&p, at, v, f) && loft_jp_finish(&p, f);
-    if (!ok) loft_jp_render_path(&p, path);
-    loft_jp_close(&p);
+    int ok = loft_jp_value(cx, &p, at, v, f) && loft_jp_finish(cx, &p, f);
+    if (!ok) loft_jp_render_path(cx, &p, path);
+    loft_jp_close(cx, &p);
     return ok;
 }
 #endif
@@ -915,55 +908,55 @@ static int loft_json_parse(const uint8_t *text, size_t len, int lenient, loft_jv
 #define LOFT_JD_INT 7
 
 
-static uint8_t loft_jd(loft_ref v) {
-    return *loft_at(loft_store_of(v), v.rec, v.pos);
+static uint8_t loft_jd(loft_cx *cx, loft_ref v) {
+    return *loft_at(cx, loft_store_of(cx, v), v.rec, v.pos);
 }
 
 /* `materialise_primitive_into`: tree `v` written at `slot`. */
-static void loft_jv_into(loft_ref slot, const loft_jv *v) {
+static void loft_jv_into(loft_cx *cx, loft_ref slot, const loft_jv *v) {
     switch (v->kind) {
-    case LOFT_JV_NULL: loft_set_byte(slot, 0, LOFT_JD_NULL); break;
+    case LOFT_JV_NULL: loft_set_byte(cx, slot, 0, LOFT_JD_NULL); break;
     case LOFT_JV_BOOL:
-        loft_set_byte(slot, 0, LOFT_JD_BOOL);
-        loft_set_byte(slot, LOFT_JV_BOOL_VALUE, (uint8_t) (v->b != 0));
+        loft_set_byte(cx, slot, 0, LOFT_JD_BOOL);
+        loft_set_byte(cx, slot, LOFT_JV_BOOL_VALUE, (uint8_t) (v->b != 0));
         break;
     case LOFT_JV_NUMBER:
-        loft_set_byte(slot, 0, LOFT_JD_NUMBER);
-        loft_set_float(slot, LOFT_JV_NUMBER_VALUE, v->n);
+        loft_set_byte(cx, slot, 0, LOFT_JD_NUMBER);
+        loft_set_float(cx, slot, LOFT_JV_NUMBER_VALUE, v->n);
         break;
     case LOFT_JV_INT:
-        loft_set_byte(slot, 0, LOFT_JD_INT);
-        loft_set_int(slot, LOFT_JV_INT_VALUE, v->i);
+        loft_set_byte(cx, slot, 0, LOFT_JD_INT);
+        loft_set_int(cx, slot, LOFT_JV_INT_VALUE, v->i);
         break;
     case LOFT_JV_STR:
     case LOFT_JV_IDENT:
-        loft_set_text(slot, LOFT_JV_STRING_VALUE, loft_view(&v->s));
-        loft_set_byte(slot, 0, LOFT_JD_STRING);
+        loft_set_text(cx, slot, LOFT_JV_STRING_VALUE, loft_view(cx, &v->s));
+        loft_set_byte(cx, slot, 0, LOFT_JD_STRING);
         break;
     case LOFT_JV_ARRAY: {
-        loft_set_byte(slot, 0, LOFT_JD_ARRAY);
+        loft_set_byte(cx, slot, 0, LOFT_JD_ARRAY);
         loft_ref items = slot;
         items.pos += LOFT_JV_ITEMS;
-        loft_set_u32(loft_store_of(slot), slot.rec, items.pos, 0);
+        loft_set_u32(cx, loft_store_of(cx, slot), slot.rec, items.pos, 0);
         for (size_t i = 0; i < v->nkids; i++) {
-            loft_ref e = loft_vec_append(items, LOFT_JV_SIZE);
-            loft_jv_into(e, &v->kids[i]);
-            loft_vec_finish(items);
+            loft_ref e = loft_vec_append(cx, items, LOFT_JV_SIZE);
+            loft_jv_into(cx, e, &v->kids[i]);
+            loft_vec_finish(cx, items);
         }
         break;
     }
     case LOFT_JV_OBJECT: {
-        loft_set_byte(slot, 0, LOFT_JD_OBJECT);
+        loft_set_byte(cx, slot, 0, LOFT_JD_OBJECT);
         loft_ref fields = slot;
         fields.pos += LOFT_JV_FIELDS;
-        loft_set_u32(loft_store_of(slot), slot.rec, fields.pos, 0);
+        loft_set_u32(cx, loft_store_of(cx, slot), slot.rec, fields.pos, 0);
         for (size_t i = 0; i < v->nkids; i++) {
-            loft_ref e = loft_vec_append(fields, LOFT_JF_SIZE);
-            loft_set_text(e, LOFT_JF_NAME, loft_view(&v->keys[i]));
+            loft_ref e = loft_vec_append(cx, fields, LOFT_JF_SIZE);
+            loft_set_text(cx, e, LOFT_JF_NAME, loft_view(cx, &v->keys[i]));
             loft_ref val = e;
             val.pos += LOFT_JF_VALUE;
-            loft_jv_into(val, &v->kids[i]);
-            loft_vec_finish(fields);
+            loft_jv_into(cx, val, &v->kids[i]);
+            loft_vec_finish(cx, fields);
         }
         break;
     }
@@ -975,37 +968,35 @@ static void loft_jv_into(loft_ref slot, const loft_jv *v) {
         obj.nkids = 1;
         obj.kids = v->kids;
         obj.keys = (loft_text *) &v->s;
-        loft_jv_into(slot, &obj);
+        loft_jv_into(cx, slot, &obj);
         break;
     }
     }
 }
 
 /* `jv_alloc`: a JsonValue root in a store of its own, zeroed. */
-static loft_ref loft_jv_alloc(void) {
-    loft_ref r = loft_ref_null();
+static loft_ref loft_jv_alloc(loft_cx *cx) {
+    loft_ref r = loft_ref_null(cx);
     uint32_t words = (LOFT_JV_SIZE + 7) / 8 + 1;
     if (words < 2) words = 2;
-    loft_database(&r, (words - 1) * 8);
+    loft_database(cx, &r, (words - 1) * 8);
     return r;
 }
 
 /* `jv_null_sentinel`: the one JNull the readers answer for a miss, in a store nothing frees. */
-static loft_ref loft_jv_null(void) {
-    static LOFT_TLS loft_ref sentinel;
-    static LOFT_TLS int made = 0;
-    if (!made) {
-        sentinel = loft_jv_alloc();
-        loft_set_byte(sentinel, 0, LOFT_JD_NULL);
-        loft_stores[sentinel.store_nr].pinned = 1;
-        made = 1;
+static loft_ref loft_jv_null(loft_cx *cx) {
+    if (!cx->jv_sentinel_made) {
+        cx->jv_sentinel = loft_jv_alloc(cx);
+        loft_set_byte(cx, cx->jv_sentinel, 0, LOFT_JD_NULL);
+        cx->stores[cx->jv_sentinel.store_nr].pinned = 1;
+        cx->jv_sentinel_made = 1;
     }
-    return sentinel;
+    return cx->jv_sentinel;
 }
 
 /* `json::format_error(input, err, 2, 1)`: where, the path, the message, and the lines around
  * the fault with a caret under its column. */
-static void loft_json_format_error(loft_text *out, const uint8_t *in, size_t len, const loft_jfault *f,
+static void loft_json_format_error(loft_cx *cx, loft_text *out, const uint8_t *in, size_t len, const loft_jfault *f,
                                    loft_str path) {
     size_t cap = f->at < len ? f->at : len;
     size_t line = 1, col_start = 0;
@@ -1014,11 +1005,11 @@ static void loft_json_format_error(loft_text *out, const uint8_t *in, size_t len
     size_t col = cap - col_start + 1;
     char head[160];
     int n = snprintf(head, sizeof head, "parse error at line %zu col %zu (byte %zu):\n  path: ", line, col, f->at);
-    loft_push(out, head, (size_t) n);
-    if (path.len) loft_text_append(out, path); else loft_push_cstr(out, "(root)");
-    loft_push_cstr(out, "\n  ");
-    loft_push_cstr(out, f->msg);
-    loft_push_char(out, '\n');
+    loft_push(cx, out, head, (size_t) n);
+    if (path.len) loft_text_append(cx, out, path); else loft_push_cstr(cx, out, "(root)");
+    loft_push_cstr(cx, out, "\n  ");
+    loft_push_cstr(cx, out, f->msg);
+    loft_push_char(cx, out, '\n');
     /* `str::lines`: split at '\n', a "\r\n" ending's '\r' dropped, no line after a final '\n'. */
     size_t nlines = 0;
     for (size_t i = 0; i < len; i++) if (in[i] == '\n') nlines++;
@@ -1034,14 +1025,14 @@ static void loft_json_format_error(loft_text *out, const uint8_t *in, size_t len
             size_t ce = e;
             if (e < len && ce > at && in[ce - 1] == '\r') ce--;
             n = snprintf(head, sizeof head, "    %*zu \xe2\x94\x82 ", width, idx + 1);
-            loft_push(out, head, (size_t) n);
-            loft_push(out, (const char *) in + at, ce - at);
-            loft_push_char(out, '\n');
+            loft_push(cx, out, head, (size_t) n);
+            loft_push(cx, out, (const char *) in + at, ce - at);
+            loft_push_char(cx, out, '\n');
             if (idx + 1 == line) {
                 n = snprintf(head, sizeof head, "    %*s \xe2\x94\x82 ", width, "");
-                loft_push(out, head, (size_t) n);
-                for (size_t c = 1; c < col; c++) loft_push_char(out, ' ');
-                loft_push_cstr(out, "^\n");
+                loft_push(cx, out, head, (size_t) n);
+                for (size_t c = 1; c < col; c++) loft_push_char(cx, out, ' ');
+                loft_push_cstr(cx, out, "^\n");
             }
         }
         at = e + 1;
@@ -1049,77 +1040,77 @@ static void loft_json_format_error(loft_text *out, const uint8_t *in, size_t len
 }
 
 /* `json_parse`: the document as a fresh JsonValue tree, or JNull with the error kept. */
-static loft_ref loft_json_parse_value(loft_str raw) {
+static loft_ref loft_json_parse_value(loft_cx *cx, loft_str raw) {
     loft_jv v;
     loft_jfault f;
     loft_text path = { 0, 0, 0 };
-    int ok = loft_json_parse((const uint8_t *) raw.p, raw.len, 0, &v, &f, &path);
-    loft_ref r = loft_jv_alloc();
-    loft_jerr_clear();
+    int ok = loft_json_parse(cx, (const uint8_t *) raw.p, raw.len, 0, &v, &f, &path);
+    loft_ref r = loft_jv_alloc(cx);
+    loft_jerr_clear(cx);
     if (ok) {
-        loft_jv_into(r, &v);
+        loft_jv_into(cx, r, &v);
     } else {
-        loft_set_byte(r, 0, LOFT_JD_NULL);
+        loft_set_byte(cx, r, 0, LOFT_JD_NULL);
         loft_text e = { 0, 0, 0 };
-        loft_json_format_error(&e, (const uint8_t *) raw.p, raw.len, &f, loft_view(&path));
-        loft_jerr_take(e);
+        loft_json_format_error(cx, &e, (const uint8_t *) raw.p, raw.len, &f, loft_view(cx, &path));
+        loft_jerr_take(cx, e);
     }
-    loft_jv_free(&v);
-    loft_text_free(&path);
+    loft_jv_free(cx, &v);
+    loft_text_free(cx, &path);
     return r;
 }
 
-static loft_text loft_json_errors(void) {
+static loft_text loft_json_errors(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    for (size_t i = 0; i < loft_jerr_n; i++) {
-        if (i) loft_push_char(&t, '|');
-        loft_text_append(&t, loft_view(&loft_jerr[i]));
+    for (size_t i = 0; i < cx->jerr_n; i++) {
+        if (i) loft_push_char(cx, &t, '|');
+        loft_text_append(cx, &t, loft_view(cx, &cx->jerr[i]));
     }
     return t;
 }
 
 /* The collection record of a container's items or members, 0 for none. */
-static uint32_t loft_jv_kids(loft_ref v, uint8_t want) {
-    if (loft_jd(v) != want) return 0;
-    return loft_u32(loft_store_of(v), v.rec, v.pos + (want == LOFT_JD_ARRAY ? LOFT_JV_ITEMS : LOFT_JV_FIELDS));
+static uint32_t loft_jv_kids(loft_cx *cx, loft_ref v, uint8_t want) {
+    if (loft_jd(cx, v) != want) return 0;
+    return loft_u32(cx, loft_store_of(cx, v), v.rec, v.pos + (want == LOFT_JD_ARRAY ? LOFT_JV_ITEMS : LOFT_JV_FIELDS));
 }
 
-static int64_t loft_jv_count(loft_ref v, uint32_t rec) {
-    return rec == 0 ? 0 : (int64_t) loft_u32(loft_store_of(v), rec, 4);
+static int64_t loft_jv_count(loft_cx *cx, loft_ref v, uint32_t rec) {
+    return rec == 0 ? 0 : (int64_t) loft_u32(cx, loft_store_of(cx, v), rec, 4);
 }
 
-/* `field`: the member named `name` of an object, in place; the JNull sentinel otherwise. */
-static loft_ref loft_jv_field(loft_ref v, loft_str name) {
-    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
-    int64_t n = loft_jv_count(v, fr);
-    loft_store_t *s = loft_store_of(v);
+/* `field`: the member named `name` of an object, in place; the JNull sentinel (`loft_jv_null`) otherwise. */
+static loft_ref loft_jv_field(loft_cx *cx, loft_ref v, loft_str name) {
+    uint32_t fr = loft_jv_kids(cx, v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(cx, v, fr);
+    loft_store_t *s = loft_store_of(cx, v);
     for (int64_t i = 0; i < n; i++) {
         uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
-        if (loft_str_eq(loft_store_str(s, loft_u32(s, fr, at + LOFT_JF_NAME)), name)) {
+        if (loft_str_eq(cx, loft_store_str(cx, s, loft_u32(cx, s, fr, at + LOFT_JF_NAME)), name)) {
             loft_ref r = v;
             r.rec = fr;
             r.pos = at + LOFT_JF_VALUE;
             return r;
         }
     }
-    return loft_jv_null();
+    return loft_jv_null(cx);
 }
 
-static uint8_t loft_jv_has_field(loft_ref v, loft_str name) {
-    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
-    int64_t n = loft_jv_count(v, fr);
-    loft_store_t *s = loft_store_of(v);
+static uint8_t loft_jv_has_field(loft_cx *cx, loft_ref v, loft_str name) {
+    uint32_t fr = loft_jv_kids(cx, v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(cx, v, fr);
+    loft_store_t *s = loft_store_of(cx, v);
     for (int64_t i = 0; i < n; i++)
-        if (loft_str_eq(loft_store_str(s, loft_u32(s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)), name))
+        if (loft_str_eq(cx, loft_store_str(cx, s, loft_u32(cx, s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)), name))
             return 1;
     return 0;
 }
 
-/* `item`: element `index` of an array, in place; the JNull sentinel otherwise. */
-static loft_ref loft_jv_item(loft_ref v, int64_t index) {
+/* `item`: element `index` of an array, in place; the JNull sentinel (`loft_jv_null`) otherwise. */
+static loft_ref loft_jv_item(loft_cx *cx, loft_ref v, int64_t index) {
     int32_t i = (int32_t) index;
-    uint32_t ir = loft_jv_kids(v, LOFT_JD_ARRAY);
-    if (i < 0 || i >= loft_jv_count(v, ir)) return loft_jv_null();
+    uint32_t ir = loft_jv_kids(cx, v, LOFT_JD_ARRAY);
+    if (i < 0 || i >= loft_jv_count(cx, v, ir)) return loft_jv_null(cx);
     loft_ref r = v;
     r.rec = ir;
     r.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
@@ -1127,30 +1118,30 @@ static loft_ref loft_jv_item(loft_ref v, int64_t index) {
 }
 
 /* `len`: an array's items or an object's members; null for anything else. */
-static int64_t loft_jv_len(loft_ref v) {
-    uint8_t d = loft_jd(v);
+static int64_t loft_jv_len(loft_cx *cx, loft_ref v) {
+    uint8_t d = loft_jd(cx, v);
     if (d != LOFT_JD_ARRAY && d != LOFT_JD_OBJECT) return LOFT_NULL;
-    return loft_jv_count(v, loft_jv_kids(v, d));
+    return loft_jv_count(cx, v, loft_jv_kids(cx, v, d));
 }
 
-static loft_text loft_jv_as_text(loft_ref v) {
-    if (loft_jd(v) != LOFT_JD_STRING) return loft_text_own(loft_null_text());
-    return loft_text_own(loft_get_text(v, LOFT_JV_STRING_VALUE));
+static loft_text loft_jv_as_text(loft_cx *cx, loft_ref v) {
+    if (loft_jd(cx, v) != LOFT_JD_STRING) return loft_text_own(cx, loft_null_text(cx));
+    return loft_text_own(cx, loft_get_text(cx, v, LOFT_JV_STRING_VALUE));
 }
 
-static double loft_jv_as_number(loft_ref v) {
-    uint8_t d = loft_jd(v);
-    if (d == LOFT_JD_NUMBER) return loft_get_float(v, LOFT_JV_NUMBER_VALUE);
-    if (d == LOFT_JD_INT) return (double) loft_get_int(v, LOFT_JV_INT_VALUE);
+static double loft_jv_as_number(loft_cx *cx, loft_ref v) {
+    uint8_t d = loft_jd(cx, v);
+    if (d == LOFT_JD_NUMBER) return loft_get_float(cx, v, LOFT_JV_NUMBER_VALUE);
+    if (d == LOFT_JD_INT) return (double) loft_get_int(cx, v, LOFT_JV_INT_VALUE);
     return NAN;
 }
 
-static int64_t loft_jv_as_long(loft_ref v) {
-    uint8_t d = loft_jd(v);
-    if (d == LOFT_JD_INT) return loft_get_int(v, LOFT_JV_INT_VALUE);
+static int64_t loft_jv_as_long(loft_cx *cx, loft_ref v) {
+    uint8_t d = loft_jd(cx, v);
+    if (d == LOFT_JD_INT) return loft_get_int(cx, v, LOFT_JV_INT_VALUE);
     if (d == LOFT_JD_NUMBER) {
         /* Rust's `as i64`: saturating, NaN to 0. */
-        double x = trunc(loft_get_float(v, LOFT_JV_NUMBER_VALUE));
+        double x = trunc(loft_get_float(cx, v, LOFT_JV_NUMBER_VALUE));
         if (x != x) return 0;
         if (x >= 9223372036854775807.0) return INT64_MAX;
         if (x <= -9223372036854775808.0) return INT64_MIN;
@@ -1159,115 +1150,115 @@ static int64_t loft_jv_as_long(loft_ref v) {
     return LOFT_NULL;
 }
 
-static uint8_t loft_jv_as_bool(loft_ref v) {
-    if (loft_jd(v) != LOFT_JD_BOOL) return 255;
-    return *loft_at(loft_store_of(v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) != 0;
+static uint8_t loft_jv_as_bool(loft_cx *cx, loft_ref v) {
+    if (loft_jd(cx, v) != LOFT_JD_BOOL) return 255;
+    return *loft_at(cx, loft_store_of(cx, v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) != 0;
 }
 
-static loft_text loft_jv_kind(loft_ref v) {
+static loft_text loft_jv_kind(loft_cx *cx, loft_ref v) {
     static const char *names[] = { "JUnknown", "JNull", "JBool", "JNumber", "JString", "JArray", "JObject", "JInteger" };
-    uint8_t d = loft_jd(v);
-    return loft_text_own(loft_lit(names[d <= 7 ? d : 0], strlen(names[d <= 7 ? d : 0])));
+    uint8_t d = loft_jd(cx, v);
+    return loft_text_own(cx, loft_lit(cx, names[d <= 7 ? d : 0], strlen(names[d <= 7 ? d : 0])));
 }
 
 /* `keys`: an object's member names, in order, in a fresh vector; empty for anything else. */
-static loft_ref loft_jv_keys(loft_ref v) {
-    loft_ref vec = loft_ref_null();
-    loft_database(&vec, LOFT_TEXT_SIZE * 8 - 8);
-    loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
-    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
-    int64_t n = loft_jv_count(v, fr);
+static loft_ref loft_jv_keys(loft_cx *cx, loft_ref v) {
+    loft_ref vec = loft_ref_null(cx);
+    loft_database(cx, &vec, LOFT_TEXT_SIZE * 8 - 8);
+    loft_set_u32(cx, loft_store_of(cx, vec), vec.rec, vec.pos, 0);
+    uint32_t fr = loft_jv_kids(cx, v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(cx, v, fr);
     for (int64_t i = 0; i < n; i++) {
-        loft_store_t *s = loft_store_of(v);
-        loft_text name = loft_text_own(loft_store_str(s, loft_u32(s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)));
-        loft_ref e = loft_vec_append(vec, LOFT_TEXT_SIZE);
-        loft_set_text(e, 0, loft_view(&name));
-        loft_vec_finish(vec);
-        loft_text_free(&name);
+        loft_store_t *s = loft_store_of(cx, v);
+        loft_text name = loft_text_own(cx, loft_store_str(cx, s, loft_u32(cx, s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)));
+        loft_ref e = loft_vec_append(cx, vec, LOFT_TEXT_SIZE);
+        loft_set_text(cx, e, 0, loft_view(cx, &name));
+        loft_vec_finish(cx, vec);
+        loft_text_free(cx, &name);
     }
     return vec;
 }
 
-static void loft_jv_render(loft_text *out, loft_ref v, int pretty, int depth) {
-    switch (loft_jd(v)) {
+static void loft_jv_render(loft_cx *cx, loft_text *out, loft_ref v, int pretty, int depth) {
+    switch (loft_jd(cx, v)) {
     case LOFT_JD_BOOL:
-        loft_push_cstr(out, *loft_at(loft_store_of(v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) ? "true" : "false");
+        loft_push_cstr(cx, out, *loft_at(cx, loft_store_of(cx, v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) ? "true" : "false");
         return;
     case LOFT_JD_NUMBER: {
-        double n = loft_get_float(v, LOFT_JV_NUMBER_VALUE);
-        if (isfinite(n)) loft_push_shortest(out, n, 0); else loft_push_cstr(out, "null");
+        double n = loft_get_float(cx, v, LOFT_JV_NUMBER_VALUE);
+        if (isfinite(n)) loft_push_shortest(cx, out, n, 0); else loft_push_cstr(cx, out, "null");
         return;
     }
-    case LOFT_JD_INT: loft_push_i64(out, loft_get_int(v, LOFT_JV_INT_VALUE)); return;
-    case LOFT_JD_STRING: loft_push_json(out, loft_get_text(v, LOFT_JV_STRING_VALUE)); return;
+    case LOFT_JD_INT: loft_push_i64(cx, out, loft_get_int(cx, v, LOFT_JV_INT_VALUE)); return;
+    case LOFT_JD_STRING: loft_push_json(cx, out, loft_get_text(cx, v, LOFT_JV_STRING_VALUE)); return;
     case LOFT_JD_ARRAY:
     case LOFT_JD_OBJECT: {
-        int obj = loft_jd(v) == LOFT_JD_OBJECT;
-        uint32_t kr = loft_jv_kids(v, loft_jd(v));
-        int64_t n = loft_jv_count(v, kr);
-        if (n <= 0) { loft_push_cstr(out, obj ? "{}" : "[]"); return; }
-        loft_push_char(out, obj ? '{' : '[');
+        int obj = loft_jd(cx, v) == LOFT_JD_OBJECT;
+        uint32_t kr = loft_jv_kids(cx, v, loft_jd(cx, v));
+        int64_t n = loft_jv_count(cx, v, kr);
+        if (n <= 0) { loft_push_cstr(cx, out, obj ? "{}" : "[]"); return; }
+        loft_push_char(cx, out, obj ? '{' : '[');
         for (int64_t i = 0; i < n; i++) {
-            if (i > 0) loft_push_char(out, ',');
-            if (pretty) loft_nl(out, depth + 1);
+            if (i > 0) loft_push_char(cx, out, ',');
+            if (pretty) loft_nl(cx, out, depth + 1);
             loft_ref e = v;
             e.rec = kr;
             if (obj) {
                 uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
-                loft_store_t *s = loft_store_of(v);
-                loft_text name = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
-                loft_push_json(out, loft_view(&name));
-                loft_text_free(&name);
-                loft_push_char(out, ':');
-                if (pretty) loft_push_char(out, ' ');
+                loft_store_t *s = loft_store_of(cx, v);
+                loft_text name = loft_text_own(cx, loft_store_str(cx, s, loft_u32(cx, s, kr, at + LOFT_JF_NAME)));
+                loft_push_json(cx, out, loft_view(cx, &name));
+                loft_text_free(cx, &name);
+                loft_push_char(cx, out, ':');
+                if (pretty) loft_push_char(cx, out, ' ');
                 e.pos = at + LOFT_JF_VALUE;
             } else {
                 e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
             }
-            loft_jv_render(out, e, pretty, depth + 1);
+            loft_jv_render(cx, out, e, pretty, depth + 1);
         }
-        if (pretty) loft_nl(out, depth);
-        loft_push_char(out, obj ? '}' : ']');
+        if (pretty) loft_nl(cx, out, depth);
+        loft_push_char(cx, out, obj ? '}' : ']');
         return;
     }
-    default: loft_push_cstr(out, "null"); return;
+    default: loft_push_cstr(cx, out, "null"); return;
     }
 }
 
 /* `dbref_to_parsed`: the tree at `src` read back into `v`, so a builder copies it whole into
  * its own store. */
-static void loft_jv_read(loft_ref src, loft_jv *v) {
+static void loft_jv_read(loft_cx *cx, loft_ref src, loft_jv *v) {
     memset(v, 0, sizeof *v);
-    switch (loft_jd(src)) {
+    switch (loft_jd(cx, src)) {
     case LOFT_JD_BOOL:
         v->kind = LOFT_JV_BOOL;
-        v->b = *loft_at(loft_store_of(src), src.rec, src.pos + LOFT_JV_BOOL_VALUE) != 0;
+        v->b = *loft_at(cx, loft_store_of(cx, src), src.rec, src.pos + LOFT_JV_BOOL_VALUE) != 0;
         return;
-    case LOFT_JD_NUMBER: v->kind = LOFT_JV_NUMBER; v->n = loft_get_float(src, LOFT_JV_NUMBER_VALUE); return;
-    case LOFT_JD_INT: v->kind = LOFT_JV_INT; v->i = loft_get_int(src, LOFT_JV_INT_VALUE); return;
+    case LOFT_JD_NUMBER: v->kind = LOFT_JV_NUMBER; v->n = loft_get_float(cx, src, LOFT_JV_NUMBER_VALUE); return;
+    case LOFT_JD_INT: v->kind = LOFT_JV_INT; v->i = loft_get_int(cx, src, LOFT_JV_INT_VALUE); return;
     case LOFT_JD_STRING:
         v->kind = LOFT_JV_STR;
-        v->s = loft_text_own(loft_get_text(src, LOFT_JV_STRING_VALUE));
+        v->s = loft_text_own(cx, loft_get_text(cx, src, LOFT_JV_STRING_VALUE));
         return;
     case LOFT_JD_ARRAY:
     case LOFT_JD_OBJECT: {
-        int obj = loft_jd(src) == LOFT_JD_OBJECT;
+        int obj = loft_jd(cx, src) == LOFT_JD_OBJECT;
         v->kind = obj ? LOFT_JV_OBJECT : LOFT_JV_ARRAY;
-        uint32_t kr = loft_jv_kids(src, loft_jd(src));
-        int64_t n = loft_jv_count(src, kr);
+        uint32_t kr = loft_jv_kids(cx, src, loft_jd(cx, src));
+        int64_t n = loft_jv_count(cx, src, kr);
         for (int64_t i = 0; i < n; i++) {
-            loft_jv *k = loft_jv_push(v, obj);
+            loft_jv *k = loft_jv_push(cx, v, obj);
             loft_ref e = src;
             e.rec = kr;
             if (obj) {
                 uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
-                loft_store_t *s = loft_store_of(src);
-                v->keys[v->nkids - 1] = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
+                loft_store_t *s = loft_store_of(cx, src);
+                v->keys[v->nkids - 1] = loft_text_own(cx, loft_store_str(cx, s, loft_u32(cx, s, kr, at + LOFT_JF_NAME)));
                 e.pos = at + LOFT_JF_VALUE;
             } else {
                 e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
             }
-            loft_jv_read(e, k);
+            loft_jv_read(cx, e, k);
         }
         return;
     }
@@ -1276,122 +1267,122 @@ static void loft_jv_read(loft_ref src, loft_jv *v) {
 }
 
 /* The builders: a fresh JsonValue of their variant, the last error cleared. */
-static loft_ref loft_jv_build(const loft_jv *v) {
-    loft_ref r = loft_jv_alloc();
-    loft_jv_into(r, v);
-    loft_jerr_clear();
+static loft_ref loft_jv_build(loft_cx *cx, const loft_jv *v) {
+    loft_ref r = loft_jv_alloc(cx);
+    loft_jv_into(cx, r, v);
+    loft_jerr_clear(cx);
     return r;
 }
 
-static loft_ref loft_json_null(void) {
+static loft_ref loft_json_null(loft_cx *cx) {
     loft_jv v;
     memset(&v, 0, sizeof v);
-    return loft_jv_build(&v);
+    return loft_jv_build(cx, &v);
 }
 
-static loft_ref loft_json_bool(uint8_t b) {
+static loft_ref loft_json_bool(loft_cx *cx, uint8_t b) {
     loft_jv v;
     memset(&v, 0, sizeof v);
     v.kind = LOFT_JV_BOOL;
     v.b = b;
-    return loft_jv_build(&v);
+    return loft_jv_build(cx, &v);
 }
 
 /* `json_number`: a non-finite value is stored as JNull, and says so in `json_errors()`. */
-static loft_ref loft_json_number(double n) {
+static loft_ref loft_json_number(loft_cx *cx, double n) {
     loft_jv v;
     memset(&v, 0, sizeof v);
     if (isfinite(n)) {
         v.kind = LOFT_JV_NUMBER;
         v.n = n;
-        return loft_jv_build(&v);
+        return loft_jv_build(cx, &v);
     }
-    loft_ref r = loft_jv_build(&v);
+    loft_ref r = loft_jv_build(cx, &v);
     loft_text e = { 0, 0, 0 };
-    loft_push_cstr(&e, "json_number: non-finite value ");
-    loft_push_cstr(&e, isnan(n) ? "NaN" : n < 0 ? "-inf" : "inf");
-    loft_push_cstr(&e, " stored as JNull");
-    loft_jerr_take(e);
+    loft_push_cstr(cx, &e, "json_number: non-finite value ");
+    loft_push_cstr(cx, &e, isnan(n) ? "NaN" : n < 0 ? "-inf" : "inf");
+    loft_push_cstr(cx, &e, " stored as JNull");
+    loft_jerr_take(cx, e);
     return r;
 }
 
-static loft_ref loft_json_string(loft_str t) {
+static loft_ref loft_json_string(loft_cx *cx, loft_str t) {
     loft_jv v;
     memset(&v, 0, sizeof v);
     v.kind = LOFT_JV_STR;
-    v.s = loft_text_own(t);
-    loft_ref r = loft_jv_build(&v);
-    loft_jv_free(&v);
+    v.s = loft_text_own(cx, t);
+    loft_ref r = loft_jv_build(cx, &v);
+    loft_jv_free(cx, &v);
     return r;
 }
 
 /* `json_array` / `json_object`: the elements of a vector of JsonValue or JsonField, copied
  * whole into the new value's store. */
-static loft_ref loft_json_container(loft_ref vec, int obj) {
+static loft_ref loft_json_container(loft_cx *cx, loft_ref vec, int obj) {
     loft_jv v;
     memset(&v, 0, sizeof v);
     v.kind = obj ? LOFT_JV_OBJECT : LOFT_JV_ARRAY;
-    int64_t n = loft_vec_len(vec);
+    int64_t n = loft_vec_len(cx, vec);
     if (n > 0) {
-        loft_store_t *s = loft_store_of(vec);
-        uint32_t kr = loft_collection_rec(s, vec.rec, vec.pos);
+        loft_store_t *s = loft_store_of(cx, vec);
+        uint32_t kr = loft_collection_rec(cx, s, vec.rec, vec.pos);
         for (int64_t i = 0; i < n; i++) {
-            loft_jv *k = loft_jv_push(&v, obj);
+            loft_jv *k = loft_jv_push(cx, &v, obj);
             loft_ref e = vec;
             e.rec = kr;
             if (obj) {
                 uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
-                v.keys[v.nkids - 1] = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
+                v.keys[v.nkids - 1] = loft_text_own(cx, loft_store_str(cx, s, loft_u32(cx, s, kr, at + LOFT_JF_NAME)));
                 e.pos = at + LOFT_JF_VALUE;
             } else {
                 e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
             }
-            loft_jv_read(e, k);
+            loft_jv_read(cx, e, k);
         }
     }
-    loft_ref r = loft_jv_build(&v);
-    loft_jv_free(&v);
+    loft_ref r = loft_jv_build(cx, &v);
+    loft_jv_free(cx, &v);
     return r;
 }
 
-static loft_ref loft_json_array(loft_ref items) {
-    return loft_json_container(items, 0);
+static loft_ref loft_json_array(loft_cx *cx, loft_ref items) {
+    return loft_json_container(cx, items, 0);
 }
 
-static loft_ref loft_json_object(loft_ref fields) {
-    return loft_json_container(fields, 1);
+static loft_ref loft_json_object(loft_cx *cx, loft_ref fields) {
+    return loft_json_container(cx, fields, 1);
 }
 
 /* `fields`: an object's members, each value copied whole, in a fresh vector; empty for
  * anything else. */
-static loft_ref loft_jv_fields(loft_ref v) {
-    loft_ref vec = loft_ref_null();
-    loft_database(&vec, LOFT_JF_SIZE * 8 - 8);
-    loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
-    if (loft_jd(v) != LOFT_JD_OBJECT) return vec;
+static loft_ref loft_jv_fields(loft_cx *cx, loft_ref v) {
+    loft_ref vec = loft_ref_null(cx);
+    loft_database(cx, &vec, LOFT_JF_SIZE * 8 - 8);
+    loft_set_u32(cx, loft_store_of(cx, vec), vec.rec, vec.pos, 0);
+    if (loft_jd(cx, v) != LOFT_JD_OBJECT) return vec;
     loft_jv tree;
-    loft_jv_read(v, &tree);
+    loft_jv_read(cx, v, &tree);
     for (size_t i = 0; i < tree.nkids; i++) {
-        loft_ref e = loft_vec_append(vec, LOFT_JF_SIZE);
-        loft_set_text(e, LOFT_JF_NAME, loft_view(&tree.keys[i]));
+        loft_ref e = loft_vec_append(cx, vec, LOFT_JF_SIZE);
+        loft_set_text(cx, e, LOFT_JF_NAME, loft_view(cx, &tree.keys[i]));
         loft_ref val = e;
         val.pos += LOFT_JF_VALUE;
-        loft_jv_into(val, &tree.kids[i]);
-        loft_vec_finish(vec);
+        loft_jv_into(cx, val, &tree.kids[i]);
+        loft_vec_finish(cx, vec);
     }
-    loft_jv_free(&tree);
+    loft_jv_free(cx, &tree);
     return vec;
 }
 
-static loft_text loft_jv_to_json(loft_ref v) {
+static loft_text loft_jv_to_json(loft_cx *cx, loft_ref v) {
     loft_text t = { 0, 0, 0 };
-    loft_jv_render(&t, v, 0, 0);
+    loft_jv_render(cx, &t, v, 0, 0);
     return t;
 }
 
-static loft_text loft_jv_to_json_pretty(loft_ref v) {
+static loft_text loft_jv_to_json_pretty(loft_cx *cx, loft_ref v) {
     loft_text t = { 0, 0, 0 };
-    loft_jv_render(&t, v, 1, 0);
+    loft_jv_render(cx, &t, v, 1, 0);
     return t;
 }
 #endif

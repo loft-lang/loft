@@ -5,6 +5,7 @@
 
 // @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+use super::RunReport;
 use crate::btree;
 use crate::database::types::{HeapSlot, RelSlot};
 use crate::database::{Parts, Stores, WorkerStores};
@@ -71,7 +72,7 @@ enum PagedKind {
 // REUSED slot index (P0.4), so `seq` (a monotonic alloc counter) disambiguates slot reuse.
 // `live` maps each live slot to its current seq so a free prints the SAME id as its alloc.
 #[derive(Default)]
-struct TimelineState {
+pub(crate) struct TimelineState {
     seq: u64,
     live: std::collections::HashMap<u16, u64>,
     peak_live: usize,
@@ -79,14 +80,9 @@ struct TimelineState {
     total_free: u64,
 }
 
-thread_local! {
-    static TIMELINE: std::cell::RefCell<TimelineState> = std::cell::RefCell::new(TimelineState::default());
-}
-
-/// True when `LOFT_STORES=timeline` (cached per thread — the env is stable for a run).
+/// True when `LOFT_STORES=timeline` (read once — the environment is stable for a run).
 fn timeline_on() -> bool {
-    thread_local! { static ON: bool = std::env::var("LOFT_STORES").as_deref() == Ok("timeline"); }
-    ON.with(|b| *b)
+    crate::env_once!(std::env::var("LOFT_STORES").as_deref() == Ok("timeline"))
 }
 
 /// @PLN103 P3.3 — the working-set-vs-leak summary (the disambiguation `LOFT_STORES=warn`
@@ -94,12 +90,12 @@ fn timeline_on() -> bool {
 /// AUTHORITATIVE count from `collect_store_leaks()` (which excludes the eval-stack / const /
 /// locked runtime infrastructure the raw timeline `live` map would false-positive on — the
 /// interp-vs-native divergence this reconciles). Called at exit; no-op unless timeline mode.
-pub fn timeline_summary(real_leaked: usize) {
+pub fn timeline_summary(stores: &Stores, real_leaked: usize) {
     if !timeline_on() {
         return;
     }
-    TIMELINE.with(|t| {
-        let t = t.borrow();
+    {
+        let t = stores.run.timeline.borrow_mut();
         let verdict = if real_leaked == 0 {
             "NO leak (every user store freed)".to_string()
         } else {
@@ -107,9 +103,11 @@ pub fn timeline_summary(real_leaked: usize) {
         };
         crate::loft_eprintln!(
             "[timeline] SUMMARY: {} allocs, {} frees, peak {} concurrently-live (working set) — {verdict}",
-            t.total_alloc, t.total_free, t.peak_live
+            t.total_alloc,
+            t.total_free,
+            t.peak_live
         );
-    });
+    }
 }
 
 /// One owned nested-heap child of a container record, as enumerated by
@@ -289,11 +287,10 @@ impl Stores {
     /// survivable, but the record is still corrupt and a run that says nothing about
     /// it would be a run that hides its own bug.
     fn refuse_owned_edge(&self, rec: &DbRef, tp: u16, cur: u32, kind: &str) {
-        thread_local! {
-            static SEEN: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                std::cell::RefCell::new(std::collections::HashSet::new());
-        }
-        if SEEN.with(|s| s.borrow_mut().insert((rec.store_nr, rec.rec, rec.pos))) {
+        if self
+            .run
+            .first_report(RunReport::OwnedEdge, rec.store_nr, rec.rec, rec.pos)
+        {
             let tn = self.types.get(tp as usize).map_or("?", |t| t.name.as_str());
             crate::loft_eprintln!(
                 "loft: BUG (#796): refused to walk a {kind} edge of `{tn}` (kt={tp}) at \
@@ -1021,15 +1018,15 @@ impl Stores {
                 );
             }
             Some("timeline") => {
-                let seq = TIMELINE.with(|t| {
-                    let mut t = t.borrow_mut();
+                let seq = {
+                    let mut t = self.run.timeline.borrow_mut();
                     let s = t.seq;
                     t.seq += 1;
                     t.total_alloc += 1;
                     t.live.insert(result.store_nr, s);
                     t.peak_live = t.peak_live.max(t.live.len());
                     s
-                });
+                };
                 let label = if name.is_empty() { "·" } else { name };
                 crate::loft_eprintln!(
                     "[timeline] alloc #{}.{seq}  {label:<14} live={active} size={size}",
@@ -2037,7 +2034,7 @@ impl Stores {
             // instrument this fault's own message recommends — could never see
             // the one free that matters.
             if crate::keys::strict_stores() {
-                crate::keys::strict_note_free(al, self.alloc_pc, name);
+                crate::keys::strict_note_free(&mut self.checks, al, self.alloc_pc, name);
             }
             return;
         }
@@ -2046,7 +2043,7 @@ impl Stores {
         let already_free = !self.allocations[al as usize].live;
         // The double-free audit needs the same record, so it is armed by either instrument.
         if (crate::keys::strict_stores() || crate::keys::double_free_audit()) && !already_free {
-            crate::keys::strict_note_free(al, self.alloc_pc, name);
+            crate::keys::strict_note_free(&mut self.checks, al, self.alloc_pc, name);
         }
         if already_free && crate::keys::double_free_audit() {
             // `@FR-H-FreeTwice` — a CENSUS of refused re-frees, split by the emission that
@@ -2065,8 +2062,8 @@ impl Stores {
             // that IS dangerous — a stale reference releasing a slot handed to a new owner —
             // finds the slot LIVE and takes the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
             // this one, by never recycling a slot.
-            let same_site =
-                crate::keys::strict_free_site(al).is_some_and(|(pc, _)| pc == self.alloc_pc);
+            let same_site = crate::keys::strict_free_site(&self.checks, al)
+                .is_some_and(|(pc, _)| pc == self.alloc_pc);
             crate::keys::note_double_free(same_site);
         }
         let store = &mut self.allocations[al as usize];
@@ -2113,12 +2110,12 @@ impl Stores {
                 // @PLN103 P3 — print the SAME `<store_nr>.<seq>` id the alloc printed, so
                 // a reader matches alloc↔free across slot reuse. `?` = a free with no live
                 // alloc record (a double-free or a pre-timeline store).
-                let (seq, live_after) = TIMELINE.with(|t| {
-                    let mut t = t.borrow_mut();
+                let (seq, live_after) = {
+                    let mut t = self.run.timeline.borrow_mut();
                     t.total_free += 1;
                     let s = t.live.remove(&al);
                     (s, t.live.len())
-                });
+                };
                 let seq = seq.map_or_else(|| "?".to_string(), |s| s.to_string());
                 let label = if name.is_empty() { "·" } else { name };
                 crate::loft_eprintln!(
@@ -2203,7 +2200,7 @@ impl Stores {
         // LOFT_UAF_GEN (c): bump the slot's generation so a DbRef minted at the old
         // gen is detectably stale if read after this free (+ any later reuse).
         if crate::keys::uaf_gen_enabled() {
-            crate::keys::uaf_bump_gen(al);
+            crate::keys::uaf_bump_gen(&mut self.checks, al);
         }
         // S29: mark slot as free in the bitmap so database_named()
         // can reuse it without LIFO ordering.
@@ -2679,6 +2676,7 @@ impl Stores {
         // release binary the probes use, which is why a live UAF read as ordinary data.
         if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
+                &self.checks,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3143,6 +3141,7 @@ impl Stores {
         if crate::keys::strict_stores() && !self.allocations[r.store_nr as usize].live {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
+                &self.checks,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3332,6 +3331,7 @@ impl Stores {
     /// # Safety
     /// Same contract as [`clone_for_light_worker`](Self::clone_for_light_worker): the
     /// parent `Stores` must outlive the worker.
+    #[expect(clippy::too_many_lines, reason = "a field-by-field constructor")]
     pub unsafe fn clone_for_light_worker_with_scratch(
         &self,
         scratch_stores: usize,
@@ -3398,6 +3398,10 @@ impl Stores {
             free_bits,
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
+            run: super::RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),
@@ -5014,11 +5018,12 @@ impl Stores {
                             let a = &self.allocations[rec.store_nr as usize];
                             (!a.live, a.known_type)
                         };
-                        thread_local! {
-                            static RPT: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                                std::cell::RefCell::new(std::collections::HashSet::new());
-                        }
-                        if RPT.with(|s| s.borrow_mut().insert((rec.store_nr, rec.rec, rec.pos))) {
+                        if self.run.first_report(
+                            RunReport::StaleTextClaim,
+                            rec.store_nr,
+                            rec.rec,
+                            rec.pos,
+                        ) {
                             crate::loft_eprintln!(
                                 "[uaf-claim] remove_claims: TEXT field at store #{} rec={} pos={} \
                                  holds STALE pointer cur={cur} past store end (cap_words={cap}; \
@@ -5209,11 +5214,10 @@ impl Stores {
         let (pc, _op, _d) = crate::crash_report::last_context();
         let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
-        thread_local! {
-            static RPT_W: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                std::cell::RefCell::new(std::collections::HashSet::new());
-        }
-        if RPT_W.with(|s| s.borrow_mut().insert((to.store_nr, to.rec, bad_pos))) {
+        if self
+            .run
+            .first_report(RunReport::WatchedOob, to.store_nr, to.rec, bad_pos)
+        {
             let (s_nr, s_rec, s_pos) = src.map_or((u16::MAX, 0, 0), |s| (s.store_nr, s.rec, s.pos));
             crate::loft_eprintln!(
                 "[watch-store/{ctx}] OOB text-ptr now in watched store #{}: dst rec={} field \
@@ -7736,11 +7740,9 @@ impl Stores {
         match &self.types[tp as usize].parts {
             _ if is_keyed(tp) => tp,
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                // The target ref's `pos` is the collection's claim slot, NOT the
-                // struct field offset, so it can't select the field. A wrapper with
-                // exactly ONE keyed-collection field is the reported idiom (`struct
-                // Wrap { data: hash<T[k]> }`) and unambiguous; use it. A struct with
-                // several keyed fields can't be disambiguated yet → refuse.
+                // Asked of the type alone, a wrapper with exactly ONE keyed-collection
+                // field (`struct Wrap { data: hash<T[k]> }`) is unambiguous; with several,
+                // the reference decides (`collection_type_at`).
                 let mut keyed = fields.iter().filter(|f| is_keyed(f.content));
                 match (keyed.next(), keyed.next()) {
                     (Some(f), None) => f.content,
@@ -7749,6 +7751,26 @@ impl Stores {
             }
             _ => u16::MAX,
         }
+    }
+
+    /// [`Self::collection_type_of_store`] for the collection the reference `pos` names: in a
+    /// store rooting a struct, the keyed field whose payload offset is `pos`
+    /// (`store::RECORD_PAYLOAD` past the record's start, where a field reference sits), so a
+    /// struct holding several keyed collections answers the one the reference was taken of,
+    /// as the C backend does from the field it was bound through.  Otherwise as
+    /// `collection_type_of_store`.
+    pub(crate) fn collection_type_at(&self, tp: u16, pos: u32) -> u16 {
+        if tp != u16::MAX
+            && let Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                self.types.get(tp as usize).map(|t| &t.parts)
+            && let Some(f) = fields.iter().find(|f| {
+                u32::from(f.position) + crate::store::RECORD_PAYLOAD == pos
+                    && self.collection_type_of_store(f.content) == f.content
+            })
+        {
+            return f.content;
+        }
+        self.collection_type_of_store(tp)
     }
 
     /// True when an entry of type `content_tp` can be partially loaded today —

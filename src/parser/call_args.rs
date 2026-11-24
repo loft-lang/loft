@@ -973,6 +973,8 @@ impl Parser {
         // growing the attr count across passes.  With the signature-time
         // `__retbuf` the attr exists before any body parses and the
         // promotion re-find no longer depends on work-ref numbering.
+        // The slots the caller wrote: every caller hands in its own arguments alone.
+        let supplied = actual.len();
         // Extend to full parameter count so we can fill gaps from named arguments.
         while actual.len() < self.data.attributes(d_nr) {
             actual.push(Value::Null);
@@ -1033,6 +1035,14 @@ impl Parser {
                         "missing argument for parameter '{a_name}' of `{fname}` — the call supplies \
                          too few arguments (add it, or give the parameter a default `= …`)"
                     );
+                    continue;
+                }
+                // A slot the caller WROTE is no slot to fill, even where its argument lowered to
+                // `Null`: on the first pass an argument can (an element read of a local not
+                // typed yet, a forward-ref `&` argument).  Handed a buffer there, it left an
+                // unused work ref, flagged a caller buffer, in the frame's table; the second
+                // pass has the argument's value and never comes here for it.
+                if self.first_pass && a_nr < supplied && !a_hidden && !a_name.starts_with("__") {
                     continue;
                 }
                 // The three heap arms below allocate a caller-side BUFFER for a slot that

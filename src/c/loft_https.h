@@ -12,6 +12,7 @@
 #include <errno.h>
 
 #ifdef LOFT_HTTPS
+/* Defined in the TLS archive (`tls.rs`), compiled apart from the unit: no store context. */
 struct loft_tls;
 struct loft_tls *loft_tls_open(int fd, const char *host, char *err, size_t cap);
 long loft_tls_read(struct loft_tls *t, void *buf, size_t n);
@@ -20,14 +21,10 @@ int loft_tls_write_all(struct loft_tls *t, const void *buf, size_t n);
 void loft_tls_close(struct loft_tls *t);
 #endif
 
-typedef struct {
-    int fd;
-    void *tls; /* a `struct loft_tls *` once `loft_stream_tls` succeeded */
-} loft_stream;
 
 /* TLS over the connected socket for `host` (the name its certificate must carry): 1, else 0 with
  * `err` saying why. */
-static int loft_stream_tls(loft_stream *s, const char *host, char *err, size_t cap) {
+static int loft_stream_tls(loft_cx *cx, loft_stream *s, const char *host, char *err, size_t cap) {
 #ifdef LOFT_HTTPS
     s->tls = loft_tls_open(s->fd, host, err, cap);
     return s->tls != 0;
@@ -44,30 +41,30 @@ static int loft_stream_tls(loft_stream *s, const char *host, char *err, size_t c
 }
 
 /* Up to `n` bytes: the count, 0 at the end of the stream, -1 on a failure or a timeout. */
-static long loft_stream_read(loft_stream *s, void *buf, size_t n) {
+static long loft_stream_read(loft_cx *cx, loft_stream *s, void *buf, size_t n) {
 #ifdef LOFT_HTTPS
     if (s->tls) return loft_tls_read((struct loft_tls *) s->tls, buf, n);
 #endif
     for (;;) {
-        long r = loft_sock_recv(s->fd, buf, n, 0);
-        if (r < 0 && loft_sock_interrupted()) continue;
+        long r = loft_sock_recv(cx, s->fd, buf, n, 0);
+        if (r < 0 && loft_sock_interrupted(cx)) continue;
         return r < 0 ? -1 : r;
     }
 }
 
 /* Every byte of `p`: 1, else 0. */
-static int loft_stream_write_all(loft_stream *s, const void *p, size_t n) {
+static int loft_stream_write_all(loft_cx *cx, loft_stream *s, const void *p, size_t n) {
 #ifdef LOFT_HTTPS
     if (s->tls) return loft_tls_write_all((struct loft_tls *) s->tls, p, n);
 #endif
     const char *c = (const char *) p;
     while (n > 0) {
 #if defined(MSG_NOSIGNAL)
-        long w = loft_sock_send(s->fd, c, n, MSG_NOSIGNAL);
+        long w = loft_sock_send(cx, s->fd, c, n, MSG_NOSIGNAL);
 #else
-        long w = loft_sock_send(s->fd, c, n, 0);
+        long w = loft_sock_send(cx, s->fd, c, n, 0);
 #endif
-        if (w < 0 && loft_sock_interrupted()) continue;
+        if (w < 0 && loft_sock_interrupted(cx)) continue;
         if (w <= 0) return 0;
         c += w;
         n -= (size_t) w;
@@ -76,10 +73,10 @@ static int loft_stream_write_all(loft_stream *s, const void *p, size_t n) {
 }
 
 /* Exactly `n` bytes: 1, else 0. */
-static int loft_stream_read_exact(loft_stream *s, void *buf, size_t n) {
+static int loft_stream_read_exact(loft_cx *cx, loft_stream *s, void *buf, size_t n) {
     char *p = (char *) buf;
     while (n > 0) {
-        long r = loft_stream_read(s, p, n);
+        long r = loft_stream_read(cx, s, p, n);
         if (r <= 0) return 0;
         p += r;
         n -= (size_t) r;
@@ -88,37 +85,37 @@ static int loft_stream_read_exact(loft_stream *s, void *buf, size_t n) {
 }
 
 /* The session ended and the socket closed. */
-static void loft_stream_close(loft_stream *s) {
+static void loft_stream_close(loft_cx *cx, loft_stream *s) {
 #ifdef LOFT_HTTPS
     if (s->tls) loft_tls_close((struct loft_tls *) s->tls);
 #endif
     s->tls = 0;
-    if (s->fd >= 0) loft_sock_close(s->fd);
+    if (s->fd >= 0) loft_sock_close(cx, s->fd);
     s->fd = -1;
 }
 
 /* ── Socket mechanics: `loft_sock.h` ── */
 
-static void loft_sock_timeout(int fd, int64_t ms) {
-    loft_sock_timeout_opt(fd, SO_RCVTIMEO, ms);
+static void loft_sock_timeout(loft_cx *cx, int fd, int64_t ms) {
+    loft_sock_timeout_opt(cx, fd, SO_RCVTIMEO, ms);
 }
 
 /* ── HTTP/1.1 ── */
 
 /* Read an HTTP head from `s` to its blank line, a byte at a time (no over-read past it); 0 on a
  * closed or silent connection, or a head past 16 KiB. */
-static int loft_http_head(loft_stream *s, loft_text *head) {
+static int loft_http_head(loft_cx *cx, loft_stream *s, loft_text *head) {
     while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
         char b;
-        if (loft_stream_read(s, &b, 1) != 1) return 0;
-        loft_push(head, &b, 1);
+        if (loft_stream_read(cx, s, &b, 1) != 1) return 0;
+        loft_push(cx, head, &b, 1);
         if (head->len > 16 * 1024) return 0;
     }
     return 1;
 }
 
 /* The value of header `name` (case-blind) in an HTTP head, trimmed; 0 when absent. */
-static int loft_http_header(const loft_text *head, const char *name, const char **v, size_t *vn) {
+static int loft_http_header(loft_cx *cx, const loft_text *head, const char *name, const char **v, size_t *vn) {
     size_t nl = strlen(name), i = 0;
     while (i < head->len) {
         size_t s = i;
@@ -146,7 +143,7 @@ static int loft_http_header(const loft_text *head, const char *name, const char 
 }
 
 /* The decimal integer a header value holds: 1, else 0. */
-static int loft_http_number(const char *p, size_t n, int64_t *out) {
+static int loft_http_number(loft_cx *cx, const char *p, size_t n, int64_t *out) {
     if (n == 0 || n > 18) return 0;
     int64_t x = 0;
     for (size_t i = 0; i < n; i++) {
@@ -169,7 +166,7 @@ typedef struct {
 /* Whether two authorities (`host[:port]`, an IPv6 host in brackets) name one server: the host
  * compared without case, a port left out read as the scheme's default — `example.com` and
  * `example.com:443` are one server under https. */
-static int loft_http_same_server(const char *a, size_t an, const char *b, size_t bn, int tls) {
+static int loft_http_same_server(loft_cx *cx, const char *a, size_t an, const char *b, size_t bn, int tls) {
     const char *dflt = tls ? "443" : "80";
     const char *hp[2] = { a, b }, *pp[2];
     size_t hn[2], pn[2], n[2] = { an, bn };
@@ -195,7 +192,7 @@ static int loft_http_same_server(const char *a, size_t an, const char *b, size_t
  * words it.  `hops` redirects are followed, a 303 (and a POST's 301 or 302) as a GET, as the Rust
  * clients follow them.  Connecting and every read are bounded by 30 seconds, the Rust clients'
  * bound. */
-static int loft_http_open(loft_http *h, const char *method, const char *url, const char *headers, const char *body,
+static int loft_http_open(loft_cx *cx, loft_http *h, const char *method, const char *url, const char *headers, const char *body,
                           int hops, char *err, size_t cap) {
     memset(h, 0, sizeof *h);
     h->st.fd = -1;
@@ -249,7 +246,7 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
     struct addrinfo hints, *res = 0, *ai;
     memset(&hints, 0, sizeof hints);
     hints.ai_socktype = SOCK_STREAM;
-    loft_sock_ready();
+    loft_sock_ready(cx);
     int gai = getaddrinfo(host, port, &hints, &res);
     if (gai != 0) {
         snprintf(err, cap, "%s: Dns Failed: %s", url, gai_strerror(gai));
@@ -257,13 +254,13 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
     }
     int fd = -1, e = 0;
     for (ai = res; ai && fd < 0; ai = ai->ai_next) {
-        fd = loft_sock_open(ai->ai_family, SOCK_STREAM, 0);
+        fd = loft_sock_open(cx, ai->ai_family, SOCK_STREAM, 0);
         if (fd < 0) continue;
-        loft_sock_cloexec(fd);
-        if (!loft_sock_connect_within(fd, ai->ai_addr, (socklen_t) ai->ai_addrlen, 30000)) {
-            int se = loft_sock_pending_error(fd);
-            e = se > 0 ? se : loft_sock_error();
-            loft_sock_close(fd);
+        loft_sock_cloexec(cx, fd);
+        if (!loft_sock_connect_within(cx, fd, ai->ai_addr, (socklen_t) ai->ai_addrlen, 30000)) {
+            int se = loft_sock_pending_error(cx, fd);
+            e = se > 0 ? se : loft_sock_error(cx);
+            loft_sock_close(cx, fd);
             fd = -1;
         }
     }
@@ -273,46 +270,46 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
         snprintf(err, cap, "%s: Connection Failed: Connect error: %s (os error %d)", url, strerror(e), e);
         return 0;
     }
-    loft_sock_timeout(fd, 30000);
-    loft_sock_timeout_opt(fd, SO_SNDTIMEO, 30000);
+    loft_sock_timeout(cx, fd, 30000);
+    loft_sock_timeout_opt(cx, fd, SO_SNDTIMEO, 30000);
     h->st.fd = fd;
     if (tls) {
         char why[768];
-        if (!loft_stream_tls(&h->st, host, why, sizeof why)) {
-            loft_stream_close(&h->st);
+        if (!loft_stream_tls(cx, &h->st, host, why, sizeof why)) {
+            loft_stream_close(cx, &h->st);
             snprintf(err, cap, "%s: Connection Failed: %s", url, why);
             return 0;
         }
     }
     loft_text req = { 0, 0, 0 };
-    loft_push_cstr(&req, method);
-    loft_push_cstr(&req, " ");
-    loft_push_cstr(&req, path);
-    loft_push_cstr(&req, " HTTP/1.1\r\nHost: ");
-    loft_push(&req, auth, alen);
-    loft_push_cstr(&req, "\r\n");
-    loft_push_cstr(&req, headers);
+    loft_push_cstr(cx, &req, method);
+    loft_push_cstr(cx, &req, " ");
+    loft_push_cstr(cx, &req, path);
+    loft_push_cstr(cx, &req, " HTTP/1.1\r\nHost: ");
+    loft_push(cx, &req, auth, alen);
+    loft_push_cstr(cx, &req, "\r\n");
+    loft_push_cstr(cx, &req, headers);
     if (*body) {
         char cl[48];
         snprintf(cl, sizeof cl, "Content-Length: %zu\r\n", strlen(body));
-        loft_push_cstr(&req, cl);
+        loft_push_cstr(cx, &req, cl);
     }
-    loft_push_cstr(&req, "Connection: close\r\n\r\n");
-    loft_push_cstr(&req, body);
-    int ok = loft_stream_write_all(&h->st, req.p, req.len) && loft_http_head(&h->st, &h->head);
+    loft_push_cstr(cx, &req, "Connection: close\r\n\r\n");
+    loft_push_cstr(cx, &req, body);
+    int ok = loft_stream_write_all(cx, &h->st, req.p, req.len) && loft_http_head(cx, &h->st, &h->head);
     free(req.p);
     if (!ok) {
-        loft_stream_close(&h->st);
+        loft_stream_close(cx, &h->st);
         free(h->head.p);
         snprintf(err, cap, "%s: Connection Failed: the server closed the connection or timed out", url);
         return 0;
     }
     h->status = -1;
     const char *sp = (const char *) memchr(h->head.p, ' ', h->head.len);
-    if (sp && h->head.len - (size_t) (sp - h->head.p) > 3) loft_http_number(sp + 1, 3, &h->status);
+    if (sp && h->head.len - (size_t) (sp - h->head.p) > 3) loft_http_number(cx, sp + 1, 3, &h->status);
     const char *v;
     size_t vn;
-    if (h->status >= 300 && h->status < 400 && h->status != 304 && hops > 0 && loft_http_header(&h->head, "location", &v, &vn)) {
+    if (h->status >= 300 && h->status < 400 && h->status != 304 && hops > 0 && loft_http_header(cx, &h->head, "location", &v, &vn)) {
         loft_text next = { 0, 0, 0 };
         /* Does the redirect stay with the server the caller named: the same scheme, and the
          * same authority as it was spelled.  The caller's headers (a token, a cookie) and its
@@ -320,18 +317,18 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
          * whoever can make it redirect. */
         int same = vn && v[0] == '/';
         if (same) {
-            loft_push_cstr(&next, tls ? "https://" : "http://");
-            loft_push(&next, auth, alen);
+            loft_push_cstr(cx, &next, tls ? "https://" : "http://");
+            loft_push(cx, &next, auth, alen);
         } else {
             size_t sn = tls ? 8 : 7, ln = 0;
             if (vn >= sn && strncasecmp(v, tls ? "https://" : "http://", sn) == 0) {
                 while (sn + ln < vn && v[sn + ln] != '/' && v[sn + ln] != '?' && v[sn + ln] != '#') ln++;
-                same = loft_http_same_server(v + sn, ln, auth, alen, tls);
+                same = loft_http_same_server(cx, v + sn, ln, auth, alen, tls);
             }
         }
-        loft_push(&next, v, vn);
-        loft_push(&next, "", 1);
-        loft_stream_close(&h->st);
+        loft_push(cx, &next, v, vn);
+        loft_push(cx, &next, "", 1);
+        loft_stream_close(cx, &h->st);
         free(h->head.p);
         int get = h->status == 303 || ((h->status == 301 || h->status == 302) && strcmp(method, "POST") == 0);
         /* Never from https to http, and never a body to another server: both are refused, as
@@ -343,13 +340,13 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
             free(next.p);
             return 0;
         }
-        int r = loft_http_open(h, get ? "GET" : method, next.p, same ? headers : "", get ? "" : body, hops - 1, err, cap);
+        int r = loft_http_open(cx, h, get ? "GET" : method, next.p, same ? headers : "", get ? "" : body, hops - 1, err, cap);
         free(next.p);
         return r;
     }
-    h->chunked = loft_http_header(&h->head, "transfer-encoding", &v, &vn) && vn >= 7 && strncasecmp(v + vn - 7, "chunked", 7) == 0;
+    h->chunked = loft_http_header(cx, &h->head, "transfer-encoding", &v, &vn) && vn >= 7 && strncasecmp(v + vn - 7, "chunked", 7) == 0;
     h->left = -1;
-    if (!h->chunked && loft_http_header(&h->head, "content-length", &v, &vn) && !loft_http_number(v, vn, &h->left)) h->left = -1;
+    if (!h->chunked && loft_http_header(cx, &h->head, "content-length", &v, &vn) && !loft_http_number(cx, v, vn, &h->left)) h->left = -1;
     if (strcmp(method, "HEAD") == 0 || h->status == 204 || h->status == 304 || (h->status >= 100 && h->status < 200)) h->ended = 1;
     if (h->chunked) h->left = 0;
     if (!h->chunked && h->left == 0) h->ended = 1;
@@ -358,18 +355,18 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
 
 /* Up to `n` bytes of the body, a chunked one decoded: the count, 0 at its end, -1 on a failure or
  * a timeout. */
-static long loft_http_read(loft_http *h, void *buf, size_t n) {
+static long loft_http_read(loft_cx *cx, loft_http *h, void *buf, size_t n) {
     if (h->ended || n == 0) return 0;
     if (h->chunked && h->left == 0) {
         char crlf[2];
-        if (h->in_chunk && !loft_stream_read_exact(&h->st, crlf, 2)) return -1;
+        if (h->in_chunk && !loft_stream_read_exact(cx, &h->st, crlf, 2)) return -1;
         loft_text line = { 0, 0, 0 };
         while (line.len < 2 || memcmp(line.p + line.len - 2, "\r\n", 2) != 0) {
             char b;
-            if (loft_stream_read(&h->st, &b, 1) != 1 || line.len > 1024) { free(line.p); return -1; }
-            loft_push(&line, &b, 1);
+            if (loft_stream_read(cx, &h->st, &b, 1) != 1 || line.len > 1024) { free(line.p); return -1; }
+            loft_push(cx, &line, &b, 1);
         }
-        loft_push(&line, "", 1);
+        loft_push(cx, &line, "", 1);
         unsigned long long size = strtoull(line.p, 0, 16);
         free(line.p);
         if (size == 0) { h->ended = 1; return 0; }
@@ -379,7 +376,7 @@ static long loft_http_read(loft_http *h, void *buf, size_t n) {
         h->in_chunk = 1;
     }
     if (h->left >= 0 && (uint64_t) h->left < n) n = (size_t) h->left;
-    long r = loft_stream_read(&h->st, buf, n);
+    long r = loft_stream_read(cx, &h->st, buf, n);
     if (r <= 0) {
         h->ended = 1;
         return h->left < 0 && r == 0 ? 0 : -1;
@@ -392,8 +389,8 @@ static long loft_http_read(loft_http *h, void *buf, size_t n) {
 }
 
 /* The connection closed and the head freed; the rest of the body is not read. */
-static void loft_http_close(loft_http *h) {
-    loft_stream_close(&h->st);
+static void loft_http_close(loft_cx *cx, loft_http *h) {
+    loft_stream_close(cx, &h->st);
     free(h->head.p);
     h->head.p = 0;
 }
@@ -401,7 +398,7 @@ static void loft_http_close(loft_http *h) {
 /* ── WebSocket handshake ── */
 
 /* SHA-1 (RFC 3174), for the WebSocket accept key alone. */
-static void loft_ws_sha1(const uint8_t *data, size_t n, uint8_t out[20]) {
+static void loft_ws_sha1(loft_cx *cx, const uint8_t *data, size_t n, uint8_t out[20]) {
     uint32_t h[5] = { 0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u };
     size_t total = ((n + 8) / 64 + 1) * 64;
     uint8_t *m = (uint8_t *) calloc(total, 1);
@@ -441,14 +438,14 @@ static void loft_ws_sha1(const uint8_t *data, size_t n, uint8_t out[20]) {
 }
 
 /* `ws_handshake::ws_accept_key`: base64(SHA-1(key + the RFC 6455 GUID)). */
-static void loft_ws_accept_key(const char *key, size_t kn, char out[29]) {
+static void loft_ws_accept_key(loft_cx *cx, const char *key, size_t kn, char out[29]) {
     static const char guid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     uint8_t in[256], d[20];
     size_t n = kn < 200 ? kn : 200;
     memcpy(in, key, n);
     memcpy(in + n, guid, sizeof guid - 1);
-    loft_ws_sha1(in, n + sizeof guid - 1, d);
+    loft_ws_sha1(cx, in, n + sizeof guid - 1, d);
     size_t o = 0;
     for (int i = 0; i < 20; i += 3) {
         uint32_t v = (uint32_t) d[i] << 16 | (i + 1 < 20 ? (uint32_t) d[i + 1] << 8 : 0) | (i + 2 < 20 ? d[i + 2] : 0);
@@ -463,7 +460,7 @@ static void loft_ws_accept_key(const char *key, size_t kn, char out[29]) {
 
 /* One final frame on `s`, masked with `mask` when it is given (a client's frames must be, a
  * server's must not be), written in one call: 1 when every byte went out. */
-static int loft_ws_write_frame(loft_stream *s, int opcode, const char *p, size_t n, const uint8_t *mask) {
+static int loft_ws_write_frame(loft_cx *cx, loft_stream *s, int opcode, const char *p, size_t n, const uint8_t *mask) {
     loft_text f = { 0, 0, 0 };
     uint8_t hdr[14];
     uint8_t bit = mask ? 0x80 : 0;
@@ -483,16 +480,16 @@ static int loft_ws_write_frame(loft_stream *s, int opcode, const char *p, size_t
         memcpy(hdr + h, mask, 4);
         h += 4;
     }
-    loft_push(&f, (const char *) hdr, h);
+    loft_push(cx, &f, (const char *) hdr, h);
     if (mask) {
         for (size_t i = 0; i < n; i++) {
             char c = (char) (p[i] ^ mask[i % 4]);
-            loft_push(&f, &c, 1);
+            loft_push(cx, &f, &c, 1);
         }
     } else if (n) {
-        loft_push(&f, p, n);
+        loft_push(cx, &f, p, n);
     }
-    int ok = loft_stream_write_all(s, f.p, f.len);
+    int ok = loft_stream_write_all(cx, s, f.p, f.len);
     free(f.p);
     return ok;
 }
@@ -502,34 +499,34 @@ static int loft_ws_write_frame(loft_stream *s, int opcode, const char *p, size_t
  * peer cannot claim a length that aborts the process).  With `from_client` an unmasked frame
  * is refused too: RFC 6455 § 5.1 has a server close on one, since a client's masking is what
  * keeps a page from choosing the bytes an intermediary sees. */
-static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, uint64_t cap, int from_client) {
+static int loft_ws_read_frame(loft_cx *cx, loft_stream *s, int *opcode, loft_text *payload, uint64_t cap, int from_client) {
     uint8_t h[2];
-    if (!loft_stream_read_exact(s, h, 2)) return 0;
+    if (!loft_stream_read_exact(cx, s, h, 2)) return 0;
     uint64_t len = h[1] & 0x7F;
     if (len == 126) {
         uint8_t b[2];
-        if (!loft_stream_read_exact(s, b, 2)) return 0;
+        if (!loft_stream_read_exact(cx, s, b, 2)) return 0;
         len = (uint64_t) b[0] << 8 | b[1];
     } else if (len == 127) {
         uint8_t b[8];
-        if (!loft_stream_read_exact(s, b, 8)) return 0;
+        if (!loft_stream_read_exact(cx, s, b, 8)) return 0;
         len = 0;
         for (int i = 0; i < 8; i++) len = len << 8 | b[i];
     }
     if (len > cap) return 0;
     if (from_client && !(h[1] & 0x80)) return 0;
     uint8_t mask[4] = { 0, 0, 0, 0 };
-    if ((h[1] & 0x80) && !loft_stream_read_exact(s, mask, 4)) return 0;
+    if ((h[1] & 0x80) && !loft_stream_read_exact(cx, s, mask, 4)) return 0;
     payload->len = 0;
     if (len) {
         char *p = (char *) malloc((size_t) len);
         if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-        if (!loft_stream_read_exact(s, p, (size_t) len)) {
+        if (!loft_stream_read_exact(cx, s, p, (size_t) len)) {
             free(p);
             return 0;
         }
         for (uint64_t i = 0; i < len; i++) p[i] ^= (char) mask[i % 4];
-        loft_push(payload, p, (size_t) len);
+        loft_push(cx, payload, p, (size_t) len);
         free(p);
     }
     *opcode = h[0] & 0x0F;

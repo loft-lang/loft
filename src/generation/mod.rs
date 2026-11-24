@@ -1788,7 +1788,7 @@ impl<'a> Output<'a> {
     pub fn new(data: &'a Data, stores: &'a Stores) -> Self {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
-        begin_program();
+        begin_program(data);
         Output {
             data,
             stores,
@@ -2386,10 +2386,13 @@ impl Output<'_> {
                 (None, None) => Some("no refill buffer"),
             };
             let name = self.data.def(def_nr).name();
-            hoist::trace_refill_text_once(&match why {
-                None => format!("refill-text: {name} keeps its elements"),
-                Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
-            });
+            hoist::trace_refill_text_once(
+                self.data,
+                &match why {
+                    None => format!("refill-text: {name} keeps its elements"),
+                    Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
+                },
+            );
         }
         self.refill_text = if self.switches.refill_text_disabled {
             hoist::RefillTextSites::default()
@@ -8843,8 +8846,9 @@ extern crate loft;"
             }
             match a.typedef.base() {
                 Type::Vector(elm_tp, _) => {
-                    let elm_name = elm_tp.name(self.data);
-                    let tp = self.data.name_type(&format!("main_vector<{elm_name}>"), 0);
+                    let tp = self
+                        .data
+                        .name_type(&self.data.vector_wrapper_name(elm_tp), 0);
                     if tp == u16::MAX {
                         // No wrapper registered — the sentinel is what a
                         // pre-#629 build passed, and the body's null guards
@@ -9164,7 +9168,7 @@ extern crate loft;"
             // runs on the native `__run` thread where the alloc/free events were recorded.
             writeln!(
                 w,
-                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores.collect_store_leaks().len()); }}"
+                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores, stores.collect_store_leaks().len()); }}"
             )?;
             writeln!(
                 w,
@@ -9205,7 +9209,7 @@ extern crate loft;"
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
             writeln!(
                 w,
-                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores.collect_store_leaks().len()); }}"
+                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores, stores.collect_store_leaks().len()); }}"
             )?;
             writeln!(
                 w,
@@ -9679,7 +9683,7 @@ extern crate loft;"
             else {
                 continue;
             };
-            let vec_struct_name = format!("main_vector<{}>", elem_tp.name(self.data));
+            let vec_struct_name = self.data.vector_wrapper_name(&elem_tp);
             let vec_struct_dnr = self.data.def_nr(&vec_struct_name);
             if vec_struct_dnr == u32::MAX {
                 continue;

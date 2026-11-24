@@ -41,14 +41,14 @@ struct TtBuf {
 /// only when the timeline is armed; off, no hook reaches it.
 static TEXT_TL: std::sync::LazyLock<std::sync::Mutex<TextTimeline>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(TextTimeline::default()));
-thread_local! {
-    static TEXT_TL_ON: bool = std::env::var_os("LOFT_TEXT_TIMELINE").is_some();
-    static TEXT_TL_VERBOSE: bool = std::env::var("LOFT_TEXT_TIMELINE").as_deref() == Ok("timeline");
-}
-
 #[inline]
 fn text_tl_on() -> bool {
-    TEXT_TL_ON.with(|b| *b)
+    crate::env_once!(std::env::var_os("LOFT_TEXT_TIMELINE").is_some())
+}
+
+/// `LOFT_TEXT_TIMELINE=timeline`: every event, not only the summary.
+fn text_tl_verbose() -> bool {
+    crate::env_once!(std::env::var("LOFT_TEXT_TIMELINE").as_deref() == Ok("timeline"))
 }
 
 /// Record a text-buffer GROWTH (an append / format that may have (re)allocated).
@@ -95,7 +95,7 @@ fn text_tl_grow(fn_nr: Option<u32>, before: (usize, usize), after: (usize, usize
             t.peak_bytes = t.peak_bytes.max(t.live_bytes);
         }
     }
-    if ac > 0 && TEXT_TL_VERBOSE.with(|b| *b) {
+    if ac > 0 && text_tl_verbose() {
         eprintln!("[text-tl] grow fn={fn_nr:?} cap={ac} ptr={ap:#x} {content:?}");
     }
 }
@@ -114,7 +114,7 @@ fn text_tl_free(fn_nr: Option<u32>, ptr: usize, cap: usize, content: &str) {
             t.live_bytes -= b.cap;
         }
     }
-    if TEXT_TL_VERBOSE.with(|b| *b) {
+    if text_tl_verbose() {
         eprintln!("[text-tl] free fn={fn_nr:?} cap={cap} ptr={ptr:#x} {content:?}");
     }
 }

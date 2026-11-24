@@ -212,8 +212,8 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
 /// receipt).  Each must still `git apply --check`; a stale one is re-derived at the current
-/// tree and re-scored.  A hunk of the generated `src/compiled_stdlib_gen.rs` is left out, as
-/// `falsify.sh` and `receipts_ci.py` leave it out: the control regenerates that file.  `tests/falsified_patches.baseline` lists the ones already stale when
+/// tree and re-scored.  A hunk of the retired generated `src/compiled_stdlib_gen.rs` is left
+/// out, as `falsify.sh` and `receipts_ci.py` leave it out.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
 #[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
@@ -398,7 +398,7 @@ fn every_new_guard_records_its_control() {
 }
 
 /// Every `#[ignore = "..."]` — and every `#[cfg_attr(<cfg>, ignore = "...")]` — in
-/// `tests/*.rs` and `src/**/*.rs` must match the committed baseline at
+/// `tests/*.rs` (with the parts in `tests/<binary>/`) and `src/**/*.rs` must match the committed baseline at
 /// `tests/ignored_tests.baseline`, keyed `<file>::<test>` because two `src/` tests share
 /// a bare name.  A drift is one of three things worth the author's attention at review:
 ///   * an ignored test just got its fix landed — delete its line and un-ignore it;
@@ -427,12 +427,22 @@ fn ignored_tests_baseline_is_current() {
             }
         }
     }
-    let mut files: Vec<String> = Vec::new();
-    for e in fa::read_dir("tests").expect("read tests/") {
-        let p = e.os_spelling();
-        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
-            files.push(p.to_string_lossy().replace('\\', "/"));
+    fn top_rust_files(dir: &str, out: &mut Vec<String>) {
+        let Ok(entries) = fa::read_dir(dir) else {
+            return;
+        };
+        for e in entries {
+            let p = e.os_spelling();
+            if fa::is_file(&p) && fa::has_extension(&p, "rs") {
+                out.push(p.to_string_lossy().replace('\\', "/"));
+            }
         }
+    }
+    let mut files: Vec<String> = Vec::new();
+    top_rust_files("tests", &mut files);
+    // a test binary split into parts keeps them in the directory named after it
+    for binary in files.clone() {
+        top_rust_files(&binary[..binary.len() - 3], &mut files);
     }
     rust_files("src", &mut files);
     files.sort();
@@ -530,39 +540,49 @@ fn ignored_tests_baseline_is_current() {
 /// about `code!()` once; this guard prevents it reoccurring.
 #[test]
 fn no_orphan_test_attributes_in_tests_issues_rs() {
-    let path = "tests/issues.rs";
-    let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
-    let lines: Vec<&str> = src.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed != "#[test]" {
-            continue;
+    // the binary and its parts in tests/issues/
+    let mut paths = vec!["tests/issues.rs".to_string()];
+    for e in fa::read_dir("tests/issues").expect("read tests/issues/") {
+        let p = e.os_spelling();
+        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
+            paths.push(p.to_string_lossy().replace('\\', "/"));
         }
-        // Scan forward through blank lines, other attributes, and
-        // `///` / `//` doc/comment lines until we find the next
-        // non-trivial line.  It must be either another `#[…]`
-        // attribute or a `fn` declaration.
-        let next = lines
-            .iter()
-            .enumerate()
-            .skip(i + 1)
-            .find(|(_, l)| {
-                let t = l.trim_start();
-                !t.is_empty() && !t.starts_with("//")
-            })
-            .map(|(j, l)| (j, l.trim_start()));
-        match next {
-            Some((_, t))
-                if t.starts_with("#[") || t.starts_with("fn ") || t.starts_with("pub fn ") => {}
-            Some((j, t)) => panic!(
-                "Orphan #[test] attribute at {path}:{} — next non-comment line is {path}:{} `{t}` (expected another `#[…]` or `fn`). Remove the stray attribute.",
-                i + 1,
-                j + 1
-            ),
-            None => panic!(
-                "Orphan #[test] attribute at {path}:{} with no following declaration.",
-                i + 1
-            ),
+    }
+    paths.sort();
+    for path in &paths {
+        let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed != "#[test]" {
+                continue;
+            }
+            // Scan forward through blank lines, other attributes, and
+            // `///` / `//` doc/comment lines until we find the next
+            // non-trivial line.  It must be either another `#[…]`
+            // attribute or a `fn` declaration.
+            let next = lines
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .find(|(_, l)| {
+                    let t = l.trim_start();
+                    !t.is_empty() && !t.starts_with("//")
+                })
+                .map(|(j, l)| (j, l.trim_start()));
+            match next {
+                Some((_, t))
+                    if t.starts_with("#[") || t.starts_with("fn ") || t.starts_with("pub fn ") => {}
+                Some((j, t)) => panic!(
+                    "Orphan #[test] attribute at {path}:{} — next non-comment line is {path}:{} `{t}` (expected another `#[…]` or `fn`). Remove the stray attribute.",
+                    i + 1,
+                    j + 1
+                ),
+                None => panic!(
+                    "Orphan #[test] attribute at {path}:{} with no following declaration.",
+                    i + 1
+                ),
+            }
         }
     }
 }
@@ -659,10 +679,11 @@ fn ci_target_verdict_covers_every_phase_not_just_the_tests() {
 /// stress regression from CI.
 #[test]
 fn p122_long_running_struct_loop_is_cfg_attr_ignored_in_debug_only() {
-    let src = fa::read_to_string("tests/issues.rs").expect("cannot read tests/issues.rs");
+    let src = fa::read_to_string("tests/issues/loop_returns.rs")
+        .expect("cannot read tests/issues/loop_returns.rs");
     let idx = src
         .find("fn p122_long_running_struct_loop")
-        .expect("tests/issues.rs must define p122_long_running_struct_loop");
+        .expect("tests/issues/loop_returns.rs must define p122_long_running_struct_loop");
     // Look backwards ~30 lines to capture the attribute stack above the fn.
     let preamble_start = src[..idx]
         .rfind("#[test]")
@@ -3156,6 +3177,7 @@ fn page_is_exempt(name: &str) -> bool {
         // the page's own runtime shim — which a reader meets as a running program, not as
         // documentation.
         "brick-buster.html"
+        | "crystal-editor.html"
         | "playground.html"
         | "gallery-run.html"
         | "kernel-differential.html"

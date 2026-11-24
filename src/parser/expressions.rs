@@ -5227,7 +5227,12 @@ use a separate collection or add after the loop"
             if self.lexer.peek_token(";") {
                 // Nothing is left for the copy census to find, so tell it here (@PLN163).
                 if !self.first_pass {
-                    crate::copy_manifest::note_self_bind(self.context, *lhs, self.lexer.pos().line);
+                    crate::copy_manifest::note_self_bind(
+                        &self.data,
+                        self.context,
+                        *lhs,
+                        self.lexer.pos().line,
+                    );
                 }
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
@@ -5704,7 +5709,9 @@ use a separate collection or add after the loop"
                         // that has ended, it widened the ended one's variable: every read in
                         // the block that bound it non-null then stored "a nullable" value,
                         // and a later block's non-null bind stayed nullable.
-                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
+                        || self.vars.rebind_differs_in_absence(var_nr, &s_type)
+                        // `@FR-B-Scope`: a view of another base is another binding's type.
+                        || self.vars.rebind_views_another_base(var_nr, &s_type))))
         {
             let ended = var_nr;
             var_nr = self.rebind_after_block(var_nr, &s_type);
@@ -7165,6 +7172,7 @@ use a separate collection or add after the loop"
                     );
                     // @PLN130 — parser-emitted materialisation; see `ParserMaterialise`.
                     crate::copy_manifest::record(
+                        &self.data,
                         self.context,
                         w,
                         kt,
@@ -13149,6 +13157,7 @@ use a separate collection or add after the loop"
         // copies are these executes two record copies and `--report-copies` still answers
         // `none`. Being emitted into the IR is not the same as producing a user-facing row.
         crate::copy_manifest::record(
+            &self.data,
             self.context,
             w,
             kt,

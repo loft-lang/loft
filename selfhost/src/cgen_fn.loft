@@ -4163,9 +4163,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   rret = resolve_tuples(x, held(ret));
   rlist = resolve_tuples(x, list);
   rinner = resolve_tuples(x, out);
-  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts — for MSVC
-  // alone by default, under `#if defined(_MSC_VER)`, the whole body (out of line, as its parts
-  // are) in the `#else` arm.
+  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts.  By default
+  // both forms: the parts under `#if LOFT_C_SPLIT_ABOVE > 0 && <sites> > LOFT_C_SPLIT_ABOVE`, so
+  // each C compiler takes them above its own size (loft_cc.h), the whole body (out of line, as
+  // its parts are) in the `#else` arm.
   parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
   // `@FR-R-CTail`: the whole body's shared release tails are written once; the parts keep
   // every exit's own statements, and `inner` stays the body before this pass.
@@ -4176,7 +4177,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   if parts != "" {
     whole = "{outer} {rret} {name}__fr({rlist}) {{\n{if merged != "" { merged } else { rinner }}}}\n";
-    rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
+    rtext = if cgen_split::everywhere() { parts } else { "#if LOFT_C_SPLIT_ABOVE > 0 && {cgen_split::body_sites(rinner)} > LOFT_C_SPLIT_ABOVE\n{parts}#else\n{whole}#endif\n" };
   }
   Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner, traced: traced }
 }

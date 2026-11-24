@@ -76,7 +76,7 @@ fn every_mint_of_the_cells_matches_the_walk_on_the_interpreter() {
 
 #[test]
 fn every_mint_of_the_cells_matches_the_walk_on_native() {
-    let out = run("--native-rust", VERIFY_NATIVE);
+    let out = run("--native", VERIFY_NATIVE);
     assert!(
         out.trim_end().ends_with("ok"),
         "cells did not reach `ok`:\n{out}"
@@ -91,8 +91,8 @@ fn the_switch_answers_the_same_values() {
         on, off,
         "interpreter: the image and the walk must print the same"
     );
-    let n_on = run("--native-rust", &[]);
-    let n_off = run("--native-rust", OFF);
+    let n_on = run("--native", &[]);
+    let n_off = run("--native", OFF);
     assert_eq!(
         n_on, n_off,
         "native: the image and the walk must print the same"
@@ -150,17 +150,8 @@ fn image_uses(mode: &str, tp: &str) -> usize {
 
 #[test]
 fn the_cells_use_the_image_on_both_backends() {
-    // A cell that only CAPTURES the image proves nothing about it — and on `--native`
-    // every `Mix` literal is a complete-write mint that never prefills (`@FR-R-CompleteWrite`,
-    // whose buffer clauses cover c11's per-activation slot as well), so c1–c11 capture
-    // `Mix`'s image there and never use it.  c12's `Outer` keeps its prefill on native —
-    // the discriminant of its `Inner?` field is written by no literal — and that is what
-    // makes the native half of the verify pin above non-vacuous.  Both backends must USE
-    // an image: the interpreter `Mix`'s (every cell), native `Outer`'s (c12).
+    // A cell that only CAPTURES the image proves nothing about it: the interpreter must USE
+    // `Mix`'s image (every cell).  The C backend counts no image use.
     let interpret = image_uses("--interpret", "Mix");
-    let native = image_uses("--native-rust", "Outer");
-    assert!(
-        interpret > 0 && native > 0,
-        "image uses: interpret `Mix` {interpret}, native `Outer` {native}"
-    );
+    assert!(interpret > 0, "image uses: interpret `Mix` {interpret}");
 }

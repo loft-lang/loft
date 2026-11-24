@@ -478,7 +478,22 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
             return ex(ir::NdNull, ir::TyVoid);
           }
           src = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: inner, dep: [] });
-          ls += el_ex_pattern::literal_store(e, vars, src, rows!);
+          sst = el_ex_pattern::literal_store(e, vars, src, rows!);
+          // (`vector_db`'s `depend(vec, db)`: the snapshot borrows the store it is built in.)
+          for sop in sst {
+            match el_ir::unspan(sop) {
+              NdCall { def_nr: sd, args: sa } => {
+                if el::def(e, sd).name == "OpDatabase" {
+                  match el_ir::unspan(sa[0] ?? ir::NdNull) {
+                    NdVar { n: sdb } => { el_vars::set_type(vars, src, ir::TyVector { inner: inner, dep: [sdb] }); },
+                    _ => {}
+                  }
+                }
+              },
+              _ => {}
+            }
+          }
+          ls += sst;
           ls += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: src }, p.code, ir::NdInt { n: row }])];
           writes = [for op in writes { el_ex_place::replace_field_reads(op, rec, pos, src) }];
         }

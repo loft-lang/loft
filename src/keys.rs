@@ -3136,25 +3136,15 @@ fn strict_stores_init(ss: &std::sync::atomic::AtomicU8) -> bool {
 /// than stopping at the first — the same reasoning as `LOFT_DEV_SOFT_HALT`.
 static STRICT_VIOLATIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-thread_local! {
-    /// Where each store was FREED: slot -> (pc, the variable name `free_named` was given).
-    /// A side table rather than two more `Store` fields, so the bookkeeping costs nothing
-    /// when strict mode is off.
-    static STRICT_FREE_SITE: std::cell::RefCell<std::collections::HashMap<u16, (u32, String)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// Record where store `slot` was freed. Call only when [`strict_stores`] is on.
-pub fn strict_note_free(slot: u16, pc: u32, name: &str) {
-    STRICT_FREE_SITE.with(|m| {
-        m.borrow_mut().insert(slot, (pc, name.to_string()));
-    });
+pub fn strict_note_free(c: &mut StoreChecks, slot: u16, pc: u32, name: &str) {
+    c.strict_free_site.insert(slot, (pc, name.to_string()));
 }
 
 /// The recorded free site for `slot`, if any.
 #[must_use]
-pub fn strict_free_site(slot: u16) -> Option<(u32, String)> {
-    STRICT_FREE_SITE.with(|m| m.borrow().get(&slot).cloned())
+pub fn strict_free_site(c: &StoreChecks, slot: u16) -> Option<(u32, String)> {
+    c.strict_free_site.get(&slot).cloned()
 }
 
 /// Report an access to a store that was freed. Call only when [`strict_stores`] is on.
@@ -3168,6 +3158,7 @@ pub fn strict_free_site(slot: u16) -> Option<(u32, String)> {
     reason = "one report line, one argument each"
 )]
 pub fn strict_store_violation(
+    checks: &StoreChecks,
     store_nr: u16,
     rec: u32,
     pos: u32,
@@ -3179,7 +3170,7 @@ pub fn strict_store_violation(
 ) {
     let n = STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if n < 200 && crate::fault_log::armed() {
-        let (freed_pc, var) = strict_free_site(store_nr).unwrap_or((0, String::new()));
+        let (freed_pc, var) = strict_free_site(checks, store_nr).unwrap_or((0, String::new()));
         let var = if var.is_empty() {
             crate::store_trace::freed_variable(freed_pc).unwrap_or_default()
         } else {
@@ -3204,7 +3195,7 @@ pub fn strict_store_violation(
     // Cap the output: a stale ref inside a loop reports every iteration, and the first
     // few already name the site.
     if n < 20 {
-        let site = strict_free_site(store_nr);
+        let site = strict_free_site(checks, store_nr);
         let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
         // The interpreter's free carries no name: the variable is the one its operand read.
         let who = site.as_ref().map_or_else(
@@ -4058,13 +4049,17 @@ pub fn watch_store() -> Option<u16> {
     *WATCH.get_or_init(|| env_value("LOFT_WATCH_STORE").and_then(|s| s.trim().parse::<u16>().ok()))
 }
 
-thread_local! {
+/// `@PLN226` — the store-lifetime detectors' records of ONE run, kept in its `Stores`
+/// (`Stores::checks`) rather than in thread-locals: a `par` worker's `Stores` is its own, so
+/// are its records, as each thread's were.
+#[derive(Default)]
+pub struct StoreChecks {
     /// `LOFT_UAF_GEN` (c): generation per store slot — bumped on each free. A DbRef
     /// minted while a slot is at gen G is stale if the slot reaches gen >G (freed +
     /// reused) before the ref is read. The gen distinguishes the OLD occupant from a
     /// re-claimed NEW one — so it does NOT false-positive on free-then-reclaim (the
     /// flaw that sank the store_nr-only scan).
-    static SLOT_GEN: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    slot_gen: Vec<u32>,
     /// Shadow of the operand stack: keyed by eval-stack byte offset, holding the STORE a
     /// DbRef named at PUSH together with that slot's gen. At POP, a mismatch against the
     /// slot's current gen = reused-since-push.
@@ -4077,59 +4072,66 @@ thread_local! {
     /// UNRELATED value occupied the offset. Matching the store makes such a leftover stamp
     /// inert instead of a false positive, for every bypassing writer rather than the ones
     /// that had been found.
-    static STACK_SHADOW: std::cell::RefCell<std::collections::HashMap<u32, (u16, u32)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-thread_local! {
+    stack_shadow: std::collections::HashMap<u32, (u16, u32)>,
     /// @PLN118 arc B refinement — depth of record deep-copies (`copy_record`/`finish_record`)
     /// on the stack. A `LOFT_UAF_GEN` stale read while > 0 is a record COPY reading a stale
     /// sub-reference (the copy is incomplete; the correctly-placed source free is NOT the bug)
     /// — a distinct root from a plain deref of a genuinely prematurely-freed store.
-    static COPY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    copy_depth: u32,
+    /// `LOFT_UAF` companion (cluster-462 tool-gap #1): store slot -> the
+    /// execution `code_pos` of its most-recent free.  The frame-var scan in
+    /// `uaf_scan_freed` misses a stale DbRef that lives on the OPERAND STACK
+    /// (the source `OpCopyRecord` pops) — so this records every free's pc and
+    /// `do_copy_record` reports it when it reads a still-freed source, pinning
+    /// the premature-free op without a full operand-stack scan.
+    freed_at: std::collections::HashMap<u16, (u32, u32, u16)>,
+    /// @PLN118 arc B — the free site keyed by `(slot, post-free generation)`. For a slot
+    /// freed-and-reused many times, `freed_at` (last free only) names the LAST occupant's
+    /// free, not the free that made a specific stale ref stale. Keyed by generation, the
+    /// gen-detector can name the CAUSAL free (the one at the ref's stamped gen + 1).
+    freed_at_gen: std::collections::HashMap<(u16, u32), (u32, u32, u16)>,
+    /// Where each store was FREED under [`strict_stores`]: slot -> (pc, the variable name
+    /// `free_named` was given).  A side table rather than two more `Store` fields, so the
+    /// bookkeeping costs nothing when strict mode is off.
+    strict_free_site: std::collections::HashMap<u16, (u32, String)>,
 }
 
 /// Enter a record deep-copy (bump the depth). Gate at the call site on `uaf_gen_enabled`.
-pub fn uaf_copy_enter() {
-    COPY_DEPTH.with(|d| d.set(d.get() + 1));
+pub fn uaf_copy_enter(c: &mut StoreChecks) {
+    c.copy_depth += 1;
 }
 
 /// Leave a record deep-copy (drop the depth). Saturating so a mismatched pair can't underflow.
-pub fn uaf_copy_exit() {
-    COPY_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+pub fn uaf_copy_exit(c: &mut StoreChecks) {
+    c.copy_depth = c.copy_depth.saturating_sub(1);
 }
 
 /// True when a record deep-copy is currently executing (a stale read here is a copy-incomplete,
 /// not a premature-free).
 #[must_use]
-pub fn uaf_in_copy() -> bool {
-    COPY_DEPTH.with(|d| d.get() > 0)
+pub fn uaf_in_copy(c: &StoreChecks) -> bool {
+    c.copy_depth > 0
 }
 
 /// Bump store `slot`'s generation (called from `free_named` under `LOFT_UAF_GEN`).
-pub fn uaf_bump_gen(slot: u16) {
-    SLOT_GEN.with(|g| {
-        let mut v = g.borrow_mut();
-        let i = slot as usize;
-        if i >= v.len() {
-            v.resize(i + 1, 0);
-        }
-        v[i] = v[i].wrapping_add(1);
-    });
+pub fn uaf_bump_gen(c: &mut StoreChecks, slot: u16) {
+    let i = slot as usize;
+    if i >= c.slot_gen.len() {
+        c.slot_gen.resize(i + 1, 0);
+    }
+    c.slot_gen[i] = c.slot_gen[i].wrapping_add(1);
 }
 
 /// Store `slot`'s current generation (0 if never freed).
 #[must_use]
-pub fn uaf_slot_gen(slot: u16) -> u32 {
-    SLOT_GEN.with(|g| g.borrow().get(slot as usize).copied().unwrap_or(0))
+pub fn uaf_slot_gen(c: &StoreChecks, slot: u16) -> u32 {
+    c.slot_gen.get(slot as usize).copied().unwrap_or(0)
 }
 
 /// Stamp eval-stack offset `off` with the store a pushed DbRef names and that slot's
 /// generation.
-pub fn uaf_stamp_shadow(off: u32, store_nr: u16, generation: u32) {
-    STACK_SHADOW.with(|s| {
-        s.borrow_mut().insert(off, (store_nr, generation));
-    });
+pub fn uaf_stamp_shadow(c: &mut StoreChecks, off: u32, store_nr: u16, generation: u32) {
+    c.stack_shadow.insert(off, (store_nr, generation));
 }
 
 /// The gen stamped at `off` — but only when the stamp is ABOUT `store_nr`. A stamp naming
@@ -4137,29 +4139,24 @@ pub fn uaf_stamp_shadow(off: u32, store_nr: u16, generation: u32) {
 /// writer that bypasses `put_stack`; it says nothing about the ref being popped now, so it
 /// reads as absent rather than as evidence.
 #[must_use]
-pub fn uaf_shadow_gen(off: u32, store_nr: u16) -> Option<u32> {
-    STACK_SHADOW.with(|s| {
-        s.borrow()
-            .get(&off)
-            .and_then(|&(st, stamped)| (st == store_nr).then_some(stamped))
-    })
+pub fn uaf_shadow_gen(c: &StoreChecks, off: u32, store_nr: u16) -> Option<u32> {
+    c.stack_shadow
+        .get(&off)
+        .and_then(|&(st, stamped)| (st == store_nr).then_some(stamped))
 }
 
 /// Move a stamp from one eval-stack offset to another, for a writer that relocates a DbRef
 /// without going through `put_stack` (the `copy_result` return slide). Clears `to` when
 /// `from` holds no stamp, so the destination never keeps its previous occupant's.
-pub fn uaf_move_shadow(from: u32, to: u32) {
-    STACK_SHADOW.with(|s| {
-        let mut m = s.borrow_mut();
-        match m.remove(&from) {
-            Some(v) => {
-                m.insert(to, v);
-            }
-            None => {
-                m.remove(&to);
-            }
+pub fn uaf_move_shadow(c: &mut StoreChecks, from: u32, to: u32) {
+    match c.stack_shadow.remove(&from) {
+        Some(v) => {
+            c.stack_shadow.insert(to, v);
         }
-    });
+        None => {
+            c.stack_shadow.remove(&to);
+        }
+    }
 }
 
 /// `LOFT_UAF_GEN_INJECT=1` — the positive control for detector (c). Bumps a store's
@@ -4180,56 +4177,33 @@ pub fn uaf_gen_inject_enabled() -> bool {
 /// Consume the shadow stamp at `off` (called on a DbRef POP). The stack is LIFO, so a
 /// stamp is valid only for its matching pop; clearing it stops a stale stamp from
 /// surviving to an unrelated later read once a non-DbRef push reuses the offset.
-pub fn uaf_clear_shadow(off: u32) {
-    STACK_SHADOW.with(|s| {
-        s.borrow_mut().remove(&off);
-    });
-}
-
-thread_local! {
-    /// `LOFT_UAF` companion (cluster-462 tool-gap #1): store slot -> the
-    /// execution `code_pos` of its most-recent free.  The frame-var scan in
-    /// `uaf_scan_freed` misses a stale DbRef that lives on the OPERAND STACK
-    /// (the source `OpCopyRecord` pops) — so this records every free's pc and
-    /// `do_copy_record` reports it when it reads a still-freed source, pinning
-    /// the premature-free op without a full operand-stack scan.
-    static FREED_AT: std::cell::RefCell<std::collections::HashMap<u16, (u32, u32, u16)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-    /// @PLN118 arc B — the free site keyed by `(slot, post-free generation)`. For a slot
-    /// freed-and-reused many times, `FREED_AT` (last free only) names the LAST occupant's
-    /// free, not the free that made a specific stale ref stale. Keyed by generation, the
-    /// gen-detector can name the CAUSAL free (the one at the ref's stamped gen + 1).
-    static FREED_AT_GEN: std::cell::RefCell<std::collections::HashMap<(u16, u32), (u32, u32, u16)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+pub fn uaf_clear_shadow(c: &mut StoreChecks, off: u32) {
+    c.stack_shadow.remove(&off);
 }
 
 /// Record (under `LOFT_UAF`/`LOFT_UAF_GEN`) that store `slot` was freed while executing
 /// `pc` in function `d_nr`, by the op whose opcode is `op` (names the freeing op category:
 /// a scope-exit `OpFreeRef`, an `OpFreeRefIfDistinct`, or a `copy_record` free-bit). Also
 /// stamps it against the slot's now-current (post-free) generation for causal attribution.
-pub fn uaf_record_free(slot: u16, pc: u32, d_nr: u32, op: u16) {
-    FREED_AT.with(|m| {
-        m.borrow_mut().insert(slot, (pc, d_nr, op));
-    });
+pub fn uaf_record_free(c: &mut StoreChecks, slot: u16, pc: u32, d_nr: u32, op: u16) {
+    c.freed_at.insert(slot, (pc, d_nr, op));
     if uaf_gen_enabled() {
-        let slot_gen = uaf_slot_gen(slot);
-        FREED_AT_GEN.with(|m| {
-            m.borrow_mut().insert((slot, slot_gen), (pc, d_nr, op));
-        });
+        let slot_gen = uaf_slot_gen(c, slot);
+        c.freed_at_gen.insert((slot, slot_gen), (pc, d_nr, op));
     }
 }
 
 /// The `(code_pos, d_nr, op_code)` of `slot`'s most-recent recorded free, if any.
 #[must_use]
-pub fn uaf_freed_pc(slot: u16) -> Option<(u32, u32, u16)> {
-    FREED_AT.with(|m| m.borrow().get(&slot).copied())
+pub fn uaf_freed_pc(c: &StoreChecks, slot: u16) -> Option<(u32, u32, u16)> {
+    c.freed_at.get(&slot).copied()
 }
 
 /// The free that took `slot` to generation `gen` (the CAUSAL free for a DbRef stamped at
 /// `gen - 1`), if recorded. Falls back to `uaf_freed_pc` at the call site when absent.
 #[must_use]
-pub fn uaf_freed_pc_at_gen(slot: u16, want_gen: u32) -> Option<(u32, u32, u16)> {
-    FREED_AT_GEN.with(|m| m.borrow().get(&(slot, want_gen)).copied())
+pub fn uaf_freed_pc_at_gen(c: &StoreChecks, slot: u16, want_gen: u32) -> Option<(u32, u32, u16)> {
+    c.freed_at_gen.get(&(slot, want_gen)).copied()
 }
 
 /// `#[inline]` because a generated `--native` program links this across a crate

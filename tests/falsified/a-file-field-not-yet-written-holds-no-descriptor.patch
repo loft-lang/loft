@@ -1,5 +1,4 @@
 diff --git b/src/c/loft_io.h a/src/c/loft_io.h
-index 28ab6d16b..d3f2f3b25 100644
 --- b/src/c/loft_io.h
 +++ a/src/c/loft_io.h
 @@ -1,7 +1,7 @@
@@ -12,8 +11,8 @@ index 28ab6d16b..d3f2f3b25 100644
   * 5 NotExists).
   *
   * What a file needs beyond C99 — a path's kind and size, a directory listing, mkdir, rmdir,
-@@ -494,11 +494,8 @@ static char *loft_file_path(loft_ref f) {
-     return loft_resolve(loft_get_text(f, 24));
+@@ -500,11 +500,8 @@
+     return loft_resolve(cx, loft_get_text(cx, f, 24));
  }
  
 -/* A File record's handle (byte 28) is the OS descriptor it reads and writes through, kept PLUS
@@ -26,22 +25,22 @@ index 28ab6d16b..d3f2f3b25 100644
   * record's own position (`#next`, byte 16, which the record always holds) and closed when the
   * record goes.  No record shares it — a copy of a record opens its own (`loft_file_lease`) —
   * and nothing else holds it, so a `par` worker or a `parallel` arm opens and reads files as
-@@ -628,7 +625,7 @@ static void loft_fh_close(loft_fh fd) {
- static int32_t loft_file_fd(loft_ref f) {
+@@ -634,7 +631,7 @@
+ static int32_t loft_file_fd(loft_cx *cx, loft_ref f) {
      int32_t h;
-     memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
+     memcpy(&h, loft_at(cx, loft_store_of(cx, f), f.rec, f.pos + 28), 4);
 -    return h > 0 ? h - 1 : INT32_MIN;
 +    return h;
  }
  #else
  typedef FILE *loft_fh;
-@@ -675,8 +672,7 @@ static int loft_file_get(loft_ref f, int how, loft_fh *h, char **path) {
-     *h = loft_fh_open(*path, how);
+@@ -681,8 +678,7 @@
+     *h = loft_fh_open(cx, *path, how);
  #if defined(LOFT_FD)
      if (*h < 0) return 0;
 -    int32_t kept = *h + 1;
--    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &kept, 4);
-+    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), h, 4);
+-    memcpy(loft_at(cx, loft_store_of(cx, f), f.rec, f.pos + 28), &kept, 4);
++    memcpy(loft_at(cx, loft_store_of(cx, f), f.rec, f.pos + 28), h, 4);
  #else
      if (!*h) return 0;
  #endif

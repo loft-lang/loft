@@ -410,7 +410,7 @@ fn w1_1_html_export_produces_file() {
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
     let result = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--html")
         .arg(&out)
         .arg(&src)
@@ -1669,117 +1669,6 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
         );
     }
     let _ = fa::remove_dir_all(&dir);
-}
-
-/// @C102 — with no usable `rustc`, a RELEASE binary falls back to the interpreter and says
-/// nothing; the explanation prints when native was asked for (`--native`), and in a SOURCE
-/// CHECKOUT, where the toolchain is expected; `LOFT_REQUIRE_NATIVE=1` makes any fallback an
-/// error naming the reason.
-///
-/// Both shapes are measured: the test's own binary sits in a checkout, and a copy beside a
-/// copied `default/` in a temp directory is the release bundle's shape.  `PATH` is an empty
-/// directory, so `rustc` is not found, and the program cache is off so the run cannot hit a
-/// binary compiled earlier.  A checkout without rustc used to ATTEMPT a runtime rebuild —
-/// "native runtime out of date … rebuilding it with your rustc" and then "could not run
-/// cargo" — where nothing could be rebuilt.
-#[test]
-// @PLN203 rust-writer: a missing rustc is the Rust writer's fallback (@C102); the C's is c_driver's
-fn a_missing_rustc_falls_back_quietly_except_where_asked() {
-    let tmp = std::env::temp_dir().join(format!("loft_c102_{}", std::process::id()));
-    let _ = fa::remove_dir_all(&tmp);
-    let empty = tmp.join("empty");
-    let bundle = tmp.join("bundle");
-    fa::create_dir_all(&empty).expect("empty PATH dir");
-    fa::create_dir_all(bundle.join("default")).expect("bundle dir");
-    let bundled = bundle.join("loft");
-    fa::copy(loft_bin(), &bundled).expect("copy the binary");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for entry in fa::read_dir(root.join("default")).expect("default/") {
-        if fa::is_file(&entry) {
-            fa::copy(
-                &entry,
-                bundle.join("default").join(entry.os_name().expect("entry")),
-            )
-            .expect("copy default/");
-        }
-    }
-    let prog = tmp.join("p.loft");
-    fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
-    let run = |bin: &std::path::Path, native: bool, require: bool| {
-        let mut c = loft::platform::process::harness_command(bin);
-        c.env("LOFT_NATIVE_BACKEND", "rust");
-        if native {
-            c.arg("--native-rust");
-        }
-        c.arg(&prog)
-            .env("PATH", &empty)
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_TIMEOUT", "120")
-            .env_remove("LOFT_REQUIRE_NATIVE");
-        if require {
-            c.env("LOFT_REQUIRE_NATIVE", "1");
-        }
-        let out = c.output().expect("run loft");
-        (
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )
-    };
-    let checkout = loft_bin();
-    let ran = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
-        assert_eq!(*code, Some(0), "{cell}: exit\n{err}");
-        assert_eq!(
-            out, "hello 42\n",
-            "{cell}: the program ran interpreted\n{err}"
-        );
-        assert!(
-            !err.contains("Rebuilding"),
-            "{cell}: nothing to rebuild with\n{err}"
-        );
-    };
-    let refused = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
-        assert_eq!(*code, Some(1), "{cell}: exit\n{err}");
-        assert!(out.is_empty(), "{cell}: nothing ran\n{out}");
-        assert!(
-            err.contains("LOFT_REQUIRE_NATIVE is set") && err.contains("(rustc not found)"),
-            "{cell}: the refusal names the reason\n{err}"
-        );
-        assert!(
-            !err.contains("running interpreted"),
-            "{cell}: it is not running\n{err}"
-        );
-    };
-
-    let r = run(&bundled, false, false);
-    ran("bundle", &r);
-    assert!(r.2.is_empty(), "a release binary says nothing: {:?}", r.2);
-    let r = run(&bundled, true, false);
-    ran("bundle --native", &r);
-    assert!(
-        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
-        "{}",
-        r.2
-    );
-    refused("bundle REQUIRE", &run(&bundled, false, true));
-
-    let r = run(&checkout, false, false);
-    ran("checkout", &r);
-    assert_eq!(
-        r.2,
-        "loft: rustc not found — native runs need a Rust toolchain on PATH; running \
-         interpreted instead.\n",
-        "a checkout explains itself, once"
-    );
-    let r = run(&checkout, true, false);
-    ran("checkout --native", &r);
-    assert!(
-        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
-        "{}",
-        r.2
-    );
-    refused("checkout REQUIRE", &run(&checkout, false, true));
-    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// @C102 — the moments that belong to a developer name a missing `rustc`, while a program run

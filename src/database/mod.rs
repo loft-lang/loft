@@ -365,6 +365,40 @@ pub enum SchemaCheck {
 /// them would leave the guard silently matching nothing.
 pub const TYPEVAR_ROW_PREFIX: &str = "__typevar_";
 
+/// The reports a run makes once ([`RunDiagnostics::first_report`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RunReport {
+    /// `refuse_owned_edge`: an owned edge pointing outside its store (#796).
+    OwnedEdge,
+    /// `remove_claims`: a text field holding a pointer past its store's end.
+    StaleTextClaim,
+    /// `LOFT_WATCH_STORE`: an out-of-bounds text pointer arriving in the watched store.
+    WatchedOob,
+    /// `LOFT_UAF`: a record copy read from a freed source store, named once per store.
+    LeakNamed,
+    /// `LOFT_UAF`: a record copy read from a live but reused source store, once per store.
+    ReuseNamed,
+    /// `LOFT_UAF_GEN`: a stale reference popped, once per code position.
+    StaleGenerator,
+}
+
+/// `@PLN226` — what one run reports once, and its store timeline (`LOFT_STORES=timeline`): kept
+/// in the run's `Stores` rather than in thread-locals.  `RefCell`s, not locks: the reports are
+/// made from `&self` reads, and a `Stores` is used by one thread at a time (`@FR-C-Own`) — a `par`
+/// worker's `Stores` is its own, as each thread's sets were.
+#[derive(Default)]
+pub(crate) struct RunDiagnostics {
+    reported: std::cell::RefCell<std::collections::HashSet<(RunReport, u16, u32, u32)>>,
+    pub(crate) timeline: std::cell::RefCell<allocation::TimelineState>,
+}
+
+impl RunDiagnostics {
+    /// Whether `(what, a, b, c)` is reported for the first time this run (and mark it so).
+    pub(crate) fn first_report(&self, what: RunReport, a: u16, b: u32, c: u32) -> bool {
+        self.reported.borrow_mut().insert((what, a, b, c))
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct Stores {
     pub types: Vec<Type>,
@@ -521,6 +555,15 @@ pub struct Stores {
     pub bridge_text_dest: Option<crate::keys::DbRef>,
     /// `@PLN206 P4` — the table as a hosted C unit reads it (`host_abi::TableView`).
     pub hosted_view: crate::host_abi::TableView,
+    /// `@PLN226` — the store contexts hosted C units keep for this `Stores`
+    /// (`host_abi::HostedContexts`).
+    pub hosted_cx: crate::host_abi::HostedContexts,
+    /// `@PLN226` — the store-lifetime detectors' records of this run (`keys::StoreChecks`).
+    pub(crate) checks: crate::keys::StoreChecks,
+    /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
+    pub(crate) run: RunDiagnostics,
+    /// `@PLN226` — the render in progress (`format::RenderState`).
+    pub(crate) render: std::cell::RefCell<format::RenderState>,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -817,6 +860,10 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
+            run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1638,6 +1685,10 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
+            run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),

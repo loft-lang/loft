@@ -314,7 +314,8 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             }
             vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
             vtmp = el_vars::work_ref(vars, vt);
-            el_vars::set_skip_free(vars, vtmp, "parse_object_field");
+            // (No `skip_free`: `parse_object_field` marks a staged temp a view only where the
+            // staged value is a projection call; the whole local staged here is a copy.)
             staged += [el_ir::v_set(vtmp, args[1]!)];
             ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
           }
@@ -429,7 +430,13 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               TyVector { inner: wvi } => {
                 wmd = el::def_nr(e, "main_vector<{el_types::elem_name(e, wvi)}>");
                 if wmd >= 0 {
-                  el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                  // `snapshot_read_destination`'s copy, as Rust makes it before the build takes
+                  // another route: `_build_src_N` and then the store it is built in, the copy
+                  // borrowing that store (`vector_db`'s `depend(vec, db)`).
+                  wsrc = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: wvi, dep: [] });
+                  el_vars::set_defined(vars, wsrc);
+                  wdb = el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                  el_vars::set_type(vars, wsrc, ir::TyVector { inner: wvi, dep: [wdb] });
                 }
               },
               _ => {}
@@ -1755,7 +1762,7 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
         rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, TyEnum { n: red } => red, _ => 0 }).known_type;
         rw = el_vars::work_ref(vars, el_types::without_deps(ft));
         // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
-        vars.vars[rw].caller_hidden_buf = true;
+        el_vars::mark_caller_hidden_buf(vars, rw, "add_defaults");
         return [el_ir::cl(e, "OpCopyRecord", [ir::NdCall { def_nr: hd, args: [ir::NdVar { n: rw }] }, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: rkt }]), ir::NdInt { n: rkt }])];
       }
       if starts_with(el::def(e, hd).name, "n___dflt_") {
@@ -1769,7 +1776,7 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
         }
         hw = el_vars::work_ref(vars, el_types::without_deps(ft));
         // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
-        vars.vars[hw].caller_hidden_buf = true;
+        el_vars::mark_caller_hidden_buf(vars, hw, "add_defaults");
         return [
           el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]),
           el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: hvt }]), ir::NdCall { def_nr: hd, args: [ir::NdVar { n: hw }] }, ir::NdInt { n: hrow }])

@@ -25,7 +25,6 @@
 //! with no table armed — a binary built with the ledger, run without `LOFT_LEDGER` — computes
 //! the checked answers and records nothing.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 /// The operator kinds, as the instrumented call passes them.  Stable: they are not written to
@@ -86,7 +85,9 @@ struct Armed {
     counters: &'static Counters,
 }
 
-static ARMED: Mutex<Option<Armed>> = Mutex::new(None);
+/// The armed program's ledger, one atomic word (LOCKS.md): arming swaps a new one in, and
+/// [`flush`] swaps it out and owns what it took, so two programs of one process never share it.
+static ARMED: AtomicPtr<Armed> = AtomicPtr::new(std::ptr::null_mut());
 /// The armed program's counters for [`op`]: one load per operator, no lock.
 static COUNTERS: AtomicPtr<Counters> = AtomicPtr::new(std::ptr::null_mut());
 /// `--ship`: a shipped build is never instrumented, whatever the environment says.
@@ -128,14 +129,17 @@ pub fn arm(sites: &[Site]) {
         runs: sites.iter().map(|_| AtomicU64::new(0)).collect(),
         faults: sites.iter().map(|_| AtomicU64::new(0)).collect(),
     }));
-    if let Ok(mut slot) = ARMED.lock() {
-        *slot = Some(Armed {
-            path,
-            sites: sites.to_vec(),
-            counters,
-        });
-        COUNTERS.store(std::ptr::from_ref(counters).cast_mut(), Ordering::Release);
+    let armed = Box::into_raw(Box::new(Armed {
+        path,
+        sites: sites.to_vec(),
+        counters,
+    }));
+    let before = ARMED.swap(armed, Ordering::AcqRel);
+    if !before.is_null() {
+        // SAFETY: a pointer `ARMED` held came from `Box::into_raw` and was swapped out once.
+        drop(unsafe { Box::from_raw(before) });
     }
+    COUNTERS.store(std::ptr::from_ref(counters).cast_mut(), Ordering::Release);
     AT_EXIT.call_once(register_at_exit);
 }
 
@@ -209,14 +213,13 @@ fn record(site: i64, faulted: bool) {
 /// Merge the armed program's counts into its ledger file and disarm.  Called when the next
 /// program arms, and at process exit.
 pub fn flush() {
-    let armed = match ARMED.lock() {
-        Ok(mut slot) => slot.take(),
-        Err(_) => return,
-    };
+    let taken = ARMED.swap(std::ptr::null_mut(), Ordering::AcqRel);
     COUNTERS.store(std::ptr::null_mut(), Ordering::Release);
-    let Some(armed) = armed else {
+    if taken.is_null() {
         return;
-    };
+    }
+    // SAFETY: a pointer `ARMED` held came from `Box::into_raw` and was swapped out once.
+    let armed = unsafe { Box::from_raw(taken) };
     let rows: Vec<(Site, u64, u64)> = armed
         .sites
         .iter()

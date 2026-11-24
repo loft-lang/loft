@@ -214,12 +214,18 @@ Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the 
 overflow is undefined).  The runtime and the generator write these macros and never a raw
 builtin or attribute.
 
-The unit's floor is C11, for one feature: `_Thread_local`, which the threads that run `par`
-workers and `parallel` arms keep their runtime state in (`LOFT_TLS`).  The threads themselves
-are the host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and
-the runtime uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit
-compiled as C99, which has no thread-local storage, runs on one thread: `par` rows and
-`parallel` arms in order.
+No state is a thread-local (@PLN226).  What a thread of the program keeps of its own — its
+store table, frames, fault and test jumps, held texts, text pool and scratch — is its **store
+context**, `struct loft_cx` (`loft_cx.h`), which every runtime function and every emitted
+function takes first as `cx`, as the rustc writer passes its `Stores`.  The main thread's is
+`loft_main_cx`; a `par` worker's or `parallel` arm's is made by the thread that starts it
+(`loft_par_job_init`: its table a copy of the caller's, the caller's stores read-only in it),
+and `loft_cx_end` releases what it holds when the worker ends.  A hosted unit keeps one per
+interpreter `Stores` that calls it (`HostedTable::cx_of`), a component (`libloft_net`) one of its
+own per caller context (`loft_cx_make_v1`, handed to each symbol first).  The threads are the
+host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and the runtime
+uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit builds as C99 too
+and runs `par` on threads.
 
 The OS beyond ISO C — a monotonic clock, a path's kind and size, directories, truncate, fsync — is
 POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO_POSIX` builds
@@ -242,23 +248,33 @@ long test `main` can cost minutes.  `src/c/split.rs` therefore writes a function
 consecutive top-level statements, and the locals that live across parts share one frame
 struct.  A body the pass cannot read for certain stays whole: a `setjmp`, a preprocessor
 conditional, a block comment over lines, or a label it cannot place.  A split changes no
-answer.  The parts are for MSVC: by default the function is written both ways, the parts under
-`#if defined(_MSC_VER)` and the whole body under `#else`, because on gcc and clang a split costs
-a hot function its registers — every call builds the frame struct and makes two indirect calls
-(a recursive decoder ran 12× its Rust twin split and 2× whole).
+answer.  The function is written both ways, the parts under `#if LOFT_C_SPLIT_ABOVE > 0 &&
+<its sites> > LOFT_C_SPLIT_ABOVE` and the whole body under `#else`, so each C compiler takes
+the parts above its own size (`loft_cc.h`):
+- **MSVC: 300**, for `cl`'s optimiser time.
+- **gcc and clang (clang-cl too): 2000**, for their memory: they stay linear in time, but the
+  self-hosted elaborator's 165 000-site `assignment_inner` took `cc1 -O2` past 8.8 GB.  Below
+  that size a split only costs a hot function its registers — every call builds the frame
+  struct and makes two indirect calls (a recursive decoder ran 12× its Rust twin split and 2×
+  whole).
 
 - **Where it runs:** every semantics build — `--native-c`, `--native-debug`, `loft test`,
   `--emit-c`, the C sweep (`scripts/c_sweep.py`), and the non-`--ship` wasm and page builds.
-- **Where it never runs:** a shipped artefact keeps every function whole, so its C is
-  exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That covers a
-  `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
-  `LOFT_C_SPLIT`.
-- **Switches:** `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for every compiler
-  (`1` keeps the default, MSVC-only parts; `0` turns the pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
+- **Where it does not run by default:** a shipped artefact keeps every function whole, so its
+  C is exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That
+  covers a `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
+  `LOFT_C_SPLIT`.  `LOFT_C_SPLIT_SHIP=1` writes a shipped unit's parts too, under the same
+  per-compiler size: for a build that must fit a machine's memory, such as the gate's tools on
+  a GitHub runner.
+- **Switches:** `LOFT_C_SPLIT_ABOVE=<n>` sets the unit's size for every C compiler (`0` keeps
+  every function whole there); `-DLOFT_C_SPLIT_ABOVE=<n>` does the same when compiling an
+  `--emit-c` unit by hand.  `LOFT_C_SPLIT=<n>` sets the budget and writes the parts alone, for
+  every compiler and size (`1` keeps the default; `0` turns the pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
   `LOFT_TRACE_C_SPLIT=1` names each over-budget function, its parts and its frame size, or
   why it stayed whole.
 - **Guards:** `tests/c_split.rs` runs the split cells on both backends at budget 4, and
-  asserts that the default build splits and a `--ship` unit holds no part.  The rule is
+  asserts that the default build splits under the per-compiler size and that a `--ship` unit
+  holds a part only under `LOFT_C_SPLIT_SHIP=1`.  The rule is
   `(R-CSplit)` in [formal/rewrites.md](formal/rewrites.md); the plan and its measurements are
   [@PLN212](https://github.com/loft-lang/plans/issues/212).
 - **The runtime stays in the unit:** every unit carries the whole C runtime and compiles
@@ -529,7 +545,8 @@ by each backend with every reader — the interpreter, the C, `--native` — on 
 collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
 
 **Paged loads.**  The working-set loaders read an image a page at a time (`loft_paged.h`, the
-port of `paged_reader.rs`): a 64 KiB page is read from the file when a walk first touches it,
+port of `paged_reader.rs`): a 64 KiB page (`LOFT_PAGE_BYTES` names another size) is read
+from the file when a walk first touches it,
 a byte past the end reads as 0, and a size or a count is trusted only as far as the record that
 holds it (`@FR-S-Paged`), so a malformed image answers and never faults.  A hash entry is found
 by the port of `find_hash_entry`, a sorted range by its binary search; a trie or a spatial walk
@@ -543,6 +560,8 @@ interpreter does.  An `http(s)://` image is read the same way, a page per `Range
 (`HttpRangeProvider`'s port: sized by a `bytes=0-0` probe, its signature read before anything
 else, a host that ignores `Range` read through to the page) and gated by its fetched sidecar;
 the Rust provider's concurrent batches are not ported, so each page is one round trip.
+`LOFT_LOADER_STATS=1` prints each loader's `bytes_fetched` and `requests`, as the interpreter's
+loaders do.
 `tests/c_emit.rs` crosses every
 loader with every writer and reader, and
 `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
@@ -732,6 +751,14 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
+**Port, never reinvent (owner).**  The C carries loft's design, not a new one: a counter, a
+cache, a fallback or a gate the C needs is the one the interpreter (or the rustc writer's
+runtime) already has, ported.  A mechanism made up for the C is, in almost every case, a
+regression.  Where loft's own design is the flaw — a thread-local, a reference count — the
+cure is that design's fix on every backend, never a C variant of it: thread-locals and
+reference counts hide bugs and are almost never needed (@PLN226: per-thread state is a field
+of the `Stores` a worker is handed).
+
 **Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
 a keyed lookup that misses on a bound collection fetches that one key through the paged
 loader the collection's kind takes — a hash's and a trie's key, a spatial's point as the
@@ -915,7 +942,7 @@ not need it, with the reason).  Every row has its verdict; no **port** is open. 
 | store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | `LOFT_STRICT_STORES` (the free that killed a store), `LOFT_LEAK_SITES` (the site that made a kept one) | **drop** (decided): no C defect of P3–P7 needed it; the two named answer what a watch was read for | — |
 | leak sites (`LOFT_LEAK_SITES`) | O | `-DLOFT_LEAK_SITES` (the driver's build under the variable): each store remembers the function, file and line it was made at (`loft_note_site`, the frames kept), and the leak report groups the stores left by site and type, most first — a file and line where the interpreter names a pc | **ported** | `tests/c_emit.rs` `a_leak_site_c_build_names_where_a_kept_store_was_made` |
 | store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (decided): the allocation trace and the leak report, sites included, answer what these were read for | — |
-| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
+| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, …) are their own rows when a C defect needs them; the hash layout policy (`LOFT_NO_HASH_TAG`, `LOFT_NO_HASH_INLINE`, `LOFT_TRACE_HASH_LAYOUT`, `@FR-Col-Layouts`) is ported (`loft_h_policy`, `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_others_in_one_store`) | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
 | the live debugger (`loft debug`, `--rpc`) | O | the C debug tier's `#line` markers: the loft file and line of every C line in the binary's debug information, for gdb, lldb, a profiler and a backtrace (`emit_program_with_source_lines`, DEBUG.md § A C build in gdb or lldb) | **covered** (owner, decided): the full debugger is the interpreter's, for development, as live editing is; a bug only the C build shows is debugged on its binary by loft line | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table` |
 | live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip`) | E | — the C engine host answers `flip false` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4) | — |
 | the live build swap and background rebuild (`swap_world`, `swap_start`, `rebuild_*`, the channel's `rebuild` / `swap`) | E | carried on POSIX hosts (`loft_engine.h`), every incarnation a C build | **carried** (owner, asked for) — `tests/engine_host_kernel.rs` `s5_c_*`, the listener, connector and local roles | — |

@@ -227,10 +227,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       }
       kheld = el_vars::create_unique(vars, "_ncc", lhs);
       el_vars::set_skip_free(vars, kheld, "build_null_coalesce_default_inner");
-      el_vars::register_work_ref(vars, kheld);
-      // (found.md row 8: the holder VIEWS the place, an inline ref — its null init mints no
-      // store.)
-      el_vars::mark_inline(vars, kheld, "build_null_coalesce_default_inner");
+      // (No work ref: `build_null_coalesce` registers a record's or a borrowed vector's hoist
+      // for the preamble's null (#319), not a keyed one's.)
+      // (`build_null_coalesce_default_inner` marks a keyed hoist `skip_free` and only that: its
+      // null init mints no store because a skip-free `__ncc_N` is an overwritten view
+      // (`keyed_null_mints`), not because it is an inline ref.)
       // (On the first pass too the holder is bound — Rust builds the block on both — so a
       // consumer that asks whether the value runs a bind, a `for`'s source hold, sees it.)
       if e.first_pass {
@@ -2902,6 +2903,11 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 && !vmatch {
     rename_onto(e, vars, rb, first_arm_ref(vars, x));
   }
+  // (A struct enum keeps `__retbuf`: the exit's work ref is minted and substituted out, on
+  // both passes — `wrong_shape_for_buffer`.)
+  if vmatch && rb >= 0 && match_subject_is_local(vars, el_ir::unspan(x)) {
+    enum_exit_work_ref(e, vars, result);
+  }
   if vmatch && !e.first_pass && rb >= 0 {
     mvx = el_expressions::materialize_match_value(e, vars, el_ir::unspan(x), rb, result);
     if mvx != null {
@@ -3685,4 +3691,48 @@ pub fn copy_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, v: integer,
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   }
   copy
+}
+
+// `ref_return` at an exit answering a view for a STRUCT ENUM result: the enum keeps `__retbuf`
+// (`wrong_shape_for_buffer`: a work ref typed as a record cannot be the enum's buffer), so the
+// exit's work ref is minted and substituted out (`unregister_work_ref`) — on both passes.
+pub fn enum_exit_work_ref(e: el::El, vars: el_vars::Vars, result: ir::TypeT) {
+  if !el_convert::struct_enum(el_types::base(result)) {
+    return;
+  }
+  ew = el_vars::work_ref(vars, ir::TyReference { n: heap_def(el_types::base(result)), dep: [] });
+  el_vars::unregister_work_ref(vars, ew);
+}
+
+// Is the vector a `vector_match` walks a LOCAL of this function (its length read, `OpLengthVector
+// (v)`)?  A parameter's elements are the caller's: its view is renamed onto, no exit work ref.
+pub fn match_subject_is_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  sv = match_subject_var(n);
+  sv >= 0 && sv < len(vars.vars) && !vars.vars[sv].argument
+}
+
+fn match_subject_var(n: ir::Node) -> integer {
+  match n {
+    NdCall { args } => {
+      for a in args {
+        match el_ir::unspan(a) { NdVar { n: av } => { return av; }, _ => {} }
+      }
+      for a in args {
+        r = match_subject_var(a);
+        if r >= 0 {
+          return r;
+        }
+      }
+      -1
+    },
+    _ => {
+      for c in el_ir::children(n) {
+        r = match_subject_var(c);
+        if r >= 0 {
+          return r;
+        }
+      }
+      -1
+    }
+  }
 }

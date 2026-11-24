@@ -7,11 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, `status:next` on [loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225).  Design
-and inventory written; no phase started; R1's library half done in @PLN206.  Resume:
-[handoff-2026-11-23.md](handoff-2026-11-23.md).  Every count below was measured on
-`tuxedo-pr2606-next`, and each list in [inventory.md](inventory.md) carries the command that
-measures it again.
+Open, `status:active` on [loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225).
+R0's test-suite census is taken ([census.md](census.md)); R1 is done: libraries in @PLN206, the
+compiled stdlib as a C unit here.  Work continues on `tuxedo-pr2617-next`.  Each list in
+[inventory.md](inventory.md) carries the command that measures it again.
 
 ## Goal
 
@@ -66,7 +65,7 @@ is the work list every later phase shrinks; R7 may start only when it is empty.
 | Phase | What | Validated by | Effort |
 |---|---|---|---|
 | **R0** | Record `@C170`.  Run the whole test suite, the language suite, `revalidate-libs` and the corpus with `LOFT_NO_RUSTC=1` (nothing builds through rustc; a request for it is refused) on Linux and macOS, and file the result as the rust-free census: every test, cell, library and target that fails or refuses. | The census is a list that can be non-empty: it is the plan's measured work list. | S |
-| **R1** | The library route (`@C71`): **done in @PLN206** (closed) on `tuxedo-pr2606-next` — a used library runs as its hosted C unit, shipped per release, no rustc.  **Open: the compiled stdlib** (@PLN181, `src/compiled_stdlib_gen.rs`), still writer output built into the binary, through the C backend too (O1). | Parallel run on the library test corpus: every interpreted program answers the same with its libraries built by C and by rustc (value, length, leak), and the time ratio C / rustc is recorded. | L+ (in @PLN206) |
+| **R1** | The library route (`@C71`), **done**: a used library runs as its hosted C unit (@PLN206), and so do the standard library's compiled functions (`src/compiled_stdlib.rs`: built once per loft build and stdlib source into `stdlib-units/` in the user cache, adopted by every interpreted program; no C compiler → interpreted).  `src/compiled_stdlib_gen.rs`, `stdlib_codegen.rs`, `loft-stdlib-gen` and `make compiled-stdlib` are gone. | `tests/stdlib_unit.rs` (built, adopted, answers alike under `LOFT_HOSTED_VERIFY`); the 16 functions it carries are the 16 the generated file carried; a text loop runs 0.16 s compiled, 0.21 s with the rustc-built stdlib, 0.82 s interpreted. | done |
 | **R2** | Targets: `--html` / `--native-wasm` without the writer fallback; `--native-android` without its rust path; `--native-rust` and `LOFT_NATIVE_BACKEND=rust` refused with a message that names `--native`. | The html, wasm and android test binaries pass under `LOFT_NO_RUSTC=1`; the refusals are tests. | M |
 | **R3** | Libraries: a registry census of published releases that need rustc (a Rust native part, a `#rust` body in library source).  Each gets a C successor or is deprecated in the registry, as `crypto` 0.3.x was.  Then the hand-written Rust native part goes (@PLN206 P6's route 3, [p6-design.md](../206-one-store-model/p6-design.md) § Route 3): a `[library] native` cdylib cargo builds and the interpreter loads, `install::fetch_prebuilt` and a library version's `binaries` — a library that declares one is refused, naming a `[c] shim`. | `revalidate-libs` green under `LOFT_NO_RUSTC=1`; the census list empty. | S–M |
 | **R4** | Tests and guards: each of the 165 test files keeps its interpreter and C halves and loses its rust leg; tests that exist only for the writer go; the 125 receipts are classified (writer-only → retire with that half; also guarding C or the interpreter → re-derived against that code); the 11 suite cells lose `ARMED: FALSIFY_NATIVE=rust` and are re-falsified on C or the interpreter, or lose their native half. | `make rule-coverage`: no rule loses its last guard except the rewrites R5 removes; the R0 census has no test left. | L |

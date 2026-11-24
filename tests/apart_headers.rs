@@ -46,7 +46,7 @@ fn cells() -> PathBuf {
 fn kept(env: &[(&str, &str)], tag: &str) -> Vec<String> {
     let out = std::env::temp_dir().join(format!("loft_apart_headers_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells())

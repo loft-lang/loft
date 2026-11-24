@@ -543,7 +543,7 @@ fn the_server_natives_answer_the_same_on_the_interpreter() {
 
 #[test]
 fn the_server_natives_answer_the_same_on_the_rust_writer() {
-    run("--native-rust");
+    run("--native");
 }
 
 #[test]

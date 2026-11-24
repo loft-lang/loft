@@ -8,22 +8,9 @@
 //! cells answer the same with the exchange on and off and on either route, and no store is
 //! left behind — a released store the exchange kept instead of freeing reads as a leak here
 //! and nowhere else.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
 const CELLS: &str = "tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft";
-
-/// `(cell, OpRebindRecord sites)` in the emitted Rust.
-const SITES: &[(&str, usize)] = &[
-    ("n_r1", 1),
-    ("n_r2", 1),
-    ("n_r3", 1),
-    ("n_r4", 2),
-    ("n_r5", 1),
-    ("n_r6", 1),
-    ("n_r7", 1),
-    ("n_r8", 1),
-];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
     let mut cmd =
@@ -50,35 +37,6 @@ fn cells() -> String {
         .join(CELLS)
         .to_string_lossy()
         .into_owned()
-}
-
-#[test]
-fn every_cell_rebinds_through_the_exchange() {
-    let rs = std::env::temp_dir().join(format!("loft_swap_rebind_{}.rs", std::process::id()));
-    let (_, err, ok) = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            &rs.to_string_lossy(),
-            &cells(),
-        ],
-        &[("LOFT_NATIVE_OWN_CALL_BIND", "1")],
-    );
-    assert!(ok, "emit failed:\n{err}");
-    let src = fa::read_to_string(&rs).expect("emitted source");
-    let _ = fa::remove_file(&rs);
-    for (cell, want) in SITES {
-        let head = format!("fn {cell}(");
-        let body = src
-            .split("\nfn ")
-            .find(|f| format!("fn {f}").starts_with(&head))
-            .unwrap_or_else(|| panic!("{cell} not emitted"));
-        let got = body.matches("OpRebindRecord(").count();
-        assert_eq!(
-            got, *want,
-            "{cell}: {got} OpRebindRecord sites, expected {want}"
-        );
-    }
 }
 
 #[test]

@@ -44,7 +44,7 @@ const EXPECTED: &[(&str, usize)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -82,24 +82,6 @@ fn scalar_counts(rust: &str) -> HashMap<String, usize> {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-#[test]
-fn each_cell_hoists_exactly_the_scalars_predicted() {
-    let out = std::env::temp_dir().join("loft_mint_hoist_on.rs");
-    let rust = emit(&cells(), &out, &[]);
-    let got = scalar_counts(&rust);
-    for (name, scalars) in EXPECTED {
-        let s = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(
-            s, *scalars,
-            "{name}: hoisted scalars — the cell's prediction vs the emitted prelude"
-        );
-    }
-    let _ = fa::remove_file(&out);
 }
 
 #[test]

@@ -72,10 +72,6 @@ permissions:
 env:
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
-  # The threaded `--html` bundle these gates read is the rustc writer's (the nightly std with
-  # atomics, `make wasm-mt`); `--html` alone builds through the C since @PLN203 C9, so the
-  # workflow names the writer it tests.
-  LOFT_NATIVE_BACKEND: rust
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_NET_RETRY: "10"
@@ -168,6 +164,13 @@ jobs:
       # binaryen: `loft --html` needs wasm-opt to inject asyncify.
       - name: Install mold + binaryen
         run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
+
+      # `--html` builds through the C and clang for wasm32-wasi (@PLN203 C6), as html-thread-proof.sh
+      # and html-unavailable-builtin.sh do; without it those two refuse at the build.
+      - name: Install the C backend's wasm toolchain
+        run: >
+          timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
+          clang lld wasi-libc libclang-rt-dev-wasm32
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh

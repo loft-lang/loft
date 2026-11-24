@@ -26,9 +26,9 @@ impl Cx<'_> {
         self.fn_values.borrow_mut().insert(d);
         // A hosted unit's value names the function as the interpreter numbers it.
         if self.open {
-            format!("loft_fn_of(loft_fhost(INT64_C({d})))")
+            format!("loft_fn_of(cx, loft_fhost(cx, INT64_C({d})))")
         } else {
-            format!("loft_fn_of(INT64_C({d}))")
+            format!("loft_fn_of(cx, INT64_C({d}))")
         }
     }
 
@@ -101,33 +101,33 @@ impl Cx<'_> {
                     .collect();
                 let _ = writeln!(
                     out,
-                    "\n#ifdef LOFT_HOSTED\nstatic {} loft_up{id}({});\n#endif",
+                    "\n#ifdef LOFT_HOSTED\nstatic {} loft_up{id}(loft_cx *cx, {});\n#endif",
                     held(*ret),
                     proto.join(", ")
                 );
             }
             let _ = writeln!(
                 out,
-                "\nstatic {} loft_call{id}{}({}) {{",
+                "\nstatic {} loft_call{id}{}(loft_cx *cx, {}) {{",
                 held(*ret),
                 if buf { "b" } else { "" },
                 list.join(", ")
             );
             // A hosted unit's value carries the interpreter's number: the unit's own function is
             // found by it, any other is the program's, called in the interpreter.
-            out.push_str("#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(f.d);\n");
+            out.push_str("#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(cx, f.d);\n");
             if up {
                 let args: Vec<String> = std::iter::once("f".to_string())
                     .chain((0..params.len()).map(|i| format!("a{i}")))
                     .collect();
                 // A record answer the interpreter made is the caller's, as an arm's minted one.
                 let hold = *ret == CType::Ref && !buf;
-                let call = format!("loft_up{id}({})", args.join(", "));
+                let call = format!("loft_up{id}({})", super::cx_args(&args));
                 let body = if *ret == CType::Void {
                     format!("{call}; return;")
                 } else if hold {
                     format!(
-                        "uint64_t sn = loft_stores_allocated; loft_ref r = {call}; loft_fnref_mint(r, sn, f.clos); return r;"
+                        "uint64_t sn = cx->stores_allocated; loft_ref r = {call}; loft_fnref_mint(cx, r, sn, f.clos); return r;"
                     )
                 } else {
                     format!("return {call};")
@@ -156,7 +156,7 @@ impl Cx<'_> {
                     && let Some(c) = super::plain_native(super::runtime_name(self.data, d))
                 {
                     let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
-                    let call = format!("{c}({})", args.join(", "));
+                    let call = format!("{c}({})", super::cx_args(&args));
                     if *ret == CType::Void {
                         let _ = writeln!(out, "    case INT64_C({d}): {call}; return;");
                     } else {
@@ -176,7 +176,9 @@ impl Cx<'_> {
             // An absent value, or one naming no function of this signature: the result's null.
             match ret {
                 CType::Void => out.push_str("}\n"),
-                CType::Text => out.push_str("    return loft_text_own(loft_null_text());\n}\n"),
+                CType::Text => {
+                    out.push_str("    return loft_text_own(cx, loft_null_text(cx));\n}\n")
+                }
                 c => {
                     let _ = writeln!(
                         out,
@@ -211,8 +213,8 @@ impl Cx<'_> {
             let n = params.len();
             let _ = writeln!(
                 out,
-                "\nstatic {} loft_up{id}({}) {{\n    unsigned char la[{} * LOFT_LA_SIZE], cl[LOFT_LA_SIZE], r[LOFT_LA_SIZE];\n    \
-                 memset(la, 0, sizeof la);\n    memset(cl, 0, sizeof cl);\n    memset(r, 0, sizeof r);\n    loft_la_set_ref(cl, f.clos);",
+                "\nstatic {} loft_up{id}(loft_cx *cx, {}) {{\n    unsigned char la[{} * LOFT_LA_SIZE], cl[LOFT_LA_SIZE], r[LOFT_LA_SIZE];\n    \
+                 memset(la, 0, sizeof la);\n    memset(cl, 0, sizeof cl);\n    memset(r, 0, sizeof r);\n    loft_la_set_ref(cx, cl, f.clos);",
                 held(*ret),
                 list.join(", "),
                 n.max(1)
@@ -223,30 +225,30 @@ impl Cx<'_> {
                     out,
                     "    {}",
                     match c {
-                        CType::Int => format!("loft_la_set_bits({at}, a{i});"),
-                        CType::Bool => format!("loft_la_set_bits({at}, (int64_t) a{i});"),
+                        CType::Int => format!("loft_la_set_bits(cx, {at}, a{i});"),
+                        CType::Bool => format!("loft_la_set_bits(cx, {at}, (int64_t) a{i});"),
                         CType::Float => format!(
-                            "{{ int64_t b; memcpy(&b, &a{i}, 8); loft_la_set_bits({at}, b); }}"
+                            "{{ int64_t b; memcpy(&b, &a{i}, 8); loft_la_set_bits(cx, {at}, b); }}"
                         ),
-                        CType::Text => format!("loft_la_set_text({at}, a{i});"),
-                        _ => format!("loft_la_set_ref({at}, a{i});"),
+                        CType::Text => format!("loft_la_set_text(cx, {at}, a{i});"),
+                        _ => format!("loft_la_set_ref(cx, {at}, a{i});"),
                     }
                 );
             }
             let _ = writeln!(
                 out,
-                "    loft_host_call_ref(loft_host_stores, (uint32_t) f.d, cl, la, {n}, r);\n    loft_host_sync();"
+                "    loft_host_call_ref(cx->host_stores, (uint32_t) f.d, cl, la, {n}, r);\n    loft_host_sync(cx);"
             );
             let _ = writeln!(
                 out,
                 "    {}\n}}",
                 match ret {
                     CType::Void => "return;".to_string(),
-                    CType::Int => "return loft_la_bits(r, 0);".to_string(),
-                    CType::Bool => "return (uint8_t) loft_la_bits(r, 0);".to_string(),
-                    CType::Float => "return loft_f64(loft_la_bits(r, 0));".to_string(),
-                    CType::Text => "return loft_text_own(loft_la_text(r, 0));".to_string(),
-                    _ => "return loft_la_ref(r, 0);".to_string(),
+                    CType::Int => "return loft_la_bits(cx, r, 0);".to_string(),
+                    CType::Bool => "return (uint8_t) loft_la_bits(cx, r, 0);".to_string(),
+                    CType::Float => "return loft_f64(cx, loft_la_bits(cx, r, 0));".to_string(),
+                    CType::Text => "return loft_text_own(cx, loft_la_text(cx, r, 0));".to_string(),
+                    _ => "return loft_la_ref(cx, r, 0);".to_string(),
                 }
             );
         }
@@ -287,10 +289,10 @@ impl Cx<'_> {
         );
         let _ = writeln!(
             out,
-            "static loft_word loft_fhost(loft_word d) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_funits[i] == d) return loft_fhosts[i];\n    return d;\n}}\n\
-             static loft_word loft_funit(loft_word h) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_fhosts[i] == h) return loft_funits[i];\n    return -1;\n}}\n\
+            "static loft_word loft_fhost(loft_cx *cx, loft_word d) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_funits[i] == d) return loft_fhosts[i];\n    return d;\n}}\n\
+             static loft_word loft_funit(loft_cx *cx, loft_word h) {{\n    for (uint32_t i = 0; i < {n}u; i++) if (loft_fhosts[i] == h) return loft_funits[i];\n    return -1;\n}}\n\
              typedef uint32_t (*loft_fn_id_fn)(const void *ids, const uint8_t *key, size_t len);\n\
-             static void loft_map_fns(const unsigned char *loft_t, const void *loft_ids) {{\n    \
+             static void loft_map_fns(loft_cx *cx, const unsigned char *loft_t, const void *loft_ids) {{\n    \
              loft_fn_id_fn id;\n    memcpy(&id, loft_t + LOFT_HT_FN_ID, sizeof id);\n    \
              for (uint32_t i = 0; i < {n}u; i++) {{\n        uint32_t h = id(loft_ids, (const uint8_t *) loft_fkeys[i], strlen(loft_fkeys[i]));\n        \
              loft_fhosts[i] = h == 0xFFFFFFFFu ? loft_funits[i] : (int64_t) h;\n    }}\n}}"
@@ -303,8 +305,8 @@ impl Cx<'_> {
     /// there.  A value with no record, or one in a freed store, releases nothing.
     pub(crate) fn drop_code(&self, fns: &[u32]) -> String {
         let mut out = String::from(
-            "\nstatic void loft_drop_closure(loft_fn f) {\n    if (!loft_store_live(f.clos)) return;\n\
-             #ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(f.d);\n    if (loft_ud < 0) return; /* the interpreter's closure */\n    switch (loft_ud) {\n\
+            "\nstatic void loft_drop_closure(loft_cx *cx, loft_fn f) {\n    if (!loft_store_live(cx, f.clos)) return;\n\
+             #ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(cx, f.d);\n    if (loft_ud < 0) return; /* the interpreter's closure */\n    switch (loft_ud) {\n\
              #else\n    switch (f.d) {\n#endif\n",
         );
         for &d in self.fn_values.borrow().iter() {
@@ -312,7 +314,7 @@ impl Cx<'_> {
             if cascade != u32::MAX && fns.contains(&cascade) {
                 let _ = writeln!(
                     out,
-                    "    case INT64_C({d}): {}(f.clos); return;",
+                    "    case INT64_C({d}): {}(cx, f.clos); return;",
                     c_name(self.data, cascade)
                 );
             }
@@ -376,9 +378,7 @@ impl Cx<'_> {
         let mut visible = 0;
         let vec_buf = match def.returned().ret_promo_base() {
             Type::Vector(elm, _) => {
-                let tp = self
-                    .data
-                    .name_type(&format!("main_vector<{}>", elm.name(self.data)), 0);
+                let tp = self.data.name_type(&self.data.vector_wrapper_name(elm), 0);
                 (tp != u16::MAX).then_some(tp)
             }
             _ => None,
@@ -400,7 +400,7 @@ impl Cx<'_> {
                 args.push(format!("&{w}"));
                 buffers.push(w);
             } else if a.work_buffer {
-                args.push("loft_ref_null()".to_string());
+                args.push("loft_ref_null(cx)".to_string());
             } else if !matches!(a.typedef, Type::Optional(_))
                 && matches!(
                     a.typedef.base(),
@@ -422,7 +422,7 @@ impl Cx<'_> {
                     rb_used = true;
                     args.push("rb".to_string());
                 } else {
-                    args.push("loft_ref_null()".to_string());
+                    args.push("loft_ref_null(cx)".to_string());
                 }
             } else {
                 return Err(format!(
@@ -436,7 +436,7 @@ impl Cx<'_> {
         let call = format!(
             "{}({})",
             super::twin_name(self.data, callee, mask),
-            args.join(", ")
+            super::cx_args(&args)
         );
         let _ = write!(out, "    case INT64_C({d}): {{");
         for w in &buffers {
@@ -454,7 +454,7 @@ impl Cx<'_> {
         // copies an older one at once (`opaque_callref_stmt`), so nothing is held for it.
         let hold = heap_answer && !buf;
         if hold {
-            out.push_str(" uint64_t sn = loft_stores_allocated;");
+            out.push_str(" uint64_t sn = cx->stores_allocated;");
         }
         let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
         if let Some(tp) = vec_tp {
@@ -463,7 +463,7 @@ impl Cx<'_> {
             self.copy_type(tp)?;
             let _ = write!(
                 out,
-                " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {}, {tp});",
+                " loft_ref hb = loft_ref_null(cx); loft_database_wrapper(cx, loft_types, &hb, {}, {tp});",
                 self.stores.size(tp)
             );
         }
@@ -473,13 +473,13 @@ impl Cx<'_> {
             let _ = write!(out, " {} r = {call};", held(ret));
         }
         if vec_tp.is_some() {
-            out.push_str(" loft_fnref_buf(r, hb);");
+            out.push_str(" loft_fnref_buf(cx, r, hb);");
         }
         if hold {
-            out.push_str(" loft_fnref_mint(r, sn, f.clos);");
+            out.push_str(" loft_fnref_mint(cx, r, sn, f.clos);");
         }
         for w in &buffers {
-            let _ = write!(out, " loft_text_free(&{w});");
+            let _ = write!(out, " loft_text_free(cx, &{w});");
         }
         if ret == CType::Void {
             out.push_str(" return; }\n");

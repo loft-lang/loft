@@ -159,8 +159,8 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    ([formal/rewrites.md § Every rewrite is switchable and
    falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable)),
    `make rewrite-census`, and native's signatures unchanged — no change may make native or any
-   routine's ratio worse.  Regenerate what it derives: `make compiled-stdlib` after a change to
-   what stdlib functions compile to, `make surface-gen` after a new op or builtin.
+   routine's ratio worse.  Regenerate what it derives: `make surface-gen` after a new op or
+   builtin.
 7. **Measure the routines the optimisation was scheduled against, and only those**:
    `python3 bench/stats.py --routine <bench/routine,…>`, or `make perf-check ARGS="--routine
    <bench/routine> --record"` to compare them with this machine's committed rows and keep the
@@ -765,23 +765,14 @@ history is the density of the commits, which is why `--record` exists.
 > line and a library doing the work reads as a hot caller.
 >
 > The standard library is compiled the same way for an interpreted program (@PLN181): the
-> functions `compiled_stdlib::export_set` picks — the ones whose loft body loops — run their
-> compiled bodies, built into the loft binary, and the sampler sees each as one call.
+> functions `native_gate::export_set` picks — the ones whose loft body loops — run as a C unit
+> the binary builds once in the user cache, and the sampler sees each as one call.
 > `LOFT_NO_COMPILED_STDLIB=1` interprets them instead, which is how to attribute inside one and
 > the A/B for anything the compiled bodies are suspected of.  `LOFT_TIMING=1` prints how many
-> dispatched, and 0 means declined: the program's type table does not start with the standard
-> library's, or `default/*.loft` is not the source they were compiled from (an edited stdlib
-> runs its current loft bodies until `make compiled-stdlib`).
->
-> That decline is correct and SILENT — 5–23× slower on text routines, so a commit that edits
-> `default/` without regenerating reads as a large "regression" (+2213 % on `join`) of the next
-> change measured.  So staleness is asked at every point that can act on it, all through one
-> check (`scripts/compiled_stdlib_fresh.py`, the runtime's source hash re-derived): **the build**
-> prints a cargo warning naming `make compiled-stdlib`; **the gate pre-flight** refuses;
-> **`find_problems --changed`** runs `tests/compiled_stdlib.rs` for any `default/` edit; and
-> **`bench/stats.py`** asks the binary under test (`LOFT_TIMING=1`) and refuses an interpreter lane
-> whose compiled stdlib is declined, a binary built before the stdlib moved included
-> (`--allow-declined-stdlib` measures that state on purpose).
+> dispatched; 0 means the unit could not be built here (no C compiler — `LOFT_HOSTED_VERIFY=1`
+> says why).  That state is correct and 5–23× slower on text routines, so **`bench/stats.py`**
+> refuses an interpreter lane where none dispatched (`--allow-declined-stdlib` measures that
+> state on purpose).
 
 ### Validating a codegen change — the single-file Rust-emit harness
 

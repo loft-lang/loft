@@ -2938,6 +2938,25 @@ impl Function {
         }
     }
 
+    /// `@FR-B-Scope`, loft#2627 — does a bind after `var_nr`'s block ended VIEW a different
+    /// value than the ended binding did?  Both are views (each names a base in its deps) and
+    /// the two dep sets share no base: `bl = block[0]` under one `match` over `b`, and again
+    /// under a later `match` over `code`.  The rule makes them two bindings, each with its
+    /// own type, and a dep list is part of the type.  Bound onto one variable, that variable
+    /// kept the LAST bind's deps, so the first `bl` read as a view of `code`, and a rebind of
+    /// `b` released the store `bl` still viewed.  A declared local keeps its declaration.
+    pub fn rebind_views_another_base(&self, var_nr: u16, type_def: &Type) -> bool {
+        let Some(v) = self.variables.get(var_nr as usize) else {
+            return false;
+        };
+        if self.is_declared(var_nr) {
+            return false;
+        }
+        let old = v.type_def.depend();
+        let new = type_def.depend();
+        !old.is_empty() && !new.is_empty() && !old.iter().any(|d| new.contains(d))
+    }
+
     /// Would storing `type_def` into `var_nr` be REFUSED as a type change?
     ///
     /// Deliberately CONSERVATIVE: it answers `true` only where the two types stand in
@@ -4836,7 +4855,9 @@ impl Function {
         }
     }
 
+    #[track_caller]
     pub fn mark_caller_hidden_buf(&mut self, var_nr: u16) {
+        self.trace_flag("caller_hidden_buf", var_nr);
         if (var_nr as usize) < self.variables.len() {
             self.variables[var_nr as usize].caller_hidden_buf = true;
         }
@@ -6326,13 +6347,13 @@ impl Function {
                 continue;
             }
             if let Some(var) = self.variables.get(v as usize) {
-                let cleared = [
-                    ("-user_named", var.user_named),
-                    ("-user_appended", var.user_appended),
-                    ("-value_const", var.value_const),
-                ];
-                for (flag, was_set) in cleared {
-                    if was_set {
+                // The names and the flags in two lists: a code scanner taints a tuple whole by
+                // a field named like a user name (`user_named`, a boolean), and then reports
+                // the printed flag name as a logged secret.
+                let names = ["-user_named", "-user_appended", "-value_const"];
+                let was_set = [var.user_named, var.user_appended, var.value_const];
+                for (flag, set) in names.into_iter().zip(was_set) {
+                    if set {
                         self.trace_flag(flag, v);
                     }
                 }

@@ -1483,7 +1483,7 @@ fn write_param_shadows(
 fn snapshot_type_id(data: &crate::data::Data, tp: &Type) -> Option<u16> {
     let d_nr = match tp {
         Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) => *d_nr,
-        Type::Vector(elem, _) => data.def_nr(&format!("main_vector<{}>", elem.name(data))),
+        Type::Vector(elem, _) => data.def_nr(&data.vector_wrapper_name(elem)),
         Type::Rewritten(t) | Type::Optional(t) => return snapshot_type_id(data, t),
         _ => return None,
     };

@@ -8,7 +8,7 @@
 // JS reader (doc/loft-deliver.js, the twin of `read_via_descriptor`) reproduces the same value in
 // the browser target.
 //
-// Self-skips when the wasm toolchain is unavailable (node / wasm32 target / release binary) —
+// Self-skips when the wasm toolchain is unavailable (node / the wasm32 C toolchain / the binary) —
 // same policy as tests/html_wasm.rs.
 
 use loft::file_access as fa;
@@ -23,12 +23,10 @@ fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Can this machine build a page?  `--html` builds through the C backend and clang (@PLN225),
+/// so the question is the C driver's own: does a WASI program link.
 fn wasm32_installed() -> bool {
-    loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
-        .unwrap_or(false)
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 fn repo_root() -> PathBuf {
@@ -74,7 +72,7 @@ fn run_harness(
         return None;
     }
     if !wasm32_installed() {
-        eprintln!("SKIP: wasm32-unknown-unknown target not installed");
+        eprintln!("SKIP: no wasm32 C toolchain that links a WASI program");
         return None;
     }
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
@@ -93,7 +91,7 @@ fn run_harness(
 
     let status = loft::platform::process::harness_command(&loft_bin)
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",

@@ -1,7 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: a loft lazy driver and its contained fault differ on the C — its `--native` runs as `--native-rust` until then.
-//
 // @PLN129 arc B — the database source, from the C surface up.
 //
 // The first test here is step 0's probe, GRADUATED rather than deleted: it is
@@ -477,7 +475,7 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
 
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-graph.loft");
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
@@ -640,7 +638,7 @@ fn an_explicit_query_populates_the_collection_both_backends() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-query.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
@@ -717,7 +715,7 @@ fn a_key_range_is_one_query_both_backends() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-range.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
@@ -880,7 +878,7 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-owner.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
@@ -918,9 +916,9 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
             "{backend}: a lookup finds what the query populated: {stdout}"
         );
         assert!(
-            stdout.contains("ambiguous=0 why_empty=false"),
-            "{backend}: a wrapper with two keyed fields refuses rather than \
-             guessing which one a reference names: {stdout}"
+            stdout.contains("ambiguous=4 why_empty=true"),
+            "{backend}: a field of a wrapper with two keyed fields is queried as the \
+             collection its reference names: {stdout}"
         );
         assert!(
             stdout.contains("sound=true,true"),
@@ -1041,7 +1039,7 @@ fn a_lazy_fetch_can_be_a_loft_function() {
     // One driver, two mechanisms, one answer — asserted whole. A backend that
     // installed the pointer but never called it, or that contained a fault
     // differently, would differ HERE and nowhere else.
-    let n = run("--native-rust");
+    let n = run("--native");
     assert_eq!(
         s, n,
         "both backends must give the same answers about a loft-driven lazy fetch"
@@ -1169,7 +1167,7 @@ fn a_lazy_driver_serves_one_element_type_and_the_miss_finds_it() {
         "the dispatch must leave nothing behind: {s}"
     );
 
-    let n = run("133-lazy-driver-dispatch.loft", "--native-rust");
+    let n = run("133-lazy-driver-dispatch.loft", "--native");
     assert_eq!(
         s, n,
         "both backends must reach the same driver for the same collection"
@@ -1193,7 +1191,7 @@ fn a_lazy_driver_serves_one_element_type_and_the_miss_finds_it() {
     );
     assert_eq!(
         dup,
-        run("133-lazy-driver-refused.loft", "--native-rust"),
+        run("133-lazy-driver-refused.loft", "--native"),
         "both backends must word the duplicate-driver refusal identically"
     );
 
@@ -1205,7 +1203,7 @@ fn a_lazy_driver_serves_one_element_type_and_the_miss_finds_it() {
     );
     assert_eq!(
         bad,
-        run("133-lazy-driver-malformed.loft", "--native-rust"),
+        run("133-lazy-driver-malformed.loft", "--native"),
         "both backends must word the malformed-driver refusal identically"
     );
 }
@@ -1300,7 +1298,7 @@ fn a_contained_driver_fault_releases_what_it_held() {
     // One answer, two mechanisms — the interpreter stops its dispatch loop, and
     // native unwinds through Rust. Compared whole, because the way they differ
     // is exactly where an unpredicted divergence would hide.
-    let n = run("--native-rust");
+    let n = run("--native");
     assert_eq!(
         s, n,
         "both backends must release identically after a contained fault"

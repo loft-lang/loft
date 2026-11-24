@@ -122,7 +122,7 @@ fn main() {
         .join("prog.so");
     let _ = fa::remove_file(&out_so);
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-android")
         .arg(&out_so)
         .arg(&probe)

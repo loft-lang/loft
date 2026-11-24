@@ -60,7 +60,7 @@ mod rust_writer {
             );
             return;
         }
-        vector_arg_import_is_emitted("--native-rust", "rust");
+        vector_arg_import_is_emitted("--native", "rust");
     }
 }
 

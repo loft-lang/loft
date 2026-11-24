@@ -158,7 +158,7 @@ impl State {
         // The rewrite census credits what the bytecode generator admits to the `interp` phase.
         let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
         if bind_trace_on() {
-            BIND_FN_START.with(|s| s.set(self.code_pos));
+            self.bind_fn_start = self.code_pos;
         }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
         // @decline-owed: a loop variable written by more than its iterator's one `Set`, taken
@@ -238,7 +238,7 @@ impl State {
             stack.grow(stack.step(size(stack.function.tp(*v), &Context::Argument)));
         }
         let start = self.code_pos;
-        BIND_FN_START.with(|s| s.set(start));
+        self.bind_fn_start = start;
         self.arguments = stack.position;
         stack.grow(stack.step(4)); // keep space for the code return address
         if is_empty_stub {
@@ -2661,13 +2661,13 @@ impl State {
         let line = crate::bind_lowering::row_line(
             &value.to_owned_value(),
             self.line_numbers
-                .range(BIND_FN_START.with(std::cell::Cell::get)..=self.code_pos)
+                .range(self.bind_fn_start..=self.code_pos)
                 .next_back()
                 .map_or(0, |(_, l)| *l),
         );
-        BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
+        self.bind_notes.push(Vec::new());
         self.generate_set_inner(stack, v, value);
-        let mut notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        let mut notes = self.bind_notes.pop().unwrap_or_default();
         // `decided=<arm>` stays only where the emitted arm (the last note) is another one.
         if let Some(i) = notes.iter().position(|n| n.starts_with("decided="))
             && notes.last().map(String::as_str) == Some(&notes[i]["decided=".len()..])
@@ -2704,7 +2704,7 @@ impl State {
         let value = &value_owned;
         self.vars.insert(self.code_pos, v);
         if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
-            note_bind("walk-step");
+            self.note_bind("walk-step");
             return;
         }
         // `@FR-R-LoopSlot` — a counted loop's variable placed in its range index's own slot (`slot_alias`): the
@@ -2726,13 +2726,13 @@ impl State {
             // The step writes the shared slot: from here on the debugger may show `v`.
             self.record_store_span(from, v);
             stack.function.set_stack_allocated(v);
-            note_bind("loop-slot");
+            self.note_bind("loop-slot");
             return;
         }
         // Zero-sized variables (null-typed) have no stack storage.
         if size(stack.function.tp(v), &Context::Variable) == 0 {
             stack.function.set_stack_allocated(v);
-            note_bind("zero-size");
+            self.note_bind("zero-size");
             return;
         }
         // Plan-04 Phase 2h.3: codegen is the allocator.  For a
@@ -2757,7 +2757,7 @@ impl State {
             let rb =
                 crate::bind_lowering::re_bind(stack.data, stack.def_nr, &stack.function, v, value);
             if rb.arm == ReArm::KeyedNull {
-                note_bind("B0");
+                self.note_bind("B0");
                 self.gen_keyed_null(stack, v, false);
                 return;
             }
@@ -2787,8 +2787,14 @@ impl State {
                 // The facts the decision read and the arm it decided (`rb`), not a
                 // recomputation: the arm this writer emits is noted where it emits it, and a
                 // row whose two differ says so (`generate_set`).
-                note_bind(&rb.trace_facts(stack.data, stack.def_nr, &stack.function, v, value));
-                note_bind(&format!("decided={}", rb.arm.trace_name()));
+                self.note_bind(&rb.trace_facts(
+                    stack.data,
+                    stack.def_nr,
+                    &stack.function,
+                    v,
+                    value,
+                ));
+                self.note_bind(&format!("decided={}", rb.arm.trace_name()));
             }
             if rb.free == DisplacedFree::Stash {
                 let free_pos = stack.var_pos(v);
@@ -2868,7 +2874,7 @@ impl State {
             // released by identity at scope exit, so nothing is materialised here.
             if let ReArm::Join { d_nr, base } = rb.arm {
                 let tp_nr = stack.data.def(d_nr).known_type();
-                note_bind("R1");
+                self.note_bind("R1");
                 // A stashed rebind still names its old store, which the copy arm's allocation
                 // would refill in place — the store may be a view into another record.  Reset
                 // to the sentinel, the copy mints a store of its own, as the C writer's join
@@ -2948,7 +2954,7 @@ impl State {
                 // maintained against.
                 if let ReArm::OpaqueCallRef { rec } = rb.arm {
                     let tp_nr = stack.data.def(rec).known_type();
-                    note_bind("R2a");
+                    self.note_bind("R2a");
                     let ref_size = size_of::<crate::keys::DbRef>() as u16;
                     let slot_end = stack.function.stack(v).saturating_add(ref_size);
                     if stack.position < slot_end {
@@ -2968,6 +2974,7 @@ impl State {
                         self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3262,7 +3269,7 @@ impl State {
                         self.code_add(stack.var_pos(v));
                         self.code_add(tp_nr);
                     }
-                    note_bind("R2b");
+                    self.note_bind("R2b");
                     stack.add_op("OpCopyRefOrNull", self);
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_val as u16);
@@ -3306,6 +3313,7 @@ impl State {
                     // path, so instrumenting only the first-bind emitters left every
                     // reassignment copy off the manifest.
                     crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3351,12 +3359,13 @@ impl State {
                     // (`@FR-N-Store`: a dense slot can hold the null it was handed).
                     self.generate(&Value::Var(src), stack, false);
                     self.push_copy_witness(stack, src);
-                    note_bind("R2c");
+                    self.note_bind("R2c");
                     stack.add_op("OpBindOrCopy", self);
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
                     // @PLN130 — reassignment `v = src`, both same-struct References (#306).
                     crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3398,7 +3407,7 @@ impl State {
                 // read of `v`, the view stayed an alias of the record the next rebind released.
                 // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                 if let ReArm::ElementCopy { d_nr } = rb.arm {
-                    note_bind("R2d");
+                    self.note_bind("R2d");
                     // The value reads `v` (`x = x.next ?? y`): computed before `v`'s fresh store
                     // replaces the old one in the slot.
                     self.gen_set_first_ref_elem_copy(
@@ -3414,7 +3423,7 @@ impl State {
                     return;
                 }
             }
-            note_bind("R3");
+            self.note_bind("R3");
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
@@ -3594,10 +3603,10 @@ impl State {
         if bind_trace_on() {
             let facts = arm.trace_facts(stack.data, stack.def_nr, &stack.function, v, value);
             if !facts.is_empty() {
-                note_bind(&facts);
+                self.note_bind(&facts);
             }
         }
-        note_bind(arm.trace_name());
+        self.note_bind(arm.trace_name());
         match arm {
             FirstArm::Text => self.gen_set_first_text(stack, v, value),
             FirstArm::RefNull => self.gen_set_first_ref_null(stack, v),
@@ -3822,6 +3831,7 @@ impl State {
         self.generate(value, stack, false);
         // @PLN130 — past the adopt-the-fresh-store return above: this arm deep-copies.
         crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -3933,7 +3943,7 @@ impl State {
             && !stack.function.is_argument(src)
             && !stack.function.is_captured(src)
         {
-            note_bind("move");
+            self.note_bind("move");
             let src_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);
             self.code_add(src_pos);
@@ -3950,7 +3960,7 @@ impl State {
             self.code_add(var_pos);
             return;
         }
-        note_bind("copy");
+        self.note_bind("copy");
         let tp_nr = stack.data.def(d_nr).known_type();
         let ref_size = size_of::<crate::keys::DbRef>() as u16;
         // Bump TOS so v's slot is fully below stack.position, then emit
@@ -3992,6 +4002,7 @@ impl State {
         // @PLN130 — recorded HERE, past the last-use-move return above, so the manifest
         // claims a copy only where one is actually written.
         crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4054,6 +4065,7 @@ impl State {
         self.code_add(stack.var_pos(v));
         self.code_add(tp_nr);
         crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4096,6 +4108,7 @@ impl State {
         self.generate(&copy_val, stack, false);
         // @PLN130 — tuple destructuring deep-copies unconditionally.
         crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4350,6 +4363,7 @@ impl State {
         // corpus never produces (its own doc records zero fires), so instrumenting that one
         // alone left every call-return copy off the manifest.
         crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -6197,7 +6211,7 @@ impl State {
         if crate::bind_lowering::lazy_buffer_mints_at(&stack.function, var, value)
             && let Type::Vector(elm_tp, _) = stack.function.tp(var).base().clone()
         {
-            note_bind("mint=1");
+            self.note_bind("mint=1");
             self.gen_owned_vector_store(stack, var, &elm_tp);
             return;
         }
@@ -7522,29 +7536,19 @@ fn is_return_temp_owning_its_arms(stack: &Stack, v: u16) -> bool {
 
 // ── `LOFT_TRACE_BIND` — the strict comparison's binds layer (1b-compare.md) ──
 
-std::thread_local! {
-    /// The notes of each bind being lowered: a frame per `generate_set`, since a value's own
-    /// lowering can contain binds of its own.
-    static BIND_NOTES: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// Where the function being generated starts, so a bind row's line is a line of that
-    /// function: a bind before its first line marker (a hoisted null init) names line 0, as
-    /// the other writers' rows do.
-    static BIND_FN_START: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
 /// Is `LOFT_TRACE_BIND` set?
 fn bind_trace_on() -> bool {
     crate::env_once!(std::env::var_os("LOFT_TRACE_BIND").is_some_and(|v| !v.is_empty()))
 }
 
-/// One note on the bind being lowered: the arm it takes, or the facts it decided on.
-fn note_bind(note: &str) {
-    if bind_trace_on() {
-        BIND_NOTES.with(|n| {
-            if let Some(top) = n.borrow_mut().last_mut() {
-                top.push(note.to_string());
-            }
-        });
+impl State {
+    /// One note on the bind being lowered: the arm it takes, or the facts it decided on.
+    fn note_bind(&mut self, note: &str) {
+        if bind_trace_on()
+            && let Some(top) = self.bind_notes.last_mut()
+        {
+            top.push(note.to_string());
+        }
     }
 }
 

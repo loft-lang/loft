@@ -1617,14 +1617,12 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
             // datagram, deterministically — loopback has no real loss, and
             // the sync class's claim is graceful degradation under it.
             // Read once; 0 = off.
-            thread_local! {
-                static DROP_NTH: u64 = std::env::var("LOFT_UDP_DROP_NTH")
+            static RECV_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let drop_nth: u64 = *crate::env_once!(@value u64,
+                std::env::var("LOFT_UDP_DROP_NTH")
                     .ok()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
-                static RECV_COUNT: RefCell<u64> = const { RefCell::new(0) };
-            }
-            let drop_nth = DROP_NTH.with(|d| *d);
+                    .unwrap_or(0));
             let mut buf = [0u8; 2048];
             loop {
                 let len = match udp.recv(&mut buf) {
@@ -1642,11 +1640,7 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
                     && let Ok(seq) = seq_s.parse::<i64>()
                 {
                     if drop_nth > 0 {
-                        let nth = RECV_COUNT.with(|r| {
-                            let mut r = r.borrow_mut();
-                            *r += 1;
-                            *r
-                        });
+                        let nth = RECV_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         if nth.is_multiple_of(drop_nth) {
                             continue; // injected loss — the datagram never existed
                         }
@@ -2340,7 +2334,13 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     return 0;
                 };
                 use crate::platform::process::{Program, Spawn, Tree};
-                let spawned = Spawn::new(Program::os(&artifact))
+                let mut successor = Spawn::new(Program::os(&artifact));
+                // An interpreted host names its program to the rebuild in-process; the new
+                // build learns it from its environment.
+                for (name, value) in crate::live_rebuild::live_env_for_successor() {
+                    successor.push_env(name, value);
+                }
+                let spawned = successor
                     .env("LOFT_RESUME", &snap)
                     .env("LOFT_SWAP_READY", &ready)
                     // Dispatch reset: the new build has the edits COMPILED —

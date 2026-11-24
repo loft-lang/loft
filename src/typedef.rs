@@ -718,7 +718,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         for a_nr in 0..data.attributes(d_nr) {
             if let Type::Vector(content, _) = data.attr_type(d_nr, a_nr) {
                 let content_tp = *content;
-                let wrapper_name = format!("main_vector<{}>", content_tp.name(data));
+                let wrapper_name = data.vector_wrapper_name(&content_tp);
                 if data.def_nr(&wrapper_name) == u32::MAX {
                     pending.push(content_tp);
                 }

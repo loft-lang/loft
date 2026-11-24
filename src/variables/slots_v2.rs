@@ -208,6 +208,56 @@ pub fn assign_slots_v2(
     };
     // Offsets are counted in `u32`: a frame past 64 KiB is reported in `frame_end` and refused
     // by the caller rather than wrapped onto another local's bytes.
+    //
+    // loft#2620 — the placement below is the greedy scan this allocator always made: at a
+    // candidate offset, the FIRST blocker in scan order (the pinned slots, then the locals placed
+    // so far, in placement order) sends the search past its end.  Only a placed slot whose bytes
+    // overlap the candidate's can block, so the placed slots are kept indexed by offset and only
+    // those are looked at; the earliest of the blocking ones in scan order is the one the full
+    // scan met first.  The loop-straddle test reads each interval's loop membership as bit
+    // masks.  The layout is the one the full scan gave.
+    let words = loop_ranges.len().div_ceil(64);
+    // One flat table: entry `k` (scan order, below) holds `words` inside-bits then `words`
+    // outside-bits at `k * 2 * words` — one allocation, not two per slot.
+    // A function of few slots keeps the plain scan and builds neither table: the index is
+    // there for the large ones, and costs two allocations per function.
+    let small = pinned.len() + ivs.len() <= 32;
+    let entries = if small { 0 } else { pinned.len() + ivs.len() };
+    let mut masks: Vec<u64> = vec![0u64; entries * 2 * words];
+    for (k, i) in pinned.iter().chain(ivs.iter()).enumerate().take(entries) {
+        let (ls, le) = (i.ls, i.le);
+        let at = k * 2 * words;
+        for (l, &(s, e)) in loop_ranges.iter().enumerate() {
+            if ls >= s && le < e {
+                masks[at + l / 64] |= 1 << (l % 64);
+            }
+            if le < s || ls >= e {
+                masks[at + words + l / 64] |= 1 << (l % 64);
+            }
+        }
+    }
+    let straddles = |a: usize, b: usize| {
+        let (a, b) = (a * 2 * words, b * 2 * words);
+        (0..words).any(|w| {
+            let n = loop_ranges.len() - w * 64;
+            let all = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+            !((masks[a + w] & masks[b + w]) | (masks[a + words + w] & masks[b + words + w])) & all
+                != 0
+        })
+    };
+    // Scan order: pinned slot `k` is key `k`, placed local `j` is key `pinned.len() + j`.
+    let max_size = pinned
+        .iter()
+        .chain(ivs.iter())
+        .map(|i| u32::from(i.size))
+        .max()
+        .unwrap_or(0);
+    // Every placed slot as `(offset, key)`, kept sorted: one vector, not one per offset.
+    let mut by_slot: Vec<(u32, usize)> = Vec::with_capacity(entries);
+    for (k, p) in pinned.iter().enumerate().take(entries) {
+        by_slot.push((u32::from(p.slot), k));
+    }
+    by_slot.sort_unstable();
     let mut frame_end = u32::from(local_start);
     for idx in 0..ivs.len() {
         let (sz, al, ls, le, kind) = {
@@ -216,44 +266,72 @@ pub fn assign_slots_v2(
         };
         let al32 = u32::from(al);
         let mut pos = u32::from(local_start).next_multiple_of(al32);
-        'search: loop {
+        loop {
             let end = pos + u32::from(sz);
             if end > u32::from(u16::MAX) {
                 break;
             }
-            for p in pinned.iter().chain(ivs[..idx].iter()) {
-                let p_end = u32::from(p.slot) + u32::from(p.size);
-                let overlap_range = pos < p_end && u32::from(p.slot) < end;
-                if !overlap_range {
-                    continue;
-                }
-                // Reuse is only valid as an EXACT slot match (same start+size);
-                // any PARTIAL overlap is always a conflict (it would alias only
-                // part of a live value).
-                let exact = pos == u32::from(p.slot) && sz == p.size;
-                let life_overlap = ls <= p.le && p.ls <= le;
-                let incompatible = p.kind != kind || p.size != sz;
-                // I6: forbid sharing that straddles any loop scope.
-                let straddle = loop_ranges.iter().any(|&(s, e)| {
-                    let iv_in = ls >= s && le < e;
-                    let iv_out = le < s || ls >= e;
-                    let p_in = p.ls >= s && p.le < e;
-                    let p_out = p.le < s || p.ls >= e;
-                    !((iv_in && p_in) || (iv_out && p_out))
-                });
-                if !exact || life_overlap || incompatible || straddle {
-                    // Jump past the blocker, re-align, retry.
-                    pos = p_end.next_multiple_of(al32);
-                    continue 'search;
+            // A slot starting at or below `pos - max_size` ends at or before `pos`.
+            let lo = (pos + 1).saturating_sub(max_size);
+            let mut first: Option<(usize, u32)> = None;
+            // A small function scans every placed slot in scan order, with no index built.
+            let scan = if small { 0..pinned.len() + idx } else { 0..0 };
+            let from = by_slot.partition_point(|&(s, _)| s < lo);
+            let indexed = by_slot[from..]
+                .iter()
+                .take_while(|&&(s, _)| s < end)
+                .map(|&(_, k)| k);
+            for key in scan.chain(indexed) {
+                {
+                    let p = if key < pinned.len() {
+                        &pinned[key]
+                    } else {
+                        &ivs[key - pinned.len()]
+                    };
+                    let p_end = u32::from(p.slot) + u32::from(p.size);
+                    let overlap_range = pos < p_end && u32::from(p.slot) < end;
+                    if !overlap_range || first.is_some_and(|(k, _)| k < key) {
+                        continue;
+                    }
+                    // Reuse is only valid as an EXACT slot match (same start+size);
+                    // any PARTIAL overlap is always a conflict (it would alias only
+                    // part of a live value).
+                    let exact = pos == u32::from(p.slot) && sz == p.size;
+                    let life_overlap = ls <= p.le && p.ls <= le;
+                    let incompatible = p.kind != kind || p.size != sz;
+                    // I6: forbid sharing that straddles any loop scope.
+                    let straddle = if small {
+                        loop_ranges.iter().any(|&(s, e)| {
+                            let iv_in = ls >= s && le < e;
+                            let iv_out = le < s || ls >= e;
+                            let p_in = p.ls >= s && p.le < e;
+                            let p_out = p.le < s || p.ls >= e;
+                            !((iv_in && p_in) || (iv_out && p_out))
+                        })
+                    } else {
+                        straddles(pinned.len() + idx, key)
+                    };
+                    if !exact || life_overlap || incompatible || straddle {
+                        first = Some((key, p_end));
+                    }
                 }
             }
-            break;
+            match first {
+                // Jump past the blocker, re-align, retry.
+                Some((_, p_end)) => pos = p_end.next_multiple_of(al32),
+                None => break,
+            }
         }
         frame_end = frame_end.max(pos + u32::from(sz));
         if frame_end > u32::from(u16::MAX) {
             break;
         }
         ivs[idx].slot = pos as u16;
+        if !small {
+            let key = (pos, pinned.len() + idx);
+            let at = by_slot.partition_point(|e| *e < key);
+            by_slot.insert(at, key);
+        }
     }
     let hwm = u16::try_from(frame_end).unwrap_or(u16::MAX);
     let mut slots: Vec<SlotAssignment> = ivs

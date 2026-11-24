@@ -2621,7 +2621,10 @@ impl ReplSession {
             |b| Ok(std::path::PathBuf::from(b)),
         )?;
         use crate::platform::process::{Program, Spawn};
-        let mut spawn = Spawn::new(Program::os(bin)).arg(file);
+        // `@C170` — the game runs on the interpreter, which carries the live tier the editor
+        // drives (a save hot-swaps the edited function, a breakpoint stops it); its libraries
+        // still run as their compiled C units.
+        let mut spawn = Spawn::new(Program::os(bin)).arg("--interpret").arg(file);
         for d in &self.parser.lib_dirs {
             spawn = spawn.arg("--lib").arg(d);
         }

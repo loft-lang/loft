@@ -20,6 +20,7 @@
 #include "loft_os.h"
 #include "loft_width.h"
 #include "loft_cc.h"
+#include "loft_cx.h"
 #include "loft_text.h"
 #include "loft_store.h"
 #include "loft_rt.h"

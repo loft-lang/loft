@@ -7,6 +7,9 @@
  * a flag) — and calls one routine the C runtime already defines, so a format the loft
  * interpreter renders is the C runtime's rendering.  Each answers the rendering's length in
  * bytes; when that exceeds `cap`, nothing is written and the caller asks again with room. */
+/* The store context (@PLN226): the shim's helpers take it first, as every runtime function does;
+ * each exported function — a fixed `#c` ABI the interpreter calls — starts from the main
+ * thread's, `loft_main_cx`. */
 /* The allocator trace of the interpreted program's stores (@PLN91 1b-compare.md, the alloc
  * layer): this copy of the runtime writes the event lines `LOFT_ALLOC_TRACE` writes, to the file
  * `LOFT_CRT_ALLOC_TRACE` names, so the interpreter's own stores never mix into them. */
@@ -49,7 +52,7 @@
  * loaded table and from a list the runner hands over (`loft_crt_main_vector`). */
 static uint8_t *loft_crt_main_vectors = 0;
 static uint32_t loft_crt_nmain_vectors = 0;
-static int loft_is_main_vector(uint16_t tp) {
+static int loft_is_main_vector(loft_cx *cx, uint16_t tp) {
     return tp < loft_crt_nmain_vectors && loft_crt_main_vectors[tp];
 }
 /* The JsonValue tree's layout (the emitter's `json_layout`): positions in the stdlib's own
@@ -72,12 +75,12 @@ static uint32_t loft_crt_jl[11];
 #include "../../../src/c/loft_log.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
-static loft_str loft_crt_str(const char *val, int64_t bytes) {
-    return bytes < 0 ? loft_null_text() : loft_lit(val, (size_t) bytes);
+static loft_str loft_crt_str(loft_cx *cx, const char *val, int64_t bytes) {
+    return bytes < 0 ? loft_null_text(cx) : loft_lit(cx, val, (size_t) bytes);
 }
 
-static int64_t loft_crt_out(loft_text *t, char *out, int64_t cap) {
-    loft_str v = loft_view(t);
+static int64_t loft_crt_out(loft_cx *cx, loft_text *t, char *out, int64_t cap) {
+    loft_str v = loft_view(cx, t);
     int64_t n = (int64_t) v.len;
     if (n <= cap && n > 0) {
         memcpy(out, v.p, (size_t) n);
@@ -88,27 +91,30 @@ static int64_t loft_crt_out(loft_text *t, char *out, int64_t cap) {
 
 int64_t loft_crt_format_int(char *out, int64_t cap, int64_t val, int64_t is_null, int64_t radix,
                             int64_t width, int64_t token, int64_t plus, int64_t note, int64_t dir) {
+    loft_cx *cx = &loft_main_cx;
     loft_text t = {0};
-    loft_format_long(&t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
+    loft_format_long(cx, &t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
                      (int) plus, (int) note, (int) dir);
-    return loft_crt_out(&t, out, cap);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 int64_t loft_crt_format_float(char *out, int64_t cap, const double *val, int64_t n_val,
                               int64_t is_null, int64_t width, int64_t prec, int64_t token,
                               int64_t plus, int64_t dir, int64_t single) {
+    loft_cx *cx = &loft_main_cx;
     loft_text t = {0};
     double v = (is_null || n_val < 1) ? NAN : val[0];
-    loft_format_float(&t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
-    return loft_crt_out(&t, out, cap);
+    loft_format_float(cx, &t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 int64_t loft_crt_format_text(char *out, int64_t cap, const char *val, int64_t bytes,
                              int64_t width, int64_t dir, int64_t token) {
+    loft_cx *cx = &loft_main_cx;
     loft_text t = {0};
-    loft_str v = loft_crt_str(val, bytes);
-    loft_format_text(&t, v, width, (int) dir, (uint8_t) token);
-    return loft_crt_out(&t, out, cap);
+    loft_str v = loft_crt_str(cx, val, bytes);
+    loft_format_text(cx, &t, v, width, (int) dir, (uint8_t) token);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 /* ── The store (@PLN91 S3): the interpreted program's records live in this shim's own copy of
@@ -116,7 +122,7 @@ int64_t loft_crt_format_text(char *out, int64_t cap, const char *val, int64_t by
  * a routine that answers one writes them into the caller's three-integer vector.  Each
  * function marshals and calls one runtime routine; none derives a layout. */
 
-static loft_ref loft_crt_ref(int64_t store, int64_t rec, int64_t pos) {
+static loft_ref loft_crt_ref(loft_cx *cx, int64_t store, int64_t rec, int64_t pos) {
     loft_ref r;
     r.store_nr = (uint16_t) store;
     r.rec = (uint32_t) rec;
@@ -124,7 +130,7 @@ static loft_ref loft_crt_ref(int64_t store, int64_t rec, int64_t pos) {
     return r;
 }
 
-static void loft_crt_put_ref(int64_t *out, int64_t n, loft_ref r) {
+static void loft_crt_put_ref(loft_cx *cx, int64_t *out, int64_t n, loft_ref r) {
     if (n < 3) return;
     out[0] = r.store_nr;
     out[1] = r.rec;
@@ -132,17 +138,18 @@ static void loft_crt_put_ref(int64_t *out, int64_t n, loft_ref r) {
 }
 
 /* The variable a routine writes: its three parts in `io`, read before and written after. */
-static loft_ref loft_crt_get_ref(const int64_t *io, int64_t n) {
-    return n < 3 ? loft_ref_null() : loft_crt_ref(io[0], io[1], io[2]);
+static loft_ref loft_crt_get_ref(loft_cx *cx, const int64_t *io, int64_t n) {
+    return n < 3 ? loft_ref_null(cx) : loft_crt_ref(cx, io[0], io[1], io[2]);
 }
 
 /* OpDatabase of a record type, on the variable in `io`: a store it already names is cleared and
  * made again in place, any other variable gets a fresh store; the root is a zeroed record of
  * `bytes`. */
 int64_t loft_crt_database(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
-    loft_ref r = loft_crt_get_ref(io, n);
-    loft_database_typed(&r, (uint32_t) bytes, (uint16_t) tp);
-    loft_crt_put_ref(io, n, r);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_get_ref(cx, io, n);
+    loft_database_typed(cx, &r, (uint32_t) bytes, (uint16_t) tp);
+    loft_crt_put_ref(cx, io, n, r);
     return 0;
 }
 
@@ -153,8 +160,8 @@ int64_t loft_crt_database(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
 
 /* `Store::extend_primary_to_store_end`: record 1 takes the rest of the store, so no free tail
  * is left for the allocator to hand out. */
-static void loft_crt_stack_span(loft_store_t *s) {
-    loft_set_u32(s, LOFT_ST_PRIMARY, 0, s->size - LOFT_ST_PRIMARY);
+static void loft_crt_stack_span(loft_cx *cx, loft_store_t *s) {
+    loft_set_u32(cx, s, LOFT_ST_PRIMARY, 0, s->size - LOFT_ST_PRIMARY);
     s->wild = 0;
     s->free_root = 0;
     s->claimed_end = s->size;
@@ -162,36 +169,39 @@ static void loft_crt_stack_span(loft_store_t *s) {
 
 /* `database_defined`: a fresh stack store of at least `bytes` of frame, pinned to its slot. */
 int64_t loft_crt_stack_new(int64_t *io, int64_t n, int64_t bytes) {
-    loft_ref r = loft_ref_null();
-    loft_database(&r, (uint32_t) bytes);
-    loft_store_t *s = &loft_stores[r.store_nr];
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    loft_database(cx, &r, (uint32_t) bytes);
+    loft_store_t *s = &cx->stores[r.store_nr];
     s->pinned = 1;
-    loft_crt_stack_span(s);
-    loft_crt_put_ref(io, n, r);
+    loft_crt_stack_span(cx, s);
+    loft_crt_put_ref(cx, io, n, r);
     return 0;
 }
 
 /* `State::grow_stack`: the store grown until record 1 holds `bytes` of frame. */
 void loft_crt_stack_grow(int64_t store, int64_t bytes) {
-    loft_store_t *s = &loft_stores[store];
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
     uint32_t words = (uint32_t) ((8 + bytes + 7) / 8) + 1;
     if (s->size >= LOFT_ST_PRIMARY + words) return;
-    loft_resize_store(s, LOFT_ST_PRIMARY + words);
-    loft_crt_stack_span(s);
+    loft_resize_store(cx, s, LOFT_ST_PRIMARY + words);
+    loft_crt_stack_span(cx, s);
 }
 
 /* ── F-1b: a text variable in its slot, as the Rust frame holds it: a local a `loft_text` (24
  * bytes, a `String`), an argument a `loft_str` view (16 bytes, a `&str`) of a copy the call made
  * and its return releases. */
-static uint8_t *loft_crt_slot_at(int64_t store, int64_t at) {
-    return loft_stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
+static uint8_t *loft_crt_slot_at(loft_cx *cx, int64_t store, int64_t at) {
+    return cx->stores[store].buf + (size_t) LOFT_ST_PRIMARY * 8 + 8 + (size_t) at;
 }
 
 /* The interpreter's frame bytes as `State::get_stack` / `put_stack` / `get_var` / `put_var`
  * read and write them: the raw value of width `which` (0 u8, 1 i8, 2 u16, 3 i16, 4 u32, 5 i32,
  * 6 i64) at byte `at` of the stack store's frame, no field encoding; a float as its own bytes. */
 int64_t loft_crt_stack_get(int64_t which, int64_t store, int64_t at) {
-    const uint8_t *p = loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    const uint8_t *p = loft_crt_slot_at(cx, store, at);
     switch (which) {
     case 0: { uint8_t v; memcpy(&v, p, 1); return v; }
     case 1: { int8_t v; memcpy(&v, p, 1); return v; }
@@ -203,7 +213,8 @@ int64_t loft_crt_stack_get(int64_t which, int64_t store, int64_t at) {
     }
 }
 void loft_crt_stack_put(int64_t which, int64_t store, int64_t at, int64_t v, int64_t is_null) {
-    uint8_t *p = loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    uint8_t *p = loft_crt_slot_at(cx, store, at);
     if (is_null) v = INT64_MIN; /* the integer null's pattern, cut to the width */
     switch (which) {
     case 0: case 1: { uint8_t w = (uint8_t) v; memcpy(p, &w, 1); break; }
@@ -213,14 +224,16 @@ void loft_crt_stack_put(int64_t which, int64_t store, int64_t at, int64_t v, int
     }
 }
 double loft_crt_stack_get_float(int64_t store, int64_t at, int64_t single) {
-    const uint8_t *p = loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    const uint8_t *p = loft_crt_slot_at(cx, store, at);
     if (single) { float f; memcpy(&f, p, 4); return (double) f; }
     double d;
     memcpy(&d, p, 8);
     return d;
 }
 void loft_crt_stack_put_float(int64_t store, int64_t at, const double *v, int64_t n, int64_t single) {
-    uint8_t *p = loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    uint8_t *p = loft_crt_slot_at(cx, store, at);
     double d = n > 0 ? v[0] : 0.0;
     if (single) { float f = (float) d; memcpy(p, &f, 4); }
     else memcpy(p, &d, 8);
@@ -228,7 +241,8 @@ void loft_crt_stack_put_float(int64_t store, int64_t at, const double *v, int64_
 /* `(R-StackBase)` — the frame area's address for the run's dispatch loop, as an integer a loft
  * local holds; taken again after anything that can grow the stack store. */
 int64_t loft_crt_stack_base(int64_t store) {
-    return (int64_t) (uintptr_t) loft_crt_slot_at(store, 0);
+    loft_cx *cx = &loft_main_cx;
+    return (int64_t) (uintptr_t) loft_crt_slot_at(cx, store, 0);
 }
 /* A routine the dispatch loop calls at every step: a shipped program's link-time optimisation
  * takes it into the caller whatever the caller's size (`extern` keeps the definition for a
@@ -274,6 +288,7 @@ LOFT_STEP_FN double loft_twin_peek_f64(int64_t base, int64_t at) {
     return v;
 }
 LOFT_STEP_FN void loft_twin_poke_f64(int64_t base, int64_t at, double v) {
+    loft_cx *cx = &loft_main_cx;
     memcpy(LOFT_AT(base, at), &v, 8);
 }
 extern float loft_twin_peek_f32(int64_t base, int64_t at);
@@ -284,16 +299,20 @@ LOFT_STEP_FN float loft_twin_peek_f32(int64_t base, int64_t at) {
     return v;
 }
 LOFT_STEP_FN void loft_twin_poke_f32(int64_t base, int64_t at, float v) {
+    loft_cx *cx = &loft_main_cx;
     memcpy(LOFT_AT(base, at), &v, 4);
 }
 void loft_crt_move(int64_t base, int64_t from, int64_t to, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
 }
 extern void loft_twin_move(int64_t base, int64_t from, int64_t to, int64_t n);
 LOFT_STEP_FN void loft_twin_move(int64_t base, int64_t from, int64_t to, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     memmove(LOFT_AT(base, to), LOFT_AT(base, from), (size_t) n);
 }
 int64_t loft_crt_peek(int64_t which, int64_t base, int64_t at) {
+    loft_cx *cx = &loft_main_cx;
     const uint8_t *p = LOFT_AT(base, at);
     switch (which) {
     case 0: { uint8_t v; memcpy(&v, p, 1); return v; }
@@ -306,11 +325,13 @@ int64_t loft_crt_peek(int64_t which, int64_t base, int64_t at) {
     }
 }
 double loft_crt_peek_f64(int64_t base, int64_t at) {
+    loft_cx *cx = &loft_main_cx;
     double v;
     memcpy(&v, LOFT_AT(base, at), 8);
     return v;
 }
 void loft_crt_poke(int64_t which, int64_t base, int64_t at, int64_t v, int64_t is_null) {
+    loft_cx *cx = &loft_main_cx;
     uint8_t *p = LOFT_AT(base, at);
     if (is_null) v = INT64_MIN; /* the integer null's pattern, cut to the width */
     switch (which) {
@@ -321,6 +342,7 @@ void loft_crt_poke(int64_t which, int64_t base, int64_t at, int64_t v, int64_t i
     }
 }
 void loft_crt_poke_f64(int64_t base, int64_t at, const double *v, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     double d = n > 0 ? v[0] : 0.0;
     memcpy(LOFT_AT(base, at), &d, 8);
 }
@@ -331,41 +353,48 @@ typedef struct { uint32_t store, rec, pos; } loft_crt_slot_ref;
 extern void loft_twin_poke_ref(int64_t to, int64_t store, int64_t rec, int64_t pos);
 extern void loft_twin_copy_ref(int64_t from, int64_t to);
 LOFT_STEP_FN void loft_twin_poke_ref(int64_t to, int64_t store, int64_t rec, int64_t pos) {
+    loft_cx *cx = &loft_main_cx;
     loft_crt_slot_ref v = { (uint32_t) store, (uint32_t) rec, (uint32_t) pos };
     memcpy(LOFT_AT(to, 0), &v, 12);
 }
 LOFT_STEP_FN void loft_twin_copy_ref(int64_t from, int64_t to) {
+    loft_cx *cx = &loft_main_cx;
     memmove(LOFT_AT(to, 0), LOFT_AT(from, 0), 12);
 }
-static int64_t loft_crt_slot_part(loft_ref r, int64_t part) {
+static int64_t loft_crt_slot_part(loft_cx *cx, loft_ref r, int64_t part) {
     return part == 0 ? (int64_t) r.store_nr : part == 1 ? (int64_t) r.rec : (int64_t) r.pos;
 }
 int64_t loft_crt_vec_get_part(int64_t part, int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx) {
-    return loft_crt_slot_part(loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx), part);
+    loft_cx *cx = &loft_main_cx;
+    return loft_crt_slot_part(cx, loft_vec_get(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, idx), part);
 }
 int64_t loft_crt_get_dbref_part(int64_t part, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
-    return loft_crt_slot_part(loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld), part);
+    loft_cx *cx = &loft_main_cx;
+    return loft_crt_slot_part(cx, loft_get_dbref(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld), part);
 }
 void loft_twin_vec_get_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx) {
-    loft_ref r = idx == INT64_MIN ? loft_ref_null() : loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = idx == INT64_MIN ? loft_ref_null(cx) : loft_vec_get(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, idx);
     loft_twin_poke_ref(to, r.store_nr, r.rec, r.pos);
 }
 void loft_twin_get_dbref_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
-    loft_ref r = loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_get_dbref(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld);
     loft_twin_poke_ref(to, r.store_nr, r.rec, r.pos);
 }
 
 /* The text a slot holds — a local's (`arg` 0) or an argument's (1) — copied into `out` when it
  * fits: its length, or -1 for the null text. */
 int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, int64_t arg) {
+    loft_cx *cx = &loft_main_cx;
     loft_str v;
     if (arg) {
-        loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
-        v = a->p ? *a : loft_lit("", 0);
+        loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
+        v = a->p ? *a : loft_lit(cx, "", 0);
     } else {
-        v = loft_view((loft_text *) loft_crt_slot_at(store, at));
+        v = loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
     }
-    if (loft_str_is_null(v)) return -1;
+    if (loft_str_is_null(cx, v)) return -1;
     int64_t len = (int64_t) v.len;
     if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
     return len;
@@ -373,46 +402,53 @@ int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, in
 
 /* A local's slot as `OpInitText` leaves it: the empty text, no buffer. */
 void loft_crt_slot_text_init(int64_t store, int64_t at) {
-    memset(loft_crt_slot_at(store, at), 0, sizeof(loft_text));
+    loft_cx *cx = &loft_main_cx;
+    memset(loft_crt_slot_at(cx, store, at), 0, sizeof(loft_text));
 }
 
 /* A local set to `val` (or the null text). */
 void loft_crt_set_slot_text(int64_t store, int64_t at, const char *val, int64_t bytes) {
-    loft_text *t = (loft_text *) loft_crt_slot_at(store, at);
-    loft_text_set(t, loft_crt_str(val, bytes));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_crt_slot_at(cx, store, at);
+    loft_text_set(cx, t, loft_crt_str(cx, val, bytes));
 }
 
 /* `val` appended to a local (`OpAppendText`, `loft_text_concat`): a null local stays null, a null
  * `val` makes it null (`@FR-E-NullArg`). */
 void loft_crt_slot_text_append(int64_t store, int64_t at, const char *val, int64_t bytes) {
-    loft_text_concat((loft_text *) loft_crt_slot_at(store, at), loft_crt_str(val, bytes));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_concat(cx, (loft_text *) loft_crt_slot_at(cx, store, at), loft_crt_str(cx, val, bytes));
 }
 
 /* `OpClearText`: the local emptied, its buffer kept. */
 void loft_crt_slot_text_clear(int64_t store, int64_t at) {
-    loft_text_set((loft_text *) loft_crt_slot_at(store, at), loft_lit("", 0));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_set(cx, (loft_text *) loft_crt_slot_at(cx, store, at), loft_lit(cx, "", 0));
 }
 
 /* `OpFreeText`: the local's buffer released; the slot reads as the empty text. */
 void loft_crt_slot_text_free(int64_t store, int64_t at) {
-    loft_text_free((loft_text *) loft_crt_slot_at(store, at));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_free(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
 }
 
 /* An argument's slot: a view of a copy of `val` (the null text's one byte too). */
 void loft_crt_set_slot_arg(int64_t store, int64_t at, const char *val, int64_t bytes) {
-    loft_str v = loft_crt_str(val, bytes);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = loft_crt_str(cx, val, bytes);
     char *copy = (char *) malloc(v.len + 1);
     if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(copy, v.p, v.len);
     copy[v.len] = 0;
-    loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+    loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
     a->p = copy;
     a->len = v.len;
 }
 
 /* The call's return: the argument's copy released. */
 void loft_crt_slot_arg_free(int64_t store, int64_t at) {
-    loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
     free((char *) a->p);
     a->p = 0;
     a->len = 0;
@@ -425,7 +461,8 @@ void loft_crt_slot_arg_free(int64_t store, int64_t at) {
 /* `OpConstText`: a view of `len` bytes of the image's code at `from` — the bytes stay where the
  * image holds them. */
 void loft_crt_stack_str_code(int64_t store, int64_t at, const char *code, int64_t from, int64_t len) {
-    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    loft_str *v = (loft_str *) loft_crt_slot_at(cx, store, at);
     v->p = code + from;
     v->len = (size_t) len;
 }
@@ -433,6 +470,7 @@ void loft_crt_stack_str_code(int64_t store, int64_t at, const char *code, int64_
 /* Bytes held for a run's text views — the code, the constant store's texts — in memory of their
  * own, which no store's growth moves; its address as an integer.  Held for the program's life. */
 int64_t loft_crt_hold_bytes(const uint8_t *b, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     uint8_t *p = (uint8_t *) malloc(n > 0 ? (size_t) n : 1);
     if (p && n > 0) memcpy(p, b, (size_t) n);
     return (int64_t) (uintptr_t) p;
@@ -440,18 +478,21 @@ int64_t loft_crt_hold_bytes(const uint8_t *b, int64_t n) {
 
 /* `bytes` of zeroed memory of its own, held for the program's life. */
 int64_t loft_crt_hold_room(int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     return (int64_t) (uintptr_t) calloc(bytes > 0 ? (size_t) bytes : 1, 1);
 }
 
 /* A view of `len` held bytes at `from` (`loft_crt_hold_bytes`) in the frame slot at `at`. */
 void loft_crt_stack_str_held(int64_t store, int64_t at, int64_t base, int64_t from, int64_t len) {
-    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    loft_cx *cx = &loft_main_cx;
+    loft_str *v = (loft_str *) loft_crt_slot_at(cx, store, at);
     v->p = (const char *) (uintptr_t) base + from;
     v->len = (size_t) len;
 }
 
 /* The unsigned 32-bit value at `at` of held bytes. */
 int64_t loft_crt_held_u32(int64_t base, int64_t at) {
+    loft_cx *cx = &loft_main_cx;
     uint32_t v = 0;
     if (base) memcpy(&v, (const uint8_t *) (uintptr_t) base + at, 4);
     return (int64_t) v;
@@ -459,123 +500,140 @@ int64_t loft_crt_held_u32(int64_t base, int64_t at) {
 
 /* `OpVarText`: a view of the text local at `src`. */
 void loft_crt_stack_str_of_text(int64_t store, int64_t at, int64_t src) {
-    *(loft_str *) loft_crt_slot_at(store, at) = loft_view((loft_text *) loft_crt_slot_at(store, src));
+    loft_cx *cx = &loft_main_cx;
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, src));
 }
 
 /* `OpAppendText`: the view at `src` appended to the text local at `at`. */
 void loft_crt_stack_text_append_str(int64_t store, int64_t at, int64_t src) {
-    loft_text_concat((loft_text *) loft_crt_slot_at(store, at), *(loft_str *) loft_crt_slot_at(store, src));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_concat(cx, (loft_text *) loft_crt_slot_at(cx, store, at), *(loft_str *) loft_crt_slot_at(cx, store, src));
 }
 
 /* `OpConstFloat` and its kin: `n` bytes of the image's code at `from` copied onto the stack at
  * `at` as they stand — a constant's bits, which the runner does not reinterpret. */
 void loft_crt_stack_code_bytes(int64_t store, int64_t at, const char *code, int64_t from, int64_t n) {
-    memcpy(loft_crt_slot_at(store, at), code + from, (size_t) n);
+    loft_cx *cx = &loft_main_cx;
+    memcpy(loft_crt_slot_at(cx, store, at), code + from, (size_t) n);
 }
 
 /* `OpConvTextFromNull`: the null text's view (the one byte "\0") pushed at `at`. */
 void loft_crt_stack_str_null(int64_t store, int64_t at) {
-    *(loft_str *) loft_crt_slot_at(store, at) = loft_null_text();
+    loft_cx *cx = &loft_main_cx;
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = loft_null_text(cx);
 }
 
 /* `OpGetText`: a view of the text the field at `fld` of `(s, r, p)` holds, pushed at `at` — the
  * bytes stay in the store. */
 void loft_crt_stack_str_of_field(int64_t store, int64_t at, int64_t s, int64_t r, int64_t p, int64_t fld) {
-    *(loft_str *) loft_crt_slot_at(store, at) = loft_get_text(loft_crt_ref(s, r, p), (uint32_t) fld);
+    loft_cx *cx = &loft_main_cx;
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = loft_get_text(cx, loft_crt_ref(cx, s, r, p), (uint32_t) fld);
 }
 
 /* A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names — a text
  * local of the stack store, or a text a store holds. */
 void loft_crt_ref_text_append(int64_t s, int64_t r, int64_t p, const char *val, int64_t bytes) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    if (t) loft_text_concat(t, loft_crt_str(val, bytes));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    if (t) loft_text_concat(cx, t, loft_crt_str(cx, val, bytes));
 }
 
 /* A rendering appended in place to the text a format operator writes: the text local in the
  * stack store's frame slot `at` (`rec` -1, `store` the stack) or the text `(store, rec, pos)`
  * names — the runtime's own formatter writing into it, no buffer between (`OpFormatInt`,
  * `OpFormatFloat`, `OpFormatText` and their stack forms).  A float arrives as its bits. */
-static loft_text *loft_crt_fmt_target(int64_t store, int64_t rec, int64_t pos) {
-    if (rec < 0) return (loft_text *) loft_crt_slot_at(store, pos);
-    return (loft_text *) loft_place(loft_crt_ref(store, rec, pos), 0);
+static loft_text *loft_crt_fmt_target(loft_cx *cx, int64_t store, int64_t rec, int64_t pos) {
+    if (rec < 0) return (loft_text *) loft_crt_slot_at(cx, store, pos);
+    return (loft_text *) loft_place(cx, loft_crt_ref(cx, store, rec, pos), 0);
 }
 void loft_crt_append_int(int64_t store, int64_t rec, int64_t pos, int64_t val, int64_t is_null,
                          int64_t radix, int64_t width, int64_t token, int64_t plus, int64_t note,
                          int64_t dir) {
-    loft_text *t = loft_crt_fmt_target(store, rec, pos);
-    if (t) loft_format_long(t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = loft_crt_fmt_target(cx, store, rec, pos);
+    if (t) loft_format_long(cx, t, is_null ? LOFT_NULL : val, (uint8_t) radix, width, (uint8_t) token,
                             (int) plus, (int) note, (int) dir);
 }
 void loft_crt_append_float(int64_t store, int64_t rec, int64_t pos, int64_t bits, int64_t is_null,
                            int64_t width, int64_t prec, int64_t token, int64_t plus, int64_t dir,
                            int64_t single) {
-    loft_text *t = loft_crt_fmt_target(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = loft_crt_fmt_target(cx, store, rec, pos);
     double v;
     memcpy(&v, &bits, 8);
     if (is_null) v = NAN;
-    if (t) loft_format_float(t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
+    if (t) loft_format_float(cx, t, v, width, prec, (uint8_t) token, (int) plus, (int) dir, (int) single);
 }
 void loft_crt_append_text(int64_t store, int64_t rec, int64_t pos, const char *val, int64_t bytes,
                           int64_t width, int64_t dir, int64_t token) {
-    loft_text *t = loft_crt_fmt_target(store, rec, pos);
-    if (t) loft_format_text(t, loft_crt_str(val, bytes), width, (int) dir, (uint8_t) token);
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = loft_crt_fmt_target(cx, store, rec, pos);
+    if (t) loft_format_text(cx, t, loft_crt_str(cx, val, bytes), width, (int) dir, (uint8_t) token);
 }
 
 /* The null text's one byte appended to the text the reference names: what a Rust native's
  * destination form writes for an absent answer (`STRING_NULL`), so an empty destination reads
  * back as null. */
 void loft_crt_ref_text_append_null(int64_t s, int64_t r, int64_t p) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    if (t) loft_text_concat(t, loft_lit("", 1));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    if (t) loft_text_concat(cx, t, loft_lit(cx, "", 1));
 }
 
 /* `OpClearStackText`: the text the reference `(s, r, p)` names emptied, its buffer kept. */
 void loft_crt_ref_text_clear(int64_t s, int64_t r, int64_t p) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    if (t) loft_text_set(t, loft_lit("", 0));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    if (t) loft_text_set(cx, t, loft_lit(cx, "", 0));
 }
 
 /* `OpCastTextFromBool`: the view of "true", "false" or — for the null boolean (255) — the null
  * text, pushed at `at`. */
 void loft_crt_stack_str_bool(int64_t store, int64_t at, int64_t v) {
-    *(loft_str *) loft_crt_slot_at(store, at) = v == 1 ? loft_lit("true", 4)
-        : v == 255 ? loft_null_text() : loft_lit("false", 5);
+    loft_cx *cx = &loft_main_cx;
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = v == 1 ? loft_lit(cx, "true", 4)
+        : v == 255 ? loft_null_text(cx) : loft_lit(cx, "false", 5);
 }
 
 /* `OpGetStackText`: a view of the text the reference `(s, r, p)` names, pushed at `at`. */
 void loft_crt_stack_str_of_ref(int64_t store, int64_t at, int64_t s, int64_t r, int64_t p) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    *(loft_str *) loft_crt_slot_at(store, at) = t ? loft_view(t) : loft_null_text();
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = t ? loft_view(cx, t) : loft_null_text(cx);
 }
 
 /* A run image's constant (`OpConstRef`): a fresh store adopting `bytes` — the store as Rust built
  * it — as its image (`loft_image_adopt`, the loader `store_load` uses); its reference written
  * into `io`.  Answers 0 when the image is refused. */
 int64_t loft_crt_store_from_image(int64_t *io, int64_t n_io, const char *bytes, int64_t n) {
-    loft_ref r = loft_ref_null();
-    loft_database(&r, 8);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    loft_database(cx, &r, 8);
     uint8_t *copy = (uint8_t *) malloc((size_t) n);
     if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(copy, bytes, (size_t) n);
-    if (!loft_image_adopt(r, copy, (size_t) n, 0, 0, 0, "a constant", "run image")) return 0;
-    loft_crt_put_ref(io, n_io, r);
+    if (!loft_image_adopt(cx, r, copy, (size_t) n, 0, 0, 0, "a constant", "run image")) return 0;
+    loft_crt_put_ref(cx, io, n_io, r);
     return 1;
 }
 
 /* Is store `nr` live?  A freed store answers 0 (`Store::is_free`). */
 int64_t loft_crt_store_live(int64_t nr) {
-    return nr >= 0 && nr < loft_nstores && loft_stores[nr].live ? 1 : 0;
+    loft_cx *cx = &loft_main_cx;
+    return nr >= 0 && nr < cx->nstores && cx->stores[nr].live ? 1 : 0;
 }
 
 /* The type a typed mint gave store `nr`'s root (`Store::known_type`), 65535 for none. */
 int64_t loft_crt_store_known(int64_t nr) {
-    return nr >= 0 && nr < loft_nstores ? loft_stores[nr].known : 0xFFFF;
+    loft_cx *cx = &loft_main_cx;
+    return nr >= 0 && nr < cx->nstores ? cx->stores[nr].known : 0xFFFF;
 }
 
 /* As `Stores::place_record_prefilled` when the host names no store: the fresh store keeps the
  * placed record's type. */
 void loft_crt_set_store_known(int64_t nr, int64_t tp) {
-    if (nr >= 0 && nr < loft_nstores) loft_stores[nr].known = (uint16_t) tp;
+    loft_cx *cx = &loft_main_cx;
+    if (nr >= 0 && nr < cx->nstores) cx->stores[nr].known = (uint16_t) tp;
 }
 
 /* The run image's runner (step 3): text views on the stack as `State::get_text_sub`,
@@ -584,17 +642,19 @@ void loft_crt_set_store_known(int64_t nr, int64_t tp) {
 /* OpGetTextSub: the view at `at` replaced by its `from..till` slice — the two raw words above
  * it (`till` i32::MIN: the one character at `from`) — snapped to character boundaries. */
 void loft_crt_stack_text_sub(int64_t store, int64_t at) {
-    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
-    int64_t from = *(int64_t *) loft_crt_slot_at(store, at + 16);
-    int64_t till = *(int64_t *) loft_crt_slot_at(store, at + 24);
-    *v = loft_text_sub(*v, from, till);
+    loft_cx *cx = &loft_main_cx;
+    loft_str *v = (loft_str *) loft_crt_slot_at(cx, store, at);
+    int64_t from = *(int64_t *) loft_crt_slot_at(cx, store, at + 16);
+    int64_t till = *(int64_t *) loft_crt_slot_at(cx, store, at + 24);
+    *v = loft_text_sub(cx, *v, from, till);
 }
 
 /* OpTextCharacter: the character holding byte `idx` — the raw word above the view at `at` — of
  * that view, 0 out of range. */
 int64_t loft_crt_stack_text_char(int64_t store, int64_t at) {
-    int64_t idx = *(int64_t *) loft_crt_slot_at(store, at + 16);
-    return (int64_t) loft_text_char(*(loft_str *) loft_crt_slot_at(store, at), idx);
+    loft_cx *cx = &loft_main_cx;
+    int64_t idx = *(int64_t *) loft_crt_slot_at(cx, store, at + 16);
+    return (int64_t) loft_text_char(cx, *(loft_str *) loft_crt_slot_at(cx, store, at), idx);
 }
 
 /* OpTextWalkStep: a `for c in t` step, the frame slots addressed from the stack top `sp`: the
@@ -602,36 +662,39 @@ int64_t loft_crt_stack_text_char(int64_t store, int64_t at) {
  * `c`, `index` set to where it starts and `next` moved past it — by one byte at least. */
 void loft_crt_text_walk_step(int64_t store, int64_t sp, int64_t c, int64_t index, int64_t next, int64_t src,
                              int64_t arg) {
-    int64_t *nx = (int64_t *) loft_crt_slot_at(store, sp - next);
+    loft_cx *cx = &loft_main_cx;
+    int64_t *nx = (int64_t *) loft_crt_slot_at(cx, store, sp - next);
     int64_t at = *nx;
-    loft_str t = arg ? *(loft_str *) loft_crt_slot_at(store, sp - src)
-                     : loft_view((loft_text *) loft_crt_slot_at(store, sp - src));
-    uint32_t ch = loft_str_is_null(t) ? 0 : loft_text_char(t, at);
+    loft_str t = arg ? *(loft_str *) loft_crt_slot_at(cx, store, sp - src)
+                     : loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, sp - src));
+    uint32_t ch = loft_str_is_null(cx, t) ? 0 : loft_text_char(cx, t, at);
     int64_t w = ch == 0 ? 0 : ch < 0x80 ? 1 : ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
     int64_t moved = at == LOFT_NULL ? LOFT_NULL : at + w;
     if (moved <= at) moved = at == LOFT_NULL ? LOFT_NULL : at + 1;
-    *(int64_t *) loft_crt_slot_at(store, sp - index) = at;
+    *(int64_t *) loft_crt_slot_at(cx, store, sp - index) = at;
     *nx = moved;
-    *(uint32_t *) loft_crt_slot_at(store, sp - c) = ch;
+    *(uint32_t *) loft_crt_slot_at(cx, store, sp - c) = ch;
 }
 
 /* The text a frame slot holds — a local's (`arg` 0) or a view (1) — as `State::local_text`. */
-static loft_str loft_crt_local_text(int64_t store, int64_t at, int64_t arg) {
+static loft_str loft_crt_local_text(loft_cx *cx, int64_t store, int64_t at, int64_t arg) {
     if (arg) {
-        loft_str *a = (loft_str *) loft_crt_slot_at(store, at);
-        return a->p ? *a : loft_lit("", 0);
+        loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
+        return a->p ? *a : loft_lit(cx, "", 0);
     }
-    return loft_view((loft_text *) loft_crt_slot_at(store, at));
+    return loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
 }
 
 /* OpTextEndJump's size: the byte length of the text at `at`, the null text's one byte included. */
 int64_t loft_crt_local_text_len(int64_t store, int64_t at, int64_t arg) {
-    return (int64_t) loft_crt_local_text(store, at, arg).len;
+    loft_cx *cx = &loft_main_cx;
+    return (int64_t) loft_crt_local_text(cx, store, at, arg).len;
 }
 
 /* OpTextNullJump: is the text at `at` the null text? */
 int64_t loft_crt_local_text_null(int64_t store, int64_t at, int64_t arg) {
-    return loft_str_is_null(loft_crt_local_text(store, at, arg)) ? 1 : 0;
+    loft_cx *cx = &loft_main_cx;
+    return loft_str_is_null(cx, loft_crt_local_text(cx, store, at, arg)) ? 1 : 0;
 }
 
 /* A text view in its frame slot at `at`, measured and compared in place — what an arm of the
@@ -639,46 +702,53 @@ int64_t loft_crt_local_text_null(int64_t store, int64_t at, int64_t arg) {
  * `OpConvBoolFromText` (2: is it a text at all) with, and `OpEqText`, `OpLtText`, `OpLeText`
  * (`which` 0, 1, 2) for the views at `a` and `b`; the character holding byte `idx` of one. */
 int64_t loft_crt_view_measure(int64_t which, int64_t store, int64_t at) {
-    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
-    return which == 0 ? loft_text_size(v) : which == 1 ? loft_text_length(v) : !loft_str_is_null(v);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, store, at);
+    return which == 0 ? loft_text_size(cx, v) : which == 1 ? loft_text_length(cx, v) : !loft_str_is_null(cx, v);
 }
 int64_t loft_crt_view_compare(int64_t which, int64_t store, int64_t a, int64_t b) {
-    loft_str x = *(loft_str *) loft_crt_slot_at(store, a), y = *(loft_str *) loft_crt_slot_at(store, b);
-    return which == 0 ? loft_str_eq(x, y) : which == 1 ? loft_text_lt(x, y) : loft_text_le(x, y);
+    loft_cx *cx = &loft_main_cx;
+    loft_str x = *(loft_str *) loft_crt_slot_at(cx, store, a), y = *(loft_str *) loft_crt_slot_at(cx, store, b);
+    return which == 0 ? loft_str_eq(cx, x, y) : which == 1 ? loft_text_lt(cx, x, y) : loft_text_le(cx, x, y);
 }
 int64_t loft_crt_view_char(int64_t store, int64_t at, int64_t idx) {
-    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
-    return loft_str_is_null(v) ? 0 : (int64_t) loft_text_char(v, idx);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, store, at);
+    return loft_str_is_null(cx, v) ? 0 : (int64_t) loft_text_char(cx, v, idx);
 }
 /* The text natives on the views in their slots, no text copied out: `find` (`which` 0) and
  * `rfind` (1) of the view at `val` in the one at `self`, whether that one starts (2) or ends
  * (3) with it; the null text reads as the empty one, as the natives' loft ports read it. */
 int64_t loft_crt_view_search(int64_t which, int64_t store, int64_t self, int64_t val) {
+    loft_cx *cx = &loft_main_cx;
     /* A null text is searched as its own bytes, the one NUL (`STRING_NULL`), as the Rust natives
      * search `Str::str()`: `t.contains("\0")` asks for a NUL byte, and is not the empty needle
      * every text holds. */
-    loft_str s = *(loft_str *) loft_crt_slot_at(store, self), v = *(loft_str *) loft_crt_slot_at(store, val);
-    return which == 0 ? loft_find(s, v) : which == 1 ? loft_rfind(s, v)
-         : which == 2 ? (int64_t) loft_starts_with(s, v) : (int64_t) loft_ends_with(s, v);
+    loft_str s = *(loft_str *) loft_crt_slot_at(cx, store, self), v = *(loft_str *) loft_crt_slot_at(cx, store, val);
+    return which == 0 ? loft_find(cx, s, v) : which == 1 ? loft_rfind(cx, s, v)
+         : which == 2 ? (int64_t) loft_starts_with(cx, s, v) : (int64_t) loft_ends_with(cx, s, v);
 }
 /* `text.byte_at(i)` of the view at `at`: 0 out of range. */
 int64_t loft_crt_view_byte(int64_t store, int64_t at, int64_t i) {
-    loft_str s = *(loft_str *) loft_crt_slot_at(store, at);
-    return loft_str_is_null(s) ? 0 : loft_byte_at(s, i);
+    loft_cx *cx = &loft_main_cx;
+    loft_str s = *(loft_str *) loft_crt_slot_at(cx, store, at);
+    return loft_str_is_null(cx, s) ? 0 : loft_byte_at(cx, s, i);
 }
 /* `OpSetText` / `OpSetTextReplace` (`refill`) of the view in the slot at `at`, and that view
  * appended to the text a reference names (`loft_crt_ref_text_append`): no copy of the text
  * is made on the way. */
 void loft_crt_set_text_view(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t stk, int64_t at,
                             int64_t refill) {
-    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
-    if (refill) loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
-    else loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, stk, at);
+    if (refill) loft_refill_text(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, v);
+    else loft_set_text(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, v);
 }
 void loft_crt_ref_text_append_view(int64_t s, int64_t r, int64_t p, int64_t stk, int64_t at) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
-    if (t) loft_text_concat(t, v);
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, stk, at);
+    if (t) loft_text_concat(cx, t, v);
 }
 
 /* A program's own `#c` binding, called as the interpreter's `c_call` calls it: the symbol looked
@@ -692,6 +762,7 @@ static void *loft_crt_cfn[LOFT_CRT_CCALLS];
 int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symlen, const char *args,
                         int64_t nargs, int64_t ret_bits, int64_t ret_signed, int64_t idx, int64_t *ok,
                         int64_t okn) {
+    loft_cx *cx = &loft_main_cx;
     if (okn < 1) return 0;
     ok[0] = -1;
     if (nargs < 0 || nargs > 8 || idx < 0 || idx >= LOFT_CRT_CCALLS || symlen <= 0) return 0;
@@ -700,14 +771,14 @@ int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symle
         /* What the process has loaded, by the runtime's own lookup (`dlsym` on POSIX, every
          * module's `GetProcAddress` on Windows); a host with no loader finds nothing. */
 #if defined(LOFT_DL)
-        f = loft_dl_self_sym(sym);
+        f = loft_dl_self_sym(cx, sym);
 #endif
         if (!f) return 0;
         loft_crt_cfn[idx] = f;
     }
     int64_t a[8] = { 0 };
     for (int64_t k = 0; k < nargs; k++) {
-        const uint8_t *q = loft_crt_slot_at(stk, top - 8 * (nargs - k));
+        const uint8_t *q = loft_crt_slot_at(cx, stk, top - 8 * (nargs - k));
         if (args[k] == 'b') { uint8_t v; memcpy(&v, q, 1); a[k] = v; }
         else if (args[k] == 'c') { uint32_t v; memcpy(&v, q, 4); a[k] = v; }
         else { memcpy(&a[k], q, 8); }
@@ -731,56 +802,63 @@ int64_t loft_crt_c_call(int64_t stk, int64_t top, const char *sym, int64_t symle
  * own parse (`loft_float_of_text`, as the C backend casts), NaN — null — where it is not a
  * number, the null text included. */
 double loft_crt_view_float(int64_t stk, int64_t at) {
-    return loft_float_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+    loft_cx *cx = &loft_main_cx;
+    return loft_float_of_text(cx, *(loft_str *) loft_crt_slot_at(cx, stk, at));
 }
 double loft_crt_view_single(int64_t stk, int64_t at) {
-    return (double) loft_single_of_text(*(loft_str *) loft_crt_slot_at(stk, at));
+    loft_cx *cx = &loft_main_cx;
+    return (double) loft_single_of_text(cx, *(loft_str *) loft_crt_slot_at(cx, stk, at));
 }
 
 /* `self.replace(value, with)` over the three views in their frame slots, the answer appended
  * to the text `(s, r, p)` names — the runtime's own `loft_replace`, no text copied out first.  A
  * null view reads as the empty text, as the native's `?? ""` does. */
-static loft_str loft_crt_view_or_empty(int64_t stk, int64_t at) {
-    loft_str v = *(loft_str *) loft_crt_slot_at(stk, at);
-    return loft_str_is_null(v) ? loft_lit("", 0) : v;
+static loft_str loft_crt_view_or_empty(loft_cx *cx, int64_t stk, int64_t at) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, stk, at);
+    return loft_str_is_null(cx, v) ? loft_lit(cx, "", 0) : v;
 }
 void loft_crt_ref_text_replace_view(int64_t s, int64_t r, int64_t p, int64_t stk, int64_t self_at,
                                     int64_t val_at, int64_t with_at) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    loft_text out = loft_replace(loft_crt_view_or_empty(stk, self_at),
-                                 loft_crt_view_or_empty(stk, val_at),
-                                 loft_crt_view_or_empty(stk, with_at));
-    if (t) loft_text_concat(t, loft_view(&out));
-    loft_text_free(&out);
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    loft_text out = loft_replace(cx, loft_crt_view_or_empty(cx, stk, self_at),
+                                 loft_crt_view_or_empty(cx, stk, val_at),
+                                 loft_crt_view_or_empty(cx, stk, with_at));
+    if (t) loft_text_concat(cx, t, loft_view(cx, &out));
+    loft_text_free(cx, &out);
 }
 
 /* `text.trim()` / `trim_start()` / `trim_end()` (`which` 0, 1, 2) on the view at `at`: the
  * view narrowed in place, as Rust's `str::trim*` answers a sub-slice of the same text. */
 void loft_crt_stack_text_trim(int64_t store, int64_t at, int64_t which) {
-    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
-    if (loft_str_is_null(*v)) return;
-    if (which != 2) *v = loft_trim_start_view(*v);
-    if (which != 1) *v = loft_trim_end_view(*v);
+    loft_cx *cx = &loft_main_cx;
+    loft_str *v = (loft_str *) loft_crt_slot_at(cx, store, at);
+    if (loft_str_is_null(cx, *v)) return;
+    if (which != 2) *v = loft_trim_start_view(cx, *v);
+    if (which != 1) *v = loft_trim_end_view(cx, *v);
 }
 
 /* The run image's runner (step 3): a generator frame's pieces (`State::coroutine_*`). */
 
 /* `n` stack bytes at `at` copied into `out` (a byte vector's buffer). */
 void loft_crt_stack_read_bytes(char *out, int64_t store, int64_t at, int64_t n) {
-    memcpy(out, loft_crt_slot_at(store, at), (size_t) n);
+    loft_cx *cx = &loft_main_cx;
+    memcpy(out, loft_crt_slot_at(cx, store, at), (size_t) n);
 }
 
 /* `n` stack bytes at `at` zeroed: a generator's locals region at its first resume. */
 void loft_crt_stack_zero(int64_t store, int64_t at, int64_t n) {
-    memset(loft_crt_slot_at(store, at), 0, (size_t) n);
+    loft_cx *cx = &loft_main_cx;
+    memset(loft_crt_slot_at(cx, store, at), 0, (size_t) n);
 }
 
 /* A created generator's text argument: the view at `at` repointed at a copy the frame owns (the
  * caller's text may be gone before the generator runs, `serialise_text_args`).  Answers the copy
  * to release with the frame, 0 for the null or the empty text, which keep their view. */
 int64_t loft_crt_stack_str_own(int64_t store, int64_t at) {
-    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
-    if (v->len == 0 || loft_str_is_null(*v)) return 0;
+    loft_cx *cx = &loft_main_cx;
+    loft_str *v = (loft_str *) loft_crt_slot_at(cx, store, at);
+    if (v->len == 0 || loft_str_is_null(cx, *v)) return 0;
     char *copy = (char *) malloc(v->len);
     if (!copy) return 0;
     memcpy(copy, v->p, v->len);
@@ -790,32 +868,38 @@ int64_t loft_crt_stack_str_own(int64_t store, int64_t at) {
 
 /* The copy `loft_crt_stack_str_own` made, released when its frame ends. */
 void loft_crt_owned_free(int64_t copy) {
+    loft_cx *cx = &loft_main_cx;
     free((void *) (intptr_t) copy);
 }
 
 /* `Stores::hold_for_frame` / `release_frame_hold` (`@FR-G-Arg-Rebind`). */
 int64_t loft_crt_hold_for_frame(int64_t s, int64_t r, int64_t p) {
-    return loft_hold_for_frame(loft_crt_ref(s, r, p)) ? 1 : 0;
+    loft_cx *cx = &loft_main_cx;
+    return loft_hold_for_frame(cx, loft_crt_ref(cx, s, r, p)) ? 1 : 0;
 }
 
 void loft_crt_release_frame_hold(int64_t s, int64_t r, int64_t p) {
-    loft_release_frame_hold(loft_crt_ref(s, r, p));
+    loft_cx *cx = &loft_main_cx;
+    loft_release_frame_hold(cx, loft_crt_ref(cx, s, r, p));
 }
 
 /* The allocation count as it stands (`Stores::stores_allocated`), and store `nr`'s stamp
  * (`Store::alloc_serial`), 0 for none: a call through a function value tells a store it minted
  * from one already there by them (loft#1185, `State::release_fnref_bufs`). */
 int64_t loft_crt_serial_now(void) {
-    return (int64_t) loft_stores_allocated;
+    loft_cx *cx = &loft_main_cx;
+    return (int64_t) cx->stores_allocated;
 }
 
 int64_t loft_crt_store_serial(int64_t nr) {
-    return nr >= 0 && nr < loft_nstores ? (int64_t) loft_stores[nr].serial : 0;
+    loft_cx *cx = &loft_main_cx;
+    return nr >= 0 && nr < cx->nstores ? (int64_t) cx->stores[nr].serial : 0;
 }
 
 /* A text the runner keeps for the whole run (an enum variant's name, which Rust views in its type
  * table): copied once into memory of its own; the handle is that copy. */
 int64_t loft_crt_intern_text(const char *val, int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     char *copy = (char *) malloc(bytes > 0 ? (size_t) bytes : 1);
     if (!copy) return 0;
     if (bytes > 0) memcpy(copy, val, (size_t) bytes);
@@ -824,7 +908,8 @@ int64_t loft_crt_intern_text(const char *val, int64_t bytes) {
 
 /* A view of `len` bytes of an interned text pushed at `at`. */
 void loft_crt_stack_str_interned(int64_t store, int64_t at, int64_t handle, int64_t len) {
-    *(loft_str *) loft_crt_slot_at(store, at) = loft_lit((const char *) (intptr_t) handle, (size_t) len);
+    loft_cx *cx = &loft_main_cx;
+    *(loft_str *) loft_crt_slot_at(cx, store, at) = loft_lit(cx, (const char *) (intptr_t) handle, (size_t) len);
 }
 
 /* A `par` row passed by value (`parallel::read_primitive_at` + `put_stack`): `esize` bytes of the
@@ -832,14 +917,15 @@ void loft_crt_stack_str_interned(int64_t store, int64_t at, int64_t handle, int6
  * else 8 — at stack byte `at`, the rest of its 8-byte slot zero. */
 void loft_crt_par_row(int64_t store, int64_t rec, int64_t pos, int64_t esize, int64_t stk, int64_t at,
                       int64_t isize) {
-    const uint8_t *p = (const uint8_t *) loft_place(loft_crt_ref(store, rec, pos), 0);
+    loft_cx *cx = &loft_main_cx;
+    const uint8_t *p = (const uint8_t *) loft_place(cx, loft_crt_ref(cx, store, rec, pos), 0);
     uint64_t v = 0;
     if (p) {
         if (esize == 1) v = p[0];
         else if (esize == 4) { uint32_t w; memcpy(&w, p, 4); v = w; }
         else memcpy(&v, p, 8);
     }
-    uint8_t *d = loft_crt_slot_at(stk, at);
+    uint8_t *d = loft_crt_slot_at(cx, stk, at);
     memset(d, 0, 8);
     memcpy(d, &v, isize == 1 ? 1 : isize == 4 ? 4 : 8);
 }
@@ -847,8 +933,9 @@ void loft_crt_par_row(int64_t store, int64_t rec, int64_t pos, int64_t esize, in
 /* A `par` row passed wide (`read_primitive_at_wide`): `n` bytes of the row copied to stack byte
  * `at`, the slot's stepped rest zero. */
 void loft_crt_par_row_wide(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at, int64_t n) {
-    const uint8_t *p = (const uint8_t *) loft_place(loft_crt_ref(store, rec, pos), 0);
-    uint8_t *d = loft_crt_slot_at(stk, at);
+    loft_cx *cx = &loft_main_cx;
+    const uint8_t *p = (const uint8_t *) loft_place(cx, loft_crt_ref(cx, store, rec, pos), 0);
+    uint8_t *d = loft_crt_slot_at(cx, stk, at);
     memset(d, 0, (size_t) ((n + 7) / 8 * 8));
     if (p) memcpy(d, p, (size_t) n);
 }
@@ -859,24 +946,25 @@ void loft_crt_par_row_wide(int64_t store, int64_t rec, int64_t pos, int64_t stk,
  * function number as a fn-ref whose closure is the null sentinel. */
 void loft_crt_par_row_tuple(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at, const int64_t *plan,
                             int64_t n) {
-    loft_ref row = loft_crt_ref(store, rec, pos);
-    const uint8_t *p = (const uint8_t *) loft_place(row, 0);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref row = loft_crt_ref(cx, store, rec, pos);
+    const uint8_t *p = (const uint8_t *) loft_place(cx, row, 0);
     int64_t width = 0;
     for (int64_t k = 0; k + 3 < n; k += 4) width += plan[k + 2];
-    uint8_t *d = loft_crt_slot_at(stk, at);
+    uint8_t *d = loft_crt_slot_at(cx, stk, at);
     memset(d, 0, (size_t) ((width + 7) / 8 * 8));
     if (!p) return;
     int64_t off = 0;
     for (int64_t k = 0; k + 3 < n; k += 4) {
         int64_t in = plan[k], stored = plan[k + 1], arg = plan[k + 2], kind = plan[k + 3];
         if (kind == 1) {
-            *(loft_str *) (d + off) = loft_get_text(row, (uint32_t) in);
+            *(loft_str *) (d + off) = loft_get_text(cx, row, (uint32_t) in);
         } else if (kind == 2) {
             uint32_t fn;
             memcpy(&fn, p + in, 4);
             int64_t f64 = fn;
             memcpy(d + off, &f64, 8);
-            loft_ref none = loft_ref_null();
+            loft_ref none = loft_ref_null(cx);
             memcpy(d + off + 8, &none, 12);
         } else {
             memcpy(d + off, p + in, (size_t) (stored < arg ? stored : arg));
@@ -888,11 +976,12 @@ void loft_crt_par_row_tuple(int64_t store, int64_t rec, int64_t pos, int64_t stk
 /* `log_info` … `log_fatal` (`sev` 0 … 3): the C runtime's logger, configured as a compiled
  * program's is (`log.conf`). */
 void loft_crt_log(int64_t sev, const char *m, int64_t mlen, const char *f, int64_t flen, int64_t line) {
-    loft_str ms = loft_crt_str(m, mlen), fs = loft_crt_str(f, flen);
-    if (sev == 0) loft_log_info(ms, fs, line);
-    else if (sev == 1) loft_log_warn(ms, fs, line);
-    else if (sev == 2) loft_log_error(ms, fs, line);
-    else loft_log_fatal(ms, fs, line);
+    loft_cx *cx = &loft_main_cx;
+    loft_str ms = loft_crt_str(cx, m, mlen), fs = loft_crt_str(cx, f, flen);
+    if (sev == 0) loft_log_info(cx, ms, fs, line);
+    else if (sev == 1) loft_log_warn(cx, ms, fs, line);
+    else if (sev == 2) loft_log_error(cx, ms, fs, line);
+    else loft_log_fatal(cx, ms, fs, line);
 }
 
 /* ── The `#c_twin` routines of crt.loft's typed byte reads and writes: each loads or stores
@@ -907,6 +996,7 @@ int64_t loft_twin_get_u8(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_u8(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     uint8_t w = (uint8_t) v;
     if (LOFT_TWIN_IN(n, at, 1)) memcpy(b + at, &w, 1);
 }
@@ -916,6 +1006,7 @@ int64_t loft_twin_get_i8(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_i8(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     int8_t w = (int8_t) v;
     if (LOFT_TWIN_IN(n, at, 1)) memcpy(b + at, &w, 1);
 }
@@ -925,6 +1016,7 @@ int64_t loft_twin_get_u16(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_u16(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     uint16_t w = (uint16_t) v;
     if (LOFT_TWIN_IN(n, at, 2)) memcpy(b + at, &w, 2);
 }
@@ -934,6 +1026,7 @@ int64_t loft_twin_get_i16(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_i16(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     int16_t w = (int16_t) v;
     if (LOFT_TWIN_IN(n, at, 2)) memcpy(b + at, &w, 2);
 }
@@ -943,6 +1036,7 @@ int64_t loft_twin_get_u32(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_u32(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     uint32_t w = (uint32_t) v;
     if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &w, 4);
 }
@@ -952,6 +1046,7 @@ int64_t loft_twin_get_i32(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_i32(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     int32_t w = (int32_t) v;
     if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &w, 4);
 }
@@ -961,10 +1056,12 @@ int64_t loft_twin_get_i64(const uint8_t *b, int64_t n, int64_t at) {
     return (int64_t) v;
 }
 void loft_twin_put_i64(uint8_t *b, int64_t n, int64_t at, int64_t v) {
+    loft_cx *cx = &loft_main_cx;
     int64_t w = (int64_t) v;
     if (LOFT_TWIN_IN(n, at, 8)) memcpy(b + at, &w, 8);
 }
 void loft_twin_copy_within(uint8_t *b, int64_t n, int64_t from, int64_t to, int64_t len) {
+    loft_cx *cx = &loft_main_cx;
     if (len <= 0 || from < 0 || to < 0 || from > n - len || to > n - len) return;
     memmove(b + to, b + from, (size_t) len);
 }
@@ -974,6 +1071,7 @@ float loft_twin_get_f32(const uint8_t *b, int64_t n, int64_t at) {
     return v;
 }
 void loft_twin_put_f32(uint8_t *b, int64_t n, int64_t at, float v) {
+    loft_cx *cx = &loft_main_cx;
     if (LOFT_TWIN_IN(n, at, 4)) memcpy(b + at, &v, 4);
 }
 double loft_twin_get_f64(const uint8_t *b, int64_t n, int64_t at) {
@@ -982,24 +1080,28 @@ double loft_twin_get_f64(const uint8_t *b, int64_t n, int64_t at) {
     return v;
 }
 void loft_twin_put_f64(uint8_t *b, int64_t n, int64_t at, double v) {
+    loft_cx *cx = &loft_main_cx;
     if (LOFT_TWIN_IN(n, at, 8)) memcpy(b + at, &v, 8);
 }
 
 /* `expose` / `release` off the browser (`Stores::expose_value`): the value's store locked
  * read-only while the host holds it, and unlocked. */
 void loft_crt_store_lock(int64_t s, int64_t r, int64_t p, int64_t lock) {
-    loft_set_store_lock(loft_crt_ref(s, r, p), (uint8_t) lock);
+    loft_cx *cx = &loft_main_cx;
+    loft_set_store_lock(cx, loft_crt_ref(cx, s, r, p), (uint8_t) lock);
 }
 
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
-    memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
+    loft_cx *cx = &loft_main_cx;
+    memmove(loft_crt_slot_at(cx, store, to), loft_crt_slot_at(cx, store, from), (size_t) n);
 }
 
 /* The text a view at `at` shows, copied into `out` when it fits: its length, -1 for null. */
 int64_t loft_crt_stack_str(char *out, int64_t cap, int64_t store, int64_t at) {
-    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
-    if (loft_str_is_null(v)) return -1;
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = *(loft_str *) loft_crt_slot_at(cx, store, at);
+    if (loft_str_is_null(cx, v)) return -1;
     int64_t len = (int64_t) v.len;
     if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
     return len;
@@ -1007,26 +1109,30 @@ int64_t loft_crt_stack_str(char *out, int64_t cap, int64_t store, int64_t at) {
 
 /* The run's end: the stack store released (a pinned store keeps itself from `loft_free_ref`). */
 void loft_crt_stack_free(int64_t store) {
-    loft_store_t *s = &loft_stores[store];
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 0;
-    loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
+    loft_free_ref(cx, loft_crt_ref(cx, store, LOFT_ST_PRIMARY, 8));
 }
 
 /* A store's length in 8-byte words (`Store::capacity_words`). */
 int64_t loft_crt_store_words(int64_t store) {
-    return store >= 0 && store < loft_nstores ? (int64_t) loft_stores[store].size : 0;
+    loft_cx *cx = &loft_main_cx;
+    return store >= 0 && store < cx->nstores ? (int64_t) cx->stores[store].size : 0;
 }
 
 /* A store's first `n` words copied into `out` (a byte vector's buffer, `n * 8` bytes): the
  * words `const_code` writes for a constant's store (`loft_cwords<d>`). */
 void loft_crt_store_bytes(char *out, int64_t store, int64_t n) {
-    memcpy(out, loft_stores[store].buf, (size_t) n * 8);
+    loft_cx *cx = &loft_main_cx;
+    memcpy(out, cx->stores[store].buf, (size_t) n * 8);
 }
 
 /* A constant's store built (`consts.loft`): pinned and read-only, as `Store::lock_constant` and
  * `loft_const_store` leave it. */
 void loft_crt_lock_constant(int64_t store) {
-    loft_store_t *s = &loft_stores[store];
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 1;
     s->read_only = 1;
 }
@@ -1034,10 +1140,11 @@ void loft_crt_lock_constant(int64_t store) {
 /* A constant's store released by the run that built it: unpinned and writable first, as the
  * stack store is. */
 void loft_crt_free_constant(int64_t store) {
-    loft_store_t *s = &loft_stores[store];
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
     s->pinned = 0;
     s->read_only = 0;
-    loft_free_ref(loft_crt_ref(store, LOFT_ST_PRIMARY, 8));
+    loft_free_ref(cx, loft_crt_ref(cx, store, LOFT_ST_PRIMARY, 8));
 }
 
 /* The reference a PLACE holds — a frame slot (`(stack, 1, 8 + at)`), a field, an element —
@@ -1045,71 +1152,81 @@ void loft_crt_free_constant(int64_t store) {
  * no record marked and no tombstone read through (`loft_get_dbref` does both, for a reference
  * FIELD read as a value). */
 int64_t loft_crt_place_ref(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos) {
-    loft_store_t *s = &loft_stores[store];
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
     loft_ref x;
-    x.store_nr = (uint16_t) loft_u32(s, (uint32_t) rec, (uint32_t) pos);
-    x.rec = loft_u32(s, (uint32_t) rec, (uint32_t) pos + 4);
-    x.pos = loft_u32(s, (uint32_t) rec, (uint32_t) pos + 8);
-    loft_crt_put_ref(out, n, x);
+    x.store_nr = (uint16_t) loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos);
+    x.rec = loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4);
+    x.pos = loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 8);
+    loft_crt_put_ref(cx, out, n, x);
     return 0;
 }
 
 void loft_crt_set_place_ref(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                             int64_t r_pos) {
-    loft_store_t *s = &loft_stores[store];
-    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos, (uint32_t) r_store);
-    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos + 4, (uint32_t) r_rec);
-    loft_set_u32(s, (uint32_t) rec, (uint32_t) pos + 8, (uint32_t) r_pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
+    loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos, (uint32_t) r_store);
+    loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4, (uint32_t) r_rec);
+    loft_set_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 8, (uint32_t) r_pos);
 }
 
 /* OpFreeRef of a variable: its store released, the variable reset to the sentinel. */
 void loft_crt_free_var(int64_t *io, int64_t n) {
-    loft_ref r = loft_crt_get_ref(io, n);
-    loft_free_var(&r);
-    loft_crt_put_ref(io, n, r);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_get_ref(cx, io, n);
+    loft_free_var(cx, &r);
+    loft_crt_put_ref(cx, io, n, r);
 }
 
 /* OpFreeRefIfDistinct of a variable: released and reset unless it names the witness's store. */
 void loft_crt_free_var_distinct(int64_t *io, int64_t n, int64_t w_store, int64_t w_rec,
                                 int64_t w_pos) {
-    loft_ref r = loft_crt_get_ref(io, n);
-    loft_free_var_distinct(&r, loft_crt_ref(w_store, w_rec, w_pos));
-    loft_crt_put_ref(io, n, r);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_get_ref(cx, io, n);
+    loft_free_var_distinct(cx, &r, loft_crt_ref(cx, w_store, w_rec, w_pos));
+    loft_crt_put_ref(cx, io, n, r);
 }
 
 void loft_crt_free_ref(int64_t store, int64_t rec, int64_t pos) {
-    loft_free_ref(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_free_ref(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpFreeRefIfDistinct of two values (`Stores::free_displaced`): the displaced store released
  * unless it is the witness's, absent, or protected by a call in flight. */
 void loft_crt_free_displaced(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t w_store,
                              int64_t w_rec, int64_t w_pos) {
-    loft_free_displaced(loft_crt_ref(d_store, d_rec, d_pos), loft_crt_ref(w_store, w_rec, w_pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_free_displaced(cx, loft_crt_ref(cx, d_store, d_rec, d_pos), loft_crt_ref(cx, w_store, w_rec, w_pos));
 }
 
 /* n_protect_store_frees / n_unprotect_store_frees: the call bracket around a reference
  * argument. */
 void loft_crt_protect(int64_t store, int64_t rec, int64_t pos, int64_t on) {
-    if (on) loft_protect(loft_crt_ref(store, rec, pos));
-    else loft_unprotect(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    if (on) loft_protect(cx, loft_crt_ref(cx, store, rec, pos));
+    else loft_unprotect(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 int64_t loft_crt_get_int(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
-    return loft_get_int(loft_crt_ref(store, rec, pos), (uint32_t) fld);
+    loft_cx *cx = &loft_main_cx;
+    return loft_get_int(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld);
 }
 
 void loft_crt_set_int(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t v,
                       int64_t is_null) {
-    loft_set_int(loft_crt_ref(store, rec, pos), (uint32_t) fld, is_null ? LOFT_NULL : v);
+    loft_cx *cx = &loft_main_cx;
+    loft_set_int(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, is_null ? LOFT_NULL : v);
 }
 
 /* OpGetText: the text copied into the caller's buffer; answers its length in bytes, -1 for
  * null, and writes nothing when the length exceeds `cap`. */
 int64_t loft_crt_get_text(char *out, int64_t cap, int64_t store, int64_t rec, int64_t pos,
                           int64_t fld) {
-    loft_str v = loft_get_text(loft_crt_ref(store, rec, pos), (uint32_t) fld);
-    if (loft_str_is_null(v)) return -1;
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = loft_get_text(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld);
+    if (loft_str_is_null(cx, v)) return -1;
     int64_t len = (int64_t) v.len;
     if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
     return len;
@@ -1117,15 +1234,17 @@ int64_t loft_crt_get_text(char *out, int64_t cap, int64_t store, int64_t rec, in
 
 void loft_crt_set_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
                        int64_t bytes) {
-    loft_str v = loft_crt_str(val, bytes);
-    loft_set_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = loft_crt_str(cx, val, bytes);
+    loft_set_text(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, v);
 }
 
 /* OpSetTextReplace: the text field refilled in place where its claim has room. */
 void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, const char *val,
                           int64_t bytes) {
-    loft_str v = loft_crt_str(val, bytes);
-    loft_refill_text(loft_crt_ref(store, rec, pos), (uint32_t) fld, v);
+    loft_cx *cx = &loft_main_cx;
+    loft_str v = loft_crt_str(cx, val, bytes);
+    loft_refill_text(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, v);
 }
 
 /* The other field widths, by the operator's `which` (the loft side's `crt::W_*`), each calling
@@ -1139,73 +1258,79 @@ void loft_crt_refill_text(int64_t store, int64_t rec, int64_t pos, int64_t fld, 
  * OpConvIntFromEnum reads 255. */
 int64_t loft_crt_get_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t fld,
                        int64_t min) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     uint32_t f = (uint32_t) fld;
     switch (which) {
-    case 0: return loft_get_int4(r, f);
-    case 1: return loft_get_byte(r, f, min);
-    case 2: return loft_get_byte_nullable(r, f, min);
-    case 3: return loft_get_short(r, f, min);
-    case 4: return loft_get_short_raw(r, f, min);
-    case 5: return (int64_t) loft_get_char(r, f);
+    case 0: return loft_get_int4(cx, r, f);
+    case 1: return loft_get_byte(cx, r, f, min);
+    case 2: return loft_get_byte_nullable(cx, r, f, min);
+    case 3: return loft_get_short(cx, r, f, min);
+    case 4: return loft_get_short_raw(cx, r, f, min);
+    case 5: return (int64_t) loft_get_char(cx, r, f);
     case 6: {
-        uint8_t b = loft_get_bool(r, f);
+        uint8_t b = loft_get_bool(cx, r, f);
         return b == LOFT_BOOL_NULL ? LOFT_NULL : (int64_t) b;
     }
     case 7: {
-        uint8_t e = loft_get_enum(r, f);
+        uint8_t e = loft_get_enum(cx, r, f);
         return e == 255 ? LOFT_NULL : (int64_t) e;
     }
-    case 8: return loft_get_int4_raw(r, f);
-    case 9: return loft_get_int4_full(r, f);
+    case 8: return loft_get_int4_raw(cx, r, f);
+    case 9: return loft_get_int4_full(cx, r, f);
     default: return LOFT_NULL;
     }
 }
 
 void loft_crt_set_w(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t fld,
                     int64_t min, int64_t v, int64_t is_null) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     uint32_t f = (uint32_t) fld;
     int64_t x = is_null ? LOFT_NULL : v;
     switch (which) {
-    case 0: loft_set_int4(r, f, x); break;
-    case 1: loft_set_byte_v(r, f, min, x); break;
-    case 2: loft_set_byte_nullable(r, f, min, x); break;
-    case 3: loft_set_short(r, f, min, x); break;
-    case 4: loft_set_short_raw(r, f, min, x); break;
-    case 5: loft_set_char(r, f, is_null ? 0u : (uint32_t) v); break;
-    case 6: loft_set_byte(r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
-    case 7: loft_set_byte(r, f, is_null ? (uint8_t) 255 : (uint8_t) v); break;
-    case 8: loft_set_int4_raw(r, f, x); break;
+    case 0: loft_set_int4(cx, r, f, x); break;
+    case 1: loft_set_byte_v(cx, r, f, min, x); break;
+    case 2: loft_set_byte_nullable(cx, r, f, min, x); break;
+    case 3: loft_set_short(cx, r, f, min, x); break;
+    case 4: loft_set_short_raw(cx, r, f, min, x); break;
+    case 5: loft_set_char(cx, r, f, is_null ? 0u : (uint32_t) v); break;
+    case 6: loft_set_byte(cx, r, f, is_null ? LOFT_BOOL_NULL : (uint8_t) v); break;
+    case 7: loft_set_byte(cx, r, f, is_null ? (uint8_t) 255 : (uint8_t) v); break;
+    case 8: loft_set_int4_raw(cx, r, f, x); break;
     /* A full four-byte word reads without a null code and writes raw (`NarrowIntKind::Int4Full`). */
-    case 9: loft_set_int4_raw(r, f, x); break;
+    case 9: loft_set_int4_raw(cx, r, f, x); break;
     default: break;
     }
 }
 
 /* OpGetFloat and OpGetSingle (`single` 1): NaN is the null either way. */
 double loft_crt_get_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t single) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
-    return single ? (double) loft_get_single(r, (uint32_t) fld) : loft_get_float(r, (uint32_t) fld);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
+    return single ? (double) loft_get_single(cx, r, (uint32_t) fld) : loft_get_float(cx, r, (uint32_t) fld);
 }
 
 /* OpSetFloat and OpSetSingle: the value is `val[0]`, a float argument being a vector of one. */
 void loft_crt_set_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, const double *val,
                         int64_t n, int64_t is_null, int64_t single) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     double v = is_null || n < 1 ? (double) NAN : val[0];
-    if (single) loft_set_single(r, (uint32_t) fld, (float) v);
-    else loft_set_float(r, (uint32_t) fld, v);
+    if (single) loft_set_single(cx, r, (uint32_t) fld, (float) v);
+    else loft_set_float(cx, r, (uint32_t) fld, v);
 }
 
 /* `set_float` and `vec_push_float` with the value itself: NaN is the null float. */
 void loft_twin_set_float(int64_t store, int64_t rec, int64_t pos, int64_t fld, double v, int64_t single) {
+    loft_cx *cx = &loft_main_cx;
     loft_crt_set_float(store, rec, pos, fld, &v, 1, 0, single);
 }
 /* OpGetField: the reference to an embedded record, `loft_field` — the position moved past the
  * field's offset.  Answers the new position; the store and record are the host's. */
 int64_t loft_crt_field_pos(int64_t store, int64_t rec, int64_t pos, int64_t fld) {
-    return (int64_t) loft_field(loft_crt_ref(store, rec, pos), (uint32_t) fld).pos;
+    loft_cx *cx = &loft_main_cx;
+    return (int64_t) loft_field(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld).pos;
 }
 
 /* ── Vectors (@PLN91 S3, the second slice): a vector is the reference to the field that holds
@@ -1214,32 +1339,37 @@ int64_t loft_crt_field_pos(int64_t store, int64_t rec, int64_t pos, int64_t fld)
 
 /* OpLengthVector. */
 int64_t loft_crt_vec_len(int64_t store, int64_t rec, int64_t pos) {
-    return loft_vec_len(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_vec_len(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpGetVector and OpGetVectorNullable: the element at `idx` (negative from the end), or the null
  * reference past either end, written into `out`. */
 int64_t loft_crt_vec_get(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos,
                          int64_t size, int64_t idx) {
-    loft_crt_put_ref(out, n, loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, n, loft_vec_get(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, idx));
     return 0;
 }
 
 /* The integer field `fld` of element `idx` (`size` bytes each) of a vector, read and written
  * in one step: null where there is no such element, and no write to one. */
 int64_t loft_crt_vec_elem_int(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx, int64_t fld) {
-    loft_ref e = loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
-    return e.rec == 0 ? LOFT_NULL : loft_get_int(e, (uint32_t) fld);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref e = loft_vec_get(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, idx);
+    return e.rec == 0 ? LOFT_NULL : loft_get_int(cx, e, (uint32_t) fld);
 }
 void loft_crt_vec_elem_set_int(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t idx, int64_t fld,
                                int64_t v, int64_t is_null) {
-    loft_ref e = loft_vec_get(loft_crt_ref(store, rec, pos), (uint32_t) size, idx);
-    if (e.rec != 0) loft_set_int(e, (uint32_t) fld, is_null ? LOFT_NULL : v);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref e = loft_vec_get(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, idx);
+    if (e.rec != 0) loft_set_int(cx, e, (uint32_t) fld, is_null ? LOFT_NULL : v);
 }
 
 /* OpPreAllocVector: room for `count` more elements of `size` bytes. */
 void loft_crt_vec_prealloc(int64_t store, int64_t rec, int64_t pos, int64_t count, int64_t size) {
-    loft_vec_prealloc(loft_crt_ref(store, rec, pos), (uint32_t) count, (uint32_t) size);
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_prealloc(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) count, (uint32_t) size);
 }
 
 /* The pushes, by `which` (the loft side's `crt::P_*`): 0 OpPushInt, 1 OpPushInt4, 2 OpPushCharacter,
@@ -1247,15 +1377,16 @@ void loft_crt_vec_prealloc(int64_t store, int64_t rec, int64_t pos, int64_t coun
  * the int64 null, code 0, or 255 for an enum or a boolean, as a C program's operand carries it. */
 void loft_crt_vec_push(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t min,
                        int64_t v, int64_t is_null) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     int64_t x = is_null ? LOFT_NULL : v;
     switch (which) {
-    case 0: loft_vec_push_int(r, x); break;
-    case 1: loft_vec_push_int4(r, x); break;
-    case 2: loft_vec_push_char(r, is_null ? 0u : (uint32_t) v); break;
-    case 3: loft_vec_push_byte(r, loft_byte_raw(min, x)); break;
+    case 0: loft_vec_push_int(cx, r, x); break;
+    case 1: loft_vec_push_int4(cx, r, x); break;
+    case 2: loft_vec_push_char(cx, r, is_null ? 0u : (uint32_t) v); break;
+    case 3: loft_vec_push_byte(cx, r, loft_byte_raw(cx, min, x)); break;
     case 4:
-    case 5: loft_vec_push_byte(r, is_null ? (uint8_t) 255 : (uint8_t) v); break;
+    case 5: loft_vec_push_byte(cx, r, is_null ? (uint8_t) 255 : (uint8_t) v); break;
     default: break;
     }
 }
@@ -1263,43 +1394,50 @@ void loft_crt_vec_push(int64_t which, int64_t store, int64_t rec, int64_t pos, i
 /* OpPushFloat and OpPushSingle (`single` 1): the value is `val[0]`. */
 void loft_crt_vec_push_float(int64_t store, int64_t rec, int64_t pos, const double *val,
                              int64_t n, int64_t is_null, int64_t single) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     double v = is_null || n < 1 ? (double) NAN : val[0];
-    if (single) loft_vec_push_single(r, (float) v);
-    else loft_vec_push_float(r, v);
+    if (single) loft_vec_push_single(cx, r, (float) v);
+    else loft_vec_push_float(cx, r, v);
 }
 
 void loft_twin_vec_push_float(int64_t store, int64_t rec, int64_t pos, double v, int64_t single) {
+    loft_cx *cx = &loft_main_cx;
     loft_crt_vec_push_float(store, rec, pos, &v, 1, 0, single);
 }
 
 /* OpNewRecord on a vector: a new element of `size` bytes at its end, written into `out`. */
 int64_t loft_crt_vec_append(int64_t *out, int64_t n, int64_t store, int64_t rec, int64_t pos,
                             int64_t size) {
-    loft_crt_put_ref(out, n, loft_vec_append(loft_crt_ref(store, rec, pos), (uint32_t) size));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, n, loft_vec_append(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size));
     return 0;
 }
 
 /* The bytes a fresh element holds before its literal runs: the type's default image. */
 void loft_crt_fill(int64_t store, int64_t rec, int64_t pos, const uint8_t *image, int64_t n) {
-    loft_fill(loft_crt_ref(store, rec, pos), image, (uint32_t) n);
+    loft_cx *cx = &loft_main_cx;
+    loft_fill(cx, loft_crt_ref(cx, store, rec, pos), image, (uint32_t) n);
 }
 
 /* OpFinishRecord on a vector: the appended element counts. */
 void loft_crt_vec_finish(int64_t store, int64_t rec, int64_t pos) {
-    loft_vec_finish(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_finish(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* How many stores are live: what a probe reads to see a free took effect. */
 int64_t loft_crt_live_stores(void) {
+    loft_cx *cx = &loft_main_cx;
     int64_t n = 0;
-    for (uint32_t i = 0; i < loft_nstores; i++) n += loft_stores[i].live ? 1 : 0;
+    for (uint32_t i = 0; i < cx->nstores; i++) n += cx->stores[i].live ? 1 : 0;
     return n;
 }
 
 /* P2: one part of a reference after the trip through `loft_ref`, to show none is cut. */
 int64_t loft_crt_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t which) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     return which == 0 ? (int64_t) r.store_nr : which == 1 ? (int64_t) r.rec : (int64_t) r.pos;
 }
 
@@ -1317,7 +1455,7 @@ static loft_tdesc *loft_crt_types = 0;
 static uint32_t loft_crt_types_gen = 0;
 static uint32_t loft_crt_ntypes = 0;
 
-static void loft_crt_drop_types(void) {
+static void loft_crt_drop_types(loft_cx *cx) {
     for (uint32_t i = 0; i < loft_crt_ntypes; i++) {
         free((void *) loft_crt_types[i].fields);
         free((void *) loft_crt_types[i].variants);
@@ -1329,7 +1467,8 @@ static void loft_crt_drop_types(void) {
 }
 
 int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
-    loft_crt_drop_types();
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_drop_types(cx);
     loft_crt_types_gen++;
     if (ntypes < 1 || ntypes > 0xFFFF) return -1;
     loft_crt_types = (loft_tdesc *) calloc((size_t) ntypes, sizeof(loft_tdesc));
@@ -1392,9 +1531,10 @@ int64_t loft_crt_load_types(const int64_t *rows, int64_t n, int64_t ntypes) {
 /* OpDatabase of a vector wrapper (`main_vector<T>`, `Stores::mint_at_place`): a live buffer
  * that is a place stays where it is with its collection emptied. */
 int64_t loft_crt_database_wrapper(int64_t *io, int64_t n, int64_t bytes, int64_t tp) {
-    loft_ref r = loft_crt_get_ref(io, n);
-    loft_database_wrapper((const struct loft_tdesc_s *) loft_crt_types, &r, (uint32_t) bytes, (uint16_t) tp);
-    loft_crt_put_ref(io, n, r);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_get_ref(cx, io, n);
+    loft_database_wrapper(cx, (const struct loft_tdesc_s *) loft_crt_types, &r, (uint32_t) bytes, (uint16_t) tp);
+    loft_crt_put_ref(cx, io, n, r);
     return 0;
 }
 
@@ -1402,13 +1542,15 @@ int64_t loft_crt_database_wrapper(int64_t *io, int64_t n, int64_t bytes, int64_t
  * store's root made again and prefilled with its type's defaults; answers 0 for any other. */
 int64_t loft_crt_reset_pool_root(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size,
                                  const uint8_t *image, int64_t n) {
-    return loft_reset_pool_root(loft_crt_ref(store, rec, pos), (uint16_t) tp, (uint32_t) size, image,
+    loft_cx *cx = &loft_main_cx;
+    return loft_reset_pool_root(cx, loft_crt_ref(cx, store, rec, pos), (uint16_t) tp, (uint32_t) size, image,
                                 (uint32_t) n);
 }
 
 void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
-    loft_remove_claims(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
+    loft_remove_claims(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record of `size` bytes claimed inside
@@ -1416,9 +1558,10 @@ void loft_crt_clear(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
  * into `out`.  `foreign`: the host's root is a vector of another element type (@FR-H-RootExtent). */
 int64_t loft_crt_place_record(int64_t *out, int64_t n, int64_t h_store, int64_t h_rec, int64_t h_pos, int64_t tp,
                               int64_t size, const uint8_t *image, int64_t in, int64_t foreign) {
-    loft_ref r = loft_place_record(loft_crt_ref(h_store, h_rec, h_pos), (uint16_t) tp, (uint32_t) size, image,
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_place_record(cx, loft_crt_ref(cx, h_store, h_rec, h_pos), (uint16_t) tp, (uint32_t) size, image,
                                    (uint32_t) in, (int) foreign);
-    loft_crt_put_ref(out, n, r);
+    loft_crt_put_ref(cx, out, n, r);
     return 0;
 }
 
@@ -1432,6 +1575,7 @@ int64_t loft_crt_place_record(int64_t *out, int64_t n, int64_t h_store, int64_t 
  * all, released when no vector member holds it (`held`). */
 void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t ps, int64_t pr, int64_t pp,
                            int64_t rs, int64_t rr, int64_t rp, const int64_t *m, int64_t nm) {
+    loft_cx *cx = &loft_main_cx;
     int n = (int) (nm / 3);
     if (!loft_crt_types || n <= 0 || n > 64) return;
     loft_member rows[64];
@@ -1442,8 +1586,8 @@ void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t
         rows[i].keys = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].keys : 0;
         rows[i].nk = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].nk : 0;
     }
-    loft_group_finish(loft_crt_types, (uint16_t) elem, (int) held, (int) nullable, loft_crt_ref(ps, pr, pp),
-                      loft_crt_ref(rs, rr, rp), rows, n);
+    loft_group_finish(cx, loft_crt_types, (uint16_t) elem, (int) held, (int) nullable, loft_crt_ref(cx, ps, pr, pp),
+                      loft_crt_ref(cx, rs, rr, rp), rows, n);
 }
 
 /* OpFillKeyed (`Stores::fill_keyed_from_vector`): every record of the vector `src` filed into
@@ -1455,6 +1599,7 @@ void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64
                          int64_t sp, int64_t kind, int64_t linked, int64_t free_source, int64_t held,
                          int64_t nullable, int64_t ps, int64_t pr, int64_t pp, int64_t keyed_src, const int64_t *m,
                          int64_t nm) {
+    loft_cx *cx = &loft_main_cx;
     int k = kind == 1 ? LOFT_KEYED_SORTED : kind == 2 ? LOFT_KEYED_ORDERED : kind == 3 ? LOFT_KEYED_INDEX
           : kind == 4 ? LOFT_KEYED_SPATIAL : kind == 5 ? LOFT_KEYED_TRIE : LOFT_KEYED_HASH;
     int n = (int) (nm / 3);
@@ -1468,12 +1613,12 @@ void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64
         rows[i].keys = LOFT_CRT_TP_OK(mt) ? loft_crt_types[mt].keys : 0;
         rows[i].nk = LOFT_CRT_TP_OK(mt) ? loft_crt_types[mt].nk : 0;
     }
-    g.parent = loft_crt_ref(ps, pr, pp);
+    g.parent = loft_crt_ref(cx, ps, pr, pp);
     g.m = rows;
     g.n = n;
     g.held = (int) held;
     g.nullable = (int) nullable;
-    loft_fill_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(cs, cr, cp), loft_crt_ref(ss, sr, sp), k,
+    loft_fill_keyed(cx, loft_crt_types, (uint16_t) elem, loft_crt_ref(cx, cs, cr, cp), loft_crt_ref(cx, ss, sr, sp), k,
                     loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) linked, (int) free_source, n > 0 ? &g : 0,
                     (int) keyed_src);
 }
@@ -1482,16 +1627,18 @@ void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64
  * `size` bytes compared as floats, texts, unsigned or signed integers. */
 void loft_crt_vec_sort(int64_t store, int64_t rec, int64_t pos, int64_t size, int64_t is_float, int64_t is_text,
                        int64_t is_unsigned) {
-    loft_vec_sort(loft_crt_ref(store, rec, pos), (uint32_t) size, (int) is_float, (int) is_text, (int) is_unsigned);
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_sort(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, (int) is_float, (int) is_text, (int) is_unsigned);
 }
 
 /* OpInsertVector: a new element of `size` bytes at `index` — a linked element a record of its
  * own, its slot the record's id — its reference in `out`. */
 int64_t loft_crt_vec_insert(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos, int64_t size,
                             int64_t index, int64_t linked) {
-    loft_ref v = loft_crt_ref(store, rec, pos);
-    loft_crt_put_ref(out, no, linked ? loft_vec_insert_linked(v, (uint32_t) size, index)
-                                     : loft_vec_insert(v, (uint32_t) size, index));
+    loft_cx *cx = &loft_main_cx;
+    loft_ref v = loft_crt_ref(cx, store, rec, pos);
+    loft_crt_put_ref(cx, out, no, linked ? loft_vec_insert_linked(cx, v, (uint32_t) size, index)
+                                     : loft_vec_insert(cx, v, (uint32_t) size, index));
     return 0;
 }
 
@@ -1499,8 +1646,9 @@ int64_t loft_crt_vec_insert(int64_t *out, int64_t no, int64_t store, int64_t rec
  * place with the type's defaults when it names none; its reference in `out`. */
 int64_t loft_crt_child_rec_in_place(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
                                     const uint8_t *image, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return 0;
-    loft_crt_put_ref(out, no, loft_child_rec_in_place(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+    loft_crt_put_ref(cx, out, no, loft_child_rec_in_place(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos),
                                                       image, (uint32_t) n));
     return 0;
 }
@@ -1509,8 +1657,9 @@ int64_t loft_crt_child_rec_in_place(int64_t *out, int64_t no, int64_t tp, int64_
  * type's defaults; its reference in `out`. */
 int64_t loft_crt_new_child_rec(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
                                const uint8_t *image, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return 0;
-    loft_crt_put_ref(out, no, loft_new_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), image,
+    loft_crt_put_ref(cx, out, no, loft_new_child_rec(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos), image,
                                                  (uint32_t) n));
     return 0;
 }
@@ -1519,11 +1668,12 @@ int64_t loft_crt_new_child_rec(int64_t *out, int64_t no, int64_t tp, int64_t sto
  * owned capture slots (`owned`, their positions) given records of their own; in `out`. */
 int64_t loft_crt_copy_closure(int64_t *out, int64_t no, int64_t tp, int64_t store, int64_t rec, int64_t pos,
                               const int64_t *owned, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     uint16_t slots[64];
     int64_t i;
     if (!LOFT_CRT_TP_OK(tp) || n > 64) return 0;
     for (i = 0; i < n; i++) slots[i] = (uint16_t) owned[i];
-    loft_crt_put_ref(out, no, loft_copy_closure(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
+    loft_crt_put_ref(cx, out, no, loft_copy_closure(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos),
                                                 n ? slots : 0, (uint32_t) n));
     return 0;
 }
@@ -1531,59 +1681,67 @@ int64_t loft_crt_copy_closure(int64_t *out, int64_t no, int64_t tp, int64_t stor
 /* OpDemoteRec (`Stores::demote_rec`): the record's field `fld` of type `tp` demoted to a child
  * record. */
 void loft_crt_demote_rec(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t fld) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_demote_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), (uint32_t) fld);
+    loft_demote_rec(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld);
 }
 
 /* OpStoreBuf / OpStoreBufOnly (`Stores::store_buf`, `store_buf_only`): a return buffer in the
  * host's store, or the buffer as its own; its reference in `out`. */
 int64_t loft_crt_store_buf(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos, int64_t only) {
-    loft_ref h = loft_crt_ref(store, rec, pos);
-    loft_crt_put_ref(out, no, only ? loft_store_buf_only(h) : loft_store_buf(h));
+    loft_cx *cx = &loft_main_cx;
+    loft_ref h = loft_crt_ref(cx, store, rec, pos);
+    loft_crt_put_ref(cx, out, no, only ? loft_store_buf_only(cx, h) : loft_store_buf(cx, h));
     return 0;
 }
 
 /* `store_buf`'s answer written at the address `to` (`OpStoreBuf`'s arm). */
 extern void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only);
 LOFT_STEP_FN void loft_twin_store_buf_to(int64_t to, int64_t store, int64_t rec, int64_t pos, int64_t only) {
-    loft_ref h = loft_crt_ref(store, rec, pos);
-    loft_ref b = only ? loft_store_buf_only(h) : loft_store_buf(h);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref h = loft_crt_ref(cx, store, rec, pos);
+    loft_ref b = only ? loft_store_buf_only(cx, h) : loft_store_buf(cx, h);
     loft_twin_poke_ref(to, b.store_nr, b.rec, b.pos);
 }
 
 /* OpAdoptChildRec (`Stores::adopt_child_rec`): the field's child record adopted from the value. */
 void loft_crt_adopt_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t vs, int64_t vr, int64_t vp) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_adopt_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(vs, vr, vp));
+    loft_adopt_child_rec(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, fs, fr, fp), loft_crt_ref(cx, vs, vr, vp));
 }
 
 /* OpReleaseRecIfDistinct (`Stores::release_rec_if_distinct`): the record released unless the
  * answer is it. */
 void loft_crt_release_rec_if_distinct(int64_t tp, int64_t rs, int64_t rr, int64_t rp, int64_t as, int64_t ar,
                                       int64_t ap) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_release_rec_if_distinct(loft_crt_types, (uint16_t) tp, loft_crt_ref(rs, rr, rp), loft_crt_ref(as, ar, ap));
+    loft_release_rec_if_distinct(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, rs, rr, rp), loft_crt_ref(cx, as, ar, ap));
 }
 
 /* OpAdoptVector (`Stores::vector_adopt`): the vector takes the other's elements as its own. */
 void loft_crt_vec_adopt(int64_t tp, int64_t vs, int64_t vr, int64_t vp, int64_t os, int64_t orec, int64_t op) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_vec_adopt(loft_crt_types, (uint16_t) tp, loft_crt_ref(vs, vr, vp), loft_crt_ref(os, orec, op));
+    loft_vec_adopt(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, vs, vr, vp), loft_crt_ref(cx, os, orec, op));
 }
 
 /* OpEvacuate (`Stores::evacuate`): the holder's field `fld` moved out to a record of its own at
  * `home`, placed as `OpPlaceRecord` places one. */
 void loft_crt_evacuate(int64_t tp, int64_t hs, int64_t hr, int64_t hp, int64_t fld, int64_t ms, int64_t mr,
                        int64_t mp, int64_t size, const uint8_t *image, int64_t n, int64_t foreign) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_evacuate(loft_crt_types, (uint16_t) tp, loft_crt_ref(hs, hr, hp), (uint32_t) fld, loft_crt_ref(ms, mr, mp),
+    loft_evacuate(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, hs, hr, hp), (uint32_t) fld, loft_crt_ref(cx, ms, mr, mp),
                   (uint32_t) size, image, (uint32_t) n, (int) foreign);
 }
 
 /* OpGetDir (`Stores::get_dir`): the directory's entries appended to the vector of `File`
  * records of `size` bytes; whether the path is a directory that was read. */
 int64_t loft_crt_get_dir(const char *path, int64_t bytes, int64_t store, int64_t rec, int64_t pos, int64_t size) {
-    return loft_get_dir(loft_crt_str(path, bytes), loft_crt_ref(store, rec, pos), (uint32_t) size);
+    loft_cx *cx = &loft_main_cx;
+    return loft_get_dir(cx, loft_crt_str(cx, path, bytes), loft_crt_ref(cx, store, rec, pos), (uint32_t) size);
 }
 
 /* `Stores::reference_removed` (`@FR-H-Removed`): does a reference to record `rec` of store
@@ -1591,28 +1749,32 @@ int64_t loft_crt_get_dir(const char *path, int64_t bytes, int64_t store, int64_t
 /* `Stores::drop_leave` (`@FR-H-DropOnce`): the root record of `store`, a `tp` released by its
  * `OpDrop`, is marked released. */
 int64_t loft_crt_drop_leave(int64_t store, int64_t tp) {
-    loft_ref r = loft_ref_null_reported();
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null_reported(cx);
     r.store_nr = (uint16_t) store;
     r.rec = LOFT_ST_PRIMARY;
     r.pos = 8;
-    loft_drop_leave(r, (uint16_t) tp);
+    loft_drop_leave(cx, r, (uint16_t) tp);
     return 0;
 }
 
 /* `Store::released_root`: was the root record of `store` released by its `OpDrop`? */
 int64_t loft_crt_drop_released(int64_t store) {
-    return store >= 0 && (uint64_t) store < loft_nstores && loft_stores[store].live
-        && loft_stores[store].released_root;
+    loft_cx *cx = &loft_main_cx;
+    return store >= 0 && (uint64_t) store < cx->nstores && cx->stores[store].live
+        && cx->stores[store].released_root;
 }
 
 int64_t loft_crt_ref_removed(int64_t store, int64_t rec) {
-    return rec != 0 && store >= 0 && (uint64_t) store < loft_nstores
-        && loft_st_is_removed(&loft_stores[store], (uint32_t) rec);
+    loft_cx *cx = &loft_main_cx;
+    return rec != 0 && store >= 0 && (uint64_t) store < cx->nstores
+        && loft_st_is_removed(cx, &cx->stores[store], (uint32_t) rec);
 }
 
 /* `DbRef::NULL_REPORTED`: a null whose absence is accounted for; in `out`. */
 int64_t loft_crt_null_reported(int64_t *out, int64_t no) {
-    loft_crt_put_ref(out, no, loft_ref_null_reported());
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_ref_null_reported(cx));
     return 0;
 }
 
@@ -1620,8 +1782,9 @@ int64_t loft_crt_null_reported(int64_t *out, int64_t no) {
  * `tp` record, the source freed after when `free_source`. */
 void loft_crt_set_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t ss, int64_t sr, int64_t sp,
                             int64_t free_source) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_set_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp), (int) free_source);
+    loft_set_child_rec(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, fs, fr, fp), loft_crt_ref(cx, ss, sr, sp), (int) free_source);
 }
 
 /* The run image's persisted-type sidecars (`RunSidecar`), made once a run: each the C backend's
@@ -1629,7 +1792,7 @@ void loft_crt_set_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int6
 static loft_sidecar *loft_crt_sidecars = 0;
 static int64_t loft_crt_nsidecars = 0;
 
-static const char *loft_crt_cstr(const char *p, int64_t n) {
+static const char *loft_crt_cstr(loft_cx *cx, const char *p, int64_t n) {
     char *c = (char *) malloc((size_t) n + 1);
     if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
     if (n > 0) memcpy(c, p, (size_t) n);
@@ -1641,34 +1804,37 @@ static const char *loft_crt_cstr(const char *p, int64_t n) {
 int64_t loft_crt_sidecar_add(int64_t tp, int64_t hash, int64_t walks, const char *before, int64_t blen,
                              const char *after, int64_t alen, const char *dump, int64_t dlen, const char *oldest,
                              int64_t olen, const char *bridge, int64_t brlen) {
+    loft_cx *cx = &loft_main_cx;
     loft_sidecar *t = (loft_sidecar *) realloc(loft_crt_sidecars, (size_t) (loft_crt_nsidecars + 1) * sizeof *t);
     if (!t) { fputs("loft: out of memory\n", stderr); abort(); }
     loft_crt_sidecars = t;
     loft_sidecar *c = &t[loft_crt_nsidecars];
     memset(c, 0, sizeof *c);
     c->tp = (uint16_t) tp;
-    c->before_slot = loft_crt_cstr(before, blen);
-    c->after_slot = loft_crt_cstr(after, alen);
+    c->before_slot = loft_crt_cstr(cx, before, blen);
+    c->after_slot = loft_crt_cstr(cx, after, alen);
     c->hash = (uint64_t) hash;
-    c->dump = loft_crt_cstr(dump, dlen);
-    c->oldest = loft_crt_cstr(oldest, olen);
-    c->bridge = loft_crt_cstr(bridge, brlen);
+    c->dump = loft_crt_cstr(cx, dump, dlen);
+    c->oldest = loft_crt_cstr(cx, oldest, olen);
+    c->bridge = loft_crt_cstr(cx, bridge, brlen);
     c->types = walks ? (const loft_tdesc *) loft_crt_types : 0;
     return loft_crt_nsidecars++;
 }
 
 /* `store_persist_copy(r, path)` (`loft_image_write`) with sidecar `sc`. */
 int64_t loft_crt_image_write(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || sc < 0 || sc >= loft_crt_nsidecars) return 0;
-    return loft_image_write((const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(s, r, p),
-                            loft_crt_str(path, plen), &loft_crt_sidecars[sc]) ? 1 : 0;
+    return loft_image_write(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(cx, s, r, p),
+                            loft_crt_str(cx, path, plen), &loft_crt_sidecars[sc]) ? 1 : 0;
 }
 
 /* `store_load(r, path)` / `store_load_untrusted` (`loft_image_load`) with sidecar `sc`. */
 int64_t loft_crt_image_load(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
                             int64_t untrusted) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars) return 0;
-    return loft_image_load(loft_crt_ref(s, r, p), loft_crt_str(path, plen), &loft_crt_sidecars[sc], (int) untrusted)
+    return loft_image_load(cx, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen), &loft_crt_sidecars[sc], (int) untrusted)
                ? 1 : 0;
 }
 
@@ -1679,10 +1845,11 @@ int64_t loft_crt_image_load(int64_t s, int64_t r, int64_t p, const char *path, i
 int64_t loft_crt_pg_load_key(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
                              const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t kind,
                              int64_t key, const char *tkey, int64_t tlen, int64_t is_text) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
-    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
-    loft_kv kv = is_text ? loft_kv_text(loft_crt_str(tkey, tlen)) : loft_kv_int(key);
-    int64_t n = loft_pg_load_keys((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+    const char *why = rlen > 0 ? loft_crt_cstr(cx, refusal, rlen) : 0;
+    loft_kv kv = is_text ? loft_kv_text(cx, loft_crt_str(cx, tkey, tlen)) : loft_kv_int(cx, key);
+    int64_t n = loft_pg_load_keys(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen),
                                   &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
                                   loft_crt_types[coll].keys, loft_crt_types[coll].nk, (int) kind, &kv, 1);
     return n > 0 ? 1 : 0;
@@ -1693,11 +1860,12 @@ int64_t loft_crt_pg_load_key(int64_t s, int64_t r, int64_t p, const char *path, 
 int64_t loft_crt_pg_load_keys(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
                               const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t kind,
                               int64_t ls, int64_t lr, int64_t lp, int64_t is_text) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
-    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
-    return loft_pg_load_key_list((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+    const char *why = rlen > 0 ? loft_crt_cstr(cx, refusal, rlen) : 0;
+    return loft_pg_load_key_list(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen),
                                  &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
-                                 loft_crt_types[coll].keys, loft_crt_types[coll].nk, (int) kind, loft_crt_ref(ls, lr, lp),
+                                 loft_crt_types[coll].keys, loft_crt_types[coll].nk, (int) kind, loft_crt_ref(cx, ls, lr, lp),
                                  (int) is_text);
 }
 
@@ -1706,11 +1874,12 @@ int64_t loft_crt_pg_load_keys(int64_t s, int64_t r, int64_t p, const char *path,
 int64_t loft_crt_pg_load_prefix(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
                                 const char *refusal, int64_t rlen, int64_t content, int64_t coll, const char *pre,
                                 int64_t prelen, int64_t limit) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
-    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
-    return loft_pg_load_prefix((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+    const char *why = rlen > 0 ? loft_crt_cstr(cx, refusal, rlen) : 0;
+    return loft_pg_load_prefix(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen),
                                &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
-                               loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_str(pre, prelen), limit);
+                               loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_str(cx, pre, prelen), limit);
 }
 
 /* `store_load_box(r, path, from, till, limit)` (`loft_pg_load_box`) on a spatial index: the
@@ -1719,12 +1888,13 @@ int64_t loft_crt_pg_load_box(int64_t s, int64_t r, int64_t p, const char *path, 
                              const char *refusal, int64_t rlen, int64_t content, int64_t coll, int64_t fs, int64_t fr,
                              int64_t fp, int64_t ts, int64_t tr, int64_t tp, int64_t limit, const char *name,
                              int64_t nlen) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(coll)) return 0;
-    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
-    return loft_pg_load_box((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+    const char *why = rlen > 0 ? loft_crt_cstr(cx, refusal, rlen) : 0;
+    return loft_pg_load_box(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen),
                             &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
-                            loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_ref(fs, fr, fp),
-                            loft_crt_ref(ts, tr, tp), limit, loft_crt_cstr(name, nlen));
+                            loft_crt_types[coll].keys, loft_crt_types[coll].nk, loft_crt_ref(cx, fs, fr, fp),
+                            loft_crt_ref(cx, ts, tr, tp), limit, loft_crt_cstr(cx, name, nlen));
 }
 
 /* `store_load_range(r, path, lo, hi)` (`loft_pg_load_range`) on a sorted collection, the root type
@@ -1732,21 +1902,23 @@ int64_t loft_crt_pg_load_box(int64_t s, int64_t r, int64_t p, const char *path, 
 int64_t loft_crt_pg_load_range(int64_t s, int64_t r, int64_t p, const char *path, int64_t plen, int64_t sc,
                                const char *refusal, int64_t rlen, int64_t content, int64_t tp, int64_t lo,
                                int64_t hi) {
+    loft_cx *cx = &loft_main_cx;
     if (sc < 0 || sc >= loft_crt_nsidecars || !LOFT_CRT_TP_OK(tp)) return 0;
-    const char *why = rlen > 0 ? loft_crt_cstr(refusal, rlen) : 0;
-    return loft_pg_load_range((const loft_tdesc *) loft_crt_types, loft_crt_ref(s, r, p), loft_crt_str(path, plen),
+    const char *why = rlen > 0 ? loft_crt_cstr(cx, refusal, rlen) : 0;
+    return loft_pg_load_range(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ref(cx, s, r, p), loft_crt_str(cx, path, plen),
                               &loft_crt_sidecars[sc], why, (uint16_t) (content < 0 ? 0 : content),
                               loft_crt_types[tp].keys, lo, hi);
 }
 
 /* `store_verify(r)` (`loft_store_verify`). */
 int64_t loft_crt_store_verify(int64_t s, int64_t r, int64_t p) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types) return 0;
-    return loft_store_verify((const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(s, r, p));
+    return loft_store_verify(cx, (const loft_tdesc *) loft_crt_types, loft_crt_ntypes, loft_crt_ref(cx, s, r, p));
 }
 
 /* The parser's type table (`loft_parse.h` declares it): the loaded one. */
-static const loft_tdesc *loft_parse_types(void) {
+static const loft_tdesc *loft_parse_types(loft_cx *cx) {
     return (const loft_tdesc *) loft_crt_types;
 }
 
@@ -1757,6 +1929,7 @@ static uint32_t loft_crt_nptypes = 0;
 
 /* A type is a vector variable's own store (`main_vector<T>`). */
 void loft_crt_main_vector(int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     if (tp < 0) return;
     if ((uint32_t) tp >= loft_crt_nmain_vectors) {
         uint32_t n = (uint32_t) tp + 64;
@@ -1770,7 +1943,7 @@ void loft_crt_main_vector(int64_t tp) {
 }
 
 /* Row `tp` of the parse table, the table grown to hold it; zeroed when new. */
-static loft_ptype *loft_crt_prow(int64_t tp) {
+static loft_ptype *loft_crt_prow(loft_cx *cx, int64_t tp) {
     if (tp < 0 || tp > 65535) return 0;
     if ((uint32_t) tp >= loft_crt_nptypes) {
         uint32_t n = (uint32_t) tp + 64;
@@ -1785,6 +1958,7 @@ static loft_ptype *loft_crt_prow(int64_t tp) {
 
 /* Is row `tp` written already? */
 int64_t loft_crt_ptype_known(int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     return tp >= 0 && (uint32_t) tp < loft_crt_nptypes && loft_crt_ptypes[tp].name != 0 ? 1 : 0;
 }
 
@@ -1793,7 +1967,8 @@ void loft_crt_ptype_set(int64_t tp, int64_t kind, int64_t size, int64_t elem, in
                         int64_t n, int64_t strict, int64_t zero, int64_t variant, int64_t keyed, int64_t linked,
                         int64_t some, int64_t payload_tp, int64_t payload_pos, int64_t refs, const char *name,
                         int64_t nlen) {
-    loft_ptype *r = loft_crt_prow(tp);
+    loft_cx *cx = &loft_main_cx;
+    loft_ptype *r = loft_crt_prow(cx, tp);
     if (!r) return;
     r->kind = (uint8_t) kind;
     r->size = (uint16_t) size;
@@ -1804,7 +1979,7 @@ void loft_crt_ptype_set(int64_t tp, int64_t kind, int64_t size, int64_t elem, in
     r->strict_enum = (uint8_t) strict;
     r->zero_default = (uint8_t) zero;
     r->variant = (uint8_t) variant;
-    r->name = loft_crt_cstr(name, nlen);
+    r->name = loft_crt_cstr(cx, name, nlen);
     r->keyed = (uint8_t) keyed;
     if (kind == LOFT_P_KEYED && LOFT_CRT_TP_OK(tp)) {
         r->keys = loft_crt_types[tp].keys;
@@ -1819,7 +1994,8 @@ void loft_crt_ptype_set(int64_t tp, int64_t kind, int64_t size, int64_t elem, in
 
 /* A record row's prefill image. */
 void loft_crt_ptype_prefill(int64_t tp, const uint8_t *img, int64_t n) {
-    loft_ptype *r = loft_crt_prow(tp);
+    loft_cx *cx = &loft_main_cx;
+    loft_ptype *r = loft_crt_prow(cx, tp);
     if (!r || n <= 0) return;
     uint8_t *c = (uint8_t *) malloc((size_t) n);
     if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -1829,7 +2005,8 @@ void loft_crt_ptype_prefill(int64_t tp, const uint8_t *img, int64_t n) {
 
 /* An enum row's variants: their record types; the names follow, one `loft_crt_ptype_vname` each. */
 void loft_crt_ptype_enum(int64_t tp, const int64_t *vt, int64_t n) {
-    loft_ptype *r = loft_crt_prow(tp);
+    loft_cx *cx = &loft_main_cx;
+    loft_ptype *r = loft_crt_prow(cx, tp);
     if (!r) return;
     uint16_t *types = (uint16_t *) calloc((size_t) (n > 0 ? n : 1), sizeof *types);
     /* The names by value from 1, as the emitter's `loft_enum{tp}`: slot 0 the empty name. */
@@ -1843,14 +2020,16 @@ void loft_crt_ptype_enum(int64_t tp, const int64_t *vt, int64_t n) {
 
 /* The name of variant `k` (from 1) of enum row `tp`. */
 void loft_crt_ptype_vname(int64_t tp, int64_t k, const char *name, int64_t nlen) {
+    loft_cx *cx = &loft_main_cx;
     if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].vnames) return;
     if (k < 1 || k > loft_crt_ptypes[tp].n) return;
-    ((const char **) loft_crt_ptypes[tp].vnames)[k] = loft_crt_cstr(name, nlen);
+    ((const char **) loft_crt_ptypes[tp].vnames)[k] = loft_crt_cstr(cx, name, nlen);
 }
 
 /* A record row's field table of `n` fields. */
 void loft_crt_ptype_fields(int64_t tp, int64_t n) {
-    loft_ptype *r = loft_crt_prow(tp);
+    loft_cx *cx = &loft_main_cx;
+    loft_ptype *r = loft_crt_prow(cx, tp);
     if (!r) return;
     loft_pfield *f = (loft_pfield *) calloc((size_t) (n > 0 ? n : 1), sizeof *f);
     if (!f) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -1862,9 +2041,10 @@ void loft_crt_ptype_fields(int64_t tp, int64_t n) {
 void loft_crt_pfield_set(int64_t tp, int64_t i, const char *name, int64_t nlen, int64_t content, int64_t pos,
                          int64_t nullable, int64_t skip, int64_t type_tag, int64_t dkind, int64_t di, const double *dnum,
                          int64_t ndnum, const char *ds, int64_t dslen, int64_t target) {
+    loft_cx *cx = &loft_main_cx;
     if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].fields) return;
     loft_pfield *f = (loft_pfield *) &loft_crt_ptypes[tp].fields[i];
-    f->name = loft_crt_cstr(name, nlen);
+    f->name = loft_crt_cstr(cx, name, nlen);
     f->content = (uint16_t) content;
     f->pos = (uint16_t) pos;
     f->nullable = (uint8_t) nullable;
@@ -1874,7 +2054,7 @@ void loft_crt_pfield_set(int64_t tp, int64_t i, const char *name, int64_t nlen, 
     f->di = di;
     double dv = ndnum > 0 ? dnum[0] : 0.0;
     memcpy(&f->dbits, &dv, sizeof f->dbits); /* a NUMBER default's bits */
-    f->ds = loft_crt_cstr(ds, dslen);
+    f->ds = loft_crt_cstr(cx, ds, dslen);
     f->dslen = (size_t) dslen;
     f->target = (uint16_t) target;
 }
@@ -1883,6 +2063,7 @@ void loft_crt_pfield_set(int64_t tp, int64_t i, const char *name, int64_t nlen, 
  * member, the field itself first. */
 void loft_crt_pfield_group(int64_t tp, int64_t i, const int64_t *m, int64_t nm, int64_t gelem, int64_t gheld,
                            int64_t gnull) {
+    loft_cx *cx = &loft_main_cx;
     if (tp < 0 || (uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].fields) return;
     int n = (int) (nm / 3);
     loft_member *rows = (loft_member *) calloc((size_t) (n > 0 ? n : 1), sizeof *rows);
@@ -1904,24 +2085,28 @@ void loft_crt_pfield_group(int64_t tp, int64_t i, const int64_t *m, int64_t nm, 
 
 /* The JsonValue layout, in `loft_crt_jl`'s order. */
 void loft_crt_json_layout(const int64_t *v, int64_t n) {
+    loft_cx *cx = &loft_main_cx;
     for (int64_t i = 0; i < n && i < 11; i++) loft_crt_jl[i] = (uint32_t) v[i];
 }
 
 /* `json_parse(raw)`: the tree in a store of its own. */
 int64_t loft_crt_json_parse(int64_t *out, int64_t no, const char *raw, int64_t len) {
-    loft_crt_put_ref(out, no, loft_json_parse_value(loft_crt_str(raw, len)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_json_parse_value(cx, loft_crt_str(cx, raw, len)));
     return 0;
 }
 
 /* `json_errors()`: the last parse's errors, `|`-separated. */
 int64_t loft_crt_json_errors(char *out, int64_t cap) {
-    loft_text t = loft_json_errors();
-    return loft_crt_out(&t, out, cap);
+    loft_cx *cx = &loft_main_cx;
+    loft_text t = loft_json_errors(cx);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 /* `parse_errors_of(r)`: the errors of the parse that built `r`'s store, as a fresh vector. */
 int64_t loft_crt_parse_errors_of(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p) {
-    loft_crt_put_ref(out, no, loft_parse_errors_of(loft_crt_ref(s, r, p)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_parse_errors_of(cx, loft_crt_ref(cx, s, r, p)));
     return 0;
 }
 
@@ -1932,46 +2117,47 @@ int64_t loft_crt_parse_errors_of(int64_t *out, int64_t no, int64_t s, int64_t r,
  * type), `f[0]` a float one. */
 int64_t loft_crt_jv(int64_t which, int64_t *ro, int64_t nro, int64_t s, int64_t r, int64_t p, const char *t, int64_t tl,
                     int64_t i, double *f, int64_t nf, char *out, int64_t cap) {
-    loft_ref v = loft_crt_ref(s, r, p);
-    loft_str ts = loft_crt_str(t, tl);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref v = loft_crt_ref(cx, s, r, p);
+    loft_str ts = loft_crt_str(cx, t, tl);
     loft_text o = { 0, 0, 0 };
     switch (which) {
-    case 0: loft_crt_put_ref(ro, nro, loft_json_null()); return 0;
-    case 1: loft_crt_put_ref(ro, nro, loft_json_bool((uint8_t) i)); return 0;
-    case 2: loft_crt_put_ref(ro, nro, loft_json_number(nf > 0 ? f[0] : 0.0)); return 0;
-    case 3: loft_crt_put_ref(ro, nro, loft_json_string(ts)); return 0;
-    case 4: loft_crt_put_ref(ro, nro, loft_json_array(v)); return 0;
-    case 5: loft_crt_put_ref(ro, nro, loft_json_object(v)); return 0;
-    case 6: loft_crt_put_ref(ro, nro, loft_jv_fields(v)); return 0;
-    case 7: loft_crt_put_ref(ro, nro, loft_jv_field(v, ts)); return 0;
-    case 8: loft_crt_put_ref(ro, nro, loft_jv_item(v, i)); return 0;
-    case 9: loft_crt_put_ref(ro, nro, loft_jv_keys(v)); return 0;
-    case 10: loft_crt_put_ref(ro, nro, loft_struct_from_jsonvalue(loft_crt_ptypes, v, (uint16_t) i)); return 0;
-    case 20: return loft_jv_len(v);
-    case 21: return loft_jv_as_long(v);
-    case 22: return loft_jv_as_bool(v);
-    case 23: return loft_jv_has_field(v, ts);
-    case 30: if (nf > 0) f[0] = loft_jv_as_number(v); return 0;
-    case 40: o = loft_jv_as_text(v); break;
-    case 41: o = loft_jv_kind(v); break;
-    case 42: o = loft_jv_to_json(v); break;
-    case 43: o = loft_jv_to_json_pretty(v); break;
+    case 0: loft_crt_put_ref(cx, ro, nro, loft_json_null(cx)); return 0;
+    case 1: loft_crt_put_ref(cx, ro, nro, loft_json_bool(cx, (uint8_t) i)); return 0;
+    case 2: loft_crt_put_ref(cx, ro, nro, loft_json_number(cx, nf > 0 ? f[0] : 0.0)); return 0;
+    case 3: loft_crt_put_ref(cx, ro, nro, loft_json_string(cx, ts)); return 0;
+    case 4: loft_crt_put_ref(cx, ro, nro, loft_json_array(cx, v)); return 0;
+    case 5: loft_crt_put_ref(cx, ro, nro, loft_json_object(cx, v)); return 0;
+    case 6: loft_crt_put_ref(cx, ro, nro, loft_jv_fields(cx, v)); return 0;
+    case 7: loft_crt_put_ref(cx, ro, nro, loft_jv_field(cx, v, ts)); return 0;
+    case 8: loft_crt_put_ref(cx, ro, nro, loft_jv_item(cx, v, i)); return 0;
+    case 9: loft_crt_put_ref(cx, ro, nro, loft_jv_keys(cx, v)); return 0;
+    case 10: loft_crt_put_ref(cx, ro, nro, loft_struct_from_jsonvalue(cx, loft_crt_ptypes, v, (uint16_t) i)); return 0;
+    case 20: return loft_jv_len(cx, v);
+    case 21: return loft_jv_as_long(cx, v);
+    case 22: return loft_jv_as_bool(cx, v);
+    case 23: return loft_jv_has_field(cx, v, ts);
+    case 30: if (nf > 0) f[0] = loft_jv_as_number(cx, v); return 0;
+    case 40: o = loft_jv_as_text(cx, v); break;
+    case 41: o = loft_jv_kind(cx, v); break;
+    case 42: o = loft_jv_to_json(cx, v); break;
+    case 43: o = loft_jv_to_json_pretty(cx, v); break;
     default: return 0;
     }
-    return loft_crt_out(&o, out, cap);
+    return loft_crt_out(cx, &o, out, cap);
 }
 
 /* `deliver(tag, value)` off the browser: the value's bytes, walked over the parse table's rows
  * as the C backend's per-type walkers (`src/c/deliver.rs`, `deliver_body`) walk them — a base
  * value or a narrow integer as its bytes, a record's data fields in order, a vector's or an
  * array's elements — or why the layout cannot carry them. */
-static const char *loft_crt_dlv_walk(loft_text *o, uint16_t tp, loft_ref r) {
+static const char *loft_crt_dlv_walk(loft_cx *cx, loft_text *o, uint16_t tp, loft_ref r) {
     static char why[256];
     if (tp <= 6) {
-        if (tp == 2 || tp == 6) loft_dlv_raw(o, r, 4);
-        else if (tp == 4) loft_dlv_raw(o, r, 1);
-        else if (tp == 5) loft_dlv_text(o, r);
-        else loft_dlv_raw(o, r, 8);
+        if (tp == 2 || tp == 6) loft_dlv_raw(cx, o, r, 4);
+        else if (tp == 4) loft_dlv_raw(cx, o, r, 1);
+        else if (tp == 5) loft_dlv_text(cx, o, r);
+        else loft_dlv_raw(cx, o, r, 8);
         return 0;
     }
     if ((uint32_t) tp >= loft_crt_nptypes || !loft_crt_ptypes[tp].name) {
@@ -1981,37 +2167,37 @@ static const char *loft_crt_dlv_walk(loft_text *o, uint16_t tp, loft_ref r) {
     const loft_ptype *P = &loft_crt_ptypes[tp];
     switch (P->kind) {
     case LOFT_P_BYTE:
-    case LOFT_P_ENUM: loft_dlv_raw(o, r, 1); return 0;
-    case LOFT_P_SHORT: loft_dlv_short(o, r, 0, 1); return 0;
-    case LOFT_P_SHORTRAW: loft_dlv_short(o, r, P->min, 0); return 0;
+    case LOFT_P_ENUM: loft_dlv_raw(cx, o, r, 1); return 0;
+    case LOFT_P_SHORT: loft_dlv_short(cx, o, r, 0, 1); return 0;
+    case LOFT_P_SHORTRAW: loft_dlv_short(cx, o, r, P->min, 0); return 0;
     case LOFT_P_NINT:
-    case LOFT_P_NINTRAW: loft_dlv_raw(o, r, 4); return 0;
+    case LOFT_P_NINTRAW: loft_dlv_raw(cx, o, r, 4); return 0;
     case LOFT_P_RECORD:
         for (uint16_t k = 0; k < P->n; k++) {
             const loft_pfield *f = &P->fields[k];
             /* `LayoutField::is_data`: the enum discriminant, an absent field and a `#` synthetic
              * are not data. */
             if (strcmp(f->name, "enum") == 0 || f->pos == 0xFFFF || f->name[0] == '#') continue;
-            const char *e = loft_crt_dlv_walk(o, f->content, loft_field(r, f->pos));
+            const char *e = loft_crt_dlv_walk(cx, o, f->content, loft_field(cx, r, f->pos));
             if (e) return e;
         }
         return 0;
     case LOFT_P_VECTOR: {
-        uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;
+        uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;
         uint32_t size = P->elem < loft_crt_nptypes ? loft_crt_ptypes[P->elem].size : 0;
         for (uint32_t i = 0; i < n; i++) {
             loft_ref x = { r.store_nr, v, 8 + size * i, 0 };
-            const char *e = loft_crt_dlv_walk(o, P->elem, x);
+            const char *e = loft_crt_dlv_walk(cx, o, P->elem, x);
             if (e) return e;
         }
         return 0;
     }
     default:
         if (P->kind == LOFT_P_KEYED && P->keyed == LOFT_P_ARRAY) {
-            uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;
+            uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;
             for (uint32_t i = 0; i < n; i++) {
-                loft_ref x = { r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8, 0 };
-                const char *e = loft_crt_dlv_walk(o, P->elem, x);
+                loft_ref x = { r.store_nr, loft_u32(cx, loft_store_of(cx, r), v, 8 + 4 * i), 8, 0 };
+                const char *e = loft_crt_dlv_walk(cx, o, P->elem, x);
                 if (e) return e;
             }
             return 0;
@@ -2024,16 +2210,17 @@ static const char *loft_crt_dlv_walk(loft_text *o, uint16_t tp, loft_ref r) {
 }
 
 void loft_crt_deliver(int64_t tag, int64_t s, int64_t r, int64_t p, int64_t tp, const char *name, int64_t nlen) {
+    loft_cx *cx = &loft_main_cx;
     loft_text o = { 0, 0, 0 };
-    const char *e = loft_crt_dlv_walk(&o, (uint16_t) tp, loft_crt_ref(s, r, p));
+    const char *e = loft_crt_dlv_walk(cx, &o, (uint16_t) tp, loft_crt_ref(cx, s, r, p));
     if (e) printf("deliver tag=%lld type=%.*s error=%s\n", (long long) tag, (int) nlen, name, e);
     else printf("deliver tag=%lld type=%.*s bytes=%.*s\n", (long long) tag, (int) nlen, name, (int) o.len, o.p ? o.p : "");
-    loft_text_free(&o);
+    loft_text_free(cx, &o);
 }
 
 /* `LOFT_CRT_PTYPES=1`: the parse table's rows on standard error, in the emitter's spelling of
  * `loft_ptypes`, to compare with a `--native-c --native-emit` of the same program. */
-static void loft_crt_ptypes_dump(void) {
+static void loft_crt_ptypes_dump(loft_cx *cx) {
     for (uint32_t tp = 0; tp < loft_crt_nptypes; tp++) {
         const loft_ptype *r = &loft_crt_ptypes[tp];
         if (!r->name) continue;
@@ -2058,9 +2245,10 @@ static void loft_crt_ptypes_dump(void) {
 
 /* `t as vector<T>` / a record from text (`loft_record_from_text`) as type `tp`: its reference. */
 int64_t loft_crt_record_from_text(int64_t *out, int64_t no, const char *text, int64_t len, int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     const char *d = getenv("LOFT_CRT_PTYPES");
-    if (d && *d == '1') loft_crt_ptypes_dump();
-    loft_crt_put_ref(out, no, loft_record_from_text(loft_crt_ptypes, loft_crt_str(text, len), (uint16_t) tp));
+    if (d && *d == '1') loft_crt_ptypes_dump(cx);
+    loft_crt_put_ref(cx, out, no, loft_record_from_text(cx, loft_crt_ptypes, loft_crt_str(cx, text, len), (uint16_t) tp));
     return 0;
 }
 
@@ -2068,57 +2256,64 @@ int64_t loft_crt_record_from_text(int64_t *out, int64_t no, const char *text, in
  * type of a linked group. */
 void loft_crt_move_vector(int64_t d_store, int64_t d_rec, int64_t d_pos, int64_t s_store, int64_t s_rec,
                           int64_t s_pos, int64_t tp, int64_t linked) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_ref d = loft_crt_ref(d_store, d_rec, d_pos), s = loft_crt_ref(s_store, s_rec, s_pos);
-    if (linked) loft_move_vector_array(loft_crt_types, (uint16_t) tp, d, s);
-    else loft_move_vector(loft_crt_types, (uint16_t) tp, d, s);
+    loft_ref d = loft_crt_ref(cx, d_store, d_rec, d_pos), s = loft_crt_ref(cx, s_store, s_rec, s_pos);
+    if (linked) loft_move_vector_array(cx, loft_crt_types, (uint16_t) tp, d, s);
+    else loft_move_vector(cx, loft_crt_types, (uint16_t) tp, d, s);
 }
 
 /* OpMoveField / OpMoveRecord: a `tp` record moved from `src` to `dst` — into a field, or out to a
  * returned record (`record_out`). */
 void loft_crt_move_field(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store, int64_t d_rec,
                          int64_t d_pos, int64_t tp, int64_t record_out) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_ref s = loft_crt_ref(s_store, s_rec, s_pos), d = loft_crt_ref(d_store, d_rec, d_pos);
-    if (record_out) loft_move_record_out(loft_crt_types, (uint16_t) tp, s, d);
-    else loft_move_field(loft_crt_types, (uint16_t) tp, s, d);
+    loft_ref s = loft_crt_ref(cx, s_store, s_rec, s_pos), d = loft_crt_ref(cx, d_store, d_rec, d_pos);
+    if (record_out) loft_move_record_out(cx, loft_crt_types, (uint16_t) tp, s, d);
+    else loft_move_field(cx, loft_crt_types, (uint16_t) tp, s, d);
 }
 
 /* OpFreeRecordIn: a placed `tp` record released inside its host's store. */
 void loft_crt_free_record_in(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_free_record_in(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos));
+    loft_free_record_in(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpReplaceVector (Stores::vector_replace): `v`'s elements replaced by `o`'s. */
 void loft_crt_vec_replace(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t o_store, int64_t o_rec,
                           int64_t o_pos, int64_t tp, int64_t linked) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_ref v = loft_crt_ref(v_store, v_rec, v_pos), o = loft_crt_ref(o_store, o_rec, o_pos);
-    if (linked) loft_vec_replace_array(loft_crt_types, (uint16_t) tp, v, o);
-    else loft_vec_replace(loft_crt_types, loft_crt_ntypes, (uint16_t) tp, v, o);
+    loft_ref v = loft_crt_ref(cx, v_store, v_rec, v_pos), o = loft_crt_ref(cx, o_store, o_rec, o_pos);
+    if (linked) loft_vec_replace_array(cx, loft_crt_types, (uint16_t) tp, v, o);
+    else loft_vec_replace(cx, loft_crt_types, loft_crt_ntypes, (uint16_t) tp, v, o);
 }
 
 /* `vector_sum_int` (KERNELS.md, `sum`'s integer loop): `acc` plus every element of the vector,
  * with integer addition's rules — a null element or an overflow makes it null. */
 int64_t loft_crt_vector_sum_int(int64_t store, int64_t rec, int64_t pos, int64_t acc) {
-    return loft_vector_sum_int(loft_crt_ref(store, rec, pos), acc);
+    loft_cx *cx = &loft_main_cx;
+    return loft_vector_sum_int(cx, loft_crt_ref(cx, store, rec, pos), acc);
 }
 
 /* OpClearKeyed of a SECONDARY VIEW of a linked group (`CLEAR_KEYED_VIEW`): the view drops its own
  * route and leaves the records to the member that holds them (`remove_claims_keyed`). */
 void loft_crt_clear_view(int64_t store, int64_t rec, int64_t pos, int64_t tp) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
-    loft_remove_claims_mode(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), 1);
+    loft_remove_claims_mode(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos), 1);
 }
 
 /* OpReplaceKeyed (`Stores::replace_keyed`): `dest`'s collection filled again from `src`'s, of
  * type `tp`; `flags` bit 0 the caller's own, bit 1 the element tree may move whole. */
 void loft_crt_replace_keyed(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store, int64_t d_rec,
                             int64_t d_pos, int64_t tp, int64_t flags) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
-    loft_replace_keyed(loft_crt_types, (uint16_t) tp, loft_crt_ref(s_store, s_rec, s_pos),
-                       loft_crt_ref(d_store, d_rec, d_pos), (int) flags);
+    loft_replace_keyed(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, s_store, s_rec, s_pos),
+                       loft_crt_ref(cx, d_store, d_rec, d_pos), (int) flags);
 }
 
 /* A record variable bound to a copy of another (`loft_bind_copy`, the C generator's
@@ -2126,25 +2321,28 @@ void loft_crt_replace_keyed(int64_t s_store, int64_t s_rec, int64_t s_pos, int64
  * the claims it owns, by the table loaded above. */
 void loft_crt_bind_copy(int64_t *io, int64_t n, int64_t tp, int64_t s_store, int64_t s_rec,
                         int64_t s_pos) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
-    loft_ref r = loft_crt_get_ref(io, n);
-    loft_bind_copy(loft_crt_types, (uint16_t) tp, &r, loft_crt_ref(s_store, s_rec, s_pos));
-    loft_crt_put_ref(io, n, r);
+    loft_ref r = loft_crt_get_ref(cx, io, n);
+    loft_bind_copy(cx, loft_crt_types, (uint16_t) tp, &r, loft_crt_ref(cx, s_store, s_rec, s_pos));
+    loft_crt_put_ref(cx, io, n, r);
 }
 
 /* OpCopyRecord: the record at `src` copied into `dst`, the claims it owns copied with it, by the
  * table loaded above. */
 void loft_crt_copy_record(int64_t s_store, int64_t s_rec, int64_t s_pos, int64_t d_store,
                           int64_t d_rec, int64_t d_pos, int64_t tp, int64_t flags) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types || tp < 0 || (uint32_t) tp >= loft_crt_ntypes) return;
-    loft_copy_record(loft_crt_types, (uint16_t) tp, loft_crt_ref(s_store, s_rec, s_pos),
-                     loft_crt_ref(d_store, d_rec, d_pos), (int) flags);
+    loft_copy_record(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, s_store, s_rec, s_pos),
+                     loft_crt_ref(cx, d_store, d_rec, d_pos), (int) flags);
 }
 
 /* OpClearVector: emptied, the claims its elements own released, by the loaded table. */
 void loft_crt_vec_clear(int64_t store, int64_t rec, int64_t pos) {
+    loft_cx *cx = &loft_main_cx;
     if (!loft_crt_types) return;
-    loft_vec_clear_release(loft_crt_types, loft_crt_ntypes, loft_crt_ref(store, rec, pos));
+    loft_vec_clear_release(cx, loft_crt_types, loft_crt_ntypes, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* ── Keyed collections (@PLN91 S3, the fourth slice): the hash routines the C generator calls
@@ -2160,7 +2358,7 @@ static loft_kv loft_crt_kv[LOFT_CRT_KEYS];
 static char *loft_crt_kv_owned[LOFT_CRT_KEYS];
 static int loft_crt_nkv = 0;
 
-static void loft_crt_key_push(loft_kv k, char *owned) {
+static void loft_crt_key_push(loft_cx *cx, loft_kv k, char *owned) {
     if (loft_crt_nkv >= LOFT_CRT_KEYS) {
         free(owned);
         return;
@@ -2171,34 +2369,38 @@ static void loft_crt_key_push(loft_kv k, char *owned) {
 }
 
 void loft_crt_key_int(int64_t v, int64_t is_null) {
-    loft_crt_key_push(loft_kv_int(is_null ? LOFT_NULL : v), 0);
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_key_push(cx, loft_kv_int(cx, is_null ? LOFT_NULL : v), 0);
 }
 
 void loft_crt_key_float(const double *v, int64_t n, int64_t is_null, int64_t single) {
+    loft_cx *cx = &loft_main_cx;
     double f = is_null || n < 1 ? (double) NAN : v[0];
-    loft_crt_key_push(single ? loft_kv_single((float) f) : loft_kv_float(f), 0);
+    loft_crt_key_push(cx, single ? loft_kv_single(cx, (float) f) : loft_kv_float(cx, f), 0);
 }
 
 void loft_crt_key_text(const char *val, int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     if (bytes < 0) {
-        loft_crt_key_push(loft_kv_text(loft_null_text()), 0);
+        loft_crt_key_push(cx, loft_kv_text(cx, loft_null_text(cx)), 0);
         return;
     }
     size_t len = (size_t) bytes;
     char *copy = (char *) malloc(len + 1);
     if (!copy) return;
     memcpy(copy, val, len + 1);
-    loft_crt_key_push(loft_kv_text(loft_lit(copy, len)), copy);
+    loft_crt_key_push(cx, loft_kv_text(cx, loft_lit(cx, copy, len)), copy);
 }
 
 /* A text part as the view in the stack store's frame slot at `at`, not copied: the operator
  * that pushed it reads the key before it pops the slot. */
 void loft_crt_key_view(int64_t store, int64_t at) {
-    loft_crt_key_push(loft_kv_text(*(const loft_str *) loft_crt_slot_at(store, at)), 0);
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_key_push(cx, loft_kv_text(cx, *(const loft_str *) loft_crt_slot_at(cx, store, at)), 0);
 }
 
 /* The top `n` parts popped, their text copies released. */
-static void loft_crt_key_pop(int64_t n) {
+static void loft_crt_key_pop(loft_cx *cx, int64_t n) {
     while (n-- > 0 && loft_crt_nkv > 0) {
         loft_crt_nkv--;
         free(loft_crt_kv_owned[loft_crt_nkv]);
@@ -2206,7 +2408,7 @@ static void loft_crt_key_pop(int64_t n) {
     }
 }
 
-static int loft_crt_keyed(int64_t tp) {
+static int loft_crt_keyed(loft_cx *cx, int64_t tp) {
     return loft_crt_types && tp >= 0 && (uint32_t) tp < loft_crt_ntypes;
 }
 
@@ -2214,12 +2416,13 @@ static int loft_crt_keyed(int64_t tp) {
  * null reference on a miss.  The parts are popped either way. */
 int64_t loft_crt_hash_find(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t tp, int64_t n) {
-    loft_ref r = loft_ref_null();
-    if (loft_crt_keyed(tp) && n >= 0 && n <= loft_crt_nkv)
-        r = loft_h_find(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    if (loft_crt_keyed(cx, tp) && n >= 0 && n <= loft_crt_nkv)
+        r = loft_h_find(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_types[tp].keys,
                         &loft_crt_kv[loft_crt_nkv - n], (int) n);
-    loft_crt_key_pop(n);
-    loft_crt_put_ref(out, no, r);
+    loft_crt_key_pop(cx, n);
+    loft_crt_put_ref(cx, out, no, r);
     return 0;
 }
 
@@ -2229,29 +2432,31 @@ int64_t loft_crt_hash_find(int64_t *out, int64_t no, int64_t store, int64_t rec,
  * parts are popped either way. */
 int64_t loft_crt_keyed_entry(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                              int64_t elem, int64_t tp, int64_t n) {
-    loft_ref r = loft_ref_null();
-    if (loft_crt_keyed(tp) && loft_crt_keyed(elem) && n >= 1 && n <= 4 && n <= loft_crt_nkv) {
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    if (loft_crt_keyed(cx, tp) && loft_crt_keyed(cx, elem) && n >= 1 && n <= 4 && n <= loft_crt_nkv) {
         const loft_kv *kv = &loft_crt_kv[loft_crt_nkv - n];
-        loft_ref c = loft_crt_ref(store, rec, pos);
+        loft_ref c = loft_crt_ref(cx, store, rec, pos);
         const loft_tdesc *T = &loft_crt_types[tp];
         if (kv[0].kind == LOFT_KV_TEXT)
-            r = loft_keyed_entry_text(loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, kv[0].s);
+            r = loft_keyed_entry_text(cx, loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, kv[0].s);
         else {
             int64_t ks[4];
             for (int i = 0; i < n; i++) ks[i] = kv[i].i;
-            r = loft_keyed_entry_ints(loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, ks);
+            r = loft_keyed_entry_ints(cx, loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, ks);
         }
     }
-    loft_crt_key_pop(n);
-    loft_crt_put_ref(out, no, r);
+    loft_crt_key_pop(cx, n);
+    loft_crt_put_ref(cx, out, no, r);
     return 0;
 }
 
 /* OpNewRecord in a hash: an entry of `size` bytes of its table, into `out`. */
 int64_t loft_crt_hash_entry(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                             int64_t size, int64_t linked) {
-    loft_crt_put_ref(out, no,
-                     loft_hash_entry(loft_crt_ref(store, rec, pos), (uint32_t) size, (int) linked));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no,
+                     loft_hash_entry(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size, (int) linked));
     return 0;
 }
 
@@ -2259,9 +2464,10 @@ int64_t loft_crt_hash_entry(int64_t *out, int64_t no, int64_t store, int64_t rec
  * element replaced and released by the element type `elem`'s row. */
 void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                           int64_t r_pos, int64_t elem, int64_t tp) {
-    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
-    (void) loft_hash_insert(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
-                            loft_crt_ref(r_store, r_rec, r_pos), loft_crt_types[tp].keys,
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp) || !loft_crt_keyed(cx, elem)) return;
+    (void) loft_hash_insert(cx, loft_crt_types, (uint16_t) elem, loft_crt_ref(cx, store, rec, pos),
+                            loft_crt_ref(cx, r_store, r_rec, r_pos), loft_crt_types[tp].keys,
                             loft_crt_types[tp].nk, 0);
 }
 
@@ -2269,9 +2475,10 @@ void loft_crt_hash_insert(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
  * released unless `view` (`CLEAR_KEYED_VIEW`: a linked group's view member only unlinks). */
 void loft_crt_hash_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                           int64_t r_pos, int64_t elem, int64_t tp, int64_t view) {
-    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
-    loft_hash_remove(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
-                     loft_crt_ref(r_store, r_rec, r_pos), loft_crt_types[tp].keys,
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp) || !loft_crt_keyed(cx, elem)) return;
+    loft_hash_remove(cx, loft_crt_types, (uint16_t) elem, loft_crt_ref(cx, store, rec, pos),
+                     loft_crt_ref(cx, r_store, r_rec, r_pos), loft_crt_types[tp].keys,
                      loft_crt_types[tp].nk, (int) view);
 }
 
@@ -2280,26 +2487,29 @@ void loft_crt_hash_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_sto
 void loft_crt_set_keyed(int64_t store, int64_t rec, int64_t pos, int64_t v_store, int64_t v_rec,
                         int64_t v_pos, int64_t elem, int64_t tp, int64_t n, int64_t free_source,
                         int64_t kind) {
+    loft_cx *cx = &loft_main_cx;
     /* `kind` as the lowering numbers it: 0 a hash, 1 a sorted, 2 an ordered, 3 an index, 4 a
      * spatial index, 5 a trie. */
     int k = kind == 1 ? LOFT_KEYED_SORTED : kind == 2 ? LOFT_KEYED_ORDERED : kind == 3 ? LOFT_KEYED_INDEX
           : kind == 4 ? LOFT_KEYED_SPATIAL : kind == 5 ? LOFT_KEYED_TRIE : LOFT_KEYED_HASH;
-    if (loft_crt_keyed(tp) && loft_crt_keyed(elem) && n >= 0 && n <= loft_crt_nkv)
-        loft_set_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos),
-                       loft_crt_ref(v_store, v_rec, v_pos), k, loft_crt_types[tp].keys,
+    if (loft_crt_keyed(cx, tp) && loft_crt_keyed(cx, elem) && n >= 0 && n <= loft_crt_nkv)
+        loft_set_keyed(cx, loft_crt_types, (uint16_t) elem, loft_crt_ref(cx, store, rec, pos),
+                       loft_crt_ref(cx, v_store, v_rec, v_pos), k, loft_crt_types[tp].keys,
                        loft_crt_types[tp].nk, &loft_crt_kv[loft_crt_nkv - n], (int) n,
                        (int) free_source, 0);
-    loft_crt_key_pop(n);
+    loft_crt_key_pop(cx, n);
 }
 
 /* OpSizeHash (`hash::table_bytes`): the bytes of a hash's bucket table, holes included. */
 int64_t loft_crt_hash_bytes(int64_t store, int64_t rec, int64_t pos) {
-    return loft_hash_table_bytes(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_hash_table_bytes(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpLengthHash. */
 int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
-    return loft_hash_len(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_hash_len(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* ── Walking a hash (@PLN91 S3, the fourth slice continued): the snapshot `for c in h` steps
@@ -2310,15 +2520,16 @@ int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
  * records (`@FR-Col-Unordered`), so it is handed the keys too. */
 int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                              int64_t tp, int64_t unordered) {
-    loft_ref r = loft_ref_null();
-    int keyed = loft_crt_keyed(tp);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    int keyed = loft_crt_keyed(cx, tp);
     if (unordered)
-        r = loft_hash_unsorted(loft_crt_ref(store, rec, pos), keyed ? loft_crt_types[tp].keys : 0,
+        r = loft_hash_unsorted(cx, loft_crt_ref(cx, store, rec, pos), keyed ? loft_crt_types[tp].keys : 0,
                                keyed ? loft_crt_types[tp].nk : 0);
     else if (keyed)
-        r = loft_hash_sorted(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+        r = loft_hash_sorted(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_types[tp].keys,
                              loft_crt_types[tp].nk);
-    loft_crt_put_ref(out, no, r);
+    loft_crt_put_ref(cx, out, no, r);
     return 0;
 }
 
@@ -2327,9 +2538,10 @@ int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t re
  * `no / 3` references into `out` and answers how many entries there are. */
 int64_t loft_crt_hash_refs(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t tp) {
-    if (!loft_crt_keyed(tp)) return 0;
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp)) return 0;
     uint32_t n = 0;
-    loft_ref *refs = loft_hash_refs(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
+    loft_ref *refs = loft_hash_refs(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_types[tp].keys,
                                     loft_crt_types[tp].nk, 0, &n);
     for (uint32_t i = 0; i < n && 3 * (int64_t) i + 2 < no; i++) {
         out[3 * i] = refs[i].store_nr;
@@ -2342,36 +2554,40 @@ int64_t loft_crt_hash_refs(int64_t *out, int64_t no, int64_t store, int64_t rec,
 
 /* OpIterate over a snapshot: the walk's state. */
 int64_t loft_crt_scratch_iterate(int64_t store, int64_t rec, int64_t pos) {
-    return loft_scratch_iterate(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_scratch_iterate(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpStep over a snapshot: the next element into `out[0..3]`, the state it leaves into `out[3]`. */
 int64_t loft_crt_scratch_step(int64_t *out, int64_t no, int64_t state, int64_t store, int64_t rec,
                               int64_t pos, int64_t reverse) {
-    loft_ref r = loft_scratch_step(&state, loft_crt_ref(store, rec, pos), (int) reverse);
-    loft_crt_put_ref(out, no, r);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_scratch_step(cx, &state, loft_crt_ref(cx, store, rec, pos), (int) reverse);
+    loft_crt_put_ref(cx, out, no, r);
     if (no >= 4) out[3] = state;
     return 0;
 }
 
 /* OpFreeScratch. */
 void loft_crt_free_scratch(int64_t store, int64_t rec, int64_t pos) {
-    loft_free_scratch(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_free_scratch(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpAppendVector (@PLN91 S3): the elements of `o` appended to `v` as copies of type `tp`, their
  * claims copied by the loaded table. */
 void loft_crt_vec_add(int64_t tp, int64_t store, int64_t rec, int64_t pos, int64_t o_store,
                       int64_t o_rec, int64_t o_pos) {
-    if (!loft_crt_keyed(tp)) return;
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp)) return;
     /* A linked element type is an array of record ids: each record copied into a record of its
      * own (`loft_vec_add_array`). */
     if (loft_crt_types[tp].linked)
-        loft_vec_add_array(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
-                           loft_crt_ref(o_store, o_rec, o_pos));
+        loft_vec_add_array(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos),
+                           loft_crt_ref(cx, o_store, o_rec, o_pos));
     else
-        loft_vec_add(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
-                     loft_crt_ref(o_store, o_rec, o_pos));
+        loft_vec_add(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos),
+                     loft_crt_ref(cx, o_store, o_rec, o_pos));
 }
 
 /* ── Rendering a value (@PLN91 S3, `OpFormatDatabase`): the interpreter walks the schema in loft
@@ -2383,24 +2599,25 @@ static loft_text loft_crt_show_buf = { 0, 0, 0 };
 
 int64_t loft_crt_show_leaf(char *out, int64_t cap, int64_t kind, int64_t store, int64_t rec,
                            int64_t pos, int64_t fmt, int64_t min, int64_t nullable) {
+    loft_cx *cx = &loft_main_cx;
     loft_text *s = &loft_crt_show_buf;
     s->len = 0;
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     int f = (int) fmt, n = (int) nullable;
     switch (kind) {
-    case 0: case 1: loft_show_long(s, r, f, 0); break;
-    case 2: loft_show_single(s, r, f, 0); break;
-    case 3: loft_show_float(s, r, f, 0); break;
-    case 4: loft_show_bool(s, r, f, 0); break;
-    case 5: loft_show_text(s, r, f, 0); break;
-    case 6: loft_show_char(s, r, f, 0); break;
-    case 7: loft_show_byte(s, r, min, n); break;
-    case 8: loft_show_short(s, r, min, n); break;
-    case 9: loft_show_short_raw(s, r, min, n); break;
-    case 10: loft_show_int4(s, r, n); break;
-    case 11: loft_show_int_raw(s, r, n); break;
-    case 12: loft_show_dbref(s, r); break;
-    case 13: loft_show_child(s, r); break;
+    case 0: case 1: loft_show_long(cx, s, r, f, 0); break;
+    case 2: loft_show_single(cx, s, r, f, 0); break;
+    case 3: loft_show_float(cx, s, r, f, 0); break;
+    case 4: loft_show_bool(cx, s, r, f, 0); break;
+    case 5: loft_show_text(cx, s, r, f, 0); break;
+    case 6: loft_show_char(cx, s, r, f, 0); break;
+    case 7: loft_show_byte(cx, s, r, min, n); break;
+    case 8: loft_show_short(cx, s, r, min, n); break;
+    case 9: loft_show_short_raw(cx, s, r, min, n); break;
+    case 10: loft_show_int4(cx, s, r, n); break;
+    case 11: loft_show_int_raw(cx, s, r, n); break;
+    case 12: loft_show_dbref(cx, s, r); break;
+    case 13: loft_show_child(cx, s, r); break;
     default: return 0;
     }
     int64_t len = (int64_t) s->len;
@@ -2410,7 +2627,8 @@ int64_t loft_crt_show_leaf(char *out, int64_t cap, int64_t kind, int64_t store, 
 
 /* loft_vec_absent: a collection field that holds none. */
 int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
-    return loft_vec_absent(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_vec_absent(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpSliceVector / OpSliceView (Stores::vector_slice / vector_slice_view): `v = src[lo..hi]`
@@ -2418,78 +2636,89 @@ int64_t loft_crt_vec_absent(int64_t store, int64_t rec, int64_t pos) {
  * bytes in place where the runtime can. */
 void loft_crt_vec_slice(int64_t v_store, int64_t v_rec, int64_t v_pos, int64_t o_store, int64_t o_rec,
                         int64_t o_pos, int64_t lo, int64_t hi, int64_t size, int64_t view) {
-    loft_ref v = loft_crt_ref(v_store, v_rec, v_pos), o = loft_crt_ref(o_store, o_rec, o_pos);
-    if (view) loft_vec_slice_view(v, o, lo, hi, (uint32_t) size);
-    else loft_vec_slice(v, o, lo, hi, (uint32_t) size);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref v = loft_crt_ref(cx, v_store, v_rec, v_pos), o = loft_crt_ref(cx, o_store, o_rec, o_pos);
+    if (view) loft_vec_slice_view(cx, v, o, lo, hi, (uint32_t) size);
+    else loft_vec_slice(cx, v, o, lo, hi, (uint32_t) size);
 }
 
 /* OpAppendCopy (State::append_copy): `[x; n]` — the vector's last element repeated until it
  * holds `count`, of element type `ctp`; `count` <= 0 leaves it empty. */
 void loft_crt_vec_append_copy(int64_t store, int64_t rec, int64_t pos, int64_t ctp, int64_t count) {
-    loft_vec_append_copy(loft_crt_types, (uint16_t) ctp, loft_crt_ref(store, rec, pos), count);
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_append_copy(cx, loft_crt_types, (uint16_t) ctp, loft_crt_ref(cx, store, rec, pos), count);
 }
 
 /* OpKeepVectorRange (`Stores::keep_vector_range`): only the elements `lo..hi` kept, what the
  * dropped ones own released through the type table; `size` 0 for a linked element. */
 void loft_crt_vec_keep(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size, int64_t lo,
                        int64_t hi) {
-    loft_keep_vector_range((const loft_tdesc *) loft_crt_types, (uint16_t) tp,
-                           loft_crt_ref(store, rec, pos), (uint32_t) size, lo, hi);
+    loft_cx *cx = &loft_main_cx;
+    loft_keep_vector_range(cx, (const loft_tdesc *) loft_crt_types, (uint16_t) tp,
+                           loft_crt_ref(cx, store, rec, pos), (uint32_t) size, lo, hi);
 }
 
 /* OpAppendTextBytes: the bytes `lo..hi` of a text appended to a byte vector. */
 void loft_crt_append_text_bytes(int64_t store, int64_t rec, int64_t pos, const char *val,
                                 int64_t bytes, int64_t lo, int64_t hi) {
-    loft_append_text_bytes(loft_crt_ref(store, rec, pos), loft_crt_str(val, bytes), lo, hi);
+    loft_cx *cx = &loft_main_cx;
+    loft_append_text_bytes(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_str(cx, val, bytes), lo, hi);
 }
 
 /* text_from_byte_range (`Stores::text_from_bytes_range`): the bytes [lo, hi) of a vector<u8> as a
  * text, copied into `out` when it fits; answers the length in bytes. */
 int64_t loft_crt_text_from_byte_range(char *out, int64_t cap, int64_t store, int64_t rec,
                                       int64_t pos, int64_t lo, int64_t hi) {
-    loft_text t = loft_text_from_byte_range(loft_crt_ref(store, rec, pos), lo, hi);
+    loft_cx *cx = &loft_main_cx;
+    loft_text t = loft_text_from_byte_range(cx, loft_crt_ref(cx, store, rec, pos), lo, hi);
     int64_t len = (int64_t) t.len;
     if (len <= cap && len > 0) memcpy(out, t.p, (size_t) len);
-    loft_text_free(&t);
+    loft_text_free(cx, &t);
     return len;
 }
 
 /* OpReverseVector: the elements of `size` bytes reversed in place. */
 void loft_crt_vec_reverse(int64_t store, int64_t rec, int64_t pos, int64_t size) {
-    loft_vec_reverse(loft_crt_ref(store, rec, pos), (uint32_t) size);
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_reverse(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size);
 }
 
 /* OpReserveVector (`vector::reserve_vector`): room for `count` elements of `size` bytes. */
 void loft_crt_vec_reserve(int64_t store, int64_t rec, int64_t pos, int64_t count, int64_t size) {
-    loft_vec_reserve(loft_crt_ref(store, rec, pos), count, (uint32_t) size);
+    loft_cx *cx = &loft_main_cx;
+    loft_vec_reserve(cx, loft_crt_ref(cx, store, rec, pos), count, (uint32_t) size);
 }
 
 /* OpReserveHash (`Stores::reserve_hash`): a hash of type `tp` sized for `count` entries. */
 void loft_crt_hash_reserve(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t count) {
-    if (!loft_crt_keyed(tp)) return;
-    loft_hash_reserve(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos), count);
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp)) return;
+    loft_hash_reserve(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos), count);
 }
 
 /* OpPrependVector (`Stores::prepend_vector`): `o`'s elements put in front of `v`'s, copied by the
  * element type `tp`'s table entry; answers whether anything was prepended. */
 int64_t loft_crt_vec_prepend(int64_t store, int64_t rec, int64_t pos, int64_t o_store, int64_t o_rec,
                              int64_t o_pos, int64_t tp, int64_t linked) {
-    if (!loft_crt_keyed(tp)) return 0;
-    return loft_vec_prepend(loft_crt_types, (uint16_t) tp, loft_crt_ref(store, rec, pos),
-                            loft_crt_ref(o_store, o_rec, o_pos), (int) linked);
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp)) return 0;
+    return loft_vec_prepend(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, store, rec, pos),
+                            loft_crt_ref(cx, o_store, o_rec, o_pos), (int) linked);
 }
 
 /* OpSetDbRef (`Stores::set_db_ref`): a reference written into the twelve bytes at `fld`, the record
  * it names marked referenced, so removing it leaves a tombstone. */
 void loft_crt_set_dbref(int64_t store, int64_t rec, int64_t pos, int64_t fld, int64_t r_store,
                         int64_t r_rec, int64_t r_pos) {
-    loft_set_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld, loft_crt_ref(r_store, r_rec, r_pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_set_dbref(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld, loft_crt_ref(cx, r_store, r_rec, r_pos));
 }
 
 /* OpGetDbRef: the reference stored at `fld`, into `out`; a removed record reads null. */
 int64_t loft_crt_get_dbref(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t fld) {
-    loft_crt_put_ref(out, no, loft_get_dbref(loft_crt_ref(store, rec, pos), (uint32_t) fld));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_get_dbref(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) fld));
     return 0;
 }
 
@@ -2497,21 +2726,24 @@ int64_t loft_crt_get_dbref(int64_t *out, int64_t no, int64_t store, int64_t rec,
  * the collection's store (`loft_entry_new`), into `out`. */
 int64_t loft_crt_entry_new(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t size) {
-    loft_crt_put_ref(out, no, loft_entry_new(loft_crt_ref(store, rec, pos), (uint32_t) size));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_entry_new(cx, loft_crt_ref(cx, store, rec, pos), (uint32_t) size));
     return 0;
 }
 
 /* OpFinishRecord in an array: the record's number joins the end. */
 void loft_crt_array_append(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                            int64_t r_pos) {
-    loft_array_append(loft_crt_ref(store, rec, pos), loft_crt_ref(r_store, r_rec, r_pos));
+    loft_cx *cx = &loft_main_cx;
+    loft_array_append(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_ref(cx, r_store, r_rec, r_pos));
 }
 
 /* OpVectorRef / OpVectorRefNullable on an array: the record its slot `idx` names, into `out`; the
  * null reference past either end. */
 int64_t loft_crt_array_get(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t idx, int64_t is_null) {
-    loft_crt_put_ref(out, no, is_null ? loft_ref_null() : loft_array_get(loft_crt_ref(store, rec, pos), idx));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, is_null ? loft_ref_null(cx) : loft_array_get(cx, loft_crt_ref(cx, store, rec, pos), idx));
     return 0;
 }
 
@@ -2521,16 +2753,18 @@ int64_t loft_crt_array_get(int64_t *out, int64_t no, int64_t store, int64_t rec,
  * Answers whether an element was removed. */
 int64_t loft_crt_vec_remove(int64_t store, int64_t rec, int64_t pos, int64_t tp, int64_t size,
                             int64_t mode, int64_t index) {
-    loft_ref v = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref v = loft_crt_ref(cx, store, rec, pos);
     const loft_tdesc *T = (const loft_tdesc *) loft_crt_types;
-    if (mode == 2) return loft_vec_remove_linked(T, (uint16_t) tp, v, index);
-    if (mode == 1) return loft_vec_remove_at(T, (uint16_t) tp, v, index);
-    return loft_vec_remove(v, (uint32_t) size, index);
+    if (mode == 2) return loft_vec_remove_linked(cx, T, (uint16_t) tp, v, index);
+    if (mode == 1) return loft_vec_remove_at(cx, T, (uint16_t) tp, v, index);
+    return loft_vec_remove(cx, v, (uint32_t) size, index);
 }
 
 /* The interpreted program starts: the trace's `M` line, as the Rust interpreter writes it when
  * it enters the program (`State::execute_argv_shared`). */
 void loft_crt_trace_mark(void) {
+    loft_cx *cx = &loft_main_cx;
     LOFT_TRACE("M\n");
 }
 
@@ -2539,27 +2773,32 @@ void loft_crt_trace_mark(void) {
  * as a C program anchors (`loft_set_anchor`) — or against the working directory, for a program
  * that declared `#cwd`. */
 void loft_crt_fs_anchor(int64_t program_relative) {
-    loft_set_anchor((int) program_relative);
+    loft_cx *cx = &loft_main_cx;
+    loft_set_anchor(cx, (int) program_relative);
 }
 
 /* OpGetFile: what the File's path names. */
 int64_t loft_crt_get_file(int64_t store, int64_t rec, int64_t pos) {
-    return loft_get_file(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_get_file(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* OpGetFileText: the whole file into the text local at byte `at` of the stack store. */
 void loft_crt_file_text(int64_t store, int64_t rec, int64_t pos, int64_t stk, int64_t at) {
-    loft_get_file_text(loft_crt_ref(store, rec, pos), (loft_text *) loft_crt_slot_at(stk, at));
+    loft_cx *cx = &loft_main_cx;
+    loft_get_file_text(cx, loft_crt_ref(cx, store, rec, pos), (loft_text *) loft_crt_slot_at(cx, stk, at));
 }
 
 /* `write_bytes(path, bytes)`: the file is the store vector's bytes. */
 int64_t loft_crt_write_bytes(const char *path, int64_t bytes, int64_t store, int64_t rec, int64_t pos) {
-    return loft_write_bytes(loft_crt_str(path, bytes), loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_write_bytes(cx, loft_crt_str(cx, path, bytes), loft_crt_ref(cx, store, rec, pos));
 }
 
 /* Is a write or read through this File little-endian? */
 int64_t loft_crt_file_le(int64_t store, int64_t rec, int64_t pos) {
-    return loft_file_le(loft_crt_ref(store, rec, pos));
+    loft_cx *cx = &loft_main_cx;
+    return loft_file_le(cx, loft_crt_ref(cx, store, rec, pos));
 }
 
 /* A value's binary form (`Stores::read_data`) is gathered here, piece by piece as the loft side
@@ -2568,36 +2807,42 @@ static loft_text loft_crt_wbuf = { 0, 0, 0 };
 
 /* `w` raw bytes at a place, in the File's byte order. */
 void loft_crt_ser_at(int64_t store, int64_t rec, int64_t pos, int64_t w, int64_t le) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     uint64_t v = 0;
-    memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos), (size_t) w);
-    loft_put(&loft_crt_wbuf, v, (int) w, (int) le);
+    memcpy(&v, loft_at(cx, loft_store_of(cx, r), r.rec, r.pos), (size_t) w);
+    loft_put(cx, &loft_crt_wbuf, v, (int) w, (int) le);
 }
 
 /* An integer's low `w` bytes, in the File's byte order. */
 void loft_crt_ser_int(int64_t v, int64_t w, int64_t le) {
-    loft_put(&loft_crt_wbuf, (uint64_t) v, (int) w, (int) le);
+    loft_cx *cx = &loft_main_cx;
+    loft_put(cx, &loft_crt_wbuf, (uint64_t) v, (int) w, (int) le);
 }
 
 /* A text field's bytes. */
 void loft_crt_ser_text(int64_t store, int64_t rec, int64_t pos) {
-    loft_text_append(&loft_crt_wbuf, loft_get_text(loft_crt_ref(store, rec, pos), 0));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_append(cx, &loft_crt_wbuf, loft_get_text(cx, loft_crt_ref(cx, store, rec, pos), 0));
 }
 
 /* A text local's bytes (the local at byte `at` of the stack store). */
 void loft_crt_ser_slot_text(int64_t stk, int64_t at) {
-    loft_text_append(&loft_crt_wbuf, loft_view((loft_text *) loft_crt_slot_at(stk, at)));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_append(cx, &loft_crt_wbuf, loft_view(cx, (loft_text *) loft_crt_slot_at(cx, stk, at)));
 }
 
 /* The run image's runner (step 3): a text reached through a reference rather than a frame byte. */
 void loft_crt_ser_ref_text(int64_t s, int64_t r, int64_t p) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    if (t) loft_text_append(&loft_crt_wbuf, loft_view(t));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    if (t) loft_text_append(cx, &loft_crt_wbuf, loft_view(cx, t));
 }
 
 /* OpWriteFile: the gathered bytes at the File's next position; the buffer emptied. */
 void loft_crt_ser_write(int64_t store, int64_t rec, int64_t pos) {
-    loft_write_file(loft_crt_ref(store, rec, pos), &loft_crt_wbuf);
+    loft_cx *cx = &loft_main_cx;
+    loft_write_file(cx, loft_crt_ref(cx, store, rec, pos), &loft_crt_wbuf);
     loft_crt_wbuf.len = 0;
 }
 
@@ -2607,68 +2852,77 @@ static uint8_t *loft_crt_rbuf = 0;
 static int64_t loft_crt_rlen = 0;
 
 int64_t loft_crt_read_file(int64_t store, int64_t rec, int64_t pos, int64_t n, int64_t text, int64_t width) {
+    loft_cx *cx = &loft_main_cx;
     free(loft_crt_rbuf);
     loft_crt_rbuf = 0;
-    loft_crt_rlen = loft_read_file(loft_crt_ref(store, rec, pos), n, (int) text, width, &loft_crt_rbuf);
+    loft_crt_rlen = loft_read_file(cx, loft_crt_ref(cx, store, rec, pos), n, (int) text, width, &loft_crt_rbuf);
     return loft_crt_rlen;
 }
 
 /* The read bytes as the text local at byte `at` of the stack store. */
 void loft_crt_de_slot_text(int64_t stk, int64_t at) {
-    loft_text_set((loft_text *) loft_crt_slot_at(stk, at),
-                  loft_lit((const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
+    loft_cx *cx = &loft_main_cx;
+    loft_text_set(cx, (loft_text *) loft_crt_slot_at(cx, stk, at),
+                  loft_lit(cx, (const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
 }
 
 void loft_crt_de_ref_text(int64_t s, int64_t r, int64_t p) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
-    if (t) loft_text_set(t, loft_lit((const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
+    if (t) loft_text_set(cx, t, loft_lit(cx, (const char *) loft_crt_rbuf, (size_t) (loft_crt_rlen < 0 ? 0 : loft_crt_rlen)));
 }
 
 /* `OpGetFileText`: the file's text into the text the reference `(ts, tr, tp)` names. */
 void loft_crt_file_text_ref(int64_t store, int64_t rec, int64_t pos, int64_t ts, int64_t tr, int64_t tp) {
-    loft_text *t = (loft_text *) loft_place(loft_crt_ref(ts, tr, tp), 0);
-    if (t) loft_get_file_text(loft_crt_ref(store, rec, pos), t);
+    loft_cx *cx = &loft_main_cx;
+    loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, ts, tr, tp), 0);
+    if (t) loft_get_file_text(cx, loft_crt_ref(cx, store, rec, pos), t);
 }
 
 /* The read bytes `off..off+n` as a text field. */
 void loft_crt_de_text(int64_t store, int64_t rec, int64_t pos, int64_t off, int64_t n) {
-    loft_set_text(loft_crt_ref(store, rec, pos), 0, loft_lit((const char *) loft_crt_rbuf + off, (size_t) n));
+    loft_cx *cx = &loft_main_cx;
+    loft_set_text(cx, loft_crt_ref(cx, store, rec, pos), 0, loft_lit(cx, (const char *) loft_crt_rbuf + off, (size_t) n));
 }
 
 /* The `w` read bytes at `off`, in the File's byte order, raw at a place. */
 void loft_crt_de_at(int64_t store, int64_t rec, int64_t pos, int64_t off, int64_t w, int64_t le) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
-    uint64_t v = loft_take(loft_crt_rbuf + off, (int) w, (int) le);
-    memcpy(loft_at(loft_store_of(r), r.rec, r.pos), &v, (size_t) w);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
+    uint64_t v = loft_take(cx, loft_crt_rbuf + off, (int) w, (int) le);
+    memcpy(loft_at(cx, loft_store_of(cx, r), r.rec, r.pos), &v, (size_t) w);
 }
 
 /* The `w` read bytes at `off` as an integer, sign-extended from `w` bytes when `sgn`. */
 int64_t loft_crt_de_int(int64_t off, int64_t w, int64_t sgn, int64_t le) {
-    return loft_fcur_decode(loft_crt_rbuf + off, (int) w, (int) sgn, (int) le);
+    loft_cx *cx = &loft_main_cx;
+    return loft_fcur_decode(cx, loft_crt_rbuf + off, (int) w, (int) sgn, (int) le);
 }
 
 /* OpDelete, OpMoveFile, OpMkdir, OpMkdirAll, OpRmdir, by `which` (0–4): the runtime's own, each
  * answering its FileResult code. */
 int64_t loft_crt_fs_op(int64_t which, const char *a, int64_t an, const char *b, int64_t bn) {
-    loft_str x = loft_crt_str(a, an);
+    loft_cx *cx = &loft_main_cx;
+    loft_str x = loft_crt_str(cx, a, an);
     switch (which) {
-    case 0: return loft_fs_delete(x);
-    case 1: return loft_fs_move(x, loft_crt_str(b, bn));
-    case 2: return loft_fs_mkdir(x, 0);
-    case 3: return loft_fs_mkdir(x, 1);
-    case 4: return loft_fs_rmdir(x);
+    case 0: return loft_fs_delete(cx, x);
+    case 1: return loft_fs_move(cx, x, loft_crt_str(cx, b, bn));
+    case 2: return loft_fs_mkdir(cx, x, 0);
+    case 3: return loft_fs_mkdir(cx, x, 1);
+    case 4: return loft_fs_rmdir(cx, x);
     default: return LOFT_FS_OTHER;
     }
 }
 
 /* OpSizeFile, OpSeekFile, OpTruncateFile, OpSyncFile, by `which` (0–3), on a File record. */
 int64_t loft_crt_file_op(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t arg) {
-    loft_ref f = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref f = loft_crt_ref(cx, store, rec, pos);
     switch (which) {
-    case 0: return loft_size_file(f);
-    case 1: loft_seek_file(f, arg); return 0;
-    case 2: return loft_truncate_file(f, arg);
-    case 3: return loft_sync_file(f);
+    case 0: return loft_size_file(cx, f);
+    case 1: loft_seek_file(cx, f, arg); return 0;
+    case 2: return loft_truncate_file(cx, f, arg);
+    case 3: return loft_sync_file(cx, f);
     default: return 0;
     }
 }
@@ -2676,7 +2930,8 @@ int64_t loft_crt_file_op(int64_t which, int64_t store, int64_t rec, int64_t pos,
 /* `read_bytes(path)`: the whole file as a byte vector in a store of its own, into `out`; the null
  * reference for a missing or unreadable file. */
 int64_t loft_crt_read_bytes(int64_t *out, int64_t no, const char *path, int64_t bytes) {
-    loft_crt_put_ref(out, no, loft_read_bytes(loft_crt_str(path, bytes)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_read_bytes(cx, loft_crt_str(cx, path, bytes)));
     return 0;
 }
 
@@ -2685,48 +2940,53 @@ int64_t loft_crt_read_bytes(int64_t *out, int64_t no, const char *path, int64_t 
  * `loft_get_file_text` — null when a file with bytes gave none (they are not text).  The length,
  * or -1 for null; nothing is written when it exceeds `cap`. */
 int64_t loft_crt_file_content(char *out, int64_t cap, int64_t store, int64_t rec, int64_t pos) {
-    loft_ref f = loft_crt_ref(store, rec, pos);
-    uint8_t format = loft_file_format(f);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref f = loft_crt_ref(cx, store, rec, pos);
+    uint8_t format = loft_file_format(cx, f);
     if (format == 5 || format == 4) return -1;
     loft_text t = { 0, 0, 0 };
-    loft_get_file_text(f, &t);
-    int64_t size = loft_file_long(f, 0);
+    loft_get_file_text(cx, f, &t);
+    int64_t size = loft_file_long(cx, f, 0);
     if (t.len == 0 && size != LOFT_NULL && size > 0) {
-        loft_text_free(&t);
+        loft_text_free(cx, &t);
         return -1;
     }
-    return loft_crt_out(&t, out, cap);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 /* `write_text_raw(file, v)`: `v` at the File's position, through the runtime's own. */
 int64_t loft_crt_write_text_raw(int64_t store, int64_t rec, int64_t pos, const char *v, int64_t bytes) {
-    return loft_write_text_raw(loft_crt_ref(store, rec, pos), loft_crt_str(v, bytes));
+    loft_cx *cx = &loft_main_cx;
+    return loft_write_text_raw(cx, loft_crt_ref(cx, store, rec, pos), loft_crt_str(cx, v, bytes));
 }
 
 /* `list_dir(path)`: the entries' names in a store of their own, into `out`; the null reference for
  * a path that is not a readable directory. */
 int64_t loft_crt_list_dir(int64_t *out, int64_t no, const char *path, int64_t bytes) {
-    loft_crt_put_ref(out, no, loft_list_dir(loft_crt_str(path, bytes)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_list_dir(cx, loft_crt_str(cx, path, bytes)));
     return 0;
 }
 
 /* `file_map(path)` (`Stores::fs_file_map`): the file's bytes as a read-only vector, null where
  * it cannot be mapped; its reference in `out`. */
 int64_t loft_crt_file_map(int64_t *out, int64_t no, const char *path, int64_t bytes) {
-    loft_crt_put_ref(out, no, loft_file_map(loft_crt_str(path, bytes)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_file_map(cx, loft_crt_str(cx, path, bytes)));
     return 0;
 }
 
 /* The store natives by `which`: 0 `protect_store_frees`, 1 `unprotect_store_frees`, 2
  * `get_store_lock`, 3 `set_store_lock` (`arg` the lock), 4 `store_reclaim` — the runtime's own. */
 int64_t loft_crt_store_native(int64_t which, int64_t store, int64_t rec, int64_t pos, int64_t arg) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     switch (which) {
-    case 0: loft_protect(r); return 0;
-    case 1: loft_unprotect(r); return 0;
-    case 2: return loft_get_store_lock(r);
-    case 3: loft_set_store_lock(r, (uint8_t) arg); return 0;
-    case 4: return loft_store_reclaim(r);
+    case 0: loft_protect(cx, r); return 0;
+    case 1: loft_unprotect(cx, r); return 0;
+    case 2: return loft_get_store_lock(cx, r);
+    case 3: loft_set_store_lock(cx, r, (uint8_t) arg); return 0;
+    case 4: return loft_store_reclaim(cx, r);
     default: return 0;
     }
 }
@@ -2734,6 +2994,7 @@ int64_t loft_crt_store_native(int64_t which, int64_t store, int64_t rec, int64_t
 /* The interpreted program's command line, one argument at a time after its name (the image):
  * what `arguments()` answers. */
 void loft_crt_add_arg(const char *v, int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     if (loft_argc == 0) {
         loft_argv = (char **) malloc(sizeof(char *));
         if (!loft_argv) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -2753,18 +3014,21 @@ void loft_crt_add_arg(const char *v, int64_t bytes) {
 /* `panic(message, file, line)` reported at the PROGRAM's place: the runtime's own `loft_panic`
  * (a loft call to `panic` gets the caller's place injected by the compiler). */
 void loft_crt_panic(const char *msg, int64_t mlen, const char *file, int64_t flen, int64_t line) {
-    loft_panic(loft_crt_str(msg, mlen), loft_crt_str(file, flen), line);
+    loft_cx *cx = &loft_main_cx;
+    loft_panic(cx, loft_crt_str(cx, msg, mlen), loft_crt_str(cx, file, flen), line);
 }
 
 /* `env_variables()`: the environment as `EnvVariable` records of `size` bytes, the C runtime's
  * own (`loft_env_variables`), into `out`. */
 int64_t loft_crt_env_variables(int64_t *out, int64_t no, int64_t size) {
-    loft_crt_put_ref(out, no, loft_env_variables((uint32_t) size));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_env_variables(cx, (uint32_t) size));
     return 0;
 }
 
 int64_t loft_crt_arguments(int64_t *out, int64_t no) {
-    loft_crt_put_ref(out, no, loft_arguments());
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_arguments(cx));
     return 0;
 }
 
@@ -2773,6 +3037,7 @@ static const char **loft_crt_tnames = 0;
 static uint32_t loft_crt_ntnames = 0;
 
 void loft_crt_add_type_name(const char *v, int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     const char **grown = (const char **) realloc((void *) loft_crt_tnames, sizeof(char *) * (loft_crt_ntnames + 1));
     char *copy = (char *) malloc((size_t) bytes + 1);
     if (!grown || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -2783,28 +3048,31 @@ void loft_crt_add_type_name(const char *v, int64_t bytes) {
 }
 
 int64_t loft_crt_type_names(void) {
+    loft_cx *cx = &loft_main_cx;
     return loft_crt_ntnames;
 }
 
 /* `store_memory()`: the runtime's own report over the interpreted program's stores. */
 int64_t loft_crt_store_memory(char *out, int64_t cap) {
-    loft_text t = loft_store_memory(loft_crt_tnames, loft_crt_ntnames);
-    return loft_crt_out(&t, out, cap);
+    loft_cx *cx = &loft_main_cx;
+    loft_text t = loft_store_memory(cx, loft_crt_tnames, loft_crt_ntnames);
+    return loft_crt_out(cx, &t, out, cap);
 }
 
 /* ── S4: the keyed collections beyond a hash, by `kind` (1 a sorted, 2 an ordered, 3 an index),
  * each through the routine the C generator calls for that kind (`src/c/body/keyed.rs`), its keys
  * the loaded table's. */
-static uint32_t loft_crt_size_of(int64_t tp) {
-    return loft_crt_keyed(tp) ? loft_crt_types[tp].size : 0;
+static uint32_t loft_crt_size_of(loft_cx *cx, int64_t tp) {
+    return loft_crt_keyed(cx, tp) ? loft_crt_types[tp].size : 0;
 }
 
 /* OpNewRecord: a sorted stages an element of `size` bytes past its end; an ordered or an index
  * gives it a record of its own.  Into `out`; the caller fills it with the defaults. */
 int64_t loft_crt_keyed_new(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                            int64_t kind, int64_t size) {
-    loft_ref c = loft_crt_ref(store, rec, pos);
-    loft_crt_put_ref(out, no, kind == 1 ? loft_sorted_new(c, (uint32_t) size) : loft_entry_new(c, (uint32_t) size));
+    loft_cx *cx = &loft_main_cx;
+    loft_ref c = loft_crt_ref(cx, store, rec, pos);
+    loft_crt_put_ref(cx, out, no, kind == 1 ? loft_sorted_new(cx, c, (uint32_t) size) : loft_entry_new(cx, c, (uint32_t) size));
     return 0;
 }
 
@@ -2812,33 +3080,35 @@ int64_t loft_crt_keyed_new(int64_t *out, int64_t no, int64_t store, int64_t rec,
  * by the element type `elem`'s row. */
 void loft_crt_keyed_finish(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                            int64_t r_pos, int64_t kind, int64_t elem, int64_t tp) {
-    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
-    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_crt_ref(r_store, r_rec, r_pos);
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp) || !loft_crt_keyed(cx, elem)) return;
+    loft_ref c = loft_crt_ref(cx, store, rec, pos), r = loft_crt_ref(cx, r_store, r_rec, r_pos);
     const loft_key *keys = loft_crt_types[tp].keys;
     int nk = loft_crt_types[tp].nk;
-    if (kind == 1) loft_sorted_finish(c, loft_crt_size_of(elem), keys, nk);
-    else if (kind == 2) (void) loft_ordered_insert(loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
-    else if (kind == 3) (void) loft_ix_insert(loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
-    else (void) loft_rx_insert_record(loft_crt_types, (uint16_t) elem, c, r, keys, nk, kind == 5, 0);
+    if (kind == 1) loft_sorted_finish(cx, c, loft_crt_size_of(cx, elem), keys, nk);
+    else if (kind == 2) (void) loft_ordered_insert(cx, loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
+    else if (kind == 3) (void) loft_ix_insert(cx, loft_crt_types, (uint16_t) elem, c, r, keys, nk, 0);
+    else (void) loft_rx_insert_record(cx, loft_crt_types, (uint16_t) elem, c, r, keys, nk, kind == 5, 0);
 }
 
 /* OpGetRecord: the element whose key is the top `n` parts, into `out`; null on a miss.  The parts
  * are popped either way. */
 int64_t loft_crt_keyed_find(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                             int64_t kind, int64_t tp, int64_t n) {
-    loft_ref r = loft_ref_null();
-    if (loft_crt_keyed(tp) && n >= 0 && n <= loft_crt_nkv) {
-        loft_ref c = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_ref_null(cx);
+    if (loft_crt_keyed(cx, tp) && n >= 0 && n <= loft_crt_nkv) {
+        loft_ref c = loft_crt_ref(cx, store, rec, pos);
         const loft_key *keys = loft_crt_types[tp].keys;
         int nk = loft_crt_types[tp].nk;
         const loft_kv *kv = &loft_crt_kv[loft_crt_nkv - n];
-        if (kind == 1) r = loft_seq_find(c, loft_crt_size_of(loft_crt_types[tp].elem), keys, nk, kv, (int) n);
-        else if (kind == 2) r = loft_seq_find(c, 0, keys, nk, kv, (int) n);
-        else if (kind == 3) r = loft_ix_find(c, keys, nk, kv, (int) n);
-        else r = loft_rx_find(c, keys, nk, kind == 5, kv, (int) n);
+        if (kind == 1) r = loft_seq_find(cx, c, loft_crt_size_of(cx, loft_crt_types[tp].elem), keys, nk, kv, (int) n);
+        else if (kind == 2) r = loft_seq_find(cx, c, 0, keys, nk, kv, (int) n);
+        else if (kind == 3) r = loft_ix_find(cx, c, keys, nk, kv, (int) n);
+        else r = loft_rx_find(cx, c, keys, nk, kind == 5, kv, (int) n);
     }
-    loft_crt_key_pop(n);
-    loft_crt_put_ref(out, no, r);
+    loft_crt_key_pop(cx, n);
+    loft_crt_put_ref(cx, out, no, r);
     return 0;
 }
 
@@ -2846,12 +3116,13 @@ int64_t loft_crt_keyed_find(int64_t *out, int64_t no, int64_t store, int64_t rec
  * view member (`view`) only unlinks. */
 void loft_crt_keyed_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec,
                            int64_t r_pos, int64_t kind, int64_t elem, int64_t tp, int64_t view) {
-    if (!loft_crt_keyed(tp) || !loft_crt_keyed(elem)) return;
-    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_crt_ref(r_store, r_rec, r_pos);
-    if (kind == 1) loft_sorted_remove_owned(loft_crt_types, (uint16_t) elem, c, r, loft_crt_size_of(elem));
-    else if (kind == 2) loft_ordered_remove(loft_crt_types, (uint16_t) elem, c, r, 0, (int) view);
-    else if (kind == 3) loft_ix_remove(loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) view);
-    else loft_rx_remove_owned(loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, kind == 5, (int) view);
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp) || !loft_crt_keyed(cx, elem)) return;
+    loft_ref c = loft_crt_ref(cx, store, rec, pos), r = loft_crt_ref(cx, r_store, r_rec, r_pos);
+    if (kind == 1) loft_sorted_remove_owned(cx, loft_crt_types, (uint16_t) elem, c, r, loft_crt_size_of(cx, elem));
+    else if (kind == 2) loft_ordered_remove(cx, loft_crt_types, (uint16_t) elem, c, r, 0, (int) view);
+    else if (kind == 3) loft_ix_remove(cx, loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) view);
+    else loft_rx_remove_owned(cx, loft_crt_types, (uint16_t) elem, c, r, loft_crt_types[tp].keys, loft_crt_types[tp].nk, kind == 5, (int) view);
 }
 
 /* OpHashRemove on a group's vector member (an array of linked records): the record's slot
@@ -2859,8 +3130,9 @@ void loft_crt_keyed_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_st
  * member only unlinks. */
 void loft_crt_array_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_store, int64_t r_rec, int64_t r_pos,
                            int64_t elem, int64_t view) {
-    if (!loft_crt_keyed(elem)) return;
-    loft_ordered_remove(loft_crt_types, (uint16_t) elem, loft_crt_ref(store, rec, pos), loft_crt_ref(r_store, r_rec, r_pos),
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, elem)) return;
+    loft_ordered_remove(cx, loft_crt_types, (uint16_t) elem, loft_crt_ref(cx, store, rec, pos), loft_crt_ref(cx, r_store, r_rec, r_pos),
                         1, (int) view);
 }
 
@@ -2869,6 +3141,7 @@ void loft_crt_array_remove(int64_t store, int64_t rec, int64_t pos, int64_t r_st
  * leaves every keyed member — `m` the keyed members' `(position, kind, type)` rows. */
 void loft_crt_index_group(int64_t ps, int64_t pr, int64_t pp, int64_t prim, int64_t nullable, int64_t vpos,
                           int64_t vkind, int64_t vtp, const int64_t *m, int64_t nm) {
+    loft_cx *cx = &loft_main_cx;
     int n = (int) (nm / 3);
     if (!loft_crt_types || n < 0 || n > 64 || !LOFT_CRT_TP_OK(vtp)) return;
     loft_member rows[64];
@@ -2880,87 +3153,95 @@ void loft_crt_index_group(int64_t ps, int64_t pr, int64_t pp, int64_t prim, int6
         rows[i].nk = LOFT_CRT_TP_OK(tp) ? loft_crt_types[tp].nk : 0;
     }
     loft_member view = { (uint32_t) vpos, (int) vkind, loft_crt_types[vtp].keys, loft_crt_types[vtp].nk };
-    loft_index_group(loft_crt_ref(ps, pr, pp), (uint32_t) prim, (int) nullable, &view, rows, n);
+    loft_index_group(cx, loft_crt_ref(cx, ps, pr, pp), (uint32_t) prim, (int) nullable, &view, rows, n);
 }
 
 /* OpMoveChildRec (`Stores::move_child_rec`): the source record moved into the field's child. */
 void loft_crt_move_child_rec(int64_t tp, int64_t fs, int64_t fr, int64_t fp, int64_t ss, int64_t sr, int64_t sp) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_move_child_rec(loft_crt_types, (uint16_t) tp, loft_crt_ref(fs, fr, fp), loft_crt_ref(ss, sr, sp));
+    loft_move_child_rec(cx, loft_crt_types, (uint16_t) tp, loft_crt_ref(cx, fs, fr, fp), loft_crt_ref(cx, ss, sr, sp));
 }
 
 /* The slot cells (`@FR-F-ParamRef`): a reference cell that names either a value or, tagged, a
  * field whose child it stands for. */
 
 /* A cell's reference read and written raw, as Rust's slot operators do (`read::<DbRef>`). */
-static loft_ref loft_crt_cell_get(loft_ref at, uint32_t fld) {
-    loft_ref x = loft_ref_null();
-    if (at.rec == 0 || at.store_nr >= loft_nstores) return x;
-    loft_store_t *s = loft_store_of(at);
-    x.store_nr = (uint16_t) loft_u32(s, at.rec, at.pos + fld);
-    x.rec = loft_u32(s, at.rec, at.pos + fld + 4);
-    x.pos = loft_u32(s, at.rec, at.pos + fld + 8);
+static loft_ref loft_crt_cell_get(loft_cx *cx, loft_ref at, uint32_t fld) {
+    loft_ref x = loft_ref_null(cx);
+    if (at.rec == 0 || at.store_nr >= cx->nstores) return x;
+    loft_store_t *s = loft_store_of(cx, at);
+    x.store_nr = (uint16_t) loft_u32(cx, s, at.rec, at.pos + fld);
+    x.rec = loft_u32(cx, s, at.rec, at.pos + fld + 4);
+    x.pos = loft_u32(cx, s, at.rec, at.pos + fld + 8);
     return x;
 }
 
-static void loft_crt_cell_set(loft_ref at, loft_ref x) {
-    if (at.rec == 0 || at.store_nr >= loft_nstores) return;
-    loft_store_t *s = loft_store_of(at);
-    loft_set_u32(s, at.rec, at.pos, x.store_nr);
-    loft_set_u32(s, at.rec, at.pos + 4, x.rec);
-    loft_set_u32(s, at.rec, at.pos + 8, x.pos);
+static void loft_crt_cell_set(loft_cx *cx, loft_ref at, loft_ref x) {
+    if (at.rec == 0 || at.store_nr >= cx->nstores) return;
+    loft_store_t *s = loft_store_of(cx, at);
+    loft_set_u32(cx, s, at.rec, at.pos, x.store_nr);
+    loft_set_u32(cx, s, at.rec, at.pos + 4, x.rec);
+    loft_set_u32(cx, s, at.rec, at.pos + 8, x.pos);
 }
 
 /* OpGetSlotRef: what the cell at field `fld` of `(s, r, p)` reads as (`slot_read`). */
 int64_t loft_crt_slot_get(int64_t *out, int64_t no, int64_t s, int64_t r, int64_t p, int64_t fld) {
-    loft_crt_put_ref(out, no, loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)));
+    loft_cx *cx = &loft_main_cx;
+    loft_crt_put_ref(cx, out, no, loft_slot_read(cx, loft_crt_cell_get(cx, loft_crt_ref(cx, s, r, p), (uint32_t) fld)));
     return 0;
 }
 
 /* `place_ref`'s answer — the reference stored at `(store, rec, pos)` — a part at a time, and
  * written at the address `to` (`OpGetStackRef`'s arm). */
 int64_t loft_crt_place_ref_part(int64_t store, int64_t rec, int64_t pos, int64_t part) {
-    loft_store_t *s = &loft_stores[store];
-    uint32_t v = loft_u32(s, (uint32_t) rec, (uint32_t) (pos + part * 4));
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
+    uint32_t v = loft_u32(cx, s, (uint32_t) rec, (uint32_t) (pos + part * 4));
     return part == 0 ? (int64_t) (uint16_t) v : (int64_t) v;
 }
 extern void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos);
 LOFT_STEP_FN void loft_twin_place_ref_to(int64_t to, int64_t store, int64_t rec, int64_t pos) {
-    loft_store_t *s = &loft_stores[store];
-    loft_twin_poke_ref(to, (uint16_t) loft_u32(s, (uint32_t) rec, (uint32_t) pos),
-                       loft_u32(s, (uint32_t) rec, (uint32_t) pos + 4),
-                       loft_u32(s, (uint32_t) rec, (uint32_t) pos + 8));
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = &cx->stores[store];
+    loft_twin_poke_ref(to, (uint16_t) loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos),
+                       loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 4),
+                       loft_u32(cx, s, (uint32_t) rec, (uint32_t) pos + 8));
 }
 
 /* `slot_get`'s answer a part at a time (0 store, 1 record, 2 position), and written at the
  * address `to` (`OpGetSlotRef`'s arm). */
 int64_t loft_crt_slot_get_part(int64_t part, int64_t s, int64_t r, int64_t p, int64_t fld) {
-    return loft_crt_slot_part(loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld)), part);
+    loft_cx *cx = &loft_main_cx;
+    return loft_crt_slot_part(cx, loft_slot_read(cx, loft_crt_cell_get(cx, loft_crt_ref(cx, s, r, p), (uint32_t) fld)), part);
 }
 extern void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld);
 LOFT_STEP_FN void loft_twin_slot_get_to(int64_t to, int64_t s, int64_t r, int64_t p, int64_t fld) {
-    loft_ref v = loft_slot_read(loft_crt_cell_get(loft_crt_ref(s, r, p), (uint32_t) fld));
+    loft_cx *cx = &loft_main_cx;
+    loft_ref v = loft_slot_read(cx, loft_crt_cell_get(cx, loft_crt_ref(cx, s, r, p), (uint32_t) fld));
     loft_twin_poke_ref(to, v.store_nr, v.rec, v.pos);
 }
 
 /* OpMoveSlotRef: `slot = slot.f` through the cell at `(s, r, p)` (`slot_move`). */
 void loft_crt_slot_move(int64_t tp, int64_t s, int64_t r, int64_t p, int64_t ss, int64_t sr, int64_t sp) {
+    loft_cx *cx = &loft_main_cx;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_ref at = loft_crt_ref(s, r, p);
-    loft_ref cell = loft_crt_cell_get(at, 0);
-    loft_slot_move(loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(ss, sr, sp));
-    loft_crt_cell_set(at, cell);
+    loft_ref at = loft_crt_ref(cx, s, r, p);
+    loft_ref cell = loft_crt_cell_get(cx, at, 0);
+    loft_slot_move(cx, loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(cx, ss, sr, sp));
+    loft_crt_cell_set(cx, at, cell);
 }
 
 /* OpSetSlotRef: a whole write through the cell at `(s, r, p)` (`slot_write`); the type's top bit
  * frees the source after. */
 void loft_crt_slot_set(int64_t raw, int64_t s, int64_t r, int64_t p, int64_t vs, int64_t vr, int64_t vp) {
+    loft_cx *cx = &loft_main_cx;
     int64_t tp = raw & 0x3FFF;
     if (!LOFT_CRT_TP_OK(tp)) return;
-    loft_ref at = loft_crt_ref(s, r, p);
-    loft_ref cell = loft_crt_cell_get(at, 0);
-    loft_slot_write(loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(vs, vr, vp), (raw & 0x8000) != 0);
-    loft_crt_cell_set(at, cell);
+    loft_ref at = loft_crt_ref(cx, s, r, p);
+    loft_ref cell = loft_crt_cell_get(cx, at, 0);
+    loft_slot_write(cx, loft_crt_types, (uint16_t) tp, &cell, loft_crt_ref(cx, vs, vr, vp), (raw & 0x8000) != 0);
+    loft_crt_cell_set(cx, at, cell);
 }
 
 /* A walk's key list (`OpIterate`'s `Keys`), one part at a time, for the iterate that follows. */
@@ -2968,6 +3249,7 @@ static loft_key loft_crt_wkeys[LOFT_CRT_KEYS];
 static int loft_crt_nwkeys = 0;
 
 void loft_crt_walk_key(int64_t type, int64_t pos, int64_t start) {
+    loft_cx *cx = &loft_main_cx;
     if (loft_crt_nwkeys >= LOFT_CRT_KEYS) return;
     loft_crt_wkeys[loft_crt_nwkeys].type = (int8_t) type;
     loft_crt_wkeys[loft_crt_nwkeys].pos = (uint16_t) pos;
@@ -2980,21 +3262,22 @@ void loft_crt_walk_key(int64_t type, int64_t pos, int64_t start) {
  * above (cleared). */
 int64_t loft_crt_keyed_iterate(int64_t store, int64_t rec, int64_t pos, int64_t on, int64_t arg,
                                int64_t nfrom, int64_t ntill) {
+    loft_cx *cx = &loft_main_cx;
     int64_t state = 0;
     int64_t n = nfrom + ntill;
     if (n >= 0 && n <= loft_crt_nkv) {
-        loft_ref c = loft_crt_ref(store, rec, pos);
+        loft_ref c = loft_crt_ref(cx, store, rec, pos);
         const loft_kv *from = &loft_crt_kv[loft_crt_nkv - n];
         const loft_kv *till = from + nfrom;
         int ex = (on & 128) == 0, reverse = (on & 64) != 0;
         switch (on & 63) {
-        case 1: state = loft_ix_iterate(c, ex, reverse, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
-        case 2: state = loft_seq_iterate(c, (uint32_t) arg, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
-        case 3: state = loft_seq_iterate(c, 0, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        case 1: state = loft_ix_iterate(cx, c, ex, reverse, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        case 2: state = loft_seq_iterate(cx, c, (uint32_t) arg, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
+        case 3: state = loft_seq_iterate(cx, c, 0, ex, loft_crt_wkeys, loft_crt_nwkeys, from, (int) nfrom, till, (int) ntill); break;
         default: break;
         }
     }
-    loft_crt_key_pop(n);
+    loft_crt_key_pop(cx, n);
     loft_crt_nwkeys = 0;
     return state;
 }
@@ -3003,17 +3286,18 @@ int64_t loft_crt_keyed_iterate(int64_t store, int64_t rec, int64_t pos, int64_t 
  * `arg` is the index type (its keys find the record again) or the sorted's element size. */
 int64_t loft_crt_keyed_step(int64_t *out, int64_t no, int64_t state, int64_t store, int64_t rec,
                             int64_t pos, int64_t on, int64_t arg) {
-    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_ref_null();
+    loft_cx *cx = &loft_main_cx;
+    loft_ref c = loft_crt_ref(cx, store, rec, pos), r = loft_ref_null(cx);
     int reverse = (on & 64) != 0;
     switch (on & 63) {
     case 1:
-        if (loft_crt_keyed(arg)) r = loft_ix_step(&state, c, loft_crt_types[arg].keys, loft_crt_types[arg].nk, reverse);
+        if (loft_crt_keyed(cx, arg)) r = loft_ix_step(cx, &state, c, loft_crt_types[arg].keys, loft_crt_types[arg].nk, reverse);
         break;
-    case 2: r = loft_seq_step(&state, c, (uint32_t) arg, reverse); break;
-    case 3: r = loft_seq_step(&state, c, 0, reverse); break;
+    case 2: r = loft_seq_step(cx, &state, c, (uint32_t) arg, reverse); break;
+    case 3: r = loft_seq_step(cx, &state, c, 0, reverse); break;
     default: break;
     }
-    loft_crt_put_ref(out, no, r);
+    loft_crt_put_ref(cx, out, no, r);
     if (no >= 4) out[3] = state;
     return 0;
 }
@@ -3021,12 +3305,13 @@ int64_t loft_crt_keyed_step(int64_t *out, int64_t no, int64_t state, int64_t sto
 /* By `which`: OpLengthIndex (0), OpSizeIndex (1), OpLengthSpatial / OpLengthTrie (2), OpSizeSpatial
  * (3) — the records, or the table's bytes. */
 int64_t loft_crt_index_len(int64_t store, int64_t rec, int64_t pos, int64_t which) {
-    loft_ref r = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    loft_ref r = loft_crt_ref(cx, store, rec, pos);
     switch (which) {
-    case 1: return (int64_t) loft_bt_table_bytes(r);
-    case 2: return (int64_t) loft_rx_count(r);
-    case 3: return (int64_t) loft_rx_table_bytes(r);
-    default: return (int64_t) loft_bt_len(r);
+    case 1: return (int64_t) loft_bt_table_bytes(cx, r);
+    case 2: return (int64_t) loft_rx_count(cx, r);
+    case 3: return (int64_t) loft_rx_table_bytes(cx, r);
+    default: return (int64_t) loft_bt_len(cx, r);
     }
 }
 
@@ -3036,14 +3321,15 @@ int64_t loft_crt_index_len(int64_t store, int64_t rec, int64_t pos, int64_t whic
 int64_t loft_crt_radix_snap(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                             int64_t which, int64_t tp, const int64_t *ints, int64_t nints,
                             const char *pre, int64_t pre_bytes) {
-    loft_ref c = loft_crt_ref(store, rec, pos), r = loft_ref_null();
-    if (which == 0) r = loft_radix_sorted(c);
-    else if (which == 1 && nints >= 8 && loft_crt_keyed(tp))
-        r = loft_spatial_range(c, loft_crt_types[tp].keys, loft_crt_types[tp].nk, ints[0], ints[1], ints[2],
+    loft_cx *cx = &loft_main_cx;
+    loft_ref c = loft_crt_ref(cx, store, rec, pos), r = loft_ref_null(cx);
+    if (which == 0) r = loft_radix_sorted(cx, c);
+    else if (which == 1 && nints >= 8 && loft_crt_keyed(cx, tp))
+        r = loft_spatial_range(cx, c, loft_crt_types[tp].keys, loft_crt_types[tp].nk, ints[0], ints[1], ints[2],
                                ints[3], ints[4], ints[5], ints[6], ints[7]);
-    else if (which == 2 && nints >= 1 && loft_crt_keyed(tp))
-        r = loft_trie_prefix(c, loft_crt_types[tp].keys, loft_crt_str(pre, pre_bytes), ints[0]);
-    loft_crt_put_ref(out, no, r);
+    else if (which == 2 && nints >= 1 && loft_crt_keyed(cx, tp))
+        r = loft_trie_prefix(cx, c, loft_crt_types[tp].keys, loft_crt_str(cx, pre, pre_bytes), ints[0]);
+    loft_crt_put_ref(cx, out, no, r);
     return 0;
 }
 
@@ -3052,21 +3338,22 @@ int64_t loft_crt_radix_snap(int64_t *out, int64_t no, int64_t store, int64_t rec
  * (an array when `tp`'s records are linked), 1 an index (`tp` the index type), 2 a sorted, 3 an
  * ordered (`tp` the element type) — and the state it leaves is answered. */
 int64_t loft_crt_walk_remove(int64_t state, int64_t store, int64_t rec, int64_t pos, int64_t on, int64_t tp) {
-    if (!loft_crt_keyed(tp)) return state;
-    loft_ref d = loft_crt_ref(store, rec, pos);
+    loft_cx *cx = &loft_main_cx;
+    if (!loft_crt_keyed(cx, tp)) return state;
+    loft_ref d = loft_crt_ref(cx, store, rec, pos);
     int reverse = (on & 64) != 0;
     uint16_t t = (uint16_t) tp;
     switch (on & 63) {
     case 0:
-        if (loft_crt_types[tp].linked) loft_array_walk_remove(loft_crt_types, t, &state, d, reverse);
-        else loft_vec_walk_remove(loft_crt_types, t, &state, d, reverse);
+        if (loft_crt_types[tp].linked) loft_array_walk_remove(cx, loft_crt_types, t, &state, d, reverse);
+        else loft_vec_walk_remove(cx, loft_crt_types, t, &state, d, reverse);
         break;
     case 1:
-        loft_ix_walk_remove(loft_crt_types, loft_crt_types[tp].elem, &state, d, loft_crt_types[tp].keys,
+        loft_ix_walk_remove(cx, loft_crt_types, loft_crt_types[tp].elem, &state, d, loft_crt_types[tp].keys,
                             loft_crt_types[tp].nk, reverse);
         break;
-    case 2: loft_sorted_walk_remove(loft_crt_types, t, &state, d, reverse); break;
-    case 3: loft_ordered_walk_remove(loft_crt_types, t, &state, d, reverse); break;
+    case 2: loft_sorted_walk_remove(cx, loft_crt_types, t, &state, d, reverse); break;
+    case 3: loft_ordered_walk_remove(cx, loft_crt_types, t, &state, d, reverse); break;
     default: break;
     }
     return state;
@@ -3088,48 +3375,49 @@ int64_t loft_crt_walk_remove(int64_t state, int64_t store, int64_t rec, int64_t 
 #define LOFT_LEX 1
 #include "../../../src/c/loft_lex.h"
 
-static void loft_crt_lex_u32(loft_lx_buf *e, uint64_t v, int bytes) {
-    for (int i = 0; i < bytes; i++) loft_lx_buf_byte(e, (uint8_t) (v >> (8 * i)));
+static void loft_crt_lex_u32(loft_cx *cx, loft_lx_buf *e, uint64_t v, int bytes) {
+    for (int i = 0; i < bytes; i++) loft_lx_buf_byte(cx, e, (uint8_t) (v >> (8 * i)));
 }
 
-static void loft_crt_lex_float(loft_lx_buf *e, double v) {
+static void loft_crt_lex_float(loft_cx *cx, loft_lx_buf *e, double v) {
     char s[40];
     int n = snprintf(s, sizeof s, "%.17g", v);
-    loft_lx_buf_byte(e, (uint8_t) n);
-    loft_lx_buf_put(e, s, (size_t) n);
+    loft_lx_buf_byte(cx, e, (uint8_t) n);
+    loft_lx_buf_put(cx, e, s, (size_t) n);
 }
 
 int64_t loft_crt_lex(char *out, int64_t cap, const char *src, int64_t bytes) {
+    loft_cx *cx = &loft_main_cx;
     loft_lx_toks toks = {0};
-    loft_lex((const uint8_t *) src, bytes < 0 ? 0 : (size_t) bytes, &toks);
+    loft_lex(cx, (const uint8_t *) src, bytes < 0 ? 0 : (size_t) bytes, &toks);
     loft_lx_buf e = {0};
     for (size_t i = 0; i < toks.n; i++) {
         const loft_lx_tok *t = &toks.t[i];
-        loft_lx_buf_byte(&e, t->kind);
-        loft_crt_lex_u32(&e, t->line, 4);
-        loft_crt_lex_u32(&e, t->col, 4);
-        loft_crt_lex_u32(&e, t->eline, 4);
-        loft_crt_lex_u32(&e, t->ecol, 4);
+        loft_lx_buf_byte(cx, &e, t->kind);
+        loft_crt_lex_u32(cx, &e, t->line, 4);
+        loft_crt_lex_u32(cx, &e, t->col, 4);
+        loft_crt_lex_u32(cx, &e, t->eline, 4);
+        loft_crt_lex_u32(cx, &e, t->ecol, 4);
         switch (t->kind) {
         case LOFT_LX_IDENT: case LOFT_LX_STR: case LOFT_LX_STRHOLE:
-            loft_crt_lex_u32(&e, t->s_len, 4);
-            loft_lx_buf_put(&e, toks.txt.p + t->s_at, t->s_len);
+            loft_crt_lex_u32(cx, &e, t->s_len, 4);
+            loft_lx_buf_put(cx, &e, toks.txt.p + t->s_at, t->s_len);
             break;
         case LOFT_LX_INT:
-            loft_crt_lex_u32(&e, (uint64_t) t->i, 4);
-            loft_lx_buf_byte(&e, t->zero);
+            loft_crt_lex_u32(cx, &e, (uint64_t) t->i, 4);
+            loft_lx_buf_byte(cx, &e, t->zero);
             break;
-        case LOFT_LX_LONG: case LOFT_LX_WIDE: loft_crt_lex_u32(&e, (uint64_t) t->i, 8); break;
-        case LOFT_LX_CHAR: loft_crt_lex_u32(&e, (uint64_t) t->i, 4); break;
+        case LOFT_LX_LONG: case LOFT_LX_WIDE: loft_crt_lex_u32(cx, &e, (uint64_t) t->i, 8); break;
+        case LOFT_LX_CHAR: loft_crt_lex_u32(cx, &e, (uint64_t) t->i, 4); break;
         case LOFT_LX_FLOAT:
-            loft_lx_buf_byte(&e, t->zero);
-            loft_crt_lex_float(&e, t->f);
+            loft_lx_buf_byte(cx, &e, t->zero);
+            loft_crt_lex_float(cx, &e, t->f);
             break;
-        case LOFT_LX_DOUBLE: case LOFT_LX_SINGLE: loft_crt_lex_float(&e, t->f); break;
+        case LOFT_LX_DOUBLE: case LOFT_LX_SINGLE: loft_crt_lex_float(cx, &e, t->f); break;
         default: break;
         }
     }
-    loft_lx_toks_free(&toks);
+    loft_lx_toks_free(cx, &toks);
     int64_t n = (int64_t) e.len;
     if (n <= cap && n > 0) memcpy(out, e.p, (size_t) n);
     free(e.p);
@@ -3174,47 +3462,48 @@ int64_t loft_body_call_dest(int64_t entry, int64_t stk, int64_t sp, int64_t s, i
  * One entry for every kernel routine that answers a scalar, selected by `which` (the runner's
  * `natives::KERNEL_*` order): its integer operands `a`, `b` and its text operand. */
 int64_t loft_crt_kernel(int64_t which, int64_t a, int64_t b, const char *s, int64_t slen) {
-    loft_str t = loft_crt_str(s, slen);
+    loft_cx *cx = &loft_main_cx;
+    loft_str t = loft_crt_str(cx, s, slen);
     switch (which) {
-    case 0: return loft_kernel_listen(a, b);
-    case 1: return loft_kernel_pump();
-    case 2: return loft_kernel_next_event();
-    case 3: return loft_kernel_event_cid();
-    case 4: return loft_kernel_event_kind();
-    case 5: return loft_kernel_event_status();
-    case 6: return loft_kernel_tick_due();
-    case 7: return loft_kernel_send(a, t);
-    case 8: return loft_kernel_broadcast(t);
-    case 9: loft_kernel_idle(a); return 0;
-    case 10: return loft_kernel_clients();
-    case 11: return loft_kernel_alive();
-    case 12: loft_kernel_stop(); return 0;
-    case 13: loft_kernel_frame(); return 0;
-    case 14: return loft_kernel_post(t);
-    case 15: return loft_kernel_udp_bound(a);
-    case 16: loft_kernel_sync_class(a); return 0;
-    case 17: loft_kernel_sync_class_keyed(a); return 0;
-    case 18: return loft_kernel_keyframe(a, t);
-    case 19: return loft_kernel_sync_next();
-    case 20: return loft_kernel_sync_cid();
-    case 21: return loft_kernel_sync_seq();
-    case 22: return loft_kernel_local(a);
-    case 23: return loft_kernel_connect(t, a, b);
-    case 24: return loft_kernel_client_pump();
-    case 25: return loft_kernel_client_alive();
-    case 26: loft_kernel_client_stop(); return 0;
-    case 27: return loft_kernel_client_next_event();
-    case 28: return loft_kernel_client_event_kind();
-    case 29: return loft_kernel_client_event_cid();
-    case 30: return loft_kernel_client_event_status();
-    case 31: return loft_kernel_client_tick_due();
-    case 32: loft_kernel_client_idle(a); return 0;
-    case 33: return loft_kernel_client_send(t);
-    case 34: return loft_kernel_client_sync_next();
-    case 35: return loft_kernel_client_sync_seq();
-    case 36: return loft_kernel_client_udp_bound();
-    case 37: loft_kernel_client_frame(); return 0;
-    case 38: return loft_kernel_swap_step();
+    case 0: return loft_kernel_listen(cx, a, b);
+    case 1: return loft_kernel_pump(cx);
+    case 2: return loft_kernel_next_event(cx);
+    case 3: return loft_kernel_event_cid(cx);
+    case 4: return loft_kernel_event_kind(cx);
+    case 5: return loft_kernel_event_status(cx);
+    case 6: return loft_kernel_tick_due(cx);
+    case 7: return loft_kernel_send(cx, a, t);
+    case 8: return loft_kernel_broadcast(cx, t);
+    case 9: loft_kernel_idle(cx, a); return 0;
+    case 10: return loft_kernel_clients(cx);
+    case 11: return loft_kernel_alive(cx);
+    case 12: loft_kernel_stop(cx); return 0;
+    case 13: loft_kernel_frame(cx); return 0;
+    case 14: return loft_kernel_post(cx, t);
+    case 15: return loft_kernel_udp_bound(cx, a);
+    case 16: loft_kernel_sync_class(cx, a); return 0;
+    case 17: loft_kernel_sync_class_keyed(cx, a); return 0;
+    case 18: return loft_kernel_keyframe(cx, a, t);
+    case 19: return loft_kernel_sync_next(cx);
+    case 20: return loft_kernel_sync_cid(cx);
+    case 21: return loft_kernel_sync_seq(cx);
+    case 22: return loft_kernel_local(cx, a);
+    case 23: return loft_kernel_connect(cx, t, a, b);
+    case 24: return loft_kernel_client_pump(cx);
+    case 25: return loft_kernel_client_alive(cx);
+    case 26: loft_kernel_client_stop(cx); return 0;
+    case 27: return loft_kernel_client_next_event(cx);
+    case 28: return loft_kernel_client_event_kind(cx);
+    case 29: return loft_kernel_client_event_cid(cx);
+    case 30: return loft_kernel_client_event_status(cx);
+    case 31: return loft_kernel_client_tick_due(cx);
+    case 32: loft_kernel_client_idle(cx, a); return 0;
+    case 33: return loft_kernel_client_send(cx, t);
+    case 34: return loft_kernel_client_sync_next(cx);
+    case 35: return loft_kernel_client_sync_seq(cx);
+    case 36: return loft_kernel_client_udp_bound(cx);
+    case 37: loft_kernel_client_frame(cx); return 0;
+    case 38: return loft_kernel_swap_step(cx);
     default: return LOFT_NULL;
     }
 }
@@ -3223,24 +3512,26 @@ int64_t loft_crt_kernel(int64_t which, int64_t a, int64_t b, const char *s, int6
  * client's two, the default host), its bytes into `out` (`cap` bytes): its length, which the
  * caller reads again with a larger buffer when it exceeds `cap`; -1 for the null text. */
 int64_t loft_crt_kernel_text(char *out, int64_t cap, int64_t which) {
+    loft_cx *cx = &loft_main_cx;
     loft_text v;
     switch (which) {
-    case 0: v = loft_kernel_event_payload(); break;
-    case 1: v = loft_kernel_sync_payload(); break;
-    case 2: v = loft_kernel_client_event_payload(); break;
-    case 3: v = loft_kernel_client_sync_payload(); break;
-    case 4: v = loft_kernel_default_host(); break;
+    case 0: v = loft_kernel_event_payload(cx); break;
+    case 1: v = loft_kernel_sync_payload(cx); break;
+    case 2: v = loft_kernel_client_event_payload(cx); break;
+    case 3: v = loft_kernel_client_sync_payload(cx); break;
+    case 4: v = loft_kernel_default_host(cx); break;
     default: return -1;
     }
-    loft_str w = loft_view(&v);
-    int64_t n = loft_str_is_null(w) ? -1 : (int64_t) w.len;
+    loft_str w = loft_view(cx, &v);
+    int64_t n = loft_str_is_null(cx, w) ? -1 : (int64_t) w.len;
     if (n > 0) memcpy(out, w.p, (size_t) (n < cap ? n : cap));
-    loft_text_free(&v);
+    loft_text_free(cx, &v);
     return n;
 }
 
 /* `http_fetch(method, url, body, headers)`: the request's id, its completion a kind-3 event. */
 int64_t loft_crt_kernel_fetch(const char *m, int64_t ml, const char *u, int64_t ul, const char *b, int64_t bl,
                               const char *h, int64_t hl) {
-    return loft_kernel_http_fetch(loft_crt_str(m, ml), loft_crt_str(u, ul), loft_crt_str(b, bl), loft_crt_str(h, hl));
+    loft_cx *cx = &loft_main_cx;
+    return loft_kernel_http_fetch(cx, loft_crt_str(cx, m, ml), loft_crt_str(cx, u, ul), loft_crt_str(cx, b, bl), loft_crt_str(cx, h, hl));
 }

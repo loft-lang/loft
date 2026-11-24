@@ -9,8 +9,7 @@ compiled program reaches, counted over a corpus of programs.
     LOFT_BIN=<loft> scripts/runtime_surface.py # another build (default target/release/loft)
 
 The corpus is every `bench/*/bench.loft` and `tests/scripts/*.loft`, emitted with
-`loft introspect <file> --show-rust`, plus the compiled standard library
-(`src/compiled_stdlib_gen.rs`), which is library emission.  From each text it reads:
+`loft introspect <file> --show-rust`.  From each text it reads:
 
 - every path `loft::<module>::<item>` and every `use loft::…` import;
 - every bare call of a function that `use loft::codegen_runtime::*` brings in;
@@ -95,7 +94,6 @@ def census():
     files = corpus()
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
         texts = list(ex.map(emit, files))
-    texts.append((ROOT / "src" / "compiled_stdlib_gen.rs").read_text(encoding="utf-8"))
     paths, calls, meths = defaultdict(int), defaultdict(int), defaultdict(int)
     for raw in texts:
         text = strip_comments(raw)

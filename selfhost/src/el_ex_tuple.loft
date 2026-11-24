@@ -183,6 +183,22 @@ fn plain_struct_member(e: el::El, t: ir::TypeT) -> boolean {
   }
 }
 
+// `unbox_tuple_from_dbref`'s cursor: the element held in a work ref typed `ref(<tuple>)`
+// borrowing the vector it is read out of (`vector_element_cursor_deps`), never freed where it
+// borrows — that mark taken on the second pass only (loft#848: the `__ref_N` counter restarts).
+fn unbox_cursor(e: el::El, vars: el_vars::Vars, td: integer, elem: ir::Node) -> integer {
+  croot = place_root(e, elem);
+  ct = ir::TyReference { n: td, dep: if croot >= 0 { [croot] } else { [] } };
+  cw = el_vars::work_ref(vars, ct);
+  if !e.first_pass {
+    el_vars::set_var_type(vars, cw, ct);
+    if croot >= 0 {
+      el_vars::set_skip_free(vars, cw, "unbox_tuple_from_dbref");
+    }
+  }
+  cw
+}
+
 // `Parser::unbox_tuple_from_dbref` for an element of a vector of tuples bound to a local
 // (`y = v[1]`): the element held in a `__ref_N` borrowing the vector (never freed), each member
 // read at its field's position into the stack tuple ("tuple_unbox").  The local keeps the read's
@@ -658,9 +674,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       // A record member of an element is read where it lies, a view of the vector's local.
       rsd = struct_ref(e, mt);
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && rsd >= 0 && !(mt is TyOptional) && el_ex_object::literal_def(e, rsd) {
-        uw2 = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        el_vars::set_skip_free(vars, uw2, "unbox_tuple_from_dbref");
-        el_vars::unregister_work_ref(vars, uw2);
+        uw2 = unbox_cursor(e, vars, td, x.code);
         if e.first_pass {
           return ex(ir::NdNull, mt);
         }
@@ -669,9 +683,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       }
       // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
-        nw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        el_vars::set_skip_free(vars, nw, "unbox_tuple_from_dbref");
-        el_vars::unregister_work_ref(vars, nw);
+        nw = unbox_cursor(e, vars, td, x.code);
         if e.first_pass {
           return ex(ir::NdNull, mt);
         }
@@ -683,9 +695,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && (mt is TyText || (el_convert::plain_scalar(mt) && read_op(mt) != "" && match mt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true })) {
         // Rust holds the element in a work ref here (the unbox it then drops): the name is
         // taken on both passes, so later buffers number past it.
-        uw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        el_vars::set_skip_free(vars, uw, "unbox_tuple_from_dbref");
-        el_vars::unregister_work_ref(vars, uw);
+        uw = unbox_cursor(e, vars, td, x.code);
         if e.first_pass {
           return ex(ir::NdNull, mt);
         }

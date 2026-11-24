@@ -1503,22 +1503,12 @@ jobs:
         run: >
           python3 loft-suite/loft-suite run --loft target/release/loft --mode both-c
           --jobs 4 --timeout 300 --junit target/loft-suite-junit.xml
-      # The rustc-native backend reads the rules once a day, off the per-change path.
-      - name: Run the rules on the rustc-native backend (daily)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        env:
-          LOFT_NATIVE_BACKEND: rust
-        run: >
-          python3 loft-suite/loft-suite run --loft target/release/loft --mode native
-          --jobs 4 --timeout 300 --junit target/loft-suite-native-junit.xml
       - name: Keep the suite junit
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: loft-suite-junit
-          path: |
-            target/loft-suite-junit.xml
-            target/loft-suite-native-junit.xml
+          path: target/loft-suite-junit.xml
           retention-days: 7
           if-no-files-found: ignore
 
@@ -2052,14 +2042,6 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt -- --check
-
-      # The compiled stdlib (src/compiled_stdlib_gen.rs, @PLN181) is DERIVED from default/*.loft.
-      # A stale one still builds, but every compiled stdlib routine is then interpreted (5-23x
-      # slower on text), and `main` would ship it to every source build.  Checked here, in a
-      # required job, so it cannot merge; the cure is one command, which the local gate's
-      # pre-flight and `join.py rederive` already run automatically.
-      - name: Compiled stdlib is current
-        run: python3 scripts/compiled_stdlib_fresh.py || { echo "::error::src/compiled_stdlib_gen.rs is stale — run \`make compiled-stdlib\` and commit it"; exit 1; }
 
   # Prevent browser-side "Failed to grow table" / "import mismatch"
   # errors from reaching the deployed site by rebuilding BOTH browser

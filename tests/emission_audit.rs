@@ -10,64 +10,8 @@
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
-const CORPORA: &[&str] = &[
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-l-in-place-callee-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/P4c-scalar-hoist-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-n-view-def-header-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-o-wrapper-op-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-p-callee-inputs-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-q-hoisted-push-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-s-mint-hoist-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-t-record-push-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-j-move-append-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-x-invariant-literal-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-y-complete-write-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-z-element-first-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-aa-value-record-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-u-retbuf-adopt-cells.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-w-selfread-literal-cells.loft",
-    "tests/scripts/157-write-hoist.loft",
-    "tests/scripts/157-callee-inputs.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ac-vector-param-cells.loft",
-    "tests/scripts/157-vector-param-inputs.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ad-null-buffer-cells.loft",
-    "tests/scripts/157-null-buffer-hoist.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ae-fill-cells.loft",
-    "tests/scripts/157-fill-hoist.loft",
-    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ag-store-reset-cells.loft",
-    "tests/scripts/157-store-reset.loft",
-    "tests/scripts/157-push-hoist.loft",
-    "tests/scripts/157-mint-hoist.loft",
-    "tests/scripts/157-record-push.loft",
-    "tests/scripts/157-move-append.loft",
-    "tests/scripts/157-retbuf-adopt.loft",
-    "tests/scripts/157-selfread-literal.loft",
-    "tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft",
-    "bench/12_drawing/bench.loft",
-];
-
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn emit(src: &Path, out: &Path) -> String {
-    let status =
-        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--native-rust")
-            .arg("--native-emit")
-            .arg(out)
-            .arg(src)
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(out),
-        "no Rust emitted for {} (exit {:?}): {}",
-        src.display(),
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Run the audit; answers `(exit ok, summary line, full output)`.
@@ -85,62 +29,6 @@ fn audit(rust: &Path) -> (bool, String, String) {
         .unwrap_or("")
         .to_string();
     (out.status.success(), summary, text)
-}
-
-fn holders_bound(summary: &str) -> usize {
-    summary
-        .split(';')
-        .nth(1)
-        .and_then(|s| s.trim().split(' ').next())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(0)
-}
-
-#[test]
-fn every_corpus_emits_within_the_rules_and_binds_a_holder() {
-    for (i, corpus) in CORPORA.iter().enumerate() {
-        let out = std::env::temp_dir().join(format!("loft_emission_audit_{i}.rs"));
-        emit(&root().join(corpus), &out);
-        let (ok, summary, text) = audit(&out);
-        assert!(
-            ok,
-            "{corpus}: the emission audit found a violation:\n{text}"
-        );
-        assert!(
-            holders_bound(&summary) >= 1,
-            "{corpus}: the audit resolved no holder — a vacuous pass ({summary})"
-        );
-        let _ = fa::remove_file(&out);
-    }
-}
-
-#[test]
-fn the_audit_refuses_a_second_holder_for_one_path() {
-    let src = root().join(CORPORA[5]);
-    let out = std::env::temp_dir().join("loft_emission_audit_double.rs");
-    let rust = emit(&src, &out);
-    // Duplicate the first plain header under a new name in the same prelude.
-    let mut lines: Vec<String> = rust.lines().map(str::to_owned).collect();
-    let at = lines
-        .iter()
-        .position(|l| {
-            l.trim_start().starts_with("let __vh_") && l.contains("vector::vec_header(&(")
-        })
-        .expect("a plain header to duplicate");
-    // `let __vh_999 = <the same path>` right below it: the original's path text, a new name.
-    let (head, tail) = lines[at].split_once(" = ").expect("a binding");
-    let indent = head.len() - head.trim_start().len();
-    lines.insert(
-        at + 1,
-        format!("{}let __vh_999 = {tail}", " ".repeat(indent)),
-    );
-    fa::write(&out, lines.join("\n")).expect("write the doubled emission");
-    let (ok, _, text) = audit(&out);
-    assert!(
-        !ok && text.contains("R-State") && text.contains("__vh_999"),
-        "the audit must refuse a second holder for one path:\n{text}"
-    );
-    let _ = fa::remove_file(&out);
 }
 
 /// A holder dies with the scope that bound it, also where one line closes that scope and opens

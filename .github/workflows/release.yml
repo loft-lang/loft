@@ -77,7 +77,8 @@ jobs:
       - name: Install packaging tools (Linux)
         if: runner.os == 'Linux'
         run: |
-          timeout 600 dnf -y -q install zip unzip
+          # A stalled mirror is left for the next one, as daily-build.yml does.
+          timeout 600 dnf -y -q --setopt=timeout=30 --setopt=minrate=10k --setopt=retries=5 install zip unzip
           command -v python3 >/dev/null || ln -s "$(ls -d /opt/python/cp3*/bin/python3 | sort -V | tail -1)" /usr/local/bin/python3
           python3 --version
 

@@ -152,7 +152,7 @@ fn test_runaway() {
 /// runaway it exists for is no less likely in compiled code (@PLN206 P0b, D19c).
 #[test]
 fn the_default_ceiling_reaches_a_compiled_test() {
-    for backend in ["--native-c", "--native-rust"] {
+    for backend in ["--native-c", "--native"] {
         let path = std::env::temp_dir().join(format!("loft_memlimit_compiled{backend}.loft"));
         fa::write(&path, RUNAWAY_COMPILED).expect("write probe");
         let mut cmd = loft::platform::process::harness_command(loft_bin());

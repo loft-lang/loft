@@ -181,7 +181,6 @@ fn crystal_editor_gl_matches_gold() {
     // A program that does not compile produces no screenshot either, and the
     // screenshot check below reads that as "no software GL".  Ask first.
     let check = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .args(["--no-warnings", "--path"])
         .arg(format!("{}/", root.display()))
         .arg("--lib")
@@ -198,7 +197,6 @@ fn crystal_editor_gl_matches_gold() {
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
     let _ = fa::remove_file(&shot);
     let out = loft::platform::process::harness_command("xvfb-run")
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .args([
             "-a",
             "-s",

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the ledger counts the Rust runtime records — its `--native` runs as `--native-rust` until then.
+// The test ledger (@F38) on both backends: each counts its fault sites into one file.
 
 //! The test ledger (@PLN201 step 2, `src/ledger.rs`, `src/opt/ledger_sites.rs`): a run with
 //! `LOFT_LEDGER=<file>` is the ordinary checked run, on either backend, and records per fault
@@ -23,7 +23,6 @@ fn scratch(tag: &str) -> PathBuf {
 /// Run `prog` on `mode`, recording into `ledger` when given; answers stdout and stderr.
 fn run(mode: &[&str], prog: &Path, ledger: Option<&Path>) -> (String, String) {
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.args(mode)
         .arg(prog)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -94,7 +93,7 @@ fn both_backends_record_the_same_counts_and_answer_as_a_checked_run() {
         "share 0 div 2 1",
     ];
     let mut files = Vec::new();
-    for (mode, tag) in [("--interpret", "i"), ("--native-rust", "n")] {
+    for (mode, tag) in [("--interpret", "i"), ("--native", "n")] {
         let ledger = dir.join(format!("{tag}.ledger"));
         let (out, _) = run(&[mode], &prog, Some(&ledger));
         assert_eq!(
@@ -132,7 +131,7 @@ fn a_second_run_adds_its_counts() {
     fa::write(&prog, PROGRAM).expect("write program");
     let ledger = dir.join("l.ledger");
     run(&["--interpret"], &prog, Some(&ledger));
-    run(&["--native-rust"], &prog, Some(&ledger));
+    run(&["--native"], &prog, Some(&ledger));
     assert_eq!(
         lines_of(&ledger, &["mix", "big", "share"]),
         vec![

@@ -100,8 +100,10 @@ fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> Strin
 }
 
 /// @PLN212 P2: a semantics build splits an over-budget function by default (the MSVC sweep's
-/// `cl` time stays bounded without a switch), and a shipped build (`--ship`) never does — not
-/// even under a switch that asks — so a shipped artefact's C is the C it was before the split.
+/// `cl` time stays bounded without a switch), under the C compiler's own size
+/// (`LOFT_C_SPLIT_ABOVE`), and a shipped build (`--ship`) does only under `LOFT_C_SPLIT_SHIP=1`
+/// — no budget switch splits it — so a shipped artefact's C is by default the C it was before
+/// the split.
 ///
 /// @falsified-at: 4bce889d7 — by hand.  The default-on assertion fails on the tree before it
 /// (no `__part` without `LOFT_C_SPLIT`); with `functions_whole` planted to answer false, the
@@ -134,6 +136,24 @@ fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
     assert!(
         !emitted(&prog, &[], &[("LOFT_NO_C_SPLIT", "1")]).contains("__part"),
         "LOFT_NO_C_SPLIT keeps the semantics build whole"
+    );
+    // Both forms by default, and the C compiler's own size picks one; a shipped unit carries
+    // them only on request.
+    let both = emitted(&prog, &[], &[]);
+    assert!(
+        both.contains("#if LOFT_C_SPLIT_ABOVE > 0 && ")
+            && both.contains("#define LOFT_C_SPLIT_ABOVE 2000"),
+        "the parts are under the per-compiler size"
+    );
+    let shipped = emitted(&prog, &["--ship"], &[("LOFT_C_SPLIT_SHIP", "1")]);
+    assert!(
+        shipped.contains("n_main__fr__part") && shipped.contains("#if LOFT_C_SPLIT_ABOVE > 0 && "),
+        "LOFT_C_SPLIT_SHIP writes a shipped unit's parts too"
+    );
+    assert!(
+        emitted(&prog, &[], &[("LOFT_C_SPLIT_ABOVE", "77")])
+            .contains("#define LOFT_C_SPLIT_ABOVE 77\n"),
+        "LOFT_C_SPLIT_ABOVE sets the unit's size"
     );
     let _ = loft::file_access::remove_dir_all(&dir);
 }
@@ -214,7 +234,7 @@ fn a_unit_carries_its_runtime_and_compiles_alone() {
             "{args:?}: the unit includes a file of loft's"
         );
         assert!(
-            unit.contains("static void loft_leak_report(void) {"),
+            unit.contains("static void loft_leak_report(loft_cx *cx) {"),
             "{args:?}: the unit defines the runtime it calls"
         );
     }

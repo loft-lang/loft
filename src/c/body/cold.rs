@@ -430,7 +430,7 @@ impl<'a> FnWriter<'a> {
                 .collect();
             let (body, _) = helper.write()?;
             let sig = format!(
-                "static LOFT_NOINLINE LOFT_COLD void {}({})",
+                "static LOFT_NOINLINE LOFT_COLD void {}(loft_cx *cx, {})",
                 p.name, p.params
             );
             let _ = std::fmt::Write::write_fmt(
@@ -471,7 +471,7 @@ impl<'a> FnWriter<'a> {
             ind,
             &format!("if (LOFT_UNLIKELY({})) {{", super::bare(&test)),
         );
-        self.line(ind + 1, &format!("{name}({});", args.join(", ")));
+        self.line(ind + 1, &format!("{name}({});", crate::c::cx_args(&args)));
         self.stmt(&ret, ind + 1)?;
         if !matches!(else_arm.unspan(), Value::Null) {
             self.line(ind, "} else {");

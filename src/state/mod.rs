@@ -288,30 +288,15 @@ impl Yielded {
     }
 }
 
-std::thread_local! {
-    /// @PLN199 C2 — the text result of this thread's last call back into the interpreter
-    /// (`State::call_back`), which the compiled caller copies before it calls back again.
-    static CALL_BACK_TEXT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-}
-
-std::thread_local! {
-    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
-    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
-    /// bytes live here until the handle's next advance replaces them or its free drops them.
-    /// Per thread, as the generator table it shadows.
-    static NATIVE_TEXT_YIELDS: std::cell::RefCell<Vec<(DbRef, String)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
-/// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
-pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
-    if text == STRING_NULL {
-        release_native_text_yield(gen_ref);
-        return Str::new(STRING_NULL);
-    }
-    NATIVE_TEXT_YIELDS.with(|y| {
-        let mut y = y.borrow_mut();
+impl State {
+    /// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
+    /// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+    pub(crate) fn hold_native_text_yield(&mut self, gen_ref: DbRef, text: String) -> Str {
+        if text == STRING_NULL {
+            self.release_native_text_yield(gen_ref);
+            return Str::new(STRING_NULL);
+        }
+        let y = &mut self.native_text_yields;
         let at = if let Some(i) = y
             .iter()
             .position(|(g, _)| g.rec == gen_ref.rec && g.pos == gen_ref.pos)
@@ -324,15 +309,13 @@ pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
         };
         // The `String`'s buffer stays put while the vector moves its header.
         Str::new(y[at].1.as_str())
-    })
-}
+    }
 
-/// Drop the text compiled generator `gen_ref` last yielded — at its free.
-pub(crate) fn release_native_text_yield(gen_ref: DbRef) {
-    NATIVE_TEXT_YIELDS.with(|y| {
-        y.borrow_mut()
+    /// Drop the text compiled generator `gen_ref` last yielded — at its free.
+    pub(crate) fn release_native_text_yield(&mut self, gen_ref: DbRef) {
+        self.native_text_yields
             .retain(|(g, _)| !(g.rec == gen_ref.rec && g.pos == gen_ref.pos));
-    });
+    }
 }
 
 /// Lifecycle state of a coroutine frame (CO1.1).
@@ -498,6 +481,19 @@ pub struct CoroutineFrame {
 
 /// Internal State of the interpreter to run bytecode.
 pub struct State {
+    /// @PLN199 C2 — the text result of the last call back into this interpreter
+    /// (`State::call_back`), which the compiled caller copies before it calls back again.
+    pub(crate) call_back_text: String,
+    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
+    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
+    /// bytes live here until the handle's next advance replaces them or its free drops them.
+    pub(crate) native_text_yields: Vec<(DbRef, String)>,
+    /// `LOFT_TRACE_BIND` — the notes of each bind being lowered: a frame per `generate_set`,
+    /// since a value's own lowering can contain binds of its own (`codegen.rs`).
+    pub(crate) bind_notes: Vec<Vec<String>>,
+    /// Where the function being generated starts, so a bind row's line is a line of that
+    /// function: a bind before its first line marker (a hoisted null init) names line 0.
+    pub(crate) bind_fn_start: u32,
     pub(crate) bytecode: Arc<Vec<u8>>,
     pub(crate) stack_cur: DbRef,
     /// @PLN18 02 — the stack store's high-water mark: the highest `stack_pos`
@@ -659,6 +655,13 @@ pub struct State {
     /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
     /// worker enters the same function for every element.
     worker_fn_memo: (u32, u32),
+    /// The call-stack depth a re-entered call found (`reenter`, `reenter_ret`, `reenter_dbg`,
+    /// a generator advanced for native code): the run that ends it pops no frame below it.
+    /// The callee's `Return` pops the frame the re-entry pushed (`fn_return`), so the
+    /// end-of-run pop of [`Self::resume`] and `debug_step` would otherwise take the
+    /// caller's — one frame per call-back, and with it the depth every hand-up list is
+    /// keyed by.  0 outside a re-entry.
+    reentry_floor: usize,
     /// `@FR-R-FrameHeadroom` — per definition, the bytes above its frame base its operators
     /// can reach (the highest stack position codegen recorded in it, plus a margin).
     /// `push_frame` ensures that much room once per frame, so the direct-path push
@@ -1013,6 +1016,10 @@ impl State {
             crate::database::CONST_STORE
         );
         State {
+            call_back_text: String::new(),
+            native_text_yields: Vec::new(),
+            bind_notes: Vec::new(),
+            bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
             code_len: 0,
@@ -1052,6 +1059,7 @@ impl State {
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
+            reentry_floor: 0,
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,
@@ -1430,9 +1438,7 @@ impl State {
             // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read
             // seq[0] as null).  Allocate a fresh store with a properly-claimed vector record.
             crate::data::Type::Vector(elm_tp, _) => {
-                let elm_name = elm_tp.name(data);
-                let tp_name = format!("main_vector<{elm_name}>");
-                let tp_id = self.database.name(&tp_name);
+                let tp_id = self.database.name(&data.vector_wrapper_name(elm_tp));
                 if tp_id == u16::MAX {
                     return Some(self.database.null());
                 }
@@ -2635,7 +2641,8 @@ impl State {
             // handle until its next advance or its free (`hold_native_text_yield`).
             (0, n) if n == std::mem::size_of::<Str>() as u32 => {
                 let v = cr::coroutine_next_text(gen_ref, &mut self.database);
-                self.put_stack(hold_native_text_yield(gen_ref, v));
+                let held = self.hold_native_text_yield(gen_ref, v);
+                self.put_stack(held);
             }
             _ => self.push_null_value(packed_size),
         }
@@ -3210,9 +3217,10 @@ impl State {
         // reports at the consuming pop.
         if crate::keys::uaf_gen_enabled() {
             if size == size_of::<DbRef>() as u32 {
-                crate::keys::uaf_move_shadow(pos - self.stack_step(size), fn_stack);
+                let from = pos - self.stack_step(size);
+                crate::keys::uaf_move_shadow(&mut self.database.checks, from, fn_stack);
             } else {
-                crate::keys::uaf_clear_shadow(fn_stack);
+                crate::keys::uaf_clear_shadow(&mut self.database.checks, fn_stack);
             }
         }
         // @PLAN53 cluster 2 / S4: the returned value occupies a stepped slot
@@ -3533,82 +3541,87 @@ impl State {
             // stamp belongs to exactly the pop that matches its push. Clearing on pop stops
             // a stale stamp from surviving to a later unrelated read once a non-DbRef push
             // reuses the offset — the main residual-false-positive source.
-            let stamped = crate::keys::uaf_shadow_gen(self.stack_pos, db.store_nr);
-            crate::keys::uaf_clear_shadow(self.stack_pos);
+            let stamped =
+                crate::keys::uaf_shadow_gen(&self.database.checks, self.stack_pos, db.store_nr);
+            crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
             // Only stamped < current is a genuine reuse-SINCE-push (gen increases
             // monotonically per slot). A stamped >= current is not a reuse-since-push; the
             // `<` test drops stale stamps too.
             if db.store_nr != u16::MAX
                 && (db.store_nr as usize) < self.database.allocations.len()
                 && let Some(stamped) = stamped
-                && stamped < crate::keys::uaf_slot_gen(db.store_nr)
+                && stamped < crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr)
+                && self.database.run.first_report(
+                    crate::database::RunReport::StaleGenerator,
+                    0,
+                    self.code_pos,
+                    0,
+                )
             {
-                thread_local! {
-                    static REPORTED_GEN: std::cell::RefCell<std::collections::HashSet<u32>> =
-                        std::cell::RefCell::new(std::collections::HashSet::new());
-                }
-                if REPORTED_GEN.with(|s| s.borrow_mut().insert(self.code_pos)) {
-                    let line = self
+                let line = self
+                    .line_numbers
+                    .range(..=self.code_pos)
+                    .next_back()
+                    .map_or(0, |(_, &v)| v);
+                // @PLN118 arc B — attribute the FREE site. Prefer the CAUSAL free (the one
+                // that took the slot to `stamped + 1`, making THIS ref stale) over the
+                // last free — a heavily-reused slot's last free is a different occupant's.
+                // Names the chokepoint (the dropped dep) rather than only the read symptom.
+                // @PLN118 arc E — also name the freeing OP (recorded with the free site) so
+                // the report says WHICH free to fix, not just where; needs `Data`, valid
+                // throughout execution (null only in a parallel worker, tolerated below).
+                // A parallel worker may hold no table; `get` answers None for it.
+                let handle = &self.data_ptr;
+                let data: Option<&Data> = handle.get();
+                let op_name = |opc: u16| -> String {
+                    data.and_then(|d| d.operator_name(opc))
+                        .map_or_else(|| format!("op#{opc}"), str::to_string)
+                };
+                let free_str = crate::keys::uaf_freed_pc_at_gen(
+                    &self.database.checks,
+                    db.store_nr,
+                    stamped + 1,
+                )
+                .or_else(|| crate::keys::uaf_freed_pc(&self.database.checks, db.store_nr))
+                .map_or_else(String::new, |(fpc, _d, op)| {
+                    let fline = self
                         .line_numbers
-                        .range(..=self.code_pos)
+                        .range(..=fpc)
                         .next_back()
                         .map_or(0, |(_, &v)| v);
-                    // @PLN118 arc B — attribute the FREE site. Prefer the CAUSAL free (the one
-                    // that took the slot to `stamped + 1`, making THIS ref stale) over the
-                    // last free — a heavily-reused slot's last free is a different occupant's.
-                    // Names the chokepoint (the dropped dep) rather than only the read symptom.
-                    // @PLN118 arc E — also name the freeing OP (recorded with the free site) so
-                    // the report says WHICH free to fix, not just where; needs `Data`, valid
-                    // throughout execution (null only in a parallel worker, tolerated below).
-                    // A parallel worker may hold no table; `get` answers None for it.
-                    let handle = &self.data_ptr;
-                    let data: Option<&Data> = handle.get();
-                    let op_name = |opc: u16| -> String {
-                        data.and_then(|d| d.operator_name(opc))
-                            .map_or_else(|| format!("op#{opc}"), str::to_string)
-                    };
-                    let free_str = crate::keys::uaf_freed_pc_at_gen(db.store_nr, stamped + 1)
-                        .or_else(|| crate::keys::uaf_freed_pc(db.store_nr))
-                        .map_or_else(String::new, |(fpc, _d, op)| {
-                            let fline = self
-                                .line_numbers
-                                .range(..=fpc)
-                                .next_back()
-                                .map_or(0, |(_, &v)| v);
-                            format!(
-                                " (freed at code_pos={fpc}, line {fline}, by {})",
-                                op_name(op)
-                            )
-                        });
-                    // @PLN118 arc E — the READING op is the one currently dispatching (this
-                    // pop happens inside its handler); `last_context` holds its opcode byte.
-                    let (_rpc, read_op, _fd) = crate::crash_report::last_context();
-                    let read_op_str = op_name(read_op);
-                    // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
-                    // copy reading a stale SUB-reference: the copy is incomplete and the source
-                    // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
-                    // read outside a copy IS a premature-free candidate. This is the distinction
-                    // that turns "prematurely freed" (which points at a correctly-placed temp
-                    // free) into "incomplete record-copy" (which points at the actual op).
-                    let verdict = if crate::keys::uaf_in_copy() {
-                        "INCOMPLETE RECORD-COPY — a copy read a stale sub-reference; the copy \
-                         did not finish deep-copying before the source was freed (the free is \
-                         correct — fix the copy, not the free)"
-                    } else {
-                        "PREMATURE FREE — a plain deref of a store freed while this ref was live \
-                         (fix the free / the dropped dep)"
-                    };
-                    eprintln!(
-                        "[uaf-gen] stale DbRef popped: store #{} (rec={}, pos={}) was gen {stamped} \
-                         at push but is now gen {} (freed+reused since) — read at code_pos={} \
-                         (line {line}) by {read_op_str}{free_str} — {verdict}",
-                        db.store_nr,
-                        db.rec,
-                        db.pos,
-                        crate::keys::uaf_slot_gen(db.store_nr),
-                        self.code_pos,
-                    );
-                }
+                    format!(
+                        " (freed at code_pos={fpc}, line {fline}, by {})",
+                        op_name(op)
+                    )
+                });
+                // @PLN118 arc E — the READING op is the one currently dispatching (this
+                // pop happens inside its handler); `last_context` holds its opcode byte.
+                let (_rpc, read_op, _fd) = crate::crash_report::last_context();
+                let read_op_str = op_name(read_op);
+                // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
+                // copy reading a stale SUB-reference: the copy is incomplete and the source
+                // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
+                // read outside a copy IS a premature-free candidate. This is the distinction
+                // that turns "prematurely freed" (which points at a correctly-placed temp
+                // free) into "incomplete record-copy" (which points at the actual op).
+                let verdict = if crate::keys::uaf_in_copy(&self.database.checks) {
+                    "INCOMPLETE RECORD-COPY — a copy read a stale sub-reference; the copy \
+                     did not finish deep-copying before the source was freed (the free is \
+                     correct — fix the copy, not the free)"
+                } else {
+                    "PREMATURE FREE — a plain deref of a store freed while this ref was live \
+                     (fix the free / the dropped dep)"
+                };
+                eprintln!(
+                    "[uaf-gen] stale DbRef popped: store #{} (rec={}, pos={}) was gen {stamped} \
+                     at push but is now gen {} (freed+reused since) — read at code_pos={} \
+                     (line {line}) by {read_op_str}{free_str} — {verdict}",
+                    db.store_nr,
+                    db.rec,
+                    db.pos,
+                    crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr),
+                    self.code_pos,
+                );
             }
         }
         r
@@ -4086,10 +4099,6 @@ impl State {
                 size_of::<T>() as u32,
             );
         }
-        let m = self
-            .database
-            .store_mut(&self.stack_cur)
-            .addr_mut::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
         // LOFT_UAF_GEN (c): keep the offset's shadow stamp in sync with what is pushed
         // (BEFORE the move below). A DbRef push STAMPS its slot-gen so a later pop after a
         // free+reuse is caught; ANY non-DbRef push CLEARS the offset, so a stale stamp left
@@ -4100,12 +4109,14 @@ impl State {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
                 let db: &DbRef = unsafe { &*(&raw const val).cast::<DbRef>() };
                 if db.store_nr == u16::MAX {
-                    crate::keys::uaf_clear_shadow(self.stack_pos);
+                    crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
                 } else {
+                    let slot_gen = crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr);
                     crate::keys::uaf_stamp_shadow(
+                        &mut self.database.checks,
                         self.stack_pos,
                         db.store_nr,
-                        crate::keys::uaf_slot_gen(db.store_nr),
+                        slot_gen,
                     );
                     // Positive control (LOFT_UAF_GEN_INJECT): age EVERY ref just AFTER
                     // stamping it, so the stamp keeps the older gen and the ref is stale
@@ -4115,13 +4126,17 @@ impl State {
                     // run would still be ambiguous — which is the very thing the control
                     // exists to rule out.
                     if crate::keys::uaf_gen_inject_enabled() {
-                        crate::keys::uaf_bump_gen(db.store_nr);
+                        crate::keys::uaf_bump_gen(&mut self.database.checks, db.store_nr);
                     }
                 }
             } else {
-                crate::keys::uaf_clear_shadow(self.stack_pos);
+                crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
             }
         }
+        let m = self
+            .database
+            .store_mut(&self.stack_cur)
+            .addr_mut::<T>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
         // A WRITE, not an assignment: the slot is fresh stack space (see `put_stack`).
         unsafe { std::ptr::write(m, val) };
         self.stack_pos += self.stack_step(size_of::<T>() as u32);
@@ -5966,6 +5981,15 @@ impl State {
             crate::debugger::STOPPED_BY_INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let hit = self.capture_break_frame(pc, data);
+        // `@C170` — a program run on the interpreter under the `D!:` control channel pauses
+        // here, in place, until the channel resumes it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.debug.as_ref().is_some_and(|d| d.stepping)
+            && crate::live_dispatch::interp_control_armed()
+        {
+            crate::live_dispatch::interp_pause(self, data, &hit);
+            return false;
+        }
         let suspended = if let Some(d) = self.debug.as_mut() {
             if d.stepping {
                 d.paused = Some(hit);
@@ -7780,6 +7804,12 @@ impl State {
         #[cfg(target_arch = "wasm32")]
         let reload_on = false;
         let mut reload_tick: u32 = RELOAD_POLL_OPS;
+        // `@C170` — the `D!:` control channel answered by this interpreter: the full loop
+        // applies a queued breakpoint at the next op boundary.
+        #[cfg(not(target_arch = "wasm32"))]
+        let control_on = crate::live_dispatch::interp_control_armed();
+        #[cfg(target_arch = "wasm32")]
+        let control_on = false;
         // @PLN140 arc C — allocation PATHS. Hoisted out of the loop like `reload_on`
         // and `uaf_on` above, so an ordinary run pays one never-taken branch per op
         // rather than a lookup. The op is the finest granularity a path can be read
@@ -7803,6 +7833,7 @@ impl State {
         // `LOFT_NO_LEAN_LOOP=1` takes the full loop on purpose — fast_stack_allowed's twin.
         let lean_loop = !(crate::env_once!(std::env::var_os("LOFT_NO_LEAN_LOOP").is_some())
             || reload_on
+            || control_on
             || census_on
             || verify_on
             || alloc_paths_on
@@ -7876,13 +7907,26 @@ impl State {
         while self.code_pos < bytecode_len {
             if reload_on {
                 reload_tick -= 1;
-                if reload_tick == 0 {
+                // The editor's Apply lands at the next op, not at the next counted poll: the
+                // game's next event already runs the applied edit.
+                #[cfg(not(target_arch = "wasm32"))]
+                let apply = control_on && crate::live_control::apply_pending();
+                #[cfg(target_arch = "wasm32")]
+                let apply = false;
+                if reload_tick == 0 || apply {
                     reload_tick = RELOAD_POLL_OPS;
                     #[cfg(not(target_arch = "wasm32"))]
                     if crate::live_reload::poll(self) {
                         bytecode_len = self.bytecode.len() as u32;
+                        if control_on {
+                            crate::live_dispatch::interp_reapply_bps(self, data);
+                        }
                     }
                 }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if control_on && crate::live_dispatch::interp_bp_pending() {
+                crate::live_dispatch::interp_take_bps(self, data);
             }
             let op_pos_rt = self.code_pos;
             // @PLN154 phase 1 — where the stack top stood before the op.  Every route that
@@ -7901,8 +7945,12 @@ impl State {
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
             // not debugging.
-            if self.debug.is_some() && self.debug_check(op_pos_rt, data) {
-                return Dispatch::Suspended;
+            if self.debug.is_some() {
+                if self.debug_check(op_pos_rt, data) {
+                    return Dispatch::Suspended;
+                }
+                // A pause held by the control channel can have reloaded a body.
+                bytecode_len = self.bytecode.len() as u32;
             }
             #[cfg(debug_assertions)]
             let op_pos = self.code_pos;
@@ -8003,7 +8051,13 @@ impl State {
                     let freed = std::mem::take(&mut self.database.uaf_freed_this_op);
                     let d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                     for &slot in &freed {
-                        crate::keys::uaf_record_free(slot, op_pos_rt, d_nr, u16::from(op));
+                        crate::keys::uaf_record_free(
+                            &mut self.database.checks,
+                            slot,
+                            op_pos_rt,
+                            d_nr,
+                            u16::from(op),
+                        );
                     }
                 }
             }
@@ -8176,7 +8230,7 @@ impl State {
         // @PLN103 P3.3 — the store-timeline working-set-vs-leak summary (no-op unless
         // `LOFT_STORES=timeline`), reconciled with the authoritative leak count so the
         // interp eval-stack/const infrastructure is not false-positived as a leak.
-        crate::database::timeline_summary(leaked.len());
+        crate::database::timeline_summary(&self.database, leaked.len());
         // @PLN104 — the text-buffer analogue: orphaned stack-frame `String`s (loft#568),
         // which the store timeline above cannot see (they are not loft stores). No-op unless
         // `LOFT_TEXT_TIMELINE`.
@@ -8617,6 +8671,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         self.put_stack(gen_ref);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8625,15 +8680,16 @@ impl State {
         });
         self.code_pos = u32::MAX;
         self.coroutine_next(packed as u32);
-        if self.code_pos == u32::MAX {
-            self.call_stack.pop();
-        } else {
+        if self.code_pos != u32::MAX {
             let yielded = self.resume();
             assert!(
                 !yielded,
                 "advance_for_native: the generator suspended the frame"
             );
         }
+        // The frame pushed for this advance goes, and only it: an exhausted generator never
+        // took it, a yield set the generator's own frames aside.
+        self.leave_reentry(floor);
         let exhausted = self.coroutine_exhausted(&gen_ref);
         let mut out = Yielded::EXHAUSTED;
         if !exhausted {
@@ -8801,13 +8857,11 @@ impl State {
                 let s = self.reenter_ret::<Str>(d_nr, pos, push);
                 // Copied out before the buffers it points into are dropped; the compiled
                 // caller copies it again before its next call back.
-                CALL_BACK_TEXT.with(|t| {
-                    let mut t = t.borrow_mut();
-                    t.clear();
-                    t.push_str(s.str());
-                    ret.text_ptr = t.as_ptr();
-                    ret.text_len = t.len();
-                });
+                let t = &mut self.call_back_text;
+                t.clear();
+                t.push_str(s.str());
+                ret.text_ptr = t.as_ptr();
+                ret.text_len = t.len();
             }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
             Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
@@ -8877,6 +8931,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8887,6 +8942,7 @@ impl State {
         self.code_pos = code_position;
         let yielded = self.resume();
         assert!(!yielded, "reenter_ret: the callee yielded mid-call");
+        self.leave_reentry(floor);
         let result = self
             .database
             .store(&self.stack_cur)
@@ -8921,6 +8977,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8954,6 +9011,7 @@ impl State {
             };
             on_pause(self, data, &hit);
         }
+        self.leave_reentry(floor);
         let result = self
             .database
             .store(&self.stack_cur)
@@ -9003,7 +9061,9 @@ impl State {
         // Balance: the callee's return pops a CallFrame unconditionally
         // (`fn_return`) — without this push the FIRST re-entry pops the
         // paused program's own frame (probe-caught: heap corruption at
-        // teardown after 200k imbalanced pops).
+        // teardown after 200k imbalanced pops).  The end of the run pops
+        // nothing below the depth found here (`reentry_floor`).
+        let floor = std::mem::replace(&mut self.reentry_floor, self.call_stack.len());
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -9014,6 +9074,7 @@ impl State {
         self.code_pos = code_position;
         let yielded = self.resume();
         assert!(!yielded, "reenter: the callee yielded mid-call");
+        self.leave_reentry(floor);
         self.code_pos = saved_pos;
         self.stack_pos = saved_sp;
     }
@@ -9027,7 +9088,7 @@ impl State {
             if self.dispatch(data) == Dispatch::Suspended {
                 return true; // yielded again, or paused — still running
             }
-            self.call_stack.pop();
+            self.pop_entry_frame();
             return false;
         }
         let bytecode_len = self.bytecode.len() as u32;
@@ -9050,16 +9111,33 @@ impl State {
                 break;
             }
         }
-        // Loop finished — pop the synthetic frame (the entry frame for the
-        // frame-yield drivers, `reenter`'s push for a re-entered call).
+        // Loop finished — pop the entry frame of the frame-yield drivers
+        // (`pop_entry_frame`; a re-entered call's frame its own return popped).
         // `parallel_ctx` is NOT cleared here: its lifetime is the PROGRAM's
         // (who wired it unwires it — `execute_argv` / the frame-yield
         // drivers).  Clearing on every loop completion tore down the
         // standing ctx the live-dispatch host wired, so the SECOND call of
         // a flipped fn using `par_*` panicked in `n_parallel_*`'s expect
         // (probe: a flipped `par_fold` killed the kernel on ping 2).
-        self.call_stack.pop();
+        self.pop_entry_frame();
         false
+    }
+
+    /// The end of a run: pop the entry frame a frame-yield driver pushed, but never a frame
+    /// below [`Self::reentry_floor`] — a re-entered call's own frame is gone already (its
+    /// `Return` popped it), and the one below is its caller's.
+    fn pop_entry_frame(&mut self) {
+        if self.call_stack.len() > self.reentry_floor {
+            self.call_stack.pop();
+        }
+    }
+
+    /// The end of a re-entered call: the call stack back at the depth the call found (a
+    /// callee that halted leaves its frames above it), and the floor of the re-entry around
+    /// this one back in place.
+    fn leave_reentry(&mut self, floor: usize) {
+        self.call_stack.truncate(self.reentry_floor);
+        self.reentry_floor = floor;
     }
 
     /// Resume from a suspension and stop per `mode` — the @PLN16 F step verbs
@@ -9180,9 +9258,9 @@ impl State {
                 watch_fired = true;
             }
         }
-        // Same contract as `resume`: pop the synthetic frame only —
+        // Same contract as `resume`: pop the entry frame only —
         // `parallel_ctx` is program-scoped and unwired by its wirer.
-        self.call_stack.pop();
+        self.pop_entry_frame();
         false
     }
 
@@ -9289,6 +9367,10 @@ impl State {
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         State {
+            call_back_text: String::new(),
+            native_text_yields: Vec::new(),
+            bind_notes: Vec::new(),
+            bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,
             stack_high: 4,
@@ -9328,6 +9410,7 @@ impl State {
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
+            reentry_floor: 0,
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,

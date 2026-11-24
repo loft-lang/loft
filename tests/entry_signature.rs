@@ -229,8 +229,8 @@ fn plain_entry_is_unchanged() {
     );
     let src = fa::read_to_string(&c).expect("read the emitted C");
     assert!(
-        src.contains("    { n_main(); }\n"),
-        "a plain entry must be called with no argument"
+        src.contains("    { n_main(cx); }\n"),
+        "a plain entry must be called with the store context alone"
     );
     let _ = fa::remove_file(&c);
 }

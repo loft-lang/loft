@@ -55,7 +55,7 @@ fn repo_root() -> PathBuf {
 
 thread_local! {
     /// The writer this test's page is built by (@PLN203 C6): each body runs once per writer.
-    static BACKEND: std::cell::Cell<&'static str> = const { std::cell::Cell::new("--native-rust") };
+    static BACKEND: std::cell::Cell<&'static str> = const { std::cell::Cell::new("--native") };
 }
 
 /// The `--native-rust` / `--native-c` flag the running test builds its page with.
@@ -306,7 +306,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_body() {
 #[test]
 fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     on(
-        "--native-rust",
+        "--native",
         a_declared_pack_is_readable_in_the_page_by_the_programs_own_path_body,
     );
 }
@@ -386,7 +386,7 @@ fn the_embedded_file_is_the_one_the_program_would_open_body() {
 #[test]
 fn the_embedded_file_is_the_one_the_program_would_open() {
     on(
-        "--native-rust",
+        "--native",
         the_embedded_file_is_the_one_the_program_would_open_body,
     );
 }
@@ -484,7 +484,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file_body() {
 #[test]
 fn a_librarys_declaration_brings_the_librarys_own_file() {
     on(
-        "--native-rust",
+        "--native",
         a_librarys_declaration_brings_the_librarys_own_file_body,
     );
 }
@@ -599,7 +599,7 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm_body() {
 #[test]
 fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
     on(
-        "--native-rust",
+        "--native",
         a_declaration_that_cannot_work_stops_the_build_before_the_wasm_body,
     );
 }

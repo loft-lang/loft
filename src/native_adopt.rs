@@ -220,7 +220,20 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     gen_adopt: hosted_gen_adopt,
     pause: &crate::debugger::INTERRUPT,
     handover: hosted_handover,
+    cx_of: hosted_cx_of,
 };
+
+/// `HostedTable::cx_of` — the unit's store context for the `Stores` of the calling thread.
+unsafe extern "C" fn hosted_cx_of(
+    stores: *mut Stores,
+    unit: *const std::ffi::c_void,
+    make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+    end: unsafe extern "C" fn(*mut std::ffi::c_void),
+) -> *mut std::ffi::c_void {
+    // SAFETY: the `Stores` the bridge call was handed, live for the call.
+    let stores = unsafe { &mut *stores };
+    stores.hosted_cx.of(unit, make, end)
+}
 
 /// `HostedTable::handover` — the interpreter running this bridge call takes the routine over.
 unsafe extern "C" fn hosted_handover(

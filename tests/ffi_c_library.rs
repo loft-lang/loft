@@ -197,7 +197,7 @@ fn check(backend: &str, how: Shipped) {
 /// The backends a C library is called on: the interpreter, the Rust writer, and the C runtime
 /// where it has its POSIX host layer (Windows is @PLN203 C8's).
 fn backends() -> Vec<&'static str> {
-    let mut b = vec!["--interpret", "--native-rust"];
+    let mut b = vec!["--interpret", "--native"];
     if loft::platform::c_runtime_posix_host() {
         b.push("--native-c");
     }
@@ -211,7 +211,7 @@ fn a_prebuilt_c_library_answers_on_the_interpreter() {
 
 #[test]
 fn a_prebuilt_c_library_answers_on_the_rust_writer() {
-    check("--native-rust", Shipped::InPackage);
+    check("--native", Shipped::InPackage);
 }
 
 #[test]
@@ -514,7 +514,7 @@ fn test_many_rounds_leave_nothing_behind() {
 /// machine built it at.
 #[test]
 fn a_shipped_program_finds_its_library_beside_it() {
-    let mut compiled = vec!["--native-rust"];
+    let mut compiled = vec!["--native"];
     if loft::platform::c_runtime_posix_host() {
         compiled.push("--native-c");
     }

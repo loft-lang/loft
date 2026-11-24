@@ -1615,7 +1615,7 @@ impl Scopes<'_> {
                 keyed_copy = Some((tmp, i32::from(ktp)));
             }
             if let Type::Vector(inner, _) = function.tp(v).base().clone() {
-                let wrapper = format!("main_vector<{}>", inner.name(data));
+                let wrapper = data.vector_wrapper_name(&inner);
                 if data.name_type(&wrapper, data.def(self.d_nr).source) != u16::MAX
                     && let Some(elem) = data.vector_element_type(&inner, self.database)
                 {
@@ -1640,6 +1640,7 @@ impl Scopes<'_> {
             let cname = function.name(cause.container).to_string();
             let via = disturbance_via(data, &cause);
             report_materialised_view(
+                data,
                 cause.reported_cause(),
                 &vname,
                 &cname,
@@ -1726,6 +1727,7 @@ impl Scopes<'_> {
             {
                 let via = disturbance_via(data, &cause);
                 report_materialised_view(
+                    data,
                     cause.reported_cause(),
                     function.name(v),
                     function.name(cause.container),

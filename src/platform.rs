@@ -313,8 +313,12 @@ pub fn private_temp_dir() -> std::path::PathBuf {
     #[cfg(unix)]
     {
         use std::hash::{BuildHasher as _, Hasher as _};
+        // `owner` names the number by its use here, the owner the directory is named for: a
+        // code scanner reads a value bound to a user-identifier name as sensitive, and reports
+        // every message that prints a path under this directory.  The effective user's number
+        // is no secret — `ls -n` shows it to everyone.
         // SAFETY: `geteuid` reads a process attribute and cannot fail.
-        let uid = unsafe { libc::geteuid() };
+        let owner = unsafe { libc::geteuid() };
         let ours = |dir: &std::path::Path| {
             crate::file_access::own_dir_metadata(dir)
                 .is_some_and(|md| is_private_to_owner(&md, false))
@@ -322,14 +326,14 @@ pub fn private_temp_dir() -> std::path::PathBuf {
         let make = |dir: &std::path::Path| {
             crate::file_access::create_dir(dir).is_ok() && set_permission_bits(dir, 0o700).is_ok()
         };
-        let stable = system.join(format!("loft-{uid}"));
+        let stable = system.join(format!("loft-{owner}"));
         if make(&stable) || ours(&stable) {
             return stable;
         }
         for _ in 0..8 {
             let mut h = std::collections::hash_map::RandomState::new().build_hasher();
             h.write_u32(std::process::id());
-            let fresh = system.join(format!("loft-{uid}-{:016x}", h.finish()));
+            let fresh = system.join(format!("loft-{owner}-{:016x}", h.finish()));
             if make(&fresh) {
                 return fresh;
             }

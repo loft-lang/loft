@@ -460,7 +460,7 @@ fn main() {
         .output()
         .is_ok()
     {
-        legs.push("--native-rust");
+        legs.push("--native");
     }
     legs.push("--native-c");
     for leg in legs {
@@ -562,7 +562,7 @@ fn main() {
         .output()
         .is_ok()
     {
-        legs.push("--native-rust");
+        legs.push("--native");
     }
     legs.push("--native-c");
     for leg in legs {
@@ -640,8 +640,8 @@ fn main() {
 // machinery (script + log.conf + read the captured log) is already here.
 // ---------------------------------------------------------------------------
 
-/// The three backends every logged cell runs on.
-const LEGS: [&str; 3] = ["--interpret", "--native-rust", "--native-c"];
+/// The two backends every logged cell runs on.
+const LEGS: [&str; 2] = ["--interpret", "--native"];
 
 /// Run a script under a plain (non-production) backend with a logger attached,
 /// and return the captured log.
@@ -996,7 +996,7 @@ fn main() {
             })
             .collect();
         let want: Vec<(u32, String)> = want.iter().map(|(l, k)| (*l, (*k).to_string())).collect();
-        if leg == "--native-rust" {
+        if leg == "--native" {
             // `(E-Report)`: native may name the running function's declaration instead of
             // the statement, so its records are compared by kind, in order.
             let kinds = |v: &[(u32, String)]| v.iter().map(|(_, k)| k.clone()).collect::<Vec<_>>();

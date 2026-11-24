@@ -442,7 +442,10 @@ impl Cx<'_> {
             }
         }
         for g in &seals {
-            let _ = writeln!(out, "static inline void lt_seal_{g}(lt_{g} *s);");
+            let _ = writeln!(
+                out,
+                "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s);"
+            );
         }
         for g in &seals {
             let none = BTreeSet::new();
@@ -453,13 +456,13 @@ impl Cx<'_> {
                 .iter()
                 .filter_map(|(o, m)| match m {
                     Member::Vector => Some(format!("s->{n}.cap = s->{n}.n;", n = m.name(*o))),
-                    Member::Record(r) => Some(format!("lt_seal_{r}(&s->{});", m.name(*o))),
+                    Member::Record(r) => Some(format!("lt_seal_{r}(cx, &s->{});", m.name(*o))),
                     _ => None,
                 })
                 .collect();
             let _ = writeln!(
                 out,
-                "static inline void lt_seal_{g}(lt_{g} *s) {{ (void) s; {} }}",
+                "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s) {{ (void) s; {} }}",
                 body.join(" ")
             );
         }
@@ -658,11 +661,7 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
         .filter(|(i, _)| phantom_at != Some(*i))
         .map(|(_, &a)| var_name(vars.name(a), a))
         .collect();
-    let params = if params.is_empty() {
-        "void".to_string()
-    } else {
-        params.join(", ")
-    };
+    let params = crate::c::cx_params(&params);
     let rtype = held(ret);
     let sig = format!("static {rtype} {name}({params})");
     let (body, _) = FnWriter::new(cx, key.d, shapes, ret)
@@ -674,7 +673,7 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
     // after scope.
     if body.contains("LOFT_HOLD(") {
         let inner = format!("{name}__in");
-        let call = format!("{inner}({})", call_args.join(", "));
+        let call = format!("{inner}({})", crate::c::cx_args(&call_args));
         let wrapper = if rtype == "void" {
             format!("    LOFT_HOLD_MARK(hm);\n    {call};\n    LOFT_HOLD_BACK(hm);\n")
         } else {
@@ -1016,6 +1015,11 @@ impl Cx<'_> {
         let p = self.answers_work(d, true).ok_or("no work return")?;
         let args = self.data.def(d).variables().arguments();
         let (params, shapes) = self.plain_params(d)?;
+        let params = if params == "void" {
+            "loft_cx *cx".to_string()
+        } else {
+            format!("loft_cx *cx, {params}")
+        };
         let sig = format!("static inline void {name}({params})");
         let (body, _) = FnWriter::new(self, d, shapes, CType::Void)
             .work_return(args[p])
@@ -1156,13 +1160,13 @@ impl FnWriter<'_> {
             if matches!(tf.vars.get(&p), Some(TrVar::Vec(_))) {
                 let n = self.var(p);
                 self.decls.push(format!(
-                    "{n} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"
+                    "{n} = (loft_ta_vec *) loft_ta_alloc(cx, sizeof(loft_ta_vec));"
                 ));
             }
         }
         if !tf.roots.is_empty() {
             self.decls
-                .push("loft_ta_mark_t loft_tmf = loft_ta_mark();".to_string());
+                .push("loft_ta_mark_t loft_tmf = loft_ta_mark(cx);".to_string());
         }
         self.vr = None;
         self.adopt = None;
@@ -1274,7 +1278,7 @@ impl FnWriter<'_> {
                 let g = self.cx.tr_group(tp);
                 let tmp = format!("trp{}", self.decls.len() + 1);
                 self.decls.push(format!("lt_{g} *{tmp} = 0;"));
-                let zero = format!("{tmp} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
+                let zero = format!("{tmp} = (lt_{g} *) loft_ta_zero(cx, sizeof(lt_{g}));");
                 let test = super::as_cond(self.expr(cond, ind)?)?;
                 self.line(ind, &format!("if ({}) {{", super::bare(&test)));
                 if first {
@@ -1456,7 +1460,7 @@ impl FnWriter<'_> {
                 if name != "OpClear"
                     && let Some(m) = self.tr.as_ref().and_then(|t| t.roots.get(&v)).cloned()
                 {
-                    self.line(ind, &format!("loft_ta_back({m});"));
+                    self.line(ind, &format!("loft_ta_back(cx, {m});"));
                 }
                 void()
             }
@@ -1506,7 +1510,7 @@ impl FnWriter<'_> {
                     let n = self.var(v);
                     self.line(
                         ind,
-                        &format!("{n} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"),
+                        &format!("{n} = (loft_ta_vec *) loft_ta_alloc(cx, sizeof(loft_ta_vec));"),
                     );
                     return void();
                 }
@@ -1517,7 +1521,7 @@ impl FnWriter<'_> {
                 let n = self.var(v);
                 self.line(
                     ind,
-                    &format!("{n} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));"),
+                    &format!("{n} = (lt_{g} *) loft_ta_alloc(cx, sizeof(lt_{g}));"),
                 );
                 void()
             }
@@ -1610,7 +1614,7 @@ impl FnWriter<'_> {
                     Member::Int => super::as_int(e)?,
                     Member::Bool => super::as_bool(e)?,
                     Member::Enum => super::as_enum(e)?,
-                    _ => format!("loft_ta_str({})", super::as_view(e)?),
+                    _ => format!("loft_ta_str(cx, {})", super::as_view(e)?),
                 };
                 self.line(ind, &format!("{lv}.{} = {x};", m.name(off)));
                 self.flush(ind);
@@ -1636,7 +1640,7 @@ impl FnWriter<'_> {
                 // The copy shares its vectors' elements with the source: sealed, a push into
                 // it moves it first.
                 self.cx.tr.borrow_mut().seals.insert(g);
-                self.line(ind, &format!("{d} = *{s}; lt_seal_{g}(&{d});"));
+                self.line(ind, &format!("{d} = *{s}; lt_seal_{g}(cx, &{d});"));
                 void()
             }
             "OpMoveVector" if args.first().and_then(|b| self.tr_root(b)).is_some() => {
@@ -1672,7 +1676,7 @@ impl FnWriter<'_> {
                 }
                 let e = self.expr(src, ind)?;
                 let s = super::as_ref(e)?;
-                self.line(ind, &format!("loft_ta_vec_copy(&{d}, {s}, {size});"));
+                self.line(ind, &format!("loft_ta_vec_copy(cx, &{d}, {s}, {size});"));
                 self.flush(ind);
                 void()
             }
@@ -1704,7 +1708,7 @@ impl FnWriter<'_> {
                 let (from, lo, hi) = (super::as_ref(from)?, super::as_int(lo)?, super::as_int(hi)?);
                 self.line(
                     ind,
-                    &format!("loft_ta_vec_copy_range(&{d}, {from}, {lo}, {hi}, {size});"),
+                    &format!("loft_ta_vec_copy_range(cx, &{d}, {from}, {lo}, {hi}, {size});"),
                 );
                 self.flush(ind);
                 crate::rewrite_census::fired("R-SliceInto/transient", 1);
@@ -1813,7 +1817,7 @@ impl FnWriter<'_> {
                             self.line(
                                 ind,
                                 &format!(
-                                    "{lhs} = (lt_{g} *) loft_ta_vec_at(&{lv}, {idx}, sizeof(lt_{g}));"
+                                    "{lhs} = (lt_{g} *) loft_ta_vec_at(cx, &{lv}, {idx}, sizeof(lt_{g}));"
                                 ),
                             );
                             if let Some(t) = self.tr.as_mut() {
@@ -1829,7 +1833,7 @@ impl FnWriter<'_> {
                             self.line(
                                 ind,
                                 &format!(
-                                    "{lhs} = (lt_{g} *) loft_ta_vec_push(&{lv}, sizeof(lt_{g}));"
+                                    "{lhs} = (lt_{g} *) loft_ta_vec_push(cx, &{lv}, sizeof(lt_{g}));"
                                 ),
                             );
                         }
@@ -1839,7 +1843,7 @@ impl FnWriter<'_> {
                             }
                             self.line(
                                 ind,
-                                &format!("{lhs} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));"),
+                                &format!("{lhs} = (lt_{g} *) loft_ta_alloc(cx, sizeof(lt_{g}));"),
                             );
                         }
                         (opn, _) => return Err(format!("a transient local bound from {opn}")),
@@ -1849,7 +1853,7 @@ impl FnWriter<'_> {
                 Value::Call(..) => {
                     // The frame's arena back to its entry: nothing transient is left to read.
                     if let Some(m) = self.tr.as_ref().and_then(|t| t.roots.get(&var)).cloned() {
-                        self.line(ind, &format!("loft_ta_back({m});"));
+                        self.line(ind, &format!("loft_ta_back(cx, {m});"));
                     }
                     let ptr = self.tr_ptr(x, ind)?;
                     self.line(ind, &format!("{lhs} = {ptr};"));
@@ -1890,7 +1894,7 @@ impl FnWriter<'_> {
             let lhs = self.var(var);
             self.line(
                 ind,
-                &format!("{lhs} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));"),
+                &format!("{lhs} = (lt_{g} *) loft_ta_zero(cx, sizeof(lt_{g}));"),
             );
             return Ok(());
         }

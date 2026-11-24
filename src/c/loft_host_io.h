@@ -33,25 +33,25 @@ loft_io_output(const char *p, size_t n);
 #endif
 
 /* `n` bytes as text, an invalid byte as U+FFFD (`String::from_utf8_lossy`). */
-static void loft_hi_push_lossy(loft_text *t, const unsigned char *p, size_t n) {
-    if (loft_utf8_valid(p, n)) {
-        loft_push(t, (const char *) p, n);
+static void loft_hi_push_lossy(loft_cx *cx, loft_text *t, const unsigned char *p, size_t n) {
+    if (loft_utf8_valid(cx, p, n)) {
+        loft_push(cx, t, (const char *) p, n);
         return;
     }
     for (size_t i = 0; i < n;) {
         size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
                    : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
-        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
-            loft_push(t, (const char *) p + i, len);
+        if (len && i + len <= n && loft_utf8_valid(cx, p + i, len)) {
+            loft_push(cx, t, (const char *) p + i, len);
             i += len;
         } else {
-            loft_push(t, "\xEF\xBF\xBD", 3);
+            loft_push(cx, t, "\xEF\xBF\xBD", 3);
             i++;
         }
     }
 }
 
-static void loft_host_output(loft_str msg) {
+static void loft_host_output(loft_cx *cx, loft_str msg) {
 #if defined(LOFT_BROWSER)
     loft_io_output(msg.p, msg.len);
 #else
@@ -62,7 +62,7 @@ static void loft_host_output(loft_str msg) {
 }
 
 #if defined(LOFT_BROWSER)
-static loft_text loft_host_input(int64_t wait_ms) {
+static loft_text loft_host_input(loft_cx *cx, int64_t wait_ms) {
     (void) wait_ms; /* a page reads its queue without blocking: every read is a poll */
     loft_text out = { 0, 0, 0 };
     size_t n = loft_io_input_len();
@@ -70,7 +70,7 @@ static loft_text loft_host_input(int64_t wait_ms) {
     unsigned char *b = (unsigned char *) malloc(n);
     if (!b) return out;
     loft_io_input_copy(b);
-    loft_hi_push_lossy(&out, b, n);
+    loft_hi_push_lossy(cx, &out, b, n);
     free(b);
     return out;
 }
@@ -81,7 +81,7 @@ static unsigned char *loft_hi_buf;
 static size_t loft_hi_len, loft_hi_cap;
 static int loft_hi_eof;
 
-static void loft_hi_add(const unsigned char *p, size_t n) {
+static void loft_hi_add(loft_cx *cx, const unsigned char *p, size_t n) {
     if (loft_hi_len + n > loft_hi_cap) {
         size_t cap = loft_hi_cap ? loft_hi_cap : 4096;
         while (cap < loft_hi_len + n) cap *= 2;
@@ -95,17 +95,17 @@ static void loft_hi_add(const unsigned char *p, size_t n) {
 }
 
 /* Read stdin to its end. */
-static void loft_hi_drain(void) {
+static void loft_hi_drain(loft_cx *cx) {
     unsigned char chunk[65536];
     while (!loft_hi_eof) {
         size_t r = fread(chunk, 1, sizeof chunk, stdin);
-        if (r > 0) loft_hi_add(chunk, r);
+        if (r > 0) loft_hi_add(cx, chunk, r);
         if (r < sizeof chunk) loft_hi_eof = 1;
     }
 }
 
 /* Read what stdin holds, waiting up to `wait_ms` for the first byte. */
-static void loft_hi_pull(int64_t wait_ms) {
+static void loft_hi_pull(loft_cx *cx, int64_t wait_ms) {
 #if defined(LOFT_POSIX_HOST)
     unsigned char chunk[65536];
     int timeout = wait_ms > 2147483647 ? 2147483647 : (int) wait_ms;
@@ -118,16 +118,16 @@ static void loft_hi_pull(int64_t wait_ms) {
             loft_hi_eof = 1;
             return;
         }
-        loft_hi_add(chunk, (size_t) r);
+        loft_hi_add(cx, chunk, (size_t) r);
         timeout = 0; /* what else is there now, without waiting again */
     }
 #elif defined(_WIN32)
     HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
     if (GetFileType(in) != FILE_TYPE_PIPE) {
-        loft_hi_drain(); /* a file has all its bytes now */
+        loft_hi_drain(cx); /* a file has all its bytes now */
         return;
     }
-    int64_t until = loft_now_us() + wait_ms * 1000;
+    int64_t until = loft_now_us(cx) + wait_ms * 1000;
     unsigned char chunk[65536];
     while (!loft_hi_eof) {
         DWORD avail = 0, got = 0;
@@ -136,7 +136,7 @@ static void loft_hi_pull(int64_t wait_ms) {
             return;
         }
         if (avail == 0) {
-            if (loft_now_us() >= until) return;
+            if (loft_now_us(cx) >= until) return;
             Sleep(1);
             continue;
         }
@@ -145,18 +145,18 @@ static void loft_hi_pull(int64_t wait_ms) {
             loft_hi_eof = 1;
             return;
         }
-        loft_hi_add(chunk, got);
+        loft_hi_add(cx, chunk, got);
         until = 0; /* what else is there now, without waiting again */
     }
 #else
     (void) wait_ms;
-    loft_hi_drain(); /* no way to wait for stdin here: the whole stream keeps the value right */
+    loft_hi_drain(cx); /* no way to wait for stdin here: the whole stream keeps the value right */
 #endif
 }
 
 /* How many buffered bytes can be answered now: all of them at the end of the stream or when a
  * byte is malformed (waiting cannot repair it), else up to a character that is still arriving. */
-static size_t loft_hi_takeable(void) {
+static size_t loft_hi_takeable(loft_cx *cx) {
     const unsigned char *p = loft_hi_buf;
     size_t n = loft_hi_len;
     if (loft_hi_eof) return n;
@@ -180,23 +180,23 @@ static size_t loft_hi_takeable(void) {
             }
             return i;
         }
-        if (!loft_utf8_valid(p + i, len)) return n;
+        if (!loft_utf8_valid(cx, p + i, len)) return n;
         i += len;
     }
     return n;
 }
 
-static loft_text loft_host_input(int64_t wait_ms) {
+static loft_text loft_host_input(loft_cx *cx, int64_t wait_ms) {
     loft_text out = { 0, 0, 0 };
     if (wait_ms < 0) {
-        loft_hi_drain();
+        loft_hi_drain(cx);
     } else {
-        loft_hi_pull(0);
-        if (loft_hi_takeable() == 0 && !loft_hi_eof) loft_hi_pull(wait_ms);
+        loft_hi_pull(cx, 0);
+        if (loft_hi_takeable(cx) == 0 && !loft_hi_eof) loft_hi_pull(cx, wait_ms);
     }
-    size_t take = loft_hi_takeable();
+    size_t take = loft_hi_takeable(cx);
     if (take == 0) return out;
-    loft_hi_push_lossy(&out, loft_hi_buf, take);
+    loft_hi_push_lossy(cx, &out, loft_hi_buf, take);
     memmove(loft_hi_buf, loft_hi_buf + take, loft_hi_len - take);
     loft_hi_len -= take;
     return out;

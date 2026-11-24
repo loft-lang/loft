@@ -585,6 +585,122 @@ fn debug_reapply_bps(st: &mut State, data: &crate::data::Data) {
     }
 }
 
+// ── The control channel over an interpreted program ────────────────────────
+//
+// `@C170`: the development features live in the interpreter, so a program run on it
+// (`--interpret`, the editor's game) answers the `D!:` channel itself.  There is no
+// parked State: the running one is the interpreter, and the dispatch loop picks up a
+// breakpoint the channel queued at the next op boundary, then pauses at it in place
+// through the same pause loop the live tier runs.  Every function is interpreted
+// already, so a flip of one that exists answers true.
+
+/// Armed by [`arm_interp_control`]: the running interpreter answers the channel.
+#[cfg(not(target_arch = "wasm32"))]
+static INTERP_CONTROL: AtomicBool = AtomicBool::new(false);
+/// A breakpoint the channel queued that the dispatch loop has not applied yet.
+#[cfg(not(target_arch = "wasm32"))]
+static INTERP_BP_PENDING: AtomicBool = AtomicBool::new(false);
+/// The program's function names (loft names, without `n_`): what a flip or a breakpoint
+/// may name.
+#[cfg(not(target_arch = "wasm32"))]
+static INTERP_FNS: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    /// Breakpoints the channel asked for, already acknowledged, waiting for the loop.
+    static INTERP_QUEUED_BPS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Under `LOFT_DEBUG_CONTROL=1`, let the interpreter running `data`'s program answer the
+/// `D!:` channel's flips and breakpoints.  Called once, before `main` runs.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn arm_interp_control(data: &crate::data::Data) {
+    if !std::env::var("LOFT_DEBUG_CONTROL").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let names = (0..data.definitions())
+        .map(|d| data.def(d))
+        .filter(|def| matches!(def.def_type, crate::data::DefType::Function))
+        .filter_map(|def| def.name.strip_prefix("n_").map(String::from))
+        .collect();
+    let _ = INTERP_FNS.set(names);
+    crate::live_control::install_flip(interp_flip);
+    crate::live_control::install_set_bp(interp_set_bp);
+    INTERP_CONTROL.store(true, Ordering::Relaxed);
+}
+
+/// Whether the running interpreter answers the control channel: the dispatch loop then
+/// takes its full form and checks [`interp_bp_pending`] between ops.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn interp_control_armed() -> bool {
+    INTERP_CONTROL.load(Ordering::Relaxed)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn interp_known(name: &str) -> bool {
+    INTERP_FNS.get().is_some_and(|s| s.contains(name))
+}
+
+/// A flip on the interpreter: the function runs interpreted already, either way.
+#[cfg(not(target_arch = "wasm32"))]
+fn interp_flip(name: &str, _on: bool) -> bool {
+    interp_known(name)
+}
+
+/// Queue a breakpoint for the dispatch loop; `cid` hears its hits.
+#[cfg(not(target_arch = "wasm32"))]
+fn interp_set_bp(name: &str, cid: i64) -> bool {
+    if !interp_known(name) {
+        return false;
+    }
+    DEBUG_SUB.with(|s| s.set(cid));
+    INTERP_QUEUED_BPS.with(|q| q.borrow_mut().push(name.to_string()));
+    INTERP_BP_PENDING.store(true, Ordering::Relaxed);
+    true
+}
+
+/// A breakpoint waits for the dispatch loop (one relaxed load).
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn interp_bp_pending() -> bool {
+    INTERP_BP_PENDING.load(Ordering::Relaxed)
+}
+
+/// Apply the queued breakpoints to the running State, at an op boundary.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn interp_take_bps(st: &mut State, data: &crate::data::Data) {
+    INTERP_BP_PENDING.store(false, Ordering::Relaxed);
+    let queued = INTERP_QUEUED_BPS.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    for name in queued {
+        let d_nr = data.def_nr(&format!("n_{name}"));
+        if d_nr == u32::MAX || st.set_breakpoint_fn_current(d_nr).is_none() {
+            eprintln!("loft-debug: breakpoint on {name} could not resolve");
+            continue;
+        }
+        DEBUG_BPS.with(|b| {
+            let mut b = b.borrow_mut();
+            if !b.contains(&name) {
+                b.push(name.clone());
+            }
+        });
+        eprintln!("loft-debug: breakpoint at {name}");
+    }
+}
+
+/// A breakpoint the running interpreter reached: hold the program in the pause loop
+/// until the channel resumes it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn interp_pause(st: &mut State, data: &crate::data::Data, hit: &crate::debugger::BreakHit) {
+    debug_pause_loop(st, data, hit);
+}
+
+/// After a reload moved the bodies: the breakpoints follow them.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn interp_reapply_bps(st: &mut State, data: &crate::data::Data) {
+    debug_reapply_bps(st, data);
+}
+
 /// On wasm the debug branch is dead code (breakpoints can only be set
 /// through the native control channel), but the call sites still name the
 /// pause handler — a typed no-op keeps the wasm build whole.
@@ -608,6 +724,9 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
     crate::engine_host::debug_send(sub, &format!("D:hit {} {bindings}", hit.function));
     loop {
         crate::engine_host::debug_pump();
+        if interp_bp_pending() {
+            interp_take_bps(st, data);
+        }
         for cmd in debug_mailbox_drain() {
             match cmd {
                 DebugCmd::Resume(cid) => {
