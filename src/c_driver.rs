@@ -1166,16 +1166,18 @@ pub(crate) fn build(
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
     // A lint compiles afresh, so its warnings are seen every time it is asked for.
     let linting = lint() != Lint::Off;
-    if !no_cache
-        && !linting
-        && fa::exists(&cached)
-        && crate::native_utils::cache_safe_to_execute(&cached)
-    {
-        crate::native_utils::touch_cached_binary(&cached);
-        return Ok(Built {
-            binary: cached,
-            cached: true,
-        });
+    if !no_cache && !linting && fa::exists(&cached) {
+        if crate::native_utils::cache_safe_to_execute(&cached) {
+            crate::native_utils::touch_cached_binary(&cached);
+            return Ok(Built {
+                binary: cached,
+                cached: true,
+            });
+        }
+        eprintln!(
+            "loft: rejecting suspicious cached binary at {} (P254 — wrong owner, world-writable, symlink, or SUID); recompiling",
+            cached.display()
+        );
     }
     let scratch = loft::platform::scratch_dir();
     let pid = std::process::id();
