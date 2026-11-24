@@ -432,35 +432,6 @@ fn parallel_runtime_consolidated() {
     }
 }
 
-/// Phase 06 regression test: the queue + buf-access runtime fns
-/// must remain registered in `CODEGEN_RUNTIME_FNS` with `Abi::Cell`
-/// tags.  P202's reproducer (19_threading + 22_threading +
-/// 40_par_ref_return) compiles natively only when these fns exist
-/// at link time — accidentally removing them re-opens the bug.
-#[test]
-fn p202_parallel_queue_runtime_fns_registered() {
-    use loft::codegen_runtime::{Abi, abi_of};
-    for name in [
-        "n_parallel_queue_native",
-        "n_parallel_queue_text_native",
-        "n_parallel_queue_ref_native",
-        "n_parallel_buf_get_native",
-        "n_parallel_buf_get_text_native",
-        "n_parallel_buf_get_ref_native",
-        "n_parallel_buf_drop_native",
-        "n_parallel_buf_drop_text_native",
-        "n_parallel_buf_drop_ref_native",
-    ] {
-        assert_eq!(
-            abi_of(name),
-            Abi::Cell,
-            "{name} must be in CODEGEN_RUNTIME_FNS with Abi::Cell — \
-             phase 06 (P202 close) requires it for native compilation \
-             of `for ... par(...)` loops."
-        );
-    }
-}
-
 /// Phase 06 structural test: the `n_parallel_queue` family must
 /// route through the `ParallelQueueEmitter` registered in
 /// `src/generation/ops/mod.rs`.  Without this, the call sites emit
@@ -612,67 +583,6 @@ fn pln10_n2_cdylib_text_wrapper_returns_owned_string() {
     );
 }
 
-/// @P310 regression: native codegen must emit `*const i64` (not `*const i32`)
-/// for a `vector<integer>` argument bound to a `vec<i64>` FFI wrapper.  The
-/// graphics `Canvas.data` (`vector<integer>`, 8-byte stride post-2c) is
-/// passed to `loft_save_png(data: vec<i64>)`; before the fix
-/// `vector_elem_rust_type` keyed off `is_wide()` (a value-range predicate)
-/// and emitted `*const i32`, so every graphics program failed `--check` /
-/// `--native` with E0308.  The fix keys off the storage stride
-/// (`vector_narrow_width()`); the unit test
-/// `generation::p310_vector_elem_tests` pins it at the function level, this
-/// pins it end-to-end (a real graphics program must `--check` clean).
-#[test]
-fn p310_graphics_vector_ffi_checks_clean() {
-    // Direct binary invocation — see p203_reproducer_passes_under_native
-    // for the nested-cargo race rationale.  The fixture is its own mini-
-    // package (`tests/fixtures/p310/loft.toml`) with a registry dep on
-    // `graphics`; loft auto-installs on first `use graphics;`.  Previously
-    // this test passed `--lib lib` to link the WHOLE monorepo native stack
-    // (graphics + web + server + imaging) under one rustc, doubling as the
-    // Windows multi-lib link guard — but @PLAN12 Phase 5b moved those four
-    // packages to chunk repos, so the cross-lib guard now lives in the
-    // graphics chunk's own CI matrix (per-platform builds against pinned
-    // loft).  This test still pins the vector<integer> → *const i64 path
-    // end-to-end against a real `graphics::save_png` consumer.
-    let out = loft::platform::process::harness_command(loft_binary())
-        .args(["--check", "tests/fixtures/p310/p310_save_png.loft"])
-        .current_dir(project_root())
-        .output()
-        .expect("run --check on the @P310 graphics save_png fixture");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    // The C-ABI native path links the graphics native package's cdylib, which
-    // must RESOLVE at link time — but graphics needs a system GL library that a
-    // GL-less macOS/Windows CI runner doesn't have ("needs the system library
-    // 'libGL.so.1'" → undefined `loft_save_png`).  That is ENVIRONMENTAL, not
-    // the storage-stride regression this test guards: the stride bug is a rustc
-    // TYPE error (E0308 / `*const i32`) on the GENERATED source that fires at
-    // COMPILE, before the link.  So where graphics native can't link, still
-    // verify the codegen is clean and skip only the link-success assertion;
-    // assert full success everywhere graphics native CAN link (Linux CI).
-    if !out.status.success() && stderr.contains("needs the system library") {
-        assert!(
-            !stderr.contains("E0308") && !stderr.contains("*const i32"),
-            "P310: the vector_elem_rust_type storage-stride fix regressed (E0308 \
-             on the generated source) — vector<integer> must lower to *const i64.  \
-             stderr={stderr:?}"
-        );
-        eprintln!(
-            "p310_graphics_vector_ffi_checks_clean: skipped link-success \
-             (graphics native needs a system GL library absent on this runner)"
-        );
-        return;
-    }
-    assert!(
-        out.status.success(),
-        "P310: graphics save_png fixture failed `--check`.  The \
-         vector_elem_rust_type storage-stride fix (src/generation/mod.rs) \
-         likely regressed — vector<integer> must lower to *const i64 to \
-         match the vec<i64> `loft_save_png` wrapper, not *const i32.  \
-         stderr={stderr:?}"
-    );
-}
-
 /// Phase 07 regression test: the P205 reproducer must compile +
 /// run cleanly under native.  Pins the dangling-Str fix —
 /// without phase 07's emit-time scratch routing, the generic-text-
@@ -734,25 +644,6 @@ fn p205_no_str_new_of_local_in_corpus() {
          shape is a regression.\n\nOffenders:\n  {}",
         offenders.join("\n  ")
     );
-}
-
-/// Gate: the registry's `Abi` tags must be self-consistent — every
-/// entry's `abi_of(name)` lookup must return the entry's own tag.
-/// Trivially true when the registry is well-formed; catches a typo
-/// where two entries with the same name disagree on ABI.
-#[test]
-fn abi_of_handles_all_runtime_fns() {
-    use loft::codegen_runtime::{Abi, CODEGEN_RUNTIME_FNS, abi_of};
-    for fn_def in CODEGEN_RUNTIME_FNS {
-        assert_eq!(
-            abi_of(fn_def.name),
-            fn_def.abi,
-            "abi_of disagrees with registry for `{}`",
-            fn_def.name
-        );
-    }
-    // Unknown name → Cell (user-fn / Op-stub default).
-    assert_eq!(abi_of("nonexistent_fn_for_test"), Abi::Cell);
 }
 
 // ============================================================

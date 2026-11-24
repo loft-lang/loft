@@ -10,7 +10,6 @@
 //!
 //! See `EXTERNAL_LIBS.md` for the full design.
 
-use crate::platform::process::{Program, Spawn};
 // The opened-library table and symbol lookup live in `c_libs` (core); these are the paths
 // callers name here, and what the wiring below reads.
 use crate::c_libs::adopt_foreign_block;
@@ -22,10 +21,9 @@ pub use crate::c_libs::{load_c_library, try_dlsym_pub};
 // Finding or building a package's native library lives in `native_build` (core),
 // because the parser resolves it on `use`; these are the paths callers name here.
 pub use crate::native_build::{
-    auto_build_native, browser_target, c_target, host_native_lib, native_target_root,
-    platform_lib_name, resolve_native_lib, set_browser_target, set_c_target,
+    browser_target, c_target, host_native_lib, native_target_root, platform_lib_name,
+    resolve_native_lib, set_browser_target, set_c_target,
 };
-use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
 use std::collections::HashMap;
@@ -801,14 +799,14 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
-    // A package whose native part needs no build — a component loft ships, a library shipped
-    // prebuilt per host (@PLN205) — has nothing to rebuild: say what is missing instead.
+    // A package whose natives are a component loft ships (@PLN205) has nothing to rebuild:
+    // say what is missing instead.
     let unbuildable = |krate: &str| -> Option<String> {
-        let (name, pkg_dir) = data
+        let (_, pkg_dir) = data
             .native_packages
             .iter()
             .find(|(c, _)| c.replace('-', "_") == krate.replace('-', "_"))?;
-        crate::native_build::unbuildable_native_reason(pkg_dir, name)
+        crate::native_build::unbuildable_native_reason(pkg_dir)
     };
     for (krate, mut syms) in by_crate {
         syms.sort_unstable();
@@ -828,11 +826,9 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             continue;
         }
         eprintln!(
-            "loft: native library '{krate}' did not load — {n} of its #native function(s) are \
-             unavailable ({shown}{more_txt}), and a program that calls one does not start. Its cdylib is missing or \
-             stale (commonly built against a different libloft.rlib / loft-ffi). Rebuild it with \
-             `make rebuild-native-cdylibs` (in the loft tree) or `cargo build --release` in the \
-             library's native/ dir, then re-run.",
+            "loft: no native library provides {n} #native function(s) of '{krate}' \
+             ({shown}{more_txt}), and a program that calls one does not start.  A library's \
+             native part is C: its `[c] shim` sources, bound by `#c` declarations.",
             n = syms.len(),
         );
     }
@@ -1904,7 +1900,16 @@ fn bridge_heap_answer(
     use loft_ffi::LoftTag;
     let db = match ret.tag {
         LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
-            crate::codegen_runtime::from_loft_record(ret.as_ref())
+            let r = ret.as_ref();
+            if r.is_null() {
+                crate::keys::DbRef::NULL
+            } else {
+                crate::keys::DbRef {
+                    store_nr: r.store_nr,
+                    rec: r.rec,
+                    pos: r.pos,
+                }
+            }
         }
         LoftTag::Ref => bridge_ref_handle(stores, ret.as_ref()),
         _ => return None,
@@ -2111,150 +2116,6 @@ fn make_loft_store(stores: &crate::database::Stores, store_nr: u16, minted: bool
 }
 
 // ── Auto-build ──────────────────────────────────────────────────────────
-
-/// Build the native cdylib of every INSTALLED registry package, one at a time.
-///
-/// @P229 G3, restored at the new location.  A test that `use`s a native-backed package
-/// calls [`auto_build_native`], which takes ONE global exclusive lock
-/// (`loft-native-build.lock`) around its `cargo build`.  Under a parallel test runner many
-/// of those fire at once: each blocked process still occupies a runner slot, so the suite
-/// loses concurrency it is being charged for, and the builds churn the shared cargo dir
-/// while they are at it.
-///
-/// CI used to prevent that by pre-building `lib/<pkg>/native/` sequentially before the
-/// suite.  Those libraries moved to their own repos (@PLAN12 5b) and the step became a
-/// stub, so the rebuilds went back to happening DURING the suite — measured on
-/// `tuxedo-work-2026-08-28`: 7 lock waits totalling 62.5s, worst 26.9s, with five cdylibs
-/// rebuilding mid-run because a fresh loft binary stamps them all stale.
-///
-/// This is that step at the new location.  It calls the same [`resolve_native_lib`] the
-/// tests reach, so there is no second spelling of where a cdylib lands or when it is
-/// stale — the reason a shell loop cannot do this job: `native_target_root`'s redirect and
-/// the `[library] native` stem would both have to be re-derived.
-///
-/// Best-effort by design. A package that fails to build here is not fatal: the test that
-/// needs it will try again and report properly. Returns `(attempted, built)`.
-#[cfg(feature = "registry")]
-pub fn prebuild_installed_natives() -> (usize, usize) {
-    let Ok(entries) = crate::file_access::read_dir(crate::registry_index::cache_dir()) else {
-        return (0, 0);
-    };
-    let mut dirs: Vec<std::path::PathBuf> = entries
-        .iter()
-        .map(crate::file_access::PathText::os_spelling)
-        .filter(|p| crate::file_access::exists(p.join("native").join("Cargo.toml")))
-        .collect();
-    // Deterministic order, so two runs of the same tree do the same work in the same
-    // sequence and a slow package is identifiable from the log rather than from timing.
-    dirs.sort();
-    let (mut attempted, mut built) = (0, 0);
-    for dir in dirs {
-        // The stem comes from the package's own `[library] native = "…"`, read through
-        // the one manifest reader — the same value the parser resolves at `use` time.
-        let Some(stem) = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy())
-            .and_then(|m| m.native)
-        else {
-            continue;
-        };
-        attempted += 1;
-        let pkg = dir.to_string_lossy().into_owned();
-        // Name each package as it is reached.  A warm cache makes `resolve_native_lib` an
-        // early return, so this is nearly silent; a run that takes minutes is one where the
-        // loft binary changed and every stamp went stale, and then this log is the only
-        // thing that says which package is being waited on.
-        let name = crate::file_access::file_name(&dir).unwrap_or_default();
-        let t = std::time::Instant::now();
-        if resolve_native_lib(&pkg, &stem).is_some() {
-            built += 1;
-            let secs = t.elapsed().as_secs_f64();
-            if secs > 1.0 {
-                println!("  prebuilt {name} ({secs:.1}s)");
-            }
-        } else {
-            println!("  warn: {name} did not resolve — the test that needs it will retry");
-        }
-    }
-    (attempted, built)
-}
-
-pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool {
-    use std::path::PathBuf;
-    let pkg = PathBuf::from(pkg_dir);
-    let cargo_toml = pkg.join("native").join("Cargo.toml");
-    if !crate::file_access::exists(&cargo_toml) {
-        return false;
-    }
-    let rlib_name = format!("lib{stem}.rlib");
-    // A `cargo build --target <t>` writes under `<dir>/<t>/release/`; the wasm consume
-    // path reads the IN-TREE `native/target` (not the redirected host root), so build
-    // there to keep the produced rlib and the linked rlib the same file.
-    let out_dir = pkg
-        .join("native")
-        .join("target")
-        .join(target)
-        .join("release");
-    let rlib = out_dir.join(&rlib_name);
-    let fp = crate::cache::native_artifact_cache_key();
-    let fresh = |out: &std::path::Path| {
-        crate::file_access::exists(out.join(&rlib_name))
-            && crate::cache::native_artifact_fingerprint_matches(out, fp)
-            // loft#965 — same hole, same cure, on the cross-target path.
-            && !native_crate_newer_than(pkg_dir, &out.join(&rlib_name))
-    };
-    if fresh(&out_dir) {
-        return true;
-    }
-    // Serialise cross-process builds on the SAME global lock the host path uses, so
-    // parallel `loft` invocations don't race cargo's shared registry index/cache.
-    let _build_lock = crate::file_access::open_with(
-        std::env::temp_dir().join("loft-native-build.lock"),
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false),
-    )
-    .ok();
-    if let Some(f) = &_build_lock {
-        let _ = f.lock();
-    }
-    if fresh(&out_dir) {
-        // A process we waited on just produced it.
-        return true;
-    }
-    let mut cmd = Spawn::new(Program::search("cargo"))
-        .args(["build", "--release", "--target", target, "--manifest-path"])
-        .arg(&cargo_toml)
-        // Build with CLEAN flags: the host `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` loft was
-        // built with are host-target-specific and would either break the wasm build or
-        // mis-key it.  A `#native` crate links loft-ffi (the source-stable C-ABI), not
-        // loft's rlib, so no shared-SVH flag matching is needed for the wasm leg.
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
-    match cmd.status() {
-        Ok(s) if s.success() => {
-            // Stamp the same loft-ffi ABI key so a later loft-ffi change re-builds it.
-            crate::cache::write_native_artifact_fingerprint(&out_dir, fp);
-            crate::file_access::exists(&rlib)
-        }
-        Ok(_) => {
-            eprintln!(
-                "loft: cross-building native library '{stem}' for {target} failed (cargo error \
-                 above) — its native crate is likely not wasm-clean.{}",
-                build_deps_hint(pkg_dir)
-            );
-            false
-        }
-        Err(e) => {
-            eprintln!(
-                "loft: cannot cross-build native library '{stem}' for {target}: {e} — needs a \
-                 Rust toolchain with the {target} target (`rustup target add {target}`)."
-            );
-            false
-        }
-    }
-}
 
 /// Public API for generated native code that needs to call a cdylib
 /// function with a `LoftStore` handle.
@@ -2569,7 +2430,6 @@ pub mod native_call {
 // actionable guidance.  Pure string-in/string-out, so unit-testable.
 #[cfg(all(test, feature = "native-extensions"))]
 mod dlopen_diag_tests {
-    use super::build_deps_hint;
     use crate::c_libs::dlopen_diagnostic;
     use crate::native_build::{first_missing_runtime_lib, runtime_lib_missing_diagnostic};
 
@@ -2597,14 +2457,14 @@ mod dlopen_diag_tests {
         let (host_missing, _) = host_and_foreign_lib_names();
         let dir = temp_pkg(
             "rtlib",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{host_missing}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{host_missing}\"\n"),
         );
         assert_eq!(
             first_missing_runtime_lib(dir.to_str().unwrap()).as_deref(),
             Some(host_missing)
         );
         // none declared → no check, no false positive.
-        let dir2 = temp_pkg("nort", "[native]\ncrate = \"x\"\n");
+        let dir2 = temp_pkg("nort", "[native]\ncomponent = \"x\"\n");
         assert!(first_missing_runtime_lib(dir2.to_str().unwrap()).is_none());
     }
 
@@ -2616,14 +2476,14 @@ mod dlopen_diag_tests {
         let (host_missing, foreign) = host_and_foreign_lib_names();
         let f = temp_pkg(
             "foreignrt",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{foreign}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{foreign}\"\n"),
         );
         assert!(first_missing_runtime_lib(f.to_str().unwrap()).is_none());
         // foreign (skipped) + a missing host name (probed) → the host one is still
         // detected.
         let mixed = temp_pkg(
             "mixrt",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{foreign}, {host_missing}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{foreign}, {host_missing}\"\n"),
         );
         assert_eq!(
             first_missing_runtime_lib(mixed.to_str().unwrap()).as_deref(),
@@ -2640,21 +2500,6 @@ mod dlopen_diag_tests {
             "{m}"
         );
         assert!(m.contains("install it with your OS package manager"), "{m}");
-    }
-
-    #[test]
-    fn build_deps_hint_names_declared_deps() {
-        let dir = temp_pkg(
-            "bdeps",
-            "[native]\ncrate = \"x\"\nbuild-deps = \"libgl-dev, libasound2-dev\"\n",
-        );
-        let h = build_deps_hint(dir.to_str().unwrap());
-        assert!(
-            h.contains("libgl-dev") && h.contains("libasound2-dev"),
-            "{h}"
-        );
-        let unexpected = build_deps_hint(temp_pkg("nobd", "[native]\n").to_str().unwrap());
-        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]
@@ -2726,90 +2571,5 @@ mod c_lib_beside_tests {
             );
         }
         let _ = crate::file_access::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod native_freshness_tests {
-    use super::native_crate_newer_than;
-    use std::io::Write;
-
-    /// Build `<root>/native/src/lib.rs` plus an artifact, and return both paths.
-    fn fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!("loft_965_{tag}_{}", std::process::id()));
-        let _ = crate::file_access::remove_dir_all(&root);
-        crate::file_access::create_dir_all(root.join("native/src")).expect("mkdir");
-        crate::file_access::create_dir_all(root.join("native/target/release"))
-            .expect("mkdir target");
-        let src = root.join("native/src/lib.rs");
-        crate::file_access::create(&src)
-            .and_then(|mut f| f.write_all(b"// crate source\n"))
-            .expect("write source");
-        (root, src)
-    }
-
-    /// Write the artifact AFTER the sources, which is what a real build leaves behind.
-    fn artifact_after(root: &std::path::Path, name: &str) -> std::path::PathBuf {
-        // A coarse filesystem timestamp would make "written after" indistinguishable
-        // from "written at the same moment", and the comparison is `>`.  Sleep past the
-        // granularity rather than assert on a tie whose direction is the platform's
-        // choice.
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let art = root.join(name);
-        crate::file_access::write(&art, b"artifact").expect("write artifact");
-        art
-    }
-
-    /// The reuse case: sources older than the artifact, so the cached cdylib stands.
-    #[test]
-    fn an_untouched_crate_is_not_newer() {
-        let (root, _src) = fixture("fresh");
-        let art = artifact_after(&root, "libx.so");
-        assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// loft#965 itself: the crate's own Rust edited after the artifact was built.  This
-    /// is what `loft test` used to answer "reuse" to, running the previous build against
-    /// code no longer in the tree.
-    #[test]
-    fn an_edited_crate_source_is_newer() {
-        let (root, src) = fixture("edited");
-        let art = artifact_after(&root, "libx.so");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        crate::file_access::create(&src)
-            .and_then(|mut f| f.write_all(b"// edited\n"))
-            .expect("re-write source");
-        assert!(native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// ⚠ `native/target/` is the build's OWN output and is always newer than the
-    /// artifact's siblings.  Counting it would report every crate as stale forever —
-    /// a rebuild on every run, which is the failure mode a careless fix has.
-    #[test]
-    fn the_crates_own_target_dir_does_not_count() {
-        let (root, _src) = fixture("target");
-        let art = artifact_after(&root, "libx.so");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        crate::file_access::write(root.join("native/target/release/stamp"), b"x")
-            .expect("write stamp");
-        assert!(
-            !native_crate_newer_than(&root.to_string_lossy(), &art),
-            "output under native/target must not make the crate look stale"
-        );
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// A package with no native crate at all answers "not newer" rather than walking
-    /// nothing and defaulting to a rebuild.
-    #[test]
-    fn a_package_without_a_native_crate_is_not_newer() {
-        let root = std::env::temp_dir().join(format!("loft_965_none_{}", std::process::id()));
-        let _ = crate::file_access::remove_dir_all(&root);
-        crate::file_access::create_dir_all(&root).expect("mkdir");
-        let art = artifact_after(&root, "libx.so");
-        assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
     }
 }

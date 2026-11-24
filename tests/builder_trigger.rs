@@ -41,12 +41,20 @@ fn project(tag: &str, script: &str) -> PathBuf {
     dir
 }
 
+/// A working directory outside any project and holding nothing: the shared temp directory can
+/// hold another test's package, which a bare call's resolution would read.
+fn empty_cwd() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("loft_builder_cwd_{}", std::process::id()));
+    let _ = fa::create_dir_all(&dir);
+    dir
+}
+
 fn run(dir: &std::path::Path, backend: &str) -> (bool, String, String) {
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg(backend)
         .arg(dir.join("p.loft"))
         .env("LOFT_TIMEOUT", "120")
-        .current_dir(std::env::temp_dir())
+        .current_dir(empty_cwd())
         .output()
         .expect("spawn loft");
     (
@@ -164,7 +172,7 @@ fn a_registry_dependency_fires_its_type_and_builder_triggers() {
             .arg(dir.join("p.loft"))
             .env("LOFT_TIMEOUT", "120")
             .env("LOFT_HOME", &home)
-            .current_dir(std::env::temp_dir())
+            .current_dir(empty_cwd())
             .output()
             .expect("spawn loft");
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -242,7 +250,7 @@ fn a_lib_flag_copy_fires_its_own_method_triggers() {
             .env("LOFT_TIMEOUT", "120")
             .env("LOFT_HOME", &home)
             .env("LOFT_NO_CACHE", "1")
-            .current_dir(std::env::temp_dir())
+            .current_dir(empty_cwd())
             .output()
             .expect("spawn loft");
         (
@@ -313,7 +321,7 @@ fn run_trigger(
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_HOME", home)
         .env("LOFT_NO_CACHE", "1")
-        .current_dir(std::env::temp_dir())
+        .current_dir(empty_cwd())
         .output()
         .expect("spawn loft");
     (
@@ -516,4 +524,27 @@ fn a_method_the_program_declares_loads_no_library() {
         );
     }
     let _ = fa::remove_dir_all(&tmp);
+}
+
+/// A package beside the program is read only for the triggers it declares, so its manifest's
+/// errors are not the program's: a sibling whose manifest is refused (here, a Rust native part)
+/// does not stop a program that never uses it, while a package a trigger loads is still read,
+/// and refused, where it is used.
+#[test]
+fn a_refused_package_beside_the_program_does_not_stop_it() {
+    let sibling =
+        std::env::temp_dir().join(format!("loft_builder_{}_refusedsib", std::process::id()));
+    let _ = fa::remove_dir_all(&sibling);
+    fa::create_dir_all(&sibling).expect("mkdir");
+    fa::write(
+        sibling.join("loft.toml"),
+        "[package]\nname = \"refusedsib\"\nversion = \"0.1.0\"\n\n[native]\ncrate = \"x\"\n",
+    )
+    .expect("manifest");
+    expect(
+        "besiderefused",
+        "fn main() {\n  b = bag([\"pear\", \"apple\", \"pear\"]);\n  a = b.has(\"apple\");\n  p = b.has(\"plum\");\n  println(\"{a} {p} {b.size()}\");\n}\n",
+        "true false 2",
+    );
+    let _ = fa::remove_dir_all(&sibling);
 }

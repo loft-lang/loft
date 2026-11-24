@@ -80,12 +80,11 @@ switches, [RUN_BOUNDS.md](../../../doc/claude/RUN_BOUNDS.md)):
   you find and fix at once: `claim.py file …`), and the fix commit must claim it (below).
 - Single file, interpreter: `cargo run --bin loft -- --interpret file.loft`
 - Native: `cargo run --bin loft -- --native file.loft`
-- The compiled leg of a check is the C backend (`--native-c`, or `LOFT_NATIVE_BACKEND=c` for a
-  plain `--native`); rustc-native only for an edit in what that writer emits.
-- ⚠ **The default backend is `--native` wherever rustc is available** (a downloaded release
+- The compiled leg of a check is the C backend (`--native`).
+- ⚠ **The default backend is `--native` wherever a C compiler is available** (a downloaded release
   interprets). For the SEEING loop ALWAYS pass
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in
-  seconds, whereas `--native` pays a rustc compile per probe (that cost belongs at the
+  seconds, whereas `--native` pays a C compile per probe (that cost belongs at the
   final verify, not the loop).
 - **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § Environment switches / `doc/claude/RUNNING_TESTS.md`
   § LogConfig): `minimal` (exec trace — cleanest for runtime bugs), `static` (IR +
@@ -174,14 +173,8 @@ printf '%s\n' \
 ## Native-backend env gotchas — these fake FAILURES; rule them out before believing a native failure
 
 1. **Default is `--native`** — pass `--interpret` for the seeing loop (§ Running a bug down).
-2. **Toolchain mismatch.** The box's rustup default can differ from the repo's
-   `rust-toolchain.toml`. Then `--native` fails
-   `E0514 incompatible rustc`, *or* forcing a toolchain triggers a full from-scratch
-   rebuild. Fix: run native from **inside the repo** so `rust-toolchain.toml`
-   applies; if a snap `rustc` is first on PATH, prefix
-   `PATH="$(dirname "$(rustup which rustc)"):$PATH"`. `find_problems.sh` self-heals
-   the cross-toolchain-polluted `libloft_ffi-*.rlib` case before building; hand-fix
-   only direct `--native` runs outside the script.
+2. **No C compiler.** `--native` without one interprets and says so (`LOFT_REQUIRE_NATIVE=1`
+   makes that a refusal); `loft --version`'s second line names the compiler it found.
 3. **Stale dependency rlibs.** After a rebase / `Cargo.lock` bump, a `--lib`-only build
    leaves dep rlibs stale → native tests fail `crate rustls / ureq / webpki / ring
    required to be available in rlib format, but was not found`. Fix: a **full**
@@ -191,9 +184,9 @@ printf '%s\n' \
    tmpfs `/tmp` on Linux). Native tests flake under `find_problems`' parallelism.
    Confirm any native failure **serially**
    (`cargo test --release --test <bin> <name> -- --test-threads=1`) before trusting it.
-5. **Stale `libloft.rlib`.** After changing `loft-ffi*/` or the `loft` crate's runtime
-   code, run `make check-rlib` (the 1s pre-flight) before native tests — it says whether
-   the rlib the native tests link is current; a stale one is a wave of false failures.
+5. **A stale build.** After changing the `loft` crate's runtime code, rebuild the binary the
+   native tests spawn (`cargo build --release --bin loft`) before trusting them; a stale one
+   is a wave of false failures.
 
 Pattern: a sudden wave of native-compile/link failures right after a rebase / dep /
 toolchain change is almost always 2–5, not a regression. Rebuild fully + re-run

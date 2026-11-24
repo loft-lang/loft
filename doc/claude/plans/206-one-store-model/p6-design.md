@@ -32,8 +32,9 @@ With no C compiler and no shipped unit, a library interprets.
   opt-out, the fallback and the crate each called `rustc`).
 - `tests/lib_rustc_free.rs` — a C build of a library whose native part is Rust only refuses by
   the library's name.
-- `tests/native.rs` `a_library_calling_its_rust_native_part_runs_interpreted_with_it` — route 3
-  as it stands: the library answers interpreted with its cdylib; `LOFT_REQUIRE_NATIVE` refuses.
+- Route 3 is removed by @PLN225 R3: a library declaring a native library of its own is refused
+  on every backend at its manifest (`tests/native_loader.rs`, the R3 guard;
+  `tests/lib_rustc_free.rs` checks the refusal calls no cargo or rustc).
 
 ## Route 3
 

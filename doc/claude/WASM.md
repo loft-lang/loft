@@ -4,13 +4,15 @@
 - [Overview](#overview)
 - [Which wasm build is this? (three distinct worlds)](#which-wasm-build-is-this-three-distinct-worlds)
 - [Build Toolchain Dependencies](#build-toolchain-dependencies)
-- [Library `[wasm.bridge]` packages — build, link, verify (@PLN84)](#library-wasmbridge-packages--build-link-verify-pln84)
+- [Library `[wasm.bridge]` packages — host functions for a page (@PLN84)](#library-wasmbridge-packages--host-functions-for-a-page-pln84)
 - [Host Bridge API](#host-bridge-api)
 - [Browser vs Node.js Host Comparison](#browser-vs-nodejs-host-comparison)
 - [Implementation Notes](#implementation-notes)
 - [Cargo Feature Gates](#cargo-feature-gates)
 - [Split-out subjects](#split-out-subjects)
 - [See also](#see-also)
+
+The wasm builds the retired rustc writer made: [WASM-history.md](WASM-history.md).
 
 ---
 
@@ -33,8 +35,8 @@ Bridge API and concluded `--html` has a filesystem; it does not):
 
 | Build | Target | Host surface | Use it for |
 |---|---|---|---|
-| **`--html`** | `wasm32-unknown-unknown` cdylib, raw `extern "C"` (no wasm-bindgen), driven by `doc/loft-gl-wasm.js` + `doc/loft-fs.js` | `loft_io.loft_host_print`, `loft_io` input queue + `host_output`, the `loft_io.loft_host_fs_*` filesystem (loft#851), `loft_gl.*`, plus any `[wasm.bridge]` routes a used library ships (e.g. `web`'s WebSocket).  **No args, no env.** | The browser.  Small: ~1.1 MB (~330 KB gz) for a real kernel |
-| **`--native-wasm`** | `wasm32-wasip2`, full `std` + WASI + component adapter | WASI (a real fs, args, env via the runtime) | Headless/server wasm.  **Compile-only** — needs an external runtime (wasmtime).  ~4× heavier than `--html` (measured 5.4 MB / 1.5 MB gz on the same kernel) — do not ship it to a browser |
+| **`--html`** | a `wasm32-wasi` module clang builds from the program's C (`LOFT_BROWSER` defined), asyncified by `wasm-opt`, raw imports (no wasm-bindgen), driven by `doc/loft-gl-wasm.js` + `doc/loft-fs.js` | the `loft_io` input queue + `host_output`, `loft_gl.*`, WASI (`doc/loft-wasi.js`: output, clocks, randomness, the page filesystem), plus the host functions a used library's `host_js` provides (e.g. `web`'s WebSocket, `loft_web`).  **No args, no env.** | The browser |
+| **`--native-wasm`** | a WASI module clang builds from the program's C (`wasm32-wasip1`, else `wasm32-wasi`: the first the WASI sysroot links) | WASI (a real fs, args, env via the runtime) | Headless/server wasm.  **Compile-only** — needs an external runtime (`wasmtime -W exceptions=y`: setjmp is wasm's exception-handling proposal).  Not a browser page: it imports WASI, which a page does not provide |
 | **IDE `make wasm`** | wasm-bindgen build (`wasm` Cargo feature) | the `globalThis.loftHost` bridges **this document describes** | The in-browser IDE/playground |
 
 Everything below — the virtual filesystem, the Host Bridge API, the Node
@@ -95,89 +97,19 @@ On `--html` loft owns the JS that calls in, so the trap is caught and reported t
 the page and the console rather than lost — see
 [HTML_EXPORT.md § When a page faults](HTML_EXPORT.md).
 
-### A `[native] crate` package on `--native-wasm`
+### A library's native part on `--native-wasm` and `--html`
 
-`--native-wasm` is the one wasm target that runs a package's own Rust: loft
-cross-builds the `[native] crate` to `wasm32-wasip2` on demand and links its rlib
-into the program, so `#native` functions execute for real (`--html` cannot — it
-produces a standalone module with no crate to link, and routes through the
-package's `[wasm.bridge]` instead).
-
-Two shapes, and they have different requirements. A **scalar** `#native`
-(`fn answer() -> integer`) lowers to a plain `extern "C"` call and needs nothing
-from loft's runtime. One that **allocates into a loft store** — a `vector` return,
-a struct `Reference` argument — is wrapped in `loft::native_call::enter` +
-`build_store`, so the crate can claim records in the caller's store.
-
-Those two helpers used to sit behind the `native-extensions` cargo feature, and
-the wasm runtime rlib is built `--no-default-features --features random`
-(`WasmRuntimeShape::features`) because that feature buys `dlopen`, which wasm does
-not have. The result was that every store-touching native failed in `rustc`, inside
-generated code, with `E0433: cannot find native_call in loft` — while the scalar
-shape stayed green and reported the target as covered (loft#967). `native_call`
-opens nothing, so it is no longer gated.
-
-**The rule this leaves:** a `loft::<module>` path the generator writes into
-generated code must exist in the lean feature set, or the construct that emits it
-must be REFUSED before emission. `#c` bindings take the second route — `no_c_abi()`
-rejects a reachable one with a diagnostic naming the package (@PLN24 arc E), which
-is why `loft::c_call` may stay gated. `generated_loft_paths_survive_the_wasm_feature_set`
-(`tests/html_wasm.rs`) reads both gate sites — the declaration in `src/lib.rs` and a
-module file's own inner `#![cfg(…)]` — and is always-on, because the end-to-end
-wasip2 test self-skips wherever wasmtime is not installed.
-
-#### When the crate needs a device the target does not have
-
-A `[native] crate` is cross-built as a whole, so ONE dependency that has no
-wasm32 target takes the entire package off `--native-wasm` — including the parts
-that never wanted a device.  `graphics` shipped that way for months: `winit` and
-`glutin` were unconditional, cargo failed before reaching any of the package's
-own code, and its software canvas, mesh maths and PNG encoder went down with the
-window layer they have nothing to do with.
-
-**The shape that works** (`loft-libs-graphics/graphics/native`):
-
-1. Put only the crates that genuinely cannot target wasm32 under
-   `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`, and cross-build
-   each remaining one on its own to know which those are — the list is usually
-   shorter than it looks.  For graphics it was two of nine: `gl` compiles
-   anywhere (it is a table of function pointers), and so do `fontdue`, `png`,
-   `image` and `rodio`.
-2. Give a wasm32 twin only to the entry points that touch the absent device
-   DIRECTLY.  Everything reached through a readiness flag needs none: graphics
-   sets `GL_READY` inside window creation only, so on a target with no window
-   the flag never opens and ~90 GL functions answer their documented defaults
-   through the guard they already had.  Five needed a twin.
-3. Make each twin answer what the SIGNATURE already documents for the missing
-   device — `false` from a constructor, `0` from a handle, nothing from a setter
-   — not a refusal and not a plausible-looking success.  This is loft#709's
-   disposition: unavailability is a fact about this run on this target, not
-   about whether the program is well-formed.
-4. Re-export publicly every `n_*` entry point the generated code calls.  The
-   backends reach them differently and only one notices: `--native` loads the
-   cdylib and binds the `#[unsafe(no_mangle)]` SYMBOL, which a private `use`
-   still exports, while `--native-wasm` links the rlib statically and generated
-   code writes the Rust PATH.  A privately-`use`d one is `E0603` on wasm with
-   the native build green beside it (graphics' `n_audio_play_raw`).
-
-**What gates this.**  The shared library CI
-(`.github/workflows/library-ci-reusable.yml`) cross-builds every package's
-`[native] crate` for wasm32 in its **WASM cross-build** step, unless the package
-declares `.wasm_exempt`, whose contents are the stated reason and are printed into
-the run's summary.  `loft test` itself has no `--native-wasm` mode — it compiles a
-program and a suite is not one — so the cross-build proves the crate BUILDS for
-wasm, not that the suite passes there.  A package can hold a sharper guard of its
-own: graphics' `native/tests/headless_safety.rs` holds an ALLOW-list of wasm-clean
-unconditional dependencies (always runs, no toolchain needed, so a NEW dependency
-fails until someone places it).  A deny-list of known-bad crates would be silent
-about the next one.
+A library's native part is its C `[c] shim`, and a wasm build compiles the shim's
+sources with the program's own C, for the wasm target — so a `#c` binding runs
+for real on both wasm targets.  A page build defines `LOFT_BROWSER`, so a shim can
+reach the page's host functions there; a shim that needs a device the target
+does not have keeps that part under `#if !defined(__wasm__)` and answers what
+the signature documents for the missing device.  The Rust native part these
+targets linked before @PLN225 is described in [WASM-history.md](WASM-history.md).
 
 ### The page filesystem (`--html`)
 
-A page draws AND stores.  `--html` used to bind no filesystem at all: the file
-calls compiled, each took an inert branch and answered "absent", and the build
-reported success — so a rendering editor in a page could not save, and the
-consumer found that out by grepping the emitted bundle (loft#851).
+A page draws AND stores.
 
 **What a page gets.**  The whole file surface — `file(p)` with `#size` /
 `#next` / `#read(n)` / `+=`, `read_bytes` / `write_bytes`, `delete` / `move` /
@@ -214,38 +146,31 @@ a `localStorage` quota failure is reported once to the console and then
 tolerated: the run continues against the in-memory delta, because losing the
 session is worse than losing the persistence.
 
-**Why it could not reuse the `loftHost.fs_*` bridges below.**  Those are
-`js_sys::Reflect` lookups compiled under the `wasm` (wasm-bindgen) Cargo
-feature.  `--html` deliberately builds its runtime rlib
-`--no-default-features --features random`, and it REFUSES to write a page whose
-wasm imports anything beyond `loft_gl` and `loft_io` — a wasm-bindgen build
-imports `__wbindgen_placeholder__` 35+ times and cannot instantiate against the
-page's raw-extern glue (§ *The rlib-stomp hazard*).  So the file functions are
-raw `loft_io` imports declared in `src/lib.rs`, and `src/wasm.rs` is the ONE
-place that picks a transport: `js_sys` under the `wasm` feature, raw imports
-otherwise.  Everything above it calls `host_fs_*` and never learns which it got,
-which is why the two browsers cannot answer differently.
-
-The build-side name for "this build reaches the filesystem through a JS host" is
-the `host_fs` cfg (`build.rs`), set for the wasm-bindgen bundle and for `--html`
-and deliberately NOT for `wasm32-wasip2`, which has a real WASI filesystem.
+**How a page reaches it.**  The program's C runs on the WASI libc, so a file
+call is a WASI call.  The page answers the `wasi_snapshot_preview1` imports with
+`doc/loft-wasi.js`, which preopens the page filesystem (`doc/loft-fs.js`) as `/`
+and resolves a relative path against it.  The `loftHost.fs_*` bridges below
+belong to the IDE's wasm-bindgen build of the interpreter, not to a page.
 
 ---
 
 ## Build Toolchain Dependencies
 
-loft targets four backends and they do **not** share a toolchain.  A machine
+loft builds for four targets and they do **not** share a toolchain.  A machine
 that compiles the interpreter fine can still silently ship a broken browser
 bundle if the WASM tools are missing.  Run **`make doctor`** for a live status
 report; the table below is the reference.
 
 | Tool | Needed for | If missing |
 |---|---|---|
-| `rustc` / `cargo` | everything | nothing builds |
+| `rustc` / `cargo` | building loft itself, and `make wasm` | loft does not build |
+| `clang` + `wasm-ld` + a WASI libc (or `LOFT_WASM_CC`) | **`--html`** and **`--native-wasm`**: the program's C built for wasm | the build stops and names what to install |
 | `node` (≥18) | WASM Node tests + `--html` bundle integrity check | tests skip; `make game` can't gate the bundle |
 | **`wasm-opt`** (binaryen) | **`--html`** — the `--asyncify` pass that enables frame-yield | **bundle has no frame-yield → render loop HANGS the browser tab** ("page times out", @P337) |
-| `wasmtime` | `wasm32-wasip2` (`--native-wasm`), @P334 | can't run/test the wasip2 backend locally |
+| `wasmtime` | running a `--native-wasm` module (`-W exceptions=y`), @P334 | can't run/test the WASI build locally |
 | `wasm-pack` | `make wasm` (doc/pkg gallery + browser playground) | gallery/playground can't rebuild |
+| `wasm-bindgen` CLI | *bundled by wasm-pack* | **not** needed for `--html` (a page's imports are raw, not wasm-bindgen) |
+| a browser (Chromium/Firefox) | real `--html` verification | can only stub-instantiate, not render |
 
 ⚠ **Editing `default/*.loft` — even one doc-comment — reddens the two
 `engine_host_connector` tests.** `doc/pkg` is a COMMITTED bundle, and
@@ -258,117 +183,40 @@ name — `make wasm`, then commit the rebuilt `doc/pkg` **and** `doc/pkg-src.sta
 together. Budget ~30 s and a ~4.5 MB re-commit. Before assuming the drift is yours,
 compare the stamp at HEAD against the committed one; the same failure appears when
 someone else's bundle was already stale.
-| `wasm-bindgen` CLI | *bundled by wasm-pack* | **not** needed for `--html` (it uses a raw `extern "C"` bridge, not wasm-bindgen) |
-| a browser (Chromium/Firefox) | real `--html` verification | can only stub-instantiate, not render |
-| rustup targets `wasm32-unknown-unknown` + `wasm32-wasip2` | `--html` / `--native-wasm` | cross-compile fails (E0463) |
 
-Install on Debian/Ubuntu: `apt install binaryen wasmtime` (or download
-releases); `cargo install wasm-pack`; `rustup target add
-wasm32-unknown-unknown wasm32-wasip2`.
+Install the wasm C toolchain with what `loft --native-wasm` names when it is
+missing (`platform::c_wasm_toolchain_cure`: on Debian/Ubuntu
+`apt install clang lld wasi-libc libclang-rt-dev-wasm32`; on macOS
+`brew install llvm lld wasi-libc wasi-runtimes` — Apple's clang has no wasm
+target), plus `apt install binaryen wasmtime` (or download releases) and
+`cargo install wasm-pack`.
 
-### The rlib-stomp hazard — eliminated by per-shape isolation (@PLN100 Slice 1)
+### A page imports from `loft_*` modules and WASI only
 
-> **As of @PLN100 Slice 1 the stomp cannot happen and no manual step is needed.**
-> `loft --html` now builds + links loft's own wasm runtime rlib in an **isolated
-> per-shape directory** — `target/loft/html/wasm32-unknown-unknown/release/` — so it
-> never shares a file with the `make wasm` (wasm-bindgen) build.  The rlib is
-> **auto-built on stale/missing**, keyed on the running loft build's content
-> fingerprint (`native_utils::ensure_loft_runtime_rlib`, gated by the same
-> `.loft-build-fp` sidecar the native-package auto-build uses), so `loft --html`
-> and `loft --native-wasm` need no prior `make` and never link a stale rlib.  Set
-> `LOFT_NO_AUTO_REBUILD=1` to link the existing rlib instead of triggering a build.
-> The historical hazard below is retained for context — it applies only to the
-> *shared* `target/wasm32-unknown-unknown/release/libloft.rlib` that `make wasm`
-> still writes and `loft --html` no longer reads.
-
-`make wasm` (wasm-pack, **`feature=wasm`**) and `loft --html` historically wrote
-**the same** `target/wasm32-unknown-unknown/release/libloft.rlib`, but with
-**incompatible feature sets**:
-
-- The **wasm-pack** rlib has `feature=wasm` → pulls in `wasm-bindgen`/`js_sys`,
-  so the wasm imports `__wbindgen_placeholder__` (35+ entries) that must be
-  resolved by the `wasm-bindgen` CLI + generated JS glue.
-- The **`--html`** rlib is built `--no-default-features --features random`
-  (**no** `wasm`).  Its host bridge is the raw `extern "C"` `loft_gl` / `loft_io`
-  modules that the embedded `doc/loft-gl-wasm.js` provides — **zero** wbindgen
-  imports.
-
-If `loft --html` links the wasm-pack variant (i.e. you ran `make wasm` last),
-the bundle imports `__wbindgen_placeholder__`, which the HTML glue does not
-provide, and the page fails to instantiate
-(`Import … __wbindgen_placeholder__: module is not an object`).
-
-**Rule (pre-@PLN100, now automatic):** the `--html` shape's rlib is rebuilt for
-you — `loft --html` auto-builds it into the isolated `target/loft/html/` dir.  The
-manual rebuild that used to be required after `make wasm` is retired:
-
-```bash
-# No longer needed — loft --html does this itself into target/loft/html/:
-cargo build --release --target wasm32-unknown-unknown --lib \
-    --no-default-features --features random
-```
-
-`make game` also does this (step 3); `make wasm-html-test` rebuilds it for the
-test gate.  The integrity
-gate `node tools/check_html_bundle.mjs <bundle.html>` (run by `make game`
-step 6) catches both this stomp and a missing-`wasm-opt` (no-asyncify) bundle
-before either ships.
-
-**@P350 — `loft --html` self-guards the stomp inline.**  As of 2026-05-26 a
-bare `loft --html` no longer needs the external gate to catch the stomp: it
-parses the emitted wasm's import section
-(`native_utils::html_wasm_import_modules_ok`) and **hard-aborts** (exit 1, no
-HTML written) if any import module is not `loft_gl`/`loft_io`, printing the
-rebuild command above.  So a stomped rlib produces a clear error, never a
-silently-broken bundle.  The companion `wasm-opt`/asyncify check stays a *loud
-warning* (not an abort): whether a bundle needs asyncify depends on whether the
-program frame-yields, so a compute-only `--html` program is valid without it.
+`loft --html` reads the import section of the module it built
+(`native_utils::html_wasm_import_modules_ok`) and refuses the build (exit 1, no
+HTML written) when a function import comes from a module that is neither
+`wasi_snapshot_preview1` (answered by `doc/loft-wasi.js`) nor named `loft_…` —
+the page script provides nothing else.  A missing `wasm-opt`
+(no asyncify) is a loud warning, not a refusal: a compute-only page is valid
+without it.  `node tools/check_html_bundle.mjs <bundle.html>` (run by `make game`)
+checks a finished bundle for both.
 
 ---
 
-## Library `[wasm.bridge]` packages — build, link, verify (@PLN84)
+## Library `[wasm.bridge]` packages — host functions for a page (@PLN84)
 
-A registry/`--lib` library can run its `#native` functions in `--html` builds via a
-`[wasm.bridge]` in its `loft.toml`. The `crypto` library (loft-libs-core) is the
-worked reference — all 15 primitives bridge `native == wasm`. Two mechanisms:
-
-1. **Routed pure-compute (`[wasm.bridge.routes]`).** `n_<x> = "<bridge_fn>"` maps a
-   `#native` to a `pub fn` in the bridge crate (`wasm/src/lib.rs`); codegen calls it
-   directly. Text/scalar/bool in+out, runs synchronously to completion. The cleanest
-   way to keep `native == wasm` is to `#[path]`-SHARE the native crate's modules
-   (byte-identical), e.g. crypto shares `sha256.rs`/`base64.rs`/`ed25519.rs`/… .
-2. **Host imports** (the `random_fill` / WebSocket pattern). The bridge declares
-   `#[cfg(target_arch="wasm32")] #[link(wasm_import_module="loft_<x>")] unsafe extern
-   "C" { fn f(…); }` and `host.js` pushes a `LOFT_WASM_EXTENSIONS` callback
-   `(imports, ctrl, getMem)` that adds `imports.loft_<x>.f`. For anything touching
-   the live JS world (RNG, sockets, time). Bytes cross via the ptr/len ABI over
-   `getMem().buffer` (always re-fetch — wasm memory can grow/detach).
-
-### The build-extension (deps beyond `loft`)
-
-If the bridge crate's `Cargo.toml` declares dependencies beyond `loft` (e.g.
-dalek/RustCrypto), `loft --html` builds those deps for `wasm32-unknown-unknown`,
-`--extern`s each direct dep on the bridge rustc compile, and `-L`s the deps dir on
-both the bridge compile and the main wasm link (`src/main.rs` — the `--html` bridge
-loop). The bridge still links the SHARED prebuilt loft (no duplicate loft); the deps
-are loft-independent. Deterministic crypto ops need no RNG → no getrandom/wasm-bindgen.
-Dep-less bridges skip this (the `has-nonloft-deps` gate), so existing `--html` tests
-are untouched. Import-module names must use a **`loft_` prefix** (the `--html`
-stomp-guard in `src/native_utils.rs` allows `loft_*`, rejects `__wbindgen_*`).
-
-The dep build does **not** `cargo build` the bridge's own `wasm/Cargo.toml` — that
-manifest carries a `loft = { path = "../../../loft" }` dep that resolves only in a
-dev checkout, never for a registry-installed package (where the relative path points
-at the nonexistent `~/.loft/loft`, so cargo aborts before building any dep — this was
-[#446](https://github.com/loft-lang/loft/issues/446)). That `loft` dep is redundant
-here anyway: the bridge links the SHARED prebuilt loft via `--extern`, not through the
-manifest. So the driver synthesizes a throwaway **deps-only crate** — an empty lib
-whose `[dependencies]` are exactly the bridge's non-`loft` deps (`bridge_nonloft_deps`
-/ `synth_bridge_deps_manifest` in `src/main.rs`) — and builds THAT. cargo compiles
-every declared dep regardless of the empty lib, producing the identical wasm32 dep
-rlibs without ever resolving the `loft` path. Works uniformly for dev-checkout and
-registry consumption; guarded by unit tests in `src/main.rs` (the synth manifest must
-never contain a `loft` line).
+A library whose page build must reach the live JS world (RNG, sockets, time)
+declares the host functions in its C shim as wasm imports of a `loft_<x>` module
+(`__attribute__((import_module("loft_<x>"), import_name("f")))`, under
+`#if defined(LOFT_BROWSER)`), and ships a `host.js` named by `[wasm.bridge]
+host_js` in its `loft.toml`.  `loft --html` carries that file into the page,
+where it pushes a `LOFT_WASM_EXTENSIONS` callback `(imports, ctrl, getMem)` that
+adds `imports.loft_<x>.f`.  Bytes cross as `(ptr, len)` over `getMem().buffer`
+(always re-fetch it — wasm memory can grow and detach).  `src/c/loft_web_page.h`
+with `doc/loft-web.js` is the worked example.  A `[wasm.bridge] crate` (a Rust
+bridge crate) is not built: [WASM-history.md](WASM-history.md) records how it
+was.
 
 ### Headless verify loop (no browser)
 
@@ -390,16 +238,6 @@ run proves `native == wasm`. **`wasm_repro.mjs` runs `loft_start()` synchronousl
 with no asyncify resume loop** — it is a trap+compute harness; it CANNOT drive an
 interactive/event-driven client (WebSocket) — that needs a new asyncify-aware driver
 (see [`plans/84-zt-c-web-ws-bridge.md`](plans/84-zt-c-web-ws-bridge.md) § 9).
-
-### Gotcha — clear `~/.cache/loft` before `--html` if you just ran `--interpret`
-
-The startup cache (#322) can serve a stale package entry to `--html` after an
-`--interpret` run of the same program — the freshly-added `[wasm.bridge].routes`
-don't apply and the build fails with `n_<x>(cell, …)` "unrouted native" / `can't be
-dereferenced` errors. Workaround: `rm -rf ~/.cache/loft` immediately before the
-`--html` build (the registry under `~/.loft` is separate, untouched). (Candidate
-cache-invalidation bug — the route table isn't keyed on the lib's `loft.toml` change
-across modes.)
 
 ---
 
@@ -701,18 +539,21 @@ RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals \
 `--export=__stack_pointer` is loft's own (@PLN117): every `WebAssembly.Instance`
 starts with the SAME stack pointer, so the worker bootstrap must move each worker
 onto its own shadow stack before it runs any wasm.  The same list is in
-`native_utils::WASM_THREAD_FLAGS`, which is what `loft --html` passes.
+`make wasm-mt`.
 
 Requires the **nightly** toolchain with **rust-src** (`build-std` rebuilds std with
 atomics). `--target web` is mandatory — the worker bootstrap imports the generated
 glue as a module, and node has no Web Worker global, so the **browser** is the proof
 environment.
 
-**`loft --html` threads too, and needs no flags.** A program with a reachable
-`par` gets the threaded runtime automatically; `--no-threads` opts out and
-`--threads` forces it on.  It links the same pool through an atomics-std sysroot
-assembled from the `build-std` output, so a page stays ONE self-contained file
-with no wasm-bindgen in it.  Gate: `tests/wasm/html-thread-proof.sh`.
+**A `loft --html` page runs `par` on Web Workers** (@C3).  A program with a `par`
+loop is built for `wasm32-wasip1-threads` on shared memory; the page starts a pool of
+workers before the program runs, and the main thread, which may not wait, hands every
+slice to the pool and spins until they are done.  Without cross-origin isolation, or
+without a threads sysroot (`make wasi-threads-sysroot`), `par` runs on the main thread
+with the same value.  `--threads` / `--no-threads` override the choice.  The design:
+[THREADING.md § Where the threads come from](THREADING.md#where-the-threads-come-from-pln117);
+the gate: `tests/wasm/html-thread-proof.sh`.
 
 **Host-sized types are the wasm hazard class.** A pointer is 8 bytes natively and
 **4 on wasm32**, so anything sized off a Rust type that contains one differs
@@ -765,7 +606,7 @@ if (crossOriginIsolated) {
 }
 ```
 
-A `loft --html` page does this itself (`loftInstantiate`, inlined).  When the host
+When the host
 is **not** isolated, `startLoftWorkers` returns 0 and the same `par` runs
 sequentially (one worker) and **never crashes** (proven).  `globalThis.loftThreads`
 is how many worker threads a page actually got, and `?loftTrace=1` makes loft
@@ -779,7 +620,7 @@ in-browser proof (a `par` dispatched across 4 Web Workers, value matching native
 |---|---|---|---|---|
 | `threading` | ON | OFF | **ON** | OS threads / Web Workers / sequential fallback |
 | `wasm-threads` | — | — | ON | wasm-bindgen bundle + loft's Web Worker pool |
-| `wasm-native-threads` | — | — | ON | loft's pool itself — also what `loft --html` links, without wasm-bindgen |
+| `wasm-native-threads` | — | — | ON | loft's pool itself |
 | `mmap` | ON | OFF | OFF | No file-backed mmap in browser |
 | `random` | ON | OFF | OFF | Host provides RNG via bridge |
 | `png` | ON | **ON** | **ON** | Pure Rust — compiles to WASM |
@@ -794,7 +635,7 @@ Whole sections moved out to keep this file under 1000 lines; headings are unchan
 - [WASM_FILESYSTEM.md](WASM_FILESYSTEM.md) — JSON Virtual Filesystem; Layered Filesystem — Base Tree + Delta Overlay
 - [WASM_TESTING.md](WASM_TESTING.md) — Node.js Test Harness; Test Compatibility Matrix
 - [WASM_THREADING.md](WASM_THREADING.md) — Threading in WASM — Two-Tier Design; W1.18 — Node.js Worker Threads
-- [WASM_IMPLEMENTATION_PLAN.md](WASM_IMPLEMENTATION_PLAN.md) — Implementation Plan; Function References (`CallRef`) in WASM — W1.15; Store Locks in WASM — W1.17
+- [WASM_IMPLEMENTATION_PLAN.md](WASM_IMPLEMENTATION_PLAN.md) — Implementation Plan
 - [WASM_FRAME_YIELD.md](WASM_FRAME_YIELD.md) — Frame Yield — Browser Game Loop via Interpreter Suspension
 - [WASM_HOST_MEDIA.md](WASM_HOST_MEDIA.md) — PNG Image Support in WASM; Logging in WASM
 

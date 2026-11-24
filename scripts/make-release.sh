@@ -185,11 +185,9 @@ The standard library lives in \`default/\` next to \`bin/\` — keep them togeth
 libraries call (web, server, ssh) — keep it beside \`bin/\` too.
 
 > \`--interpret\` is the standalone runtime — it needs nothing but this bundle.
-> The faster \`--native\` mode (loft's default) compiles via \`rustc\` against loft's
-> runtime library, which a bundle deliberately does not carry: with a toolchain
-> installed a default run still interprets, and an explicit \`--native\` reports a
-> missing \`loft\` crate.  A source install (\`make install\` from a checkout) is what
-> provides it.
+> The faster \`--native\` mode (loft's default) compiles the program to C and builds it
+> with the machine's C compiler (\`cc\`, \`clang\` or \`gcc\`); without one a run
+> interprets.
 
 - CLI help:    \`bin/$exe --help\`
 - Reference:   \`loft-reference.pdf\`
@@ -201,8 +199,8 @@ QS
 
   # What it takes to rebuild this bundle, as a FILE rather than only a stamp inside
   # the binary.  A verifier reproducing a macOS bundle from Linux cannot run its
-  # `bin/loft` to ask, and rustc's exact version is not optional here: an rlib and a
-  # binary are only byte-identical when the compiler is.  Written before SHA256SUMS, so
+  # `bin/loft` to ask, and rustc's exact version is not optional here: a binary is only
+  # byte-identical when the compiler is.  Written before SHA256SUMS, so
   # the manifest covers it like every other file.
   {
     echo "version = $VERSION"

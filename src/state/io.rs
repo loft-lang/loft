@@ -72,7 +72,7 @@ impl State {
             // read a binary file in complete silence (loft#829).  A refused path reads as
             // no text (`@FR-Path-Refuse`, logged by `resolve_path`).
             match path_string {
-                Some(p) => crate::codegen_runtime::read_file_text_into(&p, buf),
+                Some(p) => crate::fs_ops::read_file_text_into(&p, buf),
                 None => buf.clear(),
             }
         }
@@ -795,7 +795,7 @@ impl State {
         // @PLN199 D1 — a compiled library's generator lives in the host's native table.
         if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
             self.release_native_text_yield(db);
-            crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
+            crate::coroutine_host::free_native_coroutine(db, &mut self.database);
             return;
         }
         // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
@@ -2114,12 +2114,8 @@ impl State {
             if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
                 && self.database.try_swap_rebind(&src, &dst, tp)
             {
-                // The released slot holds `v`'s old tree, freed as the C runtime's
-                // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
-                if self.database.spare_store == Some(src.store_nr) {
-                    self.database.spare_store = None;
-                    self.database.free(&src);
-                }
+                // The released slot holds `v`'s old tree, freed by the exchange as the C
+                // runtime's `loft_swap_in` frees it.
                 return;
             }
             let code_pos = self.code_pos;
@@ -2250,7 +2246,7 @@ impl State {
             && src.store_nr != u16::MAX
             && !self.database.is_stack_store(src.store_nr)
             && self.database.allocations[src.store_nr as usize].live
-            && !self.database.allocations[src.store_nr as usize].read_only
+            && !self.database.allocations[src.store_nr as usize].is_locked()
             && !self.database.allocations[src.store_nr as usize].is_free_protected()
         {
             self.database.free(&src);

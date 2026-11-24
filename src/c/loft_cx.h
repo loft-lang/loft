@@ -229,7 +229,8 @@ struct loft_cx {
     uint32_t ffi_log_n, ffi_log_cap;
 #endif
     /* the components this context called, each with its own context of theirs
-     * (`loft_component_cx`, `loft_ffi_host.h`), ended with this one */
+     * (`loft_component_cx`, `loft_ffi_host.h`), ended with this one — or, in a hosted unit,
+     * borrowed from the calling `Stores` (no `end`) */
     struct { const char *path; void *cx; void (*end)(void *); } comps[4];
     int ncomps;
     /* `par` (`loft_keyed.h`) */

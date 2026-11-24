@@ -1,8 +1,8 @@
 #package
 // The one home of the compiler's IR types (@PLN91 S0.3).  Two readers depend on it:
-// - the Rust compiler, whose store schema `src/ir_schema_gen.rs` is GENERATED from this file
-//   (`scripts/ir_schema_check.sh`, `make ir-schema-regen`), so an edit here is an edit to the
-//   layout of every saved image;
+// - the Rust compiler, whose store schema `src/ir_schema_gen.rs` registers these types and is
+//   kept in step with this file by `doc_hygiene::ir_schema_gen_matches_its_loft_source`, so an
+//   edit here is an edit to the layout of every saved image, made in both files;
 // - the loft-written interpreter beside it (`load.loft`, …), which reads a program image as
 //   these records.  `#package` shows them to the files of this directory and the one above.
 //

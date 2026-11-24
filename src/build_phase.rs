@@ -89,18 +89,15 @@ fn builtin(name: &str) -> Option<ResolvedTarget> {
         "html" => Some(make(
             Shape::Html,
             Some("wasm32-unknown-unknown"),
-            &["wasm32-unknown-unknown"],
+            // A page builds through the C and clang (its WASI sysroot); a machine without one
+            // is told so by that build, with the install line.  No rustup target is involved.
+            &[],
             // wasm-opt/binaryen is only needed for asyncify (frame-yielding
             // programs); a compute-only page builds without it, so it is a SOFT
             // requirement (warn, don't block).
             &["wasm-opt"],
         )),
-        "wasi" => Some(make(
-            Shape::Wasi,
-            Some("wasm32-wasip2"),
-            &["wasm32-wasip2"],
-            &[],
-        )),
+        "wasi" => Some(make(Shape::Wasi, Some("wasm32-wasip2"), &[], &[])),
         _ => None,
     }
 }
@@ -970,12 +967,18 @@ mod tests {
         let html = resolve_target("html", &m).unwrap();
         assert_eq!(html.shape, Shape::Html);
         assert_eq!(html.triple.as_deref(), Some("wasm32-unknown-unknown"));
-        assert_eq!(html.requires_rust_targets, vec!["wasm32-unknown-unknown"]);
+        assert!(
+            html.requires_rust_targets.is_empty(),
+            "a page builds through the C"
+        );
         assert_eq!(html.requires_tools, vec!["wasm-opt"]);
 
         let wasi = resolve_target("wasi", &m).unwrap();
         assert_eq!(wasi.shape, Shape::Wasi);
-        assert_eq!(wasi.requires_rust_targets, vec!["wasm32-wasip2"]);
+        assert!(
+            wasi.requires_rust_targets.is_empty(),
+            "a wasi build goes through the C"
+        );
 
         let native = resolve_target("native", &m).unwrap();
         assert_eq!(native.shape, Shape::Native);
@@ -1044,7 +1047,10 @@ mod tests {
 
     #[test]
     fn missing_requires_splits_hard_and_soft() {
-        let html = resolve_target("html", &Manifest::default()).unwrap();
+        // A target a manifest declares a rustup target for (`rust-targets`): the built-ins
+        // declare none, so the mechanism is checked on a declared one.
+        let mut html = resolve_target("html", &Manifest::default()).unwrap();
+        html.requires_rust_targets = vec!["wasm32-unknown-unknown".to_string()];
         // rustup target absent, wasm-opt absent → both reported.
         let installed: Vec<String> = vec![];
         let miss = missing_requires(&html, Some(&installed), &|_| false);

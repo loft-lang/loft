@@ -127,7 +127,7 @@ jobs:
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft --bin loft-components
+          cargo build --release --bin loft --bin loft-components
           target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 

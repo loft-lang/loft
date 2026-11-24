@@ -10,7 +10,8 @@
 //!
 //!   - **Static** ([`a_discharged_generic_return_delivers_through_the_caller_buffer`]).
 //!     The monomorph's SIGNATURE must carry the hidden `&text` buffer its non-generic twin
-//!     gets (`-> text["___acc_1"]`), on BOTH backends. Deterministic, and it is the fact
+//!     gets (`-> text["___acc_1"]`), on BOTH backends: the IR's, and the C prototype's
+//!     `loft_text *` parameter. Deterministic, and it is the fact
 //!     the other two only observe the consequences of.
 //!   - **Arena poison** ([`a_poisoned_arena_survives_the_discharge`]). `LOFT_POISON=1`
 //!     fills each freshly reserved frame with `0xDEADBEEF`, so the `OpAppendText` that read
@@ -100,22 +101,38 @@ fn a_discharged_generic_return_delivers_through_the_caller_buffer() {
         .filter(|l| l.contains("i_4text_n_g1026m("))
         .collect();
     assert!(
-        sigs.len() >= 2,
-        "introspect must print the monomorph's IR signature AND its generated Rust\n\
-         stdout:\n{stdout}\nstderr:\n{stderr}"
+        !sigs.is_empty(),
+        "introspect must print the monomorph's IR signature\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         sigs.iter().any(|s| s.contains("___acc_1:&text")),
         "the interpreter monomorph must take the hidden `&text` caller buffer, got:\n{sigs:#?}"
     );
     assert!(
-        sigs.iter().any(|s| s.contains("var____acc_1: *mut String")),
-        "the native monomorph must take the same buffer — a fix on one backend only is not \
-         a fix, got:\n{sigs:#?}"
-    );
-    assert!(
         sigs.iter().all(|s| !s.trim_end().ends_with("-> text {")),
         "no monomorph may keep the owned-by-value `-> text` return, got:\n{sigs:#?}"
+    );
+    // The C the program compiles to: the monomorph's prototype takes the same buffer.
+    let c_out = std::env::temp_dir().join(format!("loft1026-sig-{}.c", std::process::id()));
+    let c_path = c_out.to_string_lossy().into_owned();
+    let (_ok, _stdout, stderr) = run(&["--native-emit", &c_path, &path], &[]);
+    let c = fa::read_to_string(&c_out)
+        .unwrap_or_else(|_| panic!("--native-emit must write the C\nstderr:\n{stderr}"));
+    let _ = fa::remove_file(&c_out);
+    let protos: Vec<&str> = c
+        .lines()
+        .filter(|l| l.starts_with("static ") && l.contains(" i_4text_n_g1026m("))
+        .collect();
+    assert!(
+        !protos.is_empty(),
+        "the emitted C must define the monomorph\nstderr:\n{stderr}"
+    );
+    assert!(
+        protos
+            .iter()
+            .all(|l| l.contains("loft_text *") && l.contains("____acc_1")),
+        "the native monomorph must take the same buffer — a fix on one backend only is not \
+         a fix, got:\n{protos:#?}"
     );
 }
 

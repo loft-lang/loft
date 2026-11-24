@@ -4,14 +4,11 @@
 
 # Coroutine Design
 
-> **Status: completed in 0.8.3.** CO1.1–CO1.6 implemented, `yield from` (CO1.4) included —
-> it ships, is guarded (loft#1277 and the two `a-delegation…` files) and is specified as
-> `(G-Delegate)` in [formal/coroutines.md](formal/coroutines.md). This line said "deferred to
-> 1.1+" until 2026-09-25, long after it landed.
-> Native lazy loop yields ([Design: lazy loop yields (CL-9)](COROUTINE_LAZY_YIELDS.md)): every
-> loop whose yields are statements is lazy on `--native` (loft#836, #1586, #1798).  One named
-> limitation remains — a `yield` inside an expression re-descent cannot hoist runs eagerly
-> (CL-9 below); text-in-loop interning (slice 4) is open.
+> Generators and `yield from` ship on both backends; `yield from` is specified as
+> `(G-Delegate)` in [formal/coroutines.md](formal/coroutines.md) and guarded by
+> `1277-yield-from-passes-arguments-and-ends-on-exhaustion.loft` and the two `a-delegation…` files.  Every `yield`, in a loop or not, hands control
+> to the consumer before the next statement runs, on both backends
+> ([COROUTINE_LAZY_YIELDS.md](COROUTINE_LAZY_YIELDS.md)).
 
 Coroutines give loft programs generator functions: functions that can suspend
 execution with `yield`, return a value to the caller, and resume from the same
@@ -808,78 +805,16 @@ stack. No extra allocation occurs on the resume path.
 | CL-2 | DbRef locals held across a yield dangle if the caller frees or reallocates the referenced record | Do not free records that a suspended generator still holds; advance the generator to exhaustion first |
 | CL-2b | A `text` value derived from a store record field (store-backed `Str`) that is live at a `yield` point will dangle if the consumer frees or reuses the backing store record before the next resume | Do not delete the backing record or free the store while the generator is suspended with a store-derived text local; CO1.3d will deep-copy these at yield time once implemented (P2-R3) |
 | CL-7 | A `text` value produced by `yield` is a zero-copy reference into the generator's frame (or into a `text_owned` buffer once CO1.3d lands); it is valid only for the current loop body iteration (or until the next `next()` call for explicit-advance code) | To keep the text beyond one iteration, copy it: `stored = "{value}"` or pass it to a function that calls `set_str` |
-| CL-3 | ~~Exhausted frames are not freed until the `iterator<T>` DbRef goes out of scope; without GC, frames are leaked if the variable is abandoned~~ **FIXED (loft#835).** A generator handle is freed at the end of the scope holding it, which releases the frame and every heap local the generator still owned; an exhausted frame is freed where it exhausts, and a generation stamp keeps the later scope-exit free off the slot's next occupant. Abandoning a generator needs no care from the author, on the interpreter. On `--native` the handle's free is still a no-op, so an abandoned native generator's own locals are not yet reclaimed | none needed on the interpreter |
 | CL-4 | Generator `iterator<T>` values must not cross `par(...)` boundaries | Accumulate parallel results in a collection, then iterate the collection outside `par(...)` |
 | CL-5 | Serialisation cost per yield is O(frame depth); deeply recursive `yield from` chains are slow | Flatten recursive generators iteratively using an explicit `vector` stack local |
 | CL-6 | Mutable-reference parameters (`&vector<T>`) in a generator function are not visible to the frame copy | Pass collections by value or use `reference<T>` and write through the reference |
-| CL-8 | On `--native`, a generator yielding a tuple with a **text element** (`iterator<(text, integer)>`) does not yet compile — a yielded `text` is a `&str`, so riding the unified yield codec needs a store intern (`db_from_text`) with a lifetime question still open. Scalar and DbRef-ref tuple elements (`(integer, float)`, `(vector, integer)`, …) work on both backends. | Yield the text from a separate single-`text` generator, or wrap the pair in a record and yield its `reference<S>` |
-| CL-9 | **Fixed for every loop whose yields are statements (loft#836, #1586, #1798); one named limitation.** `--native` lowers a generator loop lazily — one slice per advance, as the interpreter does. A loop with one `yield` on its body's straight line is ROTATED (header and body as states, statements after the yield run at the start of the next advance). Every other shape is RE-DESCENDED: two or more yields on one path, a statement after a yield inside its arm, a yield in a nested loop, a `continue` or `break` beside a yield, a loop over another generator, a yield inside a value (`x = if c { yield i; v } else { w }`) or behind stable operands (`x += { yield i; 5 }`) — for every yield type, records, tuples and fn-refs included. An endless or early-`break`-consumed generator stops when its consumer does. **Limitation — a `yield` inside an expression re-descent cannot hoist runs EAGERLY:** one in an operand beside another yielding operand, or behind an operand the suspend could change (a `text`, heap or store read, or a local the hoisted statements write — `s = s + { yield x; "b" }`). Re-descent re-enters the body from its top, so it can land only on a yield that is a statement; hoisting the yield's statements in front of the expression moves the reads of the operands before it past the suspend, and that is only invisible for literals and unwritten scalar locals, which no consumer can reach. Such a loop runs to its end before the first value is handed out, so an ENDLESS one never hands one out (it fills its buffer until memory runs out; `LOFT_TIMEOUT` does not stop it first); a struct / vector it yields is a per-yield SNAPSHOT in a store the generator owns (loft#1356), and a tuple carrying a store handle is refused at compile time. Values agree throughout. `LOFT_TRACE_REDESCENT=1` names each generator that stays eager. | Make each `yield` a statement of its own: bind the other operands to locals first, or yield before the expression that uses the value. |
 
-### Native yield codec — status (@PLAN16 phase 02)
-
-The native value channel is **layout-driven**: a yielded tuple is flattened into
-transport slots derived from `T`'s slot kinds (`src/coroutine_layout.rs`) — each
-scalar slot inline as one `i64`, each reference slot as its full `DbRef` across
-two — and *both* the producer (`generation/coroutine.rs`) and the consumer
-(`generation/ops/coroutine.rs`) derive the **same** walk from the **same** `T`, so
-they agree by construction (no per-shape template, no runtime shape tag).
-`tests/coroutine_matrix.rs` is 18/18 green on both backends.  Open tail:
-text-*element* tuples (CL-8), the tuple-through-higher-order / comprehension cells
-(`y4_x3` / `y4_x4`), and deleting the legacy `next_i64` / `next_text` /
-`next_dbref` channels once every shape routes through the codec (pure subtraction).
-Full record: the @PLAN16 closure doc at
-[`plans/finished/16-coroutine-validation/README.md`](plans/finished/16-coroutine-validation/README.md).
+CL-3, CL-8 and CL-9 are closed on both backends; their rows are in
+[COROUTINE-history.md](COROUTINE-history.md).
 
 ---
 
-**Design: lazy loop yields (CL-9)** — see [COROUTINE_LAZY_YIELDS.md](COROUTINE_LAZY_YIELDS.md).
-
----
-
-## Relationship to Rust's `gen` / `async gen` (upstream status)
-
-Loft's coroutines do **not** depend on any unstable Rust feature.  The
-native backend (`src/generation/coroutine.rs`) compiles each generator
-function into a hand-written state machine: a Rust `enum` with one
-variant per yield point plus `Exhausted`, a wrapping `struct` carrying
-locals, and a `next()` method dispatching on the enum.  All on stable
-Rust.
-
-This is the same shape Rust's own `gen` blocks desugar to internally,
-but done by loft's own codegen.  The trade-off is deliberate:
-
-- **Pro:** ships on stable Rust *today*; no MSRV bump when the user's
-  toolchain is behind; full control over frame layout, drop order, and
-  error spans.
-- **Con:** a small amount of state-machine code lives in
-  `src/generation/` that rustc could eventually generate for us if we
-  opted into `gen`.
-
-### Upstream timeline (checked April 2026)
-
-- **Sync `gen` blocks** (rust-lang/rust#117078): active, not stabilised.
-  Edition-2024 keyword reservation done; `gen fn` + `FusedIterator`
-  implementation in place; unresolved design questions remain.  No
-  public stabilisation date.
-- **`AsyncIterator` / `Stream`** (rust-lang/rust#79024): still nightly.
-  API is being redesigned (PR #119550: rename back to `Stream`,
-  introduce AFIT-based `AsyncIterator`).  WG-async explicitly states
-  "no internal consensus on the right API".
-- **Async generators** (rust-lang/wg-async#301): "In Progress" under
-  a slipped "DRAFT: Async 2024" milestone.  WG-async's own language:
-  "far enough in the future that many details may change"; "if the
-  team did prioritize async generators, they would have to pick
-  something else to deprioritize".  **Realistic earliest: 2027+.**
-
-### Implication for loft
-
-- No reason to wait for sync `gen`.  When it stabilises, revisit
-  `src/generation/coroutine.rs` as a *maintenance* refactor — capability
-  is unchanged.
-- **Async gen is off the planning horizon.**  If loft adds async I/O
-  (see [WEB_SERVER_LIB.md](lib_plans/future/08-server/README.md)), the implementation
-  will hand-roll async state machines the same way sync coroutines do
-  today — not wait for upstream.  The pattern is well understood.
+**Lazy loop yields (CL-9)** — see [COROUTINE_LAZY_YIELDS.md](COROUTINE_LAZY_YIELDS.md).
 
 ---
 

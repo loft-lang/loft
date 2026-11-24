@@ -12,13 +12,12 @@ Why
 ---
 `formal/rewrites.md` `(R-Phase)`: every rule is APPLIED BY one phase, and the phase decides its
 oracle.  Prose beside a rule goes stale; the census does not.  `scripts/rewrite_census.py` writes
-every bench program with both compiled writers and `LOFT_REWRITE_CENSUS_FN` set, which credits
-each admission to the phase that made it — `parse`, `ir` (the scope pass), `interp` (the
-interpreter's bytecode generator), `c` and `native` (the two writers) — and this module turns
-that into `bench/portal/rule_phases.tsv`, one row per census name (`R-<Entry>` or
-`R-<Entry>/<clause>`):
+every bench program with the C writer and `LOFT_REWRITE_CENSUS_FN` set, which credits each
+admission to the phase that made it — `parse`, `ir` (the scope pass), `interp` (the
+interpreter's bytecode generator) and `c` (the C writer) — and this module turns that into
+`bench/portal/rule_phases.tsv`, one row per census name (`R-<Entry>` or `R-<Entry>/<clause>`):
 
-    name  applied-by  programs  parse  ir  interp  c  native
+    name  applied-by  programs  parse  ir  interp  c
 
 *applied-by* is the set of phases whose admissions are not zero over the bench programs.
 `make rewrite-census` fails when a name's applied-by set CHANGES — a rule that moved phase, or
@@ -28,8 +27,8 @@ counts are recorded for reading; only the set is judged.
 
 *decided-in* is not stored: it is read from the code each time, as the families of the source
 files that cite the rule (`@FR-<Entry>`, `rule_tags.py sites`) — a shared analysis (`ir`),
-the interpreter (`interp`), a writer (`c`, `rust`).  A rule decided in a shared analysis and
-applied by a writer is the cheapest to move into the IR: only its emission changes home.
+the interpreter (`interp`), the C writer (`c`).  A rule decided in a shared analysis and
+applied by the writer is the cheapest to move into the IR: only its emission changes home.
 
 `formal/rewrites.md` `## Applied by` is rendered from the table (`--render`), one row per
 register entry, so the register states each rule's phase from the measurement and nowhere else;
@@ -45,15 +44,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "bench" / "portal" / "rule_phases.tsv"
 # The phases, in the order the compiler runs them.  The first three run once per program
-# whatever writer follows, so both writers' runs report the same counts for them.
-PHASES = ("parse", "ir", "interp", "c", "native")
+# whatever writer follows.
+PHASES = ("parse", "ir", "interp", "c")
 SHARED = ("parse", "ir", "interp")
 
 
 def aggregate(results):
     """`results`: `(program, writer, {(phase, rule): admissions})` per census run →
     `{name: (Counter{phase: admissions}, {program, …})}`.  A shared phase is taken from each
-    program once (both writers' runs carry it), a writer's phase from that writer's run."""
+    program once, a writer's phase from that writer's run."""
     shared = {}
     out = collections.defaultdict(lambda: (collections.Counter(), set()))
     for program, writer, split in results:
@@ -133,8 +132,6 @@ def family(path):
     p = path.split("src/", 1)[-1]
     if p.startswith("c/"):
         return "c"
-    if p.startswith(("generation/",)) or p in ("codegen_runtime.rs",):
-        return "rust"
     if p.startswith(("state/",)) or p in ("fill.rs", "ops.rs", "stack.rs", "keys.rs"):
         return "interp"
     return "ir"
@@ -148,7 +145,7 @@ def decided_in(entries):
     out = {}
     for entry in entries:
         fams = {family(f) for f, _ in sites.get(entry, [])}
-        out[entry] = [f for f in ("ir", "interp", "c", "rust") if f in fams]
+        out[entry] = [f for f in ("ir", "interp", "c") if f in fams]
     return out
 
 
@@ -160,7 +157,6 @@ PHASE_WORDS = {
     "ir": "the scope pass, which both backends run",
     "interp": "the interpreter's bytecode generator",
     "c": "the C writer",
-    "native": "the rustc writer",
 }
 
 

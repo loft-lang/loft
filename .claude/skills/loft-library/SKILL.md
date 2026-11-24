@@ -31,7 +31,7 @@ row is [PACKAGES_C_BINDING.md](../../../doc/claude/PACKAGES_C_BINDING.md)):
 | `#c` over the package's own `[c] shim` (ANSI C) | ✓ `cc` | ✓ linked | ✓ clang → wasm32 | ✓ clang → wasm32 — pure computation only (no files, clock, entropy) |
 
 **The master invariant: `interpret == native == native-wasm == browser`** — where `native`
-means both compiled backends, the Rust writer and the C backend (`--native-c`). A library is not
+means the compiled backend, the C (`--native`). A library is not
 shipped until it produces the *same observable result* on every target it claims. That
 invariant is the whole job — everything below serves it.
 

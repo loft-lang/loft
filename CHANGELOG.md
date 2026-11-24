@@ -22,7 +22,26 @@ only be cross-built and never run before it shipped, and loft ships only what it
 On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
 the last release with an Intel Mac bundle.
 
+**One compiled backend: C.**  `--native` builds through a C compiler, and so do `--html`,
+`--native-wasm`, `--native-android` and the libraries a program uses; the Rust code generator is
+gone, and compiling a loft program needs no Rust toolchain.  `--native-rust` and
+`LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`.  The second line of `loft --version`
+and the `loft test` summary name the C compiler a native build uses, or say there is none.  A page
+built with `--html` runs `par` on one thread, so `--threads` is refused there (`--no-threads` asks
+for what every page does).  `loft introspect --show-rust` and `--rust-out` and the REPL's `:rust`
+are gone: `--native-emit <file.c>` writes the C a program compiles to.  `loft cache warm` no longer
+takes `--runtime` or `--no-runtime`.
+
 ### May need a change in your code
+
+**A library's native part is C.**  A package whose `loft.toml` declares a native library of its
+own in Rust — `[library] native`, `[native] crate`, `[native.functions]` or `[native.wasm]` — is
+refused where it is used, at that line, with the cure: list the C sources under
+`[c] shim = "c/<file>.c"` and bind each function with a `#c` declaration.  loft no longer runs
+cargo to build such a library, nor fetches a prebuilt one at `loft install`.  No published
+release is affected: every library release with a Rust native part was already deprecated, and
+each library has a release with a C part.  `loft new --native <name>` now scaffolds the C part
+(`c/<name>.c`), and `loft generate`, which wrote Rust stubs, is refused.
 
 **A page that runs loft holds its game and its debugger.**  The browser bundle (`pkg/loft.js`)
 hands a page an object to keep and call, where it had loose functions that shared one hidden

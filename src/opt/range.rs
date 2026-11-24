@@ -10,8 +10,8 @@
 //! interpreter answers it, faults included.  It named the admissible successor — *"a
 //! PROOF, not a policy: arithmetic whose operands carry ranges such that the result CANNOT
 //! overflow may emit the plain operator, because no fault can occur and no value can
-//! differ"* — and `(R-BoundedNest)` built it for one loop shape with a guard evaluated at
-//! run time.  This module is the same proof for straight-line arithmetic, decided at
+//! differ"* — and `(R-BoundedNest)` builds it for a reduction loop, from the data, per block
+//! at run time.  This module is the same proof for straight-line arithmetic, decided at
 //! GENERATION time: every leaf's range is a fact of the language (a literal, a mask, a
 //! text or vector length, a byte), the operators' ranges follow by interval arithmetic in
 //! `i128`, and an operator whose RESULT fits the type cannot fault, so the processor's

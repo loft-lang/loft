@@ -36,7 +36,6 @@ pub mod sql_source;
 mod structures;
 pub use structures::BridgeArgs;
 mod types;
-pub(crate) use types::DBREF_BORROW;
 
 pub use allocation::{CLEAR_KEYED_VIEW, FILL_KEYED_SOURCE, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
@@ -590,8 +589,8 @@ pub struct Stores {
     /// (`call_frames::NativeFrames`); empty for an interpreted one.
     pub frames: crate::call_frames::NativeFrames,
     /// `@PLN226` — a generated program's generator frames and fn-ref return buffers
-    /// (`codegen_runtime::NativeRun`), the twins of the interpreter's `State` tables.
-    pub(crate) native: crate::codegen_runtime::NativeRun,
+    /// (`coroutine_host::NativeRun`), the twins of the interpreter's `State` tables.
+    pub(crate) native: crate::coroutine_host::NativeRun,
     /// `@PLN226` — the crash context of the interpreter that runs on these stores
     /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
     pub crash: crate::crash_report::CrashCx,
@@ -781,11 +780,6 @@ pub struct Stores {
     /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
     /// change once a program runs, so the answer is computed once per type.
     pub(crate) swap_safe_types: Vec<u8>,
-    /// `@FR-R-RefillBuffer` — a store an exchange released, kept instead of freed: it holds
-    /// the previous value of the rebound variable, a root of its own `known_type` at `1@8`,
-    /// and nothing references it.  The next buffer of that type minted for a refilling callee
-    /// takes it (`take_spare`); a second release frees the one kept before.
-    pub(crate) spare_store: Option<u16>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -931,7 +925,7 @@ impl Clone for Stores {
             bridge_labels: self.bridge_labels.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             frames: crate::call_frames::NativeFrames::default(),
-            native: crate::codegen_runtime::NativeRun::default(),
+            native: crate::coroutine_host::NativeRun::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
@@ -965,7 +959,6 @@ impl Clone for Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
-            spare_store: None,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1375,7 +1368,7 @@ impl Stores {
     pub fn print_or_host(&mut self, text: &str) {
         match self.output.as_mut() {
             Some(out) => out.push_str(text),
-            None => crate::codegen_runtime::host_print(text),
+            None => crate::host_print::host_print(text),
         }
     }
 
@@ -1810,7 +1803,7 @@ impl Stores {
             bridge_labels: std::sync::Arc::default(),
             bt_hints: crate::btree::WalkHints::default(),
             frames: crate::call_frames::NativeFrames::default(),
-            native: crate::codegen_runtime::NativeRun::default(),
+            native: crate::coroutine_host::NativeRun::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
@@ -1844,7 +1837,6 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
-            spare_store: None,
             source_dir: String::new(),
             release: std::sync::OnceLock::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
@@ -2653,36 +2645,6 @@ impl Stores {
         true
     }
 
-    /// `@FR-R-RefillBuffer`'s in-place clause — make the vector at `db` hold exactly `count`
-    /// copies of `val` by overwriting it where it stands, when it ALREADY holds `count`
-    /// elements of width `size`: the answer `clear_vector` + [`Stores::push_fill`] gives,
-    /// without the reset, the reserve and the two header derivations.  `false` (nothing
-    /// written) for any other length, a null, foreign or locked vector, or a width that is
-    /// not `T`'s — the caller then empties and fills as before.  Scalars only, so the
-    /// elements it overwrites own nothing.
-    #[inline]
-    pub fn fill_exact<T: crate::vector::HoistScalar>(
-        &mut self,
-        db: &crate::keys::DbRef,
-        size: u32,
-        count: i64,
-        val: T,
-    ) -> bool {
-        if size != std::mem::size_of::<T>() as u32 {
-            return false;
-        }
-        let h = crate::vector::vec_header(db, &self.allocations);
-        if h.rec == 0 || h.locked || i64::from(h.len) != count {
-            return false;
-        }
-        let store = &mut self.allocations[h.store_nr as usize];
-        if store.is_foreign() {
-            return false;
-        }
-        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
-        true
-    }
-
     #[cold]
     #[inline(never)]
     fn push_hoisted_grow<T: crate::vector::HoistScalar>(
@@ -2977,52 +2939,6 @@ impl Stores {
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — place a call's return buffer as a RECORD inside
-    /// `host`'s store, so what the callee builds into it is claimed where the consuming
-    /// append wants the elements to live.  The record is shaped exactly as `OpDatabase`
-    /// shapes a fresh-store buffer (type tag at word 1, content defaulted, `pos` 8); only
-    /// the store differs.  The store's `known_type` is the HOST's and stays untouched.
-    #[must_use]
-    pub fn place_record_in(&mut self, host: &crate::keys::DbRef, db_tp: u16) -> crate::keys::DbRef {
-        let size = self.enum_parent_size(db_tp);
-        let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
-        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
-        // @PLN157 § V-y (`@FR-R-CompleteWrite`) — the placed buffer is a vector record
-        // whose only field the CALLEE's entry clear rewrites (the shape-A clear, or the
-        // adopted init's len reset — the ABI every admitted callee has); the prefill's
-        // whole effect is this one u32 zero, written directly instead of dispatching
-        // through `set_default_value`.
-        self.store_mut(&r).set_u32_raw(r.rec, 8, 0);
-        r
-    }
-
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the move-append: relocate `size` bytes of the
-    /// dying temporary's element into the fresh destination element and ZERO the source,
-    /// both in ONE store — the element's heap handles stay valid because they never change
-    /// store, and the zeroed source is what keeps the temporary's own clear and free from
-    /// releasing what it no longer owns.  The caller dispatches on store identity and takes
-    /// the deep copy when they differ; this is only the same-store arm.
-    ///
-    /// # Panics
-    ///
-    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the two elements do NOT share a store —
-    /// the caller's dispatch failed.  Never in the emitted default.
-    pub fn move_record_shallow<const VERIFY: bool>(
-        &mut self,
-        src: &crate::keys::DbRef,
-        dst: &crate::keys::DbRef,
-        size: u32,
-    ) {
-        if VERIFY {
-            assert_eq!(
-                src.store_nr, dst.store_nr,
-                "move-append across stores — the same-store dispatch let a cross-store pair through"
-            );
-        }
-        self.copy_block(src, dst, size);
-        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
-    }
-
     /// [`Self::clear_vector_release`] for a vector whose element owns no heap, which the
     /// emitter knows from the type (`@FR-H-ClearRelease`): a foreign view dropped as there,
     /// otherwise the length reset that clear arrives at after asking the type table.
@@ -3260,8 +3176,7 @@ impl Stores {
         crate::vector::clear_vector(db, &mut self.allocations);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
-    /// lives on: the deep release of what the record still owns (elements the loop did not
+    /// Free a PLACED buffer record inside a store that lives on: the deep release of what the record still owns (elements the loop did not
     /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`
     /// performed for a fresh-store buffer released the whole STORE; a placed buffer's store
     /// is the destination's and must survive.
@@ -3620,7 +3535,7 @@ impl Stores {
     }
 
     /// `(R-MoveLast)` — the last-use store of an owned record local into a field: a
-    /// relocation within one store, the deep copy across two (see `move_record_shallow`).
+    /// relocation within one store, the deep copy across two.
     ///
     /// # Panics
     ///

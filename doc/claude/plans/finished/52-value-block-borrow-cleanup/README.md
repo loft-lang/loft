@@ -337,7 +337,7 @@ Total estimate: ~2-3 weeks (in line with @PLAN51's scope, slightly larger becaus
 - [`doc/claude/PROBLEMS.md`](../../../PROBLEMS.md) §@P383 — the canonical bug report with the full bytecode-trace diagnosis.
 - [`src/parser/operators.rs:1227-1247`](../../../../../src/parser/operators.rs) — the `??` lowering; cluster I's source-side root.
 - [`src/scopes.rs:1122-1184`](../../../../../src/scopes.rs) — `free_vars` else-branch + `get_free_vars` text-OpFreeText emission; cluster I's interpreter-side root.
-- [`src/generation/emit.rs:1283-1297`](../../../../../src/generation/emit.rs) — the @P321e/@P323 native fix (`_ret.to_string()` materialisation); the working baseline this plan's interpreter fix should match in semantics.
+- `src/generation/emit.rs:1283-1297` (retired with the rustc writer) — the @P321e/@P323 native fix (`_ret.to_string()` materialisation); the working baseline this plan's interpreter fix should match in semantics.
 
 ---
 

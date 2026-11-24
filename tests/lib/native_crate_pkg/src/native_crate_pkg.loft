@@ -1,3 +1,0 @@
-// Minimal package with native_crate for P129 dedup testing.
-pub fn native_crate_hello() -> text
-    return "hello"

@@ -2,7 +2,7 @@
 # probe-local — run the ci-probe phases LOCALLY with the exact CI commands +
 # env, so cache/timing optimisations can be verified in minutes instead of a
 # 20-minute CI round.  Faithfully reproduces loft's INTERNAL cache behaviour
-# (cdylib build-fingerprint, fixture rlib-content hash, the Timing object); the
+# (the build fingerprint, the Timing object); the
 # only thing it can't reproduce is the GitHub actions/cache save/restore layer
 # (that's the run_id-key persistence, GitHub-specific).
 #
@@ -46,7 +46,7 @@ phase() {   # phase <name> <cmd...>
 }
 
 echo "== $mode run — phases =="
-phase build    cargo build --release --lib --bin loft
+phase build    cargo build --release --bin loft
 phase cdylibs  cargo nextest run --profile ci --test native -E 'test(native_library_suite)'
 phase fixtures cargo nextest run --profile ci --test native -E 'test(native_scripts)'
 phase interp   cargo nextest run --profile ci --test wrap loft_suite

@@ -4,18 +4,17 @@
 #
 # Install `origin/main`'s loft from the runtime its daily build shipped
 # (`.github/workflows/daily-build.yml`, `scripts/runtime_bundle.sh`) instead of compiling it:
-# the binary, the standard library, and the `libloft.rlib` + `deps/` that `--native` links.
+# the binary and the standard library (`--native` compiles through the machine's C compiler).
 # `make install-main` tries this first and builds locally when it answers 3.
 #
 #   scripts/install_main_ci.sh            # into $PREFIX (default ~/.local)
 #   LOFT_DAILY_RUN=<run id> scripts/install_main_ci.sh   # that run's runtime (a branch's)
 #
 # Exit 0 installed; 3 not available here (no run for main's commit yet, no artifact for this
-# host, `gh` missing, or this machine's rustc is not the one that built the rlib — an rlib
-# links only against code from the SAME compiler); anything else is a failure.
+# host, or `gh` missing); anything else is a failure.
 set -euo pipefail
 if [ "${1:-}" = "--help" ]; then
-  sed -n '5,15p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 PREFIX=${PREFIX:-$HOME/.local}
@@ -48,12 +47,6 @@ gh run download "$run" -n "loft-daily-runtime-$triple" -D "$tmp/dl" >/dev/null 2
 mkdir -p "$tmp/x"
 tar -C "$tmp/x" -xzf "$tmp"/dl/loft-runtime-"$triple".tar.gz
 root="$tmp/x/loft-runtime-$triple"
-# The compiler that built the rlib, line for line against this machine's (release, commit).
-want=$(grep -E '^(release|commit-hash):' "$root/share/loft/RUSTC")
-have=$(rustc -vV | grep -E '^(release|commit-hash):')
-if [ "$want" != "$have" ]; then
-  unavailable "the runtime was built by rustc $(sed -n 's/^release: //p' <<<"$want"), this machine has $(sed -n 's/^release: //p' <<<"$have") (`rustup update stable` makes the download usable)"
-fi
 sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 (cd "$root" && while read -r h f; do
    [ "$(sum "$f" | cut -d' ' -f1)" = "$h" ] || { echo "install_main_ci: $f does not match SHA256SUMS" >&2; exit 1; }
@@ -61,8 +54,9 @@ sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 
 exe=loft
 case "$triple" in *windows*) exe=loft.exe ;; esac
 mkdir -p "$PREFIX/bin" "$PREFIX/share/loft"
+# A runtime library an older install left (the retired rustc route linked it) goes too.
 rm -rf "$PREFIX/share/loft/default" "$PREFIX/share/loft/deps"
-rm -f "$PREFIX/share/loft/libloft.rlib" "$PREFIX/share/loft/libloft.rmeta"
+rm -f "$PREFIX/share/loft/libloft.rlib" "$PREFIX/share/loft/libloft.rmeta" "$PREFIX/share/loft/RUSTC"
 cp -r "$root/share/loft/." "$PREFIX/share/loft/"
 install -m 755 "$root/bin/$exe" "$PREFIX/bin/$exe"
 printf '%s clean\n' "$sha" > "$PREFIX/share/loft/SOURCE"

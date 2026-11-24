@@ -2196,8 +2196,7 @@ fn emit_unit_with(
     cx.open = hosted.is_some();
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
-    cx.lazy
-        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
+    cx.lazy.set(reachable_has(data, &all, is_lazy_native));
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
@@ -2762,7 +2761,7 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
                 data.def(*c).name(),
                 "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
             );
-            lazy |= data.def(*c).name() == "n_store_bind_lazy";
+            lazy |= is_lazy_native(data.def(*c).name());
             fetches |= matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
                 || native_c(name) == Some("loft_pg_load_keys")
                 || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
@@ -2971,6 +2970,11 @@ fn unit_defines(
     let json_tree = reached.iter().any(|&d| {
         let n = data.def(d).name();
         n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
+    }) || cx.show_types.borrow().iter().any(|&t| {
+        stores
+            .types
+            .get(t as usize)
+            .is_some_and(|t| t.name == "JsonValue")
     });
     let parses = !cx.parse_types.borrow().is_empty()
         || reached
@@ -3072,6 +3076,22 @@ fn unit_defines(
 /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
 /// any of them or `http_fetch` the TLS client its `https://` requests run over
 /// (`tls::unit_lines`).
+/// A native of a lazily bound collection (`loft_lazy.h`).  A unit that reaches ANY of them carries
+/// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
+/// answer (no failure, `""`) is the header's as well as the interpreter's.
+fn is_lazy_native(name: &str) -> bool {
+    matches!(
+        name,
+        "n_store_bind_lazy"
+            | "n_store_lazy_query"
+            | "n_store_lazy_range"
+            | "n_store_lazy_error"
+            | "n_store_lazy_faults"
+            | "n_store_lazy_clear"
+            | "n_store_lazy_fail"
+    )
+}
+
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
@@ -4431,20 +4451,16 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     Ok(params)
 }
 
-/// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
-/// the loft-ffi C ABI): the file the interpreter loads for it too
-/// (`native_build::prebuilt_native_lib`), with the package's directory.  None for a package
-/// without one — never a build.
+/// The component loft ships that a `#native` symbol's package names (the loft-ffi C ABI): the
+/// file the interpreter loads for it too (`native_build::prebuilt_native_lib`), with the
+/// package's directory.  None for a package without one — never a build.
 fn prebuilt_library(data: &Data, native: &str) -> Option<(String, String)> {
     let krate = data.native_symbol_crates.get(native)?;
-    let (name, pkg_dir) = data
+    let (_, pkg_dir) = data
         .native_packages
         .iter()
         .find(|(c, _)| c.replace('-', "_") == *krate)?;
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| name.replace('-', "_"));
-    crate::native_build::prebuilt_native_lib(pkg_dir, &stem).map(|lib| (pkg_dir.clone(), lib))
+    crate::native_build::prebuilt_native_lib(pkg_dir).map(|lib| (pkg_dir.clone(), lib))
 }
 
 /// A library native's arguments as the loft-ffi ABI takes them: the typed parameters, the
@@ -5013,8 +5029,8 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             params.join(", ")
         }
     );
-    // A package whose native part needs no build — a component, a library shipped prebuilt per
-    // host (@PLN205) — is installed, never rebuilt: say what is missing.
+    // A package whose natives are a component (@PLN205) is installed, never rebuilt: say what
+    // is missing.
     let unbuildable = cx
         .data
         .native_symbol_crates
@@ -5025,7 +5041,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
-        .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+        .and_then(|(_, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir));
     // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
     // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
     // to a call the C makes by name, so the message says what does.

@@ -5,17 +5,19 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Native rewrite switches
 
-Which switch turns off a `--native` rewrite, and what checks it.  Every switch here is read at
-GENERATION time and changes only what `--native` emits; the interpreter never takes these
-rewrites, so it is the values oracle for all of them.  A wrong answer on BOTH backends belongs
+Which switch turns off a rewrite the C backend applies, and what checks it.  Every switch here
+is read at GENERATION time and changes only the C a compiled target is built from (`--native`,
+`--native-wasm`, `--html`, `--native-android`, a library's hosted unit); the interpreter never
+takes these rewrites, so it is the values oracle for all of them.  A wrong answer on BOTH backends belongs
 to [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md) instead.
 
 Each entry names its `LOFT_NO_*` switch (the first bisect step: the before-half of an A/B on
 one binary), its falsifier (usually `LOFT_HOIST_VERIFY=1`, which emits the checking form) and
 its `LOFT_TRACE_*` switch (which names each admission and decline).  The rules the rewrites
-enforce live in [formal/rewrites.md](formal/rewrites.md) (`@FR-R-…`); the emitter's design is
-[NATIVE.md](NATIVE.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.  The dated measurements
-moved out of this doc are [NATIVE_SWITCHES-history.md](NATIVE_SWITCHES-history.md).
+enforce live in [formal/rewrites.md](formal/rewrites.md) (`@FR-R-…`); the C's design is
+[C_BACKEND.md](C_BACKEND.md) and [PERFORMANCE.md](PERFORMANCE.md) § Design.  The dated measurements
+moved out of this doc, and the switches of the retired rustc writer's rewrites, are
+[NATIVE_SWITCHES-history.md](NATIVE_SWITCHES-history.md).
 
 ## Vector headers, pushes and mints
 
@@ -30,17 +32,7 @@ suite under it after touching the gate; **`LOFT_NO_VECTOR_HOIST=1`** emits the p
 which is the before-half of an A/B on one binary and the first bisect step for a
 native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the hoisted header
 but leaves the scalar element read UNFUSED, one bisect step finer;
-`LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.  **`LOFT_NO_FN_HEADER=1`**
-keeps `(R-Header)`'s FUNCTION clause off: a body that reads a vector parameter twice or more
-and leaves it as it found it (`hoist::param_untouched`, a callee asked the same of the position
-the parameter reaches, a recursion answering for itself) derives the header at every read
-again instead of once at entry — the first bisect step for a wrong element read OUTSIDE any
-loop under `--native`; `LOFT_TRACE_HOIST_DECLINE=1` names the parameter declined and the op
-that touches it.  **`LOFT_NO_KEPT_HEADER=1`** keeps the KEPT clause off: a record parameter's
-vector field (`m.chunks`) walked by a chain of callees, one of which appends to it, is derived
-at every walk again instead of held from the outermost reader and handed down by `&mut` to
-`__kh` twins — the first bisect step for a stale length or a missing element after an append
-in a callee; `LOFT_HOIST_VERIFY=1` checks every holder read, `LOFT_TRACE_KEPT=1` names each verdict.
+`LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.
 **`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
 again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
 (record type, offset) over the body's typed write set — and is the bisect step for a wrong
@@ -61,10 +53,6 @@ callee a hoisting loop calls.
 vector element (`i32`, `u16`, `u8`) untyped for the scalar hoist again, as a base-type element's
 never was: with it on, a loop whose callee writes such elements still holds the record fields
 nobody writes and calls the callee's twin — the bisect step for a stale field read in such a loop.
-**`LOFT_NO_TWIN_INLINE=1`** makes a twin that reaches no loop (but a literal `0..k`, k ≤ 16)
-take the plain `#[inline]` hint instead of `#[inline(always)]`: the A/B for a row that moved
-with it (suite + ten `hex_*` benches, 102 routines, geomean −1.1 %, `mesh_emit` −18 %,
-`draft_fit_p` −15 %; `char_roundtrip` +7 % is layout).
 **`LOFT_NO_TWIN_RECORD=1`** (`@FR-R-RecPtr`'s twin clause) gives a twin no record ADDRESS
 input: its record parameters resolve their store at entry again, as the plain body does.
 **`LOFT_NO_PLAIN_CHAIN_PTR=1`** makes the plain-chains copy of a loop (`(R-GuardedChain)`)
@@ -116,15 +104,7 @@ append holds, keyed by the path a read of the field already has (`mesh_emit` −
 element's payload keep the general append — and is the first bisect step for a wrong, missing
 or extra element out of a loop that appends records to a record's vector field;
 `LOFT_HOIST_VERIFY=1` re-derives the header at the slot and the finish.
-**`LOFT_NO_GROUP_PUSH=1`** (`@FR-R-GroupPush`, default-ON, generation time, `--native` only)
-makes a record append OUTSIDE any held header keep its templates again — with it off, a
-literal group `v += [pt(a, b), pt(c, d)]` that no enclosing loop holds a header for (a group
-at function level, in a loop that declined, or on a vector declared per pass) binds a push
-header of its own right after its reservation and emits its mints and finishes through it
-(`fronds` built its 1 296 points per call that way: 101.7 → 69.6 µs with the two clauses
-below, 2.71× → 1.86× of Rust) — and is the first bisect step for a wrong element out of a
-literal record append on native; `LOFT_HOIST_VERIFY=1` re-derives the header at the slot and
-the finish.  **`LOFT_NO_HEAP_RECORD_PUSH=1`** (`@FR-R-PushRec`'s heap clause) keeps an element
+**`LOFT_NO_HEAP_RECORD_PUSH=1`** (`@FR-R-PushRec`'s heap clause) keeps an element
 that OWNS heap (a `Frond { fpts, fwid }`) on its templates — with it off, such an element goes
 through the header too, its slot ZEROED at the mint, which is the whole of what the prefill did
 for its handles — and is the bisect step for a wrong or stale handle in an appended record
@@ -140,12 +120,6 @@ loop that declares a vector or a record per pass.
 **`LOFT_TRACE_HOIST_DECLINE=1`** names the FIRST statement that declines a loop's hoist, and
 the node that left its scalar write set untyped — reach for it when a loop that should hoist
 does not, before reading the admission.
-**`LOFT_NO_MOVE_APPEND=1`** (@PLN157 § V-j) makes `for f in call(…) { v += [f] }` keep the
-deep copy — with it on, the call's buffer is PLACED as a record in `v`'s own store, the
-append relocates the element's bytes (heap handles included — they never change store) and
-zeroes the source, and the buffer's free is record-level — and is the bisect step for a
-wrong element, a leak or a double free out of a loop that appends a dying temporary's
-elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
 **`LOFT_NO_FRESH_TEXT_SET=1`** (`@FR-R-Mint`'s text clause, default-ON, generation time) makes
 the first text written into a just-minted element, and the address of a text local, block a
 loop's header hold again — with it off, a loop that appends records with text fields while
@@ -165,12 +139,6 @@ record's bytes while a run-time compare finds the parameter's store and the buff
 First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
 falsifier.
 
-**`LOFT_NO_TEXT_SET_BORROW=1`** (default-ON, generation time, `--native` only) makes every text
-set into a store field copy its value into a `String` first — with it off, the setter reads the
-value where it lives and `Store::set_str` / `refill_str` copy only a value whose bytes lie in
-the destination store, the one store the claim can move.  First bisect step for a wrong text
-written into a field on native; the falsifier is the store unit test
-`a_text_from_its_own_store_survives_the_claim_that_moves_it`.
 
 **`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
 makes a loop that writes a text field or element decline its header hold again — with it off,
@@ -242,11 +210,7 @@ native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice of a parame
 its decline.  An append to `t`, a rebind to a built text, a `&t` link, `t` handed to a `&text`
 parameter, tupled or returned, a slice of a `&text` or rebound parameter, a slice of an OWNED
 local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1` turns this clause off with the
-rest. **`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
-only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
-local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext `materialise`
-−59 %) — and is the first bisect step for a text that reads leftover content after it was
-emptied. **`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time,
+rest. **`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time,
 `--native` only) copies a record that owns no heap through the full release-and-walk path again
 — with it off, such a copy that keeps its source is the block copy alone (zttext `insert_text`
 ≈ −40 %), and the emitter writes such a copy from a variable as its bytes, address to address
@@ -292,7 +256,7 @@ and `LOFT_TRACE_BASE=1` names each loop that keeps bases under a growth and of w
 **`LOFT_NO_RANGE_END_HEADER=1`** (`@FR-R-Base`'s bound clause, default-ON, generation time)
 makes a `for i in 0..len(v)` loop test its index against the prelude's end local again —
 with it off, inside a loop holding `v`'s element base, the test reads the held header's
-length, the same value, which lets rustc drop the element accesses' own bounds tests
+length, the same value, which lets the C compiler drop the element accesses' own bounds tests
 (stdlib `record_update` 19.7 → 12.1 µs) — and is the first bisect step for a wrong trip
 count out of such a loop.
 **`LOFT_NO_TWIN_BASE=1`** (`@FR-R-Base`'s twin clause, default-ON, generation time) makes
@@ -326,9 +290,6 @@ ordered remainder clause would ask (priced, not built: `bench/portal/analysis/re
 record into `v[i]` through the element read, not derived where it is written from one header
 read and the index.  First bisect step for a record written into the wrong element, or an
 out-of-range write that raised twice or not at all.
-**`LOFT_NO_FIELD_HEADER=1`** (`@FR-R-RecPtr`'s nested clause, `--native`) resolves a view's
-VECTOR field (`len(c.items)`, `c.items[i]`) through the store again, not through the view's
-address.  First bisect step for a wrong length or element of a record's vector field.
 **`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
 `--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
 store, the record and the text at each read again — with it off, the view's address from
@@ -346,14 +307,6 @@ add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `
 −30 %) — and is the first bisect step for a wrong field read through a `for e in v` loop
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
 every use.
-**`LOFT_NO_INDEX_RECPTR=1`** (`@FR-R-RecPtr`'s index clause, default-ON, generation time,
-`--native` only) makes `r = v[IDX]?` over a vector whose header and base the frame holds read
-its element through `get_vector_hoisted` and resolve the store for its address again — with it
-off, IDX is named once before the statement and, in range, the view is the held record at
-`8 + IDX * size` and its address the held base plus `IDX * size`, the binding running as
-written out of range (graphics `fill_polygon` −12 % alone).  First bisect step for a wrong
-field read through a `v[i]?` view on native; `LOFT_HOIST_VERIFY=1` checks the in-range read
-against the runtime's own.
 **`LOFT_NO_NESTED_FIELD=1`** (`@FR-R-RecPtr`'s path clause, default-ON, generation time,
 `--native` only) makes a scalar field reached through INLINE sub-records (`v.pos.x`) rebuild
 its `DbRef` and resolve the store again — with it off, such a field of a record view is read
@@ -426,14 +379,6 @@ out of a record literal inside nested loops.
 
 ## Generators
 
-**`LOFT_NO_REDESCENT=1`** (default-ON, generation time) sends every generator loop
-that RE-DESCENT would lower lazily back to the eager buffer — the whole loop runs in the
-factory before the first value is handed out — and is the first bisect step for a native-only
-wrong answer, leak or rustc error out of a generator loop whose yields are not all on one
-straight line (COROUTINE_LAZY_YIELDS.md § Re-descent).  The values must not move; the order of
-side effects does, which is the point.  `LOFT_TRACE_REDESCENT=1` names each generator that
-still runs eagerly with the switch off, and why: a `yield` inside an expression re-descent
-cannot hoist, or a carried local no struct field can hold.
 
 ## Counted push loops
 
@@ -487,12 +432,6 @@ step for a wrong, doubled or truncated vector after an append of a call result;
 `LOFT_TRACE_APPEND_TWIN=1` names each function's verdict, the first node that declined it,
 and each call site refused with its reason.
 
-**`LOFT_NO_PUSH_RUN=1`** (`@FR-R-PushFill`'s run clause, default-ON, generation time,
-`--native` only) pushes a straight-line run of byte appends (`v += [a]; v += [b]; …`) one by
-one through the runtime again — with it on, the run's bytes are built in a stack array and
-appended by one `vector::append_bytes` (cbor's `head`: `encode_bytes` −10 % over the earlier
-one-window form).  The first bisect step for a wrong byte or length after such a run; cells
-`tests/scripts/158-push-run.loft`.
 
 **`LOFT_NO_HAND_OVER=1`** (`@FR-R-HandOver`'s rotate clause, default-ON, generation and run
 time, `--native` only) runs an append to a full vector beside the drop of its oldest element as
@@ -507,17 +446,11 @@ with it on, the frame holds its elements as bytes and its callees run as `__apr`
 copy them into the collection (dryopea `truncate_to` −42 %).  The first bisect step for a
 wrong element after a frame-built record is appended; cells `tests/scripts/158-apart-records.loft`.
 
-**`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
-sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
-fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
-`OpReadFileInt::<W, SIGNED>`, width and sign fixed at the site and the bytes taken by value
-from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
-value or a wrong `#next` out of such a read; the interpreter's read is the reference.
 
 **`LOFT_NO_FILE_HOLD=1`** (`@FR-R-FileHold`, default-ON, generation time, `--native` only)
 sends every scalar file read through the `File` record again — with it off, a loop that
 reads one file and names nothing else that can hold a `File` moves `#index` and `#next` in a
-guard local (`codegen_runtime::FileCursor`) and writes the record when the loop is left.  The
+guard local (the held cursor in `loft_io.h`) and writes the record when the loop is left.  The
 first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`, or a value
 read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
 read and the guard's drop assert that the record still says what it said when the hold began.
@@ -525,7 +458,7 @@ read and the guard's drop assert that the record still says what it said when th
 **`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--ship` and every
 build that does not ship the live tier) keeps every record in the store from its construction —
 with it off, a record whose every field is a `vector<float>` of one length travels between the
-functions that build it, read and write its elements and hand it on as a Rust array, through
+functions that build it, read and write its elements and hand it on as a C struct (`loft_ap_<T>`, one `double[N]` per field), through
 their `__apv` twins, and is written into the store where a function returns it to a caller that
 keeps it.  The first bisect step for a wrong element, a wrong length or a missing out-of-range
 report out of such a record on a release build.  Its falsifier is this switch's A/B against the
@@ -533,7 +466,7 @@ guard's hand-computed values; **`LOFT_TRACE_APART=1`** names every type, twin an
 admits and each component it keeps in the store, with the mention that kept it.
 **`LOFT_NO_APART_VECTOR=1`** turns off instance 3 alone (`LOFT_NO_APART=1` turns off both): a
 `vector<float>` local, or a work buffer, that never leaves its function lives in the store again
-— with it off, it is an inline buffer with a heap spill (`codegen_runtime::ApVec`), on every
+— with it off, it is an inline buffer with a heap spill (`loft_apvec`, `loft_keyed.h`), on every
 native build.  The first bisect step for a wrong element or length out of such a local.
 
 **`LOFT_NO_DECODE_VIEW=1`** (`@FR-R-DecodeView`, default-ON, generation time, every build that
@@ -555,13 +488,6 @@ answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`
 **`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
 its reason; `=2` also prints each consumer's IR.
 
-**`LOFT_NO_STREAM_WALK=1`** (`@FR-R-StreamWalk`, default-ON, generation time, `--ship`
-and every build that does not ship the live tier) builds every vector a caller walks once —
-with it off, a function answering a vector of records that its caller binds and walks by
-index runs as its stream twin, handing each element's fields to the walk's body at the
-append, and no vector is built.  First bisect step for a wrong value, order or count out of
-such a walk on a release build; **`LOFT_TRACE_STREAM_WALK=1`** names every producer and walk
-admitted or declined, with why.
 
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
@@ -614,27 +540,7 @@ every path, the overflow note fired where the first evaluation stands; declared 
 innermost loop that spells it so the test peels out — declared one loop out it stayed in
 every tap), the resample tap's `yy * iw + xmin` −5 % on the row — and is the first bisect
 step for a wrong index or arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1`
-re-evaluates the chain at every use and panics when the memo disagrees.  `LOFT_TRACE_INVARIANT=1` names each memo.
-**`LOFT_NO_BOUNDED_NEST=1`** (@PLN157 `R-BoundedNest`, `@FR-R-BoundedNest`, default-ON,
-generation time, `--native` only) keeps every tap nest checked — with it off, an innermost
-counted loop that is one accumulate over `?`-discharged element products
-(`acc += a[(yy*w + x)*4 + ch]? * k[base + x]?`, a resample's tap) runs with PLAIN operators
-behind a guard evaluated once at the loop's entry: no range end or invariant is the sentinel,
-every vector read has a known element bound (taken ONCE at the outermost loop whose body
-leaves the vector alone, never at the nest's own prelude), and the magnitude bound of every
-chain and of `|acc| + trips × bound(term)` fits, so no operation can fault and the plain
-answer is the checked one; the checked loop is the `else` arm.  It is @C120's admissible
-successor built — the fact is established before the arithmetic runs, not assumed — and it
-took the drawing lane's three resample rows from 4.9–6.1× to 2.4–2.8× their Rust reference
-(`render_marks` −54 %).  **Step 2, `LOFT_NO_NEST_RAW_READS=1`** keeps the arm's bounds-tested
-reads — with it off, where every read's chain names the counter at most once (affine) the guard
-also proves both range ends in `[0, len)` and the arm reads RAW through the held base with no
-null select (the bound already ruled out a stored null): the tap becomes the multiply-accumulate
-LLVM vectorises (`render_marks` −40 % again, to ~1.7×).  Both are the first bisect steps for a
-wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` compares every
-plain operator's answer with the checked template's and every raw read with the checked read,
-panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
-the reads are raw.
+re-evaluates the chain at every use and panics when the memo disagrees.
 **`LOFT_NO_BOUNDED_SUM=1`** (`@FR-R-BoundedNest`'s reduction clause, default-ON, generation
 time, `--native` only) makes `acc = acc + v[i]` over an integer vector pay the checked add on
 every element again — with it off, a counted loop that is one such accumulate over a held
@@ -665,11 +571,6 @@ cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact beca
 such a slot refuses an unprovable value; `i32`/`u32` (the templates) and a
 signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
 sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
-**`LOFT_NO_FAULT_FLAG=1`** (`@FR-R-FaultFlag`, default-ON, generation time, `--native` only)
-runs every `for` statement as written — with it off, a statement that writes only scalar locals
-first runs a fast copy, each fault form setting a flag, and reruns as written when it is set —
-the first bisect step for a wrong value out of such a loop; `LOFT_TRACE_FAULT_FLAG=1` names each,
-and `LOFT_NO_FAULT_FLAG_UNROLL=1` keeps the fast copy's constant ranges as loops.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
@@ -788,55 +689,14 @@ Read where the rebind is emitted (the reset-and-copy pair instead of `OpRebindRe
 `OpRebindRecord` at run time, so either is the off arm.  `LOFT_TRACE_STORE_SWAP=1` names each
 exchange.
 
-**`LOFT_NO_REFILL_BUFFER=1`** (`@FR-R-RefillBuffer`, default-ON) frees the store a rebind
-exchange released and mints every return buffer — with it off, a callee whose buffer is built
-by a complete literal of a refillable type takes that store, holding the rebound variable's
-previous value, and empties its vector fields in place.  The first bisect step for a wrong
-record built into a return buffer on `--native`.  Read where the buffer is emitted and at run
-time.
 
-**`LOFT_NO_REBIND_BUFFER=1`** (`@FR-R-RebindBuffer`, default-ON) exchanges every rebind's
-fresh result into the destination's store (`@FR-H-SwapRebind`) — with it off, `x = f(…)`
-adopts the fresh result and hands `x`'s previous store to the call's hidden buffer for its
-next execution.  The first bisect step for a wrong value after a rebind in a loop on
-`--native`.  Read where the rebind is emitted; `LOFT_TRACE_REBIND_BUFFER=1` names each
-rebind it declines and why.
 
-**`LOFT_NO_REFILL_TEXT=1`** (`@FR-R-RefillText`, default-ON) keeps a pooled call buffer's
-release walk before every call and the plain callee, instead of the callee's `__rt` twin
-writing each text over the block its slot already owns.  The first bisect step for a wrong
-text, or a store that grows, read back from a record-returning call in a loop.
-`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict (`refill-text: <caller> →
-<callee> admitted`, or the condition that declined).  Guard
-`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` (its `m1` is the
-live-record census that sees a text leaked per call); pin `tests/refill_text.rs`.
 
-**`LOFT_NO_REFILL_ELEMENTS=1`** (`@FR-R-RefillText`'s collection clause, default-ON)
-releases a heap-element refill buffer whole at entry and claims every element's texts anew,
-instead of keeping the elements and refilling their texts in their slots.  The first bisect
-step for a wrong text, a panic in a text set, or a store that grows, in a vector a function
-builds by appending records and returns.  `LOFT_TRACE_REFILL_TEXT=1` names each such
-buffer's verdict.  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`.
 
-**`LOFT_NO_REFILL_VECTORS=1`** (`@FR-R-RefillText`'s vector clause, default-ON) releases a
-pooled call buffer whose heap is vectors of plain elements before every call again, instead
-of leaving its callee to empty each vector field in place.  The first bisect step for a stale
-or wrong vector field, or a store that grows, in a record a call builds in a loop.
-`LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)` for each site it takes.  Guard
-`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`.
 
-**`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
-and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
-vector that already holds the literal's count is overwritten where it stands
-(`Stores::fill_exact`).  The first bisect step for a stale element in a vector a refilling
-callee starts as `[c; n]`.  Read where the literal is emitted.
 
 ## Element-first builds, complete writes and return buffers
 
-**`LOFT_NO_SPARE_RESTAMP=1`** / **`LOFT_NATIVE_SWAP_KEEPS_HANDUP=1`** (`@FR-H-FreeTwice`, runtime, rustc
-`--native`) are the bisect steps for a store a fn-ref call's buffer leaves unreleased or releases twice: the
-first keeps a kept spare's old allocation stamp when a callee builds in it (the result then reads as borrowed
-and nobody releases it), the second leaves an exchanged source on the fn-ref hand-up list (released twice).
 
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
@@ -866,7 +726,7 @@ window reads.
 every record keep its default prefill again — with it off, a literal group the IR PROVES
 writes every field (declared defaults, sentinels, the variant tag included: the parser's
 lowering is complete by construction) mints through the no-prefill twin
-(`OpDatabaseNP`/`OpNewRecordNP` on the interpreter, rustc's and the C's own spelling) — and is
+(`OpDatabaseNP`/`OpNewRecordNP` on the interpreter, the C's own spelling) — and is
 the bisect step for a wrong default or sentinel in a literal-built record.  It leaves the
 fresh-copy flag on a copy into a minted element's field (whose null arm writes the field's
 default, `@C137`), which is not part of the elision.  A type is complete only if every mint
@@ -896,10 +756,6 @@ key names and the literal's staged values are written into it — and is the fir
 for a wrong value or count after a keyed insert (every backend: the IR applies it, and
 `LOFT_TRACE_KEYED_ENTRY=1` names each function) or a keyed literal assignment (native);
 `LOFT_KEYED_VERIFY=1` checks every answered entry against the general lookup.
-**`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
-parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
-is the first bisect step for a freed, leaked or wrong lookup result on native;
-`LOFT_TRACE_VIEW_RETURN=1` names each call site's admission or declining condition.
 **`LOFT_NO_DESTINATION=1`** (`@FR-R-Destination`) makes a call whose result is moved whole into
 a fresh element return its record again, instead of the callee's twin building it in the
 element — the bisect step for a wrong or leaked element filled from a call;
@@ -916,8 +772,8 @@ PERFORMANCE-history.md § Design: P2, NATIVE.md.
 **`LOFT_NO_FNREF_WORK_BUFFER=1`** (`@FR-R-WorkBuffer`'s function-value clause, default-ON)
 makes a call through a function value hand the function it reaches the null sentinel for
 each of its work buffers again, so the function mints a store of its own at every call.  By
-default the calling frame LENDS them (`codegen_runtime::FnRefWork`, the `__fwb` local of a
-frame that calls through a function value): one store per wrapper type and position, minted
+default the calling frame LENDS them (a frame that calls through a function value holds
+them): one store per wrapper type and position, minted
 at the first arm that asks, shared by every candidate and every call of that frame, released
 when the frame ends.  The first bisect step for a stale or shared scratch vector in a
 function reached through a function value.  Either way a work buffer is never handed the
@@ -947,20 +803,14 @@ emits the per-element form again and is the first bisect step for a wrong elemen
 missed write out of a filling loop; `LOFT_TRACE_FILL=1` names the check that declined a
 loop the idiom should have taken.
 
-## The lean tier: frameless call trees
+## Guarded fills and frame guards
 
-**A frameless call tree carries no prelude (@PLN157 row 11, `@FR-R-LeafChain`, lean tier
-only, generation time):** N4's leaf rule made transitive — a function whose every user
-callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry and buffer
-guard in `--ship`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_GUARDED_FILL=1`** (`@FR-R-Fill`'s guarded clause, default-ON, generation time,
 `--native` only) keeps the loop for a body `t = base + i; if t < N { v[t] = c }` — with it
 off, the loop is the slice fill of `lo..min(hi, N - base)` when that span holds eight or
 more elements, the loop running for every span the fill declines (graphics `fill_polygon`
 −25 %, `fill_rect` −14 %; graphics' `hline` is the loop).  First bisect step for a wrong
 pixel out of a guarded row loop on native.
-**`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
-the named tiers never elide a non-leaf.
 
 **A function that can reach no fn-ref return buffer carries no buffer guard
 (`@FR-R-GuardFree`, every tier, generation time):** when nothing that registers such a
@@ -979,19 +829,16 @@ generation time, library artifacts only):** a type id is read from a table its
 `loft_shared_init` fills from the loading program (`__tid(k)`), and a function it carries is
 numbered by its own constant (`FN_LOCAL | k`), translated where a value leaves or enters its
 code — so one artifact can run in a program that numbers its types and functions differently.
-**`LOFT_NO_LIB_IDS=1`** writes the generating program's numbers as literals again: the A/B for
-a library routine that moved, and the falsifier of `n2_cdylib`'s renumbered-program guard.
 **`LOFT_TRACE_LIB_IDS=1`** prints the loading program's key of every type, the first look when
 an artifact is refused for naming a key the program lacks.
 
 ## Inlining hints
 
-**Every loop-free loft function carries `#[inline]` (default-ON, generation time, both native
-tiers).**  The hint only raises LLVM's inlining threshold for that function; a small helper
-whose checked arithmetic pushed it just past the default budget now folds into its caller the
-way rustc folds a plain-Rust twin's.  A function that runs a loop gets no hint: pulled into a
-caller that loops itself, its loop-carried values spill across the caller's live range
-(`newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across its divide
-chain, +16 %).  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
-A/B for a row that moved after a rebuild.  `--names` pins every loft function
-`#[inline(never)]` regardless.  One home: `Output::fn_inline_attr`.
+**A small loft function is written `static inline` (`@FR-R-Inline`, default-ON, generation
+time, every native tier).**  A function of at most twelve statements, or an `__inv` twin of at
+most 64 — a twin exists only because a loop holds its inputs for the call, so every call of it
+is hot — is `static inline`; a plain helper of at most 80 statements that a hinted twin or a
+twin's caller calls is marked `LOFT_HOT_INLINE` with it (`c::small_function`,
+`c::hot_twin`, `c::hot_helper_size`).  The hint only raises the C compiler's inlining threshold
+for that function.  **`LOFT_NO_INLINE_HINT=1`** writes no hint and is the A/B for a row that
+moved after a rebuild; **`LOFT_NO_INLINE_TWIN=1`** keeps only the twin clause off.

@@ -23,7 +23,7 @@ PATTERN everywhere it is written, in users' own programs too.  A slow `split` bo
 interpreter's per-character text walk, which every hand-written text loop in a script pays.
 
 This is where loft parts from Python on purpose.  Much of CPython's speed is hand-written C for
-specific goals, because Python code itself cannot be made fast.  Loft compiles through rustc, so
+specific goals, because Python code itself cannot be made fast.  Loft compiles through C, so
 its own code can be: measured below, the compiled loft bodies of `split` and `lines` are within
 1.5× of their kernels already.  In the long run loft needs no kernels.  Each one exists only
 for a gap the INTERPRETER (or, for `sum`, the code generator) has not closed yet.
@@ -38,8 +38,8 @@ does.  The Rust version of a routine is replaced by loft as soon as that is viab
 hand-written Rust stays sparse: a library writes its loops in loft, and a `use`d library is
 compiled for an interpreted script anyway
 ([@C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
-`src/native_lib.rs`).  A library's `#native` Rust is for what loft cannot express (an OS or a
-foreign API), never for speed.
+`src/native_artifact.rs`).  A library's native part, its C `[c] shim`, is for what loft cannot
+express (an OS or a foreign API), never for speed.
 
 **A kernel earns its keep, or it does not stay.**  To be admitted:
 

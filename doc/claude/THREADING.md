@@ -194,9 +194,8 @@ in `src/` — Rust's `thread_local!`, or C thread storage in the runtime or the 
 |---|---|---|
 | Interpreter | the `State` and the `Stores` it holds | `Stores::clone_for_light_worker`, made before the worker starts: the parent's stores borrowed read-only, a few scratch stores its own |
 | C runtime | `loft_cx *cx`, first argument of every runtime and emitted function ([C_BACKEND.md](C_BACKEND.md), the store context) | `loft_par_job_init` makes it before the thread starts; `loft_cx_end` releases what it holds |
-| rustc writer | `cell: &UnsafeCell<Stores>`, first argument of every emitted function; its call frames, generator table and fn-ref buffers are `Stores::frames` and `Stores::native` | the interpreter's worker view |
 
-`cx` and `cell` are written at every call and in every signature, never supplied by a macro,
+`cx` is written at every call and in every signature, never supplied by a macro,
 which would hide the argument the way a thread-local hides the state.
 
 **Where state that once looked per-thread lives:**
@@ -419,7 +418,7 @@ Element size is computed from `self.database.size(element_type.known_type)` — 
 
 A worker does **not** get a semantically-independent copy of everything to mutate. Captured parent state is **read-only** (@PLN102 @C93 — a `ParentWrite` from inside a worker is a compile error, `scopes.rs`), so it is logically **shared**, not owned per-worker; only the worker-mutated stores (the element buffer, the return buffer) need to be per-worker. `Stores::clone_for_light_worker()` implements that: because captured state is *provably unwritten*, a worker **reads the captured stores directly** rather than slicing a large read-only structure into every job. Freed store slots (`.free == true`) are replaced with fresh unlocked `Store::new(100)` instances so that `State::new_worker → Stores::database` can safely re-initialise them without hitting the "Write to locked store" debug assert.
 
-**Read-only sharing (@PLN108, shipped 2026-07-17 — interpreter).** The per-worker byte-copy above is pure conservatism: a worker's captured parent state is read-only (@PLN102 @C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` now **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying — a copy-elision, no semantic change. There is **exactly ONE clone path** — always the read-only borrow. The original design auto-selected it by heap size (`par_share_for`, a 2 MB threshold, `LOFT_PAR_SHARE=0`/`=1`); the redesign retired both, so no data-dependent switch decides how a `par` shares (`src/parallel.rs`: *"no byte-copy, no size heuristic, no second `thread::scope` dispatcher"*). Net: a par over a large read-only structure no longer pays a copy of the whole session heap per worker (measured flat vs 53× growth). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). `--native` par is no longer separate: `src/codegen_runtime.rs`'s dispatchers call the same `parallel::parallel_workers` template, so both backends share the borrow.
+**Read-only sharing (@PLN108, interpreter).** A worker's captured parent state is read-only (@PLN102 @C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying. There is **exactly ONE clone path** — always the read-only borrow — so no data-dependent switch decides how a `par` shares (`src/parallel.rs`). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). This is the interpreter's dispatcher; the C's `par` is its own runtime (`loft_par_job_init`, § above).
 
 ### Example
 
@@ -704,15 +703,9 @@ no buffer), `run_parallel_fold` (Stitch::Reduce, scalar accumulator),
 `run_parallel_block` (`parallel { arm; arm }` — internal, not a row
 loop).
 
-`run_parallel_block`'s native twin is `codegen_runtime::n_parallel_block_native`, which
-takes one Rust closure per arm instead of one bytecode position per arm.  The generator
-emits every variable the arms assign at the top of EVERY closure, at its type's default:
-each arm is a separate top-level expression, so `sum = 0;` and the loop that reads `sum`
-are two different arms, and the interpreter gives the second one an entry-value copy
-through the parent's stack snapshot.  Private per closure, which is the isolation the
-construct promises.  A `&`-link local is left out — a raw pointer has no honest default,
-so an arm reading a sibling's link fails to compile rather than dereferencing a made-up
-address.
+`run_parallel_block`'s compiled twin is the C's `parallel_block`
+(`src/c/body/parallel.rs`): each arm written into a function of its own, the site an array
+of the addresses the arms read, and a `loft_parallel_run` over the functions.
 
 ### When to add a new dispatcher vs extend an existing one
 
@@ -723,8 +716,8 @@ address.
 - **Adding a return shape with a NEW Stores buffer-stack type** →
   add a new buffer stack in `src/database/mod.rs` (per-type, not
   polymorphic — see the rationale at lines 215-265), a new
-  `n_parallel_queue_<X>` native fn in `src/native.rs`, a new
-  `_native` mirror in `src/codegen_runtime.rs`, and either reuse
+  `n_parallel_queue_<X>` native fn in `src/native.rs`, its C
+  counterpart (`src/c/body/parallel.rs`), and either reuse
   one of the existing `run_parallel_*` shapes or add a new one if
   the per-thread state / merge truly diverges.
 - **Don't try to unify** the existing 5 dispatchers under one trait.

@@ -55,7 +55,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RECORD = ROOT / "bench" / "portal" / "decline_census.tsv"
 sys.path.insert(0, str(ROOT / "scripts"))
 import reason_census  # noqa: E402
-from rewrite_census import WRITERS, programs, rust_writer_env, warm_dependencies  # noqa: E402
+from rewrite_census import WRITERS, programs, warm_dependencies  # noqa: E402
 
 # The rules whose declines the compiler reports (`rewrite_census::declined` call sites).
 # A rule absent here with admissions present is shown as `not reported`.
@@ -135,9 +135,9 @@ def mask(why):
 
 def census(loft, prog):
     """One program's admissions and refusals over every writer (`rewrite_census.WRITERS`: the C
-    writer, and the rustc one while it exists).  A rule the parser or the scope pass decides
-    counts the same under each, and a writer's own rule counts under that writer alone, so the
-    larger count of the runs is the program's."""
+    writer).  A rule the parser or the scope pass decides counts the same under each, and a
+    writer's own rule counts under that writer alone, so the larger count of the runs is the
+    program's."""
     name, commit, cwd, argv = prog
     admitted, declined, errors = defaultdict(int), defaultdict(int), []
     for writer, (ext, flags) in WRITERS.items():
@@ -146,9 +146,7 @@ def census(loft, prog):
             proc = subprocess.run(
                 [loft, *flags(out), *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
-                # Each writer is chosen by its flag, whatever `LOFT_NATIVE_BACKEND` says (`make
-                # ci` exports it as `c`): the same environment as the rewrite census's runs.
-                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
             )
             if proc.returncode != 0 or not adm.exists():
@@ -270,18 +268,18 @@ def record(results, admitted, declined, by_rule_reason):
 
 def by_function(loft, prog, names):
     """One program's rewrites and refusals by function: `LOFT_REWRITE_CENSUS_FN` beside
-    `LOFT_DECLINE_CENSUS_FN`, over both writers.  Counts, never a verdict: a function can
+    `LOFT_DECLINE_CENSUS_FN`, over every writer.  Counts, never a verdict: a function can
     match a rule at one place and be refused at another (REWRITE_REASONS.md).  With no name,
     the functions and rules that refused something; with names, everything of those."""
     fired = defaultdict(int)
     refused = defaultdict(lambda: defaultdict(int))
-    own_phase = {"rust": "native", "c": "c"}
+    own_phase = {"c": "c"}
     for nth, (writer, (ext, flags)) in enumerate(WRITERS.items()):
         with tempfile.TemporaryDirectory() as tmp:
             adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out" + ext))
             proc = subprocess.run(
                 [loft, *flags(out), prog], capture_output=True, text=True, timeout=300,
-                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS_FN": str(adm), "LOFT_DECLINE_CENSUS_FN": str(dec)},
             )
             if not adm.exists():

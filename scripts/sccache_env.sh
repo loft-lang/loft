@@ -7,8 +7,8 @@
 #     source "$(dirname "${BASH_SOURCE[0]}")/sccache_env.sh"
 #
 # sccache caches compiled crates across branches and runs, which is
-# exactly what the batch builds here pay for repeatedly (the per-library
-# cdylibs, the wasm rlib, the full `--release` suite).  It composes with
+# exactly what the batch builds here pay for repeatedly (the release
+# binary, the wasm builds, the full `--release` suite).  It composes with
 # the mold linker pinned in .cargo/config.toml — sccache caches the
 # compile, mold still does the link.
 #

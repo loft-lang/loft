@@ -5,12 +5,10 @@
 # Run the AddressSanitizer suite locally in an ISOLATED target dir.
 #
 # WHY: ASan needs a nightly toolchain (`-Zsanitizer=address`).  A nightly build
-# run into the shared `target/` compiles `libloft_ffi` (and everything else) with
-# nightly rustc; a later STABLE build/test then hits E0514 ("incompatible version
-# of rustc") because the native test harness links that rlib directly and its
-# mtime looks fresh — neither cargo nor mtime rebuilds it.  Keeping nightly
-# artifacts in `target/asan/` means the stable `target/` is never polluted, so
-# `find_problems.sh` / native tests always reuse clean stable artifacts.  (CI's
+# run into the shared `target/` recompiles everything with nightly rustc and an
+# instrumented RUSTFLAGS, and the next stable build recompiles it all again.
+# Keeping nightly artifacts in `target/asan/` leaves the stable `target/` alone, so
+# `find_problems.sh` and the gate keep reusing their stable artifacts.  (CI's
 # `asan` job in .github/workflows/miri.yml is safe already — it runs on a fresh,
 # separately-cached checkout; this wrapper gives local runs the same isolation.)
 #
@@ -38,9 +36,6 @@
 # arena.  For intra-arena bounds use `-C debug-assertions=on`, which turns on
 # `Store::valid()` (CI's `debug-asserts` job); loft's ~200 `debug_assert!`s are
 # compiled out of normal builds by `[profile.dev.package.loft]`.
-#
-# If a stray nightly build already polluted `target/`, find_problems.sh's
-# ffi_toolchain_guard self-heals the stale rlib on its next run.
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

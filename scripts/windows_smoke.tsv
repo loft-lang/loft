@@ -31,7 +31,6 @@ scripts/c_alloc_diff.py	--help
 scripts/c_lint_census.py	--help
 scripts/c_sweep.py	--help
 scripts/campaign_review.py	--help
-scripts/cargo_dep_files.sh	--help
 scripts/check-release-published.py	--help
 scripts/ci_shards.py	--help
 scripts/claim.py	--help
@@ -48,7 +47,6 @@ scripts/doc-review.sh	--help
 scripts/doc_probe_sweep.sh	--help
 scripts/file-sizes.py	--help
 scripts/find_problems.sh	--help
-scripts/gap_report.py	--help
 scripts/gate_census.sh	--help
 scripts/gen-library-catalogue.py	--help
 scripts/gen-toolchain-entry.py	--help
@@ -65,8 +63,6 @@ scripts/lib_audit.sh	--help
 scripts/lib_warning_scan.py	--help
 scripts/licence_census.py	--help
 scripts/lint_sweep.py	--help
-scripts/native_call_census.py	--help
-scripts/native_ratio.sh	--help
 scripts/nullable_road.py	--help
 scripts/op_census.py	--help
 scripts/own_sweep.py	--help
@@ -95,7 +91,6 @@ scripts/rule_depth.py	--help
 scripts/rule_phases.py	--help
 scripts/run_scratch.py	--help
 scripts/runtime_bundle.sh	--help
-scripts/runtime_surface.py	--help
 scripts/script_twins.sh	--list
 scripts/scripts_named.py	--help
 scripts/skills-review.py	--help

@@ -497,8 +497,7 @@ the record it points at, not a place of the holder's.
                  the collection is wholly dead is a point at which the store is, and
                  releasing it there is one store reset rather than a free per
                  element.  What would break the rule is a record placed into the
-                 store from outside.  (R-MoveAppend) places an ELEMENT of that very
-                 collection, so it holds; (R-ExitVector) claims a vector local's
+                 store from outside.  (R-ExitVector) claims a vector local's
                  wrapper in a return buffer's store, and (R-Place) a loop buffer in a
                  vector local's, and neither is an element.  The runtime knows the
                  store's root by its shape alone â€” a user struct of one vector field
@@ -625,11 +624,10 @@ only thing the reset changed is what the released slot holds when it is freed â€
 instead of `x`'s previous tree.  Both are freed, so skipping the reset changes no reachable
 value.  The source must still be given up and must not be a store the last fn-ref call
 borrowed; a witnessed destination is reset as before, since its old store has to survive.
-`LOFT_NO_SWAP_REBIND=1` keeps the reset.  Site: `codegen_runtime::OpRebindRecord` over
-`Stores::try_swap_rebind`, emitted for a call-return rebind's copy arm
-(`generation/dispatch.rs`); on the C, `loft_swap_rebind` over `loft_swap_in`, emitted at the
-same bind (`c/body.rs`, the call-copy statement) and gated at compile time by the type walk
-(`Cx::swap_safe`), with `-DLOFT_NO_SWAP_REBIND` the switch.  The C's copy mints its destination
+`LOFT_NO_SWAP_REBIND=1` keeps the reset.  Sites: the interpreter's rebind over
+`Stores::try_swap_rebind` (`src/state/io.rs`); on the C, `loft_swap_rebind` over `loft_swap_in`,
+emitted for a call-return rebind's copy arm (`c/body.rs`, the call-copy statement) and gated at
+compile time by the type walk (`Cx::swap_safe`), with `-DLOFT_NO_SWAP_REBIND` the switch.  The C's copy mints its destination
 TYPED (`loft_bind_copy` over `loft_database_typed`), as `OpDatabase(tp)` does, so the next
 rebind finds the typed root the exchange asks for ([heap-history.md](heap-history.md) has the
 pricing).  Guards `tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`

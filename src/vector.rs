@@ -271,7 +271,7 @@ pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]
         let store = keys::store(db, stores);
         let vec_rec = store.collection_rec(db.rec, db.pos);
         if vec_rec != 0
-            && !store.read_only
+            && !store.is_locked()
             && let Ok(count) =
                 u32::try_from(i64::from(store.get_u32_raw(vec_rec, 4)).saturating_add(extra))
             && *store.addr::<i32>(vec_rec, 0) >= checked_vec_cap(count, elem_size) as i32
@@ -1037,26 +1037,6 @@ pub struct PushHeader {
     pub cap: u32,
 }
 
-/// `LOFT_HOIST_VERIFY=1`'s check of `@FR-R-Refresh`'s keep-range clause: the header a
-/// self-slice pop refreshed in place must equal the one derived from the record.
-///
-/// # Panics
-/// When the held header's record or length differs from the derived one — the refresh
-/// is stale, and the message names both.
-pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
-    let fresh = vec_header(db, stores);
-    assert!(
-        held.rec == fresh.rec && held.len == fresh.len && held.store_nr == fresh.store_nr,
-        "keep-range refresh stale: held rec {} len {} store {}, derived rec {} len {} store {}",
-        held.rec,
-        held.len,
-        held.store_nr,
-        fresh.rec,
-        fresh.len,
-        fresh.store_nr
-    );
-}
-
 /// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
 #[must_use]
 pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
@@ -1213,22 +1193,6 @@ fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef 
     get_vector(db, size, from, stores)
 }
 
-/// `(R-Header)`'s KEPT clause under `LOFT_HOIST_VERIFY=1` — a holder's read, checked
-/// against the header derived from the store now.
-///
-/// # Panics
-/// When they differ: something changed the vector's record or length and no refresh
-/// followed it.
-#[must_use]
-pub fn kept_header(h: VecHeader, db: &DbRef, stores: &[Store]) -> VecHeader {
-    let fresh = vec_header(db, stores);
-    assert!(
-        h == fresh,
-        "@FR-R-Header kept clause: held {h:?} but the store holds {fresh:?}"
-    );
-    h
-}
-
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
 /// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
 /// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the
@@ -1243,42 +1207,6 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     } else {
         stores[h.store_nr as usize].elem_base(h.rec)
     }
-}
-
-/// `@FR-R-RecPtr`'s base clause — the address of the element `at` bytes past a held element
-/// BASE, for an index the caller has already tested against the held header's length.  The
-/// result is never null, and saying so is the point: a field read through it ([`rec_get`])
-/// tests its address for the null record, and once the compiler knows the address cannot be
-/// null that test and the absent value it guards fold away for the whole loop body.
-///
-/// # Safety
-///
-/// `base` must be [`vec_base`] of a header whose `len` is above zero, and `at` inside that
-/// vector's elements.  Such a base is never null: [`vec_base`] answers null only for an
-/// absent vector (`rec == 0`), whose header length is 0, and otherwise the live store's own
-/// buffer plus an offset, or a foreign store's span, which exists whenever its length is.
-///
-/// # Panics
-///
-/// Under `verify` (`LOFT_HOIST_VERIFY=1`), when the address IS null — the fact is checked
-/// instead of assumed.  Never in the emitted default.
-#[must_use]
-#[allow(clippy::inline_always)] // the fact is only seen where the body is: inlined, or it states nothing
-#[inline(always)]
-pub unsafe fn held_elem_ptr(base: *const u8, at: usize, verify: bool) -> *const u8 {
-    // SAFETY: the caller's contract — `at` is inside the vector `base` is element 0 of.
-    let p = unsafe { base.add(at) };
-    if verify {
-        assert!(
-            !p.is_null(),
-            "held element address is null — a base taken for an empty or absent vector"
-        );
-    } else {
-        // SAFETY: a base of a non-empty vector is not null (above), and neither is an
-        // offset inside its allocation.
-        unsafe { std::hint::assert_unchecked(!p.is_null()) };
-    }
-    p
 }
 
 /// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
@@ -1358,73 +1286,6 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
     v
 }
 
-/// `@FR-R-RecPtr`'s nested clause — the header of the vector held in field `fld` of the record
-/// view whose address is `ptr`: the field's vector record one load through the address, its
-/// length one read of that record, where [`vec_header`] resolves the store and reads the
-/// field through it again.  The null record (a null address) holds the absent vector, as
-/// `vec_header` answers for a null `DbRef`; `locked` is the view's own lock state, held
-/// beside its address, and a vector field lives in its record's store.
-///
-/// # Safety
-///
-/// As [`rec_get`]: `ptr` must be [`rec_ptr`] of `db` with no store reallocated since, and
-/// `fld` the offset of a vector field of the record's type.
-///
-/// # Panics
-///
-/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header disagrees with `vec_header` of the
-/// field.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub unsafe fn field_header<const VERIFY: bool>(
-    ptr: *const u8,
-    locked: bool,
-    db: &DbRef,
-    fld: u32,
-    stores: &[Store],
-) -> VecHeader {
-    let h = if ptr.is_null() {
-        VecHeader {
-            store_nr: db.store_nr,
-            rec: 0,
-            len: 0,
-            locked: false,
-            room: 0,
-        }
-    } else {
-        // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has
-        // not moved, and `fld` is a field of it.
-        let raw = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
-        let rec = if raw == DbRef::ABSENT_REC { 0 } else { raw };
-        let (len, room) = if rec == 0 {
-            (0, 0)
-        } else {
-            let store = &stores[db.store_nr as usize];
-            (store.get_u32_raw(rec, 4), store.elem_room(rec))
-        };
-        VecHeader {
-            store_nr: db.store_nr,
-            rec,
-            len,
-            locked,
-            room,
-        }
-    };
-    if VERIFY {
-        let field = DbRef {
-            store_nr: db.store_nr,
-            rec: db.rec,
-            pos: db.pos + fld,
-        };
-        assert_eq!(
-            h,
-            vec_header(&field, stores),
-            "a vector field's header read through its record's address disagrees with the store"
-        );
-    }
-    h
-}
-
 /// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
 /// the null record (the setter's own `rec != 0` test, `@FR-H-WriteNull` — a view bound to an
 /// absent element, `e = r[9]; e.x = 5`, holds the null address and the write lands nowhere),
@@ -1485,33 +1346,6 @@ fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store
     if !null {
         let _ = stores[store_nr as usize].write_allowed(rec, at);
     }
-}
-
-/// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or
-/// `None` when any element is the null sentinel.  A guarded plain nest is admitted against
-/// this bound, taken once where the vector's header is derived and held beside it, so a nest
-/// that reads the vector pays one linear pass per header derivation and nothing per tap.
-/// An absent or empty vector bounds at 0.
-#[must_use]
-pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
-    let elems = h.elems(8);
-    if h.rec == 0 || elems == 0 {
-        return Some(0);
-    }
-    let base = vec_base(h, stores);
-    // One max over the magnitudes, no branch in the loop: the sentinel's magnitude is 2^63,
-    // above every other value's, so a null element shows as a bound the type cannot hold and
-    // the test runs once at the end.  Written this way the loop vectorises; with an early exit
-    // on the sentinel it did not, and the scan itself was 5.6 % of a resample-bound row.
-    let mut bound: u64 = 0;
-    for i in 0..elems as usize {
-        // SAFETY: `base` is element 0 of a live vector record of `elems` eight-byte elements
-        // (the header was derived from it in this same prelude); `read_unaligned` because an
-        // element offset need not be aligned for `i64` (loft#1481).
-        let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
-        bound = bound.max(v.unsigned_abs());
-    }
-    i64::try_from(bound).ok()
 }
 
 /// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the index resolved
@@ -1582,8 +1416,7 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
 /// same pass as the sum: when every element of a block lies in `[-SUM_BOUND, SUM_BOUND)` and
 /// the running total is more than `SUM_BLOCK * SUM_BOUND` from the i64 edge, no prefix
 /// inside the block can leave the type, so the plain block sum IS what the checked add would
-/// have answered — the magnitude-bound proof `(R-BoundedNest)` makes for an index chain,
-/// made per block at run time.  The first block that fails ends the plain part, and the
+/// have answered — a magnitude-bound proof, made per block at run time.  The first block that fails ends the plain part, and the
 /// caller's checked loop resumes at the index answered; a null element (`i64::MIN`) fails
 /// the bound and is left to that loop, which propagates it.  Answers `(acc, at)`: the total
 /// so far and the first index NOT summed.
@@ -2019,81 +1852,6 @@ impl HoistEq for f32 {
     fn same(self, other: Self) -> bool {
         self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
     }
-}
-
-/// The checking form of a hoisted record scalar read (`LOFT_HOIST_VERIFY=1`, @PLN157 P4c):
-/// `hoisted` is what the loop's prelude read once, `fresh` what the getter answers now.
-///
-/// # Panics
-///
-/// When they differ — the loop changed the field under its hoist, through a route the
-/// write-set analysis did not classify.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
-    assert!(
-        hoisted.same(fresh),
-        "hoisted record scalar is stale — the loop wrote the field it was hoisted from \
-         (hoisted {hoisted:?}, now {fresh:?})"
-    );
-    hoisted
-}
-
-/// `@FR-R-TextBorrow` under `LOFT_HOIST_VERIFY=1` — at the walk's release of its loop
-/// variable, the borrowed element (`held`) against the element read again (`fresh`).
-///
-/// # Panics
-///
-/// When the borrow no longer names the element — its address or its length moved — which
-/// is what a store write in the body the admission did not classify would do.  The
-/// address is compared FIRST, without reading through `held`: a moved store leaves the
-/// borrow dangling, and a dangling read is not a check.  Never in the emitted default.
-#[inline]
-pub fn text_borrow_verify(held: &str, fresh: &str) {
-    assert!(
-        std::ptr::eq(held.as_ptr(), fresh.as_ptr()) && held.len() == fresh.len(),
-        "borrowed text element is stale — the loop moved the element it was borrowed from \
-         (held {} bytes at {:p}, now {} bytes at {:p})",
-        held.len(),
-        held.as_ptr(),
-        fresh.len(),
-        fresh.as_ptr()
-    );
-}
-
-/// `@FR-R-CharWalk` under `LOFT_HOIST_VERIFY=1` — the fast arm's answer for an ASCII byte
-/// (`#index`, `#next`, the character) against what the step as written left behind.
-///
-/// # Panics
-///
-/// When they differ — a byte the arm took in one move that the written step reads
-/// otherwise.  Never in the emitted default.
-#[inline]
-pub fn char_walk_verify(fast: (i64, i64, i32), written: (i64, i64, i32)) {
-    assert!(
-        fast == written,
-        "character walk fast arm disagrees with the step as written \
-         (fast (index, next, c) {fast:?}, written {written:?})"
-    );
-}
-
-/// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
-/// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
-/// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it
-/// cannot see an offset summed wrongly; this one can.
-///
-/// # Panics
-///
-/// When the two reads disagree.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
-    assert!(
-        through.same(walked),
-        "record view read through a field path disagrees with the path walked \
-         (through the address {through:?}, walked {walked:?})"
-    );
-    through
 }
 
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later

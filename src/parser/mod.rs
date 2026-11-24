@@ -3822,8 +3822,6 @@ pub(crate) fn rename(op: &str) -> &str {
 #[cfg(test)]
 mod h5_changed_source_tests;
 #[cfg(test)]
-mod p269_native_backfill_tests;
-#[cfg(test)]
 mod plan86_admission_tests;
 #[cfg(test)]
 mod plan86_nesting_guard_tests;

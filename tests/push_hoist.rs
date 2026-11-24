@@ -18,9 +18,6 @@ const CELLS: &str =
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)

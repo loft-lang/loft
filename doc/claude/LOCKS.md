@@ -60,7 +60,6 @@ handlers' install.
 | `PIPE` (`platform_process.rs`) | stdin of the watcher that kills owned process groups | whichever thread starts or ends a child | one watcher per process | — | — (program-wide by nature) |
 | `SAID` (`file_access`) | refused paths logged once per process | any thread resolving a path | de-duplication across threads | a set per context merged at the join | as the C row |
 | `BY_TYPE`, `NAMES`, `BY_SITE`, `PEAK_SNAPSHOT` (`store_budget.rs`) | live bytes per type and site for the ceiling's refusal | every allocating thread — locked on **every** add, release, grow and shrink while a ceiling is set, and test runs set one | the refusal names what holds the memory | a tally per `Stores` adopted at the join, or a walk of the live stores when the refusal is built; names from `Stores::types` | the breakdown may omit workers still running |
-| `LAZY_FETCH`, `LAZY_FETCH_REFUSAL` (`codegen_runtime.rs`) | lazy drivers of the rustc writer's programs | set by `init` before any thread | **not needed** | `OnceLock`, or gone with the writer (@PLN225) | none |
 
 ## Library loading and the FFI
 

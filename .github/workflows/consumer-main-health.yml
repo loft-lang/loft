@@ -185,7 +185,7 @@ jobs:
         # The components too (`make components`): a dependency with `[native] component =
         # "net"` finds its natives only in `target/components/` beside the binary.
         run: |
-          cargo build --release --lib --bin loft --bin loft-components
+          cargo build --release --bin loft --bin loft-components
           target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 

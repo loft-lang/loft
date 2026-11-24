@@ -11,46 +11,51 @@ that runs a fully compiled loft program in the browser at
 native speed.
 
 **Non-goal:** embedding the interpreter.  The program compiles
-to optimised WASM via the native codegen pipeline; the HTML
-file is just a base64-embedded WASM blob + inline JS bridge.
+to optimised WASM through the C backend; the HTML file is just a
+base64-embedded WASM blob + inline JS bridge.  The page the
+retired rustc writer built is described in
+[HTML_EXPORT-history.md](HTML_EXPORT-history.md).
 
 ## Pipeline architecture
 
 ```
 loft --html game.loft
   │
-  ├─ Parse + compile (existing)
-  ├─ Generate Rust source (existing output_native_reachable)
-  ├─ rustc --target wasm32-unknown-unknown --crate-type cdylib
-  ├─ wasm-opt -O1 (optional)
+  ├─ Parse + compile
+  ├─ Write the program's C for a page (`loft::c::emit_browser_program`)
+  ├─ clang --target=wasm32-wasip1 (or wasm32-wasi) -DLOFT_BROWSER  (`c_driver::build_wasm`)
+  ├─ wasm-opt -O1 --asyncify (optional, warned when missing)
   └─ Assemble HTML (base64 WASM + inline JS bridge)
 ```
-
-**Size:** ~200–400 KB raw WASM, ~70–130 KB gzipped (typical).
 
 The CLI flag is parsed in `src/main.rs` (alongside `--native-emit`).
 Output defaults to `game.html` next to the source; override with
 `--html out.html`.
 
-## Codegen — cdylib entry point
+## Entry point — `loft_start`
 
-In normal `--native` mode, the generated Rust has `fn main()`.
-For `--html`, codegen instead emits an exported entry point:
+A native build's C has `int main`.  For `--html`, the unit instead
+exports an entry point the page's script calls, under asyncify, which
+suspends it at each frame the program yields and resumes it from the
+same export:
 
-```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn loft_start() {
-    loft::codegen_runtime::install_browser_panic_hook();
-    let cell = std::cell::UnsafeCell::new(Stores::new());
-    // The program's stores, named for the panic hook while it runs.
-    let _program = loft::codegen_runtime::browser_program(&cell);
-    init(&cell);
-    n_main(&cell);
+```c
+extern void __wasm_call_ctors(void);
+__attribute__((export_name("loft_start"))) void loft_page_start(void) {
+    loft_cx *cx = &loft_main_cx;
+    static int started = 0;
+    if (!started) { started = 1; __wasm_call_ctors(); }
+    loft_bind_tables();
+    loft_start(cx, 0, 0);
+    /* … the program's main … */
+    loft_leak_report(cx);
+    fflush(stdout); fflush(stderr);
 }
 ```
 
-The `cdylib` crate type produces a `.wasm` module rather than a
-binary.  The exported `loft_start` is what the JS bridge calls.
+The libc's constructors run once, as a page never calls the WASI
+`_start` that would; the program ends by returning, so the export
+flushes what it printed itself.
 
 ## JS bridge — host imports
 
@@ -58,11 +63,12 @@ binary.  The exported `loft_start` is what the JS bridge calls.
 > (JS→loft input QUEUE, #476 — seed `globalThis.loftInput`, push live
 > messages with `globalThis.loftPush(msg)`, one pop per call),
 > `host_output` (loft→JS structured messages → `globalThis.loftOutput(msg)`),
-> the `loft_io.loft_host_fs_*` FILESYSTEM (loft#851 — `doc/loft-fs.js` is the
-> host half; see [WASM.md § The page filesystem](WASM.md)), the GL set, the
-> frame yield — plus whatever `[wasm.bridge]` routes a used library ships (e.g.
-> `web`'s WebSocket).  **There is still no `arguments()` and no env**: those
-> stdlib calls compile to in-wasm stubs returning empty.  (The
+> the WASI imports its libc runs on (`doc/loft-wasi.js`: output, clocks,
+> randomness, and the FILESYSTEM — `doc/loft-fs.js` preopened as `/`; see
+> [WASM.md § The page filesystem](WASM.md)), the GL set, the frame yield —
+> plus the host functions a used library's `[wasm.bridge] host_js` provides
+> (e.g. `web`'s WebSocket).  **There is no `arguments()` and no env**: the
+> page answers one argument and an empty environment.  (The
 > `globalThis.loftHost` bridges in [WASM.md](WASM.md) belong to the
 > wasm-bindgen IDE build, not to `--html`, and `--html` cannot reuse them —
 > they need wasm-bindgen.)
@@ -72,20 +78,18 @@ instance.  The shape:
 
 ```javascript
 const imports = {
-  env: {
-    // println goes through this host import
-    loft_println: (ptr, len) => { /* read from memory.buffer, decode UTF-8, append */ },
-
-    // GL functions are imports — see "GL bridge" below
-    gl_clear: (r, g, b, a) => { /* WebGL2 call */ },
-    gl_draw: (vao, count) => { /* WebGL2 call */ },
-    gl_swap_buffers: () => { /* request next animation frame */ },
-    gl_poll_events: () => { /* return 0 if user closed tab, 1 otherwise */ },
+  // the C's libc: fd_write (println), clocks, random_get, the page filesystem
+  wasi_snapshot_preview1: { /* doc/loft-wasi.js */ },
+  loft_io: {
+    loft_host_input_len: () => { /* bytes of the next queued message */ },
+    loft_host_output: (ptr, len) => { /* globalThis.loftOutput(msg) */ },
+  },
+  // GL functions are imports — see "GL bridge" below
+  loft_gl: {
+    loft_gl_clear: (…) => { /* WebGL2 call */ },
+    loft_gl_swap_buffers: () => { /* the frame yield — see "Frame yield contract" */ },
     // … one entry per GL function the program uses
-
-    // Frame yield — see "Frame yield contract" below
-    loft_yield: () => { /* save state, request animation frame, exit loft_start */ },
-  }
+  },
 };
 
 WebAssembly.instantiate(wasmBytes, imports).then(r => {
@@ -124,16 +128,17 @@ shape reached the browser as a `LinkError` naming an import index.  The
 diagnosis was right; the disposition was not.)
 
 `host_import_stub_js` (`src/native_utils.rs`) emits the stubs, applied after the
-page shim and every `[wasm.bridge]` host_js, so a real handler always wins.
+page shim and every library's `host_js`, so a real handler always wins.
 Gate: `tests/wasm/html-unavailable-builtin.sh` builds a program naming an absent
 builtin, loads the page in headless chromium, and checks that the program's own
 `else` branch is what ran.
 
 ## GL bridge — WebGL2 imports
 
-Every GL function the loft program uses becomes an import.
-Codegen scans the reachable native call graph and emits one
-import per `gl_*` function found.  The JS bridge implements
+Every GL function the loft program uses becomes an import of
+the `loft_gl` module: the C declares one
+`__attribute__((import_module("loft_gl"), import_name(…)))`
+per `gl_*` function it reaches.  The JS bridge implements
 each as a thin wrapper over the WebGL2 context obtained from
 the `<canvas>`:
 
@@ -142,12 +147,12 @@ const gl = canvas.getContext('webgl2', { antialias: true });
 
 // Each gl_* loft function maps to one or more WebGL2 calls
 const imports = {
-  env: {
-    gl_clear: (r, g, b, a) => {
+  loft_gl: {
+    loft_gl_clear: (r, g, b, a) => {
       gl.clearColor(r/255, g/255, b/255, a/255);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     },
-    gl_draw: (vao, count) => {
+    loft_gl_draw: (vao, count) => {
       gl.bindVertexArray(vaoTable[vao]);
       gl.drawArrays(gl.TRIANGLES, 0, count);
     },
@@ -310,8 +315,7 @@ program.  ~6 s end-to-end if the HTML is fresh.
 
 **Refresh the HTML before testing.**  The test does NOT auto-build
 via `make game` — invoking `cargo build` mid-`cargo test` races
-the parallel rustc invocations in `tests/native.rs` over
-`target/release/deps/`.  Run `make game` manually (or
+the test binaries' own build over `target/release/deps/`.  Run `make game` manually (or
 `make test-html-render` which does the build + test in one step)
 when touching `--html` / `lib/graphics`.
 
@@ -340,11 +344,10 @@ process.
 
 The pipeline solves this by **yielding at `gl_swap_buffers`**:
 
-1. The loft `gl_swap_buffers()` call is mapped to an import
-   `loft_yield`.
+1. The loft `gl_swap_buffers()` call is the import
+   `loft_gl.loft_gl_swap_buffers`.
 2. `wasm-opt --asyncify` unwinds the program's stack at that
-   import — its stores live in `loft_start`'s frame, so they go
-   with it — the bridge requests `requestAnimationFrame`, and
+   import (its stores stay in linear memory), the bridge requests `requestAnimationFrame`, and
    control returns to JS.
 3. JS receives control; on the next frame, it resumes loft
    from where it left off.
@@ -520,79 +523,37 @@ Limited surface today; expand as need arises:
 - `--names` — keep the wasm name section so a trap's frames resolve to loft
   function names (see *When a page faults* below)
 - `LOFT_HTML_TITLE=…` (env var) — override the `<title>`
-- WASM imports use the `env` namespace — replace any import
-  via a custom JS bridge if you wrap the output HTML
+- WASM imports use the `loft_*` modules and WASI — replace any
+  import via a custom JS bridge if you wrap the output HTML
+  (`--host-provided` makes a missing one a warning)
 
 ## When a page faults (loft#950)
 
-A browser page reports a fault to the page, not to stderr — on
-`wasm32-unknown-unknown` stderr is a sink, so anything written there is
-simply lost.
+A browser page reports a fault to the page.  The C's runtime writes a
+fault's diagnostic to standard error, which the page's WASI layer
+(`doc/loft-wasi.js`) writes into the page — the ordinary rendered
+diagnostic, with `--> file:line:col` and, on the semantics build
+(`-DLOFT_CALL_CHAIN`), the loft frames under it.
 
-That matters because of how a fault ENDS on this target: a panic aborts,
-and abort compiles to the `unreachable` instruction.  So the console's
-whole symptom is:
+### A trap is not a fault loft reports
 
-```
-RuntimeError: unreachable
-```
+A **trap** — most often the stack running out under deep recursion — ends
+the module without running loft's fault path.  It throws into the JS that
+called the module, and both page shells catch it: the exception, the
+browser's own wasm backtrace, and — when the message names an exhausted
+stack — a line saying that bound belongs to the page's wasm engine rather
+than to loft, since the same program halts with loft's diagnostic on
+`--interpret` and `--native` ([WASM.md § How deep a program can recurse](WASM.md)).
 
-No message, no location, no stack.  loft#950 was reported as an
-undebuggable trap for exactly that reason.  Both fault paths now route
-through the same host import `println` uses:
-
-| fault | what the page gets |
-|---|---|
-| a Rust panic (incl. a failed `assert`) | `loft: panicked at …: <message>` + the loft frames under it |
-| a loft `panic(…)` / any `RuntimeError` | the ordinary rendered diagnostic, with `--> file:line:col` |
-
-The loft frames come from the shadow call stack `cr_call_push` already
-maintains, and they are the half a reader acts on: the Rust location names
-a spot in generated code or in loft's own runtime, which does not say what
-the *program* was doing.
-
-```
-loft: panicked at prog.rs:502:18:
-game.loft:2 assertion failed
-  in inner() (game.loft:1)
-  in middle() (game.loft:5)
-  in main() (game.loft:6)
-```
-
-### A trap is not a panic (loft#1059)
-
-The table above is about a PANIC.  A **trap** — most often the stack running out
-under deep recursion — does not run the panic hook at all, so none of that
-rendering fires.  What a trap does do is throw into the JS that called the
-module, and both page shells now catch it: the exception, the browser's own wasm
-backtrace, and — when the message names an exhausted stack — a line saying that
-bound belongs to the page's wasm engine rather than to loft, since the same
-program halts with loft's diagnostic on `--interpret` and `--native`
-([WASM.md § How deep a program can recurse](WASM.md)).
-
-The report does not call back into the module for loft's own frames, and cannot:
-a trap leaves the shadow-stack pointer wherever it died, because the epilogues
-that would restore it never ran, so a second entry runs off the end of the stack
-it just exhausted.  The browser's backtrace is the evidence instead, and
-`--names` is what makes its frame numbers resolve.
-
-The catch covers the boot call and the asyncify RESUME pump both — a trap during
-a frame loop used to stop the pump silently, which reads as a page that simply
-stopped.
-
-**What is still silent:** an allocation failure.  `handle_alloc_error`
-aborts without running the panic hook, so a page that OOMs still traps
-bare.  That is worth knowing rather than worth fixing — after this, a trap
-with no message before it has told you it was not a panic.
-
-The hook is installed by the generated `loft_start`, ahead of `init`, so a
-panic during startup is covered.  It is a no-op on every other target,
-where stderr works and the native crash reporter owns this job.
+The report does not call back into the module for loft's own frames: a trap
+leaves the stack pointer wherever it died, so a second entry runs off the end
+of the stack it just exhausted.  The browser's backtrace is the evidence
+instead, and `--names` is what makes its frame numbers resolve.  The catch
+covers the boot call and the asyncify RESUME pump both.
 
 ### `--names`: reading the browser's own backtrace (loft#954)
 
-Chrome hands a trap a complete wasm backtrace, and it is the best evidence
-there is — ten frames naming the failing function and its whole call chain:
+Chrome hands a trap a complete wasm backtrace:
 
 ```
 [exception] RuntimeError: unreachable
@@ -600,50 +561,35 @@ there is — ten frames naming the failing function and its whole call chain:
     at wasm://wasm/0168beca:wasm-function[1054]:0x567983
 ```
 
-A default page cannot resolve one of those numbers, so the only route left
-is bisecting the loft source by hand — rebuild, redrive the browser, move
-one `println`.  **`loft --html --names`** makes them resolve.  It costs
-roughly 10–15 % page size, so it is opt-in: the people who need it are
-debugging and will take the bytes.
-
-It has to do two things, and either one alone is useless:
+A default page cannot resolve one of those numbers.  **`loft --html --names`**
+makes them resolve, at the cost of a larger page, so it is opt-in.  It has to
+do two things, and either one alone is useless:
 
 | half | what it does | if it were missing |
 |---|---|---|
-| `wasm-opt --strip-dwarf -g` instead of `--strip-debug` | keeps the `name` custom section | no names at all — the default page |
-| `#[inline(never)]` on each generated loft function | leaves a frame to name | measured on a four-function program, LLVM folded all of them into `loft_start`; the section then named 616 std/alloc internals and not one loft function |
-
-The names are the generated Rust symbols, which carry the loft name
-verbatim: `_RNvCs3DwF3yqkNJQ_4prog17n_part_thumb_wire` is `part_thumb_wire`.
-Only loft's own functions are pinned out of line — std, alloc and loft's
-runtime still inline freely, so the cost stays on the code the backtrace is
-about.
+| `wasm-opt --strip-dwarf -g` instead of `--strip-debug`, and clang's own `wasm-opt` pass skipped (`--no-wasm-opt`, else `-O0`) | keeps the `name` custom section | no names at all — the default page |
+| `-fno-inline` on the page's C | leaves each loft function a frame of its own | the trap names the caller a function was inlined into |
 
 Two things to know before leaning on it:
 
-- **It is a different build.** Pinning functions out of line can move an
+- **It is a different build.** Keeping functions out of line can move an
   optimiser-sensitive fault.  If a trap reproduces without `--names` and not
   with it, that difference is itself the finding.
-- **A build that produced no section says so.**  `--names` is asked for
-  exactly when a page must be debugged from its backtrace, so a silently
-  nameless page — a binaryen that does not honour `-g` — is reported rather
-  than shipped looking identical.
+- **A build that produced no section says so.**  A binaryen that does not
+  honour `-g` is reported rather than shipped looking identical.
 
 Guarded by `html_names_flag_makes_loft_functions_resolvable_in_a_backtrace`
-in `tests/html_wasm.rs`, which asserts both halves and pins the default page
-as still stripped, so a green there cannot come from names that were always
-present.
+in `tests/html_wasm.rs` (skipped where `wasm-opt` is missing).
 
 ## Build prerequisites
 
 For users running `loft --html`:
 
-- Rust toolchain with `wasm32-unknown-unknown` target
-  installed (`rustup target add wasm32-unknown-unknown`).
-- `libloft.rlib` + transitive deps for that target
-  (installed by `make install` to
-  `/usr/local/share/loft/wasm32-unknown-unknown/`).
-- `wasm-opt` on `PATH` (optional but recommended for size).
+- clang with a wasm32 target, `wasm-ld` and a WASI libc (or a
+  clang named in `LOFT_WASM_CC`); a build without them stops and
+  names what to install ([WASM.md § Build Toolchain Dependencies](WASM.md#build-toolchain-dependencies)).
+- `wasm-opt` on `PATH` — without its asyncify pass a page that
+  yields frames hangs the tab.
 - A modern browser with WebGL2 + WebAssembly + ES module
   support (any 2020+ browser).
 
@@ -652,16 +598,17 @@ For users running `loft --html`:
 | Concern | Location |
 |---|---|
 | `--html` CLI flag parsing | `src/main.rs` |
-| Codegen entry-point switch (cdylib vs main) | `src/generation/mod.rs` (output_native_reachable, with `wasm_cdylib: bool`) |
-| WASM-import emission for GL / println / yield | `src/generation/` (ops dispatch + native registry) |
+| The page's C and its `loft_start` export | `src/c/mod.rs` (`emit_browser_program`) |
+| The wasm build (clang, WASI sysroot, `LOFT_BROWSER`) | `src/c_driver.rs` (`build_wasm`) |
+| GL / WebSocket imports in the C | `src/c/mod.rs` (`loft_gl`), `src/c/loft_web_page.h` (`loft_web`) |
 | HTML assembly + base64 embedding | `src/main.rs` (HTML template + `wasm-opt` invocation) |
 | End-to-end test | `tests/html_wasm.rs` (runs `--html` against fixture loft programs, verifies the output HTML loads + executes via headless chromium) |
 | Makefile targets | `make game` (brick-buster.html), `make wasm-html-test` (E2E gate) |
 
 ## Subsequent W1.x work (not part of W1.1)
 
-W1.18 added WASM Worker Thread infrastructure for parallel
-`par(...)` in the browser.  W1.19 / W1.20 added the random /
+A page runs `par` on Web Workers when its host is cross-origin isolated, and on the
+main thread otherwise, with the same values (@C3, [THREADING.md](THREADING.md#where-the-threads-come-from-pln117)).  W1.19 / W1.20 added the random /
 time host bridges.  See [WASM.md](WASM.md) for the broader
 WASM runtime + CHANGELOG_TECHNICAL.md for the W1.x history.
 

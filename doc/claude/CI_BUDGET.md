@@ -58,7 +58,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > name the holder — it answers `HELD_UNKNOWN` there and its self-test SKIPS, stated, because
 > its cells are /proc verdicts.  And this box runs an endpoint-security agent (Kandji's ES
 > system extension) at a steady 25–37 % of one core, which taxes every exec and file event —
-> the spawn-heavy phases (rustc per test program, the scratch sweep) more than a hot loop —
+> the spawn-heavy phases (a C compile per native test program, the scratch sweep) more than a hot loop —
 > so a timing taken here beside a build is not a timing.
 >
 > ⚠ A mid-run kill can tear the debug rlib (`undefined symbol: anon.*.llvm.*` out of
@@ -110,8 +110,7 @@ binary and the artefact it links have to come from one source state.
 | item | what | trigger / size |
 |---|---|---|
 | **E — read the PR** | On the first real PR run after the split: the four shards' walls (`gh run view --json jobs`), the `Finished test profile` line inside `Test` (expected seconds, was 4m05s), and the run AFTER it restoring warm (`Build` shows deps Fresh, the corpus and build caches restored).  Record here; the projection was heavy 29.3 → ~18 min | the next PR; XS |
-| **F′ — a cache for the wasm builds** | `--html` / `--native-wasm` write `<dir>/.loft/<stem>.wasm` with no key and recompile every run (`html_embed` 60 s per test isolated).  A `<stem>-<hash>` entry keyed like the native cache (generated Rust ⊕ wasm rlib CONTENT ⊕ `wasm-opt --version` ⊕ flags); seam: a lookup after `prog.rs` is emitted at `src/main.rs` "Compile to wasm32-unknown-unknown cdylib", a publish after `wasm_bytes` is read before "Assemble HTML".  Pays only on a run whose wasm rlib did not move — a docs- or tests-only re-gate — never on a fix iteration; a `--native` probe needs no cache (0.3 s cold, and the emitted Rust embeds the script's path, so a content key is a per-name key) | when docs-only re-gates are measured to matter; S |
-| **H — reuse compiled blocks** | Every loft rebuild invalidates every cached native test program (the key folds the whole `libloft` rlib) and, on a development build, every library artifact; and each test program carries the standard library's 3.3k lines through `rustc` again (~70 % of its generated Rust).  Keying both on generated source ⊕ the runtime's fingerprint, and compiling the standard library once for the test tier, is [@PLN200 B7](plans/200-backend-structure.md#b7--testing-reuse-compiled-blocks) | after @PLN191's runtime crate; B7.5 earlier; M–L |
+| **F′ — a cache for the wasm builds** | `--html` / `--native-wasm` write `<dir>/.loft/<stem>.wasm` with no key and recompile every run (`html_embed` 60 s per test isolated).  A `<stem>-<hash>` entry keyed like the native cache (generated C ⊕ the clang/WASI toolchain's version ⊕ `wasm-opt --version` ⊕ flags); seam: a lookup before `c_driver::build_wasm` compiles the emitted C, a publish after it writes the module.  Pays only on a run whose generated C did not move — a docs- or tests-only re-gate — never on a fix iteration; a `--native` probe needs no cache | when docs-only re-gates are measured to matter; S |
 | **G — the gate lock's default** | `make ci` queues behind another checkout's gate (`/tmp/loft-gate.lock`); `LOFT_GATE_PARALLEL=1` restores the throttle.  Queue finishes the first gate at 1× and the second at the same 2× the throttle gave both, and removes the OOM and load-flake reruns; an agent waiting on the lock is idle | the owner's call; XS to flip |
 | **Pin the artefact a long gate measures** | A sweep that consumes `target/release/loft` records its hash at start and fails loudly when it moves (or copies the binary aside); the gate lock is `make ci`-only and does not stop a `cargo build` beside a sweep | when the next sweep is contaminated; S |
 | **The crate split** | The 22 s a one-function edit costs is the 325 k-line crate's frontend; a workspace (parser · typing · store · runtime · codegen · cache/registry) gives cargo's crate-level "unchanged, not rebuilt" — the true analogue of a Makefile's per-file rule | H; a plan of its own |
@@ -134,7 +133,7 @@ three builds ~130 s. So the test step is the whole question.
 **The thread count is capped by MEMORY as well as cores.** `make ci` sizes its
 build and test parallelism as `nproc / live-gates`, floored at 2 — and now also capped at
 `MemAvailable / 0.7 GiB` (`CI_MEM_JOBS` in the Makefile): a thread's peak is roughly 0.7 GiB
-(rustc for native fixtures, the release build's codegen units), so sizing by cores alone
+(the C compiler for native fixtures, the release build's codegen units), so sizing by cores alone
 over-commits a small-memory box into swap — measured on a 14 GiB laptop, 20 threads drove
 swap use from 7.6 to 10.3 GiB mid-gate while a browser and rust-analyzer held their usual
 residency. `MemAvailable` is read once at gate start and already discounts that residency;
@@ -158,7 +157,7 @@ process tree, not the box, and `ci-run.sh start` is the launcher that survives i
 
 **A SECOND gate on the box turns native tests RED, not slow.** With
 `LOFT_GATE_PARALLEL=1`, or with a sibling checkout's gate live while yours starts, the two
-storms of `rustc` meet and the LINKER is what gives: a native cell fails with `native compile:
+storms of native compiles meet and the LINKER is what gives: a native cell fails with `native compile:
 error: linking with `cc` failed: exit status: 1`, the harness reports it as a failed test, and
 the verdict names a subject nothing is wrong with. Measured over four runs of one tree on one
 night: `keyed_fast_paths::the_general_paths_give_the_same_answers_on_native` failed in the two
@@ -318,7 +317,7 @@ the slowest entries from a contended run on an idle box:
 | `dhtml_vector_arg_gl_host_import_is_emitted` | 234 s | **19.1 s** | 12× |
 | `a_declared_font_reaches_the_emitted_page` | 230 s | **0.9 s** | **255×** |
 
-The cost is STRUCTURAL: ~4 474 tests of which a large share shell out to `rustc` or link a
+The cost is STRUCTURAL: ~4 474 tests of which a large share shell out to the C compiler or link a
 cdylib, saturating the cores, so wall clock is set by how much else is running rather than by any
 one test. The two levers that follow are behavioural, not code:
 
@@ -438,7 +437,7 @@ answer after it: leave out what that runner cannot host — `test(/native_script
 corpus fills its temp disk) and a test that runs `target/release/loft` by path, which this
 job never builds (`package_layout`).  `linux-probe` restores the Linux leg's cache read-only — a cache only a push to `main` saves,
 so it starts cold whenever that one has been evicted — and runs the tests the way `ci.yml`'s
-Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
+Test job does (dev profile, the `ci` nextest profile, the release binary built first), so its
 answer is that leg's answer for the tests it selects.  GitHub dispatches a workflow by name
 only once the file is on `main`; before that, a push of the commit to the probe's own branch
 (`linux-probe`, `windows-probe`) runs its standing probes — for `linux-probe`, every test
@@ -455,10 +454,9 @@ half — `make sweep-scratch`), delete scratch whose durable copy exists, and bo
 `CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 ./scripts/find_problems.sh --subject <name>`
 finishes later and finishes.  A killed run is no verdict, exactly as above.
 
-What a GitHub run cannot do: measure a ratio (`make speed` is a report and stays local;
-the native/Rust ratio gate, `scripts/native_ratio.sh --gate`, runs LAST in the local
-`make ci` and is deliberately not mirrored in ci.yml, because a shared runner's timing is
-noise and a flaking timing gate is one people learn to ignore) or read this box's scratch.  What it does that a local
+What a GitHub run cannot do: measure a ratio (`make speed` and `bench/stats.py` are reports
+and stay local, because a shared runner's timing is noise and a flaking timing gate is one
+people learn to ignore) or read this box's scratch.  What it does that a local
 run cannot: run cold, on a machine nobody else is using, and leave a verdict that
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
@@ -476,7 +474,7 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
 |---|---|---|
 | does it compile, what does the type checker say | `cargo check --bin loft` | ~1 min on a quiet box (its artefacts are separate from a build's: the first check in a session warms them, ~1 min more) |
 | what does the fixed binary DO — `--interpret`, `--native`, `introspect`, `--native-emit` | `cargo build --bin loft` (dev): `target/debug/loft` runs `--native` against the `deps/` rlib this build wrote | 3–6 min alone; 24 min beside a sibling's dependency build |
-| a release binary | `cargo build --release --bin loft` | 20–40 min — needed ONLY to refresh `target/release/libloft.rlib` for the `cargo test --release` native suites; `make check-rlib` says when |
+| a release binary | `cargo build --release --bin loft` | 20–40 min — needed by the tests that spawn `target/release/loft` |
 | the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build and the release rlib.  The curated set builds no wasm rlib: its `--html` / `--native-wasm` tests go through the C, and the Rust-writer ones live in `mod rust_writer` (nightly).  `--subject <name>` / `--changed` build the wasm rlibs only when a selected binary drives a page |
 | one area | `find_problems.sh --subject <name>` | seconds to a minute |
 | the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
@@ -518,13 +516,10 @@ threshold is 15 %, the noisy rows are flagged, and a move is one that repeats.  
 box idle for a measurement, and then for the suite, is how a verified unit sat for two hours
 (the history companion has the measurement).
 
-**The three traps that turned one perf-check into three:**
+**The traps that turned one perf-check into three:**
 
 * a lane crashes — that is a DEFECT in the change, found by the run doing its job; fix it,
   and rerun only that lane (`ARGS="--package DIR=NAME"`), never the set;
-* `no method named …` in a native lane's `rustc` after a new op — the bare
-  `target/release/libloft.rlib` the lanes link is STALE (`cargo build --bin loft` never
-  refreshes it); `cargo build --release --lib` first, and `make check-rlib` says when;
 * `no baseline to compare with` — this host has no committed results row; the A/B is then
   `perf_check.py --baseline <saved on-run.tsv>` with the switches OFF, on the flagged lanes
   named explicitly (`--package …`, `--only …`), because with the switches off the census
@@ -656,9 +651,7 @@ the full matrix as ONE test of 3,661 cells took 421 s and tripped
 `scripts/test_duration_gate.py`, and as seven tests beside one another four of them ran
 into the 600 s limit — which is why the tests sample the C backend.  It is in the per-PR test legs as any test binary.
 The rest of the C backend is the night's: `miri.yml`'s `slot-matrix-c` runs `gate --full`, every
-cell on both backends against the same baseline, and reports in the daily digest.  The rustc writer is the night's
-too: `slot-matrix-rust` runs `gate --rust --full`, every cell on that writer, against its own
-baseline.  The wider
+cell on both backends against the same baseline, and reports in the daily digest.  The wider
 runs below have no baseline of their own and are run by hand:
 
 | Run | Cells | Both backends |
@@ -676,15 +669,15 @@ a cell that loops costs its limit and is named, and cannot hold the leg.
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`),  several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on the interpreter and the C backend through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193; its rustc-native leg runs on the daily schedule), **the C backend sweep** (`c-sweep`: every corpus program through the C backend in its three macro modes against the interpreter, four shards of about ten minutes; advisory, @PLN203 C8) | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`),  several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on the interpreter and the C backend through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193), **the C backend sweep** (`c-sweep`: every corpus program through the C backend in its three macro modes against the interpreter, four shards of about ten minutes; advisory, @PLN203 C8) | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
-| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, the C backend's poison and ASan sweeps (`c-sweep-unsound`, four poison shards and eight ASan ones), debug-assertions, valgrind memcheck sweep (release binary, both backends), the slot matrix with every cell on the C backend (`slot-matrix-c`, @PLN221) and on the rustc writer (`slot-matrix-rust`), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
+| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, the C backend's poison and ASan sweeps (`c-sweep-unsound`, four poison shards and eight ASan ones), debug-assertions, valgrind memcheck sweep (release binary, both backends), the slot matrix with every cell on the C backend (`slot-matrix-c`, @PLN221), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta, nightly and the MSRV building loft), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **once per PR, on dispatch** (`miri.yml`, `pr_head: true`) | the nightly jobs a pull_request run skips, on the PR's head commit; reports as `nightly / PR head` and in the PR's `Nightly health` comment, never a required check; its jobs start once the PR's own runs on that commit have theirs on runners (`pr-ci-started`) ([DEVELOPMENT.md § The PR-head nightly](DEVELOPMENT.md#the-pr-head-nightly)) | `workflow_dispatch` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
 | **Sundays 05:30** | `registry-validation` (scope `contract`) — from the contract boundary on (`CONTRACT_FLOOR` in `scripts/registry_matrix_versions.py`), the newest release of each API line: under the soft freeze loft does not break a release that works, so one release per API checks the promise.  Older releases are held (a pin or a lock resolves them) but not tested; `full`, every published version, is by hand (`workflow_dispatch`) | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — ONE suite pass per published lib, scored twice: does it still compile + test (a break is the freeze's business), and is it RELEASE-READY — RED on any warning, since a lib carrying them fails its own `LOFT_DENY_WARNINGS` CI. **Advisory, never a required check**; blocking on a release | `schedule`, `push`, `pull_request` |
 | **nightly 07:00** | `lib-branch-report` — unmerged branches across the library repos | `schedule` |
-| **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check), and the **rustc-native** jobs taken off the per-change path: the language suite on rustc-native (`language-suite`'s daily step, its junit kept beside the per-change one) and the native suites under a STATIC link (`static-link`: `LOFT_NATIVE_CABI=0`, every suite that links a package, ubuntu and macOS, @PLN197).  The per-change compiled backend is the C (@PLN203) | `schedule` |
+| **daily 03:00** | the Windows leg (mirrored onto PRs as the non-blocking `Windows (daily)` check), and the native suites under a STATIC link (`static-link`: `LOFT_NATIVE_CABI=0`, every suite that links a package, ubuntu and macOS, @PLN197).  The compiled backend is the C (`@C170`) | `schedule` |
 | **daily 05:00** | `browser-threads` — the threaded-wasm browser leg | `schedule` |
 | **daily 05:45** | `lib-main-health` — published libs against their own `main` | `schedule` |
 | **daily 06:15** | `consumer-main-health` — each consumer's tip (moros, dryopea, Moros-Economy-Development, crawler) against loft main, every package on both backends; a stability meter (STABILITY_ROADMAP.md § The owner's directive) | `schedule` |
@@ -707,7 +700,7 @@ per program is the runtime every unit carries, about a second of `cl` time (`@C1
 ### A test that spawns a pool declares its share
 
 nextest runs `NEXTEST_TEST_THREADS` tests side by side, and a test that sizes an inner pool
-from the core count multiplies that: six native corpus chunks at 24 `rustc` each in
+from the core count multiplies that: six native corpus chunks at 24 native compiles each in
 `heavy-wide`, beside a 24-slot pool and a drop-gate chunk's 24 spawned `loft`s, was **184
 contending threads**, and the box hung.  So every test that spawns workers
 carries `threads-required` in `.config/nextest.toml` and sizes its pool from
@@ -720,7 +713,7 @@ The wider cure — the corpus leaving the crate for a suite of its own — is @P
 ### The test step runs in two passes
 
 `make ci` and `ci.yml`'s Test step run nextest twice.  The MAIN pass (`--profile ci`) runs
-everything but the starvation victims, with the rustc-storm makers — `native`, `n2_cdylib`,
+everything but the starvation victims, with the compile-storm makers — `native`,
 `n3_parity`, `n3_use_native`, the drop gate's native cells — in the six-slot `heavy-wide` group
 and `html_wasm` in `html-wasm-wide`.  The SECOND pass (`--profile ci-victims`) runs the
 networked tests a storm starves — `multiplayer_v2`, `multiplayer_v3`, `wasm_debug_relay` —
@@ -732,7 +725,7 @@ same way: the storm makers six wide, then the victims alone under `ci-victims` �
 one cap.  One at a time the storm makers were a 716 s chain the cap cut; six wide, 313 s.
 A per-change run (PR, push, the local curated run) leaves out every `mod rust_writer` test
 (`ci_test_filter.py nightly`), `wasm_debug_relay`'s Rust-writer page among them, so its
-victims pass holds the two multiplayer suites and the local run builds no wasm rlib.
+victims pass holds the two multiplayer suites.
 
 ## The schedule is not a clock — the release gate (2026-09-04)
 
@@ -801,8 +794,7 @@ an hour and a half of wall clock for a release that happens monthly.
 ## Each leg builds only the binaries it runs
 
 **Rule: a test leg builds the test binaries it runs and nothing else — one compile of the
-crate, no release build — restores no `target/`, and builds no wasm runtime its binaries
-do not use.**  Of a leg's wall, the test phase was a third and the rest was build: every
+crate, no release build — and restores no `target/`.**  Of a leg's wall, the test phase was a third and the rest was build: every
 leg compiled all 445 test binaries and ran its share, compiled the crate a second time in
 release because twenty-two binaries spawned `target/release/loft` (and skipped silently
 without it), restored a whole `target/` that made the build no faster (the dependencies
@@ -810,9 +802,8 @@ are half a minute of a cold build; the rest is loft and its test crates, which c
 every commit), and warmed two wasm runtime rlibs for each of the two binaries whether or
 not a test of the leg ran a page (the measurements: [the history companion § Where a test
 leg's minutes went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).  Every test
-spawns the loft its own build made (`CARGO_BIN_EXE_loft`), whose `--native` links the
-rlib beside it in `deps/`; a test that wants the release binary is a test of the release
-row, not of the gate.
+spawns the loft its own build made (`CARGO_BIN_EXE_loft`); a test that wants the release
+binary is a test of the release row, not of the gate.
 
 What `ci.yml` does:
 
@@ -823,19 +814,14 @@ What `ci.yml` does:
   — every other `tests/*.rs`, the unit tests, the bin targets' tests — is packed into
   `rest-a/b/c` by the measured seconds in `scripts/ci_shards.tsv`, a test that takes the
   whole runner (`threads-required`) counted four times, since nothing runs beside it.  The
-  binaries that need a wasm runtime are packed together into `rest-a`, which starts the pack
-  with the measured cost of building those runtimes so it is handed that much less.  The
   `Shard` step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest
   passes take them, so the build and the run select one set.  `ci_test_filter.py` composes
   the SAME filterset for every leg (its shard argument is accepted and selects nothing);
   a single-slot group's member on a rest leg still runs in its one slot there.
   `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
-- The wasm target and the runtime rlibs are built on the legs with a binary that uses
-  them (`ci_shards.py html` / `wasi`): the html and wasi shapes SIDE BY SIDE in one step
-  (`loft cache warm --runtime <shape>`, each a 1m45 release build of the crate for one
-  target that does not saturate the runner alone), and the warm-up proper runs
-  `--no-runtime` — a leg whose binaries use no runtime builds none, where every leg built
-  both, twice, before.
+- The wasm32-unknown-unknown target is installed on the legs with a binary that drives a
+  `--html` page (`ci_shards.py html`): the html tests skip without it.  `--html` and
+  `--native-wasm` compile through the C and clang, so no leg builds a wasm runtime.
 - The build is `cargo test --no-run` with the leg's targets, not `cargo build`: nextest
   runs the TEST artefacts, and for `--lib` that is the crate compiled once more as its
   unit-test harness, which a `cargo build --lib` does not make — the test step then spent
@@ -875,8 +861,8 @@ What `ci.yml` does since:
 
 - **Saves on `main` only** (`github.ref == 'refs/heads/main'`); every other run restores.
 - **`target/loft-native-cache` is out of the Linux/macOS cargo cache.** The compiled
-  native test binaries are 9–13 GB, and their key includes the `libloft.rlib` content
-  hash (`tests/native.rs` `cache_key`), so any commit touching loft's source misses
+  native test binaries are 9–13 GB, and their key includes the loft build's fingerprint
+  (`native_fingerprint` in `src/main.rs`), so any commit touching loft's source misses
   all of them. The `corpus` shard's own cache of them is gone for the same reason.
   Windows keeps its copy: that cache holds nothing else large.
 - **`index-hygiene`, `leak-scan` and `viewer-smoke` restore the `test` job's cache read-only.** They

@@ -192,9 +192,10 @@ API + vetted pure-loft libraries. No file / network / env / process / FFI native
   capability surface; a **native** capability's Rust is opaque to the lint — the host vouches
   for native totality separately.
 
-### S2 — No native FFI, no rustc
-An admitted script never loads a cdylib and never runs through the native (rustc)
-backend (generating + compiling Rust on the host is RCE by construction).
+### S2 — No native FFI, no host compiler
+An admitted script never loads a native library it was not granted, and a deployment can
+leave out host code generation (generating + compiling code on the host is RCE by
+construction).
 - **Chokepoint:** the backend selector + `extensions::resolve_native_lib`.
 - **Check:** admission forces `--interpret` and refuses any `[native]` lib /
   `dlopen`. `cargo build --no-default-features` (drops the `native-extensions`
@@ -215,7 +216,7 @@ backend (generating + compiling Rust on the host is RCE by construction).
   `null` on `--native` too), so admission is backend-agnostic and a sandboxed program runs
   on whatever backend the host picks (`Parser::has_sandboxed_defs` gates the admission
   walk). `cargo build --no-default-features` compiles the `libloading` path out (verified).
-  *Remaining (post-v1):* feature-gate the rustc *codegen* path too, so
+  *Remaining (post-v1):* feature-gate the C backend's *codegen* path too, so
   a deployment can build with ZERO host-codegen surface.
 
 ### S3 — Bounded recursion / call depth
@@ -438,7 +439,7 @@ perf benchmark, and the wasm tier — follow these.
 2. **S8** — an embedding `run_script() -> Result` boundary that catches faults and
    never exits the host (gives fault isolation for the clean errors at once).
 3. **S2** — force the interpreter + ban FFI for script mode. Coarse, cheap, big
-   risk reduction (no rustc, no cdylib).
+   risk reduction (no host compiler, no cdylib).
 4. **S1** — the capability/library allowlist over the resolved IR.
 5. **S4 + S3** — per-script fuel (recoverable abort) + call-depth cap; completes
    S8 for hangs/overflows.

@@ -76,7 +76,7 @@ the shared core below.
 | every byte written once | `defined` | `defined` | same |
 | parked blocks (`@FR-H-Park`) | `park`, `parked` | `no_park`, `parked_set`, `parked_heads`, `parked_count` | same lists, bytes proven alike (D20) |
 | live or free | `free` | `live` | same, opposite sense |
-| read only, and who locked it | `read_only`, `user_locked`, `lock_origin` | `read_only` | same lock; who locked it is the interpreter's report (D21) |
+| read only, and what locked it | `read_only` (a `u8`: `Store::RO_LOCK`, `RO_CONST`, `RO_FOREIGN`), `user_locked`, `lock_origin` | `read_only` (`LOFT_RO_LOCK`, `LOFT_RO_CONST`, `LOFT_RO_FOREIGN`) | one byte with one meaning: 0 writable, else the lock's kind, which both sides write and the C's locked-write advice reads; never a `bool`, since a hosted unit writes the interpreter's own struct (guard: `hosted_unit::the_lock_byte_names_the_same_kinds_in_the_interpreter_and_the_c`); the author's site is the interpreter's report (D21) |
 | a free that must wait (calls holding it) | `free_protect_depth` | `protect` | same count, two names (D22) |
 | pinned (never freed) | `pinned` | `pinned` | same |
 | the type of its first record | `known_type` | `known` | same |

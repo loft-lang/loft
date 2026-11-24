@@ -255,7 +255,7 @@ fn is_bridge_type(t: &Type) -> bool {
         return is_ref_scalar(inner) || crate::data::is_dbref(inner.base());
     }
     // @PLN199 D3 — a generator handle, interpreted or compiled: both advance through the
-    // host's table (`codegen_runtime::CoroutineHost`).
+    // host's table (`coroutine_host::CoroutineHost`).
     if let Type::Iterator(elem, _) = t.base() {
         return generator_crosses(elem);
     }
@@ -396,6 +396,30 @@ fn fn_decline(data: &Data, d_nr: u32, visited: &mut HashSet<u32>) -> Option<Decl
 }
 
 /// [`walk_decline`] as the yes/no the gate asks (the unit tests' spelling).
+/// `LOFT_TRACE_NATIVE_GATE=1` — how the library at `pkg_dir` splits: how many of the
+/// functions a script can call run compiled, and for each that stays interpreted, the rule
+/// that kept it there (`native_gate::explain_interpreted`).  A library's build reports only
+/// failure, so without this a function left out ran slower in silence.
+pub fn trace_partition(data: &crate::data::Data, pkg_dir: &str) {
+    let mut names: Vec<(String, Option<String>)> =
+        crate::opt::native_key::library_candidates(data, pkg_dir)
+            .into_iter()
+            .map(|d| (data.def(d).name().to_string(), explain_interpreted(data, d)))
+            .collect();
+    names.sort();
+    let compiled = names.iter().filter(|(_, why)| why.is_none()).count();
+    let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
+    eprintln!(
+        "[native-gate] {pkg}: {compiled} of {} callable functions compiled",
+        names.len()
+    );
+    for (name, why) in names {
+        if let Some(why) = why {
+            eprintln!("[native-gate]   `{name}` interpreted — {why}");
+        }
+    }
+}
+
 #[cfg(test)]
 fn walk(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> bool {
     walk_decline(v, u32::MAX, data, visited).is_none()

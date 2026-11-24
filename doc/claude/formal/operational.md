@@ -10,7 +10,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > **Rules then deviations** (see [README](README.md)). This is a small-step evaluation
 > relation for loft's **stable scalar core**, written for one purpose: to be the **shared
 > contract both backends must satisfy**. Today the interpreter (`src/state/`) *is* the
-> de-facto spec and the native generator (`src/generation/`) is a separate implementation
+> de-facto spec and the C backend (`src/c/`) is a separate implementation
 > kept in agreement only by tests — so a disagreement is a test gap, not a definitional
 > error. These rules turn that around: a program where the two backends step differently
 > is **by definition** a bug in whichever one disobeys.
@@ -453,8 +453,7 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                access that found it (`index_out_of_bounds`, naming the index and the length),
                an absent key or a null view by the write (`write_dropped`).  A store with an
                `else` reports nothing (the arm owns the failure).  The line names the
-               statement on the interpreter and the C backend, and may name the running
-               function's declaration on the Rust backend (`--native-rust`).
+               statement on both backends.
 
   (E-Uncomp-Seen)  `place = v else { B }` (H-Write-Else) is the form that observes it; the
                older `if !place` on the next statement stays accepted, with this meaning.

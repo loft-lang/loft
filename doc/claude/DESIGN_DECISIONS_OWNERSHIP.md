@@ -284,7 +284,7 @@ truncated frame) it still reports up front.
 
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
 **Holds at:** `@C141` — the rule `(R-DecodeView)` in [formal/rewrites.md](formal/rewrites.md)
-(instance 1 built: `src/generation/decode_view.rs`); guards
+(instance 1 built: `src/lower/decode_view.rs`); guards
 `loft-suite/attic/scripts/a-decoded-text-keeps-its-value-when-the-frame-changes.loft` (the boundary: a
 decoded value keeps its bytes when its frame is written, grown, cleared or gone) and
 `tests/scripts/a-decoded-text-is-read-where-it-lies.loft` (the rule's own cells).

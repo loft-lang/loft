@@ -15,13 +15,9 @@
 // (handed to `show`, which is no twin).
 //
 // @falsify-tier: ship
-// @falsified-by: tests/falsified/a-record-of-fixed-vectors-travels-as-a-value.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
-//   CHANNEL: the VALUE channel, native only — the patch reads a negative index as itself,
-//   so the apart read of `x.m[-1]` answers null where the store path counts from the end.
-//   WITNESS: under the patch native fails e2 with `[null,null,1,9]` where this file says
-//   `[4,1,1,9]`.
-//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
-//   both — only native's values move.
+//
+// @falsified-at: none — the defect it caught lived only in the rustc writer, which is retired
+//   (`@C170`); it still holds the answers on the interpreter and the C.
 
 struct M2 { m: vector<float> }
 struct Pair { a: vector<float>, b: vector<float> }

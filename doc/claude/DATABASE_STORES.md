@@ -371,8 +371,7 @@ store is read-only, its bytes are described by the header contract every vector 
   foreign store (`ForeignOwner::Extern` — the `Vec`'s parts and the cdylib's own release,
   called once with the last store serving the bytes, in the cdylib's allocator since the
   host's may differ; a loaded library is never unloaded) and answers the bare `FOREIGN_REC`,
-  which the two consumers of a bridge's ref return (`extensions::bridge_push_ref`,
-  `codegen_runtime::from_loft_ref`) turn into the store's own handle
+  which the consumer of a bridge's ref return turns into the store's own handle
   (`Store::foreign_handle`) instead of claiming a header in a store that is now locked.
   The callback is `LoftStore::foreign_fn`, the LAST field of the handle (an older cdylib
   reads a prefix; every host-to-cdylib crossing is the one fixed `LoftBridgeFn` shape, so a

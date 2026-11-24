@@ -216,9 +216,9 @@ struct fields.
 | `LOFT_TRACE_INSTANCE_KEY=1` | Each method-shaped generic instance key rewritten (`old key -> new key`) with the spelling of every binding. | Two instances of one generic that should be one (a duplicate `t_…` emitted), or one that should be two. |
 | `LOFT_TRACE_CLOSURE_KEEP=1` | Per function, the closure-keep analysis: the records kept, their holders and which are owning. | A captured record freed under a live closure, or kept past its last use. |
 | `LOFT_TRACE_PAR_WORKERS=1` | Per `parallel` dispatch (native only, read once): the site, `n_rows`, threads, DISTINCT workers and the indices each took. | A `par` that ran on one thread, or two workers that took the same row. |
-| `LOFT_KEEP_NATIVE_RS=1` | Preserves the generated Rust at `/tmp/loft_native_*.rs` instead of cleaning it. | Read the generated Rust at a specific line a runtime panic cites.  Added during PLAN51 V-c diagnosis. |
+| `LOFT_KEEP_NATIVE_C=1` | Keeps the generated C of a native build instead of cleaning it, and prints `loft: C source preserved at …`. | Read the generated C at a specific line a runtime fault or a debugger cites. |
 | `check_store_leaks` (interp, **`--interpret` only** — see note) / `LOFT_NATIVE_LEAK_CHECK=1` (native) | At-exit summary of unfreed stores, **aggregated by type** (`kt=68 ChunkKey×6026`). | Pin *which type* leaks.  Run the **same** repro on both backends — a leak on one and not the other means a backend-specific free emission bug (the @P317 symptom-2 shape). |
-| `--native-emit out.rs` | Writes the generated Rust and exits. | A native-only bug.  Read the generated function: look for a `null_named(...)` placeholder that is overwritten without a free, or a missing/extra `OpFreeRef`. |
+| `--native-emit out.c` | Writes the generated C and exits. | A native-only bug.  Read the generated function: look for a reference that is overwritten without a free, or a missing/extra `OpFreeRef`. |
 | `"Allocating a used store #N (known_type=…, requested by=…)"` panic (`allocation.rs:104`) | The store-pool tripwire (free-bitmap vs `store.free` disagree), now with slot + type + requester. | Fires at the *next* allocation after the real over-free/leak — a tripwire, not the bug site.  The pool near `u16::MAX` ⇒ a leak exhausted the pool and `max` wrapped to 0; otherwise a double-free. |
 
 > **Gotcha — the interpreter leak check needs `--interpret`.** Bare `loft prog.loft` runs the
@@ -228,14 +228,13 @@ struct fields.
 > `loft --interpret prog.loft` (or rely on the test harness, which is interpreter-based:
 > `tests/leak.rs::leaks_for`, `loft_suite`). Native leak-checking is the separate
 > `LOFT_NATIVE_LEAK_CHECK=1` axis. Note also that some leaks are interpreter-only: the eager
-> `OpInitRef` null-init allocates a store in the interpreter but native lowers it to `DbRef::NULL`
+> `OpInitRef` null-init allocates a store in the interpreter but native lowers it to the null reference
 > (no allocation), so an interpreter `kt=65535` leak can be genuinely absent under native.
 
 Workflow: reproduce minimally, run on **both** backends (divergence localises
 the backend), use `zero_claim` to classify the non-determinism, then `--native-emit`
 + `LOFT_STORES=log` to pin the site.  Mirror the @P311/@P313 fix shape (a
-missing/spurious `0x8000` free-source bit or a `null_named`-vs-sentinel
-choice in `src/generation/dispatch.rs::emit_null_dbref`).
+missing/spurious `0x8000` free-source bit).
 
 ---
 
@@ -293,28 +292,13 @@ the defect shipped.  Both were true of loft#899's `OpDatabase(db_tp = u16::MAX)`
 exactly one producer, zero corpus coverage.  Remove the probe once the invariant
 is enforced at its chokepoint.
 
-**Never set `RUSTFLAGS` against the MAIN target dir.**  Cargo keeps BOTH
-flag-generations of every dep in `target/release/deps/` — including two
-`libloft_ffi-*.rlib` — and anything that sweeps `deps/` (the cdylib
-auto-builds pass `--extern` for every rlib there) then dies on
-`colliding StableCrateId values`, while `loft-ffi`'s fingerprint change
-invalidates every cached cdylib.  Recovery, in order: `cargo clean --release`
-→ full `cargo build --release` → `make rebuild-native-cdylibs` → rebuild the
-registry graphics cdylib (`cd ~/.loft/registry/graphics-*/native && cargo
-build --release`) → `loft cache prune --all` (the whole-cache sweep; plain
-`loft cache prune` keeps the live generation and drops only what this loft
-cannot select — see loft#861) → rebuild the wasm rlib (the `html_wasm`
-staleness guard checks it against source mtimes).
-
-**Prevent + auto-heal it.**  Run sanitizer/nightly builds through
-**`scripts/asan.sh`**, which sets `CARGO_TARGET_DIR=target/asan` so nightly
-artifacts never land in the shared `target/` — the pollution simply cannot
-happen.  If a stray nightly build already polluted it (E0514 "incompatible
-version of rustc" on the native tests), **`find_problems.sh` self-heals**: its
-`ffi_toolchain_guard` reads the rustc version embedded in each
-`libloft_ffi-*.rlib`, and when it differs from the active `rustc` it deletes the
-stale rlib so the next build recompiles it — turning the silent, mtime-immune
-E0514 into an automatic rebuild.
+**Never set `RUSTFLAGS` against the MAIN target dir.**  A changed `RUSTFLAGS`
+rebuilds every crate there, and the next ordinary build rebuilds them all again.
+Run sanitizer/nightly builds through **`scripts/asan.sh`**, which sets
+`CARGO_TARGET_DIR=target/asan` so nightly artifacts never land in the shared
+`target/`.  Compiled libraries a stray build left behind go with
+`loft cache prune --all` (the whole-cache sweep; plain `loft cache prune` keeps
+the live generation and drops only what this loft cannot select — see loft#861).
 
 Reading the results: CLI-spawning tests fail en masse if the stdlib symlink
 is missing (lens artifact, not a finding); confirm any surprising cell

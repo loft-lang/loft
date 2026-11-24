@@ -13,12 +13,12 @@ dissolves with it, by construction.** Sites confirmed against the loft tree on
 
 ## Worked precedent (this repo — the template for every step)
 
-The cluster-A `match`-return-over-borrowed native E0308 was fixed by landing **one
-fact**: `infer_type` now answers for `Value::Insert` (its tail-item type) — a
-6-line case in `src/generation/emit.rs`. That single read made the existing
-typed-null handler fire for *every* Insert-arm value-if, so the special-case gap
-closed AND the bug auto-fixed (commit `6b29fe30`, regression
-`loft-suite/attic/scripts/85-store-lifetime-match-return-borrowed.loft`). **That is the shape
+The cluster-A `match`-return-over-borrowed compile error closed by landing **one
+fact**: `infer_type` answers for `Value::Insert` (its tail-item type). That single
+read made the existing typed-null handler fire for *every* Insert-arm value-if, so
+the special-case gap closed AND the bug went with it (regression
+`loft-suite/attic/scripts/85-store-lifetime-match-return-borrowed.loft`; the emitter
+it landed in was the rustc writer's, retired with @PLN225). **That is the shape
 of every step below: a missing fact, computed once, at the chokepoint — the bug is
 a side effect of the collapse, not a separate fix.**
 

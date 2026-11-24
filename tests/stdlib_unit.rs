@@ -47,7 +47,6 @@ fn run(dir: &std::path::Path, cache: &std::path::Path, envs: &[(&str, &str)]) ->
         .arg(&file)
         .env("XDG_CACHE_HOME", cache)
         .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_NO_RUSTC", "1")
         .env("LOFT_TIMING", "1");
     for (k, v) in envs {
         cmd.env(k, v);

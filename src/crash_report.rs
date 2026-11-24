@@ -572,7 +572,7 @@ pub fn install_panic_hook() {
             .downcast_ref::<&str>()
             .copied()
             .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str));
-        if message.is_some_and(crate::codegen_runtime::is_closed_stdout_panic) {
+        if message.is_some_and(crate::host_print::is_closed_stdout_panic) {
             std::process::exit(0);
         }
         // @PLN133 S8 — a fault inside a lazy DRIVER is contained and reported

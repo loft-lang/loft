@@ -93,6 +93,14 @@ else
   [ -f "$GUARD" ] || { echo "no such guard: $GUARD" >&2; exit 2; }
 fi
 
+# A receipt armed for the retired rustc writer cannot be scored any more: it says so, rather
+# than scoring the guard on the C leg it was never falsified on.
+if [ "${FALSIFY_NATIVE:-c}" = rust ]; then
+  echo "falsify: FALSIFY_NATIVE=rust names the rustc writer, which is gone; falsify the guard" >&2
+  echo "  on the C leg or the interpreter and drop FALSIFY_NATIVE from its ARMED: label" >&2
+  exit 2
+fi
+
 ROOT=$(git rev-parse --show-toplevel)
 # On DISK, never in TMPDIR: a control plus the HERE build is a full debug `target/` each
 # (~2 GB), and `/tmp` is a RAM tmpfs on many Linux boxes — one run filled a 7.5 GB one, and
@@ -233,10 +241,8 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   # whose declared errors all occur exits 0, one with an unmatched declaration exits 1.
   # Measured on both guard shapes — the mixed one reads 0 -> 0 (genuinely INERT, which the
   # direct run reported as a misleading `1/5` on both trees) and an all-pass-2 one reads 1 -> 0.
-  # The compiled leg is the C backend, the per-change backend (@PLN203);
-  # `FALSIFY_NATIVE=rust` scores a guard of the rustc-native writer on it instead.
+  # The compiled leg is the C backend, the one compiled backend (`@C170`).
   local nat=--native-c
-  [ "${FALSIFY_NATIVE:-c}" = rust ] && nat=--native-rust
   if grep -qE '@EXPECT_ERROR|@EXPECT_FAIL' "$1"; then
     MODE_I=(--tests); MODE_N=(--tests "$nat")
   elif grep -qE '^[[:space:]]*fn main[[:space:]]*\(' "$1"; then
@@ -290,10 +296,16 @@ locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
   fi
 }
 
-# A receipt cut while the standard library's compiled bodies were a generated Rust file may
-# carry a hunk of that file, which no longer exists: `git apply` leaves it out, as
+# A receipt may carry a hunk of retired source (tests/falsified_retired_paths.txt: the
+# generated compiled stdlib, the rustc writer): `git apply` leaves those hunks out, as
 # `receipts_ci.py` and `doc_hygiene::every_patch_receipt_still_applies` do.
-GENERATED_STDLIB=src/compiled_stdlib_gen.rs
+RETIRED_EXCLUDES=()
+RETIRED_PATHSPECS=()
+while IFS= read -r line; do
+  case "$line" in ''|'#'*) continue ;; esac
+  RETIRED_EXCLUDES+=("--exclude=$line")
+  RETIRED_PATHSPECS+=(":(exclude)$line")
+done < "$(cd "$(dirname "$0")/.." && pwd)/tests/falsified_retired_paths.txt"
 
 # `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
 # back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
@@ -311,7 +323,7 @@ build() { # <dir> <target-dir> -> path to binary
   # `--lib` as well: the native leg links `<target>/debug/libloft.rlib`, which `--bin` alone
   # never refreshes — so a plant in the RUNTIME (src/database, src/store.rs) reached the
   # interpreter leg and not the native one, and a native-only runtime defect scored INERT.
-  locked_cargo "$1" "$2" build --lib --bin loft || return 1
+  locked_cargo "$1" "$2" build --bin loft || return 1
   echo "$2/debug/loft"
 }
 
@@ -476,7 +488,7 @@ fi
 # ── bulk ─────────────────────────────────────────────────────────────────────────────────
 # Retrofitting the corpus: one control build per REF rather than per guard, into a SHARED
 # target dir so the dependency crates are compiled once (measured 61 s cold, 8.7 s warm).
-# Interpret only — the native run costs a rustc invocation per file and the question here is
+# Interpret only — the native run costs a C compile per file and the question here is
 # "did this guard ever fail", which one backend answers.
 if [ -n "$BULK" ]; then
   HERE=$(build "$ROOT" "$HEAD_TGT") || { echo "this tree does not build" >&2; exit 1; }
@@ -502,10 +514,10 @@ if [ -n "$BULK" ]; then
     # sweeps at once would write it together.
     if have_flock; then
       ( flock 9 || exit 1
-        cd "$wt" && cargo build --lib --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
+        cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
       ) 9>"$SHARED.lock"; bulk_built=$?
     else
-      ( cd "$wt" && cargo build --lib --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
+      ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
     fi
     if [ "$bulk_built" -ne 0 ]; then
       awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-build\t\n", $1, r}' "$BULK"
@@ -575,7 +587,7 @@ elif [ ! -x "$TGT/debug/loft" ]; then
       # A patch receipt is checked before it is trusted.  One records the fix as it was, so it
       # applies to the tree it was cut against and drifts out as that tree moves — refusing here
       # is the receipt telling you it has gone stale, which a dangling sha never gets to do.
-      ( cd "$WT" && git apply --exclude="$GENERATED_STDLIB" "$PATCH_ABS" ) || {
+      ( cd "$WT" && git apply "${RETIRED_EXCLUDES[@]}" "$PATCH_ABS" ) || {
         echo "the recorded patch no longer applies to HEAD: $PATCHFILE" >&2
         echo "  The receipt still RECORDS the defect, but it can no longer be re-run here." >&2
         echo "  Re-derive it against a tree it applies to, or score the guard by hand." >&2
@@ -659,9 +671,9 @@ for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
     #
     #   exit 124                  a TIMEOUT.  Both bounds land here — loft's own watchdog
     #                             (`LOFT_TIMEOUT`) and the outer `timeout` in `signature`.
-    #   exit 0, "running          NO RUST TOOLCHAIN.  `--native` does not fail when it cannot
-    #   interpreted instead"      compile: it says so and falls back, so a missing rustc
-    #                             cannot produce a non-zero exit at all.
+    #   exit 0, "running          NO C COMPILER.  `--native` does not fail when it cannot
+    #   interpreted instead"      compile: it says so and falls back (`@C102`), so a missing
+    #                             compiler cannot produce a non-zero exit at all.
     #   asserts > 0               the guard's OWN assertions, which is the ordinary case.
     #
     # So `exit 1` with ZERO assertions is none of those three.  The cause measured for it is
@@ -704,8 +716,8 @@ if [ $notclean -eq 1 ]; then
   echo
   echo "  An unclean 'here' is not one thing.  Read the columns before concluding a regression:"
   echo "    exit 124 ............ a TIMEOUT (loft's watchdog and the outer bound both land here)"
-  echo "    exit 0 + 'running interpreted instead' .. no Rust toolchain; --native FELL BACK,"
-  echo "                          it does not fail, so a missing rustc cannot exit non-zero"
+  echo "    exit 0 + 'running interpreted instead' .. no C compiler; --native FELL BACK,"
+  echo "                          it does not fail, so a missing compiler cannot exit non-zero"
   echo "    asserts > 0 ......... the guard's own assertions — the ordinary case"
   echo "    exit 1, asserts 0 ... none of those.  Measured cause: a second run of the SAME"
   echo "                          guard in flight here (a falsify started beside a suite).  Seven"
@@ -752,7 +764,7 @@ elif [ $falsified_any -eq 1 ]; then
     new="$pdir/.$pbase.patch.new"
     kept=no
     if [ -s "$pdir/$pbase.patch" ]; then kept=yes; fi
-    git -C "$ROOT" diff -R "$SHA" -- src/ default/ lib/ ":(exclude)$GENERATED_STDLIB" \
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ lib/ "${RETIRED_PATHSPECS[@]}" \
       > "$new" 2>/dev/null || true
     plines=$(wc -l < "$new" 2>/dev/null || echo 0)
     # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit

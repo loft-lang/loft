@@ -205,7 +205,7 @@ fn frame_kinds(def: &crate::data::Definition) -> Option<Vec<Kind>> {
     def.attributes()
         .iter()
         .map(|a| {
-            if crate::native_lib::is_text_work_buffer(&a.typedef) {
+            if crate::native_gate::is_text_work_buffer(&a.typedef) {
                 Some(Kind::WorkBuf)
             } else if a.work_buffer {
                 // `@FR-R-WorkBuffer` — a callee's scratch vector: neither a value the

@@ -43,7 +43,7 @@ def measure(loft, libs, pkg):
     args = [loft]
     for lib in libs:
         args += ["--lib", lib]
-    env = {**os.environ, "LOFT_NO_RUSTC": "1"}
+    env = dict(os.environ)
     r = subprocess.run(args + ["build-native", pkg], capture_output=True, text=True, env=env, timeout=900)
     out = {}
     for line in r.stdout.splitlines():

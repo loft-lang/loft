@@ -16,15 +16,11 @@ const CELLS: &str = "tests/scripts/157-record-ptr.loft";
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_RECORD_PTR")
         .env_remove("LOFT_NO_VECTOR_BASE")
-        .env_remove("LOFT_HOIST_VERIFY")
-        .env_remove("LOFT_NO_FIELD_HEADER");
+        .env_remove("LOFT_HOIST_VERIFY");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -72,12 +68,11 @@ fn the_cells_hold_on_both_backends_in_every_switch_state_under_the_falsifiers() 
     }
 }
 
-/// The nested clause's cells: a view's VECTOR field read through the view's address.
+/// A view's VECTOR field read: the cells.
 const NESTED: &str = "tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft";
 
-/// The nested cells answer their hand-computed values on both backends, with the clause on
-/// and off, under the falsifiers — `LOFT_HOIST_VERIFY=1` compares every header read through
-/// an address with the store's.
+/// The nested cells answer their hand-computed values on both backends, under the
+/// falsifiers.
 #[test]
 fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NESTED);
@@ -86,7 +81,6 @@ fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
         ("--interpret", vec![]),
         ("--native", vec![("LOFT_HOIST_VERIFY", "1")]),
         ("--native", vec![("LOFT_POISON", "1")]),
-        ("--native", vec![("LOFT_NO_FIELD_HEADER", "1")]),
     ] {
         let out = loft(&[backend, src], &env);
         let stdout = String::from_utf8_lossy(&out.stdout);

@@ -774,34 +774,6 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
     freed
 }
 
-/// Preflight check for a single native compile writing into `scratch`.
-/// Returns `true` when there is enough headroom to proceed.  Every call first sweeps the
-/// artefacts of dead processes ([`reclaim_dead_native_scratch`], silent), so the scratch
-/// directory stays bounded whatever killed the runs before this one.  When space is still
-/// below [`tmpfs_min_free_bytes`], the aged artefacts go too (the test runner's per-file
-/// binary cache included) and the space is re-checked; only if it is *still* low does it
-/// return `false` (callers skip that compile with a warning rather than risk overflowing RAM).
-pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
-    let _ = reclaim_dead_native_scratch(scratch);
-    let floor = tmpfs_min_free_bytes();
-    match fs_avail_bytes(scratch) {
-        // df unavailable → unknown → don't block (preserve old behaviour).
-        None => true,
-        Some(avail) if avail >= floor => true,
-        Some(_) => {
-            let freed = reclaim_native_scratch(scratch);
-            if freed > 0 {
-                eprintln!(
-                    "loft: low space in {} — reclaimed {} MB of stale native artefacts",
-                    scratch.display(),
-                    freed / (1024 * 1024)
-                );
-            }
-            fs_avail_bytes(scratch).is_none_or(|a| a >= floor)
-        }
-    }
-}
-
 /// Should native-compile binaries be stripped of symbols?  Stripping cuts
 /// each binary from ~36MB to ~1MB (the bulk is debug info pulled in from
 /// `libloft.rlib` + std, useless to a run-and-check test).  Set
@@ -811,13 +783,6 @@ pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
 #[must_use]
 pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
-}
-
-/// Whether a native binary's symbols live in the executable itself, so keeping them makes it
-/// larger.  The MSVC linker writes them to a `<binary>.pdb` beside it instead.
-#[must_use]
-pub fn native_symbols_in_the_binary() -> bool {
-    !cfg!(windows)
 }
 
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
@@ -2506,32 +2471,6 @@ pub fn main_stack_link_args() -> Vec<String> {
     }
 }
 
-/// The `rustc` argument that lets two native packages each define the same runtime symbol
-/// (the linker keeps the first), or `None` where the host linker has no such option: macOS
-/// `ld64` rejects `--allow-multiple-definition` and MSVC `link.exe` ignores it with one
-/// `LNK4044` warning per occurrence.
-#[must_use]
-pub fn allow_multiple_definition_arg() -> Option<&'static str> {
-    if cfg!(any(target_os = "macos", windows)) {
-        None
-    } else {
-        Some("-Clink-arg=-Wl,--allow-multiple-definition")
-    }
-}
-
-/// The `link-arg=` value that records `dir` as a run-time library search path (RPATH) in the
-/// binary, for `rustc -C`.  `None` on Windows, which has no RPATH: `link.exe` rejects
-/// `-Wl,-rpath`, and the loader finds a DLL beside the `.exe` or on `PATH` — so loft stages
-/// the DLLs beside the binary instead ([`stages_dlls_beside_binary`]).
-#[must_use]
-pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
-    if cfg!(windows) {
-        None
-    } else {
-        Some(format!("link-arg=-Wl,-rpath,{}", dir.display()))
-    }
-}
-
 /// @PLN197 — the file name of the STATIC archive a package may ship beside a prebuilt C
 /// library, which a static native link puts into the binary: `lib<stem>.a`.  `None` on
 /// Windows, where the `.lib` beside a DLL is its import library and says nothing of the
@@ -3622,7 +3561,7 @@ mod darwin_wait {
 
 /// Write `s` to standard error, ignoring a write that cannot land.
 ///
-/// The counterpart of `codegen_runtime::host_print`, and it does NOT exit: stderr being closed
+/// The counterpart of `host_print::host_print`, and it does NOT exit: stderr being closed
 /// says nothing about the program's own output, so `prog 2>/dev/full` or a reader that stopped
 /// reading the diagnostics stream must not end the run.  What it must never do is panic — a
 /// panic whose message cannot be printed is what turns a broken pipe into a SIGABRT and a crash
@@ -3675,8 +3614,12 @@ pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
         fn CFRunLoopRun();
     }
     extern "C" fn never(_timer: *mut c_void, _info: *mut c_void) {}
+    /// The main thread's stack: the OS main-thread stack (~8 MiB) overflows at a few thousand
+    /// recursive loft calls, below the `MAX_CALL_DEPTH` (10 000) guard; a virtual,
+    /// lazily-committed 512 MiB holds 10 000 frames, so the depth guard fires first.
+    const MAIN_STACK: usize = 512 * 1024 * 1024;
     std::thread::Builder::new()
-        .stack_size(crate::codegen_runtime::NATIVE_MAIN_STACK)
+        .stack_size(MAIN_STACK)
         .spawn(move || {
             let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok();
             std::process::exit(i32::from(!ok));

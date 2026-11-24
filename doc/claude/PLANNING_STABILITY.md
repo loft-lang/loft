@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # PLANNING — stability and compiler-correctness items
 
-Split from [PLANNING.md](PLANNING.md) by subject: the S-tier stability hardening items and the slot, closure, name-clash and match-arm items (P70, C47, C48, C52, C53).  Shipped items are in [PLANNING-history.md](PLANNING-history.md).
+Split from [PLANNING.md](PLANNING.md) by subject: the S-tier stability hardening items and the slot, closure, name-clash and match-arm items (P70, C48, C52, C53).  Shipped items are in [PLANNING-history.md](PLANNING-history.md).
 
 ---
 
@@ -189,68 +189,6 @@ emit).  Safe but affects every text-variable scope exit.
 
 ---
 
-## C47 — Native codegen: cross-scope closure CallRef dispatch
-
-**Status:** Interpreter cross-scope closures work.  Native codegen has two
-remaining issues.
-
-**Sub-issues fixed:**
-1. *(Fixed)* `Value::FnRef` emits `(d_nr, var___clos_N)` when closure exists.
-2. *(Fixed)* CallRef dispatch passes `var_f.1` as `__closure` for cross-scope.
-3. *(Fixed)* Scope analysis bounds check: deps from callee variable space
-   (d >= function.count()) are skipped in Set registration and check_ref_leaks.
-
-**Sub-issues remaining:**
-
-**C47.3a — Broad CallRef match dispatch** — `output_call_ref` includes ALL
-functions with matching parameter/return types, not just lambdas that could
-actually be stored in the fn-ref.  For `fn(integer) -> integer`, the match
-includes `abs()`, `len()`, and every other `integer -> integer` function.
-Non-closure candidates have no `__closure` parameter, so the emitted
-`var_f.1` argument causes "cannot find value `var_`" compile errors.
-
-**Root cause:** The dispatch is a static match on d_nr.  Without a closed
-set of possible values, it must conservatively include all type-compatible
-functions.  Same-scope fn-refs work because `closure_var_of` returns a valid
-closure variable name for the specific `has_closure` arms.
-
-**Fix approach:** When emitting the `__closure` argument in the cross-scope
-path, only emit `var_{fn_ref_name}.1` for candidates that `has_closure`.
-For non-closure candidates in the same match, omit the closure argument
-(they don't need one).  This is already handled — each arm checks
-`*has_closure` independently.
-
-The real problem: the `has_closure` arm IS emitting for `abs()` etc., but
-`abs` doesn't have `has_closure = true`, so it emits without the closure
-arg.  That's correct.  The compile error `var_??` suggests the fn-ref
-variable's name is empty — a separate bug in how temporary fn-ref variables
-are named.
-
-**Investigation:** trace which CallRef variable has an empty name and fix
-the temporary naming.
-
-**Files:** `src/generation/emit.rs`, `src/generation/mod.rs`
-
-### Step 1 — Fix temporary fn-ref variable naming
-
-Find where temporary fn-ref variables (from chained calls like
-`make_adder(5)(10)`) get created without a name.  Ensure all fn-ref
-variables have a valid sanitized name.
-
-### Step 2 — Test with named variables only
-
-Test `add5 = make_adder(5); add5(10)` in native mode (avoids the
-temporary naming issue).
-
-### Step 3 — Enable cross-scope doc test
-
-Add `make_adder` example back to `26-closures.loft`.  Run `make ci`.
-
-**Effort:** Small–Medium
-**Target:** 0.8.3
-
----
-
 ## C48 — Capturing closures with map/filter/reduce
 
 **Problem:** The interpreter rejects capturing lambdas passed to `map`, `filter`,
@@ -288,7 +226,7 @@ This requires:
 it and emit CallRef.  This doesn't require changing the collections desugaring
 — just the argument validation.
 
-**Depends on:** C47 (for native codegen parity)
+**Depends on:** none
 **Effort:** Medium
 **Target:** 0.8.3
 

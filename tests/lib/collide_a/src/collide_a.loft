@@ -1,5 +1,0 @@
-// @PLN26 phase 1 regression fixture — package A.  Exports the SAME `#native`
-// symbol (`collide_shared`) as collide_b; a program using both must be rejected
-// at native codegen (the flat C-ABI namespace can't disambiguate).
-pub fn ca_compute() -> integer;
-#native "collide_shared"

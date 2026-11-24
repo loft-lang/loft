@@ -126,10 +126,6 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ./loft-src/.github/actions/windows-gcc
 
-      # The toolchain is part of the key: a restored `target/` built by the previous stable
-      # leaves that rustc's rlibs in `deps/`, the upload carries them, and a library leg's
-      # `--native` link then finds a `loft` crate "compiled by an incompatible version of
-      # rustc" (E0514) beside the fresh one.
       - name: Install Rust stable
         id: rust
         uses: dtolnay/rust-toolchain@stable
@@ -153,22 +149,17 @@ jobs:
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft --bin loft-components
+          cargo build --release --bin loft --bin loft-components
           target/release/loft-components --out target/release/components
 
-      # What a library leg runs: the binary, and the rlibs `--native` links a test program
-      # against (`native_utils` finds them beside the binary or in `deps/`).
+      # What a library leg runs: the binary and its components.  `--native` compiles through
+      # the leg's C compiler, so no runtime library travels with it.
       - name: Upload the loft build
         uses: actions/upload-artifact@v4
         with:
           name: revalidate-loft-build
           path: |
             loft-src/target/release/loft
-            loft-src/target/release/libloft.rlib
-            loft-src/target/release/deps/*.rlib
-            loft-src/target/release/deps/*.so
-            loft-src/target/release/build/*/*/out/*.rlib
-            loft-src/target/release/build/*/*/out/*.so
             loft-src/target/release/components/
           if-no-files-found: error
           # The components' `.loft-build-fp`: a component is taken only beside its fingerprint.
@@ -213,13 +204,6 @@ jobs:
       # A no-op while this job runs on ubuntu-latest; it is here for a Windows leg.
       - if: runner.os == 'Windows'
         uses: ./loft-src/.github/actions/windows-gcc
-
-      # The SAME stable the build job installed: a library's `--native` suite compiles against
-      # the uploaded rlib with whatever `rustc` is on the path, and the runner image's own
-      # rustc can be one release behind rustup's stable — every leg then reads "found crate
-      # `loft` compiled by an incompatible version of rustc" (E0514) against a sound rlib.
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Put loft on the path
         run: |

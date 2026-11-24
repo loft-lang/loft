@@ -1,16 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `@FR-R-RefillText`'s VECTOR clause — a pooled call buffer (minted once, released before every
-// later call) whose type's heap is vectors of plain elements, handed to a callee that
-// `(R-RefillBuffer)` refills: the release is not emitted, because the callee empties each
-// vector field in place and keeps its record, and the release only freed what the refill would
-// keep.  What can go wrong is a stale tail (a shorter result over a longer one, c1), a caller's
+// A pooled call buffer (minted once, released before every later call) whose type's heap is
+// vectors of plain elements, handed to a callee whose literal refills it.  What can go wrong is a stale tail (a shorter result over a longer one, c1), a caller's
 // own write to the result surviving into the next one (c2, c3), an absent `?` field (c4), a type
 // with a text beside its vectors taking the clause (c6, declines), a callee answering a fresh
 // value on one path and its literal on the other (c7), and a store that grows per call (c8).
-// Every value by hand; `LOFT_NO_REFILL_VECTORS=1` releases first again and answers the same.
-// The sites the clause takes are pinned in `tests/refill_text.rs`.
+// Every value by hand.
 //
 // @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
 //   with `@falsified-by:` below.

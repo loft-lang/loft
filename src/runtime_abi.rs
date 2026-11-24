@@ -236,22 +236,3 @@ pub fn abi_of(name: &str) -> Abi {
 pub fn is_codegen_runtime_fn(name: &str) -> bool {
     CODEGEN_RUNTIME_FNS.iter().any(|f| f.name == name)
 }
-
-/// [`is_codegen_runtime_fn`] for the target the program is written for: a browser page's
-/// runtime also carries [`BROWSER_RUNTIME_FNS`].
-#[must_use]
-pub fn is_codegen_runtime_fn_on(name: &str, browser: bool) -> bool {
-    is_codegen_runtime_fn(name) || (browser && BROWSER_RUNTIME_FNS.contains(&name))
-}
-
-/// `@FR-R-FoldCompare` — which text predicate `codegen_runtime::fold_compare` answers.
-pub mod fold_op {
-    /// `F(t) == other`.
-    pub const EQ: u8 = 0;
-    /// `F(t) != other`.
-    pub const NE: u8 = 1;
-    /// `F(t).starts_with(other)`, or with `fold_right` `other.starts_with(F(t))`.
-    pub const STARTS: u8 = 2;
-    /// `F(t).ends_with(other)`, or with `fold_right` `other.ends_with(F(t))`.
-    pub const ENDS: u8 = 3;
-}

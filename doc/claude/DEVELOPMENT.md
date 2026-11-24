@@ -180,8 +180,8 @@ on their own branches at the same time: no step waits on them, and none touches 
    receipts' merge, the allocation pins, the platform census).  A miss there costs a whole
    run, where `find_problems.sh --changed`, the debugging loop, runs only tests.
 7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
-   (into `~/.local`, from main's daily build when this machine's rustc built it, else
-   rebuilt where only what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
+   (into `~/.local`, from main's daily build for this host, else rebuilt where only
+   what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
    installed main).  Every agent on the box scores its guards against that binary
    (`make falsify` without `REF`); a stale one makes each score against an older main, and a
    fix main now holds reads INERT only once the install has it.  `cat
@@ -565,21 +565,18 @@ process name ([CLAUDE.md § Key commands](../../CLAUDE.md)).  When this box cann
 reliably, run the same gate on GitHub: `gh workflow run ci.yml --ref <branch> -f
 os=ubuntu-latest` ([CI_BUDGET.md § When the local gate is unreliable](CI_BUDGET.md)).
 
-Keep the **installed** loft current: a stale one builds consumer libraries against an old rlib.
-`make install-user-fast` (native only) or `make install-user` (everything) install into
-`~/.local` without root, and check that `command -v loft` is the binary just installed.
+Keep the **installed** loft current: a stale one answers for an old source tree.
+`make install-user` installs the binary, the standard library and the components into
+`~/.local` without root, and checks that `command -v loft` is the binary just installed.
 
 #### Common pitfalls
 
 | Pitfall | What fails | Cure |
 |---|---|---|
 | `cargo clippy` without `-D warnings`, or only one variant | CI denies warnings, and runs the `--all-targets --all-features` variant too | both variants, with `-D warnings` |
-| A bare `cargo test` after a library change | `cargo build --bin loft` never rebuilds the `libloft.rlib` native tests link, and a bare `cargo test` builds none | `make check-rlib` first; `make ci` builds all three itself |
-| Stale wasm rlib | `--html` / `html_wasm` tests fail with rustc errors citing an older source | `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random` — never `--features wasm`, whose bundle imports from `__wbindgen_placeholder__` |
-| Stale `tests/lib/native_pkg/native` fixture cdylib | `native_loader` tests misread memory and report "expected N, got M" | `make rebuild-native-cdylibs` (`make ci` and `make run-tests` run it) |
 | `#[cfg(feature = "X")]` on an entry of a registration table | registration order shifts, and tests crash with "index out of bounds" | keep every entry, gate only what it includes |
 | New files with crypto or FFI constants | pedantic lints (`unreadable_literal`, `many_single_char_names`, `cast_lossless`) | `#[allow(clippy::…)]` on the function or constant |
-| A new operator or builtin | `index/target_surface.json` drifts and `make ci` fails a guard no targeted suite shows | `make surface-gen`, after rebuilding the wasm rlib |
+| A new operator or builtin | `index/target_surface.json` drifts and `make ci` fails a guard no targeted suite shows | `make surface-gen` (it builds the wasm32 runtime it probes) |
 
 ### Remote CI
 

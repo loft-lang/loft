@@ -78,8 +78,8 @@ and the boundaries are decided; a new analysis is a new `kind`, not a new walk.
 
 | kind | direction, flow | key | domain | read by |
 |---|---|---|---|---|
-| `writes` | MAY, UP | parameter path, result buffer, any other store | none < in-place scalar write < element write < length change (push, clear, truncate) < rebind or free | the header verdict, `(R-Inputs)`, `(R-TextBorrow)`'s tested clause, `(R-StreamWalk)` |
-| `mints` | MAY, UP | function | the stores a call creates: kept local, freed, answered | `(R-RetAdopt)`, `(R-MoveAppend)` |
+| `writes` | MAY, UP | parameter path, result buffer, any other store | none < in-place scalar write < element write < length change (push, clear, truncate) < rebind or free | the header verdict, `(R-Inputs)`, `(R-TextBorrow)`'s tested clause |
+| `mints` | MAY, UP | function | the stores a call creates: kept local, freed, answered | `(R-RetAdopt)` |
 | `observable` | MAY, UP | function | output, file, socket, clock, random, an impure native, a yield, a `par` | `(R-PureReuse)`, `(R-SharedCall)` |
 | `fault` | MAY, UP | function | may report: checked overflow, an index fault, `??`'s panic, the call-depth cap | `(R-SharedCall)` totality, `@C120` |
 | `reads` | MAY, UP | parameter path | the vectors a call indexes, the fields it reads | `(R-Inputs)`'s `__inv` |
@@ -264,9 +264,8 @@ Closed entries: [facts-history.md](facts-history.md).
 
 ### D-fact-3 (OPEN, @PLN211) — each twin kind carries its own key
 - **Violates:** `Fact-Twin` (one key, one registry)
-- **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); native's name suffixes and its
-  bit keys OR'd into a definition number (`DV_BIT`, `src/lower/decode_view.rs`; `KH_BIT`,
-  `src/generation/kept.rs`); the IR's `_tuple`, `__given_` and `@st` names
+- **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); the bit keys OR'd into a
+  definition number (`DV_BIT`, `src/lower/decode_view.rs`); the IR's `_tuple`, `__given_` and `@st` names
 - **Effect:** a twin under two assumptions is a hand-made combination; the C's mask has eight
   named bits and 24 parameter bits left, guarded by a compile-time assert.
 - **Removal:** a key of (function, assumptions) and one registry, the existing twins re-keyed

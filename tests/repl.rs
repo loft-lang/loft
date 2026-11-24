@@ -227,12 +227,6 @@ fn bytecode_command() {
 }
 
 #[test]
-fn rust_command() {
-    let out = repl(&["repl"], &format!("{DEF}:rust dbl\n:quit\n"));
-    assert!(out.contains("fn n_dbl"), "rust: {out:?}");
-}
-
-#[test]
 fn slots_command() {
     let out = repl(&["repl"], &format!("{DEF}:slots dbl\n:quit\n"));
     assert!(

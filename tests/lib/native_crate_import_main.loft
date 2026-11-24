@@ -1,4 +1,0 @@
-use native_crate_pkg
-
-fn main()
-    assert native_crate_hello() == "hello"

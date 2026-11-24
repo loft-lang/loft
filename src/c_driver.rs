@@ -477,6 +477,25 @@ fn build_key(c: &str, cc: &str, flags: &[String], links: &[String]) -> String {
     })
 }
 
+/// `@C102` — the toolchain a native build would use, for the places a developer looks
+/// (`loft --version`, the `loft test` summary): the C compiler's first `--version` line, or why
+/// native builds are unavailable when no compiler runs.
+pub(crate) fn native_toolchain() -> Result<String, String> {
+    let cc = cc_program();
+    let msvc = dialect(&cc) == Dialect::Msvc;
+    let mut probe = cc_spawn(&cc);
+    if !msvc {
+        probe.push_arg("--version");
+    }
+    match probe.run(b"") {
+        Ok(o) if msvc || o.status.success() => Ok(cc_identity(&cc)),
+        _ => Err(format!(
+            "no C compiler (`{cc}` could not be run), so native builds are unavailable; {}",
+            loft::platform::c_host_toolchain_cure()
+        )),
+    }
+}
+
 /// The compiler's first `--version` line, or its name when it reports none.  Asked once per
 /// process.
 pub(crate) fn cc_identity(cc: &str) -> String {

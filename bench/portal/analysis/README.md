@@ -206,8 +206,8 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
   and `replace` +23 % against the previous page were both between-session variation: the
   emission was byte-identical with every new switch off, and a build of the pre-arc commit
   measured the same in the same sitting (`git archive <commit> | tar -x -C <dir on DISK>`,
-  `CARGO_TARGET_DIR=<dir>/target cargo build --release --lib --bin loft`, then
-  `bench/stats.py --only N --loft <dir>/target/release/loft --lib-dir <dir>/target/release`).
+  `CARGO_TARGET_DIR=<dir>/target cargo build --release --bin loft`, then
+  `bench/stats.py --only N --loft <dir>/target/release/loft`).
 - **A row that reads slower on a function the change did not touch: compare the MACHINE CODE,
   not only the emission.**  `entity_tick` read +6 % after the push window, reproducibly, on
   one core, interleaved, on a same-build pair — with its emitted Rust byte-identical.  `nm -S`

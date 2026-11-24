@@ -739,7 +739,7 @@ pub fn entry_ints(
     let bucket = bucket?;
     if entries.inline {
         // A locked store's refusal is the general insert's to make (`@FR-H-WriteLocked`).
-        if keys::store(hash, stores).read_only {
+        if keys::store(hash, stores).is_locked() {
             return None;
         }
         let (claim, at) = inline_slot_for(hash, claim, tag, stores);
@@ -826,7 +826,7 @@ pub fn entry_one_int(
     }
     let at = bucket?;
     if h.inline {
-        if store.read_only {
+        if store.is_locked() {
             return None;
         }
         let used =
@@ -935,7 +935,7 @@ pub fn entry_str(
     }
     let bucket = bucket?;
     if entries.inline {
-        if keys::store(hash, stores).read_only {
+        if keys::store(hash, stores).is_locked() {
             return None;
         }
         let (claim, at) = inline_slot_for(hash, claim, tag, stores);
@@ -2831,7 +2831,7 @@ fn inline_insert_int(
     value: i64,
     stores: &mut [Store],
 ) -> u32 {
-    if keys::store(hash, stores).read_only {
+    if keys::store(hash, stores).is_locked() {
         return 0;
     }
     let base = unsafe { keys::store(hash, stores).base_ptr().add(claim as usize * 8) }.cast_const();

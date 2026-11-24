@@ -15,12 +15,9 @@
 // decoded value returned) and `mixed_alone` (a span variant minted alone) decline.
 //
 // @falsify-tier: ship
-// @falsified-by: tests/falsified/a-decoded-text-is-read-where-it-lies.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
-//   CHANNEL: the VALUE channel, native only — the patch reads a span one byte late.
-//   WITNESS: under the patch c1 answers `-` where this file says `apply`: the map's keys,
-//   read a byte late, never equal "op".
-//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
-//   both — only native's values move.
+//
+// @falsified-at: none — the defect it caught lived only in the rustc writer, which is retired
+//   (`@C170`); it still holds the answers on the interpreter and the C.
 
 enum Val {
   VNull,

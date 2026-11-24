@@ -223,12 +223,11 @@ When `production = true` (or `--production` CLI flag):
 | `panic(msg)` | Rust `panic!`, program aborts | `fatal` log entry, execution continues |
 | `assert(false, msg)` | Rust `assert!`, program aborts | `error` log entry, execution continues |
 
-Both backends, through one decision — `runtime_error::logged_in_production`, called by the
-interpreter's builtins (`src/native.rs`) and by the `n_panic` / `n_assert` bodies the native
-generator writes (`src/generation/mod.rs`), which have no `#rust` template and so are hand-
-written. It was interpreter-only until 2026-09-01: `--native`, the DEFAULT backend, went
-straight to `report_and_exit()`, so a `panic()` under `production = true` aborted and wrote
-nothing — the outcome the feature exists to prevent (loft#1263).
+Both backends.  The interpreter's builtins (`src/native.rs`) ask
+`runtime_error::logged_in_production`; the C runtime's `loft_panic` / `loft_assert`
+(`src/c/loft_rt.h`) ask the production fault logger a unit's `main` binds
+(`loft_log_production_fault`, `src/c/loft_log.h`), which reads the same `[log] production`
+setting (the record: [LOGGER-history.md](LOGGER-history.md)).
 
 ⚠ The process exits non-zero on either backend even when execution continues, so an
 exit-code check cannot tell production mode from a halt. What separates them is whether the
