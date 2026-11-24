@@ -76,6 +76,8 @@ const RUNTIME: &str = concat!(
     // After `windows.h`, which loft_process.h brings in on Windows.
     include_str!("loft_mapped.h"),
     include_str!("loft_engine.h"),
+    // The test ledger (`@F38`), compiled into a ledger build only.
+    include_str!("loft_ledger.h"),
     // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
     // the host side.
     "#ifdef LOFT_FFI\n",
@@ -1792,6 +1794,9 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_assert" => Some("loft_assert"),
         "n_panic" => Some("loft_panic"),
         "n_exit" => Some("loft_exit"),
+        // The test ledger's instrumented operators (`loft_ledger.h`).
+        "n___ledger" => Some("loft_ledger"),
+        "n___ledger_div" => Some("loft_ledger_div"),
         "n_protect_store_frees" => Some("loft_protect"),
         "t_4text_to_lowercase" | "t_4text_to_uppercase" => Some("loft_unicode"),
         "t_9character_is_lowercase"
@@ -3164,6 +3169,33 @@ fn emit_program_shaped(
     out
 }
 
+/// The test ledger's site table (`@F38`, [`crate::opt::ledger_sites`]) after the program's
+/// functions, with the define that compiles `loft_ledger.h` in at the unit's top, and the
+/// line `main` arms it with before anything runs; empty for a program built without
+/// `LOFT_LEDGER`.
+fn ledger_table(data: &Data, out: &mut String) -> String {
+    if data.ledger_sites.is_empty() {
+        return String::new();
+    }
+    out.insert_str(0, "#define LOFT_LEDGER 1\n");
+    out.push_str("\nstatic const loft_lg_site loft_lg_table[] = {\n");
+    for s in &data.ledger_sites {
+        let _ = writeln!(
+            out,
+            "    {{ {}, UINT64_C(0x{:016x}), {}u, {} }},",
+            body::c_string(&s.function),
+            s.body,
+            s.ordinal,
+            s.kind
+        );
+    }
+    out.push_str("};\n");
+    format!(
+        "    loft_ledger_arm(cx, loft_lg_table, {});\n",
+        data.ledger_sites.len()
+    )
+}
+
 fn emit_program_counted(
     data: &Data,
     stores: &Stores,
@@ -3176,9 +3208,10 @@ fn emit_program_counted(
     }
     let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit_shaped(data, stores, &[main], shape)?;
+    let ledger = ledger_table(data, &mut out);
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n{ledger}    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
