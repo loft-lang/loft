@@ -189,7 +189,7 @@ fn source_is_present(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
 // `branch_has_nullable_leaf`: does a branch end, on some path, in a source that may be absent —
 // a record local that may hold nothing, a field path rooted at one, a read, a user call?  A
 // literal ends in the buffer it just built, which is there.
-fn branch_has_nullable_leaf(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+pub fn branch_has_nullable_leaf(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdIf { cond: _, t, f } => nullable_leaf(e, vars, t) || nullable_leaf(e, vars, f),
     NdBlock { block } => block[0].name != "Object" && len(block[0].operators) > 0 && nullable_leaf(e, vars, el_ir::last(block[0].operators)),
