@@ -17,8 +17,9 @@ entry   = "25-brick-buster.loft"
 
 [dependencies]
 # Floors at the first releases that carry `pub` on what this reads: a field is private
-# to its file without it (C140).
-graphics = ">=0.9.10"
+# to its file without it (C140).  graphics in its current API line: the releases before it
+# carry a Rust native part, which loft no longer loads.
+graphics = ">=0.14.3"
 shapes   = ">=0.5.4"
 assets   = ">=0.4.2"
 

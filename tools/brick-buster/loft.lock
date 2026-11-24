@@ -4,17 +4,17 @@ schema_version = 1
 
 [[package]]
 name = "graphics"
-version = "0.9.12"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.12/graphics-0.9.12.tar.gz"
-sha256 = "482390eeca7fb4479a9fef021c5b7742240eb0ab0d1519567d702db80f5a91f9"
+version = "0.14.3"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.14.3/graphics-0.14.3.tar.gz"
+sha256 = "da3a5dc6f36be919ce8379132c2d36cbfe535349c44ab0badb579db16d9660fe"
 source = "registry"
-deps = ["glb", "mesh3d"]
+deps = ["glb", "gpu", "gpu_gl", "gpu_host", "imaging", "mesh3d"]
 
 [[package]]
 name = "shapes"
-version = "0.5.4"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/shapes-v0.5.4/shapes-0.5.4.tar.gz"
-sha256 = "cad0a82d274b4de5298d844a8b343038290adff133bc4bae08661de805427185"
+version = "0.5.5"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/shapes-v0.5.5/shapes-0.5.5.tar.gz"
+sha256 = "8b09ac2d1382cc967c152e1615b7a2a46aa8e9050ce30ecb814ada767e899643"
 source = "registry"
 
 [[package]]
@@ -34,8 +34,54 @@ source = "registry"
 
 [[package]]
 name = "assets"
-version = "0.5.0"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.5.0/assets-0.5.0.tar.gz"
-sha256 = "9d9fd4fa61ae2ac705a337f74c31b6915e761148b58ecaf0b4def1be25acd18c"
+version = "0.5.2"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.5.2/assets-0.5.2.tar.gz"
+sha256 = "3558e5d441f9b1705872d918ba8168c48612bec7a93f72254454624367cbed97"
 source = "registry"
 deps = ["shapes"]
+
+[[package]]
+name = "gpu"
+version = "0.4.3"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu-v0.4.3/gpu-0.4.3.tar.gz"
+sha256 = "9ec46d8141829545c5467f18fdf5ffb912cd324c2758be617e63ac1e47e68c11"
+source = "registry"
+
+[[package]]
+name = "gpu_gl"
+version = "0.3.5"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_gl-v0.3.5/gpu_gl-0.3.5.tar.gz"
+sha256 = "de61b45feb914bfd3938ccba1decc642afe05ca944347272295b59800bd38bf9"
+source = "registry"
+deps = ["gpu"]
+
+[[package]]
+name = "gpu_host"
+version = "0.1.1"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_host-v0.1.1/gpu_host-0.1.1.tar.gz"
+sha256 = "68aa22aa488961f02b70f06d29c7f95736b863604e098f409177400ab4ad368f"
+source = "registry"
+deps = ["gpu", "gpu_gl", "gpu_metal", "gpu_vulkan"]
+
+[[package]]
+name = "gpu_metal"
+version = "0.2.3"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_metal-v0.2.3/gpu_metal-0.2.3.tar.gz"
+sha256 = "44cde76422051a47cfd76bcc01c76c7aa8dbf3da2a50ae79307677ecfeb3988a"
+source = "registry"
+deps = ["gpu"]
+
+[[package]]
+name = "gpu_vulkan"
+version = "0.2.3"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gpu_vulkan-v0.2.3/gpu_vulkan-0.2.3.tar.gz"
+sha256 = "f5780333a2b10684c01aaa5694337e309bf71a0a8cc025560a995d86fc704602"
+source = "registry"
+deps = ["gpu"]
+
+[[package]]
+name = "imaging"
+version = "0.5.5"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/imaging-v0.5.5/imaging-0.5.5.tar.gz"
+sha256 = "afdbfc88b087ba253b8c5dd9723e3f5929441ee1f6305d34f7a4ed294dee59bf"
+source = "registry"
