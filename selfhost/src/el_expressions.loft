@@ -581,6 +581,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && el_trace::on() {
     el_trace::route(e, "classify_reference_delivery=MaterializeView");
   }
+  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
   if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
