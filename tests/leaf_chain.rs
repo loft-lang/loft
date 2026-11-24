@@ -1,15 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @PLN203 rust-writer: a frameless helper is the Rust writer's leaf inlining — its `--native` runs as `--native-rust`.
-//! `@FR-R-LeafChain` — in the lean tier (`--ship`) a function whose whole call
-//! tree is frameless carries no prelude: no depth entry and no fn-ref buffer guard.  Every
-//! user function it reaches has a loft body, none is on a cycle, and none calls a fn-ref.
-//!
-//! The cells (`plans/157-native-4x-drawing/bytecode-comparisons/N4b-leaf-chain-cells.loft`)
-//! carry one shape per case.  These tests pin which functions keep a frame, that the switch
-//! (`LOFT_NO_LEAF_CHAIN=1`) and the named tier keep every non-leaf frame, that the lean
-//! build answers what the interpreter answers, and that runaway recursion through a
-//! frameless helper still ends in the depth cap's report rather than a native stack crash.
+//! Chains of helper calls on the compiled tiers: the cells
+//! (`plans/157-native-4x-drawing/bytecode-comparisons/N4b-leaf-chain-cells.loft`) carry one
+//! call-tree shape per case.  These tests pin that the lean build (`--ship`) answers what the
+//! interpreter answers without a leak, and that runaway recursion — through a helper that calls
+//! no further, an overload member, a generic instance or a method — ends in the depth cap's
+//! report rather than a native stack crash.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Output;

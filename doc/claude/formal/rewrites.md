@@ -197,7 +197,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Counter)` | `R-Counter` ir, c |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | counted; admitted on no bench program |
+| `(R-DecodeView)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c |
@@ -210,21 +210,20 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
 | `(R-ExpPow)` | counted; admitted on no bench program |
 | `(R-FastTable)` | not counted — executor: the stack access mode fixed per run |
-| `(R-FaultFlag)` | counted; admitted on no bench program |
+| `(R-FaultFlag)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-FieldAppend)` | `R-FieldAppend` c · `/bare` c |
 | `(R-FileHold)` | `R-FileHold` c |
 | `(R-Fill)` | `R-Fill` c · `/guarded` c |
 | `(R-FirstClaim)` | `R-FirstClaim` interp |
 | `(R-FlatCopy)` | `R-FlatCopy` c |
 | `(R-FnRefBuffer)` | `R-FnRefBuffer` c · `/frame` c |
-| `(R-FnRefValue)` | counted; admitted on no bench program |
-| `(R-FoldCompare)` | counted; admitted on no bench program |
+| `(R-FnRefValue)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-FormatAppend)` | `R-FormatAppend` parse · `/c` c |
 | `(R-ForwardResult)` | `R-ForwardResult` ir |
 | `(R-ForwardWalk)` | `R-ForwardWalk` parse |
 | `(R-FrameHeadroom)` | not counted — executor: one capacity test per frame entry |
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
-| `(R-GroupPush)` | counted; admitted on no bench program |
+| `(R-GroupPush)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-GuardFree)` | `R-GuardFree` c |
 | `(R-GuardedChain)` | `R-GuardedChain` c · `/operators` c · `/versions` c |
 | `(R-HandOver)` | `/rotate` c |
@@ -241,11 +240,8 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
 | `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c |
-| `(R-Leaf)` | counted; admitted on no bench program |
-| `(R-LeafChain)` | counted; admitted on no bench program |
 | `(R-LiftReuse)` | `R-LiftReuse` ir |
-| `(R-LitDiv)` | counted; admitted on no bench program |
-| `(R-LitHoist)` | counted; admitted on no bench program |
+| `(R-LitHoist)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-LiteralAppend)` | `R-LiteralAppend` ir |
 | `(R-LiteralWalk)` | `R-LiteralWalk` parse |
 | `(R-LoopBuffer)` | `R-LoopBuffer` ir |
@@ -253,7 +249,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-LoopSlot)` | `R-LoopSlot` interp |
 | `(R-MaskRange)` | `R-MaskRange` parse |
 | `(R-Mint)` | `R-Mint` c |
-| `(R-MoveAppend)` | counted; admitted on no bench program |
+| `(R-MoveAppend)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-MoveChild)` | `R-MoveChild` parse |
 | `(R-MoveLast)` | `R-MoveLast` ir · `/host` ir · `/local` ir |
 | `(R-NoLocks)` | `R-NoLocks` c |
@@ -273,11 +269,10 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Range)` | `R-Range` c · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
-| `(R-RebindBuffer)` | counted; admitted on no bench program |
 | `(R-RecPtr)` | `R-RecPtr` c · `/held` c · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
-| `(R-RefillBuffer)` | counted; admitted on no bench program |
-| `(R-RefillText)` | counted; admitted on no bench program |
+| `(R-RefillBuffer)` | not counted (`rule_tags.py phases --check` names it) |
+| `(R-RefillText)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-Refresh)` | `/keep-header` c |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
@@ -300,13 +295,12 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
 | `(R-StickySum)` | `R-StickySum` c |
-| `(R-StreamWalk)` | counted; admitted on no bench program |
+| `(R-StreamWalk)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-TableHandle)` | `R-TableHandle` c |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c · `/tested` c |
-| `(R-TextClear)` | counted; admitted on no bench program |
 | `(R-TextLen)` | `R-TextLen` parse |
 | `(R-TextRun)` | counted; admitted on no bench program |
 | `(R-Transient)` | `R-Transient` c |
@@ -317,7 +311,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-VecCopy)` | `R-VecCopy` ir |
 | `(R-Version)` | `R-Version` c · `/nest` c |
 | `(R-View)` | `R-View` c |
-| `(R-ViewReturn)` | counted; admitted on no bench program |
+| `(R-ViewReturn)` | not counted (`rule_tags.py phases --check` names it) |
 | `(R-WorkBuffer)` | `R-WorkBuffer` parse · `/onward` parse · `/result` parse |
 | `(R-WorkPark)` | `R-WorkPark` c |
 | `(R-WorkView)` | not counted — unbuilt: no code; the C's (R-TextBorrow) format clause covers the shape |
@@ -568,16 +562,6 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  whose operands are proven is the plain operator and wraps.  Under
                  the probe `(R-StickySum)` and `(R-SpecChain)` decline: the
                  operators they guard are the wrapping ones already.
-
-  (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
-                 as one sentinel test and the plain operator — `if x == MIN { MIN }
-                 else { x / k }` — which is the guarded template's exact value: the
-                 null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
-                 a null operand, and the literal rules out the first two at
-                 generation time.  It needs no proof of the dividend, which is what
-                 lets it fire on an arithmetic result the proof never trusts; the
-                 template's fault note is dropped with it, since it fires only when
-                 the result is the sentinel while neither operand is.
 
   (R-LoopBuffer) a per-site vector buffer (`__vdb_N`, the store a vector local
                  declared `[]` is backed by) whose mint stands INSIDE a loop keeps
@@ -1690,46 +1674,6 @@ Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_dec
 `RefillTextSites::vectors`, `refill_text_call` in `calls.rs`.  Guard
 `tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`; pin
 `tests/refill_text.rs` (the values pass either way, so the pin is the falsifier).
-
-### A rebind hands the displaced store to the call
-
-```
-  (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
-                 direct call that answers a FRESH store (`Own::Owned`) through a
-                 hidden buffer local `b` — a compiler local nothing but this call and
-                 its scope-exit free names — ADOPTS the result and hands `x`'s
-                 previous store to `b`, the buffer of the call's next execution,
-                 instead of exchanging the result into `x`'s store
-                 (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
-                 exchange: the result has a store of its own (not null, not `x`'s),
-                 `x` held one, `b` is null or IS the result's store (so no live
-                 buffer is dropped), and `x`'s store is not the caller's entry buffer
-                 (a return-buffer local).  Static conditions: `x` is not an argument
-                 (the return-buffer attribute with its entry witness excepted), not
-                 captured, not never-free, not witnessed, not a coroutine field; the
-                 rebind sits inside a loop (the handed store is a buffer only if the
-                 call runs again); and no local borrowing `x`'s or `b`'s store is named
-                 at or after the top-level statement holding the rebind.  At its
-                 release `b` PARKS the store it holds where the exchange would have
-                 parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
-                 function leaves behind for the next mint are the exchange's.
-```
-
-**In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
-two stores' contents so that `c` kept its slot — a check of both stores' flags, the swap,
-the park of the released store and a take of it at the next mint, every iteration.  Nothing
-needs `c`'s SLOT to stay put when nothing else names it: the result is fresh, so `c` can
-simply take it, and the store `c` held — whose value the rebind ends — is exactly a buffer
-of the right type for the next call, which the refilling callee (`(R-RefillBuffer)`) writes
-in place.  The two stores take turns by name instead of by content.  The scope-exit free of
-`b` releases whichever one `c` does not hold.  Effect: mesh3d's `mat4_mul` loop 54 → 39 ns
-per product (−29 %, priced −29 %).  Switch `LOFT_NO_REBIND_BUFFER=1`, read where the rebind
-is emitted; trace `LOFT_TRACE_REBIND_BUFFER=1` names each decline.  Sites:
-`Output::rebind_buffer_for`, the call-return arm in `generation/dispatch.rs`, the body
-pre-pass that marks the buffers (`Output::rebind_handed`, so a release emitted before the
-rebind — an early `return` inside the loop — parks too), and `Stores::park_or_free`.  Guard
-`tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`, pin
-`tests/rebind_buffer.rs`.
 
 ### An in-place scalar set disturbs no header
 
@@ -3790,30 +3734,6 @@ work text — `x = x + "{e}"` is lowered as an append of the format without the 
 `FnWriter::format_into_dest` (`LOFT_NO_FORMAT_INTO`): crawler `char_roundtrip` −28 %
 instructions.
 
-### An emptied text keeps its buffer
-
-```
-  (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
-                 `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
-                 text, the buffer's capacity kept — rather than binding a fresh empty
-                 `String`.  The value is the empty text either way; only the
-                 capacity differs, which no program can observe (R-Escape).  A first
-                 bind (the declaration), a text PARAMETER passed by value, a generator
-                 field and a narrow-encoded local keep the fresh `String`.
-```
-
-**In words.**  A work text — a call's text result buffer, a format's work text, an
-accumulator — is emptied once per use and refilled.  Bound to a fresh `String` each time,
-it dropped its allocation and claimed and regrew a new one on every pass: zttext's
-`materialise` paid that per piece, its callee emptying the caller's result buffer through
-the `&text` parameter.  Emptied in place the buffer is claimed once per activation.
-`materialise` 500 → 206 µs, `seg` 950 → 665 µs on arm64 macOS, hashes unchanged.
-Switch `LOFT_NO_TEXT_CLEAR`; census `R-TextClear`, one per emission.  Cells
-`loft-suite/attic/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
-text that held MORE than it is refilled with; with the clear replaced by a no-op, c1
-reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
-`Output::output_set_inner`.
-
 ### A text call's result is read from its work buffer
 
 ```
@@ -5005,7 +4925,7 @@ activation, so a promoted call site in `main` keeps its buffer for the run exact
 return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
 reads such a `main` as a possible leak, and it is a working set.
 
-### A leaf carries no frame
+### A function value's record answer fills its caller's store
 
 ```
   (R-FnRefBuffer) on the C, a function value whose call answers a record is
@@ -5035,12 +4955,6 @@ reads such a `main` as a possible leak, and it is a working set.
                  empty text, as a fresh one is; taking empties the slot, so a recursive
                  frame takes nothing.  Nothing is parked on a `par` worker, whose thread
                  ends with its job.
-
-  (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
-                 bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
-                 buffer guard: it cannot recurse, cannot reach stack_trace / assert /
-                 panic, and cannot sit between the frame that pushed a buffer and
-                 the one that releases it.  The live-flip check stays.
 ```
 
 **(R-FnRefBuffer), in words.**  zttext's layout takes its style
@@ -5084,32 +4998,6 @@ hand: the work park −6.8 % instructions; the frame clause 88.7 → 78.5 M inst
 Switches `LOFT_NO_FNREF_PARK`, `LOFT_NO_WORK_PARK`.  Sites: `FnWriter::loop_stmt`,
 `FnWriter::park_work_texts`, `loft_park_*` / `loft_wpark_*` in the C runtime.
 
-**In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
-and loses only the innermost frame NAME from the chain.  Switch
-`LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
-`Output::output_function`.  Its IR form, inlining the leaf for both backends, is `(R-InlineLeaf)`.
-
-```
-  (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
-                 emitted as a leaf is: every user function it reaches, transitively,
-                 has a loft body, none of them lies on a cycle, and none calls a
-                 fn-ref, runs `parallel` or yields.  A native user-level callee
-                 (no loft body) makes the tree opaque, so the caller keeps its frame —
-                 except a store BRACKET the compiler emits around an argument
-                 (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
-                 which sets a store flag and calls no loft code.
-                 The named tiers keep every non-leaf frame.
-```
-
-**In words.** @PLN157 queue row 11.  Such a function cannot be re-entered while it runs, so
-the depth cap needs no entry for it: a recursion that passes through it is still counted at
-the recursive function's own frame, and the cap's report names that function — the nearest
-frame — where the interpreter names the innermost call.  Nothing beneath it can push a fn-ref
-buffer, so its buffer guard would always drop empty.  The lean frame carries no name, which is
-why the rule is lean-only: in a named tier the frame is also what `stack_trace()` and a
-panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
-`LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
-
 ### A frame no registrant can reach carries no buffer guard
 
 ```
@@ -5141,12 +5029,11 @@ register — the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under 
 and the op `OpFreeRefOrHandUp` (a capturing lambda's join tail) — and a `parallel` body, a
 `yield` and a native callee are opaque.  Where none of those is reachable no entry can ever
 stand above the mark, so the drop is empty every time and the guard is two `Cell` reads paid
-for nothing: `fib`'s frame was 27 % of its row.  `(R-LeafChain)` already elides it — with the
-whole prelude — for an ACYCLIC chain in the lean tier; the guard never depended on
-acyclicity (only the depth count does), so this rule reaches the recursive function in every
-tier, and keeps its depth push.  The predicate is a breadth-first closure with the
+for nothing: `fib`'s frame was 27 % of its row.  The guard never depended on acyclicity
+(only the depth count does), so this rule reaches the recursive function in every tier, and
+keeps its depth push.  The predicate is a breadth-first closure with the
 per-body half cached (`Output::registers_buffers`); a `#rust`-bodied standard function is
-the body's own work, as `(R-Leaf)` reads an op, and a stdlib function taking a fn-ref would
+the body's own work, as an op is, and a stdlib function taking a fn-ref would
 be opaque (none does today).  The stack-pointer overflow check the round priced beside it
 (a further −15 %) is DECLINED: `MAX_CALL_DEPTH` is a cap both backends share and report
 identically (`runtime_errors.rs`, `native.rs` pin "exceeded 10000 stack frames"), and a check
@@ -7230,8 +7117,7 @@ two operands a correct fold may not regroup (below).
 entered by a call, so the test runner compiles with the calls kept — the value guards run the
 inlined form as programs, and `tests/function_coverage.rs` failed with the pass on before the
 flag existed.  The body's `Span` wrappers stay, and a fault's position comes from them, so a
-fault inside the body keeps its exact position and loses only the leaf's frame, as
-`(R-Leaf)` settled; with the line markers gone a frame's line is the call's; the debugger, which would want the
+fault inside the body keeps its exact position and loses only the leaf's frame; with the line markers gone a frame's line is the call's; the debugger, which would want the
 body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (`clamp`,
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
@@ -8294,7 +8180,7 @@ it; switch `LOFT_NO_EXP_POW`; guard
 on fixstep `approach` (§ the ship lane, `(Perf-Weight)`), where `exp` was the only operator
 over 2.7× its Rust twin.
 
-### A text predicate over a case fold is answered without building the fold
+### A zero-length test counts no characters
 
 ```
   (R-ZeroCount)  a comparison of a text's CHARACTER count with the zero boundary —
@@ -8305,20 +8191,6 @@ over 2.7× its Rust twin.
                  neither count is negative, so a comparison that only tells zero from
                  non-zero answers the same over either.  `len(t) == 1` and
                  `len(t) > 1` count characters and are not folded.
-  (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
-                 one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
-                 to_uppercase }, where the fold's value has that ONE mention (a
-                 synthesised temporary, or a local whose every binding is such a
-                 fold or `fold + literal` and whose every other mention is a text
-                 VALUE read as an operand of such a P), is answered WITHOUT
-                 building the folded text: over the span P inspects, F is applied
-                 byte by byte while every byte of that span and of the other
-                 operand is ASCII; the FIRST non-ASCII byte met in either operand
-                 takes the written form (the fold built, P applied) for that
-                 evaluation.  A `+ literal` on the folded operand is compared as
-                 the fold followed by the literal.  The other operand is read as
-                 written.  Any other mention of the fold — a bind read elsewhere,
-                 a return, a link, a capture, a non-text-value op — declines.
 ```
 
 **In words.** (R-ZeroCount): `len(name) > 0` counted every character of the name to learn
@@ -8328,67 +8200,6 @@ so both backends read the byte count; `arguments/parse` 22.09 → 20.50 ms nativ
 (−7.2 %), interpreted −1.6 % on layout-pinned builds (INTERPRETER_PERFORMANCE.md § pin the
 layout first — the unpinned pair read +8–13 % cycles on every lane at equal instructions,
 the shift a compile-time-only module made to the dispatch loop's placement).
-
-**In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
-exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases
-to ASCII `k`, `İ` lowercases to two scalars, `ß` uppercases to `SS`), so the byte-wise form
-is sound only while both operands' inspected bytes are ASCII — one `is_ascii()` over the
-span — and the fallback is the program as written, so no answer can change.  Reach: every
-case-insensitive lookup in the text-scan class.  Priced on server `header`
-(`bench/portal/analysis/over-9x.md`): with the walked line borrowed, 9.43 → 3.52 M ns/op.
-Generation time, `--native` first (`src/generation/ops/text_ops.rs`, beside the
-`starts_with` emitter; the folding helper beside `lazy_split` in `src/codegen_runtime.rs`);
-the IR phase only on broad evidence (`(Perf-Order)`).  Switch `LOFT_NO_FOLD_COMPARE`; trace
-`LOFT_TRACE_FOLD_COMPARE` names each admitted predicate and each declined fold.  Falsifier:
-hand-computed cells on both backends — ASCII hit and miss, a prefix longer than the line,
-the Kelvin sign in the line against an ASCII prefix (must match), `İ` within the span (two-
-scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty operand, a
-fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
-`(R-TextBorrow)`'s pins with this rule off.
-
-**BUILT** for a fold that is a synthesised temporary (`codegen_runtime::fold_compare`; the
-emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
-predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
-fold's block is neither lifted nor built; guard
-`loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
-the operand clause below.
-
-```
-  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
-                 that is never built, when ALL of:
-                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
-                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
-                 (2) every other mention of x is an operand of an admitted P, or x's
-                     own release;
-                 (3) s holds at every such P the value it held at the binding: no
-                     path from the binding to a P writes s — no assignment, no
-                     append, no `&s` hand-off, no call handed s's work buffer;
-                 (4) the binding and every P that reads x lie in one activation
-                     of one function, and that function is not a generator.
-                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
-                 on the fast path the ASCII test spans the inspected bytes of
-                 s and of l as well as the fold's own operand.  The written form,
-                 taken from the first non-ASCII byte, builds F'(s) + l at most
-                 ONCE per binding of x (a frame slot filled on first use), so no
-                 run builds it more often than the program as written.
-                 Declines, keeping x built: a second binding; any other mention —
-                 a return, a format, a store, an append, `len`/`size`, an index, a
-                 call argument, a capture, a link `&x`; an s that is a field or an
-                 element (a store write between binding and P could change it); a
-                 non-literal l; a generator.
-```
-
-**In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
-the rule already removes; reading it as the pair it was built from removes the text and
-both of its allocations.  (3) is what makes deferring the fold sound: F' is pure, so F'(s)
-at the P equals F'(s) at the binding exactly when s did not change in between, and a local
-or parameter can be checked for that by its writes, where a field cannot.  The once-per-
-binding slot keeps a non-ASCII run from rebuilding x on every P.  Priced on server
-`header` (`bench/portal/analysis/over-9x.md`, lever D): −14 %.  Switch and trace are the
-rule's own.  Falsifier: hand-computed cells on both backends — the `header` shape; s written
-between binding and P (declines); x formatted once besides the compare (declines); x bound
-on two branches (declines); s non-ASCII with the P in a loop (the written form, built
-once — `LOFT_ALLOC_SITES` counts one build).
 
 ### A text local built in its work buffer is a view of it — PROPOSED
 
@@ -8422,8 +8233,7 @@ once — `LOFT_ALLOC_SITES` counts one build).
 **In words.**  Today the build fills w and then copies w into x (`.to_string()`), which is
 one allocation for w and one for x on every binding.  A view drops the second, and the pooled
 w drops the first after the first call.  The rule rests on ONE invariant, condition (2):
-nothing writes w while x is live.  That is what separates it from `(R-FoldCompare)`'s
-operand clause, whose condition is local to x's own mentions.  Here the condition ranges over
+nothing writes w while x is live.  It is not local to x's own mentions: the condition ranges over
 every site that can write w, and the parser shares one work buffer between expressions of a
 function, so a missed writer leaves x reading another expression's text with no diagnostic.
 Native only; the interpreter's text locals own their bytes and are the reference.  Reach:

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 <!--
 Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
@@ -744,3 +745,211 @@ reached a thread-local through a call (`_tlv_get_addr`, 13 % of a record-buildin
 profile), and the rule's gain was that cost: on Apple silicon, clang, 21_tree `build_rec`
 −14.5 %, every routine of @PLN219's hand pricing −10 % to −21 %.  With the state in the store
 context (`loft_cx`) the rule keeps only the thread it does not start.
+
+## Retired with the rustc writer (@PLN225 R5)
+
+Rules only the rustc writer applied.  Over the whole corpus the C backend admitted none of them
+and its emitted C did not move when their decision code was removed, so they were removed with
+the writer ([plans/225-retire-rustc-writer/rewrite-audit.md](../plans/225-retire-rustc-writer/rewrite-audit.md)).
+Each is recorded as `rewrites.md` last stated it.
+
+### `(R-FoldCompare)`
+
+```
+  (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
+                 one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
+                 to_uppercase }, where the fold's value has that ONE mention (a
+                 synthesised temporary, or a local whose every binding is such a
+                 fold or `fold + literal` and whose every other mention is a text
+                 VALUE read as an operand of such a P), is answered WITHOUT
+                 building the folded text: over the span P inspects, F is applied
+                 byte by byte while every byte of that span and of the other
+                 operand is ASCII; the FIRST non-ASCII byte met in either operand
+                 takes the written form (the fold built, P applied) for that
+                 evaluation.  A `+ literal` on the folded operand is compared as
+                 the fold followed by the literal.  The other operand is read as
+                 written.  Any other mention of the fold — a bind read elsewhere,
+                 a return, a link, a capture, a non-text-value op — declines.
+```
+```
+
+**In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
+exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases
+to ASCII `k`, `İ` lowercases to two scalars, `ß` uppercases to `SS`), so the byte-wise form
+is sound only while both operands' inspected bytes are ASCII — one `is_ascii()` over the
+span — and the fallback is the program as written, so no answer can change.  Reach: every
+case-insensitive lookup in the text-scan class.  Priced on server `header`
+(`bench/portal/analysis/over-9x.md`): with the walked line borrowed, 9.43 → 3.52 M ns/op.
+Generation time, `--native` first (`src/generation/ops/text_ops.rs`, beside the
+`starts_with` emitter; the folding helper beside `lazy_split` in `src/codegen_runtime.rs`);
+the IR phase only on broad evidence (`(Perf-Order)`).  Switch `LOFT_NO_FOLD_COMPARE`; trace
+`LOFT_TRACE_FOLD_COMPARE` names each admitted predicate and each declined fold.  Falsifier:
+hand-computed cells on both backends — ASCII hit and miss, a prefix longer than the line,
+the Kelvin sign in the line against an ASCII prefix (must match), `İ` within the span (two-
+scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty operand, a
+fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
+`(R-TextBorrow)`'s pins with this rule off.
+
+**BUILT** for a fold that is a synthesised temporary (`codegen_runtime::fold_compare`; the
+emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
+predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
+fold's block is neither lifted nor built; guard
+`loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
+the operand clause below.
+
+```
+  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
+                 that is never built, when ALL of:
+                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
+                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
+                 (2) every other mention of x is an operand of an admitted P, or x's
+                     own release;
+                 (3) s holds at every such P the value it held at the binding: no
+                     path from the binding to a P writes s — no assignment, no
+                     append, no `&s` hand-off, no call handed s's work buffer;
+                 (4) the binding and every P that reads x lie in one activation
+                     of one function, and that function is not a generator.
+                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
+                 on the fast path the ASCII test spans the inspected bytes of
+                 s and of l as well as the fold's own operand.  The written form,
+                 taken from the first non-ASCII byte, builds F'(s) + l at most
+                 ONCE per binding of x (a frame slot filled on first use), so no
+                 run builds it more often than the program as written.
+                 Declines, keeping x built: a second binding; any other mention —
+                 a return, a format, a store, an append, `len`/`size`, an index, a
+                 call argument, a capture, a link `&x`; an s that is a field or an
+                 element (a store write between binding and P could change it); a
+                 non-literal l; a generator.
+```
+
+**In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
+the rule already removes; reading it as the pair it was built from removes the text and
+both of its allocations.  (3) is what makes deferring the fold sound: F' is pure, so F'(s)
+at the P equals F'(s) at the binding exactly when s did not change in between, and a local
+or parameter can be checked for that by its writes, where a field cannot.  The once-per-
+binding slot keeps a non-ASCII run from rebuilding x on every P.  Priced on server
+`header` (`bench/portal/analysis/over-9x.md`, lever D): −14 %.  Switch and trace are the
+rule's own.  Falsifier: hand-computed cells on both backends — the `header` shape; s written
+between binding and P (declines); x formatted once besides the compare (declines); x bound
+on two branches (declines); s non-ASCII with the P in a loop (the written form, built
+once — `LOFT_ALLOC_SITES` counts one build).
+
+### `(R-Leaf)`
+
+```
+  (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
+                 bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
+                 buffer guard: it cannot recurse, cannot reach stack_trace / assert /
+                 panic, and cannot sit between the frame that pushed a buffer and
+                 the one that releases it.  The live-flip check stays.
+```
+
+**In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
+and loses only the innermost frame NAME from the chain.  Switch
+`LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
+`Output::output_function`.  Its IR form, inlining the leaf for both backends, is `(R-InlineLeaf)`.
+
+### `(R-LeafChain)`
+
+```
+  (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
+                 emitted as a leaf is: every user function it reaches, transitively,
+                 has a loft body, none of them lies on a cycle, and none calls a
+                 fn-ref, runs `parallel` or yields.  A native user-level callee
+                 (no loft body) makes the tree opaque, so the caller keeps its frame —
+                 except a store BRACKET the compiler emits around an argument
+                 (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
+                 which sets a store flag and calls no loft code.
+                 The named tiers keep every non-leaf frame.
+```
+
+**In words.** @PLN157 queue row 11.  Such a function cannot be re-entered while it runs, so
+the depth cap needs no entry for it: a recursion that passes through it is still counted at
+the recursive function's own frame, and the cap's report names that function — the nearest
+frame — where the interpreter names the innermost call.  Nothing beneath it can push a fn-ref
+buffer, so its buffer guard would always drop empty.  The lean frame carries no name, which is
+why the rule is lean-only: in a named tier the frame is also what `stack_trace()` and a
+panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
+`LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
+
+### `(R-LitDiv)`
+
+```
+  (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
+                 as one sentinel test and the plain operator — `if x == MIN { MIN }
+                 else { x / k }` — which is the guarded template's exact value: the
+                 null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
+                 a null operand, and the literal rules out the first two at
+                 generation time.  It needs no proof of the dividend, which is what
+                 lets it fire on an arithmetic result the proof never trusts; the
+                 template's fault note is dropped with it, since it fires only when
+                 the result is the sentinel while neither operand is.
+```
+
+### `(R-RebindBuffer)`
+
+#### A rebind hands the displaced store to the call
+
+```
+  (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
+                 direct call that answers a FRESH store (`Own::Owned`) through a
+                 hidden buffer local `b` — a compiler local nothing but this call and
+                 its scope-exit free names — ADOPTS the result and hands `x`'s
+                 previous store to `b`, the buffer of the call's next execution,
+                 instead of exchanging the result into `x`'s store
+                 (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
+                 exchange: the result has a store of its own (not null, not `x`'s),
+                 `x` held one, `b` is null or IS the result's store (so no live
+                 buffer is dropped), and `x`'s store is not the caller's entry buffer
+                 (a return-buffer local).  Static conditions: `x` is not an argument
+                 (the return-buffer attribute with its entry witness excepted), not
+                 captured, not never-free, not witnessed, not a coroutine field; the
+                 rebind sits inside a loop (the handed store is a buffer only if the
+                 call runs again); and no local borrowing `x`'s or `b`'s store is named
+                 at or after the top-level statement holding the rebind.  At its
+                 release `b` PARKS the store it holds where the exchange would have
+                 parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
+                 function leaves behind for the next mint are the exchange's.
+```
+
+**In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
+two stores' contents so that `c` kept its slot — a check of both stores' flags, the swap,
+the park of the released store and a take of it at the next mint, every iteration.  Nothing
+needs `c`'s SLOT to stay put when nothing else names it: the result is fresh, so `c` can
+simply take it, and the store `c` held — whose value the rebind ends — is exactly a buffer
+of the right type for the next call, which the refilling callee (`(R-RefillBuffer)`) writes
+in place.  The two stores take turns by name instead of by content.  The scope-exit free of
+`b` releases whichever one `c` does not hold.  Effect: mesh3d's `mat4_mul` loop 54 → 39 ns
+per product (−29 %, priced −29 %).  Switch `LOFT_NO_REBIND_BUFFER=1`, read where the rebind
+is emitted; trace `LOFT_TRACE_REBIND_BUFFER=1` names each decline.  Sites:
+`Output::rebind_buffer_for`, the call-return arm in `generation/dispatch.rs`, the body
+pre-pass that marks the buffers (`Output::rebind_handed`, so a release emitted before the
+rebind — an early `return` inside the loop — parks too), and `Stores::park_or_free`.  Guard
+`tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`, pin
+`tests/rebind_buffer.rs`.
+
+### `(R-TextClear)`
+
+#### An emptied text keeps its buffer
+
+```
+  (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
+                 `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
+                 text, the buffer's capacity kept — rather than binding a fresh empty
+                 `String`.  The value is the empty text either way; only the
+                 capacity differs, which no program can observe (R-Escape).  A first
+                 bind (the declaration), a text PARAMETER passed by value, a generator
+                 field and a narrow-encoded local keep the fresh `String`.
+```
+
+**In words.**  A work text — a call's text result buffer, a format's work text, an
+accumulator — is emptied once per use and refilled.  Bound to a fresh `String` each time,
+it dropped its allocation and claimed and regrew a new one on every pass: zttext's
+`materialise` paid that per piece, its callee emptying the caller's result buffer through
+the `&text` parameter.  Emptied in place the buffer is claimed once per activation.
+`materialise` 500 → 206 µs, `seg` 950 → 665 µs on arm64 macOS, hashes unchanged.
+Switch `LOFT_NO_TEXT_CLEAR`; census `R-TextClear`, one per emission.  Cells
+`loft-suite/attic/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
+text that held MORE than it is refilled with; with the clear replaced by a no-op, c1
+reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
+`Output::output_set_inner`.

@@ -1566,17 +1566,6 @@ pub fn refill_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
 }
 
-/// The store a rebind `x = f(…)` displaces becomes the hidden buffer of that call's next
-/// execution, and the fresh result is adopted (`@FR-R-RebindBuffer`) — **DEFAULT ON**.  Opt
-/// OUT with `LOFT_NO_REBIND_BUFFER` (read where the rebind is emitted): the result is
-/// exchanged into `x`'s store (`@FR-H-SwapRebind`) as before, the before-half of the A/B and
-/// the first bisect step for a wrong value after a rebind in a loop on `--native`.
-#[must_use]
-pub fn rebind_buffer_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_BUFFER"))
-}
-
 /// A refilled return buffer's repeat literal overwrites the kept vector where it stands when
 /// it already holds that many elements (`@FR-R-RefillBuffer`'s in-place clause,
 /// `Stores::fill_exact`) — **DEFAULT ON**.  Opt OUT with `LOFT_NO_REFILL_IN_PLACE` (read where
@@ -2127,13 +2116,6 @@ pub fn work_buffer_null_control() -> bool {
 pub fn format_append_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
-}
-
-/// `LOFT_NO_TEXT_CLEAR=1` — empty a text with a fresh `String` again (`@FR-R-TextClear` off):
-/// the first bisect step for a text that reads leftover content after `s = ""` on `--native`.
-pub fn text_clear_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_CLEAR"))
 }
 
 /// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk

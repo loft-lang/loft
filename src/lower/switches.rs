@@ -216,15 +216,6 @@ pub struct Switches {
     /// null sentinel again, so the candidate mints its own on every call.  The bisect step
     /// for a stale or shared scratch vector in a function reached through a function value.
     pub fnref_work_disabled: bool,
-    /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
-    /// before N4.  The bisect switch for a diagnostic that lost its
-    /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
-    pub leaf_elide_disabled: bool,
-    /// `LOFT_NO_LEAF_CHAIN=1` — in the lean tier, elide the prelude on true
-    /// leaves only, not on a function whose whole call tree is frameless
-    /// (`@FR-R-LeafChain`).  The bisect step one finer than
-    /// `LOFT_NO_LEAF_PRELUDE`.
-    pub leaf_chain_disabled: bool,
     /// `LOFT_NO_GUARD_FREE=1` — every non-leaf frame constructs its fn-ref buffer guard
     /// again, as before `@FR-R-GuardFree`; the bisect step for a leaked or doubly-freed
     /// fn-ref return buffer in a program with recursion.
@@ -318,8 +309,6 @@ impl Switches {
             typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),
             range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
             fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
-            leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
-            leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
             table_handle_disabled: std::env::var("LOFT_NO_TABLE_HANDLE").is_ok_and(|v| v != "0"),
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),

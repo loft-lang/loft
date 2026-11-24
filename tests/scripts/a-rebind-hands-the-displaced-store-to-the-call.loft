@@ -1,18 +1,14 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `@FR-R-RebindBuffer` — a rebind `x = f(…)` whose result is a fresh store adopts it, and the
-// store `x` held becomes the hidden buffer of that call's next execution, so a loop of such
-// rebinds alternates two stores instead of exchanging a new one into `x` each time
-// (`LOFT_NO_REBIND_BUFFER=1` exchanges, `@FR-H-SwapRebind`).
+// A rebind `x = f(…)` in a loop, from a call that answers a fresh store (`@FR-H-SwapRebind`).
 //
 // What can go wrong is a store owned twice or read after it was handed on: the call reading
 // `x` while it builds into `x`'s previous store, an even or odd trip count leaving the result
 // in either store, a view of `x` taken before the rebind, a callee that hands back its
 // argument instead of a fresh store, `x` starting in the caller's own return buffer, and the
 // state a second call of the same function finds.  Every cell checks values AND lengths;
-// values hand-computed.  `tests/rebind_buffer.rs` pins which rebinds take the form and runs
-// every cell under the native leak check.
+// values hand-computed.
 //
 
 struct M { m: vector<float> }
