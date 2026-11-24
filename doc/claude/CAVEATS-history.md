@@ -309,3 +309,27 @@ fix, and is corrected.
 
 Since 2026-11-12 `u32` is `limit(0, 4294967295) size(4)`: the whole width, and `u32?` keeps
 the top code for its null as `u8?` does.
+
+## Native build — same-symbol cross-package `#native` collision (until 2026-11-24)
+
+Closed by @PLN225 R3: a package's own native library (`[native] crate`) is refused, so two
+packages can no longer each ship one exporting the same symbol; the collide fixtures went with it.
+
+Two native packages (`[native] crate`) that export the **same `#native` symbol**
+can't be disambiguated under `--native`: the C-ABI link resolves first-`.so`-wins,
+and the interpreter's bridge registry resolves last-loaded-wins (a *pre-existing
+both-backend* hazard).  Today `--native` **rejects a reachable call** to such a
+symbol with a clear `compile_error!` ("rename one with `#native \"<unique>\"`") —
+so you never silently call the wrong fn; two packages sharing an *unused* symbol
+still build.  `--interpret` keeps its existing (silent, last-loaded) behavior.
+
+- **Workaround:** rename one of the colliding `#native` symbols (when you own the
+  package); the error names the symbol.
+- **Deferred fix** (canonical home: [NATIVE.md § Open work](NATIVE.md) —
+  @PLN26 and its successor loft#388 are both closed/parked): per-package symbol
+  namespacing so same-symbol packages coexist — touches the cdylib export, the
+  interpreter registry, and codegen in lockstep; only needed to *call* a symbol
+  two un-renameable packages both export (uncommon).
+- **Repro / guards:** `tests/lib/collide_a` + `collide_b` (both export
+  `collide_shared`), `collide_main` (calls both → rejected) / `collide_unused`
+  (unused → builds); in-crate `native_symbol_collision_across_packages_detected`.

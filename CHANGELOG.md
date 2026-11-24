@@ -24,6 +24,15 @@ the last release with an Intel Mac bundle.
 
 ### May need a change in your code
 
+**A library's native part is C.**  A package whose `loft.toml` declares a native library of its
+own in Rust — `[library] native`, `[native] crate`, `[native.functions]` or `[native.wasm]` — is
+refused where it is used, at that line, with the cure: list the C sources under
+`[c] shim = "c/<file>.c"` and bind each function with a `#c` declaration.  loft no longer runs
+cargo to build such a library, nor fetches a prebuilt one at `loft install`.  No published
+release is affected: every library release with a Rust native part was already deprecated, and
+each library has a release with a C part.  `loft new --native <name>` now scaffolds the C part
+(`c/<name>.c`), and `loft generate`, which wrote Rust stubs, is refused.
+
 **A page that runs loft holds its game and its debugger.**  The browser bundle (`pkg/loft.js`)
 hands a page an object to keep and call, where it had loose functions that shared one hidden
 session: `const game = new Game(); game.start(files); game.resume_frame()` in place of

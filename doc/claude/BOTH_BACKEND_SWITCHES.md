@@ -650,7 +650,8 @@ result, and the A/B `tests/foreign_store.rs` runs both cell files under.  The on
 difference between the forms is that the copy takes a write and the view refuses it.  The
 same switch covers a `#native` bridge's whole vector answer bound to a local
 (`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
-switch; `tests/foreign_bridge.rs` is its A/B).
+switch).  No test exercises that half: its A/B ran on a package's own Rust native library,
+which is refused (@PLN225).
 
 **`LOFT_NO_SLICE_INTO=1`** (`@FR-R-SliceInto`, default-ON, scope pass, BOTH backends) keeps a
 scalar slice appended to a PLACE — a literal's field `R { f: v[a..b] }`, `x.f += v[a..b]` — as a

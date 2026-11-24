@@ -124,29 +124,6 @@ over an explicit work list (a `vector` used as a stack).
 
 ---
 
-## Native build — same-symbol cross-package `#native` collision (fix deferred → @PLN26)
-
-Two native packages (`[native] crate`) that export the **same `#native` symbol**
-can't be disambiguated under `--native`: the C-ABI link resolves first-`.so`-wins,
-and the interpreter's bridge registry resolves last-loaded-wins (a *pre-existing
-both-backend* hazard).  Today `--native` **rejects a reachable call** to such a
-symbol with a clear `compile_error!` ("rename one with `#native \"<unique>\"`") —
-so you never silently call the wrong fn; two packages sharing an *unused* symbol
-still build.  `--interpret` keeps its existing (silent, last-loaded) behavior.
-
-- **Workaround:** rename one of the colliding `#native` symbols (when you own the
-  package); the error names the symbol.
-- **Deferred fix** (canonical home: [NATIVE.md § Open work](NATIVE.md) —
-  @PLN26 and its successor loft#388 are both closed/parked): per-package symbol
-  namespacing so same-symbol packages coexist — touches the cdylib export, the
-  interpreter registry, and codegen in lockstep; only needed to *call* a symbol
-  two un-renameable packages both export (uncommon).
-- **Repro / guards:** `tests/lib/collide_a` + `collide_b` (both export
-  `collide_shared`), `collide_main` (calls both → rejected) / `collide_unused`
-  (unused → builds); in-crate `native_symbol_collision_across_packages_detected`.
-
----
-
 ## Native build — no loft-source position on runtime faults (@PLN28)
 
 The @PLN28 pc → source-position map (`Definition.source_spans`, populated at
@@ -367,18 +344,12 @@ literal no longer parses.  Use `integer` (i64) and plain literals.
   bit-packed protocols, and RGBA data are unaffected.
 - **Stale derived artefacts after the migration (discovered
   2026-04-21).**  Neither `cargo test` nor `make ci` rebuilds
-  `target/wasm32-unknown-unknown/release/libloft.rlib` or
-  `tests/lib/native_pkg/native/target/release/libloft_native_test.so`.
+  `target/wasm32-unknown-unknown/release/libloft.rlib`.
   A developer who runs `cargo test --release` against a
   post-migration source tree but pre-migration artefacts will see
-  **5 html_wasm failures + 6 native_loader failures** that look
-  like real regressions:
-    * `--html` rustc errors cite `codegen_runtime.rs:1244` (old
-      `cr_rand_int` position) vs. current line 1409.
-    * `native_loader::scalar_before_vec` reports
-      `offset_sum: expected 106, got 103` because the .so still
-      reads elements as 4-byte i32 from the now-8-byte-stride
-      memory.
+  **html_wasm failures** that look like real regressions: `--html`
+  rustc errors cite `codegen_runtime.rs:1244` (old `cr_rand_int`
+  position) vs. current line 1409.
   Rebuild commands are in `DEVELOPMENT.md § Common pitfalls`.
   This class of tripwire is a general post-migration risk, not a
   language bug.
@@ -390,9 +361,7 @@ literal no longer parses.  Use `integer` (i64) and plain literals.
   `*const i64`; `lib/moros_render` takes no `vector<integer>` FFI
   arg (only graphics does), so no production cdylib was on `*const
   i32` for such an arg — verified by grep (no `*const i32` vector
-  externs).  The test fixture (`tests/lib/native_pkg/native`) and
-  graphics now agree with codegen.  Guards: `generation::p310_vector_elem_tests`
-  + `tests/codegen_emitter.rs::p310_graphics_vector_ffi_checks_clean`.
+  externs).  Graphics agrees with codegen.  Guard: `generation::p310_vector_elem_tests`.
 
 Regression guard for the overall migration:
 `tests/scripts/20-binary.loft`, `21-binary-ops.loft`,

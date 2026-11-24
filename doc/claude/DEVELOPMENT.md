@@ -575,7 +575,6 @@ Keep the **installed** loft current: a stale one builds consumer libraries again
 |---|---|---|
 | `cargo clippy` without `-D warnings`, or only one variant | CI denies warnings, and runs the `--all-targets --all-features` variant too | both variants, with `-D warnings` |
 | Stale wasm rlib | `--html` / `html_wasm` tests fail with rustc errors citing an older source | `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random` — never `--features wasm`, whose bundle imports from `__wbindgen_placeholder__` |
-| Stale `tests/lib/native_pkg/native` fixture cdylib | `native_loader` tests misread memory and report "expected N, got M" | `make rebuild-native-cdylibs` (`make ci` and `make run-tests` run it) |
 | `#[cfg(feature = "X")]` on an entry of a registration table | registration order shifts, and tests crash with "index out of bounds" | keep every entry, gate only what it includes |
 | New files with crypto or FFI constants | pedantic lints (`unreadable_literal`, `many_single_char_names`, `cast_lossless`) | `#[allow(clippy::…)]` on the function or constant |
 | A new operator or builtin | `index/target_surface.json` drifts and `make ci` fails a guard no targeted suite shows | `make surface-gen`, after rebuilding the wasm rlib |

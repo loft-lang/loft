@@ -299,6 +299,6 @@ through, on both the C-ABI `#[link_name]` and the rlib `krate::sym` path.
   nearest preceding symbol, which would hand codegen a neighbouring function's name.  A near miss
   leaves the symbol alone.
 
-Guards: `tests/lib/native_remap_pkg` is a `[native] crate` fixture in this shape which exports a
-DECOY under each `#native` name, so a regression *answers* (-1000 / -2000) instead of failing to
-link — the way this reached users.  `native_scalar_pkg` is the clean-binding control.
+No package can ship a remapped registration: a package's own native library is
+refused (@PLN225), and with it the `native_remap_pkg` and `native_scalar_pkg` fixtures that
+guarded this section.

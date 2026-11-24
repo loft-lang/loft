@@ -127,12 +127,10 @@ when the user asks "is the tree clean?".
    then `--wait` for the summary.
 5. **`cargo test --release --test doc_hygiene`** — Markdown / plan
    file invariants.
-6. **Freshness checks** — if html_wasm or native_loader tests
-   failed, check derived-artefact mtime:
+6. **Freshness checks** — if html_wasm tests failed, check derived-artefact
+   mtime:
    - `target/wasm32-unknown-unknown/release/libloft.rlib` vs
      `src/codegen_runtime.rs` / `src/ops.rs` / `src/data.rs`.
-   - `tests/lib/native_pkg/native/target/release/libloft_native_test.so`
-     vs its source.
    When stale, name the rebuild from `DEVELOPMENT.md § Common pitfalls`.
 
 ### Pre-existing vs newly-introduced failures — always report both
