@@ -3159,6 +3159,7 @@ pub fn strict_free_site(c: &StoreChecks, slot: u16) -> Option<(u32, String)> {
 )]
 pub fn strict_store_violation(
     checks: &StoreChecks,
+    cx: &crate::crash_report::CrashCx,
     store_nr: u16,
     rec: u32,
     pos: u32,
@@ -3172,7 +3173,7 @@ pub fn strict_store_violation(
     if n < 200 && crate::fault_log::armed() {
         let (freed_pc, var) = strict_free_site(checks, store_nr).unwrap_or((0, String::new()));
         let var = if var.is_empty() {
-            crate::store_trace::freed_variable(freed_pc).unwrap_or_default()
+            crate::store_trace::freed_variable(cx, freed_pc).unwrap_or_default()
         } else {
             var
         };
@@ -3187,7 +3188,7 @@ pub fn strict_store_violation(
         // Generated Rust has no bytecode positions: leave the sites out rather than `pc=0`.
         for (key, pc) in [("created", created_at), ("freed", freed_pc), ("at", now_pc)] {
             if pc != 0 {
-                fields.push((key, crate::store_trace::site(pc)));
+                fields.push((key, crate::store_trace::site(cx, pc)));
             }
         }
         crate::fault_log::record("use-after-free", &fields);
@@ -3202,7 +3203,7 @@ pub fn strict_store_violation(
             || "<not recorded>".to_string(),
             |(_, nm)| {
                 if nm.is_empty() {
-                    crate::store_trace::freed_variable(freed_pc)
+                    crate::store_trace::freed_variable(cx, freed_pc)
                         .unwrap_or_else(|| "<anon>".to_string())
                 } else {
                     format!("`{nm}`")
@@ -3217,14 +3218,14 @@ pub fn strict_store_violation(
         let where_ = if spans == 0 {
             "  (no bytecode positions — native run; re-run with --interpret for pcs)".to_string()
         } else {
-            let at = crate::store_trace::site;
+            let at = |pc| crate::store_trace::site(cx, pc);
             let mut w = format!(
                 "  created {}\n  freed   {}\n  {what:<7} {}",
                 at(created_at),
                 at(freed_pc),
                 at(now_pc)
             );
-            if let Some(x) = crate::store_trace::excerpt(now_pc) {
+            if let Some(x) = crate::store_trace::excerpt(cx, now_pc) {
                 w.push('\n');
                 w.push_str(&x);
             }

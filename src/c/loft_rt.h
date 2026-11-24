@@ -6637,7 +6637,7 @@ static loft_ref loft_arguments(loft_cx *cx) {
     return r;
 }
 
-/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: a per-thread
+/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: the context's
  * buffer the appends grow and `pack_take` hands over as a text, bytes verbatim, emptying it. */
 static void loft_pk_push(loft_cx *cx, const uint8_t *b, size_t n) {
     if (cx->pk_n + n > cx->pk_cap) {

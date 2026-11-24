@@ -67,8 +67,8 @@ enum PagedKind {
 }
 
 // @PLN103 P3 — the `LOFT_STORES=timeline` runtime store timeline. A pure diagnostic
-// (gated on the env var), so its state lives thread-local rather than on `Stores` — no
-// struct/constructor ripple. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
+// (gated on the env var); its state is the run's (`Stores::run`, `RunDiagnostics::timeline`),
+// so a `par` worker's stores keep their own. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
 // REUSED slot index (P0.4), so `seq` (a monotonic alloc counter) disambiguates slot reuse.
 // `live` maps each live slot to its current seq so a free prints the SAME id as its alloc.
 #[derive(Default)]
@@ -953,12 +953,12 @@ impl Stores {
         store.set_known_type(u16::MAX);
         #[cfg(feature = "op-census")]
         {
-            store.trace_worker = crate::store_census::worker();
-            crate::store_census::alloc_event(format_args!(
-                "N {} {}",
-                store.trace_name(),
-                store.capacity_words()
-            ));
+            store.trace_worker = self.tap.worker();
+            store.tap = Some(self.tap.clone());
+            crate::store_census::alloc_event(
+                store.tap.as_deref(),
+                format_args!("N {} {}", store.trace_name(), store.capacity_words()),
+            );
         }
         // @PLN154 phase 3 — the slot's own number, stamped where the slot goes live so a
         // record relocation can name the store it happened in.
@@ -1859,9 +1859,9 @@ impl Stores {
         // Each free resolved to its function, source position and the variable it released
         // (`store_trace`), so the two sites can be read without `introspect`.
         let at = |pc: u32| {
-            let by = crate::store_trace::freed_variable(pc)
+            let by = crate::store_trace::freed_variable(&self.crash, pc)
                 .map_or_else(String::new, |v| format!(" by {v}"));
-            format!("{}{by}", crate::store_trace::site(pc))
+            format!("{}{by}", crate::store_trace::site(&self.crash, pc))
         };
         // The names cost a table per compile, so only `LOFT_REFREE_FAILS=1` builds it.
         let names = if crate::keys::refree_names() {
@@ -1987,24 +1987,27 @@ impl Stores {
             // with the distance back to the entry, because unlabelled it reads as an
             // exact position and the map is sparse enough to be several statements
             // out — inside the stdlib, a different file entirely (loft#1262).
-            let at = crate::crash_report::nearest_source_loc_for_pc(self.alloc_pc).map_or_else(
-                || format!("pc={}", self.alloc_pc),
-                |(recorded_at, p)| {
-                    let back = self.alloc_pc.saturating_sub(recorded_at);
-                    let how_near = if back == 0 {
-                        String::new()
-                    } else {
-                        format!(", nearest span pc-{back}")
-                    };
-                    format!(
-                        "{}:{}:{} (pc={}{how_near})",
-                        p.file, p.line, p.pos, self.alloc_pc
-                    )
-                },
-            );
+            let at = self
+                .crash
+                .nearest_source_loc_for_pc(self.alloc_pc)
+                .map_or_else(
+                    || format!("pc={}", self.alloc_pc),
+                    |(recorded_at, p)| {
+                        let back = self.alloc_pc.saturating_sub(recorded_at);
+                        let how_near = if back == 0 {
+                            String::new()
+                        } else {
+                            format!(", nearest span pc-{back}")
+                        };
+                        format!(
+                            "{}:{}:{} (pc={}{how_near})",
+                            p.file, p.line, p.pos, self.alloc_pc
+                        )
+                    },
+                );
             // The opcode is exact, so print both: the line orients the reader, the op
             // says what actually ran.
-            let op = crate::crash_report::last_op_name();
+            let op = self.crash.last_op_name();
             let op = if op.is_empty() {
                 String::new()
             } else {
@@ -2191,7 +2194,10 @@ impl Stores {
         store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("F {}", store.trace_name()));
+        crate::store_census::alloc_event(
+            store.tap.as_deref(),
+            format_args!("F {}", store.trace_name()),
+        );
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {
@@ -2358,7 +2364,13 @@ impl Stores {
             if !build.allocations[si].live {
                 continue; // a transient the constructor claimed then freed
             }
-            let moved = std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg_attr(not(feature = "op-census"), allow(unused_mut))]
+            let mut moved =
+                std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg(feature = "op-census")]
+            {
+                moved.tap = Some(self.tap.clone());
+            }
             self.allocations[si] = moved;
             self.clear_free_bit(slot);
             if slot + 1 > self.max {
@@ -2677,6 +2689,7 @@ impl Stores {
         if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3142,6 +3155,7 @@ impl Stores {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3367,6 +3381,13 @@ impl Stores {
                 free_bits[word] |= 1u64 << bit;
             }
         }
+        // The worker's own instruments, shared by every store in its table.
+        #[cfg(feature = "op-census")]
+        let worker_tap = std::sync::Arc::new(self.tap.child());
+        #[cfg(feature = "op-census")]
+        for s in &mut allocations {
+            s.tap = Some(worker_tap.clone());
+        }
         WorkerStores::new(Stores {
             types: self.types.clone(),
             names: self.names.clone(),
@@ -3400,6 +3421,26 @@ impl Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::codegen_runtime::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: worker_tap,
             run: super::RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: self.const_refs.clone(),
@@ -5211,8 +5252,8 @@ impl Stores {
             return;
         };
         let src_oob = src.and_then(|s| self.first_oob_text(s, tp));
-        let (pc, _op, _d) = crate::crash_report::last_context();
-        let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
+        let (pc, _op, _d) = self.crash.last_context();
+        let line = self.crash.source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
         if self
             .run

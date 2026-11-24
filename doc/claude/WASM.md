@@ -562,7 +562,7 @@ data (see [WEB_IDE.md](lib_plans/62-web-ide/README.md) § M4 for IndexedDB proje
 | Time | `Date.now()` / `performance.now()` | Configurable fake values |
 | Environment | Pre-configured `Map` (no real env) | `process.env` or fake `Map` |
 | Storage | `localStorage` / IndexedDB | In-memory `Map` |
-| Output | Thread-local buffer → console panel | Thread-local buffer → string |
+| Output | the run's capture (`Stores::output`) → console panel | the run's capture (`Stores::output`) → string |
 | Binary data | Native `ArrayBuffer` in IndexedDB | base64 in JSON tree |
 | Persistence | IndexedDB survives reload | None (per-test lifecycle) |
 | Threading | Tier 2 (Web Workers) if COEP/COOP, else Tier 1 (sequential) | Sequential (Tier 1) |

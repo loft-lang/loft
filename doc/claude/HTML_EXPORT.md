@@ -38,18 +38,14 @@ In normal `--native` mode, the generated Rust has `fn main()`.
 For `--html`, codegen instead emits an exported entry point:
 
 ```rust
-use std::cell::RefCell;
-
-thread_local! {
-    static STORES: RefCell<Option<Stores>> = RefCell::new(None);
-}
-
-#[no_mangle]
-pub extern "C" fn loft_start() -> i32 {
-    let mut stores = Stores::new();
-    init(&mut stores);
-    n_main(&mut stores);
-    0  // 0 = finished, 1 = yielded (frame loop)
+#[unsafe(no_mangle)]
+pub extern "C" fn loft_start() {
+    loft::codegen_runtime::install_browser_panic_hook();
+    let cell = std::cell::UnsafeCell::new(Stores::new());
+    // The program's stores, named for the panic hook while it runs.
+    let _program = loft::codegen_runtime::browser_program(&cell);
+    init(&cell);
+    n_main(&cell);
 }
 ```
 
@@ -346,9 +342,10 @@ The pipeline solves this by **yielding at `gl_swap_buffers`**:
 
 1. The loft `gl_swap_buffers()` call is mapped to an import
    `loft_yield`.
-2. `loft_yield` saves the loft program's state into the
-   `STORES` thread-local, requests `requestAnimationFrame`,
-   then returns control to the JS bridge.
+2. `wasm-opt --asyncify` unwinds the program's stack at that
+   import — its stores live in `loft_start`'s frame, so they go
+   with it — the bridge requests `requestAnimationFrame`, and
+   control returns to JS.
 3. JS receives control; on the next frame, it resumes loft
    from where it left off.
 

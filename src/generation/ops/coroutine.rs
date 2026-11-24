@@ -228,7 +228,7 @@ impl OpEmitter for OpCoroutineExhaustedEmitter {
         };
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;
-            write!(ctx.w, "{cr}::coroutine_is_exhausted({gen_code})")?;
+            write!(ctx.w, "{cr}::coroutine_is_exhausted({gen_code}, stores)")?;
         }
         Ok(())
     }
@@ -248,7 +248,7 @@ impl OpEmitter for OpCoroutineRetainEmitter {
         };
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;
-            write!(ctx.w, "{cr}::coroutine_retain({gen_code})")?;
+            write!(ctx.w, "{cr}::coroutine_retain({gen_code}, stores)")?;
         }
         Ok(())
     }

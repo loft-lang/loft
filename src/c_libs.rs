@@ -44,13 +44,15 @@ pub struct CLibrary {
     pub shim: Vec<String>,
 }
 
-/// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
-/// valid for the process lifetime (the Library handle is leaked).
+/// Wrapper for `*const ()` that is Send and Sync — function pointers from cdylibs are
+/// valid for the process lifetime (the Library handle is leaked), and code is only read.
 #[cfg(feature = "native-extensions")]
 #[derive(Clone, Copy)]
 pub(crate) struct FnPtr(pub(crate) *const ());
 #[cfg(feature = "native-extensions")]
 unsafe impl Send for FnPtr {}
+#[cfg(feature = "native-extensions")]
+unsafe impl Sync for FnPtr {}
 
 /// Global registry of native function pointers loaded from cdylibs.
 #[cfg(feature = "native-extensions")]
@@ -801,8 +803,8 @@ fn resolve_in_loaded(symbol: &str) -> Option<*const ()> {
 /// and passes the word back untouched, so the bit is the host's to use.
 pub const CTX_RETURN_STORE: usize = 1 << 16;
 
-/// The foreign-vector callback's body, shared by the interpreter's dispatcher
-/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
+/// The foreign-vector callback's body, shared by the interpreter's dispatcher (the `Stores`
+/// its handle carries) and the generated `--native` call (`native_call`'s cell):
 /// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
 /// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
 /// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the

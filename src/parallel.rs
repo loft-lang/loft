@@ -669,7 +669,7 @@ pub fn run_parallel_queue_ref(
         }
         (batch, state.into_database())
     });
-    trace.report("run_parallel_queue_ref", n_rows, n_workers);
+    trace.report(stores, "run_parallel_queue_ref", n_rows, n_workers);
     let null_db = DbRef::NULL;
     let mut refs: Vec<DbRef> = vec![null_db; n_rows];
     let mut adopted: Vec<u16> = Vec::new();

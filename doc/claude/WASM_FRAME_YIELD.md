@@ -73,18 +73,16 @@ API changes, no callback pattern, no user-visible generators.
 #### Step 1: State persistence across yields
 
 `State` (bytecode stream, stack, code_pos, call frames) must survive between
-calls.  Store the active `State` in a `thread_local!` in `wasm.rs` alongside
-the existing `OUTPUT` and `VIRT_FS` thread-locals.
+calls.  It lives in a `Game` the page holds (`src/wasm_entry.rs`), a wasm-bindgen class: the
+page passes the handle to every call, so nothing is kept per thread and two games on one page
+never meet (`@FR-C-Boundary`, @PLN226).  The `State` is boxed, because `execute_argv` keeps
+pointers into it.
 
 ```rust
-thread_local! {
-    static GAME_STATE: RefCell<Option<GameSession>> = RefCell::new(None);
-}
-
-struct GameSession {
-    state: State,
-    data: Data,
-    database: Stores,
+#[wasm_bindgen]
+pub struct Game {
+    session: Option<GameSession>, // the started program: a boxed `State`
+    stage: Option<String>,        // a world snapshot staged for the next start
 }
 ```
 
@@ -120,35 +118,23 @@ up from the exact instruction after `gl_swap_buffers`.
 
 #### Step 4: Resume export
 
-Add a new WASM export that JavaScript calls on each `requestAnimationFrame`:
-
-```rust
-#[wasm_bindgen]
-pub fn resume_frame() -> bool {
-    GAME_STATE.with(|gs| {
-        let mut session = gs.borrow_mut();
-        let Some(s) = session.as_mut() else { return false };
-        s.state.execute_continue(&s.data);
-        !s.state.is_finished()
-    })
-}
-```
-
-Returns `true` while the game is still running, `false` when the loft program
-completes (loop finished, window closed, etc.).
+`Game::resume_frame`, which JavaScript calls on each `requestAnimationFrame`, resumes the
+game's `State` and answers JSON: `{"running":true}` (with `"output"` when the frame printed)
+while the game runs, `{"running":false,"output":"…"}` when the loft program completes (loop
+finished, window closed, etc.), `{"running":false,"error":"…"}` when it crashed.
 
 #### Step 5: JavaScript frame loop
 
 ```javascript
 async function runGame(source) {
   const files = JSON.stringify([{ name: 'main.loft', content: source }]);
-  compile_and_start(files);  // parses, compiles, starts execute_argv
+  const game = new Game();
+  let r = JSON.parse(game.start(files));  // parses, compiles, starts execute_argv
   function frame() {
-    if (resume_frame()) {
-      requestAnimationFrame(frame);
-    }
+    r = JSON.parse(game.resume_frame());
+    if (r.running) requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
+  if (r.running) requestAnimationFrame(frame);
 }
 ```
 
@@ -167,9 +153,9 @@ listeners to keep that state updated (see GL6.6 in GAME_INFRA.md).
 |---|---|
 | `src/database/mod.rs` | Add `pub frame_yield: bool` to `Stores` |
 | `src/state/mod.rs` | Check `frame_yield` in `execute_argv` loop; add `execute_continue` |
-| `src/wasm.rs` | Add `GAME_STATE` thread-local; new exports `compile_and_start`, `resume_frame` |
+| `src/wasm_entry.rs` | The `Game` class: `start`, `resume_frame`, `stop`, the swap entries |
 | `src/wasm_gl.rs` | `wgl_swap_buffers` sets `stores.frame_yield = true` |
-| `doc/gallery.html` | Use `requestAnimationFrame` loop with `resume_frame` |
+| `doc/gallery-run.html` | Use a `requestAnimationFrame` loop with `game.resume_frame()` |
 
 ### Native behaviour
 
@@ -192,7 +178,7 @@ to the opcode dispatch itself.
 resume, the pointer dangles.
 
 **Mitigation:** `GameSession` **owns** `Data` (moved in, not borrowed).  The current
-`run_pipeline` already owns `p.data` — `compile_and_start` moves it into the session.
+`run_pipeline` already owns `p.data` — `Game::start` moves it into the session.
 `execute_argv` is replaced by a wrapper that borrows `&session.data` for each resume,
 keeping the borrow live only while the interpreter runs.
 
@@ -229,59 +215,19 @@ true
 **Risk:** User clicks "Run" while a game session is still alive.  The old State
 holds GL resource handles (VAOs, shaders, FBOs) that leak if not freed.
 
-**Mitigation:** `compile_and_start` checks the thread-local for an existing session.
-If one exists, it calls `loftHost.gl_destroy_window()` (which frees all GL resources
-on the JS side) and drops the old session before creating the new one.
-
-```rust
-pub fn compile_and_start(files_json: &str) -> String {
-    GAME_STATE.with(|gs| {
-        let mut slot = gs.borrow_mut();
-        if slot.is_some() {
-            // Dispose previous session's GL resources
-            host_call("gl_destroy_window", &js_sys::Array::new());
-            *slot = None;
-        }
-        // ... parse, compile, create new session ...
-    })
-}
-```
+**Mitigation:** `Game::start` disposes the game's running session first: it calls
+`loftHost.gl_destroy_window()` (which frees all GL resources on the JS side) and drops the old
+`State` before creating the new one.  `Game::stop` does the same without starting another.
 
 #### M4. Panic during resume (MEDIUM)
 
 **Risk:** An opcode panics inside `resume_frame`.  Without cleanup, the session
-remains in the thread-local in an inconsistent state; a subsequent resume would
-access corrupt State.
+remains in the game in an inconsistent state; a subsequent resume would access corrupt
+State.
 
-**Mitigation:** Wrap the resume body in `std::panic::catch_unwind`.  On panic,
-dispose the session, report the error to JavaScript, and return `false`.
-
-```rust
-pub fn resume_frame() -> String {
-    GAME_STATE.with(|gs| {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut slot = gs.borrow_mut();
-            let Some(session) = slot.as_mut() else { return false };
-            session.state.execute_loop();
-            if session.state.is_finished() {
-                session.state.finalize();
-                *slot = None;
-                return false;
-            }
-            true
-        }));
-        match result {
-            Ok(running) => /* return status */,
-            Err(panic) => {
-                // Dispose the broken session
-                *gs.borrow_mut() = None;
-                host_call("gl_destroy_window", &js_sys::Array::new());
-                /* return error JSON */
-            }
-        }
-    })
-}
-```
+**Mitigation:** `Game::resume_frame` runs the frame under `std::panic::catch_unwind`.  On a
+panic it drops the session, closes the window (`loftHost.gl_destroy_window()`) and answers
+`{"running":false,"error":"internal panic"}`.
 
 #### M5. Window close / tab navigation (LOW)
 
@@ -328,8 +274,7 @@ These are safe by construction and require no mitigation:
 
 ### Limitations
 
-- **One game session at a time.** The thread-local holds a single State.
-  Multiple simultaneous games would need a session ID or separate Web Workers.
+- **One running program per `Game`.** A page that runs two games holds two handles.
 - **No input between opcodes.** Input is sampled at `gl_poll_events`, not
   continuously.  This is identical to native behaviour and standard for games.
 

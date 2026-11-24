@@ -10,6 +10,27 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### No state is a thread-local (@PLN226)
+
+- The C runtime and the C it emits keep no `LOFT_TLS` state: what a thread keeps of its own is
+  its store context, `struct loft_cx`, the first argument of every runtime and emitted
+  function.  A worker's context is made by the thread that starts it (`loft_par_job_init`); a
+  hosted unit keeps one per calling `Stores`, a component one per caller context.  A strict
+  C99 unit runs `par` on threads.
+- The Rust runtime and interpreter keep no `thread_local!`: each value is a field of the
+  context it describes — a compile pass's memos in `Data`, a run's checks, reports, crash
+  context, engine host, output capture and web buffers in `Stores`, censuses and the live
+  reload in `State`.  The rustc writer's runtime too: its call frames (`Stores::frames`),
+  generator table and fn-ref buffers (`Stores::native`), and the live tier's parked
+  interpreter (`EngineCtl::live`).  A contained lazy-driver fault unwinds with its own payload
+  (`call_frames::ContainedFault`), so the panic hook asks no thread.
+- A library's callback finds its caller's `Stores` in the store handle, above the store number,
+  as the C runtime's does.  Six locks are gone; the rest are listed in `doc/claude/LOCKS.md`.
+- A page that runs loft holds its game and its debugger as handles (`wasm_entry::Game`,
+  `wasm_debug::Debugger`) and passes them to every call.
+- Guard: `tests/par_contexts.rs::no_state_is_a_thread_local`.  The design and where each kind
+  of state lives: THREADING.md § Each thread's own state.
+
 ### One lowering decision, held by a gate (@PLN220)
 
 - `make bind-census` fails when the C writer lowers an assignment with a store effect other

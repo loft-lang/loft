@@ -56,8 +56,8 @@ impl LibArg {
 /// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
 ///
 /// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
-/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
-/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
+/// layout on both sides (the same rlib builds both), but every process-wide `static` in libloft
+/// exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
 /// sides must agree on therefore crosses as a function of the HOST, reached through this
 /// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
 /// calls its `loft_shared_init`).
@@ -98,7 +98,7 @@ pub struct HostTable {
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 7;
+pub const HOST_ABI: u32 = 8;
 
 /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
 /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set

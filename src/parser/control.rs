@@ -1133,9 +1133,9 @@ impl Parser {
                 }
                 l.push(Value::Line(line));
                 self.line = line;
-                // loft#665 piece 3 — publish where the compiler is, so an internal
-                // panic points at the user's line instead of a compiler source file.
-                crate::crash_report::note_compile_pos(self.lexer.pos());
+                // loft#665 piece 3 — where the parse is, so an internal panic points at the
+                // user's line instead of a compiler source file (`parse_file`).
+                self.compile_pos = Some(*self.lexer.pos());
             }
             if self.lexer.has_token(";") {
                 continue;
@@ -15125,8 +15125,8 @@ impl Parser {
     /// Extract the assert condition expression from the source line.
     /// Reads the line at `pos.file:pos.line`, finds `assert(`, and extracts
     /// the text up to the matching `)`.
-    fn extract_assert_expr(pos: &crate::lexer::Position) -> String {
-        let line = Self::read_source_line(pos.file.as_str(), pos.line);
+    fn extract_assert_expr(&self, pos: &crate::lexer::Position) -> String {
+        let line = self.read_source_line(pos.file.as_str(), pos.line);
         // Find "assert(" and extract the condition
         if let Some(start) = line.find("assert(") {
             let after = start + 7; // skip "assert("
@@ -15187,16 +15187,13 @@ impl Parser {
     }
 
     /// Read a single source line from a file (or VirtFS under WASM).
-    fn read_source_line(file: &str, line: u32) -> String {
-        #[cfg(feature = "wasm")]
-        {
-            if let Some(content) = crate::wasm::virt_fs_get(file) {
-                return content
-                    .lines()
-                    .nth(line as usize - 1)
-                    .unwrap_or("")
-                    .to_string();
-            }
+    fn read_source_line(&self, file: &str, line: u32) -> String {
+        if let Some(content) = self.lexer.page_file(file) {
+            return content
+                .lines()
+                .nth(line as usize - 1)
+                .unwrap_or("")
+                .to_string();
         }
         if let Ok(content) = crate::file_access::read_to_string(file) {
             content
@@ -15230,7 +15227,7 @@ impl Parser {
                 list[1].clone()
             } else {
                 // Extract the assert expression from the source line.
-                let expr = Self::extract_assert_expr(call_pos);
+                let expr = self.extract_assert_expr(call_pos);
                 Value::str(&expr)
             };
             if self.first_pass {
@@ -15260,7 +15257,7 @@ impl Parser {
             if matches!(message.unspan(), Value::Text(_)) {
                 *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
             } else {
-                let condition = Value::str(&Self::extract_assert_expr(call_pos));
+                let condition = Value::str(&self.extract_assert_expr(call_pos));
                 let pass = Value::Call(
                     d_nr,
                     vec![

@@ -3132,7 +3132,7 @@ pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
 
 #[cfg(all(test, unix))]
 mod handover_tests {
-    use crate::file_access::{Flavor, with_program_host};
+    use crate::file_access::on_emulated_windows;
 
     /// @PLN184 W1.3 — a second bind to a port that is listening: shared on Unix (the hot
     /// swap's overlap), refused on Windows — and under the emulated Windows host.
@@ -3140,21 +3140,31 @@ mod handover_tests {
     fn a_second_bind_is_shared_on_unix_and_refused_on_windows() {
         let first = super::bind_tcp_handover(0).expect("first bind");
         let port = first.local_addr().unwrap().port();
+        let udp = super::bind_udp_handover(0).expect("first udp bind");
+        let uport = udp.local_addr().unwrap().port();
+        if on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::a_second_bind_is_shared_on_unix_and_refused_on_windows"
+            ),
+            || {
+                assert!(
+                    super::bind_tcp_handover(port).is_none(),
+                    "the emulated Windows host refuses the second bind"
+                );
+                assert!(super::bind_udp_handover(uport).is_err());
+            },
+        ) {
+            return;
+        }
         assert!(
             super::bind_tcp_handover(port).is_some(),
             "Unix shares the port"
         );
         assert!(
-            with_program_host(Flavor::Windows, || super::bind_tcp_handover(port)).is_none(),
-            "the emulated Windows host refuses the second bind"
-        );
-        let udp = super::bind_udp_handover(0).expect("first udp bind");
-        let uport = udp.local_addr().unwrap().port();
-        assert!(
             super::bind_udp_handover(uport).is_ok(),
             "Unix shares the UDP port"
         );
-        assert!(with_program_host(Flavor::Windows, || super::bind_udp_handover(uport)).is_err());
     }
 }
 
@@ -3581,46 +3591,6 @@ pub fn wasm_host_log(msg: &str) {
     crate::loft_host_print(msg.as_ptr(), msg.len());
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
     let _ = msg;
-}
-
-thread_local! {
-    /// While `Some`, the loft `print` builtin appends here instead of writing stdout —
-    /// so the program's output can be drained into `output` events.  `None` (the default)
-    /// is one branch on the print path.
-    static OUTPUT_SINK: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Called by the `print` builtin (`codegen_runtime::print_or_host`): route the program's output to the capture
-/// sink when one is active (returns `true`), else let the caller write stdout (`false`).
-#[must_use]
-pub fn print_or_capture(text: &str) -> bool {
-    OUTPUT_SINK.with(|s| {
-        let mut b = s.borrow_mut();
-        if let Some(buf) = b.as_mut() {
-            buf.push_str(text);
-            true
-        } else {
-            false
-        }
-    })
-}
-
-/// Start capturing this thread's program output (`rpc`, `serve`).
-pub fn capture_begin() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = Some(String::new()));
-}
-/// Stop capturing; what was captured and not taken is dropped.
-pub fn capture_end() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = None);
-}
-/// Take the captured program output since the last drain (empty if none / not capturing).
-pub fn capture_take() -> String {
-    OUTPUT_SINK.with(|s| {
-        s.borrow_mut()
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
-    })
 }
 
 /// macOS's native `main`: the program runs on its

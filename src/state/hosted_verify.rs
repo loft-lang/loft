@@ -191,7 +191,7 @@ impl State {
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         }
-        if !in_twin() && !sampled(d_nr) {
+        if self.twin_depth == 0 && !sampled(d_nr) {
             UNVERIFIED_SAMPLED.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
@@ -232,7 +232,7 @@ impl State {
         // Inside an interpreted twin every library call is interpreted too: the twin is what
         // the interpreter alone answers, so a call it makes is neither compiled nor verified
         // again (a carried function that calls another, `mesh3d`'s `cube` its `vec3`).
-        if in_twin() {
+        if self.twin_depth > 0 {
             let r = self.twin_call(d_nr, &visible, &dests);
             unsafe { *ret = r };
             return;
@@ -405,22 +405,13 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
-thread_local! {
-    /// How deep the interpreted twins running on this thread are nested.
-    static TWIN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-fn in_twin() -> bool {
-    TWIN.with(std::cell::Cell::get) > 0
-}
-
 impl State {
     /// Function `d_nr` interpreted with `args`, answering into the caller's buffers `dests`
-    /// (`State::call_back_into`), every library call it makes interpreted as well (`in_twin`).
+    /// (`State::call_back_into`), every library call it makes interpreted as well (`twin_depth`).
     fn twin_call(&mut self, d_nr: u32, args: &[LibArg], dests: &[DbRef]) -> LibArg {
-        TWIN.with(|t| t.set(t.get() + 1));
+        self.twin_depth += 1;
         let r = self.call_back_into(d_nr, DbRef::NULL, args, dests);
-        TWIN.with(|t| t.set(t.get() - 1));
+        self.twin_depth -= 1;
         r
     }
 }

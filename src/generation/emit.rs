@@ -4565,7 +4565,7 @@ impl Output<'_> {
             // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
             if self.named_frame && self.ckpt_cur_line != 0 && super::calls_a_frame(self.data, v) {
                 self.indent(w)?;
-                writeln!(w, "cr_call_site({});", self.ckpt_cur_line)?;
+                writeln!(w, "cr_call_site(cell, {});", self.ckpt_cur_line)?;
             }
             // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
             // ONCE: the declaration statement (its pre-evals included — an OpDatabase

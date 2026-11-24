@@ -55,9 +55,10 @@ or in the C writer — and a compiled library ships C, never a rustc-built cdyli
 every program as the others do (`@C170`), so the writer, `--native-rust`, leaves the tree under
 [@PLN225](plans/225-retire-rustc-writer/README.md), with every rewrite only it applies; a
 library an interpreted program uses runs as its C unit, which each release ships (@PLN206).  No @PLN91 gate reads the writer's output.
-The C runtime then keeps no state in thread-locals: every function takes its store context, and
-a `par` worker is handed its own, as the rustc writer's code and the interpreter are
-([@PLN226](plans/226-loft-without-thread-locals.md)).  The reasons are measured in
+No backend keeps state in thread-locals: every function takes its context — the C runtime's
+store context, the interpreter's and the writer's `Stores` — and a `par` worker is handed its
+own ([@PLN226](plans/226-loft-without-thread-locals.md), finished;
+[THREADING.md § Each thread's own state](THREADING.md#each-threads-own-state)).  The reasons are measured in
 [plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position; the order
 as it read before is in
 [ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-21).

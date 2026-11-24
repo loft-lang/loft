@@ -7,7 +7,19 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plans/issues/226).
+**DONE 2026-11-24** — closed, `status:finished`, on
+[loft-lang/plans#226](https://github.com/loft-lang/plans/issues/226).  No state is a thread-local:
+`git grep 'thread_local!' -- src` and `git grep LOFT_TLS -- src/c` find none, guarded by
+`tests/par_contexts.rs::no_state_is_a_thread_local`.  Where the reference content lives now:
+
+- the design, each implementation's context and where each kind of state lives —
+  [THREADING.md § Each thread's own state](../THREADING.md#each-threads-own-state);
+- the C runtime's store context, `struct loft_cx` — [C_BACKEND.md](../C_BACKEND.md);
+- the rules `C-Own`, `C-Shared`, `C-Adopt`, `C-Publish` — [formal/concurrency.md](../formal/concurrency.md)
+  § Each thread's own state;
+- every lock that remains, with its reason — [LOCKS.md](../LOCKS.md).
+
+The rest of this file is the closure record.
 
 | Phase | State |
 |---|---|
@@ -18,41 +30,7 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
 | P1 | done: the B-tree hints, hash scratch, image checks, JSON errors and null sentinel, key seeds, the typed parse's walk and errors, the upgrade walk and the engine's message deadline are context fields too (unguarded: a header's switch is set at different points of a unit, and a field costs words) |
 | P4 | done: the URL loader's state is context fields; the `net` component keeps its own context per caller context (below) |
 | P5 | done: `LOFT_TLS` is gone (`git grep LOFT_TLS -- src/c` names only the TLS transport's `LOFT_TLS_UNAVAILABLE`); a strict C99 `par` unit runs on threads |
-| P4b | in progress: 55 `thread_local!` blocks in 31 files remain (`git grep -c 'thread_local!' -- src`).  Moved: the compile passes' memos into `Data` (`PassCell`, `DefsMemo`, the copy manifest), a run's checks and reports into `Stores` (`checks`, `run`, `render`, `hosted_cx`), the bind notes and text yields into `State`, the C emission options into `UnitShape`; four locks removed ([LOCKS.md](../LOCKS.md)).  Open, by group: the interpreter's call frames and FFI claim (`call_frames`, `extensions`); the rustc writer's runtime (`codegen_runtime`, gone with @PLN225); the engine host and live reload; wasm and the browser; the censuses and verifiers; the compile memos main added since (`PARAM_WRITES`, `SPAN_MEMO`, `WRITTEN_PARAMS`) |
-
-### Decisions taken while building it
-
-- **One struct, like `Stores`.**  Every per-thread variable is a field of `struct loft_cx`, named
-  without its `loft_` prefix (`loft_stores` → `cx->stores`).  The header holds by value only the
-  types it defines (`loft_text`, `loft_ref`, the jump buffer, the hosted locals entry, the show
-  callback); a field pointing at a runtime type names its struct tag.
-- **A worker's context is made by its caller** in `loft_par_job_init`, before the thread starts:
-  `loft_cx_fresh`, its table the copy, `no_park` set.  `loft_cx_end` releases what a context
-  holds besides its table — what a thread's exit leaked before.
-- **The parks are the main thread's.**  A park slot is a plain static; `loft_wpark_take`,
-  `loft_park_take` and the puts all check `cx->no_park`, so a `par` worker and a hosted bridge
-  call never touch one.  (A per-thread slot was always empty on a worker before: same answers.)
-- **A hosted unit's context belongs to the `Stores` that calls it** (`HostedTable::cx_of`,
-  `host_abi::HostedContexts`), as its table view does: an interpreter `par` worker's `Stores` is
-  its own, and so is its context.  The entry is appended to `HostedTable`, so `HOST_ABI` stays.
-- **A library native's callback finds its caller's context in the store handle.**  The loft-ffi
-  ABI fixes `opaque` as the store number, and both the C helper and the Rust crate read its low
-  16 bits alone (`loft_ffi_store_nr`); the context pointer rides above them
-  (`loft_ffi_handle`).  It needs 64-bit pointers, asserted at compile time.  The interpreter's
-  own callbacks (`extensions.rs`, `CURRENT_STORES`) can carry theirs the same way in P4b.
-- **A Rust thread-local becomes a field of what it describes.**  A compile pass's memo lives in `Data` behind a `PassCell` (a `Mutex`, because `Data` is shared with `par` workers; cloned empty), a run's checks and one-time reports in `Stores` (`RefCell`, a worker's `Stores` its own), an emission's options in `UnitShape`.  A flag read from the environment is `env_once!`.
-- **The TLS archive keeps its C ABI** (`loft_tls.c`, `loft_ssh.c`, compiled apart): its
-  prototypes take no context.
-- **A component has a context of its own per caller context.**  The caller's own cannot be
-  passed: the component is compiled with its own switches, so its struct is laid out its own
-  way.  `libloft_net` exports `loft_cx_make_v1` / `loft_cx_end_v1`; its typed symbols and its
-  bridges (`loft_register_bridges_cx_v1`) take that context first.  A C unit keeps one per
-  component in its own context (`loft_component_cx`, ended by `loft_cx_end`), the interpreter
-  one per `Stores` (`c_libs::CX_BRIDGES`, kept in `HostedContexts`).  The interpreter's own bit
-  above the store number in `opaque` (`CTX_RETURN_STORE`) is why the context is an argument and
-  not packed in the handle.
-- **A component's cache key names its export list** (`component.rs` `EXPORTED`): a change of it
-  rebuilds the library, where a stale one lacked the new symbols.
+| P4b | done: `git grep 'thread_local!' -- src` is empty.  Moved: the compile passes' memos into `Data` (`PassCell`; the span memos, the definitions and the two parameter-write summaries, as `ScopedCell`; the copy manifest), a run's checks and reports into `Stores` (`checks`, `run`, `render`, `hosted_cx`), the bind notes and text yields into `State`, the C emission options into `UnitShape`; a native call's library index, bridge mark, claim log and calling interpreter into `Stores`, the interpreter's FFI callbacks finding their `Stores` in the store handle as the C does (`HOST_ABI` 8: the coroutine table's `retain` and `exhausted` take the `Stores`); the wired natives' signatures, bridge labels and stub symbols into one per-program table (`Stores::wired`), in place of two locked process tables, their per-thread caches and a generation counter; a text read's reference state into `Stores`, the hosted verify's twin depth and the stack and op censuses into `State`; the store instruments (`LOFT_ALLOC_TRACE`'s site and worker, the stack store, the bytes moved) into a per-context `store_census::Tap` each store of the context shares, a store's relocations (`LOFT_VERIFY_STACK`) and its discarded-write scratch into the `Store`; the index-walk hints into `Stores` (the C's `cx->bt_hints`); a parse's manifest errors into the `Parser`; the crash context into `Stores` (`crash_report::CrashCx`, with the spans and the store-trace names), a fatal signal reporting every running interpreter from a table of atomic slots, a panic reported with its loft position by the interpreter or compile step that catches it (`State::dispatch`, `Parser::parse_file`, `compile::byte_code`), the REPL's quiet a process choice of the CLI (`crash_report::quiet_panics`); the `#c` bindings into the program's wired natives; a debug session's output capture into the states it builds (`Stores::output`, `ReplSession::new_state`); a radix measurement's touched offsets into the read `Store`; the emulated Windows host a process choice (tests re-run in a child with the switch, `file_access::on_emulated_windows`); the engine host's kernel, client (the browser's too), swap, world and sync classes and the live rebuild into the program's `Stores` (`engine_host::EngineCx`), its frame masks from one published key and one counter; the live-reload host into the running `State` (`State::reload`); the web library's pack buffer and the browser's last message, body and headers into `Stores::web` (the C's `cx->pk_*`); the page's files into the parser's lexer (`Lexer::add_page_files`) and the run's `Stores::page_files`, a page run's print into `Stores::output`, the swap root into the engine context; the page's game and debug sessions into handles the page holds and passes to every call (`wasm_entry::Game`, `wasm_debug::Debugger`, the owner's choice of a page-API change), the staged swap snapshot into the `Game` and from there into the started program's engine context, the `par` tracer's browser lines into `Stores::par_trace`; the core layer kept free of interpreter types (`Stores::host_state` untyped, the wired natives held as `Any` and read through `extensions::wired`, the bridge labels a table of their own); the debug channel's breakpoints, subscriber, queued breakpoints and mailbox into the program's engine context (`live_control::DebugCx`), the hooks taking it; six locks removed ([LOCKS.md](../LOCKS.md)); the rustc writer's runtime, though @PLN225 R7 deletes it: a generated program's library callbacks find their `Stores` in the store handle (`native_call::handle_word`; on a 32-bit host the program's one published `Stores`), its shadow stack and lazy-driver window in `Stores::frames` (`call_frames::NativeFrames`, the emitted push, site and guards taking `cell`), its generator table and fn-ref buffers in `Stores::native` (`codegen_runtime::NativeRun`), a driver's contained fault an unwind payload of its own (`call_frames::ContainedFault`, which the CLI's panic hook stays silent for), a browser page's program published for its panic hook in one atomic word while `loft_start` runs, the live tier's parked interpreter in the program's engine context (`EngineCtl::live`, taken out for a dispatch so a breakpoint set during its pause is queued) and the flip and breakpoint hooks taking that context; `codegen_runtime::make_loft_store` and its callbacks deleted (no caller).  Verified on the writer un-refused in a scratch tree: frames, `stack_trace()`, nested generators, fn-ref record results, overflow, `assert` frames, `par`, a faulting lazy driver and a live flip print what the interpreter and the previous build print.  Found on the way, not a `thread_local!`: a library cdylib's id tables (`loft_shared_init`) are the artifact's process globals, so two programs in one process that load one artifact overwrite each other's numbering — `repl_session` under `cargo test` aborts in `loft_shared_init` (nextest runs each test alone); `C-Boundary` says the tables belong to the caller's context |
 
 ## Goal
 
@@ -68,65 +46,6 @@ adding a field to `Stores` (`NATIVE.md` § N8b: "Thread-local storage avoids mod
 lazy-driver flag, the bridge markers — while every compiled function already receives its
 `Stores` and every `par` worker already has its own.  Each becomes a field of the `Stores` (or
 `State`) it belongs to, and the C ports that design (C_BACKEND.md § Port, never reinvent).
-
-## The design (owner)
-
-**A store is claimed in the main thread.  A worker starts its own stores and reads the common
-ones.  Nowhere in that design is a thread-local needed.**
-
-It is the formal model's own shape (`formal/concurrency.md`):
-
-- `C-Par` — a worker is a pure function of its element and the context arguments.  It READS
-  the parent's frame and heap, which nothing writes while the workers run, and every store it
-  makes is its own; only its result crosses back, deep-copied (`H-Copy`) into a store the
-  main thread claimed.
-- `C-Arms` — an arm of a `parallel` block runs against its own copy of the frame at entry,
-  writes none of the enclosing state, and whatever it makes is gone when it ends.
-
-So there are two kinds of state, and neither is per-thread in the C sense:
-
-| State | Owner | Where it lives |
-|---|---|---|
-| The common stores, the program's frames, its fault state | the main thread | plain globals; a worker only reads the stores |
-| A worker's own stores, its frames, its fault jump, its scratch | the worker | its own store context, made by the main thread before it starts the worker and passed to every function the worker runs |
-
-## What the thread-locals hold today
-
-`git grep -c LOFT_TLS -- src/c` measures it (178 lines).  By kind:
-
-| Kind | Sites | What replaces it |
-|---|---|---|
-| The store table (`loft_stores`, `loft_nstores`, allocation counters, hint tables, the block pool, park slots) | `loft_store.h`, `loft_rt.h` | fields of the store context |
-| Frames, the call chain, the depth count, the fault jump, the test jump, held texts, the lazy-driver jump | `loft_rt.h` | fields of the store context |
-| Scratch of ONE runtime call (JSON parse errors, the reflection and record-reference walks, `show`'s closers, equality jobs, pack buffers, upgrade tables) | `loft_parse.h`, `loft_json.h`, `loft_upgrade.h`, `loft_image.h`, `loft_keyed.h`, `loft_rt.h` | a local of that call (on the stack, or allocated and freed by the call) |
-| Per-function work-buffer parks the emitter writes (`static LOFT_TLS loft_text` slots, `body.rs`, `split.rs`) | emitted code | fields of the store context (a park per function slot) |
-| Rust: call frames and depth, crash report, lazy-driver flag, bridge markers, store census, key caches, engine host, extensions (`thread_local!`) | `src/call_frames.rs`, `crash_report.rs`, `engine_host.rs`, `extensions.rs`, `database/allocation.rs`, `keys.rs`, `store_census.rs`, … | fields of the `Stores` or `State` they describe; the writer's (`codegen_runtime.rs`) go with @PLN225 R7 |
-| Server, web and SSH connection tables | `loft_server.h`, `loft_web.h`, `loft_ssh.h`, `loft_net.h` | the server's own state, owned by the thread that runs the server loop: a global, or a value the loop holds |
-| The hosted unit's bridge answer and generator text (`hosted.rs`) | emitted code | the bridge call's own stack, or the `Stores` the interpreter hands the call |
-| The FFI call log, B-tree hints, hash-seed state | `loft_ffi_host.h`, `loft_btree.h`, `loft_hash.h` | per call, or main's global where only main writes |
-
-## How the code reaches its stores: as the rustc writer and the interpreter do
-
-Both other implementations already run `par` without a thread-local, the same way:
-
-- **The stores are an argument.**  Every function the rustc writer emits takes them first
-  (`cell: &UnsafeCell<Stores>`, `src/generation/`); the interpreter's `State` holds its own
-  `Stores`.  Nothing reaches a store through a global.
-- **A worker is handed its own `Stores`.**  `Stores::clone_for_light_worker` makes it before
-  the worker starts: every store of the parent BORROWED, locked read-only
-  (`borrow_locked_for_light_worker`), plus a few writable scratch stores the worker allocates
-  into and grows from.  `par_pool::parallel_workers` hands that view to the worker closure as
-  its `cell`; the results merge on the main thread (`par_pool::merge_batches`) into the stores
-  the main thread owns.
-- **Nested `par`** inherits the parent's context the same way (THREADING.md § Nested `par`).
-
-The C follows it: **every emitted function and every runtime helper that touches a store takes
-the store context (`loft_stores_t *`) as its first argument.**  The main thread's context is
-the program's; a worker's is made by the main thread before the worker starts (the common
-stores borrowed read-only, its own stores writable), and the frames, the fault jump, the
-depth count and the work-buffer parks are fields of that context.  P0 measures the cost of the
-argument on a call-heavy program against today's thread-local reads; the rustc writer pays it
-on every call already.
 
 ## P0 — measured
 
@@ -192,17 +111,20 @@ median of nine alternated runs, each program's answer checked.
 
 ## Documentation
 
-- `doc/claude/C_BACKEND.md` — the C11 floor and `LOFT_TLS` paragraph; the store context.
-- `doc/claude/THREADING.md` — the C runtime's worker model beside the interpreter's.
+- `doc/claude/C_BACKEND.md` — the C11 floor and `LOFT_TLS` paragraph; the store context: done
+  (the store-context paragraph).
+- `doc/claude/THREADING.md` — the C runtime's worker model beside the interpreter's: done
+  (§ Each thread's own state, with the plan's decisions).
 - `doc/claude/formal/concurrency.md` — Conformance: the C's worker context as the
-  implementation of C-Par / C-Arms.
-- `src/c/loft_cc.h` header comment (the three modes), `CHANGELOG_TECHNICAL.md`.
+  implementation of C-Par / C-Arms: done (§ Each thread's own state).
+- `src/c/loft_cc.h` header comment (the three modes): done; `CHANGELOG_TECHNICAL.md`: done
+  (§ No state is a thread-local).
 
 ## See also
 
 - [formal/concurrency.md](../formal/concurrency.md) — C-Par, C-Det, C-Arms.
 - [THREADING.md](../THREADING.md) § Nested `par` — the interpreter's worker carries its own
-  `Stores` view, explicitly.
+  `Stores` view, explicitly; § Each thread's own state.
 - `Stores::clone_for_light_worker`, `par_pool::parallel_workers` — the worker view the
   rustc writer's code is handed.
 - [225-retire-rustc-writer/](225-retire-rustc-writer/README.md).

@@ -735,3 +735,12 @@ a kept pass that does not empty its vectors fails r1 with 102280.
 3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow builtin,
 `par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); keeping
 `loft_mul` for a product by a literal, 1.85×.
+
+## `(R-NoThreads)` while the runtime kept thread-locals
+
+Until @PLN226 removed `LOFT_TLS`, `LOFT_NO_THREADS` also made the runtime's store table, frame
+stack and pools plain statics instead of thread-locals.  On macOS every store access then
+reached a thread-local through a call (`_tlv_get_addr`, 13 % of a record-building recursion's
+profile), and the rule's gain was that cost: on Apple silicon, clang, 21_tree `build_rec`
+−14.5 %, every routine of @PLN219's hand pricing −10 % to −21 %.  With the state in the store
+context (`loft_cx`) the rule keeps only the thread it does not start.

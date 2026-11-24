@@ -1302,21 +1302,21 @@ pub fn position(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
 
 /// The first record, or 0 for an empty index.
 #[must_use]
-pub fn first_record(data: &DbRef, stores: &[Store]) -> u32 {
-    end_record(data, stores, first(data, stores))
+pub fn first_record(hints: &WalkHints, data: &DbRef, stores: &[Store]) -> u32 {
+    end_record(hints, data, stores, first(data, stores))
 }
 
 /// The last record, or 0 for an empty index.
 #[must_use]
-pub fn last_record(data: &DbRef, stores: &[Store]) -> u32 {
-    end_record(data, stores, last(data, stores))
+pub fn last_record(hints: &WalkHints, data: &DbRef, stores: &[Store]) -> u32 {
+    end_record(hints, data, stores, last(data, stores))
 }
 
 /// The record at an end position, remembered as a walk's first hint.
-fn end_record(data: &DbRef, stores: &[Store], pos: u32) -> u32 {
+fn end_record(hints: &WalkHints, data: &DbRef, stores: &[Store], pos: u32) -> u32 {
     let found = record(data, stores, pos);
     if found != 0 {
-        remember(data.store_nr, arena(data, stores), found, pos);
+        remember(hints, data.store_nr, arena(data, stores), found, pos);
     }
     found
 }
@@ -1324,26 +1324,45 @@ fn end_record(data: &DbRef, stores: &[Store], pos: u32) -> u32 {
 /// The record after `rec` in key order, or 0 past the last (or when `rec` is not in the
 /// index).
 #[must_use]
-pub fn next_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
-    step_record(data, stores, keys, rec, false)
+pub fn next_record(
+    hints: &WalkHints,
+    data: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    rec: u32,
+) -> u32 {
+    step_record(hints, data, stores, keys, rec, false)
 }
 
 /// The record before `rec` in key order, or 0 before the first.
 #[must_use]
-pub fn previous_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
-    step_record(data, stores, keys, rec, true)
+pub fn previous_record(
+    hints: &WalkHints,
+    data: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    rec: u32,
+) -> u32 {
+    step_record(hints, data, stores, keys, rec, true)
 }
 
 /// One step of a walk that holds a RECORD (@C147: a body may remove others by key, which
 /// moves slots).  Finding the record's slot by key is a full descent; a walk asks for the
 /// slot of the record it was handed one step ago, so the slot that step found is kept as a
-/// HINT ([`WALK_HINTS`]) and tried first.
-fn step_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32, back: bool) -> u32 {
+/// HINT ([`WalkHints`]) and tried first.
+fn step_record(
+    hints: &WalkHints,
+    data: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    rec: u32,
+    back: bool,
+) -> u32 {
     let Some(arena) = arena_of(data, stores) else {
         return 0;
     };
     let store = keys::store(data, stores);
-    let at = match hinted(arena, store, data.store_nr, rec) {
+    let at = match hinted(hints, arena, store, data.store_nr, rec) {
         Some(p) => p,
         None => position(data, stores, keys, rec),
     };
@@ -1355,7 +1374,7 @@ fn step_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32, back: boo
         return 0;
     }
     let found = arena.rec(store, to / FANOUT, to % FANOUT);
-    remember(data.store_nr, arena.0, found, to);
+    remember(hints, data.store_nr, arena.0, found, to);
     found
 }
 
@@ -1366,25 +1385,31 @@ const HINTS: usize = 4;
 /// `(store, arena, record, position)` per walk.  A hint is never trusted: [`hinted`] reads
 /// the slot it names in the CURRENT arena and takes it only when that slot holds exactly the
 /// record asked for — and a record is in an index once — so a hint made stale by any change
-/// to the tree costs a descent and never a wrong slot.  Kept per thread and outside the
-/// store, so a walk writes nothing: a locked store and `par` workers reading one store
-/// concurrently are unaffected.
+/// to the tree costs a descent and never a wrong slot.  Kept in the walking context
+/// ([`WalkHints`]) and outside the store, so a walk writes nothing: a locked store and `par`
+/// workers reading one store concurrently are unaffected.
 type Hint = (u16, u32, u32, u32);
 
-thread_local! {
-    static WALK_HINTS: [std::cell::Cell<Hint>; HINTS] =
-        const { [const { std::cell::Cell::new((0, 0, 0, 0)) }; HINTS] };
+/// A context's walk hints (`Stores::bt_hints`, the C runtime's `cx->bt_hints`): its own, so no
+/// other thread reads them (`@FR-C-Own`).  Cells, because a walk reads its stores through `&`.
+#[derive(Default)]
+pub struct WalkHints([std::cell::Cell<Hint>; HINTS]);
+
+impl Clone for WalkHints {
+    /// A new context starts with no hints.
+    fn clone(&self) -> Self {
+        WalkHints::default()
+    }
 }
 
 /// The position the hints name for `rec` in this arena, if its slot still holds `rec`.
-fn hinted(arena: Arena, store: &Store, store_nr: u16, rec: u32) -> Option<u32> {
-    let pos = WALK_HINTS.with(|hints| {
-        hints
-            .iter()
-            .map(std::cell::Cell::get)
-            .find(|&(s, a, r, _)| r == rec && a == arena.0 && s == store_nr)
-            .map(|h| h.3)
-    })?;
+fn hinted(hints: &WalkHints, arena: Arena, store: &Store, store_nr: u16, rec: u32) -> Option<u32> {
+    let pos = hints
+        .0
+        .iter()
+        .map(std::cell::Cell::get)
+        .find(|&(s, a, r, _)| r == rec && a == arena.0 && s == store_nr)
+        .map(|h| h.3)?;
     let (n, i) = (pos / FANOUT, pos % FANOUT);
     // Bounds before reads: the node must be one the arena handed out, a live leaf, and the
     // slot inside its count.
@@ -1397,8 +1422,9 @@ fn hinted(arena: Arena, store: &Store, store_nr: u16, rec: u32) -> Option<u32> {
 }
 
 /// Keep `pos` as the hint for `rec`, replacing this arena's hint or the oldest.
-fn remember(store_nr: u16, arena: u32, rec: u32, pos: u32) {
-    WALK_HINTS.with(|hints| {
+fn remember(hints: &WalkHints, store_nr: u16, arena: u32, rec: u32, pos: u32) {
+    {
+        let hints = &hints.0;
         let mine = |h: &std::cell::Cell<Hint>| {
             let (s, a, _, _) = h.get();
             s == store_nr && a == arena
@@ -1411,7 +1437,7 @@ fn remember(store_nr: u16, arena: u32, rec: u32, pos: u32) {
             }
         }
         hints[0].set((store_nr, arena, rec, pos));
-    });
+    }
 }
 
 /// [`find`] as a record: with `before` the last record strictly below `key`, otherwise

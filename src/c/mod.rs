@@ -4334,9 +4334,8 @@ const RUNTIME_END: &str = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
-        // web's byte builder and reader (`src/web_bytes.rs`): a per-thread buffer in the
-        // binary, so a byte costs a store where the component call cost a crossing and a
-        // dynamic thread-local lookup.
+        // web's byte builder and reader (`src/web_bytes.rs`): the context's buffer in the
+        // binary, so a byte costs a store where the component call cost a crossing.
         "n_pack_reset" => Some("loft_pack_reset"),
         "n_pack_u8" => Some("loft_pack_u8"),
         "n_pack_u16_le" => Some("loft_pack_u16_le"),

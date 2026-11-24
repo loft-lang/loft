@@ -5,7 +5,7 @@
 //! op from the position the loop stores for the allocator and from the bytecode, both
 //! registered once per loop.  What that can break is attribution: a fault named against the
 //! wrong op or the wrong position, or a report after the loop naming nothing.  So a native the
-//! program calls asks, WHILE the loop runs it, what op this thread is on — it must be the
+//! program calls asks its interpreter's crash context, WHILE the loop runs it, what op it is on — it must be the
 //! native call itself, at two different positions for two calls — and after the run the last
 //! op must still be named.
 use std::cell::RefCell;
@@ -20,9 +20,9 @@ thread_local! {
     static SEEN: RefCell<Vec<(u32, u16, u32, &'static str)>> = const { RefCell::new(Vec::new()) };
 }
 
-fn n_probe_ctx(_stores: &mut Stores, _stack: &mut DbRef) {
-    let (pc, op, fn_d_nr) = loft::crash_report::last_context();
-    let name = loft::crash_report::last_op_name();
+fn n_probe_ctx(stores: &mut Stores, _stack: &mut DbRef) {
+    let (pc, op, fn_d_nr) = stores.crash.last_context();
+    let name = stores.crash.last_op_name();
     SEEN.with(|s| s.borrow_mut().push((pc, op, fn_d_nr, name)));
 }
 
@@ -75,7 +75,7 @@ fn a_running_lean_loop_names_the_op_it_is_on() {
         "two calls at two positions — not a context frozen at the first: {seen:?}"
     );
     // After the loop: the last op dispatched is still named, not an empty context.
-    let (pc, _op, _fd) = loft::crash_report::last_context();
+    let (pc, _op, _fd) = state.database.crash.last_context();
     assert!(
         pc != u32::MAX && pc > seen[1].0,
         "after the run the last op is named, past the second probe ({}): pc {pc}",

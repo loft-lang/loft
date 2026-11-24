@@ -92,7 +92,12 @@ fn crash_diagnostic_survives_a_discarded_stderr() {
 
     // Publish a context so the report carries something worth recovering —
     // this is the opcode/pc/function that #717 lost.
-    loft::crash_report::set_context(4321, 7, "OpGetRecord", 42, "sim_step");
+    let mut names = vec![""; 256];
+    names[7] = "OpGetRecord";
+    loft::crash_report::set_op_names(|| names);
+    let cx = loft::crash_report::CrashCx::default();
+    cx.set_dispatch(4321, 7, 42);
+    let _running = loft::crash_report::register(&cx);
 
     let status = crash_a_child();
     assert!(
@@ -112,14 +117,7 @@ fn crash_diagnostic_survives_a_discarded_stderr() {
             target.display()
         )
     });
-    for want in [
-        "loft crash",
-        "SIGSEGV",
-        "OpGetRecord",
-        "4321",
-        "sim_step",
-        "42",
-    ] {
+    for want in ["loft crash", "SIGSEGV", "OpGetRecord", "4321", "42"] {
         assert!(
             report.contains(want),
             "the report must name {want:?}, which is what makes a one-off crash actionable.\n\

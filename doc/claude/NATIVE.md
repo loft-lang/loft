@@ -551,8 +551,8 @@ fires if text locals exist at a yield point.
 
 **Key files:**
 - `src/generation/coroutine.rs` — state-machine emitter (`output_coroutine`)
-- `src/codegen_runtime.rs` — `LoftCoroutine` trait, `NATIVE_COROUTINES` thread-local,
-  `alloc_coroutine`, `coroutine_next_i64`, `coroutine_is_exhausted`
+- `src/codegen_runtime.rs` — `LoftCoroutine` trait, the generator table `NativeRun`
+  (`Stores::native`), `alloc_coroutine`, `coroutine_next_i64`, `coroutine_is_exhausted`
 - `src/generation/dispatch.rs` — `OpCoroutineNext`, `OpCoroutineExhausted` arms
 - `src/generation/mod.rs` — routes generator functions to `output_coroutine`;
   `collect_calls` walks `Value::Yield` nodes; `rust_type(Type::Iterator) = "DbRef"`
@@ -605,19 +605,17 @@ fn n_count(stores: &mut Stores) -> Box<dyn loft::codegen_runtime::LoftCoroutine>
 which is loft's null sentinel for integers.  `op_conv_bool_from_int(v) = (v != i32::MIN)`,
 so the for-loop condition becomes false and the loop exits.
 
-Thread-local storage avoids modifying `Stores`:
+The generators live in the program's `Stores` (`Stores::native`, `codegen_runtime::NativeRun`),
+the twin of the interpreter's `State::coroutines`; a `par` worker's stores start with none:
 
 ```rust
-std::thread_local! {
-    static NATIVE_COROUTINES: std::cell::RefCell<Vec<Option<Box<dyn LoftCoroutine>>>> = …;
-}
-
-pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef { … }
+pub fn alloc_coroutine(stores: &mut Stores, coro: Box<dyn LoftCoroutine>) -> DbRef { … }
 pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 { … }
-pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool { … }
+pub fn coroutine_is_exhausted(gen_ref: DbRef, stores: &Stores) -> bool { … }
 ```
 
-The returned `DbRef` has `store_nr = NATIVE_COROUTINE_STORE = 0xFFFD`, `rec = vec_index`.
+The returned `DbRef` has `store_nr = NATIVE_COROUTINE_STORE = 0xFFFD`, `rec` the slot and
+`pos` the generation stamp of its occupant.
 
 ---
 

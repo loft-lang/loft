@@ -5446,6 +5446,7 @@ fn start_repl() -> ! {
     };
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
+    loft::crash_report::quiet_panics();
     let code = match loft::repl::run_repl(&ctx, stdin.lock(), &mut stderr) {
         Ok(()) => 0,
         Err(e) => {
@@ -5663,6 +5664,7 @@ fn run_file_debugger() -> ! {
     };
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
+    loft::crash_report::quiet_panics();
     let code = match loft::repl::run_file_debug_as(
         &stdlib,
         &lib_dirs,
@@ -7828,29 +7830,9 @@ fn main() {
     // A memory bound beside the time bound, but only when asked for: an explicit
     // `LOFT_MEMORY_LIMIT` caps an ordinary run too (`store_budget::apply_env_limit_if_set`).
     loft::store_budget::apply_env_limit_if_set();
-    // Plan-07 phase 1 step 1.20 / phase 3 — chain a Rust panic hook
-    // that surfaces the loft source position of the offending pc
-    // before the default panic message.  Reads the per-thread snapshot
-    // published by `State::execute_argv` via `crash_report`.
-    //
-    // It prints a position only when a recorded span COVERS the pc, and
-    // otherwise says nothing.  The line renders exactly like a position the
-    // reader can act on, so there is nothing to mark it a guess — and the span
-    // table is sparse, so an inherited answer names whatever statement happened
-    // to be wrapped last.  It sent a `#lock` write on line 8 to line 7, and,
-    // with nothing preceding it in the user's file, to a stdlib file the program
-    // never mentions (loft#1262).  A wrapped construct — a call, an arithmetic
-    // fault site — still resolves, which is the case this exists for.
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let (pc, _op, _fn_d_nr) = loft::crash_report::last_context();
-        if pc != u32::MAX
-            && let Some(pos) = loft::crash_report::source_loc_for_pc(pc)
-        {
-            eprintln!("  at {}:{}:{}", pos.file, pos.line, pos.pos);
-        }
-        prev_hook(info);
-    }));
+    // Plan-07 phase 1 step 1.20 / phase 3 — an interpreter that panics names the loft
+    // source position of the op it was dispatching (`State::dispatch`).
+    loft::crash_report::tell_panic_positions();
     let argv: Vec<String> = env::args_os()
         .skip(1)
         .map(|a| a.to_str().unwrap_or("").to_string())
@@ -13955,7 +13937,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // session inherits the RESOLVED stdlib dir — a relative "default"
         // only exists when the cwd happens to be a loft checkout (#346).
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
-            loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
+            state.reload =
+                loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
         // `@C170` — the `D!:` control channel's breakpoints and flips, answered by this
         // interpreter (`LOFT_DEBUG_CONTROL=1`).
@@ -14002,14 +13985,19 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.report_alloc_sites(&data);
     state.report_profile(&data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
-    loft::op_census::write(&loft::op_census::Names {
-        operator: &|op| data.operator_name(op).map(str::to_owned),
-        function: &|d_nr| data.def(d_nr).name().to_string(),
-    });
+    let moved = loft::op_census::moved_so_far(&state.database);
+    loft::op_census::write(
+        &mut state.op_census,
+        moved,
+        &loft::op_census::Names {
+            operator: &|op| data.operator_name(op).map(str::to_owned),
+            function: &|d_nr| data.def(d_nr).name().to_string(),
+        },
+    );
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {
-        loft::stack_census::report(Some(&data));
+        loft::stack_census::report(&state.stack_census, Some(&data));
     }
     // @PLN154 phase 1 — the stack shadow's verdict.  It prints on a CLEAN run too: silence
     // is the result this instrument exists to make trustworthy, and a detector that says

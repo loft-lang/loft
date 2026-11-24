@@ -237,14 +237,17 @@ unsafe extern "C" fn hosted_cx_of(
 
 /// `HostedTable::handover` — the interpreter running this bridge call takes the routine over.
 unsafe extern "C" fn hosted_handover(
-    _stores: *mut Stores,
+    stores: *mut Stores,
     key: *const u8,
     key_len: usize,
     scope: u32,
     entries: *const crate::host_abi::HandoverEntry,
     n: u32,
 ) -> u32 {
-    let state = crate::extensions::host_state();
+    // SAFETY: the `Stores` the bridge call was handed, live for the call.
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     if state.is_null() {
         return 0;
     }
@@ -409,11 +412,14 @@ pub(crate) const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
     };
 
 /// The interpreter an interpreted generator handle belongs to, or `None` for a compiled one.
-pub(crate) fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::state::State> {
+pub(crate) fn interpreter_for(
+    gen_ref: DbRef,
+    stores: &Stores,
+) -> Option<&'static mut crate::state::State> {
     if gen_ref.store_nr != crate::database::COROUTINE_STORE {
         return None;
     }
-    let state = crate::extensions::host_state();
+    let state = stores.host_state.cast::<crate::state::State>();
     assert!(
         !state.is_null(),
         "an interpreted generator was advanced from compiled code outside a call from the \
@@ -423,7 +429,7 @@ pub(crate) fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::stat
 }
 
 pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
-    let Some(st) = interpreter_for(gen_ref) else {
+    let Some(st) = interpreter_for(gen_ref, stores) else {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
     };
     // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
@@ -437,7 +443,7 @@ pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i6
 }
 
 pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
-    let Some(st) = interpreter_for(gen_ref) else {
+    let Some(st) = interpreter_for(gen_ref, stores) else {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
     };
     let yielded = st.advance_for_native(gen_ref);
@@ -450,7 +456,7 @@ pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> 
 }
 
 pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-    let Some(st) = interpreter_for(gen_ref) else {
+    let Some(st) = interpreter_for(gen_ref, stores) else {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
     };
     // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
@@ -463,22 +469,22 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
     s.str().to_string()
 }
 
-pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {
-    match interpreter_for(gen_ref) {
+pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_exhausted(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref, stores),
     }
 }
 
-pub(crate) fn host_coroutine_retain(gen_ref: DbRef) -> DbRef {
-    match interpreter_for(gen_ref) {
+pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_retain(gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
-    match interpreter_for(gen_ref) {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.free_coroutine(&gen_ref),
         None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
     }
@@ -497,7 +503,10 @@ pub(crate) unsafe extern "C" fn host_call_ref(
 ) {
     let args = unsafe { std::slice::from_raw_parts(args, n) };
     let closure = unsafe { (*closure).dbref };
-    let state = crate::extensions::host_state();
+    // SAFETY: the `Stores` the bridge call was handed, or null on a worker of the library.
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     let result = if state.is_null() {
         // A compiled library's own `par` worker: no interpreter runs on this thread, so one
         // is made over the worker's stores for the call.

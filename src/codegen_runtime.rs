@@ -24,10 +24,8 @@ pub use crate::runtime_abi::{
 };
 // The shadow call stack and the lazy-driver flag live in `call_frames`, in the core layer;
 // these are the paths emitted Rust calls them by.
-use crate::call_frames::with_call_frames;
 pub use crate::call_frames::{
     CallGuard, NamedCallGuard, cr_call_pop, cr_call_push, cr_call_push_lean, cr_call_site,
-    in_lazy_driver, native_call_chain,
 };
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};
@@ -152,7 +150,6 @@ pub fn from_loft_record(r: loft_ffi::LoftRef) -> DbRef {
 }
 
 use crate::vector;
-use std::cell::{Cell, RefCell};
 #[cfg(not(host_fs))]
 use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
@@ -911,16 +908,6 @@ pub fn is_closed_stdout_panic(msg: &str) -> bool {
         })
 }
 
-/// The `print` builtin: into the capture sink when a debug session captures this thread's
-/// output (`platform::print_or_capture`), else [`host_print`].  The stdlib's `print`
-/// template calls this, so neither the interpreter nor a generated program names the
-/// debug server that opens the sink.
-pub fn print_or_host(s: &str) {
-    if !crate::platform::print_or_capture(s) {
-        host_print(s);
-    }
-}
-
 pub use crate::platform::host_eprint;
 
 /// conditionally free `placeholder` — only when its `store_nr`
@@ -1358,15 +1345,15 @@ fn get_record_lookup(
             // unwind runs its own drop glue, but a loft store is freed by an
             // explicit call the unwind skips exactly as the interpreter's fault
             // skips its scope-exit op — measured identical on both backends.
-            crate::call_frames::set_in_lazy_driver(true);
+            stores.frames.set_in_lazy_driver(true);
             let outer_watch = stores.lazy_watch_begin();
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 driver(cell, data, &source, key_int, &key_text)
             }));
-            crate::call_frames::set_in_lazy_driver(false);
             // `stores` was borrowed from `cell` and the driver borrowed it too,
             // so it is re-taken here rather than reused.
             let stores: &mut Stores = unsafe { &mut *cell.get() };
+            stores.frames.set_in_lazy_driver(false);
             stores.lazy_watch_end(outer_watch, outcome.is_err());
             match outcome {
                 Ok(1 | 0) => {}
@@ -1381,8 +1368,9 @@ fn get_record_lookup(
                 ),
                 Err(payload) => {
                     let why = payload
-                        .downcast_ref::<&str>()
-                        .map(|s| (*s).to_string())
+                        .downcast_ref::<crate::call_frames::ContainedFault>()
+                        .map(|c| c.0.clone())
+                        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
                         .or_else(|| payload.downcast_ref::<String>().cloned())
                         .unwrap_or_else(|| "the driver faulted".to_string());
                     stores.lazy_fail(&data, &why);
@@ -1634,18 +1622,20 @@ pub fn OpRebindRecord(
         && src != to
         && src.store_nr != u16::MAX
         && to.store_nr != u16::MAX
-        && !FNREF_BORROWED.with(|b| b.get().is_some_and(|r| r.store_nr == src.store_nr))
+        && run_of(cell)
+            .fnref_borrowed
+            .is_none_or(|r| r.store_nr != src.store_nr)
     {
         let stores: &mut Stores = unsafe { &mut *cell.get() };
         if stores.try_swap_rebind(&src, &to, raw & crate::keys::COPY_TP_MASK) {
             // The copy this replaces consumes the marker whatever it named.
-            cr_take_fnref_borrowed(src.store_nr);
+            cr_take_fnref_borrowed(stores, src.store_nr);
             // `@FR-H-FreeTwice` — and the source store: the exchange parked or freed it, so a
             // fn-ref call's buffer leaves the hand-up list here.  Left on it, the frame's guard
             // released the store the exchange had parked as the spare, and the next exchange's
             // park freed it again.  `LOFT_NATIVE_SWAP_KEEPS_HANDUP=1` leaves it on the list.
             if !crate::env_once!(std::env::var_os("LOFT_NATIVE_SWAP_KEEPS_HANDUP").is_some()) {
-                cr_fnref_forget(src.store_nr);
+                cr_fnref_forget(stores, src.store_nr);
             }
             return DbRef {
                 store_nr: to.store_nr,
@@ -1687,7 +1677,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         // The write is dropped; a given-up source is still released (`release_copy_source`),
         // under the same borrowed-store exception the copy below applies.
         if (tp as u16) & crate::keys::COPY_FREE_SOURCE != 0
-            && !cr_take_fnref_borrowed(data.store_nr)
+            && !cr_take_fnref_borrowed(stores, data.store_nr)
         {
             stores.release_copy_source(&data, &to);
         }
@@ -1712,7 +1702,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         && !crate::keys::trace_copy()
         && !stores.copy_check_enabled()
     {
-        let _ = cr_take_fnref_borrowed(data.store_nr);
+        let _ = cr_take_fnref_borrowed(stores, data.store_nr);
         if stores.copy_fresh_plain(&data, &to, raw & crate::keys::COPY_TP_MASK) {
             return;
         }
@@ -1728,7 +1718,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         && !crate::keys::trace_copy()
         && !stores.copy_check_enabled()
     {
-        let _ = cr_take_fnref_borrowed(data.store_nr);
+        let _ = cr_take_fnref_borrowed(stores, data.store_nr);
         let size = u32::from(stores.size((tp as u16) & crate::keys::COPY_TP_MASK));
         stores.copy_block(&data, &to, size);
         return;
@@ -1778,7 +1768,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // the same rule in `State::copy_ref_or_null`; measured without this,
     // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
     // `--native` alone — the field destination of the shape loft#1185 closed for a local.
-    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
+    let borrowed = cr_take_fnref_borrowed(stores, data.store_nr) && free_source;
     // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged.
     if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
         return;
@@ -2152,16 +2142,16 @@ pub fn OpStep(
             // index: arg = the index type; the cursor is the record last yielded.
             let next_rec = if cur == 0 {
                 if reverse {
-                    btree::last_record(&data, all)
+                    btree::last_record(&stores.bt_hints, &data, all)
                 } else {
-                    btree::first_record(&data, all)
+                    btree::first_record(&stores.bt_hints, &data, all)
                 }
             } else {
                 let keys = stores.keys(arg as u16);
                 if reverse {
-                    btree::previous_record(&data, all, keys, cur)
+                    btree::previous_record(&stores.bt_hints, &data, all, keys, cur)
                 } else {
-                    btree::next_record(&data, all, keys, cur)
+                    btree::next_record(&stores.bt_hints, &data, all, keys, cur)
                 }
             };
             if next_rec == finish {
@@ -5897,41 +5887,75 @@ pub trait LoftCoroutine {
     }
 }
 
-std::thread_local! {
-    /// Per-thread storage for native coroutine instances, each tagged with the generation
-    /// that identifies THIS occupant of the slot.  Slot 0 is always `None` (null sentinel).
+/// A generated program's run-time tables — the `--native` twins of the interpreter's
+/// `State::coroutines` and `State::fnref_bufs` / `State::fnref_borrowed_return`.  Owned by
+/// the program's `Stores` (`Stores::native`, `@FR-C-Own`); a `par` worker's stores start
+/// with empty ones, as a worker thread did.
+#[derive(Default)]
+pub struct NativeRun {
+    /// The generator frames, each tagged with the generation that identifies THIS occupant
+    /// of the slot.  Slot 0 is always `None` (the null sentinel), pushed by the first
+    /// allocation.
     ///
     /// A slot is freed on exhaustion and handed to the next generator, while the variable
     /// holding the handle lives to the end of its scope, where its free fires — so the
     /// index alone does not identify a coroutine for long enough.  Mirrors
     /// `CoroutineFrame::generation` on the interpreter side.
-    static NATIVE_COROUTINES: std::cell::RefCell<Vec<Option<(u32, Box<dyn LoftCoroutine>)>>> =
-        std::cell::RefCell::new(vec![None]);
-    /// Stamp handed to the next coroutine allocated on this thread.
-    static NATIVE_COROUTINE_GENERATION: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+    coroutines: Vec<Option<(u32, Box<dyn LoftCoroutine>)>>,
+    /// The stamp the last coroutine was given; the next one takes the one after (never 0).
+    generation: u32,
     /// `(G-Hold)` — each slot's holder count, the interpreter's `CoroutineFrame::holds`
     /// (loft#1708).  Read only for a live handle, so a stale count of a freed slot is never
     /// consulted: `alloc_coroutine` resets it to one.
-    static NATIVE_COROUTINE_HOLDS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    holds: Vec<u32>,
     /// `@FR-G-Arg-Rebind` — per slot, the argument stores the frame holds
     /// ([`alloc_coroutine_held`]); emptied when the frame ends.
-    static NATIVE_COROUTINE_HELD: std::cell::RefCell<Vec<Vec<DbRef>>> = const { std::cell::RefCell::new(Vec::new()) };
+    held: Vec<Vec<DbRef>>,
     /// The buffer [`alloc_coroutine_held`] fills before the frame has a slot.
-    static NATIVE_HELD_SCRATCH: std::cell::RefCell<Vec<DbRef>> = const { std::cell::RefCell::new(Vec::new()) };
+    held_scratch: Vec<DbRef>,
+    /// The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
+    /// innermost frame last ([`cr_fnref_buf`]).  A frame's own buffers are the entries above
+    /// the mark [`FnRefBufGuard`] took at entry — a watermark rather than a frame number, so
+    /// nothing has to agree about depth.
+    fnref_bufs: Vec<(DbRef, u64)>,
+    /// @PLN150 — the store the most recent fn-ref call handed back that it did NOT mint
+    /// ([`cr_fnref_minted`]).
+    fnref_borrowed: Option<DbRef>,
+}
+
+impl Clone for NativeRun {
+    /// A copied `Stores` is a new context: it holds no generator and no buffer yet.
+    fn clone(&self) -> Self {
+        NativeRun::default()
+    }
+}
+
+/// The run-time tables of the program running over `cell`.
+#[inline]
+#[expect(
+    clippy::mut_from_ref,
+    reason = "the generated program's `UnsafeCell<Stores>` is its one context"
+)]
+fn run_of(cell: &std::cell::UnsafeCell<Stores>) -> &mut NativeRun {
+    // SAFETY: generated code holds `cell` for the whole run and calls this between its own
+    // statements; the borrow ends with the statement that took it.
+    unsafe { &mut (*cell.get()).native }
 }
 
 /// Give back the argument holds of the frame in slot `idx` (`@FR-G-Arg-Rebind`): the frame
 /// ended, by exhaustion or by its last holder's release.
 fn release_native_held(idx: usize, stores: &mut Stores) {
-    NATIVE_COROUTINE_HELD.with(|h| {
-        // The slot keeps its buffer's capacity for the next frame; a release frees no frame,
-        // so nothing re-enters this table while it is borrowed.
-        if let Some(held) = h.borrow_mut().get_mut(idx) {
-            for db in held.drain(..) {
-                stores.release_frame_hold(&db);
-            }
-        }
-    });
+    // The slot keeps its buffer's capacity for the next frame.
+    let Some(held) = stores.native.held.get_mut(idx) else {
+        return;
+    };
+    let mut held = std::mem::take(held);
+    for db in held.drain(..) {
+        stores.release_frame_hold(&db);
+    }
+    if let Some(slot) = stores.native.held.get_mut(idx) {
+        *slot = held;
+    }
 }
 
 /// [`alloc_coroutine`] for a generator call: the frame also takes a hold on the store of
@@ -5944,48 +5968,41 @@ pub fn alloc_coroutine_held(
 ) -> DbRef {
     // The buffers circulate between the scratch and the slots, so a generator call allocates
     // nothing here once the table has warmed up.
-    let mut held = NATIVE_HELD_SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    let mut held = std::mem::take(&mut stores.native.held_scratch);
     held.clear();
     coro.held_args(&mut held);
     if !held.is_empty() {
-        let stores: &mut Stores = unsafe { &mut *cell.get() };
         held.retain(|db| stores.hold_for_frame(db));
     }
-    let gen_ref = alloc_coroutine(coro);
+    let gen_ref = alloc_coroutine(stores, coro);
     let idx = gen_ref.rec as usize;
-    NATIVE_COROUTINE_HELD.with(|h| {
-        let mut h = h.borrow_mut();
-        if h.len() <= idx {
-            h.resize(idx + 1, Vec::new());
-        }
-        std::mem::swap(&mut h[idx], &mut held);
-    });
+    let h = &mut stores.native.held;
+    if h.len() <= idx {
+        h.resize(idx + 1, Vec::new());
+    }
+    std::mem::swap(&mut h[idx], &mut held);
     held.clear();
-    NATIVE_HELD_SCRATCH.with(|s| *s.borrow_mut() = held);
+    stores.native.held_scratch = held;
     gen_ref
 }
 
-fn set_native_holds(idx: usize, holds: u32) {
-    NATIVE_COROUTINE_HOLDS.with(|h| {
-        let mut h = h.borrow_mut();
-        if h.len() <= idx {
-            h.resize(idx + 1, 0);
-        }
-        h[idx] = holds;
-    });
+fn set_native_holds(run: &mut NativeRun, idx: usize, holds: u32) {
+    if run.holds.len() <= idx {
+        run.holds.resize(idx + 1, 0);
+    }
+    run.holds[idx] = holds;
 }
 
 /// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`,
 /// loft#1708).  A handle naming no live generator takes nothing.  Answers the handle.
 #[must_use]
-pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
-    let live = NATIVE_COROUTINES.with(|c| native_coroutine_live(&c.borrow(), gen_ref));
-    if live {
-        NATIVE_COROUTINE_HOLDS.with(|h| {
-            if let Some(n) = h.borrow_mut().get_mut(gen_ref.rec as usize) {
-                *n += 1;
-            }
-        });
+pub fn coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    let run = &mut stores.native;
+    if native_coroutine_live(&run.coroutines, gen_ref)
+        && let Some(n) = run.holds.get_mut(gen_ref.rec as usize)
+    {
+        *n += 1;
     }
     gen_ref
 }
@@ -6008,34 +6025,26 @@ fn native_coroutine_live(
 /// `pos` carries the generation stamp: a coroutine reference addresses no store, so the
 /// field is free, and the handle then names the generator rather than the index it occupies.
 #[must_use]
-pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
-    let generation = NATIVE_COROUTINE_GENERATION.with(|g| {
-        let cur = g.get();
-        g.set(cur.wrapping_add(1).max(1));
-        cur
-    });
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        for (i, slot) in coroutines.iter_mut().enumerate().skip(1) {
-            if slot.is_none() {
-                *slot = Some((generation, coro));
-                set_native_holds(i, 1);
-                return DbRef {
-                    store_nr: NATIVE_COROUTINE_STORE,
-                    rec: i as u32,
-                    pos: generation,
-                };
-            }
-        }
-        let idx = coroutines.len();
-        coroutines.push(Some((generation, coro)));
-        set_native_holds(idx, 1);
-        DbRef {
-            store_nr: NATIVE_COROUTINE_STORE,
-            rec: idx as u32,
-            pos: generation,
-        }
-    })
+pub fn alloc_coroutine(stores: &mut Stores, coro: Box<dyn LoftCoroutine>) -> DbRef {
+    let run = &mut stores.native;
+    run.generation = run.generation.wrapping_add(1).max(1);
+    let generation = run.generation;
+    if run.coroutines.is_empty() {
+        run.coroutines.push(None);
+    }
+    let idx = if let Some(free) = run.coroutines.iter().skip(1).position(Option::is_none) {
+        free + 1
+    } else {
+        run.coroutines.push(None);
+        run.coroutines.len() - 1
+    };
+    run.coroutines[idx] = Some((generation, coro));
+    set_native_holds(run, idx, 1);
+    DbRef {
+        store_nr: NATIVE_COROUTINE_STORE,
+        rec: idx as u32,
+        pos: generation,
+    }
 }
 
 /// Free one heap local an abandoned generator still owns (loft#835).
@@ -6157,28 +6166,19 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
     }
     // Take the generator OUT of the table before running its cleanup: `drop_stores` frees
     // stores, and a nested generator handle among them re-enters this table.
-    let taken = NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        if native_coroutine_live(&coroutines, gen_ref) {
-            // `(G-Hold)`: one of several holders gives its hold back and nothing more.
-            let shared = NATIVE_COROUTINE_HOLDS.with(|h| {
-                let mut h = h.borrow_mut();
-                match h.get_mut(gen_ref.rec as usize) {
-                    Some(n) if *n > 1 => {
-                        *n -= 1;
-                        true
-                    }
-                    _ => false,
-                }
-            });
-            if shared {
-                return None;
+    let run = &mut stores.native;
+    let taken = if native_coroutine_live(&run.coroutines, gen_ref) {
+        // `(G-Hold)`: one of several holders gives its hold back and nothing more.
+        match run.holds.get_mut(gen_ref.rec as usize) {
+            Some(n) if *n > 1 => {
+                *n -= 1;
+                None
             }
-            coroutines[gen_ref.rec as usize].take()
-        } else {
-            None
+            _ => run.coroutines[gen_ref.rec as usize].take(),
         }
-    });
+    } else {
+        None
+    };
     if let Some((_, mut coro)) = taken {
         coro.drop_stores(stores);
         release_native_held(gen_ref.rec as usize, stores);
@@ -6204,33 +6204,37 @@ fn advance_native<R>(
     dead: R,
     step: impl FnOnce(&mut dyn LoftCoroutine, &mut Stores) -> (R, bool),
 ) -> R {
-    let taken = NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        if !native_coroutine_live(&coroutines, gen_ref) {
-            return None;
+    let taken = {
+        let coroutines = &mut stores.native.coroutines;
+        if native_coroutine_live(coroutines, gen_ref) {
+            coroutines[gen_ref.rec as usize]
+                .as_mut()
+                .map(|(_, coro)| std::mem::replace(coro, Box::new(Advancing)))
+        } else {
+            None
         }
-        let (_, coro) = coroutines[gen_ref.rec as usize].as_mut()?;
-        Some(std::mem::replace(coro, Box::new(Advancing)))
-    });
+    };
     let Some(mut coro) = taken else {
         return dead;
     };
     let (val, exhausted) = step(coro.as_mut(), stores);
-    let ended = NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
+    let ended = {
+        let coroutines = &mut stores.native.coroutines;
         let idx = gen_ref.rec as usize;
         // Put back only into the slot it left: a free during the advance empties the slot,
         // and a later allocation may already hold it under another generation.
-        if native_coroutine_live(&coroutines, gen_ref) {
-            if exhausted {
-                coroutines[idx] = None;
-                return true;
-            } else if let Some((_, slot)) = coroutines[idx].as_mut() {
+        if !native_coroutine_live(coroutines, gen_ref) {
+            false
+        } else if exhausted {
+            coroutines[idx] = None;
+            true
+        } else {
+            if let Some((_, slot)) = coroutines[idx].as_mut() {
                 *slot = coro;
             }
+            false
         }
-        false
-    });
+    };
     if ended {
         release_native_held(gen_ref.rec as usize, stores);
     }
@@ -6288,30 +6292,27 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
 
 /// Test whether a native coroutine has been exhausted (its slot freed).
 #[must_use]
-pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
-    NATIVE_COROUTINES.with(|c| {
-        let coroutines = c.borrow();
-        !native_coroutine_live(&coroutines, gen_ref)
-    })
+pub fn coroutine_is_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
+    !native_coroutine_live(&stores.native.coroutines, gen_ref)
 }
 
 /// @PLN199 D2 — the native coroutine table's entry points as a value: the host's own
 /// (`HERE`), which a library cdylib's copy of this module forwards to once its host
-/// installed them (`forward_coroutines`).  Every `static` and `thread_local!` here
+/// installed them (`forward_coroutines`).  Every `static` here
 /// exists once per copy of libloft, so without the forward a library's generator handle and
 /// the host's named two different tables.  Rust fn pointers, as `Box<dyn LoftCoroutine>`
 /// crosses: one rlib builds both sides.
 #[derive(Clone, Copy)]
 pub struct CoroutineHost {
     pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
-    pub alloc: fn(Box<dyn LoftCoroutine>) -> DbRef,
-    pub retain: fn(DbRef) -> DbRef,
+    pub alloc: fn(&mut Stores, Box<dyn LoftCoroutine>) -> DbRef,
+    pub retain: fn(DbRef, &mut Stores) -> DbRef,
     pub free: fn(DbRef, &mut Stores),
     pub next_i64: fn(DbRef, &mut Stores) -> i64,
     pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
     pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
     pub next_text: fn(DbRef, &mut Stores) -> String,
-    pub exhausted: fn(DbRef) -> bool,
+    pub exhausted: fn(DbRef, &Stores) -> bool,
 }
 
 impl CoroutineHost {
@@ -6723,22 +6724,53 @@ pub fn install_browser_panic_hook() {
     }
 }
 
+/// The program a browser page runs, while its `loft_start` runs it: the stores
+/// [`browser_panic_frames`] reads the loft frames from.  One atomic word (`@FR-C-Publish`),
+/// set before the program's first call: a browser page runs one program on one thread.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+static BROWSER_PROGRAM: std::sync::atomic::AtomicPtr<Stores> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Holds [`browser_program`]'s publication; withdraws it when `loft_start` ends.
+pub struct BrowserProgram;
+
+impl Drop for BrowserProgram {
+    fn drop(&mut self) {
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+        BROWSER_PROGRAM.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Name the stores a browser page's program runs over, so a panic can report its loft
+/// frames.  Emitted by the generated `loft_start` right after it builds them; a no-op on
+/// every other target.
+#[must_use]
+pub fn browser_program(cell: &std::cell::UnsafeCell<Stores>) -> BrowserProgram {
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+    BROWSER_PROGRAM.store(cell.get(), std::sync::atomic::Ordering::Release);
+    #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
+    let _ = cell;
+    BrowserProgram
+}
+
 /// The loft frames a browser panic happened under, innermost first, as indented lines.
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
 fn browser_panic_frames() -> String {
-    with_call_frames(|b| {
-        if b.is_empty() {
-            return "  (no loft frame — the panic is outside any loft call)\n".to_string();
-        }
-        let mut out = String::new();
-        for (nm, f, ln, _) in b.iter().rev().take(12) {
-            out.push_str(&format!("  in {nm}() ({f}:{ln})\n"));
-        }
-        if b.len() > 12 {
-            out.push_str(&format!("  … ({} more frames)\n", b.len() - 12));
-        }
-        out
-    })
+    let p = BROWSER_PROGRAM.load(std::sync::atomic::Ordering::Acquire);
+    // SAFETY: published by the running `loft_start` and withdrawn before its stores go; the
+    // hook only reads, on the one thread the program runs on.
+    let b = unsafe { p.as_ref() }.map_or(&[][..], |stores| stores.frames.live());
+    if b.is_empty() {
+        return "  (no loft frame — the panic is outside any loft call)\n".to_string();
+    }
+    let mut out = String::new();
+    for (nm, f, ln, _) in b.iter().rev().take(12) {
+        out.push_str(&format!("  in {nm}() ({f}:{ln})\n"));
+    }
+    if b.len() > 12 {
+        out.push_str(&format!("  … ({} more frames)\n", b.len() - 12));
+    }
+    out
 }
 
 #[inline]
@@ -6765,24 +6797,11 @@ pub fn main_file_or(baked: &'static str) -> &'static str {
 /// budget), so the depth guard fires cleanly before the OS stack is exhausted.
 pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 
-// The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
-// innermost frame last.  The `--native` half of the interpreter's `State::fnref_bufs`
+// The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through
+// (`NativeRun::fnref_bufs`) are the `--native` half of the interpreter's `State::fnref_bufs`
 // (`formal/closures.md`, loft#1183): a fn-ref call site is the only owner its heap return
 // buffer will ever have, because the destination's static type may say it owns nothing, so
 // the store is owned by the frame that holds it and travels up with the return value.
-//
-// A frame's own buffers are the entries above the mark [`FnRefBufGuard`] took at entry —
-// a watermark rather than a frame number, so nothing has to agree about depth.
-thread_local! {
-    static FNREF_BUFS: RefCell<Vec<(DbRef, u64)>> = const { RefCell::new(Vec::new()) };
-}
-
-// The length of `FNREF_BUFS`, mirrored so a frame can take its mark and test it against
-// the list without borrowing one: a program that never delivers a fn-ref return buffer —
-// which is nearly every program, on nearly every call — pays two `Cell` reads.
-thread_local! {
-    static FNREF_LEN: Cell<u32> = const { Cell::new(0) };
-}
 
 /// Record what a fn-ref dispatch arm's return buffer became, once the call has answered.
 ///
@@ -6798,18 +6817,12 @@ pub fn cr_fnref_buf(cell: &std::cell::UnsafeCell<Stores>, returned: DbRef, buf: 
         OpFreeRef(cell, buf, "__vc_hbuf");
         return;
     }
-    let serial = {
-        let stores: &mut Stores = unsafe { &mut *cell.get() };
-        stores
-            .allocations
-            .get(buf.store_nr as usize)
-            .map_or(0, |s| s.alloc_serial)
-    };
-    FNREF_BUFS.with(|b| {
-        let mut list = b.borrow_mut();
-        list.push((buf, serial));
-        FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
-    });
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    let serial = stores
+        .allocations
+        .get(buf.store_nr as usize)
+        .map_or(0, |s| s.alloc_serial);
+    stores.native.fnref_bufs.push((buf, serial));
 }
 
 /// The allocation counter, for a fn-ref call site to snapshot before it dispatches.
@@ -6823,31 +6836,32 @@ pub fn cr_alloc_serial(cell: &std::cell::UnsafeCell<Stores>) -> u64 {
     stores.stores_allocated
 }
 
-thread_local! {
-    /// @PLN150 — the store the most recent fn-ref call handed back that it did NOT mint.
-    ///
-    /// The `--native` counterpart of `State::fnref_borrowed_return`, and the same one hop:
-    /// `COPY_FREE_SOURCE` claims *"the source is a callee's fresh temporary nobody else
-    /// frees"*, and for a forwarded fn-ref result that is a PER-RUN fact.  [`cr_fnref_minted`]
-    /// is already standing at the one place both halves of the answer are in scope — the
-    /// returned `DbRef` and the `alloc_serial` snapshot taken when the call began — and its
-    /// borrow path simply returned.  This carries that verdict to [`OpCopyRecord`], which
-    /// declines the source-free for a store that predates the call.
-    ///
-    /// TAKEN by the first record copy after the call — match or not, exactly as
-    /// `State::take_fnref_borrowed_return` is — so it describes one value and cannot outlive
-    /// it.  Taken only on a match it stayed armed past an unrelated copy, and store slots are
-    /// reused: the capture a lambda handed back in one function named the slot a later
-    /// function's fresh record temporary was minted in, that copy read it as borrowed and
-    /// declined its source-free, and one record leaked per program (found by the
-    /// `158-guard-free` cells, g6 followed by g9, on the leak channel).
-    static FNREF_BORROWED: std::cell::Cell<Option<DbRef>> = const { std::cell::Cell::new(None) };
-}
-
+/// @PLN150 — the store the most recent fn-ref call handed back that it did NOT mint
+/// (`NativeRun::fnref_borrowed`).
+///
+/// The `--native` counterpart of `State::fnref_borrowed_return`, and the same one hop:
+/// `COPY_FREE_SOURCE` claims *"the source is a callee's fresh temporary nobody else
+/// frees"*, and for a forwarded fn-ref result that is a PER-RUN fact.  [`cr_fnref_minted`]
+/// is already standing at the one place both halves of the answer are in scope — the
+/// returned `DbRef` and the `alloc_serial` snapshot taken when the call began — and its
+/// borrow path simply returned.  This carries that verdict to [`OpCopyRecord`], which
+/// declines the source-free for a store that predates the call.
+///
+/// TAKEN by the first record copy after the call — match or not, exactly as
+/// `State::take_fnref_borrowed_return` is — so it describes one value and cannot outlive
+/// it.  Taken only on a match it stayed armed past an unrelated copy, and store slots are
+/// reused: the capture a lambda handed back in one function named the slot a later
+/// function's fresh record temporary was minted in, that copy read it as borrowed and
+/// declined its source-free, and one record leaked per program (found by the
+/// `158-guard-free` cells, g6 followed by g9, on the leak channel).///
 /// Take the @PLN150 borrowed-return marker, clearing it, and answer whether it named
 /// `store_nr`.
-fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
-    FNREF_BORROWED.with(|b| b.take().is_some_and(|r| r.store_nr == store_nr))
+fn cr_take_fnref_borrowed(stores: &mut Stores, store_nr: u16) -> bool {
+    stores
+        .native
+        .fnref_borrowed
+        .take()
+        .is_some_and(|r| r.store_nr == store_nr)
 }
 
 /// Bind the record an UNRESOLVED fn-ref call handed back: `true` ADOPTS it, `false` asks
@@ -6858,28 +6872,26 @@ fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
 /// is copied, left alone; any other was minted by the call and is adopted — and taken OFF the
 /// hand-up list, so the binding is its one owner and [`FnRefBufGuard`] does not hold it (or
 /// hand it up) as well.  A null `src` is adopted as the null it is.
-pub fn cr_fnref_adopt(src: DbRef) -> bool {
-    if cr_take_fnref_borrowed(src.store_nr) && src.rec != 0 {
+pub fn cr_fnref_adopt(cell: &std::cell::UnsafeCell<Stores>, src: DbRef) -> bool {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if cr_take_fnref_borrowed(stores, src.store_nr) && src.rec != 0 {
         return false;
     }
-    cr_fnref_forget(src.store_nr);
+    cr_fnref_forget(stores, src.store_nr);
     true
 }
 
 /// Take store `store_nr` off the fn-ref hand-up list: it has an owner now — a binding that
 /// adopted it ([`cr_fnref_adopt`]), or an exchange that consumed it ([`OpRebindRecord`]) — so
 /// [`FnRefBufGuard`] must not release it as well.
-fn cr_fnref_forget(store_nr: u16) {
+fn cr_fnref_forget(stores: &mut Stores, store_nr: u16) {
     if store_nr == u16::MAX {
         return;
     }
-    FNREF_BUFS.with(|b| {
-        let mut list = b.borrow_mut();
-        if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == store_nr) {
-            list.remove(at);
-            FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
-        }
-    });
+    let list = &mut stores.native.fnref_bufs;
+    if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == store_nr) {
+        list.remove(at);
+    }
 }
 
 /// Give an owner to a store a fn-ref callee MINTED and handed back.
@@ -6899,7 +6911,8 @@ pub fn cr_fnref_minted(
 ) {
     // @PLN150 — every path below decides MINTED-or-BORROWED, so the marker is re-armed here
     // rather than left over from the previous call.
-    FNREF_BORROWED.with(|b| b.set(None));
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores.native.fnref_borrowed = None;
     if returned.store_nr == u16::MAX || returned.rec == 0 {
         return;
     }
@@ -6909,10 +6922,9 @@ pub fn cr_fnref_minted(
     // reported twelve use-after-free reads of `__closure_4`, all "killed by the free of
     // `var_r`", on `--native` alone.
     if closure.store_nr != u16::MAX && returned.store_nr == closure.store_nr {
-        FNREF_BORROWED.with(|b| b.set(Some(returned)));
+        stores.native.fnref_borrowed = Some(returned);
         return;
     }
-    let stores: &mut Stores = unsafe { &mut *cell.get() };
     let Some(slot) = stores.allocations.get(returned.store_nr as usize) else {
         return;
     };
@@ -6922,12 +6934,12 @@ pub fn cr_fnref_minted(
     if slot.alloc_serial <= since {
         // Predates the call: a capture, or an argument.  It belongs to a frame further up, so
         // no caller may consume it as "the callee's fresh temporary".
-        FNREF_BORROWED.with(|b| b.set(Some(returned)));
+        stores.native.fnref_borrowed = Some(returned);
         return;
     }
     let serial = slot.alloc_serial;
-    FNREF_BUFS.with(|b| {
-        let mut list = b.borrow_mut();
+    {
+        let list = &mut stores.native.fnref_bufs;
         // One ALLOCATION is one entry, and a slot number is not an allocation: an entry left
         // by a store its owner already freed names the same slot as a new store minted into
         // it.  Refusing the new one on the number alone left it to nobody; appending beside
@@ -6942,8 +6954,7 @@ pub fn cr_fnref_minted(
             return;
         }
         list.push((returned, serial));
-        FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
-    });
+    }
 }
 
 /// `@FR-R-RefillText`'s collection clause — the exit half of a refilling callee's kept
@@ -7057,6 +7068,14 @@ impl Drop for FnRefWork {
     }
 }
 
+/// The length of the fn-ref hand-up list: a frame's mark, and what its guard tests the mark
+/// against at exit — a program that never delivers a fn-ref return buffer, which is nearly
+/// every program on nearly every call, pays one read at each end.
+#[inline]
+fn fnref_len(cell: &std::cell::UnsafeCell<Stores>) -> u32 {
+    u32::try_from(run_of(cell).fnref_bufs.len()).unwrap_or(u32::MAX)
+}
+
 /// Releases the fn-ref return buffers a frame delivered into, when that frame ends.
 ///
 /// The `--native` counterpart of `State::release_fnref_bufs`, and it answers the same
@@ -7089,7 +7108,7 @@ impl FnRefBufGuard {
     pub fn new(cell: &std::cell::UnsafeCell<Stores>, hands_up: bool) -> Self {
         Self {
             cell: std::ptr::from_ref(cell),
-            mark: FNREF_LEN.with(Cell::get),
+            mark: fnref_len(cell),
             hands_up,
         }
     }
@@ -7102,18 +7121,16 @@ impl FnRefBufGuard {
     #[cold]
     #[inline(never)]
     fn release(&mut self) {
-        let mine: Vec<(DbRef, u64)> = FNREF_BUFS.with(|b| {
-            let mut list = b.borrow_mut();
-            let from = usize::try_from(self.mark)
-                .unwrap_or(usize::MAX)
-                .min(list.len());
-            let mine = list.split_off(from);
-            FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
-            mine
-        });
         // SAFETY: the pointer is the `cell` argument of the frame this guard belongs to,
         // which outlives the guard — the guard is a local of that same frame.
         let cell = unsafe { &*self.cell };
+        let mine: Vec<(DbRef, u64)> = {
+            let list = &mut run_of(cell).fnref_bufs;
+            let from = usize::try_from(self.mark)
+                .unwrap_or(usize::MAX)
+                .min(list.len());
+            list.split_off(from)
+        };
         for (buf, serial) in mine {
             // The frame may have released the store ITSELF — its static type can read the
             // value as owned — and slot numbers are reused, so a bare `store_nr` here would
@@ -7137,7 +7154,8 @@ impl FnRefBufGuard {
 impl Drop for FnRefBufGuard {
     #[inline]
     fn drop(&mut self) {
-        if self.hands_up || FNREF_LEN.with(Cell::get) == self.mark {
+        // SAFETY: as in `release`.
+        if self.hands_up || fnref_len(unsafe { &*self.cell }) == self.mark {
             return;
         }
         self.release();
@@ -7145,11 +7163,11 @@ impl Drop for FnRefBufGuard {
 }
 
 /// Native implementation of `stack_trace()`.
-/// Reads the thread-local shadow call stack and builds `vector<StackFrame>`
+/// Reads the program's shadow call stack (`Stores::frames`) and builds `vector<StackFrame>`
 /// using the same stores API as the interpreter implementation in `native.rs`.
 pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let snapshot: Vec<(&str, &str, u32, u32)> = with_call_frames(<[_]>::to_vec);
+    let snapshot: Vec<crate::call_frames::NativeFrame> = stores.frames.live().to_vec();
 
     let sf_elm = stores.name("StackFrame");
     let sf_size = u32::from(stores.size(sf_elm));
@@ -7193,47 +7211,6 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     vec
 }
 
-// ── LoftStore construction for native codegen ───────────────────────────
-// When native codegen calls `extern "C"` functions that take `LoftStore`,
-// it needs to build one from `&mut Stores`.  These helpers provide that.
-
-std::thread_local! {
-    static CODEGEN_STORES: std::cell::Cell<*mut Stores> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-unsafe extern "C" fn ffi_claim(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 {
-    let store_nr = ctx._opaque as usize as u16;
-    CODEGEN_STORES.with(|c| {
-        let stores = unsafe { &mut *c.get() };
-        stores.allocations[store_nr as usize].claim(words)
-    })
-}
-
-unsafe extern "C" fn ffi_reload(
-    ctx: loft_ffi::LoftStoreCtx,
-    out_ptr: *mut *mut u8,
-    out_size: *mut u32,
-) {
-    let store_nr = ctx._opaque as usize as u16;
-    CODEGEN_STORES.with(|c| {
-        let stores = unsafe { &*c.get() };
-        let store = &stores.allocations[store_nr as usize];
-        unsafe {
-            *out_ptr = store.base_ptr();
-            *out_size = store.capacity_words();
-        }
-    });
-}
-
-unsafe extern "C" fn ffi_resize(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u32) -> u32 {
-    let store_nr = ctx._opaque as usize as u16;
-    CODEGEN_STORES.with(|c| {
-        let stores = unsafe { &mut *c.get() };
-        stores.allocations[store_nr as usize].resize(rec, words)
-    })
-}
-
 /// @PLN24 arc G — `c_library_available`, for generated Rust.
 ///
 /// The body of the `c_library_available` declaration in `default/02_files.loft`
@@ -7253,49 +7230,4 @@ pub fn c_library_available(name: &str, libs: &[(&str, &str)], syms: &[(&str, &[&
         let _ = (name, libs, syms);
         false
     }
-}
-
-/// Build a `LoftStore` handle for calling `extern "C"` native functions that
-/// need store access.  Sets a thread-local pointer so the FFI callbacks can
-/// reach back into the stores.
-pub fn make_loft_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStore {
-    CODEGEN_STORES.with(|c| c.set(std::ptr::from_mut::<Stores>(stores)));
-    let store = &stores.allocations[store_nr as usize];
-    loft_ffi::LoftStore {
-        ptr: store.base_ptr(),
-        size: store.capacity_words(),
-        ctx: loft_ffi::LoftStoreCtx {
-            _opaque: store_nr as usize as *mut (),
-        },
-        claim_fn: Some(ffi_claim),
-        reload_fn: Some(ffi_reload),
-        resize_fn: Some(ffi_resize),
-        // A caller here names an existing store (an argument's), never one minted for a
-        // return; the generated cdylib call builds its handle through `native_call`.
-        foreign_fn: Some(ffi_foreign),
-    }
-}
-
-/// @PLN174 F5 — the foreign-vector callback over `CODEGEN_STORES`, the twin of
-/// `native_call::ffi_foreign_pub` for a handle built here.
-unsafe extern "C" fn ffi_foreign(
-    ctx: loft_ffi::LoftStoreCtx,
-    ptr: *mut u8,
-    len: usize,
-    cap: usize,
-    elem_size: u32,
-    release: unsafe extern "C" fn(*mut u8, usize, usize),
-) -> loft_ffi::LoftRef {
-    CODEGEN_STORES.with(|c| {
-        let stores = unsafe { &mut *c.get() };
-        crate::c_libs::adopt_foreign_block(
-            stores,
-            ctx._opaque as usize,
-            ptr,
-            len,
-            cap,
-            elem_size,
-            release,
-        )
-    })
 }

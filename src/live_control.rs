@@ -16,45 +16,46 @@
 //! live state is mutably borrowed, so the control handler (which runs inside the pause
 //! loop's mini-pump) must never borrow it again — it posts, and the pause loop applies.
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 
 use crate::database::Stores;
 use crate::keys::DbRef;
 
-/// The live tier's flip, installed when it boots.
-static FLIP: OnceLock<fn(&str, bool) -> bool> = OnceLock::new();
+use crate::engine_host::EngineCtl;
+
+/// The live tier's flip, installed when it boots.  It answers for the program whose engine
+/// control `EngineCtl` is: the parked interpreter is held there.
+static FLIP: OnceLock<fn(&mut EngineCtl, &str, bool) -> bool> = OnceLock::new();
 /// The live tier's breakpoint setter, installed when it boots.
 #[cfg(not(target_arch = "wasm32"))]
-static SET_BP: OnceLock<fn(&str, i64) -> bool> = OnceLock::new();
+static SET_BP: OnceLock<fn(&mut EngineCtl, &str, i64) -> bool> = OnceLock::new();
 
 /// Called by the live tier's boot: route [`set_flip`] to it.
-pub fn install_flip(flip: fn(&str, bool) -> bool) {
+pub(crate) fn install_flip(flip: fn(&mut EngineCtl, &str, bool) -> bool) {
     let _ = FLIP.set(flip);
 }
 
 /// Called by the live tier's boot: route [`debug_set_bp`] to it.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn install_set_bp(set_bp: fn(&str, i64) -> bool) {
+pub(crate) fn install_set_bp(set_bp: fn(&mut EngineCtl, &str, i64) -> bool) {
     let _ = SET_BP.set(set_bp);
 }
 
 /// Flip `name` between its compiled body and the interpreter.  False when no live tier
 /// has booted, or the function is not one it can flip.
-pub fn set_flip(name: &str, on: bool) -> bool {
-    FLIP.get().is_some_and(|flip| flip(name, on))
+pub(crate) fn set_flip(ctl: &mut EngineCtl, name: &str, on: bool) -> bool {
+    FLIP.get().is_some_and(|flip| flip(ctl, name, on))
 }
 
 /// Set a breakpoint at the entry of `name`.  With no live tier booted, the request is
 /// queued like one that arrives during a pause, and acknowledged.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_set_bp(name: &str, cid: i64) -> bool {
+pub(crate) fn debug_set_bp(ctl: &mut EngineCtl, name: &str, cid: i64) -> bool {
     if let Some(set_bp) = SET_BP.get() {
-        set_bp(name, cid)
+        set_bp(ctl, name, cid)
     } else {
-        debug_mailbox_push(DebugCmd::SetBp(name.to_string(), cid));
+        debug_mailbox_push(&mut ctl.debug, DebugCmd::SetBp(name.to_string(), cid));
         true
     }
 }
@@ -69,19 +70,38 @@ pub enum DebugCmd {
     Reload(i64),
 }
 
+/// `@PLN226` — a program's debug channel state (`engine_host::EngineCtl::debug`): the
+/// commands waiting for the pause loop, the breakpoint names (the identity that survives
+/// reloads and re-resolution), the control client that hears `D:hit`, and the breakpoints the
+/// interpreter's dispatch loop is to take at its next op boundary.
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static DEBUG_MAILBOX: RefCell<Vec<DebugCmd>> = const { RefCell::new(Vec::new()) };
+pub struct DebugCx {
+    mailbox: Vec<DebugCmd>,
+    pub(crate) bps: Vec<String>,
+    pub(crate) sub: i64,
+    pub(crate) queued: Vec<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_mailbox_push(cmd: DebugCmd) {
-    DEBUG_MAILBOX.with(|m| m.borrow_mut().push(cmd));
+impl Default for DebugCx {
+    fn default() -> Self {
+        DebugCx {
+            mailbox: Vec::new(),
+            bps: Vec::new(),
+            sub: -1,
+            queued: Vec::new(),
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn debug_mailbox_drain() -> Vec<DebugCmd> {
-    DEBUG_MAILBOX.with(|m| std::mem::take(&mut *m.borrow_mut()))
+pub fn debug_mailbox_push(d: &mut DebugCx, cmd: DebugCmd) {
+    d.mailbox.push(cmd);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn debug_mailbox_drain(d: &mut DebugCx) -> Vec<DebugCmd> {
+    std::mem::take(&mut d.mailbox)
 }
 
 /// Set by the editor's Apply (`D!:apply`): under `LOFT_LIVE_RELOAD=hold` a saved edit waits
@@ -106,8 +126,9 @@ pub fn take_apply() -> bool {
 }
 
 /// Typed twin for generated code: `live_flip(name: text, on: boolean) -> boolean`.
-pub fn n_live_flip(_cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
-    u8::from(set_flip(name, on == 1))
+pub fn n_live_flip(cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    u8::from(set_flip(&mut stores.engine.ctl, name, on == 1))
 }
 
 /// Interp stack native: under the interpreter everything is already

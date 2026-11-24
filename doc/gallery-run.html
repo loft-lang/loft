@@ -171,7 +171,7 @@ select {
 </div>
 
 <script type="module">
-import init, { compile_and_start, resume_frame } from './pkg/loft.js?v=fa42bcd2785c';
+import init, { Game } from './pkg/loft.js?v=02bfbb7e252c';
 import { initLoftGL } from './loft-gl.js?v=917a52668ad4';
 import { GALLERY_EXAMPLES, GALLERY_LIST } from './gallery-examples.js?v=997df6476118';
 import { createHost } from './loft-rt.js?v=5c94f0e5117d';
@@ -195,6 +195,8 @@ window.loftHost = pageHost;
 // ── WebGL bridge from library ────────────────────────────────────────────────
 const canvas = document.getElementById('gl-canvas');
 let loftGL = null;
+// The page's game: the program it runs, frame by frame (`Game`, made once the module loads).
+let game = null;
 
 // Asset map: example key → list of { name, type } to pre-load.
 // type: 'image' = decode as HTMLImageElement, 'font' = register as a page font,
@@ -372,6 +374,7 @@ function explainLoadError(e) {
 async function initLoft() {
   try {
     const wasm = await init();
+    game = new Game();
     // @PLN117 — real Web Worker threads for par() when the host is cross-origin
     // isolated (COOP/COEP -> SharedArrayBuffer).  Inert on the single-threaded
     // bundle (which ships no loft-thread.js) and on non-isolated hosts: par()
@@ -432,7 +435,7 @@ window.runExample = async function() {
   const files = JSON.stringify([{ name: 'main.loft', content: currentSource }]);
   let result;
   try {
-    result = JSON.parse(compile_and_start(files));
+    result = JSON.parse(game.start(files));
   } catch (e) {
     outputEl.textContent = 'Internal error: ' + e.message;
     statusEl.textContent = 'Error';
@@ -462,7 +465,7 @@ window.runExample = async function() {
     frameCount++;
     let r;
     try {
-      r = JSON.parse(resume_frame());
+      r = JSON.parse(game.resume_frame());
     } catch (e) {
       outputEl.textContent = 'Runtime error: ' + e.message;
       statusEl.textContent = 'Error';

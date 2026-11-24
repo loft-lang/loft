@@ -23,6 +23,8 @@
 
 use std::io::Write as _;
 use std::sync::OnceLock;
+#[cfg(feature = "op-census")]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 /// One kind of store work.
@@ -58,24 +60,102 @@ pub const COLUMNS: [&str; 10] = [
 
 static COUNTS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
 
-thread_local! {
-    /// This thread's interpreter stack store, so a copy into it counts as `StackBytes`.
-    static STACK_STORE: std::cell::Cell<u16> = const { std::cell::Cell::new(u16::MAX) };
+/// `@PLN226` — one context's store instruments: the op its interpreter runs and the program's
+/// line table (`LOFT_ALLOC_TRACE`'s `@ <line>`), the `par` worker it is, its interpreter's stack
+/// store (`StackBytes`) and the bytes its stores moved (`LOFT_OP_CENSUS`).  A `Stores` owns one
+/// (`Stores::tap`) and every store it makes live carries a share (`Store::tap`), so store code
+/// reaches its context without asking which thread runs (`@FR-C-Boundary`).  Only the owning
+/// context's thread writes it (`@FR-C-Own`); the words are atomics only so a `Store`, which is
+/// `Send`, can hold the share.
+#[cfg(feature = "op-census")]
+pub struct Tap {
+    pc: AtomicU32,
+    last_line: AtomicU32,
+    lines: OnceLock<std::sync::Arc<std::collections::BTreeMap<u32, u32>>>,
+    worker: AtomicU32,
+    stack_store: AtomicU32,
+    moved: [AtomicU64; 3],
 }
 
-/// A `State` on this thread keeps its stack in store `nr`.
-pub fn set_stack_store(nr: u16) {
-    STACK_STORE.with(|s| s.set(nr));
+#[cfg(feature = "op-census")]
+impl Default for Tap {
+    fn default() -> Self {
+        Tap {
+            pc: AtomicU32::new(0),
+            last_line: AtomicU32::new(0),
+            lines: OnceLock::new(),
+            worker: AtomicU32::new(0),
+            stack_store: AtomicU32::new(u32::MAX),
+            moved: [const { AtomicU64::new(0) }; 3],
+        }
+    }
 }
 
-/// `bytes` block-copied into store `dest`: stack work when `dest` is this thread's
-/// interpreter stack, copied bytes otherwise.
-#[inline]
-pub fn copied_into(dest: u16, bytes: u64) {
-    if STACK_STORE.with(std::cell::Cell::get) == dest {
-        note(Work::StackBytes, bytes);
-    } else {
-        note(Work::CopyBytes, bytes);
+#[cfg(feature = "op-census")]
+impl Tap {
+    /// A new context's tap (a worker's `Stores`): the program's line table carried over, every
+    /// count fresh.
+    #[must_use]
+    pub fn child(&self) -> Self {
+        let tap = Tap::default();
+        if let Some(lines) = self.lines.get() {
+            let _ = tap.lines.set(lines.clone());
+        }
+        tap
+    }
+
+    /// The context's interpreter keeps its stack in store `nr`.
+    pub fn set_stack_store(&self, nr: u16) {
+        self.stack_store.store(u32::from(nr), Ordering::Relaxed);
+    }
+
+    /// `bytes` block-copied into store `dest`: stack work when `dest` is the interpreter's
+    /// stack, copied bytes otherwise.
+    #[inline]
+    pub fn copied_into(&self, dest: u16, bytes: u64) {
+        if self.stack_store.load(Ordering::Relaxed) == u32::from(dest) {
+            note(Work::StackBytes, bytes);
+        } else {
+            note(Work::CopyBytes, bytes);
+        }
+    }
+
+    /// `bytes` moved through block route `route` (`op_census::Moved`).
+    pub fn count_moved(&self, route: crate::op_census::Moved, bytes: u64) {
+        self.moved[route as usize].fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// The bytes moved so far, per route.
+    #[must_use]
+    pub fn moved(&self) -> [u64; 3] {
+        [0, 1, 2].map(|k| self.moved[k].load(Ordering::Relaxed))
+    }
+
+    /// The `par` worker this context is, 0 for the main thread's (`Store::trace_worker`).
+    #[must_use]
+    pub fn worker(&self) -> u32 {
+        self.worker.load(Ordering::Relaxed)
+    }
+
+    /// The op at `pc` is about to run in this context.
+    #[inline]
+    pub fn at_pc(&self, pc: u32) {
+        self.pc.store(pc, Ordering::Relaxed);
+    }
+
+    /// The program's line table, for the sites of the events that follow; the first table
+    /// a context is handed stays.
+    pub fn set_lines(&self, lines: std::collections::BTreeMap<u32, u32>) {
+        let _ = self.lines.set(std::sync::Arc::new(lines));
+    }
+
+    /// The `@ <line>` to write before an event, when the context's line moved since the last
+    /// one.
+    fn site_line(&self) -> Option<u32> {
+        let pc = self.pc.load(Ordering::Relaxed);
+        let lines = self.lines.get()?;
+        let line = lines.range(..=pc).next_back().map_or(0, |(_, &l)| l);
+        (line != 0 && self.last_line.swap(line, Ordering::Relaxed) != line).then_some(line)
     }
 }
 /// 0 = not read yet, 1 = off, 2 = on.
@@ -172,50 +252,14 @@ pub fn at_ticks(value: i64) {
 // file is written line by line, unbuffered, so a run that aborts keeps what it did.  Every
 // call site is itself `#[cfg(feature = "op-census")]`: a build without the feature compiles
 // no trace code at all.
-// `LOFT_ALLOC_TRACE`'s sites: the bytecode position of the op running on this thread, and the
-// interpreter's line table (`State::line_numbers`, handed over when the program starts), so an
-// event can be preceded by `@ <line>` when its source line is not the last one written — the
-// line a comparison names beside a difference (the C runtime writes the same).  A par worker
-// thread takes the program's table when it enters (`enter_worker`).
+/// A par worker's context is being built: its stores take a worker's names
+/// (`<worker>.<serial>`), each worker numbering its stores on its own.
 #[cfg(feature = "op-census")]
-thread_local! {
-    static SITE_PC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    static SITE_LINES: std::cell::RefCell<Option<(std::collections::BTreeMap<u32, u32>, u32)>> =
-        const { std::cell::RefCell::new(None) };
+pub fn enter_worker(tap: &Tap) {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    tap.worker
+        .store(NEXT.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
 }
-
-// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so a
-// store a worker makes records the worker (`Store::trace_worker`) and is named
-// `<worker>.<serial>` wherever its events are written (0 is the main thread, whose names stay
-// bare).
-#[cfg(feature = "op-census")]
-thread_local! {
-    static WORKER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// The `par` worker running on this thread, 0 on the main thread (`Store::trace_worker`).
-#[cfg(feature = "op-census")]
-pub fn worker() -> u32 {
-    WORKER.with(std::cell::Cell::get)
-}
-
-/// A par worker's state is being built on this thread: its stores take a worker's names.
-#[cfg(feature = "op-census")]
-pub fn enter_worker() {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-    WORKER.with(|w| w.set(NEXT.fetch_add(1, Ordering::Relaxed)));
-    // A worker built from the par natives' context has an empty line table of its own, so the
-    // thread takes the program's: its events then name the lines they ran at.
-    let lines = PROGRAM_LINES.lock().ok().and_then(|l| l.clone());
-    if let Some(lines) = lines {
-        SITE_LINES.with_borrow_mut(|l| *l = Some((lines, 0)));
-    }
-}
-
-/// The line table `set_lines` was last handed, for the worker threads (`enter_worker`).
-#[cfg(feature = "op-census")]
-static PROGRAM_LINES: std::sync::Mutex<Option<std::collections::BTreeMap<u32, u32>>> =
-    std::sync::Mutex::new(None);
 
 /// `LOFT_ALLOC_TRACE`'s par regions: `P` where a `par` loop's queue starts (`n_parallel_queue…`)
 /// and `Q` where its buffer is dropped (`n_parallel_buf_drop…`), as the C runtime marks the same
@@ -223,7 +267,7 @@ static PROGRAM_LINES: std::sync::Mutex<Option<std::collections::BTreeMap<u32, u3
 #[inline]
 pub fn par_mark(mark: char) {
     #[cfg(feature = "op-census")]
-    alloc_event(format_args!("{mark}"));
+    alloc_event(None, format_args!("{mark}"));
     #[cfg(not(feature = "op-census"))]
     let _ = mark;
 }
@@ -236,44 +280,16 @@ pub fn alloc_trace_on() -> bool {
     *ON.get_or_init(|| crate::platform::env_output("LOFT_ALLOC_TRACE").is_some())
 }
 
-/// The op at `pc` is about to run on this thread.
+/// One `LOFT_ALLOC_TRACE` event, preceded by its source line when that moved; `tap` is the
+/// context of the store the event happened in, `None` for a store no context made live.
 #[cfg(feature = "op-census")]
-#[inline]
-pub fn at_pc(pc: u32) {
-    SITE_PC.with(|c| c.set(pc));
-}
-
-/// The program's line table, for the sites of the events that follow.
-#[cfg(feature = "op-census")]
-pub fn set_lines(lines: std::collections::BTreeMap<u32, u32>) {
-    if let Ok(mut p) = PROGRAM_LINES.lock() {
-        *p = Some(lines.clone());
-    }
-    SITE_LINES.with_borrow_mut(|l| *l = Some((lines, 0)));
-}
-
-/// The `@ <line>` to write before an event, when this thread's line moved since the last one.
-#[cfg(feature = "op-census")]
-fn site_line() -> Option<u32> {
-    let pc = SITE_PC.with(std::cell::Cell::get);
-    SITE_LINES.with_borrow_mut(|l| {
-        let (lines, last) = l.as_mut()?;
-        let line = lines.range(..=pc).next_back().map_or(0, |(_, &l)| l);
-        (line != 0 && line != *last).then(|| {
-            *last = line;
-            line
-        })
-    })
-}
-
-#[cfg(feature = "op-census")]
-pub fn alloc_event(line: std::fmt::Arguments) {
+pub fn alloc_event(tap: Option<&Tap>, line: std::fmt::Arguments) {
     use std::sync::Mutex;
     let text = line.to_string();
     let site = if text.starts_with(['M', 'S', 'P', 'Q']) {
         None
     } else {
-        site_line()
+        tap.and_then(Tap::site_line)
     };
     static FILE: OnceLock<Option<Mutex<crate::file_access::File>>> = OnceLock::new();
     static STDERR: OnceLock<bool> = OnceLock::new();

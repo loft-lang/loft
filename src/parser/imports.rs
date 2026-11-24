@@ -139,10 +139,9 @@ impl Parser {
     /// Read a source file's content for the Tier-0 auto-`use` pre-scan.
     /// Honours the wasm VirtFS; an empty string on a read error (the scan then
     /// finds nothing and normal resolution proceeds unchanged).
-    pub(super) fn read_source(filename: &str) -> String {
-        #[cfg(feature = "wasm")]
-        if let Some(c) = crate::wasm::virt_fs_get(filename) {
-            return c;
+    pub(super) fn read_source(&self, filename: &str) -> String {
+        if let Some(c) = self.lexer.page_file(filename) {
+            return c.to_string();
         }
         crate::file_access::read_to_string(filename).unwrap_or_default()
     }
@@ -169,8 +168,8 @@ impl Parser {
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
-                if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
+                self.add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
+                if let Some(man) = self.read_manifest(&toml.to_string_lossy()) {
                     for (dep, value) in &man.dependencies {
                         // PURE lookups only: a sibling package, a `path =` dependency, the
                         // project's `lib/<dep>`, or a registry dependency's EXTRACTED copy
@@ -190,7 +189,7 @@ impl Parser {
                         let entry = self
                             .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
                             .map(|r| r.entry)
-                            .or_else(|| Self::dep_entry_by_path(&d, dep, value));
+                            .or_else(|| self.dep_entry_by_path(&d, dep, value));
                         let root = match entry {
                             Some(entry) => std::path::Path::new(&entry)
                                 .parent()
@@ -201,7 +200,7 @@ impl Parser {
                                 .or_else(|| Self::registry_dep_root(&d, dep, value)),
                         };
                         if let Some(root) = root {
-                            Self::add_pkg_triggers(
+                            self.add_pkg_triggers(
                                 &root.join("loft.toml"),
                                 &root,
                                 &mut map,
@@ -232,7 +231,7 @@ impl Parser {
         for root in Self::packages_in(&dirs) {
             let mut one: [Names; 3] = [Names::new(), Names::new(), Names::new()];
             let [m, t, b] = &mut one;
-            Self::add_pkg_triggers(&root.join("loft.toml"), &root, m, t, b);
+            self.add_pkg_triggers(&root.join("loft.toml"), &root, m, t, b);
             for ((mine, all), seen) in one.into_iter().zip(flag.iter_mut()).zip(twice.iter_mut()) {
                 for (name, pkg) in mine {
                     match all.get(&name) {
@@ -339,13 +338,14 @@ impl Parser {
     /// (`method -> package`), its public types and its declared builders — when the
     /// package opts in via `[triggers] enabled`.
     pub(super) fn add_pkg_triggers(
+        &self,
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,
         types: &mut std::collections::HashMap<String, String>,
         builders: &mut std::collections::HashMap<String, String>,
     ) {
-        let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
+        let Some(man) = self.read_manifest(&toml.to_string_lossy()) else {
             return;
         };
         if !man.trigger_enabled {
@@ -897,7 +897,7 @@ impl Parser {
         let cur_dir = script_dir(&cur_script).to_string();
         let (root, _) = self.package_declared_deps(&cur_dir)?;
         let manifest = std::path::Path::new(&root).join("loft.toml");
-        crate::manifest::read_manifest(&manifest.to_string_lossy())?.name
+        self.read_manifest(&manifest.to_string_lossy())?.name
     }
 
     /// Report when `use <id>` here names a DIFFERENT file from the one already loaded

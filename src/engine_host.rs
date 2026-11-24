@@ -41,7 +41,6 @@
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
 
-use std::cell::RefCell;
 // VecDeque / keys::Str are used only in the native (non-wasm) engine-host
 // paths, so they read as unused in wasm / feature-restricted builds.
 #[allow(unused_imports)]
@@ -75,7 +74,8 @@ struct Event {
 // The one invariant: `http_fetch` returns BEFORE any network I/O happens,
 // and the completion is delivered through the SAME queue / drain / budget
 // as every other event — a slow or stalled request can never stall the
-// loop.  The kernel is thread_local, so workers park completions in this
+// loop.  The kernel is the program's (`Stores::engine`), which a request
+// thread cannot reach, so the request threads park completions in this
 // global queue; each pump turn drains it into the host's event queue as
 // ordinary kind-3 events (cid = the request id).
 
@@ -196,7 +196,7 @@ fn http_fetch_impl(method: String, url: String, body: String, headers: String) -
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_event_status() -> integer` — the status of the last-popped event.
 pub fn n_kernel_event_status(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.last.status).unwrap_or(0);
+    let v = with_kernel(&mut stores.engine, |k| k.last.status).unwrap_or(0);
     stores.put(stack, v);
 }
 
@@ -267,10 +267,59 @@ impl ClientNet {
 // id — so one kind carries N entities' latest-values ("state-sync keyed by
 // cid" from the class table); `false` keeps one latest-value per kind.
 // Everything undeclared is the event class (must-deliver, rides WS).
-// Lives outside `Kernel` so declarations may precede `run()`.
-thread_local! {
-    static SYNC_IDS: RefCell<std::collections::HashMap<i64, bool>> =
-        RefCell::new(std::collections::HashMap::new());
+// Lives outside `Kernel` so declarations may precede `run()`: in the program's engine
+// context (`EngineCx::sync_ids`).
+type SyncIds = std::collections::HashMap<i64, bool>;
+
+/// `@PLN226` — a program's engine host: its declared sync classes, and natively its server
+/// kernel, its client, its build swap and the world it carries (`Stores::engine`).  The
+/// program's own (`@FR-C-Own`): two programs in one process serve apart.  The C runtime keeps
+/// the same as its process's, one program per binary (`loft_engine.h`).
+#[derive(Default)]
+pub struct EngineCx {
+    #[cfg(not(target_arch = "wasm32"))]
+    kernel: Option<Kernel>,
+    #[cfg(not(target_arch = "wasm32"))]
+    client: Option<ClientKernel>,
+    /// The browser's connector (`browser`): the WebSocket client of a page.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    browser: Option<browser::BrowserClient>,
+    pub(crate) ctl: EngineCtl,
+}
+
+/// The part of a program's engine host its kernel's pump also reaches — the sync classes a
+/// frame is read by, and the swap, the world and the rebuild a control command drives — kept
+/// apart from the kernel so the pump holds both.
+#[derive(Default)]
+pub(crate) struct EngineCtl {
+    sync_ids: SyncIds,
+    #[cfg(not(target_arch = "wasm32"))]
+    swap: SwapPhase,
+    /// The snapshot root registered by `swap_world`: (record, known_type).
+    world_root: Option<(DbRef, u16)>,
+    /// The world snapshot the page staged for this program's `swap_world` (`wasm_entry::Game`).
+    #[cfg(host_fs)]
+    swap_stage: Option<String>,
+    /// The registered world's layout sidecar, when it goes over as an image.
+    #[cfg(not(target_arch = "wasm32"))]
+    world_layout: Option<String>,
+    /// The background build of the next instance (`live_rebuild`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) rebuild: crate::live_rebuild::RebuildCx,
+    /// The debug channel's breakpoints, subscriber and waiting commands (`live_control`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) debug: crate::live_control::DebugCx,
+    /// The parked interpreter of a live build (`live_dispatch`), held without naming its type
+    /// (the core layer names no interpreter type).  Out of here while a dispatch runs it, so a
+    /// control command that arrives during that dispatch's pause finds none and is queued.
+    pub(crate) live: Option<Box<dyn std::any::Any>>,
+}
+
+impl Clone for EngineCx {
+    /// A new context (a worker's `Stores`) serves nothing.
+    fn clone(&self) -> Self {
+        EngineCx::default()
+    }
 }
 
 /// The leading `<digits>:` of a wire message, or `-1` when unframed.
@@ -282,17 +331,17 @@ fn msg_id_of(msg: &str) -> i64 {
 }
 
 #[allow(dead_code)] // @PLN18 phase-05a UDP state-sync scaffolding
-fn is_sync_msg(msg: &str) -> bool {
+fn is_sync_msg(sync: &SyncIds, msg: &str) -> bool {
     let id = msg_id_of(msg);
-    id >= 0 && SYNC_IDS.with(|s| s.borrow().contains_key(&id))
+    id >= 0 && sync.contains_key(&id)
 }
 
 /// The conflation key for a payload: the first comma-field after the kind
 /// for keyed kinds ("2:7,x,y" → "7"), "" for unkeyed/unframed ones.
 #[allow(dead_code)] // @PLN18 phase-05a UDP state-sync scaffolding
-fn sync_key_of(payload: &str) -> String {
+fn sync_key_of(sync: &SyncIds, payload: &str) -> String {
     let id = msg_id_of(payload);
-    let keyed = id >= 0 && SYNC_IDS.with(|s| s.borrow().get(&id).copied().unwrap_or(false));
+    let keyed = id >= 0 && sync.get(&id).copied().unwrap_or(false);
     if !keyed {
         return String::new();
     }
@@ -306,6 +355,7 @@ fn sync_key_of(payload: &str) -> String {
 /// queue machinery must never fork between them.
 #[allow(dead_code)] // @PLN18 phase-05a UDP state-sync scaffolding
 fn find_or_create_slot<'a>(
+    sync: &SyncIds,
     slots: &'a mut Vec<SyncSlot>,
     payload: &str,
 ) -> Option<&'a mut SyncSlot> {
@@ -313,7 +363,7 @@ fn find_or_create_slot<'a>(
     // memory; sync is loss-tolerant by definition, so over-cap drops.
     const SYNC_SLOTS_MAX: usize = 256;
     let msg_id = msg_id_of(payload);
-    let key = sync_key_of(payload);
+    let key = sync_key_of(sync, payload);
     match slots
         .iter_mut()
         .position(|s| s.msg_id == msg_id && s.key == key)
@@ -339,8 +389,8 @@ fn find_or_create_slot<'a>(
 /// slot's space, so a later datagram (the sender counts its sync sends
 /// across BOTH carriers) still reads as newer.
 #[allow(dead_code)] // @PLN18 phase-05a UDP state-sync scaffolding
-fn conflate_ws(slots: &mut Vec<SyncSlot>, payload: &str) {
-    if let Some(slot) = find_or_create_slot(slots, payload) {
+fn conflate_ws(sync: &SyncIds, slots: &mut Vec<SyncSlot>, payload: &str) {
+    if let Some(slot) = find_or_create_slot(sync, slots, payload) {
         slot.seq += 1;
         slot.payload.clear();
         slot.payload.push_str(payload);
@@ -349,8 +399,8 @@ fn conflate_ws(slots: &mut Vec<SyncSlot>, payload: &str) {
 }
 
 #[allow(dead_code)] // @PLN18 phase-05a UDP state-sync scaffolding
-fn conflate_slot(slots: &mut Vec<SyncSlot>, seq: i64, payload: &str) {
-    let Some(slot) = find_or_create_slot(slots, payload) else {
+fn conflate_slot(sync: &SyncIds, slots: &mut Vec<SyncSlot>, seq: i64, payload: &str) {
+    let Some(slot) = find_or_create_slot(sync, slots, payload) else {
         return;
     };
     if seq > slot.seq {
@@ -417,13 +467,54 @@ impl Kernel {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static KERNEL: RefCell<Option<Kernel>> = const { RefCell::new(None) };
+fn with_kernel<R>(e: &mut EngineCx, f: impl FnOnce(&mut Kernel) -> R) -> Option<R> {
+    e.kernel.as_mut().map(f)
 }
 
+/// [`with_kernel`] for a body that also reaches the control part ([`EngineCtl`]).
 #[cfg(not(target_arch = "wasm32"))]
-fn with_kernel<R>(f: impl FnOnce(&mut Kernel) -> R) -> Option<R> {
-    KERNEL.with(|k| k.borrow_mut().as_mut().map(f))
+fn with_kernel_ctl<R>(
+    e: &mut EngineCx,
+    f: impl FnOnce(&mut Kernel, &mut EngineCtl) -> R,
+) -> Option<R> {
+    let EngineCx { kernel, ctl, .. } = e;
+    kernel.as_mut().map(|k| f(k, ctl))
+}
+
+/// Hand the program the world snapshot its page staged, for its `swap_world` to restore.
+#[cfg(host_fs)]
+pub(crate) fn stage_swap(stores: &mut Stores, snapshot: Option<String>) {
+    stores.engine.ctl.swap_stage = snapshot;
+}
+
+/// The world the program registered with `swap_world`, if any: its root and its known type.
+#[cfg(host_fs)]
+#[must_use]
+pub(crate) fn world_root(stores: &Stores) -> Option<(DbRef, u16)> {
+    stores.engine.ctl.world_root
+}
+
+/// The program's parked live interpreter, when it runs a live build (`live_dispatch`).
+pub(crate) fn live(stores: &mut Stores) -> &mut Option<Box<dyn std::any::Any>> {
+    &mut stores.engine.ctl.live
+}
+
+/// The program's debug channel state (`live_control::DebugCx`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn debug(stores: &mut Stores) -> &mut crate::live_control::DebugCx {
+    &mut stores.engine.ctl.debug
+}
+
+/// The engine context a writer's typed twin reaches through its `Stores` cell.
+#[cfg(not(target_arch = "wasm32"))]
+#[expect(
+    clippy::mut_from_ref,
+    reason = "the stores sit in an `UnsafeCell`, the writer's calling convention"
+)]
+fn engine(cell: &std::cell::UnsafeCell<Stores>) -> &mut EngineCx {
+    // SAFETY: the cell is the calling program's stores, which no other reference reaches
+    // while one of its natives runs.
+    unsafe { &mut (*cell.get()).engine }
 }
 
 // ── WS mechanics (unbuffered TcpStream reads — a BufReader would steal bytes
@@ -644,14 +735,14 @@ fn write_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std::io::R
 pub fn n_kernel_listen(stores: &mut Stores, stack: &mut DbRef) {
     let tick_us = stores.get::<i64>(stack);
     let port = stores.get::<i64>(stack);
-    let ok = listen_impl(port, tick_us);
+    let ok = listen_impl(&mut stores.engine, port, tick_us);
     stores.put(stack, ok);
 }
 
 /// The listen body, shared by the bytecode-stack native and the typed
 /// (`--native` codegen) twin — one implementation, two calling conventions.
 #[cfg(not(target_arch = "wasm32"))]
-fn listen_impl(port: i64, tick_us: i64) -> bool {
+fn listen_impl(e: &mut EngineCx, port: i64, tick_us: i64) -> bool {
     crate::platform::bind_tcp_handover(port as u16)
         .map(|listener| {
             let _ = listener.set_nonblocking(true);
@@ -665,8 +756,8 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
                     None
                 }
             };
-            KERNEL.with(|k| {
-                *k.borrow_mut() = Some(Kernel {
+            {
+                e.kernel = Some(Kernel {
                     listener,
                     udp,
                     conns: Vec::new(),
@@ -688,7 +779,7 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
                     foreign_pages: std::collections::HashSet::new(),
                     debug_relay: std::collections::HashMap::new(),
                 });
-            });
+            }
             // @PLN18 08-S5 — the swap-resume handshake: when this process was
             // booted as a swap target, the parent polls this file; touching
             // it means "the new build is serving" and the parent retires.
@@ -704,7 +795,7 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
 /// Drain every pending datagram into the conflation slots; bind/refresh UDP
 /// paths; expire silent ones.  Called from the pump sweep — datagram arrivals
 /// do NOT count as loop work (they conflate; the tick reads the newest).
-fn pump_udp(k: &mut Kernel) {
+fn pump_udp(k: &mut Kernel, sync: &SyncIds) {
     let Some(udp) = k.udp.as_ref() else {
         return;
     };
@@ -755,7 +846,7 @@ fn pump_udp(k: &mut Kernel) {
         {
             // Conflate per (sender, msg_id): two sync kinds from one client
             // each keep their own newest; stale/reordered seqs drop.
-            conflate_slot(&mut k.net[cid].slots, seq, payload);
+            conflate_slot(sync, &mut k.net[cid].slots, seq, payload);
         }
         // "K:" (bare keepalive) needs nothing beyond the refresh above.
     }
@@ -775,13 +866,13 @@ fn pump_udp(k: &mut Kernel) {
 /// One sweep, non-blocking throughout (idle clients cost a peek-µs each).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_pump(stores: &mut Stores, stack: &mut DbRef) {
-    let n = with_kernel(pump_kernel).unwrap_or(0);
+    let n = with_kernel_ctl(&mut stores.engine, pump_kernel).unwrap_or(0);
     stores.put(stack, n);
 }
 
 /// The pump body, shared by both calling conventions.
 #[cfg(not(target_arch = "wasm32"))]
-fn pump_kernel(k: &mut Kernel) -> i64 {
+fn pump_kernel(k: &mut Kernel, ctl: &mut EngineCtl) -> i64 {
     drain_http_done(&mut k.events);
     {
         let mut added = 0i64;
@@ -839,7 +930,7 @@ fn pump_kernel(k: &mut Kernel) -> i64 {
                         // sees them), gated on LOFT_DEBUG_CONTROL=1 and a
                         // LOOPBACK peer.
                         if let Some(cmd) = payload.strip_prefix("D!:") {
-                            handle_debug_control(k, cid, cmd);
+                            handle_debug_control(k, ctl, cid, cmd);
                             continue;
                         }
                         // Wire-schema routing on the inbound reliable carrier
@@ -847,8 +938,8 @@ fn pump_kernel(k: &mut Kernel) -> i64 {
                         // exactly like a datagram — the server script reads
                         // ONE surface (sync_next) regardless of the sender's
                         // transport.
-                        if is_sync_msg(&payload) {
-                            conflate_ws(&mut k.net[cid].slots, &payload);
+                        if is_sync_msg(&ctl.sync_ids, &payload) {
+                            conflate_ws(&ctl.sync_ids, &mut k.net[cid].slots, &payload);
                         } else {
                             k.events.push_back(Event {
                                 cid: cid as i64,
@@ -869,7 +960,7 @@ fn pump_kernel(k: &mut Kernel) -> i64 {
         }
         // 05a: conflate pending state-sync datagrams (not counted as work —
         // the tick reads the newest; see pump_udp).
-        pump_udp(k);
+        pump_udp(k, &ctl.sync_ids);
         added
     }
 }
@@ -892,7 +983,7 @@ fn disconnect(k: &mut Kernel, cid: usize) {
 /// `kernel_next_event() -> boolean` — pop the queue head into the event
 /// getters below.
 pub fn n_kernel_next_event(stores: &mut Stores, stack: &mut DbRef) {
-    let got = with_kernel(|k| match k.events.pop_front() {
+    let got = with_kernel(&mut stores.engine, |k| match k.events.pop_front() {
         Some(ev) => {
             k.last = ev;
             true
@@ -905,13 +996,13 @@ pub fn n_kernel_next_event(stores: &mut Stores, stack: &mut DbRef) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_event_cid(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.last.cid).unwrap_or(-1);
+    let v = with_kernel(&mut stores.engine, |k| k.last.cid).unwrap_or(-1);
     stores.put(stack, v);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_event_kind(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.last.kind).unwrap_or(-1);
+    let v = with_kernel(&mut stores.engine, |k| k.last.kind).unwrap_or(-1);
     stores.put(stack, v);
 }
 
@@ -921,7 +1012,7 @@ pub fn n_kernel_event_kind(stores: &mut Stores, stack: &mut DbRef) {
 /// routed by `is_text_dest_native("n_kernel_event_payload")`.
 pub fn n_kernel_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = with_kernel(|k| k.last.payload.clone()).unwrap_or_default();
+    let v = with_kernel(&mut stores.engine, |k| k.last.payload.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -933,7 +1024,7 @@ pub fn n_kernel_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// `last_tick += interval` (never `= now`), so missed time is caught up tick
 /// by tick instead of silently dropped.
 pub fn n_kernel_tick_due(stores: &mut Stores, stack: &mut DbRef) {
-    let due = with_kernel(tick_due_kernel).unwrap_or(false);
+    let due = with_kernel(&mut stores.engine, tick_due_kernel).unwrap_or(false);
     stores.put(stack, due);
 }
 
@@ -996,8 +1087,9 @@ fn deliver(k: &mut Kernel, cid: usize, msg: &str, sync: bool) -> bool {
 pub fn n_kernel_send(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
     let cid = stores.get::<i64>(stack);
-    let sync = is_sync_msg(&msg);
-    let ok = with_kernel(|k| deliver(k, cid as usize, &msg, sync)).unwrap_or(false);
+    let sync = is_sync_msg(&stores.engine.ctl.sync_ids, &msg);
+    let ok =
+        with_kernel(&mut stores.engine, |k| deliver(k, cid as usize, &msg, sync)).unwrap_or(false);
     stores.put(stack, ok);
 }
 
@@ -1007,8 +1099,8 @@ pub fn n_kernel_send(stores: &mut Stores, stack: &mut DbRef) {
 /// count.  A failed WS send disconnects that client.
 pub fn n_kernel_broadcast(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
-    let sync = is_sync_msg(&msg);
-    let n = with_kernel(|k| {
+    let sync = is_sync_msg(&stores.engine.ctl.sync_ids, &msg);
+    let n = with_kernel(&mut stores.engine, |k| {
         let mut sent = 0i64;
         for cid in 0..k.conns.len() {
             if k.conns[cid].is_none() {
@@ -1029,7 +1121,7 @@ pub fn n_kernel_broadcast(stores: &mut Stores, stack: &mut DbRef) {
 /// Called by the loft loop only when a turn produced no work.
 pub fn n_kernel_idle(stores: &mut Stores, stack: &mut DbRef) {
     let max_us = stores.get::<i64>(stack);
-    let sleep_us = with_kernel(|k| {
+    let sleep_us = with_kernel(&mut stores.engine, |k| {
         let now = k.start.elapsed().as_micros() as i64;
         let until_tick = if k.last_tick_us == 0 {
             k.tick_interval_us
@@ -1045,7 +1137,10 @@ pub fn n_kernel_idle(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_clients() -> integer` — live connection count (diagnostics).
 pub fn n_kernel_clients(stores: &mut Stores, stack: &mut DbRef) {
-    let n = with_kernel(|k| k.conns.iter().filter(|c| c.is_some()).count() as i64).unwrap_or(0);
+    let n = with_kernel(&mut stores.engine, |k| {
+        k.conns.iter().filter(|c| c.is_some()).count() as i64
+    })
+    .unwrap_or(0);
     stores.put(stack, n);
 }
 
@@ -1053,15 +1148,15 @@ pub fn n_kernel_clients(stores: &mut Stores, stack: &mut DbRef) {
 /// `kernel_alive() -> boolean` — `run`'s loop condition; false after
 /// `kernel_stop()` (the windowed listener's window-close exit).
 pub fn n_kernel_alive(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.alive).unwrap_or(false);
+    let v = with_kernel(&mut stores.engine, |k| k.alive).unwrap_or(false);
     stores.put(stack, v);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_stop()` — mark the listener done so `run` returns at the top of
 /// its next turn (mirror of the connector's `client_stop`).
-pub fn n_kernel_stop(_stores: &mut Stores, _stack: &mut DbRef) {
-    let _ = with_kernel(|k| k.alive = false);
+pub fn n_kernel_stop(stores: &mut Stores, _stack: &mut DbRef) {
+    let _ = with_kernel(&mut stores.engine, |k| k.alive = false);
 }
 
 /// `kernel_frame()` — the per-turn yield point in `run`'s loop: a no-op on
@@ -1076,24 +1171,24 @@ pub fn n_kernel_frame(_stores: &mut Stores, _stack: &mut DbRef) {}
 /// Posts to the active role's queue: connector/local first, else listener.
 /// False = no kernel is booted.
 #[cfg(not(target_arch = "wasm32"))]
-fn post_impl(msg: &str) -> bool {
+fn post_impl(e: &mut EngineCx, msg: &str) -> bool {
     let ev = |payload: String| Event {
         cid: -1,
         kind: 1,
         payload,
         status: 0,
     };
-    if with_client(|c| c.events.push_back(ev(msg.to_string()))).is_some() {
+    if with_client(e, |c| c.events.push_back(ev(msg.to_string()))).is_some() {
         return true;
     }
-    with_kernel(|k| k.events.push_back(ev(msg.to_string()))).is_some()
+    with_kernel(e, |k| k.events.push_back(ev(msg.to_string()))).is_some()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 /// `post(msg) -> boolean` — see [`post_impl`].
 pub fn n_kernel_post(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
-    let ok = post_impl(&msg);
+    let ok = post_impl(&mut stores.engine, &msg);
     stores.put(stack, ok);
 }
 
@@ -1103,8 +1198,10 @@ pub fn n_kernel_post(stores: &mut Stores, stack: &mut DbRef) {
 /// `udp_bound(cid) -> boolean` — does this client have a live UDP path?
 pub fn n_kernel_udp_bound(stores: &mut Stores, stack: &mut DbRef) {
     let cid = stores.get::<i64>(stack);
-    let v =
-        with_kernel(|k| k.net.get(cid as usize).is_some_and(|n| n.path.is_some())).unwrap_or(false);
+    let v = with_kernel(&mut stores.engine, |k| {
+        k.net.get(cid as usize).is_some_and(|n| n.path.is_some())
+    })
+    .unwrap_or(false);
     stores.put(stack, v);
 }
 
@@ -1115,9 +1212,7 @@ pub fn n_kernel_udp_bound(stores: &mut Stores, stack: &mut DbRef) {
 /// the developer states what a message IS once; the kernel picks transports.
 pub fn n_kernel_sync_class(stores: &mut Stores, stack: &mut DbRef) {
     let msg_id = stores.get::<i64>(stack);
-    SYNC_IDS.with(|s| {
-        s.borrow_mut().insert(msg_id, false);
-    });
+    stores.engine.ctl.sync_ids.insert(msg_id, false);
 }
 
 /// `sync_class_keyed(msg_id)` — a sync kind whose payload's FIRST field is an
@@ -1125,9 +1220,7 @@ pub fn n_kernel_sync_class(stores: &mut Stores, stack: &mut DbRef) {
 /// kind carries N entities' latest-values ("state-sync keyed by cid").
 pub fn n_kernel_sync_class_keyed(stores: &mut Stores, stack: &mut DbRef) {
     let msg_id = stores.get::<i64>(stack);
-    SYNC_IDS.with(|s| {
-        s.borrow_mut().insert(msg_id, true);
-    });
+    stores.engine.ctl.sync_ids.insert(msg_id, true);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1166,7 +1259,10 @@ fn deliver_keyframe(k: &mut Kernel, cid: usize, msg: &str) -> bool {
 pub fn n_kernel_keyframe(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
     let cid = stores.get::<i64>(stack);
-    let ok = with_kernel(|k| deliver_keyframe(k, cid as usize, &msg)).unwrap_or(false);
+    let ok = with_kernel(&mut stores.engine, |k| {
+        deliver_keyframe(k, cid as usize, &msg)
+    })
+    .unwrap_or(false);
     stores.put(stack, ok);
 }
 
@@ -1176,7 +1272,7 @@ pub fn n_kernel_keyframe(stores: &mut Stores, stack: &mut DbRef) {
 /// inside `on_tick` gives late-latch by construction: the freshest datagram
 /// that arrived before the tick is the one read.
 pub fn n_kernel_sync_next(stores: &mut Stores, stack: &mut DbRef) {
-    let got = with_kernel(sync_next_kernel).unwrap_or(false);
+    let got = with_kernel(&mut stores.engine, sync_next_kernel).unwrap_or(false);
     stores.put(stack, got);
 }
 
@@ -1198,13 +1294,13 @@ fn sync_next_kernel(k: &mut Kernel) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_sync_cid(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.last_sync.0).unwrap_or(-1);
+    let v = with_kernel(&mut stores.engine, |k| k.last_sync.0).unwrap_or(-1);
     stores.put(stack, v);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_kernel(|k| k.last_sync.1).unwrap_or(-1);
+    let v = with_kernel(&mut stores.engine, |k| k.last_sync.1).unwrap_or(-1);
     stores.put(stack, v);
 }
 
@@ -1212,7 +1308,7 @@ pub fn n_kernel_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = with_kernel(|k| k.last_sync.2.clone()).unwrap_or_default();
+    let v = with_kernel(&mut stores.engine, |k| k.last_sync.2.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -1279,13 +1375,18 @@ impl ClientKernel {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static CLIENT: RefCell<Option<ClientKernel>> = const { RefCell::new(None) };
+fn with_client<R>(e: &mut EngineCx, f: impl FnOnce(&mut ClientKernel) -> R) -> Option<R> {
+    e.client.as_mut().map(f)
 }
 
+/// [`with_client`] for a body that also reaches the control part ([`EngineCtl`]).
 #[cfg(not(target_arch = "wasm32"))]
-fn with_client<R>(f: impl FnOnce(&mut ClientKernel) -> R) -> Option<R> {
-    CLIENT.with(|c| c.borrow_mut().as_mut().map(f))
+fn with_client_ctl<R>(
+    e: &mut EngineCx,
+    f: impl FnOnce(&mut ClientKernel, &mut EngineCtl) -> R,
+) -> Option<R> {
+    let EngineCx { client, ctl, .. } = e;
+    client.as_mut().map(|c| f(c, ctl))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1307,16 +1408,17 @@ fn write_frame_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std
     }
     let mask = {
         use std::hash::{BuildHasher as _, Hasher as _};
-        thread_local! {
-            static KEYS: (std::collections::hash_map::RandomState, std::cell::Cell<u64>) =
-                (std::collections::hash_map::RandomState::new(), std::cell::Cell::new(0));
-        }
-        KEYS.with(|(keys, n)| {
-            n.set(n.get().wrapping_add(1));
-            let mut h = keys.build_hasher();
-            h.write_u64(n.get());
-            (h.finish() as u32).to_be_bytes()
-        })
+        // A random key, published once, and one counter word (`@FR-C-Publish`): every frame
+        // of the process hashes a new count, so no two frames share a mask.
+        static KEYS: std::sync::OnceLock<std::collections::hash_map::RandomState> =
+            std::sync::OnceLock::new();
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let mut h = KEYS
+            .get_or_init(std::collections::hash_map::RandomState::new)
+            .build_hasher();
+        h.write_u64(n);
+        (h.finish() as u32).to_be_bytes()
     };
     frame.extend_from_slice(&mask);
     frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
@@ -1332,7 +1434,7 @@ pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
     let tick_us = stores.get::<i64>(stack);
     let port = stores.get::<i64>(stack);
     let host = stores.get::<Str>(stack).str().to_owned();
-    let ok = client_connect(&host, port as u16, tick_us).is_some();
+    let ok = client_connect(&mut stores.engine, &host, port as u16, tick_us).is_some();
     stores.put(stack, ok);
 }
 
@@ -1344,14 +1446,14 @@ pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
 /// what a future local source enqueues.
 pub fn n_kernel_local(stores: &mut Stores, stack: &mut DbRef) {
     let tick_us = stores.get::<i64>(stack);
-    local_init(tick_us);
+    local_init(&mut stores.engine, tick_us);
     stores.put(stack, true);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn local_init(tick_us: i64) {
-    CLIENT.with(|c| {
-        *c.borrow_mut() = Some(ClientKernel {
+fn local_init(e: &mut EngineCx, tick_us: i64) {
+    {
+        e.client = Some(ClientKernel {
             conn: None,
             udp: None,
             cookie: String::new(),
@@ -1381,11 +1483,11 @@ fn local_init(tick_us: i64) {
         if let Ok(ready) = std::env::var("LOFT_SWAP_READY") {
             let _ = crate::file_access::write(&ready, b"connected");
         }
-    });
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn client_connect(host: &str, port: u16, tick_us: i64) -> Option<()> {
+fn client_connect(e: &mut EngineCx, host: &str, port: u16, tick_us: i64) -> Option<()> {
     use std::net::ToSocketAddrs;
     let addr = (host, port).to_socket_addrs().ok()?.next()?;
     // @PLN18 08-S5 — seat reconnect semantics: a build swap closes every
@@ -1446,8 +1548,8 @@ fn client_connect(host: &str, port: u16, tick_us: i64) -> Option<()> {
             Some(s)
         })
     };
-    CLIENT.with(|c| {
-        *c.borrow_mut() = Some(ClientKernel {
+    {
+        e.client = Some(ClientKernel {
             conn: Some(conn),
             udp,
             cookie,
@@ -1488,7 +1590,7 @@ fn client_connect(host: &str, port: u16, tick_us: i64) -> Option<()> {
             eprintln!("loft-swap: new build connected (ready file touched)");
         }
         Some(())
-    })
+    }
 }
 
 /// Bind the client's loopback debug-control listener (None unless
@@ -1510,7 +1612,7 @@ fn bind_ctl_listener() -> Option<TcpListener> {
 /// `D!:` frames, dispatch through the SAME command core the server side
 /// uses.  Replies ride the control conn (see `debug_send`'s role routing).
 #[cfg(not(target_arch = "wasm32"))]
-fn pump_ctl(c: &mut ClientKernel) {
+fn pump_ctl(c: &mut ClientKernel, ctl: &mut EngineCtl) {
     let Some(listener) = c.ctl_listener.as_ref() else {
         return;
     };
@@ -1530,7 +1632,7 @@ fn pump_ctl(c: &mut ClientKernel) {
                 FrameRead::None => break,
                 FrameRead::Text(payload) => {
                     if let Some(cmd) = payload.strip_prefix("D!:") {
-                        let reply = debug_cmd_dispatch(i as i64, cmd);
+                        let reply = debug_cmd_dispatch(ctl, i as i64, cmd);
                         if let Some(msg) = reply
                             && let Some(stream) = c.ctl_conns[i].as_mut()
                         {
@@ -1556,14 +1658,14 @@ fn pump_ctl(c: &mut ClientKernel) {
 /// keepalive cadences.  Datagram arrivals are not counted as work (they
 /// conflate; the tick reads the newest — same rule as the listener).
 pub fn n_kernel_client_pump(stores: &mut Stores, stack: &mut DbRef) {
-    let n = with_client(pump_client).unwrap_or(0);
+    let n = with_client_ctl(&mut stores.engine, pump_client).unwrap_or(0);
     stores.put(stack, n);
 }
 
 /// The connector pump body, shared by both calling conventions.
 #[cfg(not(target_arch = "wasm32"))]
-fn pump_client(c: &mut ClientKernel) -> i64 {
-    pump_ctl(c); // the debug control endpoint rides every pump (incl. pauses)
+fn pump_client(c: &mut ClientKernel, ctl: &mut EngineCtl) -> i64 {
+    pump_ctl(c, ctl); // the debug control endpoint rides every pump (incl. pauses)
     drain_http_done(&mut c.events);
     {
         let mut added = 0i64;
@@ -1580,13 +1682,13 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
                         && let Some((seq_s, body)) = rest.split_once(':')
                         && let Ok(seq) = seq_s.parse::<i64>()
                     {
-                        conflate_slot(&mut c.slots, seq, body);
+                        conflate_slot(&ctl.sync_ids, &mut c.slots, seq, body);
                         continue;
                     }
                     // Plain sync-class frames (the pre-bind fallback) conflate
                     // too — the script's surface is sync_next either way.
-                    if is_sync_msg(&payload) {
-                        conflate_ws(&mut c.slots, &payload);
+                    if is_sync_msg(&ctl.sync_ids, &payload) {
+                        conflate_ws(&ctl.sync_ids, &mut c.slots, &payload);
                         continue;
                     }
                     c.events.push_back(Event {
@@ -1645,7 +1747,7 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
                             continue; // injected loss — the datagram never existed
                         }
                     }
-                    conflate_slot(&mut c.slots, seq, payload);
+                    conflate_slot(&ctl.sync_ids, &mut c.slots, seq, payload);
                 }
             }
             // Hello until acked; keepalive once bound (the radio wake).
@@ -1667,7 +1769,7 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
 /// `kernel_client_alive() -> boolean` — false once the server connection
 /// closed; `run_client`'s loop condition.
 pub fn n_kernel_client_alive(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.alive).unwrap_or(false);
+    let v = with_client(&mut stores.engine, |c| c.alive).unwrap_or(false);
     stores.put(stack, v);
 }
 
@@ -1676,13 +1778,13 @@ pub fn n_kernel_client_alive(stores: &mut Stores, stack: &mut DbRef) {
 /// it when the WINDOW closes (the loop owner is the connector, so the
 /// script needs a way to leave it).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn n_kernel_client_stop(_stores: &mut Stores, _stack: &mut DbRef) {
-    let _ = with_client(|c| c.alive = false);
+pub fn n_kernel_client_stop(stores: &mut Stores, _stack: &mut DbRef) {
+    let _ = with_client(&mut stores.engine, |c| c.alive = false);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_client_next_event(stores: &mut Stores, stack: &mut DbRef) {
-    let got = with_client(|c| match c.events.pop_front() {
+    let got = with_client(&mut stores.engine, |c| match c.events.pop_front() {
         Some(ev) => {
             c.last = ev;
             true
@@ -1695,7 +1797,7 @@ pub fn n_kernel_client_next_event(stores: &mut Stores, stack: &mut DbRef) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_client_event_kind(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.last.kind).unwrap_or(-1);
+    let v = with_client(&mut stores.engine, |c| c.last.kind).unwrap_or(-1);
     stores.put(stack, v);
 }
 
@@ -1704,14 +1806,14 @@ pub fn n_kernel_client_event_kind(stores: &mut Stores, stack: &mut DbRef) {
 /// the server, `-1` = a local `post` (window input).  Connector events were
 /// all server-origin before `post` existed; the cid keeps them apart.
 pub fn n_kernel_client_event_status(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.last.status).unwrap_or(0);
+    let v = with_client(&mut stores.engine, |c| c.last.status).unwrap_or(0);
     stores.put(stack, v);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_client_event_cid() -> integer`.
 pub fn n_kernel_client_event_cid(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.last.cid).unwrap_or(-1);
+    let v = with_client(&mut stores.engine, |c| c.last.cid).unwrap_or(-1);
     stores.put(stack, v);
 }
 
@@ -1719,7 +1821,7 @@ pub fn n_kernel_client_event_cid(stores: &mut Stores, stack: &mut DbRef) {
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = with_client(|c| c.last.payload.clone()).unwrap_or_default();
+    let v = with_client(&mut stores.engine, |c| c.last.payload.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -1729,7 +1831,7 @@ pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_client_tick_due() -> boolean` — the listener's drift-free rule.
 pub fn n_kernel_client_tick_due(stores: &mut Stores, stack: &mut DbRef) {
-    let due = with_client(tick_due_client).unwrap_or(false);
+    let due = with_client(&mut stores.engine, tick_due_client).unwrap_or(false);
     stores.put(stack, due);
 }
 
@@ -1752,7 +1854,7 @@ fn tick_due_client(c: &mut ClientKernel) -> bool {
 /// `kernel_client_idle(max_us)` — sleep, capped at the next tick boundary.
 pub fn n_kernel_client_idle(stores: &mut Stores, stack: &mut DbRef) {
     let max_us = stores.get::<i64>(stack);
-    let sleep_us = with_client(|c| {
+    let sleep_us = with_client(&mut stores.engine, |c| {
         let now = c.now_us();
         let until_tick = if c.last_tick_us == 0 {
             c.tick_interval_us
@@ -1772,8 +1874,8 @@ pub fn n_kernel_client_idle(stores: &mut Stores, stack: &mut DbRef) {
 /// a masked WS frame.
 pub fn n_kernel_client_send(stores: &mut Stores, stack: &mut DbRef) {
     let msg = stores.get::<Str>(stack).str().to_owned();
-    let sync = is_sync_msg(&msg);
-    let ok = with_client(|c| client_send_impl(c, &msg, sync)).unwrap_or(false);
+    let sync = is_sync_msg(&stores.engine.ctl.sync_ids, &msg);
+    let ok = with_client(&mut stores.engine, |c| client_send_impl(c, &msg, sync)).unwrap_or(false);
     stores.put(stack, ok);
 }
 
@@ -1820,7 +1922,7 @@ fn client_send_impl(c: &mut ClientKernel, msg: &str, sync: bool) -> bool {
 /// `client_sync_next() -> boolean` — drain the newest unread server state,
 /// one slot per call (drain inside `on_tick`: late-latch, the listener rule).
 pub fn n_kernel_client_sync_next(stores: &mut Stores, stack: &mut DbRef) {
-    let got = with_client(sync_next_client).unwrap_or(false);
+    let got = with_client(&mut stores.engine, sync_next_client).unwrap_or(false);
     stores.put(stack, got);
 }
 
@@ -1838,7 +1940,7 @@ fn sync_next_client(c: &mut ClientKernel) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_client_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.last_sync.0).unwrap_or(-1);
+    let v = with_client(&mut stores.engine, |c| c.last_sync.0).unwrap_or(-1);
     stores.put(stack, v);
 }
 
@@ -1846,7 +1948,7 @@ pub fn n_kernel_client_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
 /// Destination-passing text return — see `n_kernel_event_payload_dest`.
 pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = with_client(|c| c.last_sync.1.clone()).unwrap_or_default();
+    let v = with_client(&mut stores.engine, |c| c.last_sync.1.clone()).unwrap_or_default();
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -1856,7 +1958,7 @@ pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef)
 #[cfg(not(target_arch = "wasm32"))]
 /// `client_udp_bound() -> boolean` — read-only introspection (diagnostics).
 pub fn n_kernel_client_udp_bound(stores: &mut Stores, stack: &mut DbRef) {
-    let v = with_client(|c| c.udp_bound).unwrap_or(false);
+    let v = with_client(&mut stores.engine, |c| c.udp_bound).unwrap_or(false);
     stores.put(stack, v);
 }
 
@@ -1898,14 +2000,14 @@ fn debug_control_enabled() -> bool {
 /// Role-routed: on a LISTENER process `cid` is a kernel client; on a
 /// CONNECTOR process it is a control-conn slot (a process is one role).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn debug_send(cid: i64, msg: &str) {
+pub(crate) fn debug_send(e: &mut EngineCx, cid: i64, msg: &str) {
     if cid < 0 {
         return;
     }
-    if with_kernel(|k| deliver(k, cid as usize, msg, false)).is_some() {
+    if with_kernel(e, |k| deliver(k, cid as usize, msg, false)).is_some() {
         return;
     }
-    let _ = with_client(|c| {
+    let _ = with_client(e, |c| {
         if let Some(Some(stream)) = c.ctl_conns.get_mut(cid as usize) {
             let _ = write_frame(stream, 1, msg.as_bytes());
         }
@@ -1916,13 +2018,13 @@ pub(crate) fn debug_send(cid: i64, msg: &str) {
 /// (control frames are handled en route; game events QUEUE for after the
 /// resume), answers keepalives.  Never dispatches meaning.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn debug_pump() {
-    let _ = with_kernel(pump_kernel);
-    let _ = with_client(pump_client); // incl. the client's control endpoint
+pub(crate) fn debug_pump(e: &mut EngineCx) {
+    let _ = with_kernel_ctl(e, pump_kernel);
+    let _ = with_client_ctl(e, pump_client); // incl. the client's control endpoint
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn handle_debug_control(k: &mut Kernel, cid: usize, cmd: &str) {
+fn handle_debug_control(k: &mut Kernel, ctl: &mut EngineCtl, cid: usize, cmd: &str) {
     if !debug_control_enabled() {
         return; // not a debug host: the frame is silently dropped
     }
@@ -1987,7 +2089,7 @@ fn handle_debug_control(k: &mut Kernel, cid: usize, cmd: &str) {
     }
 
     // Local (THIS server's own interpreter) debug — the server-authoritative path.
-    if let Some(msg) = debug_cmd_dispatch(cid as i64, cmd) {
+    if let Some(msg) = debug_cmd_dispatch(ctl, cid as i64, cmd) {
         let _ = deliver(k, cid, &msg, false);
     }
     if QUIT_AFTER_REPLY.load(std::sync::atomic::Ordering::Relaxed) {
@@ -2005,30 +2107,36 @@ static QUIT_AFTER_REPLY: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// immediate reply; mailbox-routed commands (eval/resume/reload) answer
 /// later through the pause loop.
 #[cfg(not(target_arch = "wasm32"))]
-fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
+fn debug_cmd_dispatch(ctl: &mut EngineCtl, cid: i64, cmd: &str) -> Option<String> {
     let reply: Option<String> = match cmd.split_once(' ').map_or((cmd, ""), |(a, b)| (a, b)) {
         ("bp", name) if !name.is_empty() => {
-            let ok = crate::live_control::debug_set_bp(name, cid);
+            let ok = crate::live_control::debug_set_bp(ctl, name, cid);
             Some(format!("D:{} bp {name}", if ok { "ok" } else { "err" }))
         }
         ("flip", rest) => {
             let (name, on) = rest.split_once(' ').unwrap_or((rest, "1"));
-            let ok = crate::live_control::set_flip(name, on != "0");
+            let ok = crate::live_control::set_flip(ctl, name, on != "0");
             Some(format!("D:flip {ok}"))
         }
         ("eval", name) if !name.is_empty() => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Eval(
-                name.to_string(),
-                cid,
-            ));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Eval(name.to_string(), cid),
+            );
             None // answered by the pause loop
         }
         ("resume", _) => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Resume(cid));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Resume(cid),
+            );
             None
         }
         ("reload", _) => {
-            crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Reload(cid));
+            crate::live_control::debug_mailbox_push(
+                &mut ctl.debug,
+                crate::live_control::DebugCmd::Reload(cid),
+            );
             None
         }
         ("apply", _) => {
@@ -2038,28 +2146,37 @@ fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
             Some("D:apply queued".to_string())
         }
         ("rebuild", _) => {
-            let ok = crate::live_rebuild::n_rebuild_start_ctl();
+            let ok = crate::live_rebuild::n_rebuild_start_ctl(
+                &mut ctl.rebuild,
+                ctl.world_layout.as_deref(),
+            );
             Some(format!(
                 "D:rebuild {}",
                 if ok { "started" } else { "refused" }
             ))
         }
         ("rebuild?", _) => {
-            let status = crate::live_rebuild::rebuild_status_ctl();
+            let status = crate::live_rebuild::rebuild_status_ctl(
+                &mut ctl.rebuild,
+                ctl.world_layout.as_deref(),
+            );
             // A failed build says why, so the editor shows it beside the build it refused.
             Some(if status == 3 {
-                format!("D:rebuild 3 {}", crate::live_rebuild::rebuild_failure_ctl())
+                format!(
+                    "D:rebuild 3 {}",
+                    crate::live_rebuild::rebuild_failure_ctl(&ctl.rebuild)
+                )
             } else {
                 format!("D:rebuild {status}")
             })
         }
         ("swap", artifact) => {
             let target = if artifact == "auto" || artifact.is_empty() {
-                crate::live_rebuild::rebuild_artifact_ctl()
+                crate::live_rebuild::rebuild_artifact_ctl(&ctl.rebuild)
             } else {
                 artifact.to_string()
             };
-            let ok = swap_start_impl(&target);
+            let ok = swap_start_impl(ctl, &target);
             Some(format!("D:swap {ok}"))
         }
         ("quit", _) => {
@@ -2094,16 +2211,16 @@ pub enum InputFrame {
 /// while the program's `host_input()` consumes `Program` messages.  `cid` is the
 /// reply route (the debug output channel).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn route_input_frame(cid: i64, msg: &str) -> InputFrame {
+pub fn route_input_frame(e: &mut EngineCx, cid: i64, msg: &str) -> InputFrame {
     match msg.strip_prefix("D!:") {
-        Some(cmd) => InputFrame::Debug(debug_cmd_dispatch(cid, cmd.trim())),
+        Some(cmd) => InputFrame::Debug(debug_cmd_dispatch(&mut e.ctl, cid, cmd.trim())),
         None => InputFrame::Program(msg.to_string()),
     }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod p98_p33_tests {
-    use super::{InputFrame, route_input_frame};
+    use super::{EngineCx, InputFrame, route_input_frame};
 
     // @PLN98 P3.3 — debug control frames and program input share ONE input channel
     // and must not collide: a `D!:`-tagged message routes to `debug_cmd_dispatch`
@@ -2111,12 +2228,12 @@ mod p98_p33_tests {
     #[test]
     fn debug_frames_route_off_the_shared_input_channel() {
         // Program input passes straight through, untouched.
-        match route_input_frame(0, "player says: attack") {
+        match route_input_frame(&mut EngineCx::default(), 0, "player says: attack") {
             InputFrame::Program(m) => assert_eq!(m, "player says: attack"),
             InputFrame::Debug(_) => panic!("program input was misrouted as a debug frame"),
         }
         // A leading colon / lookalike that is NOT the `D!:` tag stays program input.
-        match route_input_frame(0, "Don't panic") {
+        match route_input_frame(&mut EngineCx::default(), 0, "Don't panic") {
             InputFrame::Program(m) => assert_eq!(m, "Don't panic"),
             InputFrame::Debug(_) => panic!("a non-tagged message was misrouted as debug"),
         }
@@ -2125,13 +2242,13 @@ mod p98_p33_tests {
         // debug mailbox to apply once a pause holds the State) → "D:ok". This
         // asserts the ROUTING reached the dispatcher's `bp` arm; the set-breakpoint
         // EFFECT over a live world is debug_cmd_dispatch's own contract.
-        match route_input_frame(0, "D!:bp some_fn") {
+        match route_input_frame(&mut EngineCx::default(), 0, "D!:bp some_fn") {
             InputFrame::Debug(reply) => assert_eq!(reply.as_deref(), Some("D:ok bp some_fn")),
             InputFrame::Program(_) => panic!("a D!: frame was misrouted as program input"),
         }
         // An unknown command still routes to the dispatcher (proves strip+dispatch,
         // not merely a prefix check that discards the payload).
-        match route_input_frame(0, "D!:frobnicate x") {
+        match route_input_frame(&mut EngineCx::default(), 0, "D!:frobnicate x") {
             InputFrame::Debug(reply) => {
                 assert!(
                     reply.as_deref().unwrap_or("").starts_with("D:err unknown"),
@@ -2160,7 +2277,9 @@ mod p98_p33_tests {
 // process (visible as the connection close).
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
 enum SwapPhase {
+    #[default]
     Idle,
     Requested(String),
     Waiting {
@@ -2172,20 +2291,15 @@ enum SwapPhase {
     Done,
 }
 
+/// The program's background rebuild, and the layout of the world `swap_world` registered, as
+/// sidecar text, for the rebuild to check the next instance against (`None` when no world goes
+/// over as an image).
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static SWAP: RefCell<SwapPhase> = const { RefCell::new(SwapPhase::Idle) };
-    /// The snapshot root registered by `swap_world`: (record, known_type).
-    static WORLD_ROOT: std::cell::Cell<Option<(DbRef, u16)>> = const { std::cell::Cell::new(None) };
-    /// The registered world's layout sidecar, when it goes over as an image.
-    static WORLD_LAYOUT: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-/// The layout of the world `swap_world` registered, as sidecar text, for a live rebuild to
-/// check the next instance against; `None` when no world goes over as an image.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn world_layout() -> Option<String> {
-    WORLD_LAYOUT.with(|l| l.borrow().clone())
+pub(crate) fn rebuild_parts(
+    stores: &mut Stores,
+) -> (&mut crate::live_rebuild::RebuildCx, Option<&str>) {
+    let ctl = &mut stores.engine.ctl;
+    (&mut ctl.rebuild, ctl.world_layout.as_deref())
 }
 
 /// `swap_world(w)` — name the world record: registers it as the snapshot
@@ -2200,7 +2314,7 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
         eprintln!("loft-swap: swap_world got a record with no known type; swaps disabled");
         return false;
     }
-    WORLD_ROOT.with(|r| r.set(Some((w, kt))));
+    stores.engine.ctl.world_root = Some((w, kt));
     // The layout a live rebuild checks the next instance against (@PLN196 step 8).  Only a
     // world that is its store's root goes over as an image; one that shares its store goes
     // over as JSON and is not checked.
@@ -2218,7 +2332,7 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
             format!("loft-world pid={}\n{text}", std::process::id()),
         );
     }
-    WORLD_LAYOUT.with(|l| *l.borrow_mut() = layout);
+    stores.engine.ctl.world_layout = layout;
     let Ok(snap_path) = std::env::var("LOFT_RESUME") else {
         return false;
     };
@@ -2290,20 +2404,17 @@ fn remove_world_snapshot(snap: &std::path::Path) {
 /// `swap_start(artifact)` — request a swap to the given binary (normally
 /// `rebuild_artifact()`).  The run loop acts at the next frame boundary.
 #[cfg(not(target_arch = "wasm32"))]
-fn swap_start_impl(artifact: &str) -> bool {
+fn swap_start_impl(ctl: &mut EngineCtl, artifact: &str) -> bool {
     if artifact.is_empty() || !crate::file_access::exists(artifact) {
         eprintln!("loft-swap: no such artifact `{artifact}` — swap refused");
         return false;
     }
-    SWAP.with(|sw| {
-        let mut sw = sw.borrow_mut();
-        if !matches!(*sw, SwapPhase::Idle) {
-            eprintln!("loft-swap: a swap is already in progress");
-            return false;
-        }
-        *sw = SwapPhase::Requested(artifact.to_string());
-        true
-    })
+    if !matches!(ctl.swap, SwapPhase::Idle) {
+        eprintln!("loft-swap: a swap is already in progress");
+        return false;
+    }
+    ctl.swap = SwapPhase::Requested(artifact.to_string());
+    true
 }
 
 /// The per-turn swap step `run()` drives: 0 = serve normally, 1 = FROZEN
@@ -2311,14 +2422,23 @@ fn swap_start_impl(artifact: &str) -> bool {
 /// returns; this process retires).  All failure paths roll back to 0.
 #[cfg(not(target_arch = "wasm32"))]
 fn swap_step_impl(stores: &mut Stores) -> i64 {
-    SWAP.with(|sw| {
-        let mut sw = sw.borrow_mut();
+    let mut sw = std::mem::take(&mut stores.engine.ctl.swap);
+    let step = swap_step_on(stores, &mut sw);
+    stores.engine.ctl.swap = sw;
+    step
+}
+
+/// [`swap_step_impl`] on the swap phase `sw`, taken out of the engine context while the step
+/// writes the world's snapshot through `stores`.
+#[cfg(not(target_arch = "wasm32"))]
+fn swap_step_on(stores: &mut Stores, sw: &mut SwapPhase) -> i64 {
+    {
         match &mut *sw {
             SwapPhase::Idle => 0,
             SwapPhase::Done => 2,
             SwapPhase::Requested(artifact) => {
                 let artifact = artifact.clone();
-                let Some((w, kt)) = WORLD_ROOT.with(std::cell::Cell::get) else {
+                let Some((w, kt)) = stores.engine.ctl.world_root else {
                     eprintln!("loft-swap: rolled back (no swap_world registered)");
                     *sw = SwapPhase::Idle;
                     return 0;
@@ -2398,7 +2518,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     remove_world_snapshot(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Done;
-                    KERNEL.with(|k| *k.borrow_mut() = None);
+                    stores.engine.kernel = None;
                     return 2;
                 }
                 if !child.alive() {
@@ -2422,7 +2542,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 1
             }
         }
-    })
+    }
 }
 
 /// `swap_world(w: reference) -> boolean` (stack native).
@@ -2437,7 +2557,7 @@ pub fn n_swap_world(stores: &mut Stores, stack: &mut DbRef) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_swap_start(stores: &mut Stores, stack: &mut DbRef) {
     let artifact = stores.get::<Str>(stack).str().to_owned();
-    let ok = swap_start_impl(&artifact);
+    let ok = swap_start_impl(&mut stores.engine.ctl, &artifact);
     stores.put(stack, ok);
 }
 
@@ -2454,7 +2574,7 @@ pub fn n_kernel_swap_step(stores: &mut Stores, stack: &mut DbRef) {
 /// both return from `run_client`, and the swap phase is sticky by design.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_swap_retired(stores: &mut Stores, stack: &mut DbRef) {
-    let v = SWAP.with(|sw| matches!(*sw.borrow(), SwapPhase::Done));
+    let v = matches!(stores.engine.ctl.swap, SwapPhase::Done);
     stores.put(stack, v);
 }
 
@@ -2476,7 +2596,7 @@ pub mod browser {
         host_ws_ready, host_ws_recv, host_ws_send,
     };
 
-    struct BrowserClient {
+    pub(crate) struct BrowserClient {
         ws: i32,
         alive: bool,
         /// The async half of "connect blocks until upgraded": kind-0 fires
@@ -2494,12 +2614,8 @@ pub mod browser {
         last_tick_us: i64,
     }
 
-    thread_local! {
-        static CLIENT: RefCell<Option<BrowserClient>> = const { RefCell::new(None) };
-    }
-
-    fn with_client<R>(f: impl FnOnce(&mut BrowserClient) -> R) -> Option<R> {
-        CLIENT.with(|c| c.borrow_mut().as_mut().map(f))
+    fn with_client<R>(e: &mut EngineCx, f: impl FnOnce(&mut BrowserClient) -> R) -> Option<R> {
+        e.browser.as_mut().map(f)
     }
 
     /// @PLN18 08-S6 — `swap_world(w)` in the browser: register the world as
@@ -2514,11 +2630,11 @@ pub mod browser {
             stores.put(stack, false);
             return;
         }
-        crate::wasm::swap_root_set(w, kt);
-        let resumed = match crate::wasm::swap_stage_take() {
+        stores.engine.ctl.world_root = Some((w, kt));
+        let resumed = match stores.engine.ctl.swap_stage.take() {
             // @PLN196 step 8 — a world handed over as a store image loads through the
             // converter, as the native swap's does.  The page checked this build against the
-            // world before it disposed the old one (`swap_check`), so a refusal here is
+            // world before it disposed the old one (`Game::swap_check`), so a refusal here is
             // unexpected; it is reported and the run starts fresh.
             Some(snap) if snap.starts_with(crate::wasm::SWAP_IMAGE_MARKER) => {
                 let mut lines = snap.lines().skip(1);
@@ -2581,7 +2697,7 @@ pub mod browser {
     /// (`cid: -1` = local origin).  False = no client kernel is booted.
     pub fn n_kernel_post(stores: &mut Stores, stack: &mut DbRef) {
         let msg = stores.get::<Str>(stack).str().to_owned();
-        let ok = with_client(|c| {
+        let ok = with_client(&mut stores.engine, |c| {
             c.events.push_back(Event {
                 cid: -1,
                 kind: 1,
@@ -2606,8 +2722,8 @@ pub mod browser {
     /// on a handshake that never comes.
     pub fn n_kernel_local(stores: &mut Stores, stack: &mut DbRef) {
         let tick_us = stores.get::<i64>(stack);
-        CLIENT.with(|c| {
-            *c.borrow_mut() = Some(BrowserClient {
+        {
+            stores.engine.browser = Some(BrowserClient {
                 ws: -1,
                 alive: true,
                 opened: true,
@@ -2626,7 +2742,7 @@ pub mod browser {
                 tick_interval_us: tick_us.max(1),
                 last_tick_us: 0,
             });
-        });
+        }
         stores.put(stack, true);
     }
 
@@ -2639,8 +2755,8 @@ pub mod browser {
         let ws = host_ws_connect(&format!("ws://{host}:{port}/ws"));
         let ok = ws >= 0;
         if ok {
-            CLIENT.with(|c| {
-                *c.borrow_mut() = Some(BrowserClient {
+            {
+                stores.engine.browser = Some(BrowserClient {
                     ws,
                     alive: true,
                     opened: false,
@@ -2659,7 +2775,7 @@ pub mod browser {
                     tick_interval_us: tick_us.max(1),
                     last_tick_us: 0,
                 });
-            });
+            }
         }
         stores.put(stack, ok);
     }
@@ -2668,86 +2784,91 @@ pub mod browser {
     /// the SAME machinery the native connector uses; fire kind-0 + flush the
     /// outbox once the socket opens, and kind-2 once it has closed.
     pub fn n_kernel_client_pump(stores: &mut Stores, stack: &mut DbRef) {
-        let n = with_client(|c| {
-            let mut added = 0i64;
-            if !c.opened && host_ws_ready(c.ws) {
-                c.opened = true;
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 0,
-                    payload: String::new(),
-                    status: 0,
-                });
-                added += 1;
-                for msg in std::mem::take(&mut c.outbox) {
-                    let _ = host_ws_send(c.ws, &msg, false);
+        let EngineCx { browser, ctl, .. } = &mut stores.engine;
+        let n = browser
+            .as_mut()
+            .map(|c| {
+                let mut added = 0i64;
+                if !c.opened && host_ws_ready(c.ws) {
+                    c.opened = true;
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 0,
+                        payload: String::new(),
+                        status: 0,
+                    });
+                    added += 1;
+                    for msg in std::mem::take(&mut c.outbox) {
+                        let _ = host_ws_send(c.ws, &msg, false);
+                    }
                 }
-            }
-            while c.alive && c.ws >= 0 && host_ws_recv(c.ws) == 1 {
-                let payload = host_ws_last_message();
-                // Keyframes ride `S:`-framed reliable frames for BOUND peers
-                // only — a browser is never bound, but parse defensively.
-                if let Some(rest) = payload.strip_prefix("S:")
-                    && let Some((seq_s, body)) = rest.split_once(':')
-                    && let Ok(seq) = seq_s.parse::<i64>()
-                {
-                    conflate_slot(&mut c.slots, seq, body);
-                    continue;
+                while c.alive && c.ws >= 0 && host_ws_recv(c.ws) == 1 {
+                    let payload = host_ws_last_message();
+                    // Keyframes ride `S:`-framed reliable frames for BOUND peers
+                    // only — a browser is never bound, but parse defensively.
+                    if let Some(rest) = payload.strip_prefix("S:")
+                        && let Some((seq_s, body)) = rest.split_once(':')
+                        && let Ok(seq) = seq_s.parse::<i64>()
+                    {
+                        conflate_slot(&ctl.sync_ids, &mut c.slots, seq, body);
+                        continue;
+                    }
+                    if is_sync_msg(&ctl.sync_ids, &payload) {
+                        conflate_ws(&ctl.sync_ids, &mut c.slots, &payload);
+                        continue;
+                    }
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 1,
+                        payload,
+                        status: 0,
+                    });
+                    added += 1;
                 }
-                if is_sync_msg(&payload) {
-                    conflate_ws(&mut c.slots, &payload);
-                    continue;
+                // The socket closed without ever opening: no server answered.  A native
+                // connect answers false there, and `run_client` says so and returns with no
+                // event and no tick.  A script must not be able to tell the two kernels
+                // apart, so this says the same line (`run_client` in
+                // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
+                // queued.
+                if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
+                    c.alive = false;
+                    if let Some(out) = stores.output.as_mut() {
+                        out.push_str(&format!("engine_host: cannot connect to {}\n", c.peer));
+                    }
                 }
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 1,
-                    payload,
-                    status: 0,
-                });
-                added += 1;
-            }
-            // The socket closed without ever opening: no server answered.  A native
-            // connect answers false there, and `run_client` says so and returns with no
-            // event and no tick.  A script must not be able to tell the two kernels
-            // apart, so this says the same line (`run_client` in
-            // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
-            // queued.
-            if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
-                c.alive = false;
-                crate::wasm::output_push(&format!("engine_host: cannot connect to {}\n", c.peer));
-            }
-            // The server connection closed: what it sent before closing is queued
-            // above, the kind-2 event follows it, and `run_client` returns after this
-            // turn has delivered both — the native connector's `FrameRead::Closed`.
-            // A local kernel has no socket (`ws` is -1) and nothing to lose.
-            if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
-                c.alive = false;
-                c.events.push_back(Event {
-                    cid: 0,
-                    kind: 2,
-                    payload: String::new(),
-                    status: 0,
-                });
-                added += 1;
-            }
-            added
-        })
-        .unwrap_or(0);
+                // The server connection closed: what it sent before closing is queued
+                // above, the kind-2 event follows it, and `run_client` returns after this
+                // turn has delivered both — the native connector's `FrameRead::Closed`.
+                // A local kernel has no socket (`ws` is -1) and nothing to lose.
+                if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
+                    c.alive = false;
+                    c.events.push_back(Event {
+                        cid: 0,
+                        kind: 2,
+                        payload: String::new(),
+                        status: 0,
+                    });
+                    added += 1;
+                }
+                added
+            })
+            .unwrap_or(0);
         stores.put(stack, n);
     }
 
     pub fn n_kernel_client_alive(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.alive).unwrap_or(false);
+        let v = with_client(&mut stores.engine, |c| c.alive).unwrap_or(false);
         stores.put(stack, v);
     }
 
     /// `client_stop()` — mirror of the native connector's exit surface.
-    pub fn n_kernel_client_stop(_stores: &mut Stores, _stack: &mut DbRef) {
-        let _ = with_client(|c| c.alive = false);
+    pub fn n_kernel_client_stop(stores: &mut Stores, _stack: &mut DbRef) {
+        let _ = with_client(&mut stores.engine, |c| c.alive = false);
     }
 
     pub fn n_kernel_client_next_event(stores: &mut Stores, stack: &mut DbRef) {
-        let got = with_client(|c| match c.events.pop_front() {
+        let got = with_client(&mut stores.engine, |c| match c.events.pop_front() {
             Some(ev) => {
                 c.last = ev;
                 true
@@ -2759,25 +2880,25 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_event_kind(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.kind).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last.kind).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     /// Status of the last event (kind-3 http completions carry it; `0` otherwise).
     pub fn n_kernel_client_event_status(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.status).unwrap_or(0);
+        let v = with_client(&mut stores.engine, |c| c.last.status).unwrap_or(0);
         stores.put(stack, v);
     }
 
     /// Origin of the last event: `0` = the server, `-1` = a local `post`.
     pub fn n_kernel_client_event_cid(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last.cid).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last.cid).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     pub fn n_kernel_client_event_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
         let dest = stores.get::<DbRef>(stack);
-        let v = with_client(|c| c.last.payload.clone()).unwrap_or_default();
+        let v = with_client(&mut stores.engine, |c| c.last.payload.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
             .addr_mut::<String>(dest.rec, dest.pos)
@@ -2790,7 +2911,7 @@ pub mod browser {
     /// `run_client`'s loop takes its first turn, so a script's `on_tick` does not run
     /// ahead of its kind-0 event, and not at all when no server answered.
     pub fn n_kernel_client_tick_due(stores: &mut Stores, stack: &mut DbRef) {
-        let due = with_client(|c| {
+        let due = with_client(&mut stores.engine, |c| {
             if !c.opened {
                 return false;
             }
@@ -2820,8 +2941,8 @@ pub mod browser {
     /// UDP); sync sends still count the shared seq space (carrier symmetry).
     pub fn n_kernel_client_send(stores: &mut Stores, stack: &mut DbRef) {
         let msg = stores.get::<Str>(stack).str().to_owned();
-        let sync = is_sync_msg(&msg);
-        let ok = with_client(|c| {
+        let sync = is_sync_msg(&stores.engine.ctl.sync_ids, &msg);
+        let ok = with_client(&mut stores.engine, |c| {
             if !c.alive {
                 return false;
             }
@@ -2842,7 +2963,7 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_sync_next(stores: &mut Stores, stack: &mut DbRef) {
-        let got = with_client(|c| {
+        let got = with_client(&mut stores.engine, |c| {
             for slot in &mut c.slots {
                 if slot.dirty {
                     slot.dirty = false;
@@ -2857,13 +2978,13 @@ pub mod browser {
     }
 
     pub fn n_kernel_client_sync_seq(stores: &mut Stores, stack: &mut DbRef) {
-        let v = with_client(|c| c.last_sync.0).unwrap_or(-1);
+        let v = with_client(&mut stores.engine, |c| c.last_sync.0).unwrap_or(-1);
         stores.put(stack, v);
     }
 
     pub fn n_kernel_client_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
         let dest = stores.get::<DbRef>(stack);
-        let v = with_client(|c| c.last_sync.1.clone()).unwrap_or_default();
+        let v = with_client(&mut stores.engine, |c| c.last_sync.1.clone()).unwrap_or_default();
         stores
             .store_mut(&dest)
             .addr_mut::<String>(dest.rec, dest.pos)
@@ -2909,15 +3030,15 @@ pub mod typed {
     use std::cell::UnsafeCell;
 
     // ── Listener role ──
-    pub fn n_kernel_listen(_cell: &UnsafeCell<Stores>, port: i64, tick_us: i64) -> u8 {
-        u8::from(listen_impl(port, tick_us))
+    pub fn n_kernel_listen(cell: &UnsafeCell<Stores>, port: i64, tick_us: i64) -> u8 {
+        u8::from(listen_impl(engine(cell), port, tick_us))
     }
-    pub fn n_kernel_pump(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(pump_kernel).unwrap_or(0)
+    pub fn n_kernel_pump(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel_ctl(engine(cell), pump_kernel).unwrap_or(0)
     }
-    pub fn n_kernel_next_event(_cell: &UnsafeCell<Stores>) -> u8 {
+    pub fn n_kernel_next_event(cell: &UnsafeCell<Stores>) -> u8 {
         u8::from(
-            with_kernel(|k| match k.events.pop_front() {
+            with_kernel(engine(cell), |k| match k.events.pop_front() {
                 Some(ev) => {
                     k.last = ev;
                     true
@@ -2927,20 +3048,20 @@ pub mod typed {
             .unwrap_or(false),
         )
     }
-    pub fn n_kernel_event_cid(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.last.cid).unwrap_or(-1)
+    pub fn n_kernel_event_cid(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| k.last.cid).unwrap_or(-1)
     }
-    pub fn n_kernel_event_kind(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.last.kind).unwrap_or(-1)
+    pub fn n_kernel_event_kind(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| k.last.kind).unwrap_or(-1)
     }
-    pub fn n_kernel_event_payload(_cell: &UnsafeCell<Stores>) -> String {
-        with_kernel(|k| k.last.payload.clone()).unwrap_or_default()
+    pub fn n_kernel_event_payload(cell: &UnsafeCell<Stores>) -> String {
+        with_kernel(engine(cell), |k| k.last.payload.clone()).unwrap_or_default()
     }
-    pub fn n_kernel_event_status(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.last.status).unwrap_or(0)
+    pub fn n_kernel_event_status(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| k.last.status).unwrap_or(0)
     }
-    pub fn n_kernel_client_event_status(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_client(|c| c.last.status).unwrap_or(0)
+    pub fn n_kernel_client_event_status(cell: &UnsafeCell<Stores>) -> i64 {
+        with_client(engine(cell), |c| c.last.status).unwrap_or(0)
     }
     pub fn n_kernel_http_fetch(
         _cell: &UnsafeCell<Stores>,
@@ -2956,16 +3077,18 @@ pub mod typed {
             headers.to_owned(),
         )
     }
-    pub fn n_kernel_tick_due(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_kernel(tick_due_kernel).unwrap_or(false))
+    pub fn n_kernel_tick_due(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_kernel(engine(cell), tick_due_kernel).unwrap_or(false))
     }
-    pub fn n_send(_cell: &UnsafeCell<Stores>, cid: i64, msg: &str) -> u8 {
-        let sync = is_sync_msg(msg);
-        u8::from(with_kernel(|k| deliver(k, cid as usize, msg, sync)).unwrap_or(false))
+    pub fn n_send(cell: &UnsafeCell<Stores>, cid: i64, msg: &str) -> u8 {
+        let sync = is_sync_msg(&engine(cell).ctl.sync_ids, msg);
+        u8::from(
+            with_kernel(engine(cell), |k| deliver(k, cid as usize, msg, sync)).unwrap_or(false),
+        )
     }
-    pub fn n_broadcast(_cell: &UnsafeCell<Stores>, msg: &str) -> i64 {
-        let sync = is_sync_msg(msg);
-        with_kernel(|k| {
+    pub fn n_broadcast(cell: &UnsafeCell<Stores>, msg: &str) -> i64 {
+        let sync = is_sync_msg(&engine(cell).ctl.sync_ids, msg);
+        with_kernel(engine(cell), |k| {
             let mut sent = 0i64;
             for cid in 0..k.conns.len() {
                 if k.conns[cid].is_none() {
@@ -2979,8 +3102,8 @@ pub mod typed {
         })
         .unwrap_or(0)
     }
-    pub fn n_kernel_idle(_cell: &UnsafeCell<Stores>, max_us: i64) {
-        let sleep_us = with_kernel(|k| {
+    pub fn n_kernel_idle(cell: &UnsafeCell<Stores>, max_us: i64) {
+        let sleep_us = with_kernel(engine(cell), |k| {
             let now = k.start.elapsed().as_micros() as i64;
             let until_tick = if k.last_tick_us == 0 {
                 k.tick_interval_us
@@ -2992,39 +3115,42 @@ pub mod typed {
         .unwrap_or(max_us.max(0));
         std::thread::sleep(Duration::from_micros(sleep_us as u64));
     }
-    pub fn n_clients(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.conns.iter().filter(|c| c.is_some()).count() as i64).unwrap_or(0)
+    pub fn n_clients(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| {
+            k.conns.iter().filter(|c| c.is_some()).count() as i64
+        })
+        .unwrap_or(0)
     }
-    pub fn n_udp_bound(_cell: &UnsafeCell<Stores>, cid: i64) -> u8 {
+    pub fn n_udp_bound(cell: &UnsafeCell<Stores>, cid: i64) -> u8 {
         u8::from(
-            with_kernel(|k| k.net.get(cid as usize).is_some_and(|n| n.path.is_some()))
-                .unwrap_or(false),
+            with_kernel(engine(cell), |k| {
+                k.net.get(cid as usize).is_some_and(|n| n.path.is_some())
+            })
+            .unwrap_or(false),
         )
     }
-    pub fn n_sync_class(_cell: &UnsafeCell<Stores>, msg_id: i64) {
-        SYNC_IDS.with(|s| {
-            s.borrow_mut().insert(msg_id, false);
-        });
+    pub fn n_sync_class(cell: &UnsafeCell<Stores>, msg_id: i64) {
+        engine(cell).ctl.sync_ids.insert(msg_id, false);
     }
-    pub fn n_sync_class_keyed(_cell: &UnsafeCell<Stores>, msg_id: i64) {
-        SYNC_IDS.with(|s| {
-            s.borrow_mut().insert(msg_id, true);
-        });
+    pub fn n_sync_class_keyed(cell: &UnsafeCell<Stores>, msg_id: i64) {
+        engine(cell).ctl.sync_ids.insert(msg_id, true);
     }
-    pub fn n_keyframe(_cell: &UnsafeCell<Stores>, cid: i64, msg: &str) -> u8 {
-        u8::from(with_kernel(|k| deliver_keyframe(k, cid as usize, msg)).unwrap_or(false))
+    pub fn n_keyframe(cell: &UnsafeCell<Stores>, cid: i64, msg: &str) -> u8 {
+        u8::from(
+            with_kernel(engine(cell), |k| deliver_keyframe(k, cid as usize, msg)).unwrap_or(false),
+        )
     }
-    pub fn n_sync_next(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_kernel(sync_next_kernel).unwrap_or(false))
+    pub fn n_sync_next(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_kernel(engine(cell), sync_next_kernel).unwrap_or(false))
     }
-    pub fn n_sync_cid(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.last_sync.0).unwrap_or(-1)
+    pub fn n_sync_cid(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| k.last_sync.0).unwrap_or(-1)
     }
-    pub fn n_sync_seq(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_kernel(|k| k.last_sync.1).unwrap_or(-1)
+    pub fn n_sync_seq(cell: &UnsafeCell<Stores>) -> i64 {
+        with_kernel(engine(cell), |k| k.last_sync.1).unwrap_or(-1)
     }
-    pub fn n_kernel_sync_payload(_cell: &UnsafeCell<Stores>) -> String {
-        with_kernel(|k| k.last_sync.2.clone()).unwrap_or_default()
+    pub fn n_kernel_sync_payload(cell: &UnsafeCell<Stores>) -> String {
+        with_kernel(engine(cell), |k| k.last_sync.2.clone()).unwrap_or_default()
     }
     pub fn n_kernel_client_frame(_cell: &UnsafeCell<Stores>) {}
     /// @PLN18 08-S5 — typed twins of the swap natives.
@@ -3033,8 +3159,8 @@ pub mod typed {
         u8::from(super::swap_world_impl(stores, w))
     }
 
-    pub fn n_swap_start(_cell: &UnsafeCell<Stores>, artifact: &str) -> u8 {
-        u8::from(super::swap_start_impl(artifact))
+    pub fn n_swap_start(cell: &UnsafeCell<Stores>, artifact: &str) -> u8 {
+        u8::from(super::swap_start_impl(&mut engine(cell).ctl, artifact))
     }
 
     pub fn n_kernel_swap_step(cell: &UnsafeCell<Stores>) -> i64 {
@@ -3042,8 +3168,8 @@ pub mod typed {
         super::swap_step_impl(stores)
     }
 
-    pub fn n_swap_retired(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(super::SWAP.with(|sw| matches!(*sw.borrow(), super::SwapPhase::Done)))
+    pub fn n_swap_retired(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(matches!(engine(cell).ctl.swap, super::SwapPhase::Done))
     }
 
     pub fn n_kernel_default_host(_cell: &UnsafeCell<Stores>) -> String {
@@ -3051,18 +3177,18 @@ pub mod typed {
     }
 
     // ── Connector role ──
-    pub fn n_kernel_connect(_cell: &UnsafeCell<Stores>, host: &str, port: i64, tick_us: i64) -> u8 {
-        u8::from(client_connect(host, port as u16, tick_us).is_some())
+    pub fn n_kernel_connect(cell: &UnsafeCell<Stores>, host: &str, port: i64, tick_us: i64) -> u8 {
+        u8::from(client_connect(engine(cell), host, port as u16, tick_us).is_some())
     }
-    pub fn n_kernel_local(_cell: &UnsafeCell<Stores>, tick_us: i64) -> u8 {
-        local_init(tick_us);
+    pub fn n_kernel_local(cell: &UnsafeCell<Stores>, tick_us: i64) -> u8 {
+        local_init(engine(cell), tick_us);
         1
     }
-    pub fn n_post(_cell: &UnsafeCell<Stores>, msg: &str) -> u8 {
-        u8::from(post_impl(msg))
+    pub fn n_post(cell: &UnsafeCell<Stores>, msg: &str) -> u8 {
+        u8::from(post_impl(engine(cell), msg))
     }
-    pub fn n_kernel_alive(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_kernel(|k| k.alive).unwrap_or(false))
+    pub fn n_kernel_alive(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_kernel(engine(cell), |k| k.alive).unwrap_or(false))
     }
 
     // @PLN119 arc F — the four the loft surface now reaches through a WRAPPER.
@@ -3085,26 +3211,26 @@ pub mod typed {
     pub fn n_kernel_post(cell: &UnsafeCell<Stores>, msg: &str) -> u8 {
         n_post(cell, msg)
     }
-    pub fn n_kernel_stop(_cell: &UnsafeCell<Stores>) {
-        let _ = with_kernel(|k| k.alive = false);
+    pub fn n_kernel_stop(cell: &UnsafeCell<Stores>) {
+        let _ = with_kernel(engine(cell), |k| k.alive = false);
     }
     pub fn n_kernel_frame(_cell: &UnsafeCell<Stores>) {}
-    pub fn n_kernel_client_pump(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_client(pump_client).unwrap_or(0)
+    pub fn n_kernel_client_pump(cell: &UnsafeCell<Stores>) -> i64 {
+        with_client_ctl(engine(cell), pump_client).unwrap_or(0)
     }
-    pub fn n_kernel_client_stop(_cell: &UnsafeCell<Stores>) {
-        let _ = super::with_client(|c| c.alive = false);
+    pub fn n_kernel_client_stop(cell: &UnsafeCell<Stores>) {
+        let _ = super::with_client(engine(cell), |c| c.alive = false);
     }
 
-    pub fn n_kernel_client_event_cid(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_client(|c| c.last.cid).unwrap_or(-1)
+    pub fn n_kernel_client_event_cid(cell: &UnsafeCell<Stores>) -> i64 {
+        with_client(engine(cell), |c| c.last.cid).unwrap_or(-1)
     }
-    pub fn n_kernel_client_alive(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_client(|c| c.alive).unwrap_or(false))
+    pub fn n_kernel_client_alive(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_client(engine(cell), |c| c.alive).unwrap_or(false))
     }
-    pub fn n_kernel_client_next_event(_cell: &UnsafeCell<Stores>) -> u8 {
+    pub fn n_kernel_client_next_event(cell: &UnsafeCell<Stores>) -> u8 {
         u8::from(
-            with_client(|c| match c.events.pop_front() {
+            with_client(engine(cell), |c| match c.events.pop_front() {
                 Some(ev) => {
                     c.last = ev;
                     true
@@ -3114,17 +3240,17 @@ pub mod typed {
             .unwrap_or(false),
         )
     }
-    pub fn n_kernel_client_event_kind(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_client(|c| c.last.kind).unwrap_or(-1)
+    pub fn n_kernel_client_event_kind(cell: &UnsafeCell<Stores>) -> i64 {
+        with_client(engine(cell), |c| c.last.kind).unwrap_or(-1)
     }
-    pub fn n_kernel_client_event_payload(_cell: &UnsafeCell<Stores>) -> String {
-        with_client(|c| c.last.payload.clone()).unwrap_or_default()
+    pub fn n_kernel_client_event_payload(cell: &UnsafeCell<Stores>) -> String {
+        with_client(engine(cell), |c| c.last.payload.clone()).unwrap_or_default()
     }
-    pub fn n_kernel_client_tick_due(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_client(tick_due_client).unwrap_or(false))
+    pub fn n_kernel_client_tick_due(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_client(engine(cell), tick_due_client).unwrap_or(false))
     }
-    pub fn n_kernel_client_idle(_cell: &UnsafeCell<Stores>, max_us: i64) {
-        let sleep_us = with_client(|c| {
+    pub fn n_kernel_client_idle(cell: &UnsafeCell<Stores>, max_us: i64) {
+        let sleep_us = with_client(engine(cell), |c| {
             let now = c.now_us();
             let until_tick = if c.last_tick_us == 0 {
                 c.tick_interval_us
@@ -3136,21 +3262,21 @@ pub mod typed {
         .unwrap_or(max_us.max(0));
         std::thread::sleep(Duration::from_micros(sleep_us as u64));
     }
-    pub fn n_client_send(_cell: &UnsafeCell<Stores>, msg: &str) -> u8 {
-        let sync = is_sync_msg(msg);
-        u8::from(with_client(|c| client_send_impl(c, msg, sync)).unwrap_or(false))
+    pub fn n_client_send(cell: &UnsafeCell<Stores>, msg: &str) -> u8 {
+        let sync = is_sync_msg(&engine(cell).ctl.sync_ids, msg);
+        u8::from(with_client(engine(cell), |c| client_send_impl(c, msg, sync)).unwrap_or(false))
     }
-    pub fn n_client_sync_next(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_client(sync_next_client).unwrap_or(false))
+    pub fn n_client_sync_next(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_client(engine(cell), sync_next_client).unwrap_or(false))
     }
-    pub fn n_client_sync_seq(_cell: &UnsafeCell<Stores>) -> i64 {
-        with_client(|c| c.last_sync.0).unwrap_or(-1)
+    pub fn n_client_sync_seq(cell: &UnsafeCell<Stores>) -> i64 {
+        with_client(engine(cell), |c| c.last_sync.0).unwrap_or(-1)
     }
-    pub fn n_kernel_client_sync_payload(_cell: &UnsafeCell<Stores>) -> String {
-        with_client(|c| c.last_sync.1.clone()).unwrap_or_default()
+    pub fn n_kernel_client_sync_payload(cell: &UnsafeCell<Stores>) -> String {
+        with_client(engine(cell), |c| c.last_sync.1.clone()).unwrap_or_default()
     }
-    pub fn n_client_udp_bound(_cell: &UnsafeCell<Stores>) -> u8 {
-        u8::from(with_client(|c| c.udp_bound).unwrap_or(false))
+    pub fn n_client_udp_bound(cell: &UnsafeCell<Stores>) -> u8 {
+        u8::from(with_client(engine(cell), |c| c.udp_bound).unwrap_or(false))
     }
 }
 

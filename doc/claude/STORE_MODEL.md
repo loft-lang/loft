@@ -94,7 +94,7 @@ the shared core below.
 
 | | Interpreter | C runtime |
 |---|---|---|
-| the stores | `Stores.allocations: Vec<Store>` | `loft_stores`, `loft_nstores` (thread-local) |
+| the stores | `Stores.allocations: Vec<Store>` | `cx->stores`, `cx->nstores` (the store context, `loft_cx`) |
 | the type table | `Stores.types`, `names` | the unit's generated tables |
 | a reference | `DbRef { store_nr, rec, pos }` | `loft_ref { store_nr, rec, pos }` |
 

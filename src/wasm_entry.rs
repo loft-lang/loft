@@ -10,7 +10,6 @@
 
 #[allow(clippy::wildcard_imports)]
 use crate::wasm::*;
-use std::cell::RefCell;
 
 // ── W1.9  compile_and_run() — WASM/native entry point ────────────────────────
 
@@ -123,7 +122,7 @@ pub fn compile_and_run(files_json: &str) -> String {
         }
     };
 
-    // Populate VIRT_FS with default files + graphics library + user files.
+    // The page's files: the defaults, the graphics library and the user's.
     let mut all_files: Vec<(String, String)> = DEFAULT_FILES
         .iter()
         .chain(BUNDLED_LIB_FILES.iter())
@@ -138,16 +137,8 @@ pub fn compile_and_run(files_json: &str) -> String {
         let content = desugared.as_deref().unwrap_or(content);
         all_files.push((name.clone(), content.to_string()));
     }
-    virt_fs_populate(&all_files);
-    // Clear the output buffer.
-    let _ = output_take();
-
     // Build and run.
-    let (diag, had_error, asserts) = run_pipeline();
-
-    // Collect results.
-    let output = output_take();
-    virt_fs_clear();
+    let (diag, had_error, asserts, output) = run_pipeline(&all_files);
 
     // Build asserts JSON array.
     let asserts_json = if asserts.is_empty() {
@@ -179,34 +170,121 @@ pub fn compile_and_run(files_json: &str) -> String {
 /// Persistent game session that survives across frame yields.
 /// The `State` is BOXED: `execute_argv` stores raw pointers into the `State` itself (its
 /// bytecode and library, in the parallel context), and the session is moved twice after
-/// that — into this struct, then into `GAME_SESSION`.  A box moves, its contents do not —
+/// that — into this struct, then into its [`Game`].  A box moves, its contents do not —
 /// the pattern `live_dispatch::bootstrap_core` already follows.  The definition table needs
 /// no such care: the `State` co-owns it.
-struct GameSession {
+pub(crate) struct GameSession {
     state: Box<crate::interp::state::State>,
 }
 
-thread_local! {
-    static GAME_SESSION: RefCell<Option<GameSession>> = const { RefCell::new(None) };
+/// `f` over a game's session slot.
+fn with_game<R>(
+    slot: &mut Option<GameSession>,
+    f: impl FnOnce(&mut Option<GameSession>) -> R,
+) -> R {
+    f(slot)
 }
 
-/// Start a game session: parse, compile, execute until the first frame yield.
-/// Returns JSON `{"ok":true}` on success or `{"ok":false,"error":"..."}` on failure.
+/// `@PLN226` — a page's game: the program it started and runs frame by frame, and the world
+/// snapshot staged for the next program it starts (@PLN18 08-S6).  The page holds the handle and
+/// passes it to every call (`@FR-C-Boundary`): two games on one page never meet, and nothing is
+/// kept per thread.
+///
+/// ```js
+/// const game = new Game();
+/// let r = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: src }])));
+/// while (r.running) { await nextFrame(); r = JSON.parse(game.resume_frame()); }
+/// ```
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn compile_and_start(files_json: &str) -> String {
+#[derive(Default)]
+pub struct Game {
+    session: Option<GameSession>,
+    stage: Option<String>,
+}
+
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+impl Game {
+    /// A game with nothing started.
+    #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen(constructor))]
+    #[must_use]
+    pub fn new() -> Game {
+        Game::default()
+    }
+
+    /// Start the program in `files_json` (`[{name, content}]`), ending this game's previous
+    /// one: parse, compile, execute until the first frame yield.  JSON
+    /// `{"ok":true,"running":true}`, `{"ok":true,"running":false,"output":"…"}` when it ran to
+    /// its end, or `{"ok":false,"error":"…"}`.
+    pub fn start(&mut self, files_json: &str) -> String {
+        let stage = self.stage.take();
+        start_on(&mut self.session, stage, files_json)
+    }
+
+    /// Run the next frame.  JSON `{"running":true}` (with `"output"` when the frame printed),
+    /// `{"running":false,"output":"…"}` when the program finished, or
+    /// `{"running":false,"error":"…"}` when it crashed.
+    pub fn resume_frame(&mut self) -> String {
+        resume_on(&mut self.session)
+    }
+
+    /// End the running program and close its window.
+    pub fn stop(&mut self) {
+        dispose(&mut self.session);
+    }
+
+    /// Stage `snapshot` (`swap_export` of another game) for the next program this game starts:
+    /// its `swap_world` restores it — the browser's form of the native `LOFT_RESUME`.
+    pub fn stage_swap(&mut self, snapshot: &str) {
+        self.stage = Some(snapshot.to_string());
+    }
+
+    /// The running program's world, for another game to take over (`stage_swap`).
+    pub fn swap_export(&mut self) -> String {
+        export_on(&mut self.session)
+    }
+
+    /// May the program in `files_json` take over this game's world?
+    pub fn swap_check(&mut self, files_json: &str) -> String {
+        check_on(&mut self.session, files_json)
+    }
+}
+
+/// End a game's running program and close its window.
+fn dispose(slot: &mut Option<GameSession>) {
+    if slot.is_some() {
+        #[cfg(feature = "wasm")]
+        {
+            let args = js_sys::Array::new();
+            host_call_raw("gl_destroy_window", &args);
+        }
+        *slot = None;
+    }
+}
+
+/// The program's own file among the page's: the first, by name, that is neither the stdlib
+/// nor a bundled library.
+fn main_file(all_files: &[(String, String)]) -> Option<String> {
+    let libs: std::collections::HashSet<&str> = BUNDLED_LIB_FILES.iter().map(|(n, _)| *n).collect();
+    all_files
+        .iter()
+        .map(|(n, _)| n)
+        .filter(|k| !k.starts_with("default/") && !libs.contains(k.as_str()))
+        .min()
+        .cloned()
+}
+
+/// The page's files as the run reads them (`Stores::page_files`).
+fn page_files(
+    all_files: &[(String, String)],
+) -> std::sync::Arc<std::collections::HashMap<String, String>> {
+    std::sync::Arc::new(all_files.iter().cloned().collect())
+}
+
+/// [`Game::start`] on a game's session `slot`, handing the program the `stage`d world.
+fn start_on(slot: &mut Option<GameSession>, stage: Option<String>, files_json: &str) -> String {
     #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
-    // Dispose previous session.
-    GAME_SESSION.with(|gs| {
-        if gs.borrow().is_some() {
-            #[cfg(feature = "wasm")]
-            {
-                let args = js_sys::Array::new();
-                host_call_raw("gl_destroy_window", &args);
-            }
-            *gs.borrow_mut() = None;
-        }
-    });
+    dispose(slot);
 
     let files = match parse_files_json(files_json) {
         Ok(f) => f,
@@ -227,9 +305,6 @@ pub fn compile_and_start(files_json: &str) -> String {
         let content = desugared.as_deref().unwrap_or(content);
         all_files.push((name.clone(), content.to_string()));
     }
-    virt_fs_populate(&all_files);
-    let _ = output_take();
-
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         use crate::diagnostics::Level;
         use crate::interp::compile::byte_code;
@@ -238,22 +313,14 @@ pub fn compile_and_start(files_json: &str) -> String {
         use crate::scopes;
 
         let mut p = Parser::new();
+        p.lexer.add_page_files(&all_files);
         for (name, _) in DEFAULT_FILES {
             p.parse(name, true);
             if p.diagnostics.level() >= Level::Error {
                 return Err(p.diagnostics.to_string());
             }
         }
-        let lib_set: std::collections::HashSet<&str> =
-            BUNDLED_LIB_FILES.iter().map(|(n, _)| *n).collect();
-        let main_name = VIRT_FS.with(|fs| {
-            fs.borrow()
-                .keys()
-                .filter(|k| !k.starts_with("default/") && !lib_set.contains(k.as_str()))
-                .min()
-                .cloned()
-        });
-        let Some(main_name) = main_name else {
+        let Some(main_name) = main_file(&all_files) else {
             return Err("no user file found".to_string());
         };
         p.parse(&main_name, false);
@@ -265,29 +332,32 @@ pub fn compile_and_start(files_json: &str) -> String {
             return Err(p.diagnostics.to_string());
         }
         // Boxed BEFORE any pointer is taken, so the pointers `execute_argv` keeps survive the
-        // session being moved into `GAME_SESSION` (see `GameSession`).
+        // session being moved into its game (see `GameSession`).
         let mut state = Box::new(State::new(p.database));
+        // The page captures what the program prints, and the program reads the page's files
+        // while its first frame runs.
+        state.database.output = Some(String::new());
+        state.database.page_files = Some(page_files(&all_files));
+        crate::engine_host::stage_swap(&mut state.database, stage);
         let mut data = p.data;
         byte_code(&mut state, &mut data);
         crate::interp::wasm_gl::register_wgl_natives(&mut state);
         // The State co-owns the table, so the session may move freely.
         state.execute_argv("main", std::sync::Arc::new(data), &[]);
+        state.database.page_files = None;
         // execute_argv returns either because the program finished or because
         // frame_yield was set.  Store the session for resume_frame.
         Ok(GameSession { state })
     }));
 
-    virt_fs_clear();
-
     match result {
-        Ok(Ok(session)) => {
+        Ok(Ok(mut session)) => {
             let yielded = session.state.database.frame_yield;
-            GAME_SESSION.with(|gs| *gs.borrow_mut() = Some(session));
             if yielded {
+                *slot = Some(session);
                 "{\"ok\":true,\"running\":true}".to_string()
             } else {
-                let out = output_take();
-                GAME_SESSION.with(|gs| *gs.borrow_mut() = None);
+                let out = take_output(&mut session);
                 format!(
                     "{{\"ok\":true,\"running\":false,\"output\":{}}}",
                     json_str(&out)
@@ -298,21 +368,16 @@ pub fn compile_and_start(files_json: &str) -> String {
             format!("{{\"ok\":false,\"error\":{}}}", json_str(&diag))
         }
         Err(_panic) => {
-            GAME_SESSION.with(|gs| *gs.borrow_mut() = None);
+            *slot = None;
             "{\"ok\":false,\"error\":\"internal panic\"}".to_string()
         }
     }
 }
 
-/// Resume execution after a frame yield.  Returns JSON:
-/// `{"running":true}` — yielded again, call on next requestAnimationFrame
-/// `{"running":false,"output":"..."}` — program finished
-/// `{"running":false,"error":"..."}` — program crashed
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn resume_frame() -> String {
+/// [`Game::resume_frame`] on a game's session `game`.
+fn resume_on(game: &mut Option<GameSession>) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        GAME_SESSION.with(|gs| {
-            let mut slot = gs.borrow_mut();
+        with_game(game, |slot| {
             let Some(session) = slot.as_mut() else {
                 return "{\"running\":false}".to_string();
             };
@@ -325,17 +390,17 @@ pub fn resume_frame() -> String {
                 // into a buffer nobody reads, the same silence as a missing host method
                 // one layer up.
                 //
-                // `output_take` CLEARS as it reads, so this is the only copy: the page
+                // `take_output` CLEARS as it reads, so this is the only copy: the page
                 // appends it rather than replacing, or draining here would lose
                 // everything printed before the final frame.
-                let out = output_take();
+                let out = take_output(session);
                 if out.is_empty() {
                     "{\"running\":true}".to_string()
                 } else {
                     format!("{{\"running\":true,\"output\":{}}}", json_str(&out))
                 }
             } else {
-                let out = output_take();
+                let out = take_output(session);
                 *slot = None;
                 format!("{{\"running\":false,\"output\":{}}}", json_str(&out))
             }
@@ -344,7 +409,7 @@ pub fn resume_frame() -> String {
     match result {
         Ok(json) => json,
         Err(_panic) => {
-            GAME_SESSION.with(|gs| *gs.borrow_mut() = None);
+            *game = None;
             #[cfg(feature = "wasm")]
             {
                 let args = js_sys::Array::new();
@@ -461,13 +526,14 @@ fn json_str(s: &str) -> String {
     out
 }
 
-/// Execute the full pipeline using files in VIRT_FS.
+/// Execute the full pipeline over the page's files, `all_files`: the diagnostics, whether the
+/// run failed, its asserts and what it printed.
 /// Returns `(diagnostic_string, had_error)`.  Warnings produce a non-empty
 /// diagnostic string but `had_error = false`; errors set `had_error = true`.
 /// Assert result: (passed, message, file, line).
 type AssertResult = (bool, String, String, u32);
 
-fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
+fn run_pipeline(all_files: &[(String, String)]) -> (String, bool, Vec<AssertResult>, String) {
     use crate::diagnostics::Level;
     use crate::interp::compile::byte_code;
     use crate::interp::state::State;
@@ -475,37 +541,36 @@ fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
     use crate::scopes;
 
     let mut p = Parser::new();
+    p.lexer.add_page_files(all_files);
     for (name, _) in DEFAULT_FILES {
         p.parse(name, true);
         let lvl = p.diagnostics.level();
         if lvl == Level::Error || lvl == Level::Fatal {
-            return (p.diagnostics.to_string(), true, Vec::new());
+            return (p.diagnostics.to_string(), true, Vec::new(), String::new());
         }
     }
-    let lib_names: std::collections::HashSet<&str> =
-        BUNDLED_LIB_FILES.iter().map(|(n, _)| *n).collect();
-    let main_name = VIRT_FS.with(|fs| {
-        fs.borrow()
-            .keys()
-            .filter(|k| !k.starts_with("default/") && !lib_names.contains(k.as_str()))
-            .min()
-            .cloned()
-    });
-    let Some(main_name) = main_name else {
-        return ("no user file found".to_string(), true, Vec::new());
+    let Some(main_name) = main_file(all_files) else {
+        return (
+            "no user file found".to_string(),
+            true,
+            Vec::new(),
+            String::new(),
+        );
     };
     p.parse(&main_name, false);
     let lvl = p.diagnostics.level();
     if lvl == Level::Error || lvl == Level::Fatal {
-        return (p.diagnostics.to_string(), true, Vec::new());
+        return (p.diagnostics.to_string(), true, Vec::new(), String::new());
     }
     scopes::check(&mut p.data, &mut p.database);
     let lvl = p.diagnostics.level();
     if lvl == Level::Error || lvl == Level::Fatal {
-        return (p.diagnostics.to_string(), true, Vec::new());
+        return (p.diagnostics.to_string(), true, Vec::new(), String::new());
     }
     let diag = p.diagnostics.to_string();
     let mut state = State::new(p.database);
+    state.database.output = Some(String::new());
+    state.database.page_files = Some(page_files(all_files));
     byte_code(&mut state, &mut p.data);
     // GL6.1–GL6.3: register WebGL bridge functions for graphics library.
     crate::interp::wasm_gl::register_wgl_natives(&mut state);
@@ -514,7 +579,26 @@ fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
     state.execute_argv("main", &p.data, &[]);
     let asserts = std::mem::take(&mut state.database.assert_results);
     let had_fatal = state.database.had_fatal;
-    (diag, had_fatal, asserts)
+    let mut output = state.database.output.take().unwrap_or_default();
+    #[cfg(feature = "wasm")]
+    output.push_str(&std::mem::take(&mut *state.database.par_trace.borrow_mut()));
+    (diag, had_fatal, asserts, output)
+}
+
+/// What the game printed since the last call, taken out of its capture.
+fn take_output(session: &mut GameSession) -> String {
+    let mut out = session
+        .state
+        .database
+        .output
+        .as_mut()
+        .map(std::mem::take)
+        .unwrap_or_default();
+    #[cfg(feature = "wasm")]
+    out.push_str(&std::mem::take(
+        &mut *session.state.database.par_trace.borrow_mut(),
+    ));
+    out
 }
 
 // ── @PLN117 — the thread pool ───────────────────────────────────────────────
@@ -548,53 +632,48 @@ pub fn set_par_trace_workers(on: bool) {
 ///
 /// @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
 /// that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
-/// next run's `swap_world` reads through the converter: keyed collections and references
+/// next game's `swap_world` reads through the converter: keyed collections and references
 /// survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
 /// before.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_export() -> String {
-    let Some((root, kt)) = swap_root() else {
-        return String::new();
-    };
-    GAME_SESSION.with(|gs| {
-        gs.borrow_mut()
-            .as_mut()
-            .map_or_else(String::new, |session| {
-                let db = &mut session.state.database;
-                if let Some((sidecar, image)) = db.world_image(&root, kt) {
-                    return format!(
-                        "{SWAP_IMAGE_MARKER}\n{}\n{}",
-                        crate::base64::encode(sidecar.as_bytes()),
-                        crate::base64::encode(&image)
-                    );
-                }
-                let mut json = String::new();
-                db.show_json(&mut json, &root, kt, false);
-                json
-            })
+fn export_on(slot: &mut Option<GameSession>) -> String {
+    with_game(slot, |gs| {
+        gs.as_mut().map_or_else(String::new, |session| {
+            let Some((root, kt)) = crate::engine_host::world_root(&session.state.database) else {
+                return String::new();
+            };
+            let db = &mut session.state.database;
+            if let Some((sidecar, image)) = db.world_image(&root, kt) {
+                return format!(
+                    "{SWAP_IMAGE_MARKER}\n{}\n{}",
+                    crate::base64::encode(sidecar.as_bytes()),
+                    crate::base64::encode(&image)
+                );
+            }
+            let mut json = String::new();
+            db.show_json(&mut json, &root, kt, false);
+            json
+        })
     })
 }
 
 /// @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
 /// browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
-/// it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
+/// it BEFORE `Game::start`, which disposes the running instance, so a refused change
 /// leaves the running build serving.  The program is parsed and scope-checked, not run, and
 /// the parked run is not touched.
 ///
 /// Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
 /// the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
 /// program that does not compile or a world it cannot take over.
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_check(files_json: &str) -> String {
-    let world = swap_root().and_then(|(root, kt)| {
-        GAME_SESSION.with(|gs| {
-            gs.borrow_mut().as_mut().and_then(|session| {
-                session
-                    .state
-                    .database
-                    .world_image(&root, kt)
-                    .map(|(sidecar, _)| sidecar)
-            })
+fn check_on(slot: &mut Option<GameSession>, files_json: &str) -> String {
+    let world = with_game(slot, |gs| {
+        gs.as_mut().and_then(|session| {
+            let (root, kt) = crate::engine_host::world_root(&session.state.database)?;
+            session
+                .state
+                .database
+                .world_image(&root, kt)
+                .map(|(sidecar, _)| sidecar)
         })
     });
     let files = match parse_files_json(files_json) {
@@ -610,23 +689,14 @@ pub fn swap_check(files_json: &str) -> String {
         let desugared = crate::script::script_desugar(content);
         all_files.push((name.clone(), desugared.unwrap_or_else(|| content.clone())));
     }
-    virt_fs_populate(&all_files);
     let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         use crate::diagnostics::Level;
         let mut p = crate::parser::Parser::new();
+        p.lexer.add_page_files(&all_files);
         for (name, _) in DEFAULT_FILES {
             p.parse(name, true);
         }
-        let lib_set: std::collections::HashSet<&str> =
-            BUNDLED_LIB_FILES.iter().map(|(n, _)| *n).collect();
-        let main_name = VIRT_FS.with(|fs| {
-            fs.borrow()
-                .keys()
-                .filter(|k| !k.starts_with("default/") && !lib_set.contains(k.as_str()))
-                .min()
-                .cloned()
-        });
-        let Some(main_name) = main_name else {
+        let Some(main_name) = main_file(&all_files) else {
             return Err("no user file found".to_string());
         };
         p.parse(&main_name, false);
@@ -645,7 +715,6 @@ pub fn swap_check(files_json: &str) -> String {
             crate::database::WorldPlan::Converts(changes) => Ok(changes),
         }
     }));
-    virt_fs_clear();
     match verdict {
         Ok(Ok(changes)) => {
             let list: Vec<String> = changes.iter().map(|c| json_str(c)).collect();

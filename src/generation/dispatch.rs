@@ -2326,7 +2326,7 @@ impl Output<'_> {
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
-                "; if codegen_runtime::cr_fnref_adopt(_src) {{ {disp}var_{name} = _src; }} \
+                "; if codegen_runtime::cr_fnref_adopt(cell, _src) {{ {disp}var_{name} = _src; }} \
                  else {{ var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
                  OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }} }}"
             )?;

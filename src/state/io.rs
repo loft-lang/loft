@@ -32,16 +32,20 @@ impl State {
                     .get_str(store.get_u32_raw(file.rec, file.pos + 24))
                     .to_owned()
             };
+            // @P349: consult the page's files first — `compile_and_run` hands the run every
+            // file passed to the playground/gallery (the program's bundled data,
+            // `Stores::page_files`).  Without this, runtime `file("x").content()` only hit the
+            // JS `fs_read_text` host bridge, which the browser playground does not provide →
+            // empty string (the lexer already reads source/lib files from them, but the
+            // runtime read did not).  A real host with no entry for the path still falls
+            // through to its `host_fs_read_text` bridge, so live-FS hosts are unaffected.
+            let given = self
+                .database
+                .page_files
+                .as_ref()
+                .and_then(|f| f.get(&file_path).cloned());
             let buf = self.database.store_mut(&r).addr_mut::<String>(r.rec, r.pos);
-            // @P349: consult VIRT_FS first — `compile_and_run` populates it with
-            // every file passed to the playground/gallery (the program's bundled
-            // data).  Without this, runtime `file("x").content()` only hit the JS
-            // `fs_read_text` host bridge, which the browser playground does not
-            // provide → empty string (the lexer already reads source/lib files
-            // from VIRT_FS via `virt_fs_get`, but the runtime read did not).  A
-            // real host with no VIRT_FS entry for the path still falls through to
-            // its `host_fs_read_text` bridge, so live-FS hosts are unaffected.
-            if let Some(text) = crate::wasm::virt_fs_get(&file_path) {
+            if let Some(text) = given {
                 *buf = text;
             } else if let Some(text) = crate::wasm::host_fs_read_text(&file_path) {
                 *buf = text;
@@ -1486,16 +1490,16 @@ impl State {
                     let all = &self.database.allocations;
                     let n = if cur == 0 {
                         if reverse {
-                            btree::last_record(&data, all)
+                            btree::last_record(&self.database.bt_hints, &data, all)
                         } else {
-                            btree::first_record(&data, all)
+                            btree::first_record(&self.database.bt_hints, &data, all)
                         }
                     } else {
                         let keys = self.database.keys(arg);
                         if reverse {
-                            btree::previous_record(&data, all, keys, cur)
+                            btree::previous_record(&self.database.bt_hints, &data, all, keys, cur)
                         } else {
-                            btree::next_record(&data, all, keys, cur)
+                            btree::next_record(&self.database.bt_hints, &data, all, keys, cur)
                         }
                     };
                     self.put_var(state_var - 8, n);

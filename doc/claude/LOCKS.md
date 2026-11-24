@@ -66,10 +66,7 @@ handlers' install.
 
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
-| `C_BINDINGS` (`c_call.rs`) | library index → `#c` binding — **locked and cloned on every interpreted `#c` call** | set before the run; read by every thread | a program's table in a process global | a `State` table set before the run, read-only after (`C-Boundary`) | none |
-| `NATIVE_SIGS`, `SHARED_SIGS` (`extensions.rs`) | library index → bridge and signature | set at wiring; read through a thread-local copy | a program's table in a process global; the thread-local cache and a generation counter cover several programs per process | the table in `State`, read-only during the run — no lock, no thread-local, no generation | none |
-| `SHARED_LABELS` (`call_frames.rs`), `STUB_SYMBOLS` (`compile.rs`) | names a fault or a missing native reports | set at wiring; read on a fault | same | `State` tables | none |
-| `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | same; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
+| `DECLARED_LIBS`, `LIB_SYMBOLS` (`c_libs.rs`) | the program's C libraries and their symbols | set at `register`; read on a miss | a program's table in a process global; test threads replace each other's | `Data`/`State`, fixed before the run; the lazily tried flag as one atomic per entry | none |
 | `NATIVE_REGISTRY`, `BRIDGE_REGISTRY`, `CX_BRIDGES`, `LOADED_LIBS`, `REFUSED_LIBS`, `LOAD_LOCK` (`c_libs.rs`) | what `dlopen` loaded and registered | loaders, wiring | a library is opened once per process | an append-only table published once per entry; `LOAD_LOCK` stays — an open must not run twice | — |
 | `DEP_HEADERS` (`c_shim.rs`) | dependency headers per package for shim builds | one compile thread per program | a program's data in a process global | a `Data` field | none |
 | `PLACEMENT` (`lib_placement/dispatch.rs`) | placed-library workers; **held across the whole call** | main, workers, arms | the wire has one request slot per placed worker | a slot or a worker per caller context (`C-Boundary`) | a placed library's own global state becomes one per caller context; its calls run side by side |
@@ -78,7 +75,7 @@ handlers' install.
 
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
-| `PassCell` (`data.rs`: range, non-null, copy-manifest, catch-up, trace, depth), `DefsMemo` (`use_analysis.rs`), `LazyDriverCache`, `OpSetCache`, `NameOnlyCache` (`data.rs`) | memos and scratch about one program | the compiling thread; `Data` is shared read-only with the interpreter's `par` workers | only so `Data` stays shareable — never contended | a compile-session object the passes take by `&mut`, holding these memos (`C-Own`) | none |
+| `PassCell` (`data.rs`: catch-up, trace, depth), `PassAny` (`data.rs`: range, non-null, copy-manifest — typed by their passes at each use), `ScopedCell` (`data.rs`: the definitions, ownership-span, parameter-write and written-parameter memos), `LazyDriverCache`, `OpSetCache`, `NameOnlyCache` (`data.rs`) | memos and scratch about one program | the compiling thread; `Data` is shared read-only with the interpreter's `par` workers | only so `Data` stays shareable — never contended | a compile-session object the passes take by `&mut`, holding these memos (`C-Own`) | none |
 | `FOUND` (`spent.rs`), `WHERE` and the counts (`rewrite_census.rs`), `SEEN` (`timeout.rs` give-up reports) | per-program compile state | the compiling thread; test threads race on them | process globals for a program's state | the compile session; census totals merged into a process total at exit | none; stops cross-talk between test threads |
 | `NAMES` (`lexer.rs` `intern_file`), `POOL` (`diagnostics.rs`), `SEEN` (`ir_read.rs`) | interned file names, codes and block names as `&'static str` | every compile and the runtime | `'static` names need a process table | a per-`Data` interner (names live as long as the program) — a large change | none |
 | `CACHE` (`registry_index.rs`), `INDEX_MEMO` (`install.rs`), `CACHE` (`native_utils.rs`) | parsed registry index; file hashes | compile and build threads, test threads | genuinely shared caches (a parse or a 14 MB hash once per process) | per compile session, paid once per program | none |
@@ -90,7 +87,6 @@ All are off unless a `LOFT_*` switch arms them.
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
 | `SINK` (`fault_log.rs`), `SINK` (`native.rs` assert trace), `FILE` (`store/dump.rs`), `FILE` (`store_census.rs` alloc trace), `SINKS` (`bind_lowering.rs`), `FILE` (`state/codegen.rs`), `SINK` (`lexer.rs` tokens) | a trace or log file | any thread that writes a line | whole lines | one `write` per line to an `O_APPEND` file; or per context, flushed at the join | none with `O_APPEND`; with buffers, worker lines arrive later |
-| `PROGRAM_LINES` (`store_census.rs`) | the line table workers read | main writes, workers read at start | hands data to workers | the worker's context, filled before it starts | none |
 | `VERIFY` (`stack_verify.rs`), `TEXT_TL` (`state/text.rs`), `CALLS`, `SEEN` (`state/hosted_verify.rs`), `SITES` (`net_profile.rs`) | process-wide tallies and ledgers | main, workers | one verdict for all threads | per context, adopted at the join and printed by the main thread | findings grouped after the join |
 | `Timing` (`platform.rs`) | build timing events | build threads | a shared summary | per build context | none |
 
@@ -106,9 +102,9 @@ All are off unless a `LOFT_*` switch arms them.
 
 ## Open work
 
-The locks marked **not needed**, and the hot ones, go first: `C_BINDINGS` (every `#c` call),
-`store_budget` (every allocation under a ceiling), the wiring tables (`NATIVE_SIGS` with its
-thread-local cache).  Then the
-compile session that takes the `Data` memos (`PassCell`, `DefsMemo`) and the per-program
+The locks marked **not needed**, and the hot ones, go first: `store_budget` (every allocation
+under a ceiling), then `DECLARED_LIBS` and `LIB_SYMBOLS` (a program's tables that test threads
+replace).  Then the
+compile session that takes the `Data` memos (`PassCell`, `PassAny`, `ScopedCell`) and the per-program
 globals of the compiler.  The logger and the tallies follow the per-thread-then-merged form once
 the order of their lines is agreed.  @PLN226 P4b carries them.

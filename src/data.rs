@@ -5814,6 +5814,68 @@ impl<T: Default> PassCell<T> {
     }
 }
 
+/// `@PLN226` — a pass's memo that holds only inside a SPAN: [`Self::open`] sets it and answers a
+/// guard that puts the previous value back when dropped, so a nested span leaves the outer one
+/// intact.  The guard keeps a handle, not the `Data`, so the code inside the span may still
+/// borrow the `Data` mutably; each span's own doc says why no body it reads changes inside it.
+/// Held without naming the pass's type, as [`PassAny`] is: the core layer names no higher one
+/// (`tests/extraction_hygiene.rs`).  A clone of the `Data` starts it empty, as [`PassCell`] does.
+#[derive(Default)]
+pub struct ScopedCell(std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>);
+
+impl Clone for ScopedCell {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl ScopedCell {
+    /// Run `f` on the open span's value, `None` outside any span.
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: 'static, R>(&self, f: impl FnOnce(Option<&mut T>) -> R) -> R {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(slot.as_mut().map(|v| {
+            v.downcast_mut::<T>()
+                .expect("a span memo is read as the one type its pass names")
+        }))
+    }
+
+    /// Open a span holding `value` until the answered guard drops.
+    pub fn open<T: Send + 'static>(&self, value: T) -> ScopedSpan {
+        let prev = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(Box::new(value));
+        ScopedSpan {
+            cell: self.0.clone(),
+            prev,
+        }
+    }
+}
+
+/// The open span of a [`ScopedCell`]; dropping it restores the value the span replaced.
+#[must_use]
+pub struct ScopedSpan {
+    cell: std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>,
+    prev: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl Drop for ScopedSpan {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        *self
+            .cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
+    }
+}
+
 /// A per-program memo of a pass above the core layer, held by `Data` without naming the pass's
 /// type: the core layer names no higher one (`tests/extraction_hygiene.rs`).  The pass names
 /// its type at each use, and the first use makes it `T::default()`; a clone of the `Data`
@@ -6134,7 +6196,14 @@ pub struct Data {
     pub(crate) nn_memo: PassAny,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
-    pub(crate) defs_memo: PassAny,
+    pub(crate) defs_memo: ScopedCell,
+    /// `@PLN226` — every callee's return class and definitions walk inside a span in which no
+    /// body changes (`use_analysis::ownership_memo_scope`).
+    pub(crate) span_memo: ScopedCell,
+    /// `@PLN226` — the parameter-write summary (`parser::param_writes_summary`).
+    pub(crate) param_writes: ScopedCell,
+    /// `@PLN226` — the written-parameter summary (`use_analysis::written_params_summary`).
+    pub(crate) written_params: ScopedCell,
     /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
     catching_up: PassCell<HashSet<u32>>,
     /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
@@ -6860,7 +6929,10 @@ impl Data {
             name_only: NameOnlyCache::default(),
             range_memo: PassAny::default(),
             nn_memo: PassAny::default(),
-            defs_memo: PassAny::default(),
+            defs_memo: ScopedCell::default(),
+            span_memo: ScopedCell::default(),
+            param_writes: ScopedCell::default(),
+            written_params: ScopedCell::default(),
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),

@@ -325,8 +325,8 @@ layered:
   ANY op: the watchdog sets the dispatch loop's stop flag at `T`, which the loop tests after
   every op anyway (`@FR-R-DispatchStop`), so a loop that calls nothing stops cleanly too and
   names the frame that runs.  Raises a typed `Timeout`,
-  dumps the call stack (interpreter: `crash_tail` + `StackFrame`; native: the `CALL_STACK`
-  thread-local), and exits cleanly with `124`.
+  dumps the call stack (interpreter: `crash_tail` + `StackFrame`; native: the program's shadow
+  call stack), and exits cleanly with `124`.
 - **Watchdog hard-kill** fires at `T + grace` (grace 2 s, `LOFT_TIMEOUT_GRACE`) — a background
   thread calls `std::process::abort()`, so the run ends even when stuck in Rust, native code or
   a blocking syscall (on the interpreter, only those: a loft loop stops at `T`).  It prints a breadcrumb so the kill is still informative:

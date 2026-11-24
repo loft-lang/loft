@@ -514,7 +514,7 @@ fn same_record(a: &DbRef, b: &DbRef) -> bool {
 /// cross, write the answer back.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
-    let lib_idx = crate::interp::extensions::current_lib_idx();
+    let lib_idx = stores.lib_idx;
     let mut guard = PLACEMENT
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

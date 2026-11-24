@@ -560,6 +560,66 @@ pub struct Stores {
     pub hosted_cx: crate::host_abi::HostedContexts,
     /// `@PLN226` — the store-lifetime detectors' records of this run (`keys::StoreChecks`).
     pub(crate) checks: crate::keys::StoreChecks,
+    /// `@PLN226` — the library index of the native call in flight, set by
+    /// `State::invoke_native`: the only way a `fn(&mut Stores, &mut DbRef)` handler learns
+    /// WHICH binding it serves (the `#c` and native auto-dispatchers, a missing native's stub).
+    pub lib_idx: u16,
+    /// `@PLN226` (loft#715) — `lib_idx + 1` while a shared-library bridge call is on this
+    /// `Stores`' stack, 0 otherwise: a fault raised inside one names the bridge
+    /// ([`crate::call_frames::shared_bridge_label`]).
+    pub in_bridge: u16,
+    /// `@PLN226` (@PLN199 C2) — the interpreter running the bridge call on this `Stores`, for
+    /// a compiled library's call back into it (`HostTable::call_ref`); null outside one.  Set
+    /// and restored around the call by `State::invoke_native`, so a nested bridge call leaves
+    /// the outer one reachable.
+    /// Untyped, as the core layer names no interpreter type: the readers cast it back.
+    pub host_state: *mut std::ffi::c_void,
+    /// `@PLN226` (loft#2227) — the records ONE bridge call claims in its pinned argument
+    /// store: armed by `extensions::claim_log_begin`, noted by the claim and resize callbacks.
+    pub(crate) claim_log: Option<(u16, Vec<u32>)>,
+    /// `@PLN226` — the natives this program wired, by library index (`extensions::wire_*`):
+    /// shared by `Arc` with the `par` workers, which read it and never write it.  Held without
+    /// naming its type (the core layer names no higher one): `extensions::wired` reads it.
+    pub(crate) wired: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    /// loft#715 — the bridge symbol each shared-library slot dispatches to, so a fault raised
+    /// while the bridge is on the stack can NAME it (`call_frames::shared_bridge_label`).
+    pub(crate) bridge_labels: std::sync::Arc<Vec<Option<String>>>,
+    /// `@PLN226` — this context's index-walk hints (`btree::WalkHints`).
+    pub(crate) bt_hints: crate::btree::WalkHints,
+    /// `@PLN226` — a generated program's shadow call stack and lazy-driver window
+    /// (`call_frames::NativeFrames`); empty for an interpreted one.
+    pub frames: crate::call_frames::NativeFrames,
+    /// `@PLN226` — a generated program's generator frames and fn-ref return buffers
+    /// (`codegen_runtime::NativeRun`), the twins of the interpreter's `State` tables.
+    pub(crate) native: crate::codegen_runtime::NativeRun,
+    /// `@PLN226` — the crash context of the interpreter that runs on these stores
+    /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
+    pub crash: crate::crash_report::CrashCx,
+    /// `@PLN226` — a debug session's capture of the program's output (`--rpc`, `serve`): while
+    /// `Some`, the `print` builtin appends here instead of writing stdout
+    /// ([`Stores::print_or_host`]).  The session sets it on every state it builds
+    /// (`ReplSession::new_state`); a copy of the stores, a `par` worker's included, prints.
+    pub output: Option<String>,
+    /// `@PLN226` — the program's engine host (`engine_host::EngineCx`): its kernel, client,
+    /// build swap and sync classes.
+    pub(crate) engine: crate::engine_host::EngineCx,
+    /// `@PLN226` — the program's web buffers (`web_bytes::WebCx`).
+    pub(crate) web: crate::web_bytes::WebCx,
+    /// The files a page handed the module (`wasm_entry`), for the program's own reads while
+    /// the page's run lasts; `None` outside one.
+    #[cfg(host_fs)]
+    pub(crate) page_files: Option<std::sync::Arc<std::collections::HashMap<String, String>>>,
+    /// The `par` worker tracer's lines (`LOFT_TRACE_PAR_WORKERS`), read with the program's
+    /// output by the page that runs it (`par_pool::WorkerTrace::report`).
+    #[cfg(feature = "wasm")]
+    pub(crate) par_trace: std::cell::RefCell<String>,
+    /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
+    /// shared with every store it makes live (`Store::tap`).
+    #[cfg(feature = "op-census")]
+    pub tap: std::sync::Arc<crate::store_census::Tap>,
+    /// `@PLN226` (`@FR-F-Read-Ref`) — what the top-level text read in progress knows about
+    /// places and references; `None` outside one.
+    read_refs: Option<structures::ReadRefs>,
     /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
     pub(crate) run: RunDiagnostics,
     /// `@PLN226` — the render in progress (`format::RenderState`).
@@ -708,7 +768,7 @@ pub struct Stores {
     /// `resolve_path`, the single home every file-op site routes through.
     pub program_relative: bool,
     /// FY.1: When true, the interpreter loop yields back to the caller.
-    /// Set by `gl_swap_buffers` in WASM mode; cleared by `resume_frame`.
+    /// Set by `gl_swap_buffers` in WASM mode; cleared by `Game::resume_frame`.
     pub frame_yield: bool,
     /// `@FR-R-DispatchStop` — the interpreter's lean dispatch loop tests THIS after every op
     /// instead of each rare event that ends it: a runtime error ([`Stores::raise_runtime_error`]),
@@ -862,6 +922,26 @@ impl Clone for Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::codegen_runtime::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1289,6 +1369,34 @@ impl Stores {
     /// Install an externally-allocated `Store` into this `Stores`'
     /// allocations table.  Returns the parent-side `store_nr`.
     ///
+    /// The `print` builtin: into the debug session's capture when it captures
+    /// ([`Self::output`]), else the host's stdout.  The stdlib's `print` template calls this, so
+    /// neither the interpreter nor a generated program names the debug server that captures.
+    pub fn print_or_host(&mut self, text: &str) {
+        match self.output.as_mut() {
+            Some(out) => out.push_str(text),
+            None => crate::codegen_runtime::host_print(text),
+        }
+    }
+
+    /// `LOFT_VERIFY_STACK`: did a record of a live store move since the last drain?  Asked
+    /// after every op, so it is a scan of flags with no allocation.
+    #[must_use]
+    pub fn any_relocation(&self) -> bool {
+        self.allocations.iter().any(|s| !s.relocated.is_empty())
+    }
+
+    /// `LOFT_VERIFY_STACK`: take the records that moved since the last drain, from every store.
+    #[must_use]
+    pub fn take_relocations(&mut self) -> Vec<crate::stack_verify::Relocation> {
+        let mut moved = Vec::new();
+        for s in &mut self.allocations {
+            let nr = s.store_nr;
+            moved.extend(s.relocated.drain(..).map(|(old, new)| (nr, old, new)));
+        }
+        moved
+    }
+
     /// Used by the parent thread after `WorkerStores::take_slot`
     /// extracts a worker's output slot.  The `Store` keeps its bytes
     /// — no memcpy, no claim translation.  Phase 2's rebase walk
@@ -1308,6 +1416,11 @@ impl Stores {
         // first push) died on "Using a freed store" (the @P317
         // bitmap-vs-flag dual invariant, F3 in the sweep catalog).
         store.live = true;
+        // The adopter's instruments from here on (`@FR-C-Boundary`).
+        #[cfg(feature = "op-census")]
+        {
+            store.tap = Some(self.tap.clone());
+        }
         // Inline the free-slot scan rather than calling allocation.rs's
         // private `find_free_slot` — keeping mod.rs from depending on
         // that private helper avoids cross-file plumbing for one
@@ -1658,6 +1771,7 @@ pub const BASE_TYPES: u16 = 7;
 
 impl Stores {
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per field of the stores")]
     pub fn new() -> Stores {
         let mut result = Stores {
             types: Vec::new(),
@@ -1687,6 +1801,26 @@ impl Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: std::sync::Arc::new(()),
+            bridge_labels: std::sync::Arc::default(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::codegen_runtime::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
@@ -1929,9 +2063,9 @@ impl Stores {
     ) -> Option<u32> {
         let keys = self.keys(tp).to_vec();
         let n_after = if reverse {
-            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         } else {
-            crate::btree::next_record(data, &self.allocations, &keys, cur)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         };
         // Read before the removal: `cur` is about to stop being in the tree.
         let removed_the_last = cur == finish;
@@ -1945,9 +2079,9 @@ impl Stores {
             return None;
         }
         Some(if reverse {
-            crate::btree::next_record(data, &self.allocations, &keys, n_after)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         } else {
-            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         })
     }
 
@@ -1980,7 +2114,7 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            let position = crate::call_frames::running_frame_position().map(|mut p| {
+            let position = self.frames.running_position().map(|mut p| {
                 if line != 0 {
                     p.line = line;
                 }

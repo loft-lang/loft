@@ -96,7 +96,7 @@ where
             })
             .collect()
     });
-    trace.report("parallel_workers", n_rows, threads);
+    trace.report(stores, "parallel_workers", n_rows, threads);
     out
 }
 
@@ -156,9 +156,10 @@ impl WorkerTrace {
     }
 
     /// Emit the distinct-worker count for `site` after the join.  Native →
-    /// stderr; wasm → the program output (wasm stderr is dropped), where the
-    /// browser harness reads it back from `compile_and_run`'s JSON.
-    pub(crate) fn report(self, site: &str, n_rows: usize, threads: usize) {
+    /// stderr; wasm → the program's output (wasm stderr is dropped), through the calling
+    /// program's `stores` (`Stores::par_trace`), where the browser harness reads it back.
+    #[cfg_attr(not(feature = "wasm"), allow(unused_variables))]
+    pub(crate) fn report(self, stores: &Stores, site: &str, n_rows: usize, threads: usize) {
         if let Some(seen) = self.0 {
             let indices = seen.into_inner().unwrap();
             let summary = format!(
@@ -172,7 +173,10 @@ impl WorkerTrace {
             )))]
             eprintln!("{summary}");
             #[cfg(feature = "wasm")]
-            crate::wasm::output_push(&format!("{summary}\n"));
+            stores
+                .par_trace
+                .borrow_mut()
+                .push_str(&format!("{summary}\n"));
             // @PLN117 — the raw browser build (`loft --html`) has no stderr, so
             // the tracer would report into nothing.  Send it down the page's own
             // print path instead, which is what makes an in-browser `par` gate

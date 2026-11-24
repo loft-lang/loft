@@ -24,7 +24,7 @@
 //! Failure posture: every bootstrap problem WARNS and falls back to fully
 //! compiled execution — live mode is an instrument, never a halt.
 
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -63,14 +63,24 @@ struct Live {
     names: &'static [&'static str],
 }
 
-thread_local! {
-    static LIVE: RefCell<Option<Live>> = const { RefCell::new(None) };
+/// The parked interpreter of the program running over `stores`, when it has one
+/// (`EngineCtl::live`, `@FR-C-Own`): the program world that `bootstrap_core` handed out
+/// carries it, and a `par` worker's stores do not.
+fn parked(stores: &mut Stores) -> Option<&mut Live> {
+    crate::engine_host::live(stores)
+        .as_mut()
+        .and_then(|b| b.downcast_mut::<Live>())
+}
+
+/// [`parked`] over the engine control a control command arrives with.
+fn parked_in(ctl: &mut crate::engine_host::EngineCtl) -> Option<&mut Live> {
+    ctl.live.as_mut().and_then(|b| b.downcast_mut::<Live>())
 }
 
 /// The entry check every generated user fn opens with.  Cold path cost when
 /// live mode is off: one relaxed atomic load.
 #[inline]
-pub fn live_flipped(idx: usize) -> bool {
+pub fn live_flipped(cell: &UnsafeCell<Stores>, idx: usize) -> bool {
     if !ENABLED.load(Ordering::Relaxed) {
         return false;
     }
@@ -80,8 +90,8 @@ pub fn live_flipped(idx: usize) -> bool {
     {
         return false;
     }
-    // Worker threads have no parked State — they run the compiled body.
-    LIVE.with(|l| l.borrow().is_some())
+    // A worker's stores have no parked State — it runs the compiled body.
+    parked(unsafe { &mut *cell.get() }).is_some()
 }
 
 /// True after a successful bootstrap — generated `main` uses this to skip
@@ -214,7 +224,10 @@ fn bootstrap_core(
         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
         const_refs: std::sync::Arc::new(state.const_refs.clone()),
     }));
-    crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
+    state
+        .database
+        .crash
+        .set_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
 
     // Resolve the generated fn table against the bootstrap world.
     let mut fns = Vec::with_capacity(fn_names.len());
@@ -234,7 +247,7 @@ fn bootstrap_core(
     if let Some((src, stdlib)) = reload
         && std::env::var("LOFT_LIVE_RELOAD").is_ok_and(|v| v != "0")
     {
-        crate::live_reload::install(src, stdlib, &p.lib_dirs, &p.data);
+        state.reload = crate::live_reload::install(src, stdlib, &p.lib_dirs, &p.data);
     }
     #[cfg(target_arch = "wasm32")]
     let _ = reload;
@@ -252,40 +265,34 @@ fn bootstrap_core(
 
     // The handover: the program runs over the BOOTSTRAP's world.  The parked
     // State keeps a placeholder; every dispatch swaps the world back in.
-    let stores = std::mem::take(&mut state.database);
+    let mut stores = std::mem::take(&mut state.database);
     crate::live_control::install_flip(set_flip);
     #[cfg(not(target_arch = "wasm32"))]
     crate::live_control::install_set_bp(debug_set_bp);
-    LIVE.with(|l| {
-        *l.borrow_mut() = Some(Live {
-            _parser: p,
-            state,
-            fns,
-            names: fn_names,
-        });
-    });
-    ENABLED.store(true, Ordering::Relaxed);
-
+    let live = Live {
+        _parser: p,
+        state,
+        fns,
+        names: fn_names,
+    };
     // Startup flips: LOFT_FLIP_FNS="tick,reply" (loft names, no n_ prefix).
     if let Ok(list) = std::env::var("LOFT_FLIP_FNS") {
         for name in list.split(',').filter(|s| !s.is_empty()) {
-            if !set_flip(name, true) {
+            if !set_flip_in(&live, name, true) {
                 eprintln!("loft-live: LOFT_FLIP_FNS names unknown fn `{name}` — ignored");
             }
         }
     }
+    *crate::engine_host::live(&mut stores) = Some(Box::new(live));
+    ENABLED.store(true, Ordering::Relaxed);
     stores
 }
 
 /// Flip one fn (loft name, without the `n_` prefix) to the interpreter (`on`)
 /// or back to compiled (`!on`).  Returns false when the name is unknown or
 /// unresolved — a refused flip, never a halt.
-pub fn set_flip(name: &str, on: bool) -> bool {
-    LIVE.with(|l| {
-        l.borrow()
-            .as_ref()
-            .is_some_and(|live| set_flip_in(live, name, on))
-    })
+fn set_flip(ctl: &mut crate::engine_host::EngineCtl, name: &str, on: bool) -> bool {
+    parked_in(ctl).is_some_and(|live| set_flip_in(live, name, on))
 }
 
 /// The flip body against an already-borrowed [`Live`] — shared by the public
@@ -326,20 +333,14 @@ pub fn dispatch_count() -> u64 {
 /// [`bootstrap_from_bytes`].  Each flipped call then routes through [`dispatch`]
 /// (counted by [`dispatch_count`]).  Reports the flip count to the browser host so
 /// a headless run can observe the tier switched on.
-pub fn flip_all_dispatch_debug() {
+pub fn flip_all_dispatch_debug(cell: &UnsafeCell<Stores>) {
     DEBUG.store(true, Ordering::Relaxed);
-    let names: Vec<String> = LIVE.with(|l| {
-        l.borrow().as_ref().map_or_else(Vec::new, |live| {
-            live.names
-                .iter()
-                .filter_map(|n| n.strip_prefix("n_").map(String::from))
-                .collect()
-        })
-    });
     let mut flipped = 0usize;
-    for name in &names {
-        if set_flip(name, true) {
-            flipped += 1;
+    if let Some(live) = parked(unsafe { &mut *cell.get() }) {
+        for name in live.names.iter().filter_map(|n| n.strip_prefix("n_")) {
+            if set_flip_in(live, name, true) {
+                flipped += 1;
+            }
         }
     }
     wasm_host_log(&format!(
@@ -424,11 +425,16 @@ fn dispatch<R>(
     idx: usize,
     run: impl FnOnce(&mut State, &crate::data::Data, u32, u32) -> R,
 ) -> R {
-    LIVE.with(|l| {
-        let mut borrow = l.borrow_mut();
-        let live = borrow
-            .as_mut()
-            .expect("live_flipped() gates dispatch on a parked State");
+    // The parked State leaves the program world for the dispatch, so a control command
+    // that arrives during it (a breakpoint's pause) finds none and is queued.
+    let in_cell = unsafe { &mut *cell.get() };
+    let mut parked_box = crate::engine_host::live(in_cell)
+        .take()
+        .expect("live_flipped() gates dispatch on a parked State");
+    let r = {
+        let live = parked_box
+            .downcast_mut::<Live>()
+            .expect("the parked interpreter is a Live");
         let d_nr = live.fns[idx];
         let n = DISPATCHED.fetch_add(1, Ordering::Relaxed) + 1;
         if DEBUG.load(Ordering::Relaxed) {
@@ -437,14 +443,13 @@ fn dispatch<R>(
         // The swap: generated callers up the stack hold `&mut Stores` derived
         // from this same UnsafeCell — the cell's ADDRESS stays put, only the
         // value moves, and no native frame touches it until we return.
-        let in_cell = unsafe { &mut *cell.get() };
         std::mem::swap(&mut live.state.database, in_cell);
         // @PLN18 08-S3 — the reload poll runs with the world swapped IN
         // (an edit's new const texts append to the REAL CONST_STORE) and
         // BEFORE the position resolution, so the dispatch that follows an
         // edit already runs the new body.  Internally throttled (200 ms).
         #[cfg(not(target_arch = "wasm32"))]
-        if crate::live_reload::active() && crate::live_reload::poll(&mut live.state) {
+        if crate::live_reload::active(&live.state) && crate::live_reload::poll(&mut live.state) {
             // @PLN18 08-S7 — offsets moved; breakpoint identity must not.
             debug_reapply_bps(&mut live.state, &live._parser.data);
         }
@@ -454,7 +459,9 @@ fn dispatch<R>(
         let r = run(state, data, d_nr, pos);
         std::mem::swap(&mut live.state.database, in_cell);
         r
-    })
+    };
+    *crate::engine_host::live(in_cell) = Some(parked_box);
+    r
 }
 
 /// Dispatch a `Void` fn.  `push` lands the args via [`State::put_stack`] in
@@ -513,54 +520,42 @@ pub fn live_call_ref(
 // The kernel (engine_host) owns the TRANSPORT (`D!:` frames, loopback +
 // LOFT_DEBUG_CONTROL-gated); THIS module owns the semantics.  Commands that
 // need the parked State arrive through a MAILBOX: when a dispatch is paused
-// at a breakpoint, `LIVE` is mutably borrowed, so the control handler (which
-// runs inside the pause loop's mini-pump) must never borrow it again — it
-// posts, and the pause loop (which legally holds `&mut State`) applies.
-
-#[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    /// Breakpoint NAMES — the identity that survives reloads and re-resolution.
-    static DEBUG_BPS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// The control client that hears `D:hit` notifications.
-    static DEBUG_SUB: std::cell::Cell<i64> = const { std::cell::Cell::new(-1) };
-}
+// at a breakpoint, the dispatch holds the parked State (out of the program's
+// `EngineCtl::live`), so the control handler (which runs inside the pause
+// loop's mini-pump) finds none — it posts, and the pause loop (which legally
+// holds `&mut State`) applies.
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::live_control::debug_mailbox_drain;
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::live_control::{DebugCmd, debug_mailbox_push};
+pub use crate::live_control::{DebugCmd, DebugCx, debug_mailbox_push};
 
 /// Set a breakpoint at the entry of `name` (and flip it to the interpreter —
 /// a compiled body cannot pause).  Direct when the parked State is free;
 /// posted to the mailbox when a pause holds it (the pause loop applies and
 /// acks).  Returns false only when the fn is unknown at direct application.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn debug_set_bp(name: &str, cid: i64) -> bool {
-    DEBUG_SUB.with(|s| s.set(cid));
-    let direct = LIVE.with(|l| match l.try_borrow_mut() {
-        Ok(mut guard) => guard.as_mut().map(|live| debug_apply_bp(live, name)),
-        Err(_) => None, // paused: the pause loop applies it
-    });
-    if let Some(ok) = direct {
-        ok
+fn debug_set_bp(ctl: &mut crate::engine_host::EngineCtl, name: &str, cid: i64) -> bool {
+    ctl.debug.sub = cid;
+    let crate::engine_host::EngineCtl { live, debug, .. } = ctl;
+    if let Some(live) = live.as_mut().and_then(|b| b.downcast_mut::<Live>()) {
+        debug_apply_bp(live, debug, name)
     } else {
-        debug_mailbox_push(DebugCmd::SetBp(name.to_string(), cid));
+        // Paused: the dispatch holds the parked State, and the pause loop applies it.
+        debug_mailbox_push(debug, DebugCmd::SetBp(name.to_string(), cid));
         true
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn debug_apply_bp(live: &mut Live, name: &str) -> bool {
+fn debug_apply_bp(live: &mut Live, d: &mut DebugCx, name: &str) -> bool {
     let d_nr = live._parser.data.def_nr(&format!("n_{name}"));
     if d_nr == u32::MAX || live.state.set_breakpoint_fn_current(d_nr).is_none() {
         return false;
     }
-    DEBUG_BPS.with(|b| {
-        let mut b = b.borrow_mut();
-        if !b.iter().any(|n| n == name) {
-            b.push(name.to_string());
-        }
-    });
+    if !d.bps.iter().any(|n| n == name) {
+        d.bps.push(name.to_string());
+    }
     set_flip_in(live, name, true);
     eprintln!("loft-debug: breakpoint at {name} (flipped to interp)");
     true
@@ -571,7 +566,7 @@ fn debug_apply_bp(live: &mut Live, name: &str) -> bool {
 /// identity must not.  A fresh `Debugger` drops the stale offsets.
 #[cfg(not(target_arch = "wasm32"))]
 fn debug_reapply_bps(st: &mut State, data: &crate::data::Data) {
-    let names = DEBUG_BPS.with(|b| b.borrow().clone());
+    let names = crate::engine_host::debug(&mut st.database).bps.clone();
     if names.is_empty() {
         return;
     }
@@ -597,19 +592,10 @@ fn debug_reapply_bps(st: &mut State, data: &crate::data::Data) {
 /// Armed by [`arm_interp_control`]: the running interpreter answers the channel.
 #[cfg(not(target_arch = "wasm32"))]
 static INTERP_CONTROL: AtomicBool = AtomicBool::new(false);
-/// A breakpoint the channel queued that the dispatch loop has not applied yet.
-#[cfg(not(target_arch = "wasm32"))]
-static INTERP_BP_PENDING: AtomicBool = AtomicBool::new(false);
 /// The program's function names (loft names, without `n_`): what a flip or a breakpoint
 /// may name.
 #[cfg(not(target_arch = "wasm32"))]
 static INTERP_FNS: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
-
-#[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    /// Breakpoints the channel asked for, already acknowledged, waiting for the loop.
-    static INTERP_QUEUED_BPS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
 
 /// Under `LOFT_DEBUG_CONTROL=1`, let the interpreter running `data`'s program answer the
 /// `D!:` channel's flips and breakpoints.  Called once, before `main` runs.
@@ -644,46 +630,42 @@ fn interp_known(name: &str) -> bool {
 
 /// A flip on the interpreter: the function runs interpreted already, either way.
 #[cfg(not(target_arch = "wasm32"))]
-fn interp_flip(name: &str, _on: bool) -> bool {
+fn interp_flip(_ctl: &mut crate::engine_host::EngineCtl, name: &str, _on: bool) -> bool {
     interp_known(name)
 }
 
 /// Queue a breakpoint for the dispatch loop; `cid` hears its hits.
 #[cfg(not(target_arch = "wasm32"))]
-fn interp_set_bp(name: &str, cid: i64) -> bool {
+fn interp_set_bp(ctl: &mut crate::engine_host::EngineCtl, name: &str, cid: i64) -> bool {
     if !interp_known(name) {
         return false;
     }
-    DEBUG_SUB.with(|s| s.set(cid));
-    INTERP_QUEUED_BPS.with(|q| q.borrow_mut().push(name.to_string()));
-    INTERP_BP_PENDING.store(true, Ordering::Relaxed);
+    ctl.debug.sub = cid;
+    ctl.debug.queued.push(name.to_string());
     true
 }
 
-/// A breakpoint waits for the dispatch loop (one relaxed load).
+/// A breakpoint the channel queued waits for the dispatch loop of `stores`' program.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
-pub fn interp_bp_pending() -> bool {
-    INTERP_BP_PENDING.load(Ordering::Relaxed)
+pub fn interp_bp_pending(stores: &mut crate::database::Stores) -> bool {
+    !crate::engine_host::debug(stores).queued.is_empty()
 }
 
 /// Apply the queued breakpoints to the running State, at an op boundary.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn interp_take_bps(st: &mut State, data: &crate::data::Data) {
-    INTERP_BP_PENDING.store(false, Ordering::Relaxed);
-    let queued = INTERP_QUEUED_BPS.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    let queued = std::mem::take(&mut crate::engine_host::debug(&mut st.database).queued);
     for name in queued {
         let d_nr = data.def_nr(&format!("n_{name}"));
         if d_nr == u32::MAX || st.set_breakpoint_fn_current(d_nr).is_none() {
             eprintln!("loft-debug: breakpoint on {name} could not resolve");
             continue;
         }
-        DEBUG_BPS.with(|b| {
-            let mut b = b.borrow_mut();
-            if !b.contains(&name) {
-                b.push(name.clone());
-            }
-        });
+        let bps = &mut crate::engine_host::debug(&mut st.database).bps;
+        if !bps.contains(&name) {
+            bps.push(name.clone());
+        }
         eprintln!("loft-debug: breakpoint at {name}");
     }
 }
@@ -713,7 +695,7 @@ fn debug_pause_loop(_st: &mut State, _data: &crate::data::Data, _hit: &crate::de
 /// needing the State are applied here, where `&mut State` is legal.
 #[cfg(not(target_arch = "wasm32"))]
 fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debugger::BreakHit) {
-    let sub = DEBUG_SUB.with(std::cell::Cell::get);
+    let sub = crate::engine_host::debug(&mut st.database).sub;
     let bindings = hit
         .locals
         .iter()
@@ -721,16 +703,20 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
         .collect::<Vec<_>>()
         .join("|");
     eprintln!("loft-debug: paused in {}", hit.function);
-    crate::engine_host::debug_send(sub, &format!("D:hit {} {bindings}", hit.function));
+    crate::engine_host::debug_send(
+        &mut st.database.engine,
+        sub,
+        &format!("D:hit {} {bindings}", hit.function),
+    );
     loop {
-        crate::engine_host::debug_pump();
-        if interp_bp_pending() {
+        crate::engine_host::debug_pump(&mut st.database.engine);
+        if interp_bp_pending(&mut st.database) {
             interp_take_bps(st, data);
         }
-        for cmd in debug_mailbox_drain() {
+        for cmd in debug_mailbox_drain(crate::engine_host::debug(&mut st.database)) {
             match cmd {
                 DebugCmd::Resume(cid) => {
-                    crate::engine_host::debug_send(cid, "D:resumed");
+                    crate::engine_host::debug_send(&mut st.database.engine, cid, "D:resumed");
                     eprintln!("loft-debug: resumed");
                     return;
                 }
@@ -740,7 +726,11 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                         .iter()
                         .find(|(n, _)| *n == name)
                         .map_or("<unknown>", |(_, v)| v.as_str());
-                    crate::engine_host::debug_send(cid, &format!("D:eval {name}={val}"));
+                    crate::engine_host::debug_send(
+                        &mut st.database.engine,
+                        cid,
+                        &format!("D:eval {name}={val}"),
+                    );
                 }
                 DebugCmd::Reload(cid) => {
                     // The S3 poll-now: the world is swapped IN at a pause, so
@@ -753,6 +743,7 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                         debug_reapply_bps(st, data);
                     }
                     crate::engine_host::debug_send(
+                        &mut st.database.engine,
                         cid,
                         if grew {
                             "D:reload applied"
@@ -762,16 +753,19 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                     );
                 }
                 DebugCmd::SetBp(name, cid) => {
-                    // Applied with the State at hand (LIVE is borrowed, so
+                    // Applied with the State at hand (the dispatch holds it, so
                     // no set_flip — the fn is interpreted ALREADY if we are
                     // paused inside it; otherwise the flip lands on the next
                     // un-paused set).
                     let d_nr = data.def_nr(&format!("n_{name}"));
                     let ok = d_nr != u32::MAX && st.set_breakpoint_fn_current(d_nr).is_some();
                     if ok {
-                        DEBUG_BPS.with(|b| b.borrow_mut().push(name.clone()));
+                        crate::engine_host::debug(&mut st.database)
+                            .bps
+                            .push(name.clone());
                     }
                     crate::engine_host::debug_send(
+                        &mut st.database.engine,
                         cid,
                         &format!("D:{} bp {name}", if ok { "ok" } else { "err" }),
                     );
@@ -858,14 +852,20 @@ mod tests {
     }
 
     // @PLN98 P3.1 — the full embedded bootstrap (parse + byte-code + wire + park)
-    // succeeds and hands out a seeded world.  Parks the process-global LIVE
-    // interpreter, so it relies on nextest's per-test process isolation.
+    // succeeds and hands out a seeded world, which carries the parked interpreter.
+    // Sets the process-wide flip tables, so it relies on nextest's per-test process
+    // isolation.
     #[test]
     fn bootstrap_from_bytes_ok() {
         static FNS: &[&str] = &["n_main"];
         let stores = super::bootstrap_from_bytes(FNS, "fn main() {\n  print(\"hi\")\n}\n")
             .expect("bootstrap_from_bytes succeeds");
+        let mut stores = stores;
         assert!(!stores.types.is_empty(), "parked world carries a schema");
+        assert!(
+            super::parked(&mut stores).is_some(),
+            "the world carries its parked interpreter"
+        );
     }
 }
 
