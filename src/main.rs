@@ -3364,7 +3364,7 @@ echo "  external lib         -> loft publish + open a registry PR."
                  with:\n          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n            loft-src/target\n          \
                  key: loft-${{{{ hashFiles('loft-src/Cargo.lock') }}}}\n\n      \
                  - name: Build loft\n        working-directory: loft-src\n        \
-                 run: |\n          cargo build --release --lib --bin loft\n          \
+                 run: |\n          cargo build --release --bin loft\n          \
                  echo \"$PWD/target/release\" >> $GITHUB_PATH\n\n      \
                  - name: Interpreter — loft test\n        working-directory: ${{{{ matrix.package }}}}\n        \
                  env:\n          LOFT_DENY_WARNINGS: ${{{{ hashFiles(format('{{0}}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}}}\n        \
@@ -10938,39 +10938,20 @@ fn main() {
                  without one, build without --names and bisect by hand."
             );
         }
-        // @P350: self-validate the emitted wasm BEFORE writing the HTML so a
-        // bare `loft --html` never ships the silently-broken "rlib stomp"
-        // bundle.  `make wasm` (wasm-pack, feature=wasm) and `--html` write
-        // the SAME target/wasm32-unknown-unknown/release/libloft.rlib with
-        // incompatible feature sets; if --html links the wasm-bindgen variant
-        // the wasm imports `__wbindgen_placeholder__` (35+), which the
-        // embedded loft-gl-wasm.js glue (raw loft_gl/loft_io externs only)
-        // can't provide → the page fails to instantiate.  A correct --html
-        // bundle imports ONLY `loft_gl` + `loft_io`.  Same check as
-        // tools/check_html_bundle.mjs, but inline so it guards the bare
-        // command, not just `make game`.  (The asyncify/wasm-opt footgun is
-        // handled by the loud warning above — it's conditional on whether the
-        // program frame-yields, so it must not hard-abort compute-only bundles.)
-        // A module the C wrote imports the WASI its libc runs on, which the page supplies
-        // (`doc/loft-wasi.js`); any other module is the stomp this guards.
+        // Self-validate the emitted wasm BEFORE writing the HTML: a page instantiates only when
+        // every module its wasm imports is one the page supplies — `loft_gl`, `loft_io` and the
+        // WASI its C libc runs on (`doc/loft-wasi.js`).  Same check as
+        // tools/check_html_bundle.mjs, inline so it guards the bare command too.
         let checked = html_wasm_import_modules_ok(&wasm_bytes).or_else(|mut bad| {
-            if native_c {
-                bad.retain(|m| m != "wasi_snapshot_preview1");
-            }
+            bad.retain(|m| m != "wasi_snapshot_preview1");
             if bad.is_empty() { Ok(()) } else { Err(bad) }
         });
         if let Err(bad_mods) = checked {
             eprintln!(
-                "loft: --html produced a BROKEN bundle — the wasm imports \
-                 unexpected module(s) {bad_mods:?}.\n  \
-                 The wasm32-unknown-unknown libloft.rlib was built with the \
-                 `wasm` (wasm-bindgen) feature — most likely a prior `make \
-                 wasm` stomped it (see WASM.md § The rlib-stomp hazard).\n  \
-                 Rebuild the rlib in the --html shape, then re-run --html:\n    \
-                 cargo build --release --target wasm32-unknown-unknown --lib \
-                 --no-default-features --features random\n  \
-                 (No HTML was written — a stomped bundle does not instantiate \
-                 in the browser.)"
+                "loft: --html produced a page whose wasm imports module(s) {bad_mods:?}, which \
+                 the page does not supply, so it would not instantiate in a browser.  No HTML \
+                 was written.  This is a defect of the page build: please report it with the \
+                 program."
             );
             std::process::exit(1);
         }
