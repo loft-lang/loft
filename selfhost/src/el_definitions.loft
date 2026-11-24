@@ -1904,6 +1904,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.b.data.definitions[cd].returned = el::def(e, e.context).returned;
       e.b.data.definitions[cd].synthetic = "literal_const";
     }
+    // (The twin answers what the function answers once delivered: the second pass's result,
+    // its buffer named — the first names none for a literal tail.)
+    if !e.first_pass {
+      tw = el::def_nr(e, "__const_{el::def(e, e.context).name}");
+      if tw >= 0 && el::def(e, tw).synthetic == "literal_const" {
+        e.b.data.definitions[tw].returned = el::def(e, e.context).returned;
+      }
+    }
     if !e.first_pass && len(e.type_vars) > 0 {
       e.bodies2 += [e.context];
     }

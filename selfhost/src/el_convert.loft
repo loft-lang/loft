@@ -714,8 +714,9 @@ pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
     },
     _ => {}
   }
-  // (A keyed collection's null is the reference sentinel too.)
-  if t is TyReference || el_types::keyed_elem(t) >= 0 {
+  // (A keyed collection's null is the reference sentinel too, and so is a vector's: Rust's
+  // `null` arm beside a vector arm of a `vector<T>?` result answers `OpNullRefSentinel`.)
+  if t is TyReference || el_types::keyed_elem(t) >= 0 || t is TyVector {
     d = el::def_nr(e, "OpNullRefSentinel");
     return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
   }

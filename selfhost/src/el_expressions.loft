@@ -1020,10 +1020,10 @@ pub fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
       if block[0].name != "block" || len(block[0].operators) == 0 {
         return -1;
       }
-      for op in block[0].operators {
-        if el_ir::unspan(op) is NdReturn {
-          return -1;
-        }
+      // (An early `return` among the statements leaves on its own: the join is the tail's,
+      // copied arm by arm, `materialize_return_into`'s `leaving_branch`.)
+      if el_ir::unspan(el_ir::last(block[0].operators)) is NdReturn {
+        return -1;
       }
       bind_leaves(e, vars, el_ir::last(block[0].operators))
     },
@@ -2048,7 +2048,17 @@ pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb:
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  // (A join that can leave — a `return` in an arm — is copied arm by arm, its exit building
+  // into the buffer itself: `materialize_return_into`'s `leaving_branch`.)
+  if el_ex_copy::returns_in([tail]) > 0 {
+    arms = el_ex_copy::copy_arms(e, vars, tail, rb, td, owned);
+    if arms == null {
+      return null;
+    }
+    bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), arms!);
+  } else {
+    bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  }
   bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   rba = attr_nr(el::def(e, e.context), "__retbuf");
   if rba >= 0 {

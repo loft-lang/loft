@@ -332,9 +332,8 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     lit_syntax = (olit >= 0 && match e.p.nodes[olit] { SVecLit { items } => len(items) > 0, _ => false }) || trailing_literal_return(e, vars.body);
     if e.first_pass {
       oret = el::def(e, d).returned[0];
-      if lit_syntax && !el_types::deps(oret).contains(ba) {
-        e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
-      }
+      // (A literal tail names no buffer on the first pass: Rust's literal is built into it on
+      // the second alone.)
       // A DENSE vector local at the tail takes the buffer as a plain vector's does (`Rename`,
       // `ret_promo_base` peels the `?`); a nullable local is declined (`@FR-N-Shape`), and so
       // is one that keeps its store for the plain vector's reasons (`Bind`).
@@ -436,14 +435,19 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if field_tail && local < 0 {
       el_trace::retpromo(e, vars, place_root(e, tail), "Bind");
     }
-    if (literal || local >= 0 || field_tail || cview) && !el_types::deps(ret).contains(ba) {
+    // (A literal tail publishes no buffer on the first pass — Rust's pass-1 result of
+    // `fn f() -> vector<T> { [..] }` borrows nothing, so a caller's bind borrows nothing there.)
+    // (A `return` beside it that answers something — `if c { return items(…); } []` — names
+    // the buffer there, as Rust's exit delivering into it does.)
+    lops = match code { NdBlock { block: lb } => lb[0].operators, _ => [] };
+    // (Read off the syntax: the first pass's `if` is a placeholder holding no `return`.)
+    lexit = literal && (el_ex_copy::returns_in(lops) > el_ex_copy::null_returns_in(e, lops) || value_return_syntax(e, vars.body));
+    if (lexit || local >= 0 || field_tail || cview) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && el_ex_copy::returned_local(vars, tail) >= 0 {
       // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
-      // the second pass, once it exists.
-      if !el_types::deps(ret).contains(ba) {
-        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
-      }
+      // the second pass, once it exists; the first publishes no buffer for it (Rust's
+      // `fn f() -> vector<T> { …; return v; }` answers `vector<T>` there).
     } else if !literal && local < 0 {
       // A vector local built in fewer than two steps takes the buffer (`Rename`): it becomes the
       // hidden parameter, its binds then refill the caller's vector.
@@ -510,6 +514,12 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   tcd = match tail { NdCall { def_nr: tdn } => tdn, _ => -1 };
   if tcd >= 0 && el_expressions::forwards_foreign_store(e, tcd, 0) {
     return code;
+  }
+  // (A literal tail, or a trailing `return v`, names the buffer on the second pass alone: the
+  // first publishes nothing for it, as Rust's does not.)
+  if (literal || el_ex_copy::returned_local(vars, tail) >= 0) && ba >= 0 && !el_types::deps(ret).contains(ba) {
+    ret = el_types::with_deps(ret, el_types::deps(ret) + [ba]);
+    e.b.data.definitions[d].returned = [ret];
   }
   if len(bl.operators) == 0 || !el_types::deps(ret).contains(ba) {
     el::refuse(e, "a function returning a vector from this tail: {el_ex_copy::tail_kind(e, vars, code)}");
@@ -939,7 +949,8 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     } else {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, [ba])];
     }
-  } else if !el_types::deps(ret).contains(ba) {
+  } else if !e.first_pass && !el_types::deps(ret).contains(ba) {
+    // (Arms of literals and nulls alone name the buffer on the second pass only.)
     e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
   }
   if e.first_pass {
@@ -1729,6 +1740,29 @@ pub fn tail_syntax(e: el::El, body: integer) -> integer {
 }
 
 // Is a body's last statement `return <vector literal or comprehension>`?
+// Does the syntax under `i` hold a `return` that answers a value other than `null`?
+fn value_return_syntax(e: el::El, i: integer) -> boolean {
+  if i < 0 {
+    return false;
+  }
+  match e.p.nodes[i] {
+    SJump { kind, e: x } => {
+      if kind == "return" && x != null && !(e.p.nodes[x!] is SNull) {
+        return true;
+      }
+    },
+    // (A lambda's `return` is its own.)
+    SLambda { at: _ } => { return false; },
+    _ => {}
+  }
+  for c in el_length::children(e, i) {
+    if value_return_syntax(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn trailing_literal_return(e: el::El, body: integer) -> boolean {
   if body < 0 {
     return false;

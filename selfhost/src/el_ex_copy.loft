@@ -35,7 +35,11 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
   }
-  if el_expressions::branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
+  // (`leaving_branch`: a branch or a block — not a literal's `Object` — that holds a `return` is
+  // copied arm by arm too, the exit building into the buffer itself.)
+  ln = el_ir::unspan(n);
+  leaving = (ln is NdIf || match ln { NdBlock { block: lb } => lb[0].name != "Object", _ => false }) && returns_in([ln]) > 0;
+  if leaving || el_expressions::branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
     match n {
       NdSpan { pos, inner } => {
         ci = copy_arms(e, vars, inner, rb, td, owned);
