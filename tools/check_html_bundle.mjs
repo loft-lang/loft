@@ -6,17 +6,14 @@
 // Usage:  node tools/check_html_bundle.mjs <path/to/bundle.html>
 //
 // Exit 0 = the embedded WASM is shippable; non-zero with a diagnostic = it is
-// not.  This catches the two toolchain footguns that produced a broken
-// doc/brick-buster.html in the past (see @P337):
+// not.  This catches the two ways a doc/brick-buster.html shipped broken
+// (see @P337):
 //
-//   1. rlib STOMP — `make wasm` (wasm-pack, `feature=wasm`) and `loft --html`
-//      write the SAME target/wasm32-unknown-unknown/release/libloft.rlib with
-//      incompatible feature sets.  If `--html` links the wasm-bindgen variant,
-//      the bundle imports `__wbindgen_placeholder__` (35+ entries) which the
-//      embedded loft-gl-wasm.js glue does not provide → the page fails to
-//      instantiate ("Import ... __wbindgen_placeholder__: module is not an
-//      object").  A correct --html bundle imports ONLY `loft_gl` + `loft_io`, and the
-//      WASI host its page provides.
+//   1. AN IMPORT THE PAGE DOES NOT SUPPLY — the page provides `loft_gl`,
+//      `loft_io` and the WASI host the C backend's module needs; a module that
+//      imports anything else (the wasm-bindgen placeholders a build linked by
+//      mistake once did) fails to instantiate ("Import ... : module is not an
+//      object").
 //
 //   2. MISSING asyncify — if `wasm-opt` (binaryen) was not on PATH at build
 //      time, the `--asyncify` pass never ran, so there is no frame-yield.  The
@@ -62,11 +59,8 @@ const badMods = importMods.filter(
 if (badMods.length) {
   console.error(
     `FAIL: unexpected import module(s) ${JSON.stringify(badMods)}.\n` +
-      '       The wasm32-unknown-unknown libloft.rlib was built with the `wasm`\n' +
-      '       (wasm-bindgen) feature — most likely `make wasm` stomped it.\n' +
-      '       Rebuild the rlib in the --html shape, then re-run --html:\n' +
-      '         cargo build --release --target wasm32-unknown-unknown --lib \\\n' +
-      '             --no-default-features --features random',
+      '       The page supplies only `loft_gl`, `loft_io` and its WASI host, so this\n' +
+      '       bundle will not instantiate in the browser.  Rebuild it with `loft --html`.',
   );
   process.exit(1);
 }
