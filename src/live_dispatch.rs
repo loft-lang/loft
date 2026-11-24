@@ -29,7 +29,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::database::Stores;
-use crate::keys::DbRef;
 use crate::state::State;
 
 /// Set once at a successful bootstrap; the first word of every entry check.
@@ -54,12 +53,6 @@ struct Live {
     /// parked State's `data_ptr`/`parallel_ctx` raw pointers reference.
     _parser: Box<crate::parser::Parser>,
     state: Box<State>,
-    /// Per generated fn index: the def number in the bootstrap world.  The
-    /// CODE POSITION is deliberately not cached here — every dispatch
-    /// resolves it through `state.fn_positions[d_nr]`, the one dispatch
-    /// home tier-0 live reload patches (@PLN18 08-S3): an edit moves the
-    /// target there, and a cached position would silently pin the old body.
-    fns: Vec<u32>,
     names: &'static [&'static str],
 }
 
@@ -230,11 +223,9 @@ fn bootstrap_core(
         .set_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
 
     // Resolve the generated fn table against the bootstrap world.
-    let mut fns = Vec::with_capacity(fn_names.len());
     let mut resolved = Vec::with_capacity(fn_names.len());
     for name in fn_names {
         let d_nr = p.data.def_nr(name);
-        fns.push(d_nr);
         resolved.push(d_nr != u32::MAX);
     }
 
@@ -272,7 +263,6 @@ fn bootstrap_core(
     let live = Live {
         _parser: p,
         state,
-        fns,
         names: fn_names,
     };
     // Startup flips: LOFT_FLIP_FNS="tick,reply" (loft names, no n_ prefix).
@@ -415,104 +405,6 @@ pub fn wasm_debug_selftest() -> String {
     // Resume to completion.
     let done = !state.debug_step(StepMode::Continue, &p.data);
     format!("PAUSE n={n} STEP m={m} DONE={done}")
-}
-
-/// The dispatch chokepoint: swap the program world into the parked State,
-/// re-enter the interpreter, swap it back out.  Every `live_call_*` routes
-/// through here — the sentinel and the sharing model live in ONE place.
-fn dispatch<R>(
-    cell: &UnsafeCell<Stores>,
-    idx: usize,
-    run: impl FnOnce(&mut State, &crate::data::Data, u32, u32) -> R,
-) -> R {
-    // The parked State leaves the program world for the dispatch, so a control command
-    // that arrives during it (a breakpoint's pause) finds none and is queued.
-    let in_cell = unsafe { &mut *cell.get() };
-    let mut parked_box = crate::engine_host::live(in_cell)
-        .take()
-        .expect("live_flipped() gates dispatch on a parked State");
-    let r = {
-        let live = parked_box
-            .downcast_mut::<Live>()
-            .expect("the parked interpreter is a Live");
-        let d_nr = live.fns[idx];
-        let n = DISPATCHED.fetch_add(1, Ordering::Relaxed) + 1;
-        if DEBUG.load(Ordering::Relaxed) {
-            eprintln!("live-dispatch: {} #{n}", live.names[idx]);
-        }
-        // The swap: generated callers up the stack hold `&mut Stores` derived
-        // from this same UnsafeCell — the cell's ADDRESS stays put, only the
-        // value moves, and no native frame touches it until we return.
-        std::mem::swap(&mut live.state.database, in_cell);
-        // @PLN18 08-S3 — the reload poll runs with the world swapped IN
-        // (an edit's new const texts append to the REAL CONST_STORE) and
-        // BEFORE the position resolution, so the dispatch that follows an
-        // edit already runs the new body.  Internally throttled (200 ms).
-        #[cfg(not(target_arch = "wasm32"))]
-        if crate::live_reload::active(&live.state) && crate::live_reload::poll(&mut live.state) {
-            // @PLN18 08-S7 — offsets moved; breakpoint identity must not.
-            debug_reapply_bps(&mut live.state, &live._parser.data);
-        }
-        let pos = live.state.fn_positions[d_nr as usize];
-        let state = &mut live.state;
-        let data = &live._parser.data;
-        let r = run(state, data, d_nr, pos);
-        std::mem::swap(&mut live.state.database, in_cell);
-        r
-    };
-    *crate::engine_host::live(in_cell) = Some(parked_box);
-    r
-}
-
-/// Dispatch a `Void` fn.  `push` lands the args via [`State::put_stack`] in
-/// declared order — the 02 probe's contract (and the generated signature's).
-pub fn live_call_void(cell: &UnsafeCell<Stores>, idx: usize, push: impl FnOnce(&mut State)) {
-    dispatch(cell, idx, |st, data, d_nr, pos| {
-        if st.debug.is_some() {
-            st.reenter_dbg::<()>(d_nr, pos, data, push, debug_pause_loop);
-        } else {
-            st.reenter(d_nr, pos, push);
-        }
-    });
-}
-
-/// One dispatched typed call, debug-aware: with breakpoints registered the
-/// call runs under [`State::reenter_dbg`] (suspensions block in the pause
-/// loop — mechanics stay alive); without, the plain fast path.
-macro_rules! call_typed {
-    ($cell:expr, $idx:expr, $push:expr, $t:ty) => {
-        dispatch($cell, $idx, |st, data, d_nr, pos| {
-            if st.debug.is_some() {
-                st.reenter_dbg::<$t>(d_nr, pos, data, $push, debug_pause_loop)
-            } else {
-                st.reenter_ret::<$t>(d_nr, pos, $push)
-            }
-        })
-    };
-}
-
-/// Dispatch an `integer`-returning fn.
-pub fn live_call_i64(cell: &UnsafeCell<Stores>, idx: usize, push: impl FnOnce(&mut State)) -> i64 {
-    call_typed!(cell, idx, push, i64)
-}
-
-/// Dispatch a `float`-returning fn.
-pub fn live_call_f64(cell: &UnsafeCell<Stores>, idx: usize, push: impl FnOnce(&mut State)) -> f64 {
-    call_typed!(cell, idx, push, f64)
-}
-
-/// Dispatch a `boolean`-returning fn (storage byte: 0/1/255).
-pub fn live_call_u8(cell: &UnsafeCell<Stores>, idx: usize, push: impl FnOnce(&mut State)) -> u8 {
-    call_typed!(cell, idx, push, u8)
-}
-
-/// Dispatch a record/vector/hash-returning fn (a `DbRef` into the shared world).
-pub fn live_call_ref(
-    cell: &UnsafeCell<Stores>,
-    idx: usize,
-    push: impl FnOnce(&mut State),
-) -> DbRef {
-    call_typed!(cell, idx, push, DbRef)
 }
 
 // ── @PLN18 08-S7 — the debugger loop: control-channel semantics ────────────

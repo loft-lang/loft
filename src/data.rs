@@ -6568,28 +6568,6 @@ impl NarrowSlot {
             }
         }
     }
-
-    /// Native: the stored bytes for the wide value `expr`.
-    #[must_use]
-    pub fn encode_rust(self, expr: &str) -> String {
-        let (enc, _, takes_min) = self.fns();
-        if takes_min {
-            format!("loft::narrow::{enc}(({expr}) as i64, {}_i32)", self.min)
-        } else {
-            format!("loft::narrow::{enc}(({expr}) as i64)")
-        }
-    }
-
-    /// Native: the wide value of the stored bytes `expr`.
-    #[must_use]
-    pub fn decode_rust(self, expr: &str) -> String {
-        let (_, dec, takes_min) = self.fns();
-        if takes_min {
-            format!("loft::narrow::{dec}({expr}, {}_i32)", self.min)
-        } else {
-            format!("loft::narrow::{dec}({expr})")
-        }
-    }
 }
 
 pub fn is_scalar(tp: &Type) -> bool {

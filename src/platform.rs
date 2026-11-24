@@ -774,34 +774,6 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
     freed
 }
 
-/// Preflight check for a single native compile writing into `scratch`.
-/// Returns `true` when there is enough headroom to proceed.  Every call first sweeps the
-/// artefacts of dead processes ([`reclaim_dead_native_scratch`], silent), so the scratch
-/// directory stays bounded whatever killed the runs before this one.  When space is still
-/// below [`tmpfs_min_free_bytes`], the aged artefacts go too (the test runner's per-file
-/// binary cache included) and the space is re-checked; only if it is *still* low does it
-/// return `false` (callers skip that compile with a warning rather than risk overflowing RAM).
-pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
-    let _ = reclaim_dead_native_scratch(scratch);
-    let floor = tmpfs_min_free_bytes();
-    match fs_avail_bytes(scratch) {
-        // df unavailable → unknown → don't block (preserve old behaviour).
-        None => true,
-        Some(avail) if avail >= floor => true,
-        Some(_) => {
-            let freed = reclaim_native_scratch(scratch);
-            if freed > 0 {
-                eprintln!(
-                    "loft: low space in {} — reclaimed {} MB of stale native artefacts",
-                    scratch.display(),
-                    freed / (1024 * 1024)
-                );
-            }
-            fs_avail_bytes(scratch).is_none_or(|a| a >= floor)
-        }
-    }
-}
-
 /// Should native-compile binaries be stripped of symbols?  Stripping cuts
 /// each binary from ~36MB to ~1MB (the bulk is debug info pulled in from
 /// `libloft.rlib` + std, useless to a run-and-check test).  Set
@@ -811,13 +783,6 @@ pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
 #[must_use]
 pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
-}
-
-/// Whether a native binary's symbols live in the executable itself, so keeping them makes it
-/// larger.  The MSVC linker writes them to a `<binary>.pdb` beside it instead.
-#[must_use]
-pub fn native_symbols_in_the_binary() -> bool {
-    !cfg!(windows)
 }
 
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
@@ -2454,32 +2419,6 @@ pub fn main_stack_link_args() -> Vec<String> {
         ]
     } else {
         Vec::new()
-    }
-}
-
-/// The `rustc` argument that lets two native packages each define the same runtime symbol
-/// (the linker keeps the first), or `None` where the host linker has no such option: macOS
-/// `ld64` rejects `--allow-multiple-definition` and MSVC `link.exe` ignores it with one
-/// `LNK4044` warning per occurrence.
-#[must_use]
-pub fn allow_multiple_definition_arg() -> Option<&'static str> {
-    if cfg!(any(target_os = "macos", windows)) {
-        None
-    } else {
-        Some("-Clink-arg=-Wl,--allow-multiple-definition")
-    }
-}
-
-/// The `link-arg=` value that records `dir` as a run-time library search path (RPATH) in the
-/// binary, for `rustc -C`.  `None` on Windows, which has no RPATH: `link.exe` rejects
-/// `-Wl,-rpath`, and the loader finds a DLL beside the `.exe` or on `PATH` — so loft stages
-/// the DLLs beside the binary instead ([`stages_dlls_beside_binary`]).
-#[must_use]
-pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
-    if cfg!(windows) {
-        None
-    } else {
-        Some(format!("link-arg=-Wl,-rpath,{}", dir.display()))
     }
 }
 

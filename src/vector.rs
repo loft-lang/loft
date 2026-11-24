@@ -1037,26 +1037,6 @@ pub struct PushHeader {
     pub cap: u32,
 }
 
-/// `LOFT_HOIST_VERIFY=1`'s check of `@FR-R-Refresh`'s keep-range clause: the header a
-/// self-slice pop refreshed in place must equal the one derived from the record.
-///
-/// # Panics
-/// When the held header's record or length differs from the derived one — the refresh
-/// is stale, and the message names both.
-pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
-    let fresh = vec_header(db, stores);
-    assert!(
-        held.rec == fresh.rec && held.len == fresh.len && held.store_nr == fresh.store_nr,
-        "keep-range refresh stale: held rec {} len {} store {}, derived rec {} len {} store {}",
-        held.rec,
-        held.len,
-        held.store_nr,
-        fresh.rec,
-        fresh.len,
-        fresh.store_nr
-    );
-}
-
 /// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
 #[must_use]
 pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
@@ -1227,42 +1207,6 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     } else {
         stores[h.store_nr as usize].elem_base(h.rec)
     }
-}
-
-/// `@FR-R-RecPtr`'s base clause — the address of the element `at` bytes past a held element
-/// BASE, for an index the caller has already tested against the held header's length.  The
-/// result is never null, and saying so is the point: a field read through it ([`rec_get`])
-/// tests its address for the null record, and once the compiler knows the address cannot be
-/// null that test and the absent value it guards fold away for the whole loop body.
-///
-/// # Safety
-///
-/// `base` must be [`vec_base`] of a header whose `len` is above zero, and `at` inside that
-/// vector's elements.  Such a base is never null: [`vec_base`] answers null only for an
-/// absent vector (`rec == 0`), whose header length is 0, and otherwise the live store's own
-/// buffer plus an offset, or a foreign store's span, which exists whenever its length is.
-///
-/// # Panics
-///
-/// Under `verify` (`LOFT_HOIST_VERIFY=1`), when the address IS null — the fact is checked
-/// instead of assumed.  Never in the emitted default.
-#[must_use]
-#[allow(clippy::inline_always)] // the fact is only seen where the body is: inlined, or it states nothing
-#[inline(always)]
-pub unsafe fn held_elem_ptr(base: *const u8, at: usize, verify: bool) -> *const u8 {
-    // SAFETY: the caller's contract — `at` is inside the vector `base` is element 0 of.
-    let p = unsafe { base.add(at) };
-    if verify {
-        assert!(
-            !p.is_null(),
-            "held element address is null — a base taken for an empty or absent vector"
-        );
-    } else {
-        // SAFETY: a base of a non-empty vector is not null (above), and neither is an
-        // offset inside its allocation.
-        unsafe { std::hint::assert_unchecked(!p.is_null()) };
-    }
-    p
 }
 
 /// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
@@ -1908,81 +1852,6 @@ impl HoistEq for f32 {
     fn same(self, other: Self) -> bool {
         self.to_bits() == other.to_bits() || (self.is_nan() && other.is_nan())
     }
-}
-
-/// The checking form of a hoisted record scalar read (`LOFT_HOIST_VERIFY=1`, @PLN157 P4c):
-/// `hoisted` is what the loop's prelude read once, `fresh` what the getter answers now.
-///
-/// # Panics
-///
-/// When they differ — the loop changed the field under its hoist, through a route the
-/// write-set analysis did not classify.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
-    assert!(
-        hoisted.same(fresh),
-        "hoisted record scalar is stale — the loop wrote the field it was hoisted from \
-         (hoisted {hoisted:?}, now {fresh:?})"
-    );
-    hoisted
-}
-
-/// `@FR-R-TextBorrow` under `LOFT_HOIST_VERIFY=1` — at the walk's release of its loop
-/// variable, the borrowed element (`held`) against the element read again (`fresh`).
-///
-/// # Panics
-///
-/// When the borrow no longer names the element — its address or its length moved — which
-/// is what a store write in the body the admission did not classify would do.  The
-/// address is compared FIRST, without reading through `held`: a moved store leaves the
-/// borrow dangling, and a dangling read is not a check.  Never in the emitted default.
-#[inline]
-pub fn text_borrow_verify(held: &str, fresh: &str) {
-    assert!(
-        std::ptr::eq(held.as_ptr(), fresh.as_ptr()) && held.len() == fresh.len(),
-        "borrowed text element is stale — the loop moved the element it was borrowed from \
-         (held {} bytes at {:p}, now {} bytes at {:p})",
-        held.len(),
-        held.as_ptr(),
-        fresh.len(),
-        fresh.as_ptr()
-    );
-}
-
-/// `@FR-R-CharWalk` under `LOFT_HOIST_VERIFY=1` — the fast arm's answer for an ASCII byte
-/// (`#index`, `#next`, the character) against what the step as written left behind.
-///
-/// # Panics
-///
-/// When they differ — a byte the arm took in one move that the written step reads
-/// otherwise.  Never in the emitted default.
-#[inline]
-pub fn char_walk_verify(fast: (i64, i64, i32), written: (i64, i64, i32)) {
-    assert!(
-        fast == written,
-        "character walk fast arm disagrees with the step as written \
-         (fast (index, next, c) {fast:?}, written {written:?})"
-    );
-}
-
-/// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
-/// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
-/// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it
-/// cannot see an offset summed wrongly; this one can.
-///
-/// # Panics
-///
-/// When the two reads disagree.  Never in the emitted default.
-#[must_use]
-#[inline]
-pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
-    assert!(
-        through.same(walked),
-        "record view read through a field path disagrees with the path walked \
-         (through the address {through:?}, walked {walked:?})"
-    );
-    through
 }
 
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later

@@ -236,10 +236,3 @@ pub fn abi_of(name: &str) -> Abi {
 pub fn is_codegen_runtime_fn(name: &str) -> bool {
     CODEGEN_RUNTIME_FNS.iter().any(|f| f.name == name)
 }
-
-/// [`is_codegen_runtime_fn`] for the target the program is written for: a browser page's
-/// runtime also carries [`BROWSER_RUNTIME_FNS`].
-#[must_use]
-pub fn is_codegen_runtime_fn_on(name: &str, browser: bool) -> bool {
-    is_codegen_runtime_fn(name) || (browser && BROWSER_RUNTIME_FNS.contains(&name))
-}

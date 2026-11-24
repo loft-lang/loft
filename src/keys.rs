@@ -1938,22 +1938,6 @@ pub fn trace_hand_over() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_HAND_OVER"))
 }
 
-/// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
-/// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
-/// or length after `v += [a]; v += [b]; …`.
-pub fn push_run_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_RUN"))
-}
-
-/// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
-/// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
-/// a fixed-width integer read.
-pub fn typed_read_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_TYPED_READ"))
-}
-
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
 /// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
 /// such a copy.
@@ -2284,19 +2268,6 @@ pub fn buffer_detach_enabled() -> bool {
 pub fn loop_buffer_reuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
-}
-
-/// Every LOOP-FREE loft function the native generator emits carries `#[inline]` —
-/// **DEFAULT ON** (`Output::fn_inline_attr` says why a looping one does not).
-/// The hint only raises LLVM's inlining threshold for that function, so a small helper whose
-/// checked arithmetic puts it just past the default budget (hex_field's `nb_q`, `eg_dir_from`,
-/// `eg_index` under `edgeset_count`) is folded into its caller the way rustc folds a plain-Rust
-/// twin's; a large function still stays a call.  Opt OUT with `LOFT_NO_INLINE_HINT` (read at
-/// GENERATION time): no attribute, the emission of before.  `--names` pins every loft function
-/// `#[inline(never)]` regardless, because a backtrace needs the frames.
-pub fn inline_hint_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_INLINE_HINT"))
 }
 
 /// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one
@@ -3828,31 +3799,6 @@ pub fn buffer_opaque_call_off() -> bool {
 pub fn c_own_join() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_C_OWN_JOIN"))
-}
-
-/// `LOFT_NATIVE_OWN_DISPLACED_FREE=1` — the rustc writer frees a reassignment's displaced store
-/// by its own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
-#[must_use]
-pub fn native_own_displaced_free() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_DISPLACED_FREE"))
-}
-
-/// `LOFT_NATIVE_OWN_CALL_BIND=1` — the rustc writer takes its runtime copy-or-adopt for every
-/// reassignment from a call again, instead of only where `bind_lowering::re_bind` copies or joins
-/// (@PLN220's A/B).
-#[must_use]
-pub fn native_own_call_bind() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_CALL_BIND"))
-}
-
-/// `LOFT_NATIVE_OWN_VAR_COPY=1` — the rustc writer copies every reassignment from another
-/// variable's record again, instead of only where `bind_lowering::re_bind` copies (@PLN220's A/B).
-#[must_use]
-pub fn native_own_var_copy() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_VAR_COPY"))
 }
 
 /// `LOFT_KEYED_VIEW_DISPLACED_FREE=1` — `bind_lowering::re_bind` frees what a keyed local whose

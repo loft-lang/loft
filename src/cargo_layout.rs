@@ -9,18 +9,6 @@
 //! for each question, low in the layering so the toolchain, the cache and the platform code ask
 //! it as the native writer does.
 
-/// Is `<profile>/deps/` debris: the profile's uplifted `libloft.rlib` is a per-unit output (a
-/// hard link into `build/<crate>/<hash>/out/`), so the per-unit layout built it and a `deps/`
-/// beside it was left by an older cargo or toolchain (loft#2033)?
-#[must_use]
-pub fn classic_deps_is_debris(profile_dir: &std::path::Path) -> bool {
-    let rlib = profile_dir.join("libloft.rlib");
-    crate::file_access::exists(&rlib)
-        && per_unit_dep_dirs(profile_dir)
-            .iter()
-            .any(|d| crate::file_access::same_file_identity(d.join("libloft.rlib"), &rlib))
-}
-
 /// The dependency search dir for a [`loft_lib_dir`] result: `lib_dir` itself
 /// when it already IS `deps/` (the preferred deps-first resolution, #304/#307),
 /// else `lib_dir/deps`.  Appending "deps" unconditionally yields an invalid
@@ -167,13 +155,6 @@ pub fn runtime_profile_dir(exe_dir: &std::path::Path) -> std::path::PathBuf {
         return profile.to_path_buf();
     }
     exe_dir.to_path_buf()
-}
-
-/// [`runtime_profile_dir`] of the running binary.
-#[must_use]
-pub fn current_runtime_profile_dir() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    Some(runtime_profile_dir(exe.parent()?))
 }
 
 /// Make `<profile>/libloft.rlib` the runtime the last build produced, as a cargo uplift does.

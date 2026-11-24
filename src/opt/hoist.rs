@@ -36,7 +36,6 @@ use crate::opt::facts::Facts;
 use crate::opt::lazy_split::buffer_serves_one_call;
 pub use crate::opt::lazy_split::{LazySplit, lazy_splits};
 pub use crate::opt::store_text_borrow::{StoreTextBorrows, borrowed_store_texts};
-use crate::opt::store_text_borrow::{foreign_store_writer, frame_minted_locals};
 // The return-buffer adoption and the literal-group coverage analyses live in `opt`, which
 // both writers may name (the C backend reads them too); this module keeps its own names.
 use crate::opt::ret_adopt::kind_of;
@@ -174,37 +173,6 @@ pub fn nested_counted_loops<'a>(
         });
     }
     out
-}
-
-/// `@FR-I-Range` — the range ends of `def_nr` its loops' preludes bind ONCE from the length of
-/// a pure vector path (`for i in 0..len(v)`: `_range_end = len(v)`), with that path.  An end
-/// set anywhere else in the function, or from anything but a length, is left out.
-#[must_use]
-pub fn range_end_lengths(data: &Data, def_nr: u32) -> BTreeMap<u16, PathKey> {
-    let def = data.def(def_nr);
-    let vars = def.variables();
-    let mut sets: BTreeMap<u16, (usize, Option<PathKey>)> = BTreeMap::new();
-    def.code().walk(&mut |n| {
-        if let Value::Set(v, rhs) = n
-            && vars.name(*v).starts_with("_range_end")
-        {
-            let path = match rhs.unspan() {
-                Value::Call(d, a)
-                    if a.len() == 1
-                        && matches!(data.def(*d).name(), "OpLengthVector" | "t_6vector_len") =>
-                {
-                    vector_path(data, &a[0])
-                }
-                _ => None,
-            };
-            let e = sets.entry(*v).or_insert((0, None));
-            e.0 += 1;
-            e.1 = path;
-        }
-    });
-    sets.into_iter()
-        .filter_map(|(v, (count, path))| (count == 1).then_some((v, path?)))
-        .collect()
 }
 
 /// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
@@ -2682,84 +2650,6 @@ pub struct JoinRead<'a> {
     pub absent: &'static str,
 }
 
-/// Recognise `OpGet<scalar>(Block "ncc" { Set(t, OpGetVector*(path, size, Var(i)));
-/// If(OpConvBoolFromRef(Var(t)), Var(t), <absent arm>) }, fld)` — the ONE definition of the
-/// fused join read, asked by the pre-eval collector (which then leaves the join block where
-/// it stands instead of lifting it into a `let _pre_N`) and by the emitter (which folds it),
-/// so the two cannot disagree; an arm in the emitter alone would never fire, because the
-/// collector lifts every `Block` argument.  Shape only: the caller confirms the path holds
-/// a header AND an element base.
-///
-/// The fallback is `None` and that is the safe side: every shape not named here — a second
-/// statement in the join, a present arm that is not the temp, a test that is not the ref
-/// conversion, a computed index — keeps the general emission, which costs the fused load and
-/// never a value.  The ABSENT arm is deliberately not inspected: it is emitted verbatim on
-/// the fallback path, so whatever it mints, this rewrite runs it exactly as it stood.
-#[must_use]
-pub fn fused_join_read<'a>(data: &Data, getter: &str, args: &'a [Value]) -> Option<JoinRead<'a>> {
-    let [join, fld] = args else { return None };
-    let (_, rust_type, absent) = FUSABLE_GETTERS
-        .iter()
-        .find(|(name, _, _)| *name == getter)?;
-    let Value::Block(bl) = join.unspan() else {
-        return None;
-    };
-    let stmts: Vec<&Value> = bl
-        .operators
-        .iter()
-        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
-        .collect();
-    let [bind, select] = stmts[..] else {
-        return None;
-    };
-    let Value::Set(temp, elem) = bind.unspan() else {
-        return None;
-    };
-    let Value::Call(elem_op, elem_args) = elem.unspan() else {
-        return None;
-    };
-    if !is_element_address(data, *elem_op) {
-        return None;
-    }
-    let [vector, size, index] = &elem_args[..] else {
-        return None;
-    };
-    let Value::Var(index) = index.unspan() else {
-        return None;
-    };
-    // The select: `if <temp is present> { temp } else { … }`.
-    let Value::If(test, present, _absent) = select.unspan() else {
-        return None;
-    };
-    let Value::Call(conv, conv_args) = test.unspan() else {
-        return None;
-    };
-    if (*conv as usize) >= data.definitions.len()
-        || data.def(*conv).name() != "OpConvBoolFromRef"
-        || !matches!(conv_args.as_slice(), [a] if matches!(a.unspan(), Value::Var(t) if t == temp))
-        || !matches!(present.unspan(), Value::Var(t) if t == temp)
-    {
-        return None;
-    }
-    // The index must not be the temp, and the join must not rebind it: the range test reads
-    // it before the join runs.
-    if index == temp {
-        return None;
-    }
-    let path = vector_path(data, vector)?;
-    Some(JoinRead {
-        temp: *temp,
-        join,
-        vector,
-        path,
-        size,
-        index: *index,
-        fld,
-        rust_type,
-        absent,
-    })
-}
-
 /// The cast a fused push's VALUE takes to become its element type: an unbiased `u8` kind
 /// (`OpPushBoolean`, `OpPushEnum`) is spelled `as u8`, because a boolean's native value is a
 /// `bool`; every other kind's value already has its element type (the byte kind's is
@@ -2770,22 +2660,6 @@ pub fn push_value_cast(rust_type: &str, bias: bool) -> &'static str {
         " as u8"
     } else {
         ""
-    }
-}
-
-/// The element an unbiased fused push stores, from its VALUE spelled `val` (an `i64` for every
-/// integer kind): an `i32` keeps the integer null as `i32::MIN` (`OpPushInt4`), a `u32` is the
-/// value `as u32` (`OpPushCharacter`), a `u8` kind takes [`push_value_cast`], and every other
-/// kind's value already is its element.  The push fill stores `n` of these, so it spells its
-/// value here; the per-element push (`HoistedPushEmitter`) writes the same arms in line.
-#[must_use]
-pub fn push_element(rust_type: &str, val: &str) -> String {
-    match rust_type {
-        "i32" => format!(
-            "{{ let __v: i64 = ({val}); if __v == i64::MIN {{ i32::MIN }} else {{ __v as i32 }} }}"
-        ),
-        "u32" => format!("({val}) as u32"),
-        _ => format!("({val}){}", push_value_cast(rust_type, false)),
     }
 }
 
@@ -2851,128 +2725,6 @@ pub fn run_value_plain(
     ok
 }
 
-pub fn push_run<'a>(
-    ops: &'a [Value],
-    at: usize,
-    data: &Data,
-    vars: &crate::variables::Function,
-) -> Option<PushRun<'a>> {
-    let named = |v: &'a Value, n: &str| -> Option<&'a [Value]> {
-        match v.unspan() {
-            Value::Call(d, a)
-                if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
-            {
-                Some(a)
-            }
-            _ => None,
-        }
-    };
-    // One append: `Insert([pre, push])`, or — once a block flattens the insert — the two
-    // statements `pre`, `push` in a row.  Answers the vector, `min`, the value and the index
-    // of the statement after it.
-    let one = |i: usize| -> Option<(&'a Value, &'a Value, &'a Value, usize)> {
-        let (pre, push, next) = match ops.get(i)?.unspan() {
-            Value::Insert(ins) => match &ins[..] {
-                [pre, push] => (pre, push, i + 1),
-                _ => return None,
-            },
-            _ => (ops.get(i)?, ops.get(i + 1)?, i + 2),
-        };
-        let [v, Value::Int(1), Value::Int(1)] = named(pre, "OpPreAllocVector")? else {
-            return None;
-        };
-        let [v2, min, val] = named(push, "OpPushByte")? else {
-            return None;
-        };
-        (v.unspan() == v2.unspan()).then_some((v, min, val, next))
-    };
-    let (vector, min, first, mut next) = one(at)?;
-    let (root, _) = vector_path(data, vector)?;
-    let plain = |val: &Value| run_value_plain(data, vars, root, val);
-    if !plain(first) {
-        return None;
-    }
-    let mut pushed = vec![first];
-    let mut last = next - 1;
-    loop {
-        while matches!(ops.get(next), Some(Value::Line(_))) {
-            next += 1;
-        }
-        let Some((v, m, val, after)) = one(next) else {
-            break;
-        };
-        if v.unspan() != vector.unspan() || m.unspan() != min.unspan() || !plain(val) {
-            break;
-        }
-        pushed.push(val);
-        last = after - 1;
-        next = after;
-    }
-    (pushed.len() >= 2).then_some(PushRun {
-        vector,
-        min,
-        vals: pushed,
-        last,
-    })
-}
-
-/// Recognise [`RepeatLiteral`] in statement `first` followed by statement `second`.
-#[must_use]
-pub fn repeat_literal<'a>(
-    first: &'a Value,
-    second: &'a Value,
-    data: &Data,
-) -> Option<RepeatLiteral<'a>> {
-    let Value::Insert(ops) = first.unspan() else {
-        return None;
-    };
-    let [pre, push] = &ops[..] else { return None };
-    let named = |v: &'a Value, n: &str| -> Option<&'a [Value]> {
-        match v.unspan() {
-            Value::Call(d, a)
-                if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
-            {
-                Some(a)
-            }
-            _ => None,
-        }
-    };
-    let [p0, Value::Int(n0), Value::Int(w)] = named(pre, "OpPreAllocVector")? else {
-        return None;
-    };
-    let Value::Call(pd, pargs) = push.unspan() else {
-        return None;
-    };
-    let pname = data.def(*pd).name();
-    let (rust_type, size) = match pname {
-        "OpPushInt" => ("i64", 8),
-        "OpPushFloat" => ("f64", 8),
-        "OpPushSingle" => ("f32", 4),
-        _ => return None,
-    };
-    let [p1, val] = &pargs[..] else { return None };
-    if !matches!(
-        val.unspan(),
-        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_)
-    ) {
-        return None;
-    }
-    let [p2, Value::Int(n2), _] = named(second, "OpAppendCopy")? else {
-        return None;
-    };
-    if *n0 != *n2 || i64::from(*w) != i64::from(size) || p0 != p1 || p0 != p2 {
-        return None;
-    }
-    vector_path(data, p0)?;
-    Some(RepeatLiteral {
-        vector: p0,
-        count: i64::from(*n0),
-        val,
-        rust_type,
-        size,
-    })
-}
-
 /// `@FR-R-Fill`'s guarded clause: the shortest span the fill takes, on every writer.  Measured
 /// on graphics' rows (interleaved, hashes equal): every span through the fill made
 /// `fill_triangle` 10 % SLOWER, an empty span paying the fill's setup and then the loop; spans
@@ -3010,124 +2762,10 @@ pub use crate::loop_shape::{RangeCounters, plain_for_body, range_counters};
 
 pub use crate::opt::iteration::{VectorIteration, element_binding, iteration_head};
 
+pub(crate) use crate::opt::text_borrow::text_escapes_with;
 pub use crate::opt::text_borrow::{SplitTable, TextBorrow, borrowed_text_walks, text_walk_head};
-pub(crate) use crate::opt::text_borrow::{as_emitted_by_tables, text_escapes, text_escapes_with};
 
 pub use crate::opt::char_walk::{CharWalk, char_walks, text_written};
-
-/// `@FR-R-TextBorrow`'s versioned clause — the loop variables of text walks that borrow
-/// their element in `@FR-R-Alias`'s versioned copy only: [`borrowed_text_walks`] declined
-/// the walk for writing a store, every writer in its rest names a store this frame minted
-/// or the hidden return buffer (or a local bound from it), and the walked vector's dep chain
-/// ends at a PARAMETER.  The copy runs only when that parameter's store is not the return
-/// buffer's, so no write of the loop can grow, free or rewrite the store the element's bytes
-/// live in — the walk clause's own condition, proven by the copy's run-time test instead of
-/// by the absence of writes.  Answers each loop variable with that parameter and the borrow.
-#[must_use]
-pub fn versioned_text_walks(
-    data: &Data,
-    def_nr: u32,
-    sliced: &BTreeSet<u16>,
-    tables: &BTreeMap<u16, SplitTable>,
-) -> HashMap<u16, (u16, TextBorrow)> {
-    let def = data.def(def_nr);
-    let vars = def.variables();
-    let body = def.code();
-    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
-    let mut out = HashMap::new();
-    let Some(rb) = retbuf_var(data, def_nr) else {
-        return out;
-    };
-    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
-        return out;
-    }
-    let minted = frame_minted_locals(data, vars, body, &[rb]);
-    // The parameter a variable's dep chain ends at, through single-dep views.
-    let root = |v: u16| -> Option<u16> {
-        let mut cur = v;
-        for _ in 0..16 {
-            if vars.is_argument(cur) {
-                return Some(cur);
-            }
-            let [d] = vars.tp(cur).depend()[..] else {
-                return None;
-            };
-            cur = d;
-        }
-        None
-    };
-    let mut fx = Facts::fresh();
-    body.any_node(&mut |n| {
-        let Value::Loop(lp) = n else {
-            return false;
-        };
-        if lp.name != "For loop" || lp.operators.is_empty() {
-            return false;
-        }
-        let Some((p, _index, vec, read)) = text_walk_head(&lp.operators[0], data) else {
-            return false;
-        };
-        if sliced.contains(&vec) || !matches!(vars.tp(p).base(), Type::Text(_)) {
-            return false;
-        }
-        let rest: Vec<Value> = lp.operators[1..]
-            .iter()
-            .map(|s| as_emitted_by_tables(s, tables, data))
-            .collect();
-        if !rest.iter().any(|s| may_write_store(s, data, &mut fx)) {
-            return false; // the walk clause's own: no copy needed
-        }
-        let verdict = match root(vec) {
-            Some(r) if r != rb && crate::data::is_dbref(vars.tp(r).base()) => {
-                if let Some(why) = lp.operators[1..]
-                    .iter()
-                    .find_map(|s| text_escapes(s, p, data))
-                {
-                    Err(why)
-                } else if let Some(why) = rest
-                    .iter()
-                    .find_map(|s| foreign_store_writer(s, data, &minted, &mut fx, Some(vars)))
-                {
-                    Err(why)
-                } else {
-                    Ok(r)
-                }
-            }
-            _ => Err("the walked vector is no parameter's"),
-        };
-        match verdict {
-            Ok(r) => {
-                if trace {
-                    eprintln!(
-                        "[text-borrow] {}: `{}` borrows its element in the copy versioned on `{}`",
-                        def.name(),
-                        vars.name(p),
-                        vars.name(r)
-                    );
-                }
-                out.insert(
-                    p,
-                    (
-                        r,
-                        TextBorrow {
-                            read: Some(read.clone()),
-                        },
-                    ),
-                );
-            }
-            Err(why) if trace => {
-                eprintln!(
-                    "[text-borrow] {}: `{}` no versioned borrow — {why}",
-                    def.name(),
-                    vars.name(p)
-                );
-            }
-            Err(_) => {}
-        }
-        false
-    });
-    out
-}
 
 /// `@FR-R-TextBorrow`'s discharge clause — the `__ncc_N` temps of this function that hold a
 /// split TABLE's element read for a `?` / `??` discharge (`parts[i]?`, `parts[i] ?? d`),
@@ -3225,91 +2863,6 @@ pub struct BoundedSum<'a> {
     pub vector: &'a Value,
     pub index: u16,
     pub hi: &'a Value,
-}
-
-/// Recognise the reduction: a counted, EXCLUSIVE range in the single-counter form (its
-/// `#index` seeded one below a literal start, so the prelude can advance that one counter
-/// and the checked loop resumes from it), whose body is exactly `Set(acc, OpAddInt(Var(acc),
-/// read))` — or the operands the other way round — where `read` is an 8-byte `OpGetInt` at
-/// field 0 of `v[i]` over a pure path with `i` the loop variable.  Shape only: the emitter
-/// confirms the loop holds the path's header AND base, since the block sum reads through the
-/// base.  A `?`-discharged read is not this shape (its operand is a join), a float accumulate
-/// is not (a float `+` mints no null and would need reassociation to vectorise at all), and a
-/// second statement, a computed index or a start the two-counter form carries all answer
-/// `Err` — the loop keeps its checked form, which costs the block sum and never a value.
-///
-/// # Errors
-///
-/// The reason the loop is not the reduction — what `LOFT_TRACE_NEST=1` prints.
-pub fn bounded_sum<'a>(lp: &'a Block, data: &Data) -> Result<BoundedSum<'a>, String> {
-    if lp.name != "For loop" {
-        return Err("not a for loop".to_string());
-    }
-    let rc = range_counters(lp, data)?;
-    if rc.inclusive {
-        return Err("an inclusive range".to_string());
-    }
-    if rc.next.is_some() {
-        return Err("a computed start (the two-counter form)".to_string());
-    }
-    let Some(body) = plain_for_body(lp) else {
-        return Err("the loop is not `[iterator, body block]`".to_string());
-    };
-    let stmts: Vec<&Value> = body
-        .operators
-        .iter()
-        .map(Value::unspan)
-        .filter(|v| !matches!(v, Value::Line(_)))
-        .collect();
-    let [stmt] = stmts[..] else {
-        return Err(format!("the body has {} statements, not one", stmts.len()));
-    };
-    let Value::Set(acc, rhs) = stmt else {
-        return Err("the body is not an assignment".to_string());
-    };
-    if *acc == rc.loop_var || *acc == rc.index {
-        return Err("the accumulator is a counter".to_string());
-    }
-    let Value::Call(d, args) = rhs.unspan() else {
-        return Err("the assignment is not an add".to_string());
-    };
-    if data.def(*d).name() != "OpAddInt" || args.len() != 2 {
-        return Err("the assignment is not an integer add".to_string());
-    }
-    let is_acc = |v: &Value| matches!(v.unspan(), Value::Var(a) if a == acc);
-    let read = if is_acc(&args[0]) {
-        &args[1]
-    } else if is_acc(&args[1]) {
-        &args[0]
-    } else {
-        return Err("neither operand is the accumulator".to_string());
-    };
-    let Value::Call(g, gargs) = read.unspan() else {
-        return Err("the term is not a read".to_string());
-    };
-    let Some(fused) = fused_element_read(data, data.def(*g).name(), gargs) else {
-        return Err("the term is not a fused element read".to_string());
-    };
-    if fused.rust_type != "i64" {
-        return Err("the element is not an integer".to_string());
-    }
-    if !matches!(fused.size.unspan(), Value::Int(8)) || !matches!(fused.fld.unspan(), Value::Int(0))
-    {
-        return Err("the element is not an 8-byte scalar at field 0".to_string());
-    }
-    if !matches!(fused.index.unspan(), Value::Var(i) if *i == rc.loop_var) {
-        return Err("the index is not the loop variable".to_string());
-    }
-    if fused.path.0 == *acc {
-        return Err("the vector is the accumulator".to_string());
-    }
-    Ok(BoundedSum {
-        acc: *acc,
-        path: fused.path,
-        vector: fused.vector,
-        index: rc.index,
-        hi: rc.hi,
-    })
 }
 
 /// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
@@ -5991,39 +5544,6 @@ pub fn tuple_reads(fields: &[(i64, &'static str)], db: &str, stores: &str) -> St
     format!("({}{tail})", reads.join(", "))
 }
 
-/// The tuple of `layout` read out of the record `db` names — [`tuple_reads`], and for a
-/// nullable layout the presence word after the fields: the record is present exactly when
-/// it names one (`rec != 0`, the test `OpConvBoolFromRef` makes), and an absent record's
-/// fields already read as their nulls.
-#[must_use]
-pub fn layout_reads(layout: &ValueTuple, db: &str, stores: &str) -> String {
-    let reads = tuple_reads(&layout.fields, db, stores);
-    if !layout.nullable {
-        return reads;
-    }
-    // `(a,)` or `(a, b)` → `(a, present)` / `(a, b, present)`.
-    let inner = reads[1..reads.len() - 1].trim_end_matches(',');
-    format!("({inner}, {db}.rec != 0)")
-}
-
-/// The setter call that writes tuple element `value` (a Rust expression) into field
-/// `(off, rt)` of the record `db` names, to be called on `stores.store_mut(&db)`: the
-/// twin of [`tuple_reads`], for a site that must write a tuple back into a record it
-/// holds as a `DbRef`.
-#[must_use]
-pub fn tuple_field_setter(off: i64, rt: &str, db: &str, value: &str) -> String {
-    match rt {
-        "f64" => format!("set_float({db}.rec, {db}.pos + {off}u32, {value})"),
-        "f32" => format!("set_single({db}.rec, {db}.pos + {off}u32, {value})"),
-        // `set_byte` takes the value as `i32`, not as the `u8` a boolean's STORAGE form
-        // suggests (@PLN17) — `u8::from` here compiled to "expected `i32`, found `u8`" and
-        // broke a whole cdylib, which is the only reason a library with one boolean-field
-        // record could not build.
-        "bool" => format!("set_byte({db}.rec, {db}.pos + {off}u32, 0, i32::from({value}))"),
-        _ => format!("set_int({db}.rec, {db}.pos + {off}u32, {value})"),
-    }
-}
-
 pub(crate) use crate::opt::value_records::{fits, value_shape};
 pub use crate::opt::value_records::{is_null_sentinel, value_locals_in, value_records};
 
@@ -6233,18 +5753,6 @@ pub fn value_getter(rt: &str) -> &'static str {
         "f32" => "OpGetSingle",
         "bool" => "OpGetBoolean",
         _ => "OpGetInt",
-    }
-}
-
-/// The setter twin of [`value_getter`] — what a tuple is MATERIALISED into a destination
-/// record with (`OpCopyRecord` from a value local).
-#[must_use]
-pub fn value_setter(rt: &str) -> &'static str {
-    match rt {
-        "f64" => "OpSetFloat",
-        "f32" => "OpSetSingle",
-        "bool" => "OpSetBoolean",
-        _ => "OpSetInt",
     }
 }
 
