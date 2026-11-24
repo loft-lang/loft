@@ -926,28 +926,21 @@ fn file_write_error_does_not_panic() {
 
 // N8-naming: generated code must use `_pre_N` names, not bare `_preN`.
 // A nested user-defined function call is enough to trigger pre-eval hoisting.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n8_pre_eval_uses_underscore_separator() {
     // Two nested user-fn calls: the inner call is pre-eval-hoisted by generation.rs.
     code!("fn inc(v: integer) -> integer { v + 1 }")
         .expr("inc(inc(0))")
         .result(Value::Int(2));
-    let src = fa::read_to_string("tests/generated/issues_n8_pre_eval_uses_underscore_separator.rs")
-        .expect("generated file not found");
     // Every `let _pre…` line must use `_pre_N` (digit after underscore), not `_preN`.
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("let _pre") {
-            assert!(
-                rest.starts_with('_'),
-                "Found bare `_preN` binding (should be `_pre_N`): {line}"
-            );
-        }
-    }
 }
 
 // N8-empty: generated code must not emit `let _preN = ;` (empty right-hand side).
 // The mutable-reference pattern (user fn with `&T = null` default) triggers this.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n8_no_empty_pre_eval_binding() {
     code!(
@@ -960,18 +953,12 @@ fn add(r: &Data = null, val: integer) {
     )
     .expr("v = Data { num: 1 }; add(v, 2); add(v, 3); \"{v}\"")
     .result(Value::str("{num:6,values:[2,3]}"));
-    let src = fa::read_to_string("tests/generated/issues_n8_no_empty_pre_eval_binding.rs")
-        .expect("generated file not found");
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("let _pre") && trimmed.trim_end().ends_with("= ;") {
-            panic!("Found empty pre-eval binding: {line}");
-        }
-    }
 }
 
 // N3: assigning a reference to another reference must emit OpCopyRecord for deep copy.
 // Without it, both variables alias the same heap record; mutating through one changes the other.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n3_reference_assignment_emits_copy_record() {
     // Bytecode interpreter correctly deep-copies references already; test confirms behaviour.
@@ -983,18 +970,13 @@ b.name += \" world\";
 a.name",
         )
         .result(Value::str("hello"));
-    let src =
-        fa::read_to_string("tests/generated/issues_n3_reference_assignment_emits_copy_record.rs")
-            .expect("generated file not found");
-    assert!(
-        src.contains("OpCopyRecord(cell,"),
-        "generated code missing OpCopyRecord after reference assignment"
-    );
 }
 
 // N5: vector::clear_vector must not be called when the DbRef is null (rec == 0).
 // A function that initialises and returns a vector was panicking with
 // "Unknown record 2147483648" because clear_vector ran on stores.null() before allocation.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n5_null_dbref_clear_vector_guard() {
     code!(
@@ -1006,17 +988,13 @@ fn n5_null_dbref_clear_vector_guard() {
     )
     .expr("t = fill(); \"{t}\"")
     .result(Value::str("[\"aa\",\"bb\"]"));
-    let src = fa::read_to_string("tests/generated/issues_n5_null_dbref_clear_vector_guard.rs")
-        .expect("generated file not found");
-    assert!(
-        src.contains(".rec != 0"),
-        "generated code missing null check before clear_vector"
-    );
 }
 
 // N4: struct-enum variants must show all fields when formatted with OpFormatDatabase.
 // The init function was registering every enum value with u16::MAX as the struct type,
 // so ShowDb could not dispatch to variant fields and only showed the variant name.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n4_format_struct_enum_variant_shows_fields() {
     code!(
@@ -1027,14 +1005,6 @@ fn n4_format_struct_enum_variant_shows_fields() {
     )
     .expr("v = \"Add {{ left: 1, right: 2 }}\" as Op; \"{v}\"")
     .result(Value::str("Add {left:1,right:2}"));
-    let src =
-        fa::read_to_string("tests/generated/issues_n4_format_struct_enum_variant_shows_fields.rs")
-            .expect("generated file not found");
-    // The generated init must register the Add variant with its actual struct type (not u16::MAX).
-    assert!(
-        !src.contains("db.value(e, \"Add\", u16::MAX)"),
-        "generated init still registers struct-enum variant Add with u16::MAX"
-    );
 }
 
 // N9a: the auto-generated fill.rs must contain `use crate::ops;`
@@ -1154,24 +1124,22 @@ fn every_operator_is_numbered_in_its_priority_band() {
 // N8: Sort must work correctly in native-codegen mode.
 // The #rust template for OpSortVector is inlined directly (no OpSortVector runtime fn needed):
 // it calls `Stores::sort_vector`, which picks the element order from the schema type.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n8_codegen_runtime_vector_ops_exist() {
     // Sorting a vector of integers must work in native-codegen mode.
     code!("fn sort_it() -> vector<integer> { v = [3, 1, 2]; sort(v); v }")
         .expr("\"{sort_it()}\"")
         .result(Value::str("[1,2,3]"));
-    let src = fa::read_to_string("tests/generated/issues_n8_codegen_runtime_vector_ops_exist.rs")
-        .expect("generated file not found");
-    assert!(
-        src.contains("stores.sort_vector("),
-        "generated code missing inlined stores.sort_vector call"
-    );
 }
 
 // N10: ops::text_character returns char but loft represents character as i32.
 // Generated code assigns the char to an i32 variable without a cast, causing a compile error.
 // Also, i32 character variables used in method dispatch (is_alphanumeric etc.) need wrapping
 // with ops::to_char(...) since the method requires char, not i32.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n10_char_cast_in_generated_code() {
     code!(
@@ -1183,18 +1151,14 @@ fn n10_char_cast_in_generated_code() {
     )
     .expr("count_alpha(\"a1!\")")
     .result(Value::Int(2));
-    let src = fa::read_to_string("tests/generated/issues_n10_char_cast_in_generated_code.rs")
-        .expect("generated file not found");
-    assert!(
-        src.contains("as u32 as i32") || src.contains("ops::to_char("),
-        "generated code missing char<->i32 cast"
-    );
 }
 
 // N2: output_init must register content types before the structs that reference them in
 // sorted/index/hash fields.  When a struct has a sorted<Foo> field and Foo has a higher
 // type-ID than the struct, the init function panicked because db.sorted(foo_type_id, ...)
 // was called before Foo was registered.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n2_sorted_field_content_type_registered_first() {
     code!(
@@ -1203,19 +1167,6 @@ struct Container { data: sorted<Sort[nr]> }"
     )
     .expr("c = Container {}; \"{c}\"")
     .result(Value::str("{data:[]}"));
-    let src = fa::read_to_string(
-        "tests/generated/issues_n2_sorted_field_content_type_registered_first.rs",
-    )
-    .expect("generated file not found");
-    // Sort must appear in the init before Container (which contains the sorted<Sort> field).
-    let sort_pos = src.find("\"Sort\"").expect("Sort not found in init");
-    let container_pos = src
-        .find("\"Container\"")
-        .expect("Container not found in init");
-    assert!(
-        sort_pos < container_pos,
-        "Sort (content type) must be registered before Container in generated init"
-    );
 }
 
 // ── S4: Binary I/O type coverage ─────────────────────────────────────────────
