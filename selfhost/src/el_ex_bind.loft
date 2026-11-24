@@ -648,6 +648,11 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
       _ => {}
     }
   }
+  // (An assignment is a statement answering nothing: on the first pass a build that could not
+  // type its value yet still answers void, as `parse_assign` does.)
+  if e.first_pass && el_types::is_unknown(x.tp) {
+    return ex(x.code, ir::TyVoid);
+  }
   x
 }
 

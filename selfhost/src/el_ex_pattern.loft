@@ -2094,6 +2094,10 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   if el_types::is_unknown(inner) && !el_types::is_unknown(b.elem) {
     el_vars::change_var_type(e, vars, v, ir::TyVector { inner: b.elem, dep: el_types::deps(el_vars::tp(vars, v)) });
   }
+  // (An append is a statement answering nothing, on the first pass whatever its rows.)
+  if e.first_pass && el_types::is_unknown(b.x.tp) {
+    return ex(b.x.code, ir::TyVoid);
+  }
   b.x
 }
 
