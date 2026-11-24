@@ -101,7 +101,7 @@ reports the position against the contract-1 floors.  What remains open:
 | # | family | next action |
 |---|---|---|
 | 1 | **scalar** — the bare sites | adopting `is_scalar` adds value enums at each site: a behaviour change per site, one probe each, not a sweep |
-| 9 | **what a slice bound means** (`vector` + `text`) | `ops::sub_text` normalises both bounds and is the documented home, but nothing calls it; the two live halves (`State::get_text_sub`, `codegen_runtime::OpGetTextSub`) are fixed and cited.  Delete the orphan, or make the live halves derive from it |
+| 9 | **what a slice bound means** (`vector` + `text`) | `ops::sub_text` normalises both bounds and is the documented home, but nothing calls it; the two live halves (`State::get_text_sub`, the C's `OpGetTextSub` in `src/c/loft_rt.h`) are fixed and cited.  Delete the orphan, or make the live halves derive from it |
 
 ### Rules gaps (spec decisions, not code)
 

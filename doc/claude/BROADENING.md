@@ -24,58 +24,24 @@ Four capabilities that give loft a defensible identity outside games:
    artifact.  Frictionless deployment of demos, tools, toys.
 3. **`par` / `par_light` + store isolation** (THREADING.md).
    Approachable parallelism without shared-mutable footguns.
-4. **It inherits the Rust ecosystem — and, more to the point, Rust's
-   *stability*.**  loft is *built on* Rust, so it does not re-implement numpy /
-   requests / regex — it **binds the crate** (`ndarray`, `reqwest`, `regex`,
-   `polars`, …) and gets all of crates.io.  But the **bigger reason than saved
-   code is what comes *with* the library: memory safety and maturity.**  A
-   well-grounded Rust crate brings its battle-testing *and* the guarantee that it
-   **cannot segfault loft** the way a buggy C extension hard-crashes the Python
-   interpreter (safe Rust has no UB; panics unwind), and `cargo` brings
-   reproducible, lock-filed builds instead of Python's wheel / ABI / manylinux
-   roulette.  So "Python has an ecosystem" cuts *both* ways — Python inherits C's
-   libraries **and** C's crash surface; loft inherits Rust's libraries **minus**
-   that instability.  This is the
-   [GOALS § Purpose](GOALS.md#purpose--what-loft-is-for) "software that does not
-   fall over" aim **extended to the whole dependency surface** — which is *why* the
-   crates must be **well-grounded** (the reliability filter: you inherit stability
-   only from crates that have it) and bound **one per real need**, the dogfood way,
-   not via a speculative auto-binder.
+4. **It binds the native ecosystem through the C ABI.**  loft does not re-implement
+   zlib, sqlite, libpng or BLAS — a library binds the C library it needs with `#c`
+   declarations and, where the fixed trampolines cannot express a signature, a small
+   ANSI-C shim it ships ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).  The binding is
+   built by the C compiler the C backend already uses, so it needs no second toolchain,
+   and a published library ships its C, built for each platform.
 
-   On functionality alone the boilerplate is *still* wrong: Python's "rich
-   ecosystem" is itself mostly a **binding** story (numpy/scipy = C/Fortran, torch =
-   C++, polars / pydantic-core / cryptography = *Rust*; the C-API is glue), so loft
-   plays the same move on the more modern host — and because loft *is* Rust, the
-   binding is **in-language** (loft value ↔ Rust value, no C ABI), so it is
-   lower-friction.  The honest gap is binding **ergonomics, not library existence**.
-   Mechanism: PACKAGES.md + § Native-library execution model below.
-
-   **The complementary route — the prebuilt cdylib (`@PLN21`) — is keyed on the *C
-   ABI*, and that broadens #4 from "Rust's ecosystem" to "*every native ecosystem,
-   via the C ABI*."**  A registry library's cdylib links the PUBLISHED, versioned
-   loft-ffi C-ABI (proven rustc-independent — `nm` shows zero loft symbols, only
-   system NEEDED libs), is validated by a *content* fingerprint of that ABI
-   (`cache::loft_ffi_fingerprint`, **not** a toolchain hash), and is `dlopen`'d.  So it
-   ships as a per-platform **prebuilt that needs no toolchain to *use*** — and its
-   native source can be **any language that emits a C-ABI `.so` implementing the loft-
-   ffi contract** (Rust ergonomically today via the macros; C / C++ / Zig directly once
-   a `loft-ffi.h` lands).  Where CPython / Node tie native extensions to *their own* ABI
-   **and** to a build of that runtime, loft's is the bare C ABI + a versioned
-   fingerprint — runtime-version- *and* source-language-independent.
-
-   This does **not** weaken the stability story, because **stability is being
-   *well-grounded*, not the source language.**  The "C's crash surface" point above is
-   about *un*grounded native code; a decades-hardened C library (sqlite, zlib, libpng)
-   is as stable as safe Rust — and a large share of Rust's "native" crates are precisely
-   Rust *wrapping those very C libraries*.  So the C-ABI prebuilt model just distributes
-   the stable native substrate (mature C, Rust-over-C, or pure Rust) uniformly and
-   toolchain-free; the reliability filter stays **well-grounded** (mature / tested /
-   maintained).  Memory-safe Rust is *one* route to grounding for new code; a hardened C
-   library is another.  The binary structure merges anything that speaks the contract;
-   what *earns* the guarantee is grounding, not language.
+   The filter is **well-grounded**, not the source language: a decades-hardened C
+   library (sqlite, zlib, libpng) is as stable as safe code, while *un*grounded native
+   code brings C's crash surface with it — the way a buggy C extension hard-crashes the
+   Python interpreter.  So a library binds **one mature C library per real need**, the
+   dogfood way, not through a speculative auto-binder.  On functionality alone this is
+   the same move Python makes (numpy/scipy are C/Fortran, the C-API is glue); the honest
+   gap is binding **ergonomics, not library existence**.  Mechanism: PACKAGES.md + §
+   Native-library execution model below.
 
 Everything below flows from these.  Broadening loft is mostly about
-ecosystem work around them (chiefly #4 — binding the crates, incrementally on
+ecosystem work around them (chiefly #4 — binding the C libraries, incrementally on
 need), not language rework.
 
 ---
@@ -87,9 +53,9 @@ need), not language rework.
 | **CLI scripting / tooling** | Strong — readable syntax, static types, good error locality | Fast startup (CS.C1/C2/C3 const store + stdlib `.loftc`); stdlib for regex, shell, env, path, glob; single-binary installer |
 | **Server-side web** | Very strong — store maps naturally to request/session/DB model; JSON landed | `server` library (lib_plans/future/08-server/README.md), async / non-blocking I/O, route helpers, migrations story |
 | **Embedded-DB DSL** | Unique — nothing else has store + language co-designed | Mostly packaging and "SQLite + scripting as one thing" narrative; the tech exists |
-| **Data / ETL** | Good — iterators, parallel-for, DbRef, JSON | CSV/Parquet, decimal/BigInt, date/time, streaming — all **bindable Rust crates** (`csv`, `arrow`, `rust_decimal`, `chrono`), not missing libraries |
+| **Data / ETL** | Good — iterators, parallel-for, DbRef, JSON | CSV/Parquet, decimal/BigInt, date/time, streaming — **bindable C libraries** through `#c`, not missing libraries |
 | **Educational language** | Good — Python-like surface, strong types, good diagnostics | Playground (Web IDE planned), tutorial content |
-| **Scientific / analytics** | Bindable — Rust's numerical stack (`ndarray`, `nalgebra`, `polars`, `plotters`) wraps directly; **not** an ecosystem gap | binding ergonomics + the interactive / notebook / viz + community layer (that, not library *existence*, is Python's real moat here); pursue head-on only if a killer differentiator emerges |
+| **Scientific / analytics** | Bindable — the C/Fortran numerical stack (BLAS, LAPACK) binds through `#c` ([PACKAGES_C_BINDING.md § Numeric libraries](PACKAGES_C_BINDING.md#numeric-libraries--what-the-boundary-already-does-pln128)); **not** an ecosystem gap | binding ergonomics + the interactive / notebook / viz + community layer (that, not library *existence*, is Python's real moat here); pursue head-on only if a killer differentiator emerges |
 | **Small 32-bit devices** | A target ([@PLN204](https://github.com/loft-lang/plans/issues/204)): the C backend builds an ESP-IDF app, `#width 32` keeps 64 bits a deliberate choice | The device port ([TANMATSU.md](TANMATSU.md)); a game demo at 60 fps, then nightly 32-bit sweeps |
 
 Games remain a flagship demo (onboarding, Web IDE, visual appeal) but
@@ -194,13 +160,13 @@ ceremony — and fix PHP's weaknesses.
   process (the @PLN4 reactor) that holds connections, prepared statements, and
   caches *across* requests — not PHP's fork-per-request-and-die model.
 - **Static types** catch what PHP ships to production.
-- **A direct, rustc-free, high-performance path into the database** (@PLN24 +
+- **A direct, high-performance path into the database** (@PLN24 +
   @PLN23) — see "the `#c` tier" below.
 
 **The stack + its plans (the critical path, in build order):**
 
 1. **@PLN24 — the `#c` direct C-ABI tier.**  Bind a C library straight from loft
-   with **no rustc and no libffi** (a small fixed per-arity C-ABI caller in
+   with **no libffi** (a small fixed per-arity C-ABI caller in
    loft-core; pure-loft `#c` decls + optional `cc`-compiled ANSI-C shims).
    Foundational — unblocks the DB layer and every future C binding.
    **Native-only by nature** (wasm has no C ABI / `dlopen`).
@@ -225,7 +191,7 @@ sandbox profile for third-party scripts, and how each part is verified on instru
 repo already has.
 
 **The `#c` tier is bigger than databases.**  It is loft's general "bind any C
-library without rustc" capability; DB is its first consumer, with image codecs,
+library" capability; DB is its first consumer, with image codecs,
 compression, crypto, BLAS, and C UI toolkits as later riders.  That is the
 "there will be more" — recorded so the tier is designed as reusable, not a DB
 sub-feature.
@@ -278,8 +244,8 @@ _Decided 2026-06-04. Canonical decision record: [DESIGN_DECISIONS.md § @C71](DE
 
 **Native for stable/published libraries; interpreted for the user's active
 script.** Compiled-once libraries are cached as native artifacts and reused across
-runs; the user's own code stays interpreted for fast iteration — no `rustc` per
-save.
+runs; the user's own code stays interpreted for fast iteration — no native compile
+per save.
 
 This IS the lavition model: native engine + libraries, interpreted game scripts
 for rapid prototyping.  The decision applies to loft at every deployment scale
@@ -299,10 +265,9 @@ to be engineered.
 
 `OpStaticCall` → `library_names` → `extensions::wire_native_fns` → `try_dlsym`
 (and `native_packages` / `register_native_manifest` in `src/extensions.rs`)
-implement exactly this model today: interpreted bytecode calls compiled Rust via
-the `#native` / `#rust` mechanism the stdlib uses.  The stdlib's native functions
-are already this model — interpreted user scripts calling compiled Rust.  Extending
-it to user libraries is the straight-line path.
+implement exactly this model: interpreted bytecode calls compiled code through
+the `#native` mechanism the stdlib uses, and a `use`d library's compiled C unit is
+loaded and called the same way.
 
 The native backend's cross-mode byte-identical equivalence (the @PLN11 harness)
 guarantees a library behaves the same whether run interpreted (during development)
@@ -328,17 +293,15 @@ and the shared ABI — not zero-copy interpretation of library bodies.  See
 
 ### The build fingerprint — correctness crux
 
-A native library artifact is generated Rust that `extern`-links `libloft.rlib`.
-It is valid only against the exact loft build whose rlib it links.  Change loft's
-codegen OR its runtime ABI OR rustc → an old artifact mis-links.  This is the
-root cause of the recurring "generated rust-code error" (the same class as tests
-needing `make rebuild-native-cdylibs`).
+A native library artifact is the library's C, compiled against the C runtime the loft
+binary carries.  It is valid only for the loft build that made it: change loft's C
+writer OR its runtime OR the build target, and an old artifact does not match what
+the program expects.
 
 Cache key requirements:
 
-- **MUST fold**: the loft rlib CONTENT hash (memoised once per process in
-  `native_utils::native_cache_key`, `src/native_utils.rs`; already done by BUILD2
-  for the test-binary cache) + rustc version + target + feature-set.
+- **MUST fold**: the loft executable's CONTENT hash (`cache::loft_build_fingerprint`,
+  memoised once per process) + target + feature-set.
 - **Must NOT fold**: git-HEAD `BUILD_ID` (unchanged across uncommitted rebuilds)
   or mtime (over-invalidates / fragile).
 
@@ -347,18 +310,13 @@ Two enforcement points:
 1. **Nuke-on-recompile** (startup self-check): compare current loft build
    fingerprint against a stored marker; on mismatch, clear the native artifact
    cache.  Fast cleanup of rebuild orphans.
-2. **Fingerprint in every per-artifact cache key** (lazy backstop).  Together
-   these make `make rebuild-native-cdylibs` obsolete.
-
-Known gap to close: `@P341` native-package rlib path still folds **mtime** (per
-PERFORMANCE-history.md § BUILD2 notes) — that is the specific hole behind hitting the
-error too often.
+2. **Fingerprint in every per-artifact cache key** (lazy backstop).
 
 ### Three-layer model
 
 | Layer | Mechanism | Goal |
 |---|---|---|
-| rlib-hash in each artifact key | cache key invalidation | correctness — never link a stale artifact |
+| build fingerprint in each artifact key | cache key invalidation | correctness — never load a stale artifact |
 | nuke-on-recompile (startup marker check) | cache sweep on next startup | fast cleanup of rebuild orphans |
 | idle-TTL GC (24 h, touch-on-use) | background eviction | space — unused library sets age out |
 
@@ -374,21 +332,13 @@ janitor; the nuke trigger is subsumed by validation (stale-fingerprint artifacts
 fail `is_valid` → never linked → swept).
 
 It is one fingerprint serving different audiences on different timelines:
-- **loft developers** need it now (rlib changes constantly, often uncommitted;
-  git-HEAD `BUILD_ID` is useless here).
+- **loft developers** need it now (the loft build changes constantly, often
+  uncommitted; git-HEAD `BUILD_ID` is useless here).
 - **customers on releases** are covered today by `LOFT_VERSION`.
 - **customers on daily builds** will need the fingerprint (same/rolling version,
   different codegen → `LOFT_VERSION` fails).
 
-Building it now for developers IS the customer/daily-build mechanism.  This
-dovetails with reproducible builds: BUILD2 confirmed the rlib is
-byte-deterministic (`src/native_utils.rs`), so the fingerprint is a meaningful
-stamp.
-
-Note on binary-vs-rlib: the loft binary hash is the human-meaningful "which loft
-build" identity and co-varies with the rlib, but the **rlib hash is the term that
-strictly guarantees link compatibility** (the artifact links the rlib, not the
-executable).
+Building it now for developers IS the customer/daily-build mechanism.
 
 ### Cache scope (local, 2026-06-04)
 
@@ -406,19 +356,14 @@ executable).
   are hard (see PACKAGES.md "What must be native" / the C-ABI boundary).  Needs
   a coverage audit before declaring the model generally applicable.
 - **Dev-interpret fallback**: a library under active edit should still interpret
-  (no `rustc` per save); "always native" = once the library is stable/published.
-- **WASM/browser is a different model** — no `rustc` at runtime, so `--html` stays
+  (no native compile per save); "always native" = once the library is stable/published.
+- **WASM/browser is a different model** — no C compiler at runtime, so `--html` stays
   whole-program AOT-to-WASM; native-library caching does not apply there.
 
 ### Sequencing
 
 _Tactical now (developer-facing, local)_: per-library native artifact cache with
-rlib-hash key + nuke trigger + idle-TTL; extract a single `loft_build_fingerprint()`
-reusing BUILD2's memoised rlib hash so it has a clean seam to move into the
-validation layer.
-
-First concrete step: audit every native-artifact cache key for mtime/git-HEAD
-usage (`@P341` is the known offender) + extract `loft_build_fingerprint()`.
+the build-fingerprint key (`cache::loft_build_fingerprint`) + nuke trigger + idle-TTL.
 
 _Eventually (customer-facing)_: fold the fingerprint into the library validation
 layer; becomes load-bearing when daily builds ship.

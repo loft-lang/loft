@@ -156,7 +156,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | loft fully functional on Windows — every routine, test and script, each count under a ratchet and proven by a Windows CI leg ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
-| [@PLN199](https://github.com/loft-lang/plans/issues/199) | parked | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
+| [@PLN199](https://github.com/loft-lang/plans/issues/199) | parked | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled, as C (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
 
 ### U — Ease of use
 
@@ -186,8 +186,9 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
-| [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
-| [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that shelves the Rust writer ([plan](plans/203-c99-default-backend.md)) |
+| [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from any one writer: the base the C backend stands on ([plan](plans/200-backend-structure.md)) |
+| [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that makes it the default ([plan](plans/203-c99-default-backend.md)) |
+| [@PLN225](plans/225-retire-rustc-writer/README.md) | active | The rustc writer retired: the interpreter and the C are the two backends (`@C170`), and the writer's sources, switches, rewrites and docs leave the tree |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
 ### N — Niche / opportunistic

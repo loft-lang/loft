@@ -78,14 +78,18 @@ the type system forces you to discharge a `τ?` before storing it somewhere
 non-null. So "no runtime errors" is not permissiveness; the checking moved to
 compile time. ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md))
 
-## Why loft compiles through rustc instead of its own backend
+## Why loft compiles through C instead of its own backend
 
 The north star is that loft is **correct now and stays correct as the world
 changes underneath it** — new toolchains, new platforms. The failure guarded
 against is latent undefined behaviour: a bug that passes every test on today's
 toolchain and becomes silent corruption after a compiler upgrade.
 
-Emitting Rust and handing it to rustc/LLVM buys that durability, and the honest
+Emitting C and handing it to the platform's C compiler buys that reach: every
+target loft builds for — a desktop, WebAssembly through clang, an Android phone, a
+32-bit device — already has one, so one writer serves them all. A backend stays
+only while it answers every program as the others do
+([DESIGN_DECISIONS_PLATFORM.md @C170](../DESIGN_DECISIONS_PLATFORM.md)). The honest
 cost is visible on the performance page: the interpreter loses to CPython on some
 benchmarks, and that page says so. ([GOALS.md § North star](../GOALS.md))
 
