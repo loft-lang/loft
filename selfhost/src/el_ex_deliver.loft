@@ -344,11 +344,16 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       otail = if len(ob1.operators) > 0 { el_ir::unspan(ob1.operators[-1]) } else { ir::NdNull };
       match otail {
         // A NULLABLE vector local keeps its store (`Bind`): copied into the buffer where present.
-        NdVar { n: nn } => if !vars.vars[nn].argument && nullable_vector(el_vars::tp(vars, nn)) {
+        // (So does a dense local that views another local, `e = vv[0]; e`.)
+        NdVar { n: nn } => if !vars.vars[nn].argument && (nullable_vector(el_vars::tp(vars, nn)) || (el_vars::tp(vars, nn) is TyVector && el_ex_copy::views_a_local(vars, nn))) {
           el_trace::retpromo(e, vars, nn, "Bind");
           if !el_types::deps(oret).contains(ba) {
             e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
           }
+        },
+        // (And an element or a field of a local, `vv[0]`.)
+        NdCall { def_nr: ord } => if projection_op(el::def(e, ord).name) && place_root(e, otail) >= 0 && !vars.vars[place_root(e, otail)]!.argument && !el_types::deps(oret).contains(ba) {
+          e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
         },
         _ => {}
       }
@@ -411,6 +416,8 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   local = match tail { NdVar { n } => if !vars.vars[n].argument && el_vars::tp(vars, n) is TyVector && (!e.first_pass || el_ex_copy::child_allocs(e, vars, code, n) >= 2) { n } else { -1 }, _ => -1 };
   // A vector field of a local record is copied into the buffer at the tail, as such a local is.
   field_tail = calls(e, tail, "OpGetField") && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument;
+  // (So is an element of a local vector, `vv[0]`: `Bind` on the first pass, the buffer named.)
+  elem_tail = !field_tail && match tail { NdCall { def_nr: etd } => projection_op(el::def(e, etd).name) && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument, _ => false };
   // A top-level vector constant's view (`{ NUMS }`, `is_const_view`): `Bind` on its anchor, the
   // constant copied into the buffer after the tail statement (loft#2585's tail spelling).
   cview = calls(e, tail, "OpConstRef");
@@ -447,7 +454,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if literal && !lexit {
       if !e.owed_buffer.contains(d) { e.owed_buffer += [d]; }
     }
-    if (lexit || local >= 0 || field_tail || cview) && !el_types::deps(ret).contains(ba) {
+    if (lexit || local >= 0 || field_tail || elem_tail || cview) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && el_ex_copy::returned_local(vars, tail) >= 0 {
       // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
@@ -896,7 +903,8 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     leaves: vector<integer> = [];
     for arm in branch_arms(ptail, []) {
       for lv in branch_leaves(e, vars, arm, leaves) {
-        if !leaves.contains(lv) && (arm#index == 0 || !arm_defines(arm, lv) || len(hidden_ref_args(e, vars, last_value(arm))) > 0) {
+        // (…unless it views another local, `e = vv[0]; e`: that view is `Bind` all the same.)
+        if !leaves.contains(lv) && (arm#index == 0 || !arm_defines(arm, lv) || len(hidden_ref_args(e, vars, last_value(arm))) > 0 || el_ex_copy::views_a_local(vars, lv)) {
           leaves += [lv];
         }
       }
@@ -904,7 +912,8 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     want = el_types::without_deps(el_types::base(result));
     for lf in leaves {
       // (`wrong_shape_for_buffer`: only a local of the return's own type can BE the buffer.)
-      shaped = el_types::is_equal(e, el_types::without_deps(el_types::base(el_vars::tp(vars, lf))), want) && !(el_vars::tp(vars, lf) is TyOptional) && !starts_with(el_vars::name_of(vars, lf), "___blk_val");
+      // (A local viewing another local is no store of its own to rename onto: `Bind`.)
+      shaped = el_types::is_equal(e, el_types::without_deps(el_types::base(el_vars::tp(vars, lf))), want) && !(el_vars::tp(vars, lf) is TyOptional) && !starts_with(el_vars::name_of(vars, lf), "___blk_val") && !el_ex_copy::views_a_local(vars, lf);
       if shaped && !bound && attr_nr(el::def(e, d), "__retbuf") >= 0 && !el_expressions::buffer_bound(e) {
         rename_onto(e, vars, rb, lf);
       } else {
