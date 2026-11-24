@@ -1,47 +1,11 @@
-diff --git b/src/c/mod.rs a/src/c/mod.rs
-index 8d945ff8b..5d69119ad 100644
---- b/src/c/mod.rs
-+++ a/src/c/mod.rs
-@@ -2196,7 +2196,8 @@ fn emit_unit_with(
-     cx.open = hosted.is_some();
-     cx.frames
-         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
--    cx.lazy.set(reachable_has(data, &all, is_lazy_native));
-+    cx.lazy
-+        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
-     let mut protos = String::new();
-     let mut bodies = String::new();
-     for &d in &fns {
-@@ -2761,7 +2762,7 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
-                 data.def(*c).name(),
-                 "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
-             );
--            lazy |= is_lazy_native(data.def(*c).name());
-+            lazy |= data.def(*c).name() == "n_store_bind_lazy";
-             fetches |= matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
-                 || native_c(name) == Some("loft_pg_load_keys")
-                 || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
-@@ -2970,11 +2971,7 @@ fn unit_defines(
-     let json_tree = reached.iter().any(|&d| {
-         let n = data.def(d).name();
-         n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
--    }) || cx
--        .show_types
--        .borrow()
--        .iter()
--        .any(|&t| stores.types.get(t as usize).is_some_and(|t| t.name == "JsonValue"));
-+    });
-     let parses = !cx.parse_types.borrow().is_empty()
-         || reached
-             .iter()
-@@ -3075,22 +3072,6 @@ fn unit_defines(
- /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
- /// any of them or `http_fetch` the TLS client its `https://` requests run over
- /// (`tls::unit_lines`).
--/// A native of a lazily bound collection (`loft_lazy.h`).  A unit that reaches ANY of them carries
--/// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
--/// answer (no failure, `""`) is the header's as well as the interpreter's.
--fn is_lazy_native(name: &str) -> bool {
+diff --git a/src/c/mod.rs b/src/c/mod.rs
+index acb2bb0..b03197b 100644
+--- a/src/c/mod.rs
++++ b/src/c/mod.rs
+@@ -3069,16 +3069,9 @@ fn unit_defines(
+ /// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
+ /// answer (no failure, `""`) is the header's as well as the interpreter's.
+ fn is_lazy_native(name: &str) -> bool {
 -    matches!(
 -        name,
 -        "n_store_bind_lazy"
@@ -52,32 +16,9 @@ index 8d945ff8b..5d69119ad 100644
 -            | "n_store_lazy_clear"
 -            | "n_store_lazy_fail"
 -    )
--}
--
++    // SABOTAGE: only a bind carries the lazy header; a unit asking `store_lazy_error` of a
++    // collection it never bound misses it.
++    name == "n_store_bind_lazy"
+ }
+ 
  fn fetch_defines(
-     data: &Data,
-     reached: &std::collections::HashSet<u32>,
-diff --git b/src/c/show.rs a/src/c/show.rs
-index f5df16580..fada6e8c7 100644
---- b/src/c/show.rs
-+++ a/src/c/show.rs
-@@ -23,6 +23,7 @@ impl Cx<'_> {
-             .ok_or("a format of an unknown type")?;
-         self.show_types.borrow_mut().insert(tp);
-         let r = match &t.parts {
-+            Parts::Enum(_) if t.name == "JsonValue" => Err("a format of a JsonValue".into()),
-             Parts::Enum(values) => values
-                 .iter()
-                 .filter(|(v, _)| *v != u16::MAX)
-@@ -354,11 +355,6 @@ impl Cx<'_> {
-         complex: i32,
-         brace: &str,
-     ) {
--        // A `JsonValue` in a JSON format is the JSON it holds (`ShowDb::write_jsonvalue`), at the
--        // indent of the value around it; plainly it renders as any other enum.
--        if name == "JsonValue" {
--            out.push_str("    if (fmt & 2) { loft_jv_render(cx, s, r, fmt & 1, ind); return; }\n");
--        }
-         if name.starts_with("__nullable<") {
-             // A present element renders as the dense value its `Some` variant carries.
-             out.push_str("    switch (*loft_at(cx, loft_store_of(cx, r), r.rec, r.pos)) {\n");

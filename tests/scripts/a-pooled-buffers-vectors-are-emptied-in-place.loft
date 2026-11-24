@@ -8,14 +8,8 @@
 // value on one path and its literal on the other (c7), and a store that grows per call (c8).
 // Every value by hand.
 //
-// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
-//   with `@falsified-by:` below.
-// @falsified-by: tests/falsified/a-pooled-buffers-vectors-are-emptied-in-place.patch — the
-//   vector clause admitting no callee.
-//   CHANNEL: the trace pin in tests/refill_text.rs (the values pass either way — the clause
-//   saves a release, it changes none).
-//   WITNESS: `refill-text: n_main → n_mkf declined — …` where the pin wants `admitted (vectors)`.
-//   HOLDS: every cell green on both backends with the plant applied.
+// @falsified-at: none — the refill rewrite this guarded is gone (R-RefillBuffer), so no build of
+//   today's code holds the defect; the program still checks every value and length.
 
 struct P { a: integer, b: integer }
 struct F { h: integer, xs: vector<integer>, ps: vector<P> }

@@ -1,14 +1,28 @@
-diff --git a/src/call_frames.rs b/src/call_frames.rs
-index 82123b61d..2e22f5cb7 100644
---- a/src/call_frames.rs
-+++ b/src/call_frames.rs
-@@ -180,7 +180,8 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
- /// (loft#2009).  The lean tier never emits it, so its out-of-line form costs that tier nothing.
- pub fn cr_call_site(line: u32) {
-     let depth = CALL_DEPTH.get();
--    if depth == 0 {
-+    // SABOTAGE (loft#1753): no frame records the line it is calling from.
-+    if true || depth == 0 {
-         return;
+diff --git a/src/c/loft_rt.h b/src/c/loft_rt.h
+index e13f627..90550a4 100644
+--- a/src/c/loft_rt.h
++++ b/src/c/loft_rt.h
+@@ -962,7 +962,8 @@ static void loft_frame_pop(loft_cx *cx) {
+ }
+ 
+ static void loft_frame_site(loft_cx *cx, uint32_t line) {
+-    if (cx->nframes) cx->frames[cx->nframes - 1].site = line;
++    /* SABOTAGE (loft#1753): no frame records the line it is calling from. */
++    (void) cx; (void) line;
+ }
+ #ifdef LOFT_ALLOC_TRACE
+ /* `LOFT_ALLOC_TRACE`'s sites (`store_census::alloc_event`): `@ <line>` before an event whose
+diff --git a/src/state/mod.rs b/src/state/mod.rs
+index 39ad1fb..2549d36 100644
+--- a/src/state/mod.rs
++++ b/src/state/mod.rs
+@@ -1153,7 +1153,8 @@ impl State {
+     #[must_use]
+     pub fn call_line(&self, call_pos: u32) -> u32 {
+         self.line_numbers
+-            .range(..call_pos)
++            // SABOTAGE (loft#1753): an entry AT the call position, the next statement's line.
++            .range(..=call_pos)
+             .next_back()
+             .map_or(0, |(_, &v)| v)
      }
-     CALL_FRAMES.with(|frames| {
