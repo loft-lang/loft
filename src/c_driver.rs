@@ -1124,6 +1124,20 @@ pub(crate) struct Built {
     pub cached: bool,
 }
 
+/// P254 — may the cached binary at `cached` run?  It must pass the cache's safety check
+/// (owner, mode, no symlink, no SUID); one that fails is reported and rebuilt over.
+fn reuse_cached(cached: &std::path::Path) -> bool {
+    if crate::native_utils::cache_safe_to_execute(cached) {
+        crate::native_utils::touch_cached_binary(cached);
+        return true;
+    }
+    eprintln!(
+        "loft: rejecting suspicious cached binary at {} (P254 — wrong owner, world-writable, symlink, or SUID); recompiling",
+        cached.display()
+    );
+    false
+}
+
 /// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path,
 /// placed as [`Placement`] says.
 /// The binary is compiled under the scratch directory and published by an atomic rename, so
@@ -1166,12 +1180,7 @@ pub(crate) fn build(
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
     // A lint compiles afresh, so its warnings are seen every time it is asked for.
     let linting = lint() != Lint::Off;
-    if !no_cache
-        && !linting
-        && fa::exists(&cached)
-        && crate::native_utils::cache_safe_to_execute(&cached)
-    {
-        crate::native_utils::touch_cached_binary(&cached);
+    if !no_cache && !linting && fa::exists(&cached) && reuse_cached(&cached) {
         return Ok(Built {
             binary: cached,
             cached: true,
@@ -1293,10 +1302,10 @@ pub(crate) fn loft_written_unit(
             ),
         )
         .map_err(|e| format!("the program image could not be written: {e}"))?;
-        // `@FR-R-CSplit` runs in a semantics build alone: a unit that keeps its functions whole
-        // (`c::functions_whole`, a shipped artefact) tells the generator so.
+        // `@FR-R-CSplit` runs in a semantics build, and in a shipped one only on request
+        // (`LOFT_C_SPLIT_SHIP`): a unit that keeps its functions whole tells the generator so.
         let mut spawn = Spawn::new(Program::os(&generator)).args([&image, &unit, &runtime]);
-        if loft::c::functions_whole() {
+        if loft::c::functions_whole() && !loft::c::split_shipped() {
             spawn = spawn.env("LOFT_NO_C_SPLIT", "1");
         }
         let out = spawn

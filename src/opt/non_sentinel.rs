@@ -155,7 +155,7 @@ pub(crate) struct NnMemo {
 /// Forget every per-definition answer: a new generation run is about a new program.
 /// Called by [`super::begin_program`].
 pub(crate) fn begin_generation(data: &Data) {
-    data.nn_memo.with(|m| *m = NnMemo::default());
+    data.nn_memo.with(|m: &mut NnMemo| *m = NnMemo::default());
 }
 
 /// The C backend's generation start: the per-program memos cleared, and the program-wide
@@ -164,7 +164,7 @@ pub(crate) fn begin_generation(data: &Data) {
 /// no such clause, so the fact is the C's alone.
 pub(crate) fn begin_c_generation(data: &Data) {
     begin_generation(data);
-    data.nn_memo.with(|m| m.param_proof = true);
+    data.nn_memo.with(|m: &mut NnMemo| m.param_proof = true);
 }
 
 /// Is the release-pass probe on (generation time)?  Its integer `+ - *` wrap.
@@ -197,7 +197,7 @@ enum ParamState {
     reason = "the candidates, then the fixpoint over every call site, kept as one reading"
 )]
 fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
-    let state = data.nn_memo.with(|m| match &m.params {
+    let state = data.nn_memo.with(|m: &mut NnMemo| match &m.params {
         ParamState::Known(k) | ParamState::Computing(k) => Some(k.clone()),
         ParamState::Unknown => None,
     });
@@ -207,7 +207,7 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
     if crate::env_once!(std::env::var("LOFT_NO_NN_PARAMS").is_ok_and(|v| v != "0")) {
         let k = std::sync::Arc::new(HashMap::new());
         data.nn_memo
-            .with(|m| m.params = ParamState::Known(k.clone()));
+            .with(|m: &mut NnMemo| m.params = ParamState::Known(k.clone()));
         return k;
     }
     use crate::data::Type;
@@ -288,7 +288,7 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
             if set.len() != round_len {
                 round_len = set.len();
                 let now = as_flags(&shape, set);
-                data.nn_memo.with(|m| {
+                data.nn_memo.with(|m: &mut NnMemo| {
                     m.params = ParamState::Computing(std::sync::Arc::new(now));
                     m.returns.clear();
                 });
@@ -315,7 +315,7 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
         },
     );
     let mut assumed = as_flags(&shape, &proven);
-    data.nn_memo.with(|m| m.returns.clear());
+    data.nn_memo.with(|m: &mut NnMemo| m.returns.clear());
     assumed.retain(|_, f| f.iter().any(|x| *x));
     // @decline-owed: a function taken as a value or never called directly; a parameter the body
     //   rebinds or lends; a parameter one call site passes an argument the proof does not
@@ -330,7 +330,7 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
     );
     let k = std::sync::Arc::new(assumed);
     data.nn_memo
-        .with(|m| m.params = ParamState::Known(k.clone()));
+        .with(|m: &mut NnMemo| m.params = ParamState::Known(k.clone()));
     k
 }
 
@@ -381,7 +381,7 @@ pub(crate) fn candidate_params(data: &Data, d: u32) -> Option<Vec<bool>> {
 
 /// The program-wide proven parameters of `d` (`@FR-R-NonSentinelParam`), if any.
 pub(crate) fn proven_param_flags(data: &Data, d: u32) -> Option<Vec<bool>> {
-    if !data.nn_memo.with(|m| m.param_proof) {
+    if !data.nn_memo.with(|m: &mut NnMemo| m.param_proof) {
         return None;
     }
     proven_params(data).get(&d).cloned()
@@ -407,7 +407,10 @@ fn assigned_in(code: &Value, p: u16) -> bool {
 /// Memoised per definition for the generation run (see [`NnMemo`]); a cycle answers false at the re-entry,
 /// which only declines.  A native (no body) answers false.
 fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
-    if let Some(known) = data.nn_memo.with(|m| m.returns.get(&d_nr).copied()) {
+    if let Some(known) = data
+        .nn_memo
+        .with(|m: &mut NnMemo| m.returns.get(&d_nr).copied())
+    {
         return known;
     }
     let def = data.def(d_nr);
@@ -415,7 +418,8 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
         return false;
     }
     // Pessimistic entry: a recursive callee reads itself as unproven.
-    data.nn_memo.with(|m| m.returns.insert(d_nr, false));
+    data.nn_memo
+        .with(|m: &mut NnMemo| m.returns.insert(d_nr, false));
     let vars = non_sentinel_vars(data, def.variables(), def.code());
     // A `Loop` tail is no exit (`(R-TailSelf)`'s frame loop returns only from inside it), so
     // the `return`s below are every exit.
@@ -429,7 +433,8 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
         }
         false
     });
-    data.nn_memo.with(|m| m.returns.insert(d_nr, every_exit));
+    data.nn_memo
+        .with(|m: &mut NnMemo| m.returns.insert(d_nr, every_exit));
     every_exit
 }
 
@@ -525,7 +530,7 @@ pub fn non_sentinel_vars_seeded(
     }
     // `@FR-R-NonSentinelParam`: the parameters every call proves (`proven_params`).
     let d = data.def_nr(&function.name);
-    if data.nn_memo.with(|m| m.param_proof)
+    if data.nn_memo.with(|m: &mut NnMemo| m.param_proof)
         && (d as usize) < data.definitions.len()
         && std::ptr::eq(data.def(d).variables(), function)
         && let Some(flags) = proven_params(data).get(&d)

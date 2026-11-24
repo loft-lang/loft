@@ -3052,7 +3052,9 @@ LOFT_HOT_INLINE loft_ref loft_vec_get(loft_cx *cx, loft_ref v, uint32_t size, in
 /* A vector held for a loop (@FR-R-Header, opt::header): its store, record, length and element
  * base, read once before a loop that writes no store but in place — no record moves and no
  * length changes inside it — so an element read is one bounds test and one load. */
-typedef struct { uint16_t store_nr; uint32_t rec; loft_int len; uint8_t *base; uint8_t locked; } loft_vh;
+/* `room` is the bytes the record holds past its header: a length word that claims more (a store
+ * loaded with `store_load`, never walked) is held to it by every raw access, as `LOFT_VH_LEN`. */
+typedef struct { uint16_t store_nr; uint32_t rec; loft_int len; uint8_t *base; uint8_t locked; uint32_t room; } loft_vh;
 
 /* `@FR-H-WriteLocked` — a header over a locked store has no writable element: its lock state is
  * read with the header (no loop the hoist admits locks or unlocks a store), and a write through
@@ -3069,6 +3071,7 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_cx *cx, loft_ref v) {
     h.len = 0;
     h.base = 0;
     h.locked = 0;
+    h.room = 0;
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
     loft_store_t *s = loft_store_of(cx, v);
     h.locked = s->read_only;
@@ -3077,6 +3080,9 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_cx *cx, loft_ref v) {
     h.rec = r;
     h.len = loft_u32(cx, s, r, 4);
     h.base = loft_elem_base(cx, s, r);
+    int32_t claimed;
+    memcpy(&claimed, loft_at(cx, s, r, 0), 4);
+    h.room = claimed < 1 ? 0 : (uint32_t) claimed * 8u - 8u;
     return h;
 }
 
@@ -3092,21 +3098,33 @@ LOFT_HOT_INLINE loft_vh loft_vh_fresh(loft_cx *cx, loft_vh h) {
  * record, length and base it was held with. */
 static int loft_vh_same(loft_cx *cx, loft_vh h, loft_ref v) {
     loft_vh now = loft_vh_of(cx, v);
-    return now.store_nr == h.store_nr && now.rec == h.rec && now.len == h.len && now.base == h.base;
+    return now.store_nr == h.store_nr && now.rec == h.rec && now.len == h.len && now.base == h.base
+        && now.room == h.room;
 }
 
 /* The element index `from` names (negative from the end), or -1 outside, as loft_vec_get.
  * Branch-free: a negative `from` adds the length (`from >> 63` is all ones), and one unsigned
  * compare tests both ends — the null index, the most negative one, stays outside. */
-#define LOFT_VH_WRAP(h, from) ((from) < 0 ? (from) + (h).len : (from))
-#define LOFT_VH_OUT(h, f) LOFT_UNLIKELY((loft_uint) (f) >= (loft_uint) (h).len)
-LOFT_HOT_INLINE loft_int loft_vh_index(loft_cx *cx, loft_vh h, loft_int from) {
+/* `@FR-R-Header` — the elements of `size` bytes a raw access through `h` may address: its
+ * length, held to the record's room.  For a vector the runtime wrote the two agree (its claim
+ * covers `len * size`), so this is `len`; a length word that claims more is cut to what the
+ * record holds, and the elements past it read as past the end.  With `size` a constant and a
+ * header the loop does not write, the compiler takes it once, before the loop.  Every raw
+ * access below names it, through `LOFT_VH_LEN` with the `size` in its scope. */
+LOFT_HOT_INLINE loft_int loft_vh_lim(loft_vh h, uint32_t size) {
+    loft_int held = (loft_int) (h.room / size);
+    return h.len < held ? h.len : held;
+}
+#define LOFT_VH_LEN(h) loft_vh_lim((h), size)
+#define LOFT_VH_WRAP(h, from) ((from) < 0 ? (from) + LOFT_VH_LEN(h) : (from))
+#define LOFT_VH_OUT(h, f) LOFT_UNLIKELY((loft_uint) (f) >= (loft_uint) LOFT_VH_LEN(h))
+LOFT_HOT_INLINE loft_int loft_vh_index(loft_cx *cx, loft_vh h, uint32_t size, loft_int from) {
     loft_int f = LOFT_VH_WRAP(h, from);
     return LOFT_VH_OUT(h, f) ? -1 : f;
 }
 
 LOFT_HOT_INLINE loft_ref loft_vh_get(loft_cx *cx, loft_vh h, uint32_t size, loft_int from) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return loft_ref_null(cx);
     loft_ref e = {0};
     e.store_nr = h.store_nr;
@@ -3116,7 +3134,7 @@ LOFT_HOT_INLINE loft_ref loft_vh_get(loft_cx *cx, loft_vh h, uint32_t size, loft
 }
 
 LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_cx *cx, loft_vh h, uint32_t size, loft_int from, uint32_t fld) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return LOFT_NULL;
     int64_t v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
@@ -3126,19 +3144,19 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_cx *cx, loft_vh h, uint32_t size, l
 /* The address of element `from` (negative from the end) through the held base, or the null
  * address outside the vector — the `loft_pa_*` readers answer null there. */
 LOFT_HOT_INLINE uint8_t *loft_vh_addr(loft_cx *cx, loft_vh h, uint32_t size, loft_int from) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     return f < 0 ? (uint8_t *) 0 : h.base + (size_t) f * size;
 }
 
 LOFT_HOT_INLINE void loft_vh_set_int(loft_cx *cx, loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return;
     LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 LOFT_HOT_INLINE double loft_vh_get_float(loft_cx *cx, loft_vh h, uint32_t size, loft_int from, uint32_t fld) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return (double) NAN;
     double v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
@@ -3146,7 +3164,7 @@ LOFT_HOT_INLINE double loft_vh_get_float(loft_cx *cx, loft_vh h, uint32_t size, 
 }
 
 LOFT_HOT_INLINE void loft_vh_set_float(loft_cx *cx, loft_vh h, uint32_t size, loft_int from, uint32_t fld, double v) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return;
     LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
@@ -3156,6 +3174,7 @@ LOFT_HOT_INLINE void loft_vh_set_float(loft_cx *cx, loft_vh h, uint32_t size, lo
  * [0, len). */
 LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: int");
+    if (LOFT_VH_OUT(h, f)) return LOFT_NULL;
     int64_t v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
@@ -3163,6 +3182,7 @@ LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_cx *cx, loft_vh h, uint32_t size, lo
 
 LOFT_HOT_INLINE void loft_vh_put_int(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld, int64_t v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put int");
+    if (LOFT_VH_OUT(h, f)) return;
     LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
@@ -3170,6 +3190,7 @@ LOFT_HOT_INLINE void loft_vh_put_int(loft_cx *cx, loft_vh h, uint32_t size, loft
 /* @FR-R-Version — a fast twin's boolean element write at an index its precondition proved. */
 LOFT_HOT_INLINE void loft_vh_put_bool(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld, uint8_t v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put bool");
+    if (LOFT_VH_OUT(h, f)) return;
     LOFT_VH_WRITABLE(h);
     h.base[(size_t) f * size + fld] = v;
 }
@@ -3177,6 +3198,7 @@ LOFT_HOT_INLINE void loft_vh_put_bool(loft_cx *cx, loft_vh h, uint32_t size, lof
 /* @FR-R-Base's guard clause — a float element's write at an index proven in [0, len). */
 LOFT_HOT_INLINE void loft_vh_put_float(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld, double v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put float");
+    if (LOFT_VH_OUT(h, f)) return;
     LOFT_VH_WRITABLE(h);
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
@@ -3185,12 +3207,14 @@ LOFT_HOT_INLINE void loft_vh_put_float(loft_cx *cx, loft_vh h, uint32_t size, lo
  * [0, len): its float, its reference and its address, no index test. */
 LOFT_HOT_INLINE double loft_vh_at_float(loft_cx *cx, loft_vh h, uint32_t size, loft_int f, uint32_t fld) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: float");
+    if (LOFT_VH_OUT(h, f)) return (double) NAN;
     double v;
     memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
 }
 LOFT_HOT_INLINE loft_ref loft_vh_at_ref(loft_cx *cx, loft_vh h, uint32_t size, loft_int f) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: element");
+    if (LOFT_VH_OUT(h, f)) return loft_ref_null(cx);
     loft_ref e = loft_ref_null(cx);
     e.store_nr = h.store_nr;
     e.rec = h.rec;
@@ -3207,6 +3231,7 @@ LOFT_HOT_INLINE int loft_grid_fits(loft_cx *cx, loft_vh h, int64_t rows, int64_t
 }
 LOFT_HOT_INLINE uint8_t *loft_vh_at_addr(loft_cx *cx, loft_vh h, uint32_t size, loft_int f) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: address");
+    if (LOFT_VH_OUT(h, f)) return (uint8_t *) 0;
     return h.base + (size_t) f * size;
 }
 
@@ -3267,14 +3292,14 @@ static inline int loft_vg_lin(loft_cx *cx, int64_t x, int64_t c, int64_t t, int6
  * index falls outside [0, len) — the cases the loop answers itself (a negative index counts
  * from the end), so the caller runs the loop there.  `hi` is the range's end, `inclusive` its
  * form. */
-static inline int loft_fill_run(loft_cx *cx, loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
-                                int64_t *first, int64_t *count) {
+static inline int loft_fill_run(loft_cx *cx, loft_vh h, uint32_t size, int64_t base, int64_t lo, int64_t hi,
+                                int inclusive, int64_t *first, int64_t *count) {
     int64_t last, f, e;
     if (inclusive) last = hi;
     else if (hi == INT64_MIN) return 0;
     else last = hi - 1;
     if (lo > last || LOFT_ADD_OVF(base, lo, &f) || LOFT_ADD_OVF(base, last, &e)) return 0;
-    if (f < 0 || e >= h.len || h.locked) return 0;
+    if (f < 0 || e >= LOFT_VH_LEN(h) || h.locked) return 0;
     *first = f;
     *count = e - f + 1;
     return 1;
@@ -3283,7 +3308,7 @@ static inline int loft_fill_run(loft_cx *cx, loft_vh h, int64_t base, int64_t lo
 LOFT_HOT_INLINE int loft_vh_fill_i64(loft_cx *cx, loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
                                      int64_t v) {
     int64_t f, n;
-    if (!loft_fill_run(cx, h, base, lo, hi, inclusive, &f, &n)) return 0;
+    if (!loft_fill_run(cx, h, 8, base, lo, hi, inclusive, &f, &n)) return 0;
     uint64_t bits;
     memcpy(&bits, &v, 8);
     loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
@@ -3293,7 +3318,7 @@ LOFT_HOT_INLINE int loft_vh_fill_i64(loft_cx *cx, loft_vh h, int64_t base, int64
 LOFT_HOT_INLINE int loft_vh_fill_f64(loft_cx *cx, loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
                                      double v) {
     int64_t f, n;
-    if (!loft_fill_run(cx, h, base, lo, hi, inclusive, &f, &n)) return 0;
+    if (!loft_fill_run(cx, h, 8, base, lo, hi, inclusive, &f, &n)) return 0;
     uint64_t bits;
     memcpy(&bits, &v, 8);
     loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
@@ -3303,7 +3328,7 @@ LOFT_HOT_INLINE int loft_vh_fill_f64(loft_cx *cx, loft_vh h, int64_t base, int64
 LOFT_HOT_INLINE int loft_vh_fill_f32(loft_cx *cx, loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
                                      float v) {
     int64_t f, n;
-    if (!loft_fill_run(cx, h, base, lo, hi, inclusive, &f, &n)) return 0;
+    if (!loft_fill_run(cx, h, 4, base, lo, hi, inclusive, &f, &n)) return 0;
     uint32_t bits;
     memcpy(&bits, &v, 4);
     loft_fill4(h.base + (size_t) f * 4, bits, (size_t) n);
@@ -3314,7 +3339,7 @@ LOFT_HOT_INLINE int loft_vh_fill_f32(loft_cx *cx, loft_vh h, int64_t base, int64
 LOFT_HOT_INLINE int loft_vh_fill_u32(loft_cx *cx, loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
                                      int64_t v) {
     int64_t f, n;
-    if (!loft_fill_run(cx, h, base, lo, hi, inclusive, &f, &n)) return 0;
+    if (!loft_fill_run(cx, h, 4, base, lo, hi, inclusive, &f, &n)) return 0;
     loft_fill4(h.base + (size_t) f * 4, v == LOFT_NULL ? 0xFFFFFFFFu : (uint32_t) (uint64_t) v, (size_t) n);
     return 1;
 }
@@ -4546,6 +4571,13 @@ LOFT_HOT_INLINE loft_vh loft_ph_vh(loft_cx *cx, const loft_ph *h) {
     r.len = h->len;
     r.base = h->rec != 0 ? loft_elem_base(cx, &cx->stores[h->v.store_nr], h->rec) : 0;
     r.locked = h->rec != 0 && cx->stores[h->v.store_nr].read_only;
+    /* `@FR-R-Header`: the room the record holds, as `loft_vh_of` takes it. */
+    r.room = 0;
+    if (h->rec != 0) {
+        int32_t claimed;
+        memcpy(&claimed, loft_at(cx, &cx->stores[h->v.store_nr], h->rec, 0), 4);
+        r.room = claimed < 1 ? 0 : (uint32_t) claimed * 8u - 8u;
+    }
     return r;
 }
 
@@ -6122,8 +6154,9 @@ static void loft_dlv_text(loft_cx *cx, loft_text *o, loft_ref r) {
 
 typedef const char *(*loft_dlv_fn)(loft_cx *cx, loft_text *o, loft_ref r);
 
-/* `deliver(tag, value)` on the loopback host: the bytes, or why the layout cannot carry them. */
-static void loft_deliver(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn f, loft_ref r) {
+/* `deliver(tag, value)` on the loopback host: the bytes, or why the layout cannot carry them.
+ * A page's host is `loft_deliver_page` (loft_deliver_web.h). */
+static void loft_deliver_loopback(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn f, loft_ref r) {
     loft_text o = { 0, 0, 0 };
     const char *e = f(cx, &o, r);
     if (e) printf("deliver tag=%lld type=%s error=%s\n", (long long) tag, name, e);
@@ -8103,7 +8136,8 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_cx *cx, loft_vh h, uint32_t si
  * miss answers and reports as the wrapping accessors do. */
 #define LOFT_VH_LT(h, from, f) \
     loft_int f = LOFT_VH_WRAP(h, from); \
-    LOFT_PROVED(f < (h).len, "a guarded index")
+    LOFT_PROVED(f < (h).len, "a guarded index"); \
+    if (LOFT_VH_OUT(h, f)) f = -1
 LOFT_HOT_INLINE loft_ref loft_vh_get_lt(loft_cx *cx, loft_vh h, uint32_t size, loft_int from) {
     LOFT_VH_LT(h, from, f);
     if (LOFT_UNLIKELY(f < 0)) return loft_ref_null(cx);
@@ -8220,7 +8254,7 @@ LOFT_HOT_INLINE void loft_vh_put_u32(loft_cx *cx, loft_vh h, uint32_t size, loft
     loft_vh_store_u32(cx, h, size, f, fld, v);
 }
 LOFT_HOT_INLINE void loft_vh_set_u32(loft_cx *cx, loft_vh h, uint32_t size, loft_int from, uint32_t fld, int64_t v) {
-    loft_int f = loft_vh_index(cx, h, from);
+    loft_int f = loft_vh_index(cx, h, size, from);
     if (f < 0) return;
     LOFT_VH_WRITABLE(h);
     loft_vh_store_u32(cx, h, size, f, fld, v);

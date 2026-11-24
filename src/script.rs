@@ -83,7 +83,17 @@ pub fn script_desugar_mapped(src: &str) -> Option<(String, Vec<u32>)> {
         u32::try_from(src[..off].matches('\n').count() + 1).unwrap_or(1)
     };
     let (mut defs, mut body): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+    let mut head: Vec<&str> = Vec::new();
     for it in split_top_level(src) {
+        // A file directive stays a file directive: first in the generated source.
+        let k = file_directive_prefix(it);
+        if k > 0 {
+            head.push(&it[..k]);
+        }
+        let it = it[k..].trim_start();
+        if it.is_empty() {
+            continue;
+        }
         if is_def_item(it) {
             defs.push(it);
         } else {
@@ -103,7 +113,7 @@ pub fn script_desugar_mapped(src: &str) -> Option<(String, Vec<u32>)> {
             map.push(orig + u32::try_from(k).unwrap_or(0));
         }
     };
-    for d in defs.drain(..) {
+    for d in head.into_iter().chain(defs.drain(..)) {
         let orig = line_of(d);
         last = orig;
         push(&mut out, &mut map, d, orig);
@@ -396,7 +406,7 @@ fn continues_with_else(b: &[u8], i: usize) -> bool {
 fn strip_leading_annotations(item: &str) -> &str {
     let b = item.as_bytes();
     let n = b.len();
-    let mut i = skip_trivia(b, 0);
+    let mut i = skip_trivia(b, file_directive_prefix(item));
     while i < n && b[i] == b'#' {
         i += 1;
         while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
@@ -453,6 +463,51 @@ fn strip_leading_annotations(item: &str) -> &str {
         i = skip_trivia(b, i);
     }
     item[i..].trim_start()
+}
+
+/// The byte length of the FILE directives an item begins with — `#width 32`, `#link static`,
+/// `#cwd`, `#package` (`Parser::parse_file_directives`), each with its optional `;` — or 0.
+///
+/// A file directive is no statement and no annotation of the item after it.  Two of them
+/// take a bare-word argument, which the annotation reader (quoted or parenthesised arguments
+/// only) does not read: left behind, the `32` of `#width 32` was a loose statement, so a file
+/// of definitions with no `fn main` — a test file under the 32-bit regime — was desugared as a
+/// beginner script and refused with "Expect token ;".  The desugar keeps the prefix at the
+/// top of the file, where `parse_file_directives` reads it.
+fn file_directive_prefix(item: &str) -> usize {
+    let b = item.as_bytes();
+    let n = b.len();
+    let word = |mut j: usize| {
+        while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+            j += 1;
+        }
+        j
+    };
+    let mut end = 0;
+    let mut i = skip_trivia(b, 0);
+    while i < n && b[i] == b'#' {
+        let name_end = word(i + 1);
+        let mut j = match &item[i + 1..name_end] {
+            "width" | "link" => {
+                let mut a = name_end;
+                while a < n && (b[a] == b' ' || b[a] == b'\t') {
+                    a += 1;
+                }
+                word(a)
+            }
+            "cwd" | "package" => name_end,
+            _ => break,
+        };
+        while j < n && (b[j] == b' ' || b[j] == b'\t') {
+            j += 1;
+        }
+        if j < n && b[j] == b';' {
+            j += 1;
+        }
+        end = j;
+        i = skip_trivia(b, j);
+    }
+    end
 }
 
 /// A top-level item is a DEF (a def keyword, possibly annotation-prefixed), a bare
@@ -593,6 +648,27 @@ mod tests {
         // native_crate_pkg.loft: a brace-less fn body.
         assert!(!is_script("pub fn hi() -> text\n    return \"hi\"\n"));
     }
+    #[test]
+    fn file_directives_are_not_statements() {
+        // A file of definitions under a file directive with an argument is no script: the
+        // argument is part of the directive (a regime test file has no `fn main`).
+        assert!(!is_script("#width 32\nfn test_a() { }\n"));
+        assert!(!is_script("#width 64\nstruct S { a: integer }\n"));
+        assert!(!is_script("#link static\nfn f() { }\n"));
+        assert!(!is_script(
+            "#width 32;\n#package\nfn f() -> integer { 1 }\n"
+        ));
+        assert!(!is_script("#width 32\nfn main() { }\n"));
+        // …and loose statements under one still are, the directive kept first.
+        assert!(is_script("#width 32\nx = 1\nprint(\"{x}\")\n"));
+        let out = super::script_desugar("#width 32\nx = 1\nfn h() { }\nprint(\"{x}\")\n").unwrap();
+        assert!(
+            out.starts_with("#width 32\nfn h() { }\nfn main() {\n"),
+            "{out}"
+        );
+        assert!(!out.contains("main() {\n#width"), "{out}");
+    }
+
     /// loft#736 — an `else` after the depth-0 `}` CONTINUES the item.
     ///
     /// The split ended every item at the brace that closed it back to depth 0, so

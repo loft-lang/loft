@@ -275,6 +275,11 @@ struct loft_cx {
     int seed_fixed_set;
     uint64_t seed_fixed;
     uint64_t seed_counter;
+    /* the hash layout a new table takes, and its trace (`loft_hash.h`, `loft_h_policy`) */
+    int h_policy_read;
+    int h_untagged;
+    int h_no_inline;
+    int h_trace;
     /* the typed parse (`loft_parse.h`) */
     int rd_on;
     loft_text rd_path;  /* "/leaves/1" */

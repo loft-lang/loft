@@ -1,0 +1,16 @@
+// A package's native part in C, linked into the program by `--native` and called by the
+// interpreter through the same C.  42 is the oracle that the call reached the C, and -1 the
+// oracle that its return was read at the width the binding names.
+use c_scalar_pkg::*;
+
+fn main() {
+  answer = native_answer();
+  assert(answer == 42, "native_answer={answer} (expected 42)");
+
+  // The ABI oracle: a NEGATIVE native return.  42 above survives any integer width, so
+  // it cannot see a mismatched signature; -1 read through a too-narrow return arrives
+  // as 4294967295 instead.  Assert the value AND the sign test a caller would write.
+  s = native_sentinel();
+  assert(s == -1, "native_sentinel={s} (expected -1 — a narrow native return would give 4294967295)");
+  assert(s < 0, "native_sentinel must satisfy a `< 0` failure check on both backends");
+}

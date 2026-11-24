@@ -351,13 +351,26 @@ fn block(
     } else {
         None
     };
+    // A delivery that ends in an explicit `return` already carries the frame's whole exit:
+    // the releases before that `return` are every one the function runs on the way out, as
+    // an explicit `return` statement's are (`statement`, which hands it no `epi`).  Appending
+    // the enclosing delivery's releases too released every local twice on the jump — a
+    // `return f(…)` inside an arm of a function whose tail is a `match` freed a call buffer
+    // a second time (loft#2629).
+    let tail_epi = |j: usize| -> &[Value] {
+        if matches!(ops[j].unspan(), Value::Return(_)) {
+            &[]
+        } else {
+            epi
+        }
+    };
     let frees: Vec<Value> = match (deliver, pat) {
-        (Some((m, j, x)), _) => releases(&ops, m + 1, j, epi, Some(x), cx),
+        (Some((m, j, x)), _) => releases(&ops, m + 1, j, tail_epi(j), Some(x), cx),
         (None, Some((k, j))) => {
             let Value::Set(r, _) = ops[k].unspan() else {
                 unreachable!("ret_pattern found a `Set`")
             };
-            releases(&ops, k + 1, j, epi, Some(*r), cx)
+            releases(&ops, k + 1, j, tail_epi(j), Some(*r), cx)
         }
         (None, None) => Vec::new(),
     };

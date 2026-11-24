@@ -5417,10 +5417,10 @@ pub(crate) type DefsMemo = (u32, Option<std::sync::Arc<Defs>>);
 /// (the reason given on `function_defs`): it is entered where nothing rewrites one — the
 /// emission of a single function — for this `Data` and this function, and it restores whatever
 /// it replaced when dropped, so a nested span leaves the outer one intact.
-pub(crate) type DefsMemoScope = crate::data::ScopedSpan<DefsMemo>;
+pub(crate) type DefsMemoScope = crate::data::ScopedSpan;
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    data.defs_memo.open((d_nr, None))
+    data.defs_memo.open::<DefsMemo>((d_nr, None))
 }
 
 /// The callee facts every ownership question in one span shares: per function, the round's
@@ -5440,7 +5440,7 @@ pub(crate) struct SpanMemo {
     ret: HashMap<u32, Own>,
 }
 
-pub(crate) type OwnershipMemoScope = crate::data::ScopedSpan<SpanMemo>;
+pub(crate) type OwnershipMemoScope = crate::data::ScopedSpan;
 
 /// Open a span in which no body of `data` changes: see [`SpanMemo`].  Restores whatever span
 /// it replaced when dropped, so a nested one leaves the outer one intact.
@@ -5452,11 +5452,12 @@ pub(crate) fn ownership_memo_scope(data: &Data) -> OwnershipMemoScope {
 }
 
 fn span_return_class(data: &Data, d_nr: u32) -> Option<Own> {
-    data.span_memo.with(|m| m.as_ref()?.ret.get(&d_nr).copied())
+    data.span_memo
+        .with(|m: Option<&mut SpanMemo>| m.as_ref()?.ret.get(&d_nr).copied())
 }
 
 fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
-    data.span_memo.with(|m| {
+    data.span_memo.with(|m: Option<&mut SpanMemo>| {
         if let Some(s) = m {
             s.ret.insert(d_nr, class);
         }
@@ -5468,14 +5469,14 @@ fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
 fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
     let open = data
         .span_memo
-        .with(|m| Some(m.as_ref()?.round_defs.get(&d_nr).cloned()))?;
+        .with(|m: Option<&mut SpanMemo>| Some(m.as_ref()?.round_defs.get(&d_nr).cloned()))?;
     if let Some(defs) = open {
         return Some(defs);
     }
     let mut defs = Defs::default();
     collect_defs(&data.def(d_nr).code, &FillOps::of(data), &mut defs);
     let defs = std::sync::Arc::new(defs);
-    data.span_memo.with(|m| {
+    data.span_memo.with(|m: Option<&mut SpanMemo>| {
         if let Some(s) = m {
             s.round_defs.insert(d_nr, defs.clone());
         }
@@ -5486,7 +5487,7 @@ fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
 /// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
 /// `Data` and this function is open; `None` otherwise.
 fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
-    let open = data.defs_memo.with(|m| match m {
+    let open = data.defs_memo.with(|m: Option<&mut DefsMemo>| match m {
         Some((n, got)) if *n == d_nr => Some(got.clone()),
         _ => None,
     })?;
@@ -5494,7 +5495,7 @@ fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
         return Some(defs);
     }
     let defs = std::sync::Arc::new(function_defs(data, d_nr));
-    data.defs_memo.with(|m| {
+    data.defs_memo.with(|m: Option<&mut DefsMemo>| {
         if let Some((n, got)) = m
             && *n == d_nr
         {
@@ -11293,7 +11294,7 @@ pub fn debug_dead_store_dump(
 /// graph, from the bodies as the scope pass receives them — the twin of
 /// `parser::closures::param_writes_summary` (loft#2620): one answer per function, not one per
 /// asking function and the order it walked the graph in.
-pub(crate) type WrittenParamsSummary = crate::data::ScopedSpan<WrittenParams>;
+pub(crate) type WrittenParamsSummary = crate::data::ScopedSpan;
 
 /// Per function, the parameters it writes through (`Data::written_params`).
 pub(crate) type WrittenParams = HashMap<u32, HashSet<u16>>;
@@ -11351,15 +11352,16 @@ pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
 }
 
 fn summarised_written_params(data: &Data, callee: u32) -> Option<HashSet<u16>> {
-    data.written_params.with(|m| match m {
-        Some(map) => match map.get(&callee) {
-            Some(w) => Some(w.clone()),
-            // A native (no loft body) writes nothing a walk could read: `callee_written_params`
-            // answers it empty, and so does the summary.  A body made after the summary was
-            // taken is walked as before.
-            None if *data.def(callee).code() == Value::Null => Some(HashSet::default()),
-            None => None,
-        },
-        _ => None,
-    })
+    data.written_params
+        .with(|m: Option<&mut WrittenParams>| match m {
+            Some(map) => match map.get(&callee) {
+                Some(w) => Some(w.clone()),
+                // A native (no loft body) writes nothing a walk could read: `callee_written_params`
+                // answers it empty, and so does the summary.  A body made after the summary was
+                // taken is walked as before.
+                None if *data.def(callee).code() == Value::Null => Some(HashSet::default()),
+                None => None,
+            },
+            _ => None,
+        })
 }

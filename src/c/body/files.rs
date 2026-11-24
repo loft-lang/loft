@@ -37,14 +37,34 @@ impl FnWriter<'_> {
             .get(tp as usize)
             .map_or_else(|| format!("#{tp}"), |t| t.name.clone());
         let f = self.cx.deliver_type(tp);
+        let (desc, flat) = self.cx.deliver_page(tp);
         let (tag, val) = self.two("OpDeliver", &[tag, val], ind)?;
         Ok(E::new(
             format!(
-                "loft_deliver(cx, {}, {}, {f}, {})",
+                "loft_deliver(cx, {}, {}, {f}, {}, {tp}, {desc}, {flat})",
                 as_int(tag)?,
                 super::c_string(&name),
                 as_ref(val)?
             ),
+            K::Void,
+        ))
+    }
+
+    /// `expose(tag, value)` / `release(tag, value)` (`Stores::expose_value` / `release_value`):
+    /// the value's store locked read-only while the host holds it, and unlocked; on a page the
+    /// host is handed the value as `deliver` hands it, and told when it is released.
+    fn expose(&mut self, name: &str, args: [&Value; 3], ind: usize) -> Result<E, String> {
+        let [tag, val, tp] = args;
+        let (tag, val) = self.two(name, &[tag, val], ind)?;
+        let (tag, val) = (as_int(tag)?, as_ref(val)?);
+        if name == "OpRelease" {
+            return Ok(E::new(format!("loft_release(cx, {tag}, {val})"), K::Void));
+        }
+        let tp = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        let (desc, flat) = self.cx.deliver_page(tp);
+        Ok(E::new(
+            format!("loft_expose(cx, {tag}, {val}, {tp}, {desc}, {flat})"),
             K::Void,
         ))
     }
@@ -66,19 +86,8 @@ impl FnWriter<'_> {
         };
         match (name, args) {
             ("OpDeliver", [tag, val, tp]) => self.deliver(tag, val, tp, ind).map(Some),
-            // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
-            // locked read-only while the host holds it, and unlocked.
-            ("OpExpose" | "OpRelease", [tag, val, _]) => {
-                let (tag, val) = self.two(name, &[tag, val], ind)?;
-                Ok(Some(E::new(
-                    format!(
-                        "((void) ({}), loft_set_store_lock(cx, {}, {}))",
-                        as_int(tag)?,
-                        as_ref(val)?,
-                        u8::from(name == "OpExpose")
-                    ),
-                    K::Void,
-                )))
+            ("OpExpose" | "OpRelease", [tag, val, tp]) => {
+                self.expose(name, [tag, val, tp], ind).map(Some)
             }
             ("OpGetFile", [_]) => one(self, "loft_get_file", K::Bool),
             ("OpSizeFile", [_]) => one(self, "loft_size_file", K::Int),

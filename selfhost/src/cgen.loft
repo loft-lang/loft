@@ -413,7 +413,7 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
     if a.written.find("static const loft_lazy_driver loft_lazy_driver_table[]") != null {
       bind = bind.replace("}}\n", "    loft_lazy_drivers = loft_lazy_driver_table;\n    loft_nlazy_drivers = loft_nlazy_driver_table;\n    loft_lazy_driver_refusal = loft_lazy_driver_refusal_text;\n}}\n");
     }
-    unit = "{a.defines}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
+    unit = "{a.defines}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
     anchor = if load::program_relative(b) { 1 } else { 0 };
     unit += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
     return Unit { code: cgen_tidy::drop_unnamed(unit, RUNTIME_END), refused: "" };
@@ -422,7 +422,7 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   bodies = "";
   empty_function(main, decls, bodies);
   written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
-  out = "{unit_defines()}{RUNTIME_START}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
+  out = "{unit_defines()}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
   anchor = if load::program_relative(b) { 1 } else { 0 };
   out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main_c}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
   // The finished program names what it uses: what nothing names is not written.

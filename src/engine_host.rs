@@ -2420,7 +2420,13 @@ fn swap_step_on(stores: &mut Stores, sw: &mut SwapPhase) -> i64 {
                     return 0;
                 };
                 use crate::platform::process::{Program, Spawn, Tree};
-                let spawned = Spawn::new(Program::os(&artifact))
+                let mut successor = Spawn::new(Program::os(&artifact));
+                // An interpreted host names its program to the rebuild in-process; the new
+                // build learns it from its environment.
+                for (name, value) in crate::live_rebuild::live_env_for_successor() {
+                    successor.push_env(name, value);
+                }
+                let spawned = successor
                     .env("LOFT_RESUME", &snap)
                     .env("LOFT_SWAP_READY", &ready)
                     // Dispatch reset: the new build has the edits COMPILED —

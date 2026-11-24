@@ -620,7 +620,14 @@ fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
 /// the store a pre-free had already released (a silent wrong answer on the interpreter, the
 /// self-hosted elaborator's `parse_code`).  The views are closed over their dep chains;
 /// `LOFT_NO_TRANSITIVE_VIEW_READ=1` asks the direct deps alone again.
-fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
+///
+/// A local's dep list is ONE per variable and names its last-parsed bind, so a name bound in
+/// two sibling blocks (`bl = block[0]` under two `match`es, each over its own subject) carries
+/// only the later capture's base: the earlier `bl`, a view of `b`, read as a view of the other
+/// subject, and `b = ex(… [bl] …)` released `b` before copying out of it (loft#2627).  So a local
+/// is also a view of `v` where ANY bind of it sets it to a projection rooted in a view of `v`
+/// (`use_analysis::projection_container_var`, the one root derivation).
+fn rhs_reads_a_view_of(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> bool {
     if crate::keys::transitive_view_read_off() {
         return (0..function.count())
             .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w));
@@ -630,16 +637,28 @@ fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
     if usize::from(v) < views.len() {
         views[usize::from(v)] = true;
     }
+    // Each bind `w = <projection of root>` in the body, as (w, root).
+    let mut binds: Vec<(u16, u16)> = Vec::new();
+    if d_nr != u32::MAX && (d_nr as usize) < data.definitions() as usize {
+        data.def(d_nr).code().walk(&mut |nd| {
+            if let Value::Set(w, val) = nd
+                && let Some(root) = crate::use_analysis::projection_container_var(data, val)
+                && root != *w
+            {
+                binds.push((*w, root));
+            }
+        });
+    }
+    let is_view = |views: &[bool], d: u16| views.get(usize::from(d)).copied().unwrap_or(false);
     let mut grew = true;
     while grew {
         grew = false;
         for w in 0..n {
             if !views[usize::from(w)]
-                && function
-                    .tp(w)
-                    .depend()
-                    .iter()
-                    .any(|&d| views.get(usize::from(d)).copied().unwrap_or(false))
+                && (function.tp(w).depend().iter().any(|&d| is_view(&views, d))
+                    || binds
+                        .iter()
+                        .any(|&(bw, root)| bw == w && is_view(&views, root)))
             {
                 views[usize::from(w)] = true;
                 grew = true;
@@ -949,7 +968,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     let null_reset_of_temp = function.is_compiler_generated(v)
         && is_null_value(data, value)
         && !crate::keys::temp_null_reset_frees();
-    let reads_view = rhs_reads_a_view_of(function, value, v);
+    let reads_view = rhs_reads_a_view_of(data, d_nr, function, value, v);
     // The free that goes first, with its witness, where nothing asks for the stash.
     let pre = (frees_displaced && !s1_substituted).then(|| {
         if crate::keys::displaced_witness_enabled() {

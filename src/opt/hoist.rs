@@ -5274,11 +5274,11 @@ fn pair_for_block(
         }
         return None;
     };
-    let elem_name = elem.name(data);
-    let buf_tp = data.name_type(&format!("main_vector<{elem_name}>"), 0);
+    let wrapper_name = data.vector_wrapper_name(elem);
+    let buf_tp = data.name_type(&wrapper_name, 0);
     if buf_tp == u16::MAX {
         if trace2 {
-            eprintln!("[move] no main_vector<{elem_name}> type");
+            eprintln!("[move] no {wrapper_name} type");
         }
         return None;
     }
@@ -5289,7 +5289,7 @@ fn pair_for_block(
     // typevar's layout (the c11 refusal, 2026-09-11).  The def is a valid buffer
     // type only when its `vector` attribute names OUR element; anything else
     // declines the pairing and the deep copy stays, which is always correct.
-    let wrapper = data.def_nr(&format!("main_vector<{elem_name}>"));
+    let wrapper = data.def_nr(&wrapper_name);
     let wrapper_elem_is_ours = wrapper != u32::MAX && {
         let a = data.attr(wrapper, "vector");
         a != usize::MAX
@@ -5302,7 +5302,7 @@ fn pair_for_block(
     if !wrapper_elem_is_ours {
         if trace2 {
             eprintln!(
-                "[move] main_vector<{elem_name}> is not OUR element's wrapper (a name collision with a generic template) — declined"
+                "[move] {wrapper_name} is not OUR element's wrapper (a name collision with a generic template) — declined"
             );
         }
         return None;

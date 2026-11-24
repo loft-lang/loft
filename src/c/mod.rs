@@ -66,6 +66,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
+    include_str!("loft_deliver_web.h"),
     include_str!("loft_web_page.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
@@ -76,6 +77,8 @@ const RUNTIME: &str = concat!(
     // After `windows.h`, which loft_process.h brings in on Windows.
     include_str!("loft_mapped.h"),
     include_str!("loft_engine.h"),
+    // The test ledger (`@F38`), compiled into a ledger build only.
+    include_str!("loft_ledger.h"),
     // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
     // the host side.
     "#ifdef LOFT_FFI\n",
@@ -238,6 +241,11 @@ pub(crate) struct Cx<'a> {
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every type a `deliver` walks (`loft_dlv{tp}`, `deliver.rs`).
     deliver_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// A page's delivery descriptors (`loft_dlvd{tp}`): each delivered or exposed type's layout
+    /// descriptor as JSON, its keyed collections rewritten to the arrays they are flattened to.
+    deliver_descs: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
+    /// A page's flatten walkers (`loft_dlk{tp}`), by type: the body of each.
+    deliver_flats: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
@@ -463,6 +471,8 @@ impl<'a> Cx<'a> {
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            deliver_descs: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            deliver_flats: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_sigs_buf: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -560,13 +570,18 @@ impl<'a> Cx<'a> {
         let Some(root) = &self.source_root else {
             return file.to_string();
         };
+        // Both spelled with `/`: on Windows the package directory arrives with the host's
+        // separator and a source position may hold either, so a bare prefix test misses and
+        // the unit names the machine's path.
+        let root = crate::file_access::portable_str(root);
         let root = root.trim_end_matches('/');
+        let file = crate::file_access::portable_str(file);
         if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
             return rest.to_string();
         }
         match file.rfind("/default/") {
             Some(at) => file[at + 1..].to_string(),
-            None => file.to_string(),
+            None => file,
         }
     }
 
@@ -1787,6 +1802,9 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_assert" => Some("loft_assert"),
         "n_panic" => Some("loft_panic"),
         "n_exit" => Some("loft_exit"),
+        // The test ledger's instrumented operators (`loft_ledger.h`).
+        "n___ledger" => Some("loft_ledger"),
+        "n___ledger_div" => Some("loft_ledger_div"),
         "n_protect_store_frees" => Some("loft_protect"),
         "t_4text_to_lowercase" | "t_4text_to_uppercase" => Some("loft_unicode"),
         "t_9character_is_lowercase"
@@ -2217,11 +2235,16 @@ fn emit_unit_with(
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
     // The runtime is a library every unit carries whole: a helper this program does not call
-    // is no defect of it, so gcc and clang are told not to report one there — and only there,
-    // the program's own functions after it are reported.  `LOFT_C_LINT=all` lifts it.
+    // is no defect of it, and neither is a helper that takes the store context first without
+    // reading it (every runtime function does, `@PLN226`), so gcc and clang are told not to
+    // report those there — and only there, the program's own functions after it are reported.
+    // `LOFT_C_LINT=all` lifts it.
     out.push_str(
-        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#endif\n",
     );
+    if let Some(define) = split::above_define() {
+        out.push_str(&define);
+    }
     out.push_str(RUNTIME);
     out.push_str(RUNTIME_END);
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow(), cx.open));
@@ -2234,7 +2257,7 @@ fn emit_unit_with(
     }
     if !cx.upgrades.borrow().is_empty() {
         out.push_str(
-            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { return loft_ptypes; }\n",
+            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { (void) cx; return loft_ptypes; }\n",
         );
     }
     if reflects {
@@ -2598,10 +2621,13 @@ fn c_libraries(
             );
         } else if let Some(so) = hosted
             .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
-            // Linked by name where a run path finds it (`platform::c_rpath_arg`; none on
-            // Windows, which takes the archive below).
+            // Linked by name where a run path finds it (`platform::c_rpath_arg`).  Windows has
+            // none and needs none: a gcc-style linker takes the DLL by its path and records its
+            // name, and the loader answers that name with the image already in the process.
+            // MSVC's `cl` links only an import library, so it takes the archive below.
             .filter(|so| {
-                crate::platform::c_rpath_arg(so.parent()).is_some()
+                (crate::platform::c_rpath_arg(so.parent()).is_some()
+                    || !crate::platform::c_compiler_is_msvc(&crate::platform::c_unit_compiler()))
                     && crate::file_access::exists(so)
             })
         {
@@ -3151,6 +3177,33 @@ fn emit_program_shaped(
     out
 }
 
+/// The test ledger's site table (`@F38`, [`crate::opt::ledger_sites`]) after the program's
+/// functions, with the define that compiles `loft_ledger.h` in at the unit's top, and the
+/// line `main` arms it with before anything runs; empty for a program built without
+/// `LOFT_LEDGER`.
+fn ledger_table(data: &Data, out: &mut String) -> String {
+    if data.ledger_sites.is_empty() {
+        return String::new();
+    }
+    out.insert_str(0, "#define LOFT_LEDGER 1\n");
+    out.push_str("\nstatic const loft_lg_site loft_lg_table[] = {\n");
+    for s in &data.ledger_sites {
+        let _ = writeln!(
+            out,
+            "    {{ {}, UINT64_C(0x{:016x}), {}u, {} }},",
+            body::c_string(&s.function),
+            s.body,
+            s.ordinal,
+            s.kind
+        );
+    }
+    out.push_str("};\n");
+    format!(
+        "    loft_ledger_arm(cx, loft_lg_table, {});\n",
+        data.ledger_sites.len()
+    )
+}
+
 fn emit_program_counted(
     data: &Data,
     stores: &Stores,
@@ -3163,9 +3216,10 @@ fn emit_program_counted(
     }
     let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit_shaped(data, stores, &[main], shape)?;
+    let ledger = ledger_table(data, &mut out);
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n{ledger}    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
@@ -3200,7 +3254,7 @@ fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String)
         }
         match a.typedef.base() {
             Type::Vector(elm, _) => {
-                let tp = data.name_type(&format!("main_vector<{}>", elm.name(data)), 0);
+                let tp = data.name_type(&data.vector_wrapper_name(elm), 0);
                 if tp == u16::MAX {
                     args.push("loft_ref_null(cx)".to_string());
                     continue;
@@ -5042,7 +5096,13 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// its body otherwise.  Only where the parameter and the result are the 64-bit integers the
 /// table holds.
 fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String {
-    let [param] = params.split(", ").collect::<Vec<_>>()[..] else {
+    // The store context every emitted function takes first (@PLN226 P2a) is no parameter of the
+    // loft function: the one a classifier is of comes after it.
+    let [param] = params
+        .split(", ")
+        .filter(|q| *q != "loft_cx *cx")
+        .collect::<Vec<_>>()[..]
+    else {
         return body;
     };
     let Some(p) = param.strip_prefix("int64_t ") else {
@@ -5160,9 +5220,13 @@ fn framed(
         Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
         None => whole,
     };
+    // The parts alone where a budget was asked for; otherwise both forms, and the C compiler
+    // takes the parts above its own size (`LOFT_C_SPLIT_ABOVE`, loft_cc.h).
     let text = match parts {
-        Some(parts) if split::everywhere() => parts,
-        Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
+        Some((parts, _)) if split::everywhere() => parts,
+        Some((parts, sites)) => format!(
+            "#if LOFT_C_SPLIT_ABOVE > 0 && {sites} > LOFT_C_SPLIT_ABOVE\n{parts}#else\n{whole}#endif\n"
+        ),
         None => whole,
     };
     let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
@@ -5233,6 +5297,12 @@ pub fn ship_units() {
 /// so the C compiler's optimiser time stays bounded.
 pub fn functions_whole() -> bool {
     crate::ship_tier::shipped_units()
+}
+
+/// Whether a shipped unit is written with its parts all the same (`LOFT_C_SPLIT_SHIP=1`): a
+/// build that must fit a machine's memory, such as the gate's tools on a GitHub runner.
+pub fn split_shipped() -> bool {
+    split::split_shipped()
 }
 
 /// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled

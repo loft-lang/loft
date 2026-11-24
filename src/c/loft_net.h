@@ -70,12 +70,61 @@ static int loft_fetch_http(loft_cx *cx, const char *url, loft_bytes *out, char *
 }
 #endif
 
+#if defined(LOFT_BROWSER)
+/* A page fetches through its host (`net::fetch_bytes` / `fetch_range` on the browser target): the
+ * `loft_host_http_get` and `loft_host_http_range` imports suspend the program (asyncify) while
+ * the page's `fetch()` runs and answer the byte count, `(size_t) -1` for any failure; the bytes
+ * are then copied out by `loft_host_http_get_copy`.  `loft_host_http_range_total` is the size
+ * the last range response named, or negative. */
+__attribute__((import_module("loft_io"), import_name("loft_host_http_get"))) size_t
+loft_io_http_get(const char *url, size_t n);
+__attribute__((import_module("loft_io"), import_name("loft_host_http_get_copy"))) void
+loft_io_http_copy(uint8_t *p);
+__attribute__((import_module("loft_io"), import_name("loft_host_http_range"))) size_t
+loft_io_http_range(const char *url, size_t n, double off, double len);
+__attribute__((import_module("loft_io"), import_name("loft_host_http_range_total"))) double
+loft_io_http_range_total(void);
+
+/* The host's answer of `n` bytes, malloc'd. */
+static uint8_t *loft_page_bytes(loft_cx *cx, size_t n) {
+    uint8_t *p = (uint8_t *) malloc(n ? n : 1);
+    if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_io_http_copy(p);
+    return p;
+}
+
+/* `fetch_bytes` / `fetch_beside`: the page cannot tell a missing file from a failed request, so
+ * every failure reads as "not there" (`fetch_absent`). */
+static int loft_fetch_page(loft_cx *cx, const char *url, loft_bytes *out, char *err, size_t cap) {
+    size_t n = loft_io_http_get(url, strlen(url));
+    if (n == (size_t) -1) {
+        cx->fetch_absent = 1;
+        snprintf(err, cap, "browser fetch failed for %s", url);
+        return 0;
+    }
+    out->p = loft_page_bytes(cx, n);
+    out->n = n;
+    return 1;
+}
+#endif
+
 /* `net::fetch_range`: up to `len` bytes of `url` from byte `off`, by a `Range` GET; a server that
  * ignores the range answers the whole file, which is read through to `off` — right, only slow.
  * The count (short at the end of the file), else -1 with `err` saying why. */
 static long loft_net_range(loft_cx *cx, const char *url, uint64_t off, uint8_t *buf, size_t len, char *err, size_t cap) {
     if (len == 0) return 0;
-#ifdef LOFT_SOCKETS
+#if defined(LOFT_BROWSER)
+    size_t n = loft_io_http_range(url, strlen(url), (double) off, (double) len);
+    if (n == (size_t) -1) {
+        snprintf(err, cap, "browser range fetch failed for %s", url);
+        return -1;
+    }
+    uint8_t *got = loft_page_bytes(cx, n);
+    if (n > len) n = len;
+    memcpy(buf, got, n);
+    free(got);
+    return (long) n;
+#elif defined(LOFT_SOCKETS)
     char range[96], why[1024];
     snprintf(range, sizeof range, "Range: bytes=%llu-%llu\r\n", (unsigned long long) off,
              (unsigned long long) (off + len - 1));
@@ -115,7 +164,18 @@ static long loft_net_range(loft_cx *cx, const char *url, uint64_t off, uint8_t *
  * `Content-Range`, else its `Content-Length`; 1, else 0 with `err` saying why.  The body is not
  * read, so a server that ignores the range does not send the file for nothing. */
 static int loft_net_size(loft_cx *cx, const char *url, uint64_t *size, char *err, size_t cap) {
-#ifdef LOFT_SOCKETS
+#if defined(LOFT_BROWSER)
+    /* The total is what the probe's response named, so the probe runs first. */
+    uint8_t one;
+    if (loft_net_range(cx, url, 0, &one, 1, err, cap) < 0) return 0;
+    double total = loft_io_http_range_total();
+    if (total < 0) {
+        snprintf(err, cap, "remote store: could not determine size of %s", url);
+        return 0;
+    }
+    *size = (uint64_t) total;
+    return 1;
+#elif defined(LOFT_SOCKETS)
     char why[1024];
     loft_http h;
     if (!loft_http_open(cx, &h, "GET", url, "Range: bytes=0-0\r\n", "", 5, why, sizeof why)) {
@@ -157,6 +217,10 @@ static int loft_fetch(loft_cx *cx, const char *url, loft_bytes *out, char *err, 
     out->p = 0;
     out->n = 0;
     cx->fetch_absent = 0;
+#if defined(LOFT_BROWSER)
+    /* Every URL a page loads is its host's to fetch. */
+    return loft_fetch_page(cx, url, out, err, cap);
+#endif
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(cx, url + 7, out, err, cap);
 #ifdef LOFT_SOCKETS
     if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(cx, url, out, err, cap);

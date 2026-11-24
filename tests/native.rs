@@ -4917,6 +4917,10 @@ fn native_lib_test_skipped(entry: &Path) -> bool {
 /// interpreter lib suites (separate, concurrently-run test binaries) don't race
 /// on a shared file (e.g. `moros_render_test.glb`).  Duplicated from `wrap.rs`
 /// (integration-test binaries can't share fns).  Non-unix falls back to `pkg_dir`.
+/// The backends a program calling a Rust native part runs on: the interpreter, which loads
+/// the cdylib (`@PLN206 P6`).  A program compiled with `--native` cannot call one.
+const RUST_NATIVE_BACKENDS: &[&str] = &["--interpret"];
+
 fn run_lib_test_in_temp_cwd(
     loft_bin: &str,
     pkg_dir: &Path,
@@ -5164,62 +5168,40 @@ fn native_library_suite() -> std::io::Result<()> {
     Ok(())
 }
 
-/// @PLN26 — the C-ABI native-package EXEC path: a program that `use`s a
-/// `[native] crate` package, compiled with `--native`, must link the package's
-/// cdylib by C-ABI (`add_native_extern_flags`) and call its `#native` symbol.
-/// The minimal `native_scalar_pkg` fixture exports one scalar symbol
-/// (`n_native_answer` → 42), so this is cheap to build yet covers the whole
-/// path — including, on Windows, the import-library link + DLL staging of
-/// @PLN26 phase 4 (the focused `win-cdylib` workflow's C-ABI job sets
-/// `LOFT_NATIVE_CABI=1` to force that arm on; on the normal Windows CI this
-/// exercises the rlib-link path instead).  The hard-coded 42 is the oracle, so
-/// a broken link (undefined symbol / P269 / wrong value) fails LOUDLY — not
-/// vacuously.  This is the regression guard the C-ABI exec path previously
-/// lacked (phase 0 was a manual probe).
-///
-/// Serialises via `native_suite_lock` (shared /tmp rlib + binary cache) and
-/// skips cleanly when `rustc` / the loft rlib are unavailable, like the other
-/// native suites.
+/// A package's native part, called from a program on every backend.  The Rust half, a
+/// `[native] crate` package (`native_scalar_pkg`), runs interpreted with its cdylib loaded:
+/// no library is built through rustc and a C unit cannot call a Rust native (`@PLN206 P6`).
+/// The C half (`c_scalar_pkg`, the same functions as a `[c] shim`) is linked into the program
+/// by `--native` and called by the interpreter through the same C.  Each fixture's test
+/// asserts the oracles 42 and -1 (a narrowed return would bring -1 back as 4294967295), so a
+/// broken link or a wrong value fails loudly — not vacuously.
 #[test]
-// @PLN203 rust-writer: the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!("native_crate_package_links_and_runs_via_cabi: skipped (no libloft.rlib / rustc)");
-        return Ok(());
-    }
     let loft_bin = env!("CARGO_BIN_EXE_loft");
-    let pkg_dir = Path::new("tests/lib/native_scalar_pkg");
-
-    // --native: the C-ABI exec path (the path @PLN26 phase 4's Windows arm extends).
-    let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--native"])?;
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        !combined.contains("no implementation"),
-        "native_crate package symbol was not linked (P269) — the C-ABI exec path regressed:\n{combined}"
-    );
-    assert!(
-        combined.contains("test result: ok"),
-        "--native native_crate exec test did not pass:\n{combined}"
-    );
-
-    // --interpret parity: the same package via the runtime dylib dispatch.
-    let out_i = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--interpret"])?;
-    let combined_i = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out_i.stdout),
-        String::from_utf8_lossy(&out_i.stderr)
-    );
-    assert!(
-        combined_i.contains("test result: ok"),
-        "--interpret native_crate exec test did not pass:\n{combined_i}"
-    );
+    let cells: [(&str, &[&str]); 3] = [
+        ("tests/lib/native_scalar_pkg", &["--interpret"]),
+        ("tests/lib/c_scalar_pkg", &["--native"]),
+        ("tests/lib/c_scalar_pkg", &["--interpret"]),
+    ];
+    for (pkg, mode) in cells {
+        let out = run_lib_test_in_temp_cwd(loft_bin, Path::new(pkg), "answer", mode)?;
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !combined.contains("no implementation"),
+            "{pkg} {mode:?}: the native symbol was not linked:\n{combined}"
+        );
+        assert!(
+            combined.contains("test result: ok"),
+            "{pkg} {mode:?}: the package's test did not pass:\n{combined}"
+        );
+    }
     Ok(())
 }
 
@@ -5277,79 +5259,82 @@ fn a_library_calling_its_rust_native_part_runs_interpreted_with_it() -> std::io:
     Ok(())
 }
 
-/// A program that says `#link static` ships as ONE file: its native package's Rust is linked
-/// into the binary, which names no library file and runs alone in an empty directory.  The
-/// control is the same program under `#link dynamic`, whose binary must name the package's
-/// library — so the byte check below can fail.  The fixture's two answers are its ABI oracle:
-/// 42, and -1, which a narrowed return would bring back as 4294967295.
+/// A program that says `#link static` ships as ONE file: its package's native C is linked
+/// into the binary, which runs alone in an empty directory.  The control is the same program
+/// under `#link dynamic`, whose `--out` writes the package's library beside the binary and
+/// whose binary, alone, refuses naming the package — so the run alone can fail.  The fixture's
+/// two answers are its ABI oracle: 42, and -1, which a narrowed return would bring back as
+/// 4294967295.
 #[test]
-// @PLN203 rust-writer: @PLN195's link modes over a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!("a_static_link_ships_one_file_that_runs_alone: skipped (no libloft.rlib / rustc)");
-        return Ok(());
-    }
     let lib_dir = std::env::current_dir()?.join("tests/lib");
-    let library_file = format!(
-        "{}loft_native_scalar{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    );
+    let library_prefix = format!("{}c_scalar_pkg_shim_", std::env::consts::DLL_PREFIX);
     let root = std::env::temp_dir().join(format!("loft_static_link_{}", std::process::id()));
     let _ = fa::remove_dir_all(&root);
-    for (mode, must_name_the_library) in [("static", false), ("dynamic", true)] {
+    for (mode, ships_a_library) in [("static", false), ("dynamic", true)] {
         let dir = root.join(mode);
         fa::create_dir_all(&dir)?;
         let program = dir.join("p.loft");
         fa::write(
             &program,
             format!(
-                "#link {mode}\nuse native_scalar_pkg;\nfn main() {{ println(\"{{native_scalar_pkg::native_answer()}} {{native_scalar_pkg::native_sentinel()}}\"); }}\n"
+                "#link {mode}\nuse c_scalar_pkg;\nfn main() {{ println(\"{{c_scalar_pkg::native_answer()}} {{c_scalar_pkg::native_sentinel()}}\"); }}\n"
             ),
         )?;
+        let dist = dir.join("dist");
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .args(["--native", "--check", "--lib"])
+            .args(["--native", "--lib"])
             .arg(&lib_dir)
+            .arg("--out")
+            .arg(&dist)
             .arg(&program)
-            .env("LOFT_CHECK_ARTIFACT", "1")
             .env("LOFT_TIMEOUT", "600")
             .output()?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let binary = stdout
-            .lines()
-            .find_map(|l| l.strip_prefix("ok ")?.split(' ').nth(1).map(PathBuf::from))
-            .unwrap_or_else(|| {
-                panic!(
-                    "[#link {mode}] no artifact on the ok line:\n{stdout}{}",
-                    String::from_utf8_lossy(&out.stderr)
-                )
-            });
-        let bytes = fa::read(&binary)?;
-        let names_it = bytes
-            .windows(library_file.len())
-            .any(|w| w == library_file.as_bytes());
-        assert_eq!(
-            names_it,
-            must_name_the_library,
-            "[#link {mode}] the binary {} the library file `{library_file}`",
-            if names_it { "names" } else { "does not name" }
+        assert!(
+            out.status.success(),
+            "[#link {mode}] --out failed:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
         );
-        if mode == "static" {
-            let alone = dir.join("alone");
-            fa::create_dir_all(&alone)?;
-            let shipped = alone.join(fa::file_name(&binary).unwrap_or_default());
-            fa::copy(&binary, &shipped)?;
-            let run = loft::platform::process::harness_command(&shipped)
-                .current_dir(&alone)
-                .output()?;
+        let exe_name = format!("p{}", std::env::consts::EXE_SUFFIX);
+        let libraries = fa::read_dir(&dist)?
+            .iter()
+            .filter_map(|e| e.os_name())
+            .filter(|n| n.to_string_lossy().starts_with(&library_prefix))
+            .count();
+        assert_eq!(
+            libraries > 0,
+            ships_a_library,
+            "[#link {mode}] --out {} the package's library",
+            if libraries > 0 {
+                "wrote"
+            } else {
+                "did not write"
+            }
+        );
+        let alone = dir.join("alone");
+        fa::create_dir_all(&alone)?;
+        fa::copy(dist.join(&exe_name), alone.join(&exe_name))?;
+        let run = loft::platform::process::harness_command(alone.join(&exe_name))
+            .current_dir(&alone)
+            .env("LOFT_HOME", &alone)
+            .env_remove("LOFT_LIB_PATH")
+            .output()?;
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        if ships_a_library {
+            assert!(
+                !run.status.success() && stderr.contains("`c_scalar_pkg` 0.1.0"),
+                "[#link dynamic] alone, the binary must refuse naming its package:\n{stdout}{stderr}"
+            );
+        } else {
             assert_eq!(
-                String::from_utf8_lossy(&run.stdout).trim(),
+                stdout.trim(),
                 "42 -1",
-                "the static binary, alone in a directory: {}",
-                String::from_utf8_lossy(&run.stderr)
+                "the static binary, alone in a directory: {stderr}"
             );
         }
     }
@@ -5365,23 +5350,11 @@ fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
 /// beside a DIFFERENT version, the run must fail naming the package, the version and the
 /// directories searched.  The binary must not name the directory its library was built in.
 #[test]
-// @PLN203 rust-writer: @PLN195's link modes over a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!(
-            "a_dynamic_program_finds_its_libraries_where_loft_looks: skipped (no libloft.rlib / rustc)"
-        );
-        return Ok(());
-    }
     let lib_dir = std::env::current_dir()?.join("tests/lib");
-    let library_file = format!(
-        "{}loft_native_scalar{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    );
     let root = std::env::temp_dir().join(format!("loft_lib_search_{}", std::process::id()));
     let _ = fa::remove_dir_all(&root);
     let src = root.join("src");
@@ -5389,7 +5362,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
     let program = src.join("p.loft");
     fa::write(
         &program,
-        "use native_scalar_pkg;\nfn main(args: vector<text>) { println(\"{native_scalar_pkg::native_answer()} {native_scalar_pkg::native_sentinel()} {len(args)}\"); }\n",
+        "use c_scalar_pkg;\nfn main(args: vector<text>) { println(\"{c_scalar_pkg::native_answer()} {c_scalar_pkg::native_sentinel()} {len(args)}\"); }\n",
     )?;
     let dist = root.join("dist");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
@@ -5407,13 +5380,17 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
         String::from_utf8_lossy(&out.stderr)
     );
     let exe_name = format!("p{}", std::env::consts::EXE_SUFFIX);
+    let library_prefix = format!("{}c_scalar_pkg_shim_", std::env::consts::DLL_PREFIX);
+    let library_file = fa::read_dir(&dist)?
+        .iter()
+        .filter_map(|e| e.os_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .find(|n| n.starts_with(&library_prefix))
+        .unwrap_or_else(|| panic!("--out wrote no `{library_prefix}*` library"));
     let built_lib = dist.join(&library_file);
-    assert!(fa::is_file(&built_lib), "--out wrote no `{library_file}`");
-    // The directory the library was built in — the path a linked binary named as an rpath.
-    let build_dir = lib_dir
-        .join("native_scalar_pkg")
-        .join("native")
-        .join("target");
+    // The directory the library was built from — the path a linked binary would name as an
+    // rpath.
+    let build_dir = lib_dir.join("c_scalar_pkg");
     let needle = build_dir.to_string_lossy().into_owned();
     let bytes = fa::read(dist.join(&exe_name))?;
     assert!(
@@ -5456,10 +5433,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
 
     // A shared root, by version.
     let shared = root.join("shared");
-    let versioned = shared
-        .join(".loft")
-        .join("lib")
-        .join("native_scalar_pkg-0.1.0");
+    let versioned = shared.join(".loft").join("lib").join("c_scalar_pkg-0.1.0");
     fa::create_dir_all(&versioned)?;
     fa::copy(&built_lib, versioned.join(&library_file))?;
     let alone = place("alone")?;
@@ -5482,10 +5456,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
 
     // Controls: nowhere, and only another version — each a loft error that names it all.
     let other = root.join("other");
-    let wrong = other
-        .join(".loft")
-        .join("lib")
-        .join("native_scalar_pkg-0.0.9");
+    let wrong = other.join(".loft").join("lib").join("c_scalar_pkg-0.0.9");
     fa::create_dir_all(&wrong)?;
     fa::copy(&built_lib, wrong.join(&library_file))?;
     for (cell, home) in [("nowhere", &empty_home), ("another version", &other)] {
@@ -5493,12 +5464,12 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
         let err = String::from_utf8_lossy(&o.stderr);
         assert_eq!(o.status.code(), Some(1), "[{cell}] exit: {err}");
         assert!(
-            err.contains("`native_scalar_pkg` 0.1.0") && err.contains("searched:"),
+            err.contains("`c_scalar_pkg` 0.1.0") && err.contains("searched:"),
             "[{cell}] the error names neither package nor version:\n{err}"
         );
         if cell == "another version" {
             assert!(
-                err.contains("native_scalar_pkg-0.0.9"),
+                err.contains("c_scalar_pkg-0.0.9"),
                 "[{cell}] the other version is not named:\n{err}"
             );
         }
@@ -5674,7 +5645,7 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
 }
 
 /// loft#907 — a `#native "sym"` its library implements under a DIFFERENT Rust
-/// name must reach that implementation on BOTH backends.
+/// name must reach that implementation.
 ///
 /// `#native "sym"` is an API id: a library registers its implementations by loft
 /// symbol (`loft_register_bridges! { "sym" => other__loft_bridge }`) and may point
@@ -5694,7 +5665,8 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
 /// Serialises via `native_suite_lock` and skips cleanly without `rustc` / the
 /// loft rlib, like the other native suites.
 #[test]
-// @PLN203 rust-writer: a remapped symbol of a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
+// The interpreter only: a Rust native part runs interpreted (`@PLN206 P6`), and a `#c` binding
+// names its C symbol itself, so the C has no registration table to remap through.
 fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5709,7 +5681,7 @@ fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> s
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/lib/native_remap_pkg");
 
-    for backend in ["--native", "--interpret"] {
+    for &backend in RUST_NATIVE_BACKENDS {
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "remap", &[backend])?;
         let combined = format!(
             "{}{}",
@@ -5785,12 +5757,13 @@ fn a_compiled_library_links_a_remapped_native_to_its_implementation() -> std::io
 /// native crate's `std::fs` must resolve `map.png` / `_tmp_*.png` where loft's
 /// `file()` does (`tests/`), which only holds because the runner chdir's to
 /// `source_dir`.  Both round-trip files assert hard pixel oracles, so a broken
-/// link OR a cwd regression fails loudly.  Runs on BOTH backends.
+/// link OR a cwd regression fails loudly.
 ///
 /// Serialises via `native_suite_lock`; skips cleanly without `rustc` / the loft
 /// rlib, like the other native suites.
 #[test]
-// @PLN203 rust-writer: the imaging fixture's natives are a Rust crate, which the C does not bridge (it waits for the library's own C)
+// The interpreter only: the fixture's natives are a Rust crate, which runs interpreted
+// (`@PLN206 P6`); the published imaging's C part is checked on every backend by its own CI.
 fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5802,7 +5775,7 @@ fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/fixtures/libs/imaging");
     for stem in ["14-image", "15-regression"] {
-        for mode in ["--native", "--interpret"] {
+        for &mode in RUST_NATIVE_BACKENDS {
             let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, stem, &[mode])?;
             let combined = format!(
                 "{}{}",

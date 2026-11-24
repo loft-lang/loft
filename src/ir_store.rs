@@ -2081,7 +2081,7 @@ pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
             match a.typedef.base() {
                 Type::Reference(_, _) | Type::Enum(_, true, _) => hidden.push(-1),
                 Type::Vector(elm, _) => {
-                    let tp = program.name(&format!("main_vector<{}>", elm.name(data)));
+                    let tp = program.name(&data.vector_wrapper_name(elm));
                     hidden.push(if tp == u16::MAX { -1 } else { i64::from(tp) });
                 }
                 _ => {}

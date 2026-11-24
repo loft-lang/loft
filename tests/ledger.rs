@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the ledger counts the Rust runtime records — its `--native` runs as `--native-rust` until then.
+// The test ledger (@F38) on both backends: each counts its fault sites into one file.
 
 //! The test ledger (@PLN201 step 2, `src/ledger.rs`, `src/opt/ledger_sites.rs`): a run with
 //! `LOFT_LEDGER=<file>` is the ordinary checked run, on either backend, and records per fault

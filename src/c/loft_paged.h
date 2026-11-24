@@ -2,9 +2,12 @@
  * The working-set loaders read a store image by byte range (`@FR-S-Paged`): a page is read
  * from the file the first time a walk touches it, every address comes from the caller's key and
  * the bytes already read, and a byte past the end of the image reads as 0 — so a malformed
- * image answers "absent" and never faults.  Pages are 64 KiB and the cache is uncapped, the
- * Rust reader's default.  The source is a local file, or an `http(s)://` image read by `Range` GETs
- * (`HttpRangeProvider`, through `loft_net.h`) in a unit that has the transport (`LOFT_NET`). */
+ * image answers "absent" and never faults.  Pages are 64 KiB unless `LOFT_PAGE_BYTES` names
+ * another size, and the cache is uncapped — the Rust reader's defaults (REMOTE_STORES.md § Paging).
+ * The source is a local file, or an `http(s)://` image read by `Range` GETs
+ * (`HttpRangeProvider`, through `loft_net.h`) in a unit that has the transport (`LOFT_NET`).
+ * Each page read is one request of a whole page, counted as the Rust provider counts its fetches,
+ * which `LOFT_LOADER_STATS` reports (`loft_pg_stats`). */
 
 #define LOFT_PG_PAGE 65536u
 
@@ -18,6 +21,16 @@ static int loft_pg_is_url(loft_cx *cx, const char *path) {
     return strncmp(path, "http://", 7) == 0 || strncmp(path, "https://", 8) == 0;
 }
 
+/* PagedReader::new: the page size `LOFT_PAGE_BYTES` names (a positive byte count, at most 1 GiB),
+ * else the default. */
+static uint64_t loft_pg_page_bytes(loft_cx *cx) {
+    const char *v = getenv("LOFT_PAGE_BYTES");
+    if (!v || !*v) return LOFT_PG_PAGE;
+    char *end = 0;
+    unsigned long long n = strtoull(v, &end, 10);
+    return end && *end == 0 && v[0] != '-' && n > 0 && n <= (1ull << 30) ? (uint64_t) n : LOFT_PG_PAGE;
+}
+
 typedef struct {
     FILE *f;
     char *url;                 /* the image's URL when it is read over HTTP, else 0 */
@@ -27,6 +40,9 @@ typedef struct {
     /* The tree a walk reads: the nodes it minted, and the fuel a walk spends — a child pointer
      * that cycles makes a corrupt image's walk end instead of spin (PagedTrie, PagedSpatial). */
     uint32_t nodes, fuel;
+    /* The page size (`LOFT_PAGE_BYTES`, else LOFT_PG_PAGE), and what the source was asked for:
+     * the pages read and their bytes (PageSource::requests, bytes_fetched). */
+    uint64_t psize, requests, fetched;
     /* The text key read last, and its record (PagedTrie::key_bytes); a walk holds one at a
      * time. */
     uint8_t *kbuf;
@@ -43,6 +59,7 @@ typedef struct {
 static int loft_pg_open(loft_cx *cx, loft_pg *r, const char *path, char *err, size_t cap) {
     memset(r, 0, sizeof *r);
     r->krec = UINT32_MAX;
+    r->psize = loft_pg_page_bytes(cx);
     uint8_t head[4];
     uint32_t sig = 0;
     if (loft_pg_is_url(cx, path)) {
@@ -81,7 +98,7 @@ static int loft_pg_open(loft_cx *cx, loft_pg *r, const char *path, char *err, si
         long end = fseek(r->f, 0, SEEK_END) == 0 ? ftell(r->f) : -1;
         r->size = end < 0 ? 0 : (uint64_t) end;
     }
-    r->npages = (r->size + LOFT_PG_PAGE - 1) / LOFT_PG_PAGE;
+    r->npages = (r->size + r->psize - 1) / r->psize;
     /* The page table holds a pointer per page: a size the server states whose table does not
      * fit this target's sizes (a 32-bit one) is refused, not cut to a table that the 64-bit
      * page numbers then index past. */
@@ -113,9 +130,11 @@ static void loft_pg_close(loft_cx *cx, loft_pg *r) {
 static const uint8_t *loft_pg_page(loft_cx *cx, loft_pg *r, uint64_t p) {
     if (p >= r->npages) return 0;
     if (!r->pages[p]) {
-        uint8_t *b = (uint8_t *) calloc(LOFT_PG_PAGE, 1);
+        uint8_t *b = (uint8_t *) calloc((size_t) r->psize, 1);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
-        uint64_t off = p * LOFT_PG_PAGE, want = r->size - off < LOFT_PG_PAGE ? r->size - off : LOFT_PG_PAGE;
+        uint64_t off = p * r->psize, want = r->size - off < r->psize ? r->size - off : r->psize;
+        r->requests++;
+        r->fetched += r->psize;
         /* A short read leaves the page's tail as `calloc` made it: zero, which is what a byte
          * past the end reads as.  The count is READ (a `(void)` cast does not satisfy glibc's
          * `warn_unused_result` on `fread`).  A range read that fails reads as zeros too, as the
@@ -140,9 +159,9 @@ static void loft_pg_read(loft_cx *cx, loft_pg *r, uint64_t off, void *buf, size_
     size_t done = 0;
     while (done < len) {
         uint64_t at = off + done;
-        size_t in = (size_t) (at % LOFT_PG_PAGE), take = LOFT_PG_PAGE - in;
+        size_t in = (size_t) (at % r->psize), take = (size_t) (r->psize - in);
         if (take > len - done) take = len - done;
-        const uint8_t *page = loft_pg_page(cx, r, at / LOFT_PG_PAGE);
+        const uint8_t *page = loft_pg_page(cx, r, at / r->psize);
         if (page) memcpy(out + done, page + in, take);
         else memset(out + done, 0, take);
         done += take;

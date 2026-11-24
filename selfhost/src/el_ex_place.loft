@@ -1814,6 +1814,7 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     // that names a store already takes `absent_append_mint`'s `OpRefIsNull`.)
     fresh_local = len(el_types::deps(el_vars::tp(vars, v))) == 0;
     odb = el_vars::work_vec_db(vars, ir::TyReference { n: orows!.main_def, dep: [] });
+    el_vars::release_guarded_backings(vars, v);
     el_vars::depend(vars, v, odb);
     // (`mark_inline_ref`: the mint is conditional, so the backing is nulled as an inline ref.)
     el_vars::mark_inline(vars, odb, if fresh_local { "build_vector_list" } else { "absent_append_mint" });
@@ -2143,6 +2144,9 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     return ex(ir::NdNull, ir::TyVoid);
   }
   ended = el_ex_assign::ended_binding(vars, name);
+  // (A declared bind's chain starts at its receiver literal as a plain bind's does: Rust's
+  // `orig_lhs` is the declared local.)
+  el_ex_assign::receiver_literal(e, vars, rhs!);
   v = el_ex_object::binding_var(e, vars, name);
   if v < 0 {
     return ex(ir::NdNull, ir::TyVoid);

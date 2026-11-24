@@ -1615,7 +1615,7 @@ impl Scopes<'_> {
                 keyed_copy = Some((tmp, i32::from(ktp)));
             }
             if let Type::Vector(inner, _) = function.tp(v).base().clone() {
-                let wrapper = format!("main_vector<{}>", inner.name(data));
+                let wrapper = data.vector_wrapper_name(&inner);
                 if data.name_type(&wrapper, data.def(self.d_nr).source) != u16::MAX
                     && let Some(elem) = data.vector_element_type(&inner, self.database)
                 {

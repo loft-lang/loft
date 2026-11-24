@@ -1255,6 +1255,9 @@ pub struct Parser {
     /// The ended binding a `for` statement's spelling named before its variable took it,
     /// handed from the header to the body's caller (`Parser::ended_spelling`, loft#2321).
     pub(crate) loop_spelling: Option<(String, u16)>,
+    /// Pass 1's answer to [`Self::ended_spelling`] per loop — `(function, loop variable)` —
+    /// which pass 2 takes as its own (loft#2630).
+    pub(crate) loop_spelling_kept: std::collections::HashMap<(u32, u16), bool>,
     pub(crate) block_ord: u32,
     /// The binding's block is kept as its INNERMOST ordinal (`None` = the function's own
     /// scope): ordinals are unique and a block's ancestors never change, so "the recorded
@@ -2013,7 +2016,7 @@ pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
 mod result_buffer;
-pub(crate) use closures::{ParamWrites, param_writes_summary};
+pub(crate) use closures::param_writes_summary;
 use closures::{
     callee_param_writes, collect_param_reassigns, collect_param_rebinds_owned, collect_vars_in,
     emit_fn_ref_field_write, lambda_mutated_captures, merge_dependencies,
@@ -2294,6 +2297,7 @@ impl Parser {
             block_path: Vec::new(),
             pending_loop_binders: Vec::new(),
             loop_spelling: None,
+            loop_spelling_kept: std::collections::HashMap::new(),
             block_ord: 0,
             bound_in_block: std::collections::HashMap::new(),
             block_rebinds: Vec::new(),

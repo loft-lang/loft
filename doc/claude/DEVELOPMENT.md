@@ -186,6 +186,13 @@ on their own branches at the same time: no step waits on them, and none touches 
    (`make falsify` without `REF`); a stale one makes each score against an older main, and a
    fix main now holds reads INERT only once the install has it.  `cat
    ~/.local/share/loft/SOURCE` names the commit it was built from.
+8. **Watch the runs `main` starts on the merge, and fix their reds on the next branch.**  The
+   squash commit runs CI, `revalidate-libs`, `switch-ab` and the daily build, and that night
+   the nightly checks: list them (`gh run list --branch main`, by the squash sha), watch each
+   in the background, and treat every red step as a red of the next PR's run 1 — fixed on
+   `<host>-pr<N>-next`, rebased onto the new `main`.  These runs happen anyway; a workflow
+   dispatched by hand without a question only these cannot answer takes runner time the PRs
+   and nightlies need.  The open bug issues are worked in the same pass (`make work`).
 
 **Two runs, two jobs.**  The FIRST run is discovery: with optimization work this destructive, a
 union is not green before the checks the PR exists for have run, so a red first run is the

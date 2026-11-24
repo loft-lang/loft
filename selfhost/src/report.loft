@@ -805,14 +805,87 @@ pub fn ctable(b: ir::Bundle) -> text {
 // `[state]` line each, for every function from `from`.
 // The `defs` tool prints it for Rust's image and the elaborator for its own, so
 // `elab_probe.py one` sets the two side by side; it is no part of the gate's report.
+// What a definition IS beyond its code: public, which generic instance with which arguments,
+// the `type` alias its result names, its C binding.  Shared by a function's and a record's line.
+fn identity_state(b: ir::Bundle, d: ir::Definition) -> text {
+  df = "";
+  if d.pub_visible { df += " pub"; }
+  if d.instance_of >= 0 && d.instance_of < len(b.data.definitions) {
+    df += " instance_of={b.data.definitions[d.instance_of].name}";
+    args = "";
+    for t in d.instance_args {
+      args += if args == "" { short_type(t) } else { ",{short_type(t)}" };
+    }
+    df += " instance_args={args}";
+  }
+  if d.returned_fact != "" { df += " returned_fact={d.returned_fact}"; }
+  if d.c_symbol != "" { df += " c_symbol={d.c_symbol}"; }
+  if d.c_sig != "" { df += " c_sig={d.c_sig}"; }
+  df
+}
+
+// A node as one line of `introspect` text, for a field's check or its message.
+fn one_line(b: ir::Bundle, f: ir::Function, n: ir::Node) -> text {
+  o = "";
+  show_code(b, f, n, 0, false, o);
+  o.replace("\n", " ").trim()
+}
+
+// A record's (or a field-carrying variant's) `[state]` lines: its layout facts, then each field's.
+fn record_state(b: ir::Bundle, d: ir::Definition) -> text {
+  r = "";
+  df = identity_state(b, d);
+  if len(d.bounds) > 0 {
+    bs = "";
+    for x in d.bounds {
+      bs += if bs == "" { "{x}" } else { ",{x}" };
+    }
+    df += " bounds={bs}";
+  }
+  if d.forced_size != 0 { df += " forced_size={d.forced_size}"; }
+  for g in d.field_groups {
+    fs = "";
+    for x in g.field_indices {
+      fs += if fs == "" { "{x}" } else { "+{x}" };
+    }
+    df += " group={g.kind}:{fs}:{g.alignment}:{g.size}";
+  }
+  if df != "" {
+    r += "[state] fn={d.name} def{df}\n";
+  }
+  for a in d.attributes {
+    af = "";
+    if a.primary { af += " primary"; }
+    if a.const_field { af += " const_field"; }
+    if a.pub_field { af += " pub_field"; }
+    if a.value_const { af += " value_const"; }
+    if a.fact != "" { af += " fact={a.fact}"; }
+    if len(a.check) > 0 && a.check[0] != null { af += " check={one_line(b, d.variables, a.check[0]!)}"; }
+    if len(a.check_message) > 0 && a.check_message[0] != null { af += " check_message={one_line(b, d.variables, a.check_message[0]!)}"; }
+    if af != "" {
+      r += "[state] fn={d.name} param={a.name}{af}\n";
+    }
+  }
+  r
+}
+
 pub fn state_report(b: ir::Bundle, from: integer) -> text {
   r = "";
   for d in b.data.definitions {
-    if d#index < from || (d.def_type != 1 && d.def_type != 2) || d.code[0] == null {
+    if d#index < from {
+      continue;
+    }
+    // A record (a struct, a closure record) or a variant with fields: its layout and what each
+    // field promises (a key, a write-once or public field, a runtime check).
+    if (d.def_type == 4 || d.def_type == 5) && !is_stdlib(d.position.file) {
+      r += record_state(b, d);
+      continue;
+    }
+    if (d.def_type != 1 && d.def_type != 2) || d.code[0] == null {
       continue;
     }
     // The function's contract as stored: what callers and the later passes may assume.
-    df = " purity={d.purity}";
+    df = " purity={d.purity}" + identity_state(b, d);
     if d.returned_not_null { df += " returned_not_null"; }
     if d.returned_const { df += " returned_const"; }
     if d.null_safe { df += " null_safe"; }
@@ -828,6 +901,8 @@ pub fn state_report(b: ir::Bundle, from: integer) -> text {
       if a.init { af += " init"; }
       if match a.value[0] ?? ir::NdNull { NdNull => false, _ => true } { af += " default"; }
       if a.links != "" { af += " links={a.links}"; }
+      if a.work_buffer { af += " work_buffer"; }
+      if a.fact != "" { af += " fact={a.fact}"; }
       if af != "" {
         r += "[state] fn={d.name} param={a.name}{af}\n";
       }

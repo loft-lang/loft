@@ -222,7 +222,7 @@ fn poll_host(host: &mut ReloadHost, state: &mut State) -> bool {
             if !crate::live_control::take_apply() {
                 return false;
             }
-        } else if host.last_check.elapsed() < CHECK_EVERY {
+        } else if !crate::live_control::take_apply() && host.last_check.elapsed() < CHECK_EVERY {
             return false;
         }
         host.last_check = Instant::now();

@@ -278,7 +278,7 @@ impl Cx<'_> {
         }
         let _ = writeln!(
             out,
-            "static const loft_ptype loft_ptypes[{}] = {{ {} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ return loft_types; }}",
+            "static const loft_ptype loft_ptypes[{}] = {{ {} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ (void) cx; return loft_types; }}",
             u32::from(last) + 1,
             rows.join(", ")
         );

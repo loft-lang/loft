@@ -63,6 +63,57 @@ pub(crate) struct RebuildCx {
     failure: String,
 }
 
+/// What an interpreted run tells the rebuild about itself: the driver to build with, the
+/// program's source and its library directories.  A compiled build gets the same from the
+/// driver as `LOFT_LIVE_DRIVER`, `LOFT_LIVE_SRC` and `LOFT_LIVE_LIBS`, which win.
+#[cfg(not(target_arch = "wasm32"))]
+struct LiveHost {
+    driver: String,
+    src: String,
+    libs: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static LIVE_HOST: std::sync::OnceLock<LiveHost> = std::sync::OnceLock::new();
+
+/// Called by the driver before it interprets `src`, so an interpreted serve host rebuilds
+/// and swaps as a compiled one does.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_interp_host(driver: &str, src: &str, lib_dirs: &[String]) {
+    let _ = LIVE_HOST.set(LiveHost {
+        driver: driver.to_string(),
+        src: src.to_string(),
+        libs: lib_dirs.join(":"),
+    });
+}
+
+/// One of the live variables: the environment's, else the interpreted run's own.
+#[cfg(not(target_arch = "wasm32"))]
+fn live_var(name: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(name) {
+        return Some(v);
+    }
+    let host = LIVE_HOST.get()?;
+    let v = match name {
+        "LOFT_LIVE_DRIVER" => &host.driver,
+        "LOFT_LIVE_SRC" => &host.src,
+        "LOFT_LIVE_LIBS" => &host.libs,
+        _ => return None,
+    };
+    Some(v.clone())
+}
+
+/// The live variables a swapped-in build is started with, so it can rebuild in turn: those
+/// the environment it inherits does not hold already.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn live_env_for_successor() -> Vec<(&'static str, String)> {
+    ["LOFT_LIVE_DRIVER", "LOFT_LIVE_SRC", "LOFT_LIVE_LIBS"]
+        .into_iter()
+        .filter(|n| std::env::var_os(n).is_none())
+        .filter_map(|n| live_var(n).map(|v| (n, v)))
+        .collect()
+}
+
 /// Spawn one background `--check --native` build of `src` via the driver.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_build(
@@ -85,7 +136,7 @@ fn spawn_build(
         .arg("--no-warnings")
         .arg("--check")
         .arg("--native");
-    if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
+    if let Some(libs) = live_var("LOFT_LIVE_LIBS") {
         for d in libs.split(':').filter(|s| !s.is_empty()) {
             cmd.push_arg("--lib").push_arg(d);
         }
@@ -123,10 +174,8 @@ fn spawn_build(
 /// a halt.
 #[cfg(not(target_arch = "wasm32"))]
 fn rebuild_start(rc: &mut RebuildCx, layout: Option<&str>) -> bool {
-    let (Ok(driver), Ok(src)) = (
-        std::env::var("LOFT_LIVE_DRIVER"),
-        std::env::var("LOFT_LIVE_SRC"),
-    ) else {
+    let (Some(driver), Some(src)) = (live_var("LOFT_LIVE_DRIVER"), live_var("LOFT_LIVE_SRC"))
+    else {
         eprintln!(
             "loft-live: rebuild needs LOFT_LIVE_DRIVER/LOFT_LIVE_SRC (run through the loft driver)"
         );
@@ -183,7 +232,7 @@ fn rebuild_status(rc: &mut RebuildCx, layout: Option<&str>) -> i64 {
                 return REBUILD_FAILED;
             }
         };
-        let src = std::env::var("LOFT_LIVE_SRC").unwrap_or_default();
+        let src = live_var("LOFT_LIVE_SRC").unwrap_or_default();
         // Drift first, whatever the build's outcome: a build of a source that has changed
         // since is stale whether it succeeded or failed — and a failure is often BECAUSE of
         // the edit (the build read the file while it was being rewritten, half written).
@@ -194,7 +243,7 @@ fn rebuild_status(rc: &mut RebuildCx, layout: Option<&str>) -> i64 {
             // current content — the cache makes an already-built version
             // instant, so this converges as soon as the source settles.
             eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
-            let driver = std::env::var("LOFT_LIVE_DRIVER").unwrap_or_default();
+            let driver = live_var("LOFT_LIVE_DRIVER").unwrap_or_default();
             *r = match spawn_build(&mut rc.seq, layout, &driver, &src) {
                 Ok(b) => b,
                 Err(msg) => {
@@ -315,10 +364,8 @@ pub fn n_kernel_rebuild_artifact(cell: &UnsafeCell<Stores>) -> String {
     rebuild_artifact(parts(cell).0)
 }
 
-/// Interp stack natives.  An interpreted serve host CAN rebuild too — the
-/// machinery is env-driven, not tier-driven (the driver sets the live env
-/// on native spawns only, so today these fire there as a warned no-op; an
-/// interp host that exports the env gets the real thing for free).
+/// Interp stack natives.  An interpreted serve host rebuilds too: the driver names the
+/// program to the rebuild before it runs it ([`set_interp_host`]).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_rebuild_start_stack(stores: &mut Stores, stack: &mut DbRef) {
     let (rc, layout) = crate::engine_host::rebuild_parts(stores);

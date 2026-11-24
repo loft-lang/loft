@@ -88,6 +88,11 @@ fn top_item(e: el::El, it: integer) {
     // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
     // fields — not carried; the other directives leave the code as it is.
     SDirective { at, name, arg } => {
+      // (`width_directive`: the file is under the regime — a fact of each of its functions,
+      // `body_width32`, recorded though its lowering is refused.)
+      if name == "width" && arg == "32" && e.source != el::STD_SOURCE && !e.width32_files.contains(e.file) {
+        e.width32_files += [e.file];
+      }
       if name == "width" && arg != "64" {
         el::refuse(e, "a `#width {arg}` file");
       }
@@ -559,8 +564,6 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        // (A `const` field is an attribute as any other in the image: the constness is a check
-        // on the writes, which a program that has an image passed.)
         if lexeme || tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
@@ -617,6 +620,11 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         }
         a.nullable = nullable;
         a.pub_field = public;
+        // `Parser::mark_const_field` (src/parser/definitions.rs ~7615): a `const` field that is not
+        // computed is write-once, and the image says so (`Attribute::const_field`) for the
+        // passes and backends that read it.  A computed (virtual) field is refused above.
+        a.const_field = fixed;
+        a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
           match e.p.nodes[tn!] {
@@ -1410,10 +1418,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           } else {
             param_default(e, init!, t!)
           };
-          if d == null {
-            return "";
+          // (A default refused — the refusal stands — still leaves the function registered,
+          // as Rust registers it: every definition after it keeps Rust's number.)
+          if d != null {
+            dv = d!;
           }
-          dv = d!;
         }
         arguments += [Argument { name: an, typedef: t!, constant: fixed, dflt: dv }];
       },
@@ -1528,6 +1537,25 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
     // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
     e.b.data.definitions[e.context].returned_const = ret_const;
+    // @PLN187 — where the declared result and each parameter's declared type name a user
+    // `type` alias (`parse_function`'s `returned_fact`, `pending_param_facts`).  A lambda's
+    // result keeps none, as `parse_lambda` records none: a lambda is called through its `fn`
+    // type, whose own fact the call reads, never by its definition.
+    e.b.data.definitions[e.context].returned_fact = if ret != null && !starts_with(name, "__lambda_") { alias_fact(e, ret!) } else { "" };
+    for pn in params {
+      match e.p.nodes[pn] {
+        SParam { name: an, tp } => {
+          if tp != null {
+            for a in el::def(e, e.context).attributes {
+              if a.name == an {
+                e.b.data.definitions[e.context].attributes[a#index].fact = alias_fact(e, tp!);
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    }
   } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
     // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
     // hint's, so its body is parsed against the bare result the first pass met.
@@ -1955,8 +1983,10 @@ fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position
   if !e.first_pass {
     return -1;
   }
+  // (The first `n` NO source holds — a library's placeholders included, `A#1` of an imported
+  // header beside this one.)
   n = 1;
-  while el::source_nr(e, el::STD_SOURCE, "{spelling}#{n}") >= 0 || el::source_nr(e, el::MAIN_SOURCE, "{spelling}#{n}") >= 0 {
+  while placeholder_taken(e, "{spelling}#{n}") {
     n += 1;
   }
   h = el::add_def(e, "{spelling}#{n}", pos, el::DT_STRUCT);
@@ -1972,6 +2002,16 @@ fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position
     e.b.data.definitions[h].bounds += [bd];
   }
   h
+}
+
+// Does any source hold a definition of this name?
+fn placeholder_taken(e: el::El, name: text) -> boolean {
+  for d in e.b.data.definitions {
+    if d.name == name {
+      return true;
+    }
+  }
+  false
 }
 
 // `Parser::create_bound_method_stubs` for a header's bounded variable: each method an interface
@@ -2216,3 +2256,59 @@ pub fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos
   d
 }
 
+
+// @PLN187 `AliasFact::encode` of a declared type (src/data.rs): `""` plain, `a<n>` a user `type`
+// alias, `v<f>` a vector whose elements carry a fact, `t(<f>,…)` a tuple whose members do (`_`
+// a plain member).  The type is read off its syntax as `parse_type`, `sub_type` and
+// `parse_type_full` record it: the alias arm names a `type` definition outside the standard
+// library, a `vector<T>` carries its element's fact, any other collection holds records whose
+// fields carry their own.
+pub fn alias_fact(e: el::El, tn: integer) -> text {
+  f = fact_put(e, tn);
+  if f == "_" { "" } else { f }
+}
+
+fn fact_put(e: el::El, tn: integer) -> text {
+  match e.p.nodes[tn] {
+    STy { name, args } => {
+      if name == "vector" && len(args) == 1 {
+        inner = fact_put(e, args[0]!);
+        return if inner == "_" { "_" } else { "v{inner}" };
+      }
+      d = el::def_nr(e, name);
+      if d >= 0 && d < len(e.b.data.definitions) && el::def(e, d).def_type == el::DT_TYPE && el::def(e, d).source != el::STD_SOURCE {
+        "a{d}"
+      } else {
+        "_"
+      }
+    },
+    STyTuple { elems } => {
+      ms = "";
+      plain = true;
+      for m in elems {
+        f = fact_put(e, m);
+        if f != "_" {
+          plain = false;
+        }
+        ms += if ms == "" { f } else { ",{f}" };
+      }
+      if plain { "_" } else { "t({ms})" }
+    },
+    STyArg { tp } => if tp != null { fact_put(e, tp!) } else { "_" },
+    _ => "_"
+  }
+}
+
+// `Data::body_width32`: each function from definition `from` on whose body is in a file under
+// the 32-bit regime (`width32_files`).  An instance keeps its template's position, so one minted
+// from a template in a 64-bit file is wide (`mark_wide_instance`).
+pub fn mark_width32(e: el::El, from: integer) {
+  if len(e.width32_files) == 0 {
+    return;
+  }
+  for wd in e.b.data.definitions {
+    if wd#index >= from && wd.def_type == el::DT_FUNCTION && wd.source != el::STD_SOURCE && e.width32_files.contains(wd.position.file) {
+      e.b.data.definitions[wd#index].width32 = true;
+    }
+  }
+}

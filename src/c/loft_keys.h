@@ -422,7 +422,8 @@ static uint64_t loft_fresh_seed(loft_cx *cx) {
         if (loft_seed_k0 == 0) loft_seed_keys(cx);
         /* The counter is the context's and its address differs per context, so two threads never
          * draw the same seed. */
-        s = (loft_seed_k0 + ++cx->seed_counter * UINT64_C(0x9E3779B97F4A7C15)) ^ loft_seed_k1 ^ (uint64_t) (size_t) &cx->seed_counter;
+        uint64_t n = ++cx->seed_counter;
+        s = (loft_seed_k0 + n * UINT64_C(0x9E3779B97F4A7C15)) ^ loft_seed_k1 ^ (uint64_t) (size_t) &cx->seed_counter;
         s ^= s >> 30;
         s *= UINT64_C(0xBF58476D1CE4E5B9);
         s ^= s >> 27;

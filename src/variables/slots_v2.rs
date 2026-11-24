@@ -208,6 +208,51 @@ pub fn assign_slots_v2(
     };
     // Offsets are counted in `u32`: a frame past 64 KiB is reported in `frame_end` and refused
     // by the caller rather than wrapped onto another local's bytes.
+    //
+    // loft#2620 — the placement below is the greedy scan this allocator always made: at a
+    // candidate offset, the FIRST blocker in scan order (the pinned slots, then the locals placed
+    // so far, in placement order) sends the search past its end.  Only a placed slot whose bytes
+    // overlap the candidate's can block, so the placed slots are kept indexed by offset and only
+    // those are looked at; the earliest of the blocking ones in scan order is the one the full
+    // scan met first.  The loop-straddle test reads each interval's loop membership as bit
+    // masks.  The layout is the one the full scan gave.
+    let words = loop_ranges.len().div_ceil(64);
+    let membership = |ls: u32, le: u32| -> (Vec<u64>, Vec<u64>) {
+        let (mut inside, mut outside) = (vec![0u64; words], vec![0u64; words]);
+        for (l, &(s, e)) in loop_ranges.iter().enumerate() {
+            if ls >= s && le < e {
+                inside[l / 64] |= 1 << (l % 64);
+            }
+            if le < s || ls >= e {
+                outside[l / 64] |= 1 << (l % 64);
+            }
+        }
+        (inside, outside)
+    };
+    let all_loops: Vec<u64> = (0..words)
+        .map(|w| {
+            let n = loop_ranges.len() - w * 64;
+            if n >= 64 { u64::MAX } else { (1u64 << n) - 1 }
+        })
+        .collect();
+    let pinned_masks: Vec<(Vec<u64>, Vec<u64>)> =
+        pinned.iter().map(|p| membership(p.ls, p.le)).collect();
+    let iv_masks: Vec<(Vec<u64>, Vec<u64>)> = ivs.iter().map(|i| membership(i.ls, i.le)).collect();
+    let straddles = |a: &(Vec<u64>, Vec<u64>), b: &(Vec<u64>, Vec<u64>)| {
+        (0..words).any(|w| !((a.0[w] & b.0[w]) | (a.1[w] & b.1[w])) & all_loops[w] != 0)
+    };
+    // Scan order: pinned slot `k` is key `k`, placed local `j` is key `pinned.len() + j`.
+    let max_size = pinned
+        .iter()
+        .chain(ivs.iter())
+        .map(|i| u32::from(i.size))
+        .max()
+        .unwrap_or(0);
+    let mut by_slot: std::collections::BTreeMap<u32, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (k, p) in pinned.iter().enumerate() {
+        by_slot.entry(u32::from(p.slot)).or_default().push(k);
+    }
     let mut frame_end = u32::from(local_start);
     for idx in 0..ivs.len() {
         let (sz, al, ls, le, kind) = {
@@ -216,44 +261,51 @@ pub fn assign_slots_v2(
         };
         let al32 = u32::from(al);
         let mut pos = u32::from(local_start).next_multiple_of(al32);
-        'search: loop {
+        loop {
             let end = pos + u32::from(sz);
             if end > u32::from(u16::MAX) {
                 break;
             }
-            for p in pinned.iter().chain(ivs[..idx].iter()) {
-                let p_end = u32::from(p.slot) + u32::from(p.size);
-                let overlap_range = pos < p_end && u32::from(p.slot) < end;
-                if !overlap_range {
-                    continue;
-                }
-                // Reuse is only valid as an EXACT slot match (same start+size);
-                // any PARTIAL overlap is always a conflict (it would alias only
-                // part of a live value).
-                let exact = pos == u32::from(p.slot) && sz == p.size;
-                let life_overlap = ls <= p.le && p.ls <= le;
-                let incompatible = p.kind != kind || p.size != sz;
-                // I6: forbid sharing that straddles any loop scope.
-                let straddle = loop_ranges.iter().any(|&(s, e)| {
-                    let iv_in = ls >= s && le < e;
-                    let iv_out = le < s || ls >= e;
-                    let p_in = p.ls >= s && p.le < e;
-                    let p_out = p.le < s || p.ls >= e;
-                    !((iv_in && p_in) || (iv_out && p_out))
-                });
-                if !exact || life_overlap || incompatible || straddle {
-                    // Jump past the blocker, re-align, retry.
-                    pos = p_end.next_multiple_of(al32);
-                    continue 'search;
+            // A slot starting at or below `pos - max_size` ends at or before `pos`.
+            let lo = (pos + 1).saturating_sub(max_size);
+            let mut first: Option<(usize, u32)> = None;
+            for keys in by_slot.range(lo..end).map(|(_, k)| k) {
+                for &key in keys {
+                    let (p, p_mask) = if key < pinned.len() {
+                        (&pinned[key], &pinned_masks[key])
+                    } else {
+                        (&ivs[key - pinned.len()], &iv_masks[key - pinned.len()])
+                    };
+                    let p_end = u32::from(p.slot) + u32::from(p.size);
+                    let overlap_range = pos < p_end && u32::from(p.slot) < end;
+                    if !overlap_range || first.is_some_and(|(k, _)| k < key) {
+                        continue;
+                    }
+                    // Reuse is only valid as an EXACT slot match (same start+size);
+                    // any PARTIAL overlap is always a conflict (it would alias only
+                    // part of a live value).
+                    let exact = pos == u32::from(p.slot) && sz == p.size;
+                    let life_overlap = ls <= p.le && p.ls <= le;
+                    let incompatible = p.kind != kind || p.size != sz;
+                    // I6: forbid sharing that straddles any loop scope.
+                    let straddle = straddles(&iv_masks[idx], p_mask);
+                    if !exact || life_overlap || incompatible || straddle {
+                        first = Some((key, p_end));
+                    }
                 }
             }
-            break;
+            match first {
+                // Jump past the blocker, re-align, retry.
+                Some((_, p_end)) => pos = p_end.next_multiple_of(al32),
+                None => break,
+            }
         }
         frame_end = frame_end.max(pos + u32::from(sz));
         if frame_end > u32::from(u16::MAX) {
             break;
         }
         ivs[idx].slot = pos as u16;
+        by_slot.entry(pos).or_default().push(pinned.len() + idx);
     }
     let hwm = u16::try_from(frame_end).unwrap_or(u16::MAX);
     let mut slots: Vec<SlotAssignment> = ivs

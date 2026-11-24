@@ -42,6 +42,42 @@ use el_ex_bind;
 // is met and read on each pass as `parse_function` reads a definition; the expression is its
 // definition number, read as a function value.  A name of the enclosing body is no name of the
 // lambda's (a capture is refused where it is read); the `|x|` spelling is refused by name.
+// A lambda refused before it is registered still takes what Rust registers for it, so every
+// definition after it keeps Rust's number: its name from the enclosing function's lambda count
+// (`vars.lambdas`, on both passes), and on the first pass its definition `n___lambda_<fn>_<N>`
+// and, where it captures a name, its closure record `__closure_<fn>_<N>` — the body is never
+// elaborated, the refusal stands.
+fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text) -> Ex {
+  if e.context < 0 || body == null {
+    el::refuse(e, why);
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  outer = el::def(e, e.context).name;
+  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
+  nm = "n___lambda_{bare}_{vars.lambdas}";
+  rec_nm = "__closure_{bare}_{vars.lambdas}";
+  vars.lambdas += 1;
+  if e.first_pass && el::def_nr(e, nm) < 0 {
+    own: vector<text> = names;
+    for pn in params {
+      match e.p.nodes[pn] {
+        SParam { name: pname } => { own += [pname]; },
+        _ => {}
+      }
+    }
+    captures = len(captured_names(e, vars, body!, own)) > 0;
+    ld = el::add_def(e, nm, el::pos_at(e, at), el::DT_FUNCTION);
+    if captures {
+      end = match e.p.nodes[body!] { SBlock { end: be } => be, _ => 0 };
+      rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
+      e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
+      e.b.data.definitions[ld].closure_record = rd;
+    }
+  }
+  el::refuse(e, why);
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
 pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
     SLambda { at, params, ret, body, short, names } => {
@@ -59,8 +95,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           hint = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
         }
         if !(hint is TyFunction) {
-          el::refuse(e, "a short lambda (`|…|`) with no `fn(…)` its position expects");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          return refuse_lambda(e, vars, at, params, names, body, "a short lambda (`|…|`) with no `fn(…)` its position expects");
         }
       }
       if e.context < 0 || body == null {
@@ -100,20 +135,17 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
-            el::refuse(e, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");
-            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");
           }
           // A written parameter takes a shadow cell (`promote_boxed_scalar_arg`, #685) and a
           // lambda's own local a nested lambda writes is boxed by no flip: not carried.
           // A written parameter is boxed through a shadow (`el_cell::flip`); a `const` one, a `&`
           // one and a hidden one are refused, as Rust reports the first two.
           if vars.vars[cv].argument && (vars.vars[cv].value_const || el_vars::tp(vars, cv) is TyRefVar || hidden_param(e, vars, cv)) {
-            el::refuse(e, "a lambda that captures a local of its function: a parameter written by it");
-            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a parameter written by it");
           }
           if starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {
-            el::refuse(e, "a lambda that captures a local of its function: a lambda's local written by a nested lambda");
-            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a lambda's local written by a nested lambda");
           }
           written += [c];
           if e.first_pass {
@@ -130,8 +162,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // scalar is (`closure_attr_type`).
         scalar_cap = el_convert::plain_scalar(el_types::base(ct)) || el_convert::plain_enum(el_types::base(ct)) || (el_types::base(ct) is TyText && !(ct is TyOptional));
         if !heap && !scalar_cap {
-          el::refuse(e, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
         }
         caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
       }
@@ -149,12 +180,10 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       // A record answered beside a shared capture is delivered through the late buffer: a tail
       // reading the capture is copied in (`capture_tail_copy`), any other tail as a function's.
       if shares && answer != null && !el_types::is_unknown(answer!) && !el_ex_object::scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) && !record_type(e, answer!) {
-        el::refuse(e, "a lambda answering a record or a collection beside a shared capture");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        return refuse_lambda(e, vars, at, params, names, body, "a lambda answering a record or a collection beside a shared capture");
       }
       if len(caps) > 0 && holds_lambda(e, body!) {
-        el::refuse(e, "a lambda that captures a local of its function: around another lambda");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: around another lambda");
       }
       outer = el::def(e, e.context).name;
       bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
@@ -797,6 +826,21 @@ pub fn captured_names(e: el::El, vars: el_vars::Vars, n: integer, own: vector<te
 // it written through an index or a field (`seen[x] += 1`, `s.f = v`: the accessor chain's
 // root)?  Apart from `writes_a_name`, which decides the cells and asks the whole name only.
 fn writes_rooted(e: el::El, n: integer, name: text) -> boolean {
+  // (A store with an `else` writes its PLACE through `_store_target_N` (`parse_store_else`), a
+  // variable of its own the IR walk does not root at the capture: its target is no write of
+  // it — the value and the arm are still read.)
+  match e.p.nodes[n] {
+    SStmt { e: se, orelse } => {
+      if orelse != null && se != null && match e.p.nodes[se!] { SAssign { target: st } => !(e.p.nodes[st] is SName), _ => false } {
+        match e.p.nodes[se!] {
+          SAssign { e: sv } => { if sv != null && writes_rooted(e, sv!, name) { return true; } },
+          _ => {}
+        }
+        return writes_rooted(e, orelse!, name);
+      }
+    },
+    _ => {}
+  }
   target = match e.p.nodes[n] {
     SAssign { target: t } => t,
     _ => -1

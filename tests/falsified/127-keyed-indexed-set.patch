@@ -1,7 +1,8 @@
 diff --git a/src/database/search.rs b/src/database/search.rs
+index 360631082..3a88fa0e5 100644
 --- a/src/database/search.rs
 +++ b/src/database/search.rs
-@@ -673,7 +673,7 @@
+@@ -632,7 +632,7 @@ impl Stores {
              None => keys::get_key(value, &self.allocations, &keys),
          };
          let existing = self.find(coll, db, &key);
@@ -10,7 +11,7 @@ diff --git a/src/database/search.rs b/src/database/search.rs
              // `(Col-Assign)`: a record already under the key is REPLACED, which is a removal
              // (@FR-Col-Remove) — so it takes the one removal home, which unlinks and releases
              // in the order each kind needs.  Its own copy released the record's claims before
-@@ -858,6 +858,9 @@
+@@ -951,6 +951,9 @@ impl Stores {
          content_tp: u16,
          secondary: bool,
      ) {
@@ -19,4 +20,4 @@ diff --git a/src/database/search.rs b/src/database/search.rs
 +        }
          let slot = self.unlink(data, existing, db);
          if !secondary {
-             self.remove_claims(existing, content_tp);
+             if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {

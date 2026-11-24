@@ -1857,8 +1857,9 @@ impl Output<'_> {
         // `.rec != 0` guard in front of the clear is not the whole delivery: `vector_add`
         // has no such test, so the crash was a NULL `DbRef` reaching a store accessor.
         let vec_hbuf_tp: Option<u16> = if let Type::Vector(elm_tp, _) = ret_type.ret_promo_base() {
-            let elm_name = elm_tp.name(self.data);
-            let tp = self.data.name_type(&format!("main_vector<{elm_name}>"), 0);
+            let tp = self
+                .data
+                .name_type(&self.data.vector_wrapper_name(elm_tp), 0);
             (tp != u16::MAX).then_some(tp)
         } else {
             None
@@ -1952,7 +1953,7 @@ impl Output<'_> {
                     // frame lends none, the null sentinel, and the candidate mints its own.
                     let tp = match a.typedef.base() {
                         Type::Vector(elm, _) if self.fnref_work => {
-                            let name = format!("main_vector<{}>", elm.name(self.data));
+                            let name = self.data.vector_wrapper_name(elm);
                             self.data.name_type(&name, 0)
                         }
                         _ => u16::MAX,

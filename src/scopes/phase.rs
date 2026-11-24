@@ -372,8 +372,18 @@ pub(super) fn run_scan_phase(
         // `t = f()`) lost its base, and nothing kept that base's store alive for the local's
         // reads: a per-statement `x` was released under `t` (loft#2443).  Every named local a
         // view bind into `v` is rooted at joins the list, so its lifetime covers `v`'s.
-        for b in crate::scopes::witness::view_bind_bases(orig_code, v, &function, data) {
-            function.depend(v, b);
+        // A JOIN, not one dep per base: `depend` REPLACES the list, so a loop of it kept only
+        // the last base — `t = x.tp` beside a never-run `t = m.tp` kept `m` alive and released
+        // the per-statement `x` under `t` (loft#2628).
+        let bases = crate::scopes::witness::view_bind_bases(orig_code, v, &function, data);
+        if !bases.is_empty() {
+            let mut joined: Vec<u16> = function.tp(v).depend();
+            for b in bases {
+                if !joined.contains(&b) {
+                    joined.push(b);
+                }
+            }
+            function.depend_on_all(v, &joined);
         }
     }
     // loft#2145 — the view locals a `&` callee may rebind, and the snapshot of the store each

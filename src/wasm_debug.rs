@@ -3,7 +3,8 @@
 // @I78 — Live-reload dispatch: the browser debug CLIENT (@PLN98 P3.4), the
 // live/debug tier's browser-side sibling to live_dispatch.rs.
 
-//! The interactive debug client a browser (`--html --debug`) build runs: the
+//! The interactive debug client of the rustc writer's browser build (`--html --debug` on
+//! that route; the C route refuses `--debug`, as a page has no debug channel): the
 //! program executes INTERPRETED over a parked [`State`], breakpoints PAUSE it
 //! cooperatively (P3.2 — `execute_argv` / `debug_step` return to the JS event
 //! loop, never block), and `D!:` control frames arrive over the `host_input`
@@ -14,7 +15,6 @@
 //!
 //! Split for testability: [`apply`] is a pure `(session, frame) -> replies`
 //! step (unit-tested natively); [`pump`] wires it to the wasm host I/O.
-
 
 use crate::interp::debugger::StepMode;
 use crate::interp::state::State;

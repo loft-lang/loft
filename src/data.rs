@@ -1469,20 +1469,19 @@ impl Deps {
     /// @PLN104 — renumber FRAME-variable entries in place for a variable swap:
     /// every plain entry equal to `from` becomes `to`.  Skips the `u16::MAX`
     /// pointer/share markers (they name no frame var).  FRAME-space only: a
-    /// variable swap never relocates attribute indices, so applying this to an
-    /// attr-space list would corrupt it (debug-asserted).  Used by the text-return
-    /// retbuf renumber (`Type::renumber_frame_deps`).
+    /// variable renumber never relocates attribute indices, so an attr-space list is
+    /// left as it is — renumbering it would corrupt it.  A walk over a whole body
+    /// meets such lists (a function body's result type names its PARAMETERS), and
+    /// cannot tell them apart from frame lists itself.  Only a debug build carries the space
+    /// tag; a release build renumbers every list, which leaves an attr list as it was for a
+    /// LOCAL's renumber — a local numbers after the arguments, so no attribute index equals
+    /// it.  Used by the text-return retbuf renumber and `(R-LiftReuse)`, which renumbers
+    /// lifts, locals all (`Type::renumber_frame_deps`).
     pub fn renumber_frame(&mut self, from: u16, to: u16) {
-        // An EMPTY list has nothing to corrupt, whatever space it is tagged — a `&text`
-        // parameter's declared type carries the attribute tag into the variable table, and
-        // the retbuf renumber walks every variable's type (loft#1335).  `union` exempts the
-        // empty list for the same reason.
         #[cfg(debug_assertions)]
-        debug_assert!(
-            self.items.is_empty() || self.space != DepSpace::Attr,
-            "renumber_frame on attr-space deps ({:?})",
-            self.items
-        );
+        if self.space == DepSpace::Attr {
+            return;
+        }
         for e in &mut self.items {
             if *e != u16::MAX && *e == from {
                 *e = to;
@@ -5819,53 +5818,91 @@ impl<T: Default> PassCell<T> {
 /// guard that puts the previous value back when dropped, so a nested span leaves the outer one
 /// intact.  The guard keeps a handle, not the `Data`, so the code inside the span may still
 /// borrow the `Data` mutably; each span's own doc says why no body it reads changes inside it.
-/// A clone of the `Data` starts it empty, as [`PassCell`] does.
-pub struct ScopedCell<T>(std::sync::Arc<std::sync::Mutex<Option<T>>>);
+/// Held without naming the pass's type, as [`PassAny`] is: the core layer names no higher one
+/// (`tests/extraction_hygiene.rs`).  A clone of the `Data` starts it empty, as [`PassCell`] does.
+#[derive(Default)]
+pub struct ScopedCell(std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>);
 
-impl<T> Default for ScopedCell<T> {
-    fn default() -> Self {
-        Self(std::sync::Arc::default())
-    }
-}
-
-impl<T> Clone for ScopedCell<T> {
+impl Clone for ScopedCell {
     fn clone(&self) -> Self {
         Self::default()
     }
 }
 
-impl<T> ScopedCell<T> {
+impl ScopedCell {
     /// Run `f` on the open span's value, `None` outside any span.
-    pub fn with<R>(&self, f: impl FnOnce(&mut Option<T>) -> R) -> R {
-        f(&mut self
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: 'static, R>(&self, f: impl FnOnce(Option<&mut T>) -> R) -> R {
+        let mut slot = self
             .0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(slot.as_mut().map(|v| {
+            v.downcast_mut::<T>()
+                .expect("a span memo is read as the one type its pass names")
+        }))
     }
 
     /// Open a span holding `value` until the answered guard drops.
-    pub fn open(&self, value: T) -> ScopedSpan<T> {
+    pub fn open<T: Send + 'static>(&self, value: T) -> ScopedSpan {
+        let prev = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(Box::new(value));
         ScopedSpan {
-            prev: self.with(|m| m.replace(value)),
             cell: self.0.clone(),
+            prev,
         }
     }
 }
 
 /// The open span of a [`ScopedCell`]; dropping it restores the value the span replaced.
 #[must_use]
-pub struct ScopedSpan<T> {
-    cell: std::sync::Arc<std::sync::Mutex<Option<T>>>,
-    prev: Option<T>,
+pub struct ScopedSpan {
+    cell: std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>,
+    prev: Option<Box<dyn std::any::Any + Send>>,
 }
 
-impl<T> Drop for ScopedSpan<T> {
+impl Drop for ScopedSpan {
     fn drop(&mut self) {
         let prev = self.prev.take();
         *self
             .cell
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
+    }
+}
+
+/// A per-program memo of a pass above the core layer, held by `Data` without naming the pass's
+/// type: the core layer names no higher one (`tests/extraction_hygiene.rs`).  The pass names
+/// its type at each use, and the first use makes it `T::default()`; a clone of the `Data`
+/// starts it empty, as a [`PassCell`] does.
+#[derive(Default)]
+pub struct PassAny(std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>);
+
+impl Clone for PassAny {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PassAny {
+    /// Run `f` on the memo, made `T::default()` on first use.
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: Default + Send + 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let memo = slot.get_or_insert_with(|| Box::new(T::default()));
+        f(memo
+            .downcast_mut::<T>()
+            .expect("a pass memo is read as the one type its pass names"))
     }
 }
 
@@ -6154,19 +6191,19 @@ pub struct Data {
     /// @PLN187 — the name-only types ([`Self::is_name_only`]).
     name_only: NameOnlyCache,
     /// `@PLN226` — the range analysis's call memo (`opt::range`).
-    pub(crate) range_memo: PassCell<crate::opt::range::RangeMemo>,
+    pub(crate) range_memo: PassAny,
     /// `@PLN226` — the non-null analysis's answers (`opt::non_sentinel`).
-    pub(crate) nn_memo: PassCell<crate::opt::non_sentinel::NnMemo>,
+    pub(crate) nn_memo: PassAny,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
-    pub(crate) defs_memo: ScopedCell<crate::use_analysis::DefsMemo>,
+    pub(crate) defs_memo: ScopedCell,
     /// `@PLN226` — every callee's return class and definitions walk inside a span in which no
     /// body changes (`use_analysis::ownership_memo_scope`).
-    pub(crate) span_memo: ScopedCell<crate::use_analysis::SpanMemo>,
+    pub(crate) span_memo: ScopedCell,
     /// `@PLN226` — the parameter-write summary (`parser::param_writes_summary`).
-    pub(crate) param_writes: ScopedCell<crate::parser::ParamWrites>,
+    pub(crate) param_writes: ScopedCell,
     /// `@PLN226` — the written-parameter summary (`use_analysis::written_params_summary`).
-    pub(crate) written_params: ScopedCell<crate::use_analysis::WrittenParams>,
+    pub(crate) written_params: ScopedCell,
     /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
     catching_up: PassCell<HashSet<u32>>,
     /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
@@ -6174,7 +6211,7 @@ pub struct Data {
     /// How deep `ret_adopt::buffer_complete` is nested in itself.
     pub(crate) buffer_complete_depth: PassCell<u32>,
     /// `@PLN226` — the copy manifest of this compilation (`copy_manifest`).
-    pub(crate) copies: PassCell<crate::copy_manifest::Manifest>,
+    pub(crate) copies: PassAny,
 }
 
 #[must_use]
@@ -6890,8 +6927,8 @@ impl Data {
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
             name_only: NameOnlyCache::default(),
-            range_memo: PassCell::default(),
-            nn_memo: PassCell::default(),
+            range_memo: PassAny::default(),
+            nn_memo: PassAny::default(),
             defs_memo: ScopedCell::default(),
             span_memo: ScopedCell::default(),
             param_writes: ScopedCell::default(),
@@ -6899,7 +6936,7 @@ impl Data {
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),
-            copies: PassCell::default(),
+            copies: PassAny::default(),
         }
     }
 
@@ -11039,7 +11076,7 @@ impl Data {
             let owner = self.type_def_nr(tp);
             self.set_parent(d, owner);
         }
-        let name = format!("main_vector<{}>", tp.name(self));
+        let name = self.vector_wrapper_name(tp);
         let d_nr = self.def_nr(&name);
         if d_nr == u32::MAX {
             let vd = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -13014,7 +13051,68 @@ impl Data {
     /// the bytecode writer's `OpDatabase` names for it, and every other writer with it.
     #[must_use]
     pub fn owned_vector_type(&self, elm: &Type, source: u16) -> u16 {
-        self.name_type(&format!("main_vector<{}>", elm.name(self)), source)
+        self.name_type(&self.vector_wrapper_name(elm), source)
+    }
+
+    /// The name of the record that wraps a vector of `elm` in a store of its own,
+    /// `main_vector<elm>` — the one spelling every site that mints, finds or compares such a
+    /// wrapper uses.  The wrapper is global (source 0) and found by name, while a type's name
+    /// is not unique: a program may declare a `File` beside the standard library's.  So each
+    /// type inside `elm` whose name was first bound to another TYPE adds `#<its def>` (a
+    /// constant or a function of that name owns no wrapper: the library's constant `E` leaves
+    /// a program's `struct E` its plain one):
+    /// the first definition of a name (the standard library's, which is parsed first) keeps
+    /// the plain wrapper, and a later one of the same name gets its own instead of reusing a
+    /// wrapper whose element has another layout.  A name only one definition carries stays
+    /// plain, so every other wrapper is spelled as before.
+    /// Is definition `d` a type a value can have — a struct, an enum or one of its variants,
+    /// or a named type — and so a type a vector wrapper can be made for?
+    fn is_type_def(&self, d: u32) -> bool {
+        self.definitions.get(d as usize).is_some_and(|def| {
+            matches!(
+                def.def_type,
+                DefType::Struct | DefType::Enum | DefType::EnumValue | DefType::Type
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn vector_wrapper_name(&self, elm: &Type) -> String {
+        let mut name = format!("main_vector<{}>", elm.name(self));
+        // Each definition once, in the order the walk meets it: peeled through `base()` (a
+        // nullable element names the same type, @FR-N-Shape), an `Optional` node and the node
+        // inside it are the same definition.
+        let mut seen: Vec<u32> = Vec::new();
+        elm.any_node(&mut |t| {
+            if let Type::Enum(d, _, _)
+            | Type::Reference(d, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _)
+            | Type::Hash(d, _, _) = t.base()
+                && !seen.contains(d)
+                && (*d as usize) < self.definitions.len()
+                && self
+                    .def_names
+                    .first_bound(&self.definitions[*d as usize].name)
+                    // A generic's type-variable placeholder is no earlier type: its wrapper is
+                    // spelled `__typevar_<T>` already, so a user's `T` keeps the bare one.
+                    .is_some_and(|first| {
+                        first != *d
+                            && self.is_type_def(first)
+                            && !self.is_type_var_placeholder(first)
+                    })
+            {
+                seen.push(*d);
+                let _ = {
+                    use std::fmt::Write as _;
+                    write!(name, "#{d}")
+                };
+            }
+            false
+        });
+        name
     }
 
     /** Get the definition by name

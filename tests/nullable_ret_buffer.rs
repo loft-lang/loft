@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: counts dispatch to the interpreter, the live tier the C has not got — its `--native` runs as `--native-rust` until then.
 //! loft#938 — the return buffer for a NULLABLE COLLECTION return. **Default ON.**
 //!
 //! `-> vector<T>?` gets the same hidden `__retbuf` the non-nullable form always had, so a
@@ -372,12 +371,12 @@ fn dispatch_arm_returning_a_local_delivers_into_the_buffer() {
     );
 }
 
-/// `@FR-N-Road` in the live tier: each `τ?` function beside its `τ` twin, every one named in
-/// `LOFT_FLIP_FNS`.  A flipped function runs in the parked interpreter, which prints one
-/// `live-dispatch:` line per call; a function the emitter gave no entry check runs compiled
-/// and prints none.  The record returned in registers (`make`, `make_n`, `echo`) is handed a
-/// buffer of its own for the parked call.
-const FLIPPED: &str = r#"
+/// `@FR-N-Road` across the backends: each `τ?` function beside its `τ` twin answers alike on
+/// the interpreter and the C.  The record returned in registers (`make`, `make_n`, `echo`) is
+/// among them.  The rustc writer's half of this cell flipped each one into its live tier and
+/// counted the dispatches; the C has no live tier (`@C170`), so that half went with the writer
+/// (@PLN225 R4).
+const TWINS: &str = r#"
 struct S { a: integer, b: text }
 struct P { x: integer }
 fn get_rec(p: vector<S>) -> S { p[0] }
@@ -409,59 +408,27 @@ fn main() {
 }
 "#;
 
-/// `(function, calls)` — the dispatches each flipped function owes, one per call in `main`.
-const FLIPPED_CALLS: &[(&str, usize)] = &[
-    ("get_rec", 1),
-    ("get_rec_n", 2),
-    ("get_vec", 1),
-    ("get_vec_n", 2),
-    ("read_par", 1),
-    ("read_par_n", 2),
-    ("bump", 1),
-    ("bump_n", 2),
-    ("make", 1),
-    ("make_n", 2),
-    ("echo", 1),
-];
-
-const FLIPPED_OUT: &str = "7x 7 -1\n2 8 true\n8 2 41\n5 5 -9\n7 3 true\n99 7\n";
+const TWINS_OUT: &str = "7x 7 -1\n2 8 true\n8 2 41\n5 5 -9\n7 3 true\n99 7\n";
 
 #[test]
-fn a_nullable_function_is_flipped_to_the_interpreter_as_its_dense_twin_is() {
+fn a_nullable_function_answers_as_its_dense_twin_on_both_backends() {
     let dir = std::env::temp_dir().join(format!("loft1989_{}", std::process::id()));
     fa::create_dir_all(&dir).expect("scratch dir");
-    let file = dir.join("flipped.loft");
-    fa::write(&file, FLIPPED).expect("write probe");
-    let names: Vec<&str> = FLIPPED_CALLS.iter().map(|(n, _)| *n).collect();
-    let run = |flip: bool| {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native")
+    let file = dir.join("twins.loft");
+    fa::write(&file, TWINS).expect("write probe");
+    for mode in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(mode)
             .arg(&file)
             .env("LOFT_TIMEOUT", "300")
-            .env("LOFT_NO_CACHE", "1");
-        if flip {
-            cmd.env("LOFT_LIVE_FLIP", "1")
-                .env("LOFT_FLIP_FNS", names.join(","))
-                .env("LOFT_DISPATCH_DEBUG", "1");
-        }
-        let out = cmd.output().expect("invoke loft");
-        (
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )
-    };
-    let (plain, plain_err) = run(false);
-    assert_eq!(plain, FLIPPED_OUT, "compiled: {plain_err}");
-    let (flipped, trace) = run(true);
-    assert_eq!(flipped, FLIPPED_OUT, "flipped to the interpreter: {trace}");
-    for (name, calls) in FLIPPED_CALLS {
-        let seen = trace
-            .lines()
-            .filter(|l| l.starts_with(&format!("live-dispatch: n_{name} ")))
-            .count();
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("invoke loft");
         assert_eq!(
-            seen, *calls,
-            "`{name}` dispatched {seen} of {calls} calls: {trace}"
+            String::from_utf8_lossy(&out.stdout),
+            TWINS_OUT,
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 }

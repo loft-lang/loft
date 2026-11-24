@@ -54,12 +54,16 @@ fn scan(path: text, out: Out) {
 
 fn main() {
   out = Out { rows: [] };
-  for p in "tests/*.rs".glob() { scan(p, out); }
+  for p in "tests/*.rs".glob() {
+    scan(p, out);
+    // A test binary split into parts keeps them in the directory named after it.
+    for q in "{p[0..len(p) - 3]}/*.rs".glob() { scan(q, out); }
+  }
   for p in "src".walk(".rs") { scan(p, out); }
   // The header as the original holds it, one literal (finding 014: `` \` `` is a backtick).
   header = `
     # Baseline of every \`#[ignore = "..."]\` and \`#[cfg_attr(<cfg>, ignore = "...")]\` in
-    # tests/*.rs and src/**/*.rs.  One \`<file>::<test_name>\\t<reason>\` pair per line,
+    # tests/*.rs (with the parts in tests/<binary>/) and src/**/*.rs.  One \`<file>::<test_name>\\t<reason>\` pair per line,
     # sorted; the file is part of the key because two \`src/\` tests share a bare name.
     # Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on
     # any drift.  A drift typically means one of:

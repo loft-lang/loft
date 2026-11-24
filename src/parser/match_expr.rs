@@ -7,7 +7,7 @@
 
 use super::control::{
     EnumArm, arm_body_is_null, ends_in_halt, give_halt_a_value, guarded_arm, is_place,
-    mark_forward_call, set_arm_null_typed,
+    mark_forward_call, set_arm_null_typed, yields_only_null,
 };
 use super::{
     DefType, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_set,
@@ -1671,8 +1671,10 @@ impl Parser {
             if arm_body_is_null(code) {
                 let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
                 set_arm_null_typed(code, typed_null, result_type);
-            } else if ends_in_halt(&self.data, code) {
-                // `@FR-C-Never` — the halt, then a value of the result type no run reaches.
+            } else if ends_in_halt(&self.data, code) || yields_only_null(&self.data, code) {
+                // `@FR-C-Never` — the halt, then a value of the result type no run reaches; and
+                // an arm whose every path answers null or leaves keeps its code, the result's
+                // null behind it.
                 let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
                 give_halt_a_value(code, typed_null.clone(), result_type);
             }

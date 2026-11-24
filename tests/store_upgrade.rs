@@ -2193,3 +2193,102 @@ fn cell_a_struct_wider_than_its_layout_has_types() {
         "5 0 3 x2\n",
     );
 }
+
+// The name a store records for a library type depends on what else its WRITER
+// loaded: the second definition of a name registers as `lib::Name` (`typedef::fill_database`),
+// so `assets`' `Scene`, written beside `mesh3d`'s, is `assets::Scene` in the sidecar, and
+// `assets`' own hosted unit, compiled alone, calls it `Scene`.  A library qualifier one side
+// lacks names the same type; the fields decide the rest.
+
+/// Write library `name` under `libs`: a manifest and `src/<name>.loft` holding `src`.
+fn lib_package(libs: &std::path::Path, name: &str, src: &str) {
+    let dir = libs.join(name);
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\nentry = \"src/{name}.loft\"\n"),
+    )
+    .unwrap();
+    loft::file_access::write(dir.join("src").join(format!("{name}.loft")), src).unwrap();
+}
+
+const OTHER_SCENE: &str =
+    "pub struct Scene { pub a_x: integer }\npub fn mk_a() -> Scene { Scene { a_x: 3 } }\n";
+const PACK_LIB: &str = "pub struct Scene { pub sc_name: text, pub sc_w: integer }\npub struct Pack { pub scenes: vector<Scene> }\npub fn first_w(p: Pack) -> integer { p.scenes[0].sc_w }\n";
+const PACK_READER: &str = "use pack;\nfn main() {\n  p = pack::Pack {};\n  if !store_load(p, \"a.store\") { println(\"not loaded\"); return; }\n  println(\"{pack::first_w(p)}\");\n}\n";
+
+/// The store a program that loads BOTH libraries writes: `pack`'s `Scene` is the second
+/// definition of the name, so the sidecar records it as `pack::Scene`.
+fn write_beside_another_scene(name: &str) -> std::path::PathBuf {
+    let dir = cell_dir(name);
+    let libs = dir.join("libs");
+    lib_package(&libs, "early", OTHER_SCENE);
+    lib_package(&libs, "pack", PACK_LIB);
+    loft::file_access::write(
+        dir.join("a.loft"),
+        "use early;\nuse pack;\nfn main() {\n  e = early::mk_a();\n  p = pack::Pack {};\n  p.scenes += [pack::Scene { sc_name: \"s\", sc_w: 7 }];\n  println(\"saved {store_persist_copy(p, \\\"a.store\\\")} {e.a_x}\");\n}\n",
+    )
+    .unwrap();
+    let libs = libs.to_string_lossy().into_owned();
+    let (code, out, err) = run_loft(&dir, &["--lib", &libs, "--interpret", "a.loft"]);
+    assert!(
+        code == 0 && out.contains("saved true"),
+        "{name}: the writer failed ({code}):\n{out}\n{err}"
+    );
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("pack::Scene"),
+        "the writer records the qualified name:\n{side}"
+    );
+    dir
+}
+
+/// A program that loads only `pack` reads it on both backends: its `Scene` is bare, and a
+/// library qualifier one side lacks names the same type.
+#[test]
+fn cell_a_store_written_beside_another_same_named_type_reads_without_it() {
+    let dir = write_beside_another_scene("lib_qualifier");
+    loft::file_access::write(dir.join("b.loft"), PACK_READER).unwrap();
+    let libs = dir.join("libs").to_string_lossy().into_owned();
+    for mode in [&[][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = vec!["--lib", &libs];
+        args.extend_from_slice(mode);
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "7\n"),
+            "{mode:?}: the reader saw\n{out}\n{err}"
+        );
+    }
+}
+
+/// The qualifier is all the name rule forgives: a `Scene` whose field changed kind is still
+/// refused, by the field.
+#[test]
+fn cell_a_qualified_type_whose_field_changed_is_still_refused() {
+    let dir = write_beside_another_scene("lib_qualifier_changed");
+    let libs2 = dir.join("libs2");
+    lib_package(
+        &libs2,
+        "pack",
+        &PACK_LIB
+            .replace("pub sc_w: integer", "pub sc_w: text")
+            .replace(
+                "-> integer { p.scenes[0].sc_w }",
+                "-> text { p.scenes[0].sc_w }",
+            ),
+    );
+    loft::file_access::write(dir.join("b.loft"), PACK_READER).unwrap();
+    let libs2 = libs2.to_string_lossy().into_owned();
+    for mode in [&[][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = vec!["--lib", &libs2];
+        args.extend_from_slice(mode);
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0 && out.starts_with("not loaded"),
+            "{mode:?}: a changed field was read ({code}):\n{out}\n{err}"
+        );
+    }
+}

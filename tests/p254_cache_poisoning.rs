@@ -1,6 +1,6 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the cached binaries and their strip decisions are rustc's — its `--native` runs as `--native-rust` until then.
+// The cache cells run the C build (`--native`), whose binary cache keeps the same defenses.
 
 //! P254 — `loft --native` cache-poisoning defenses.  Each test
 //! drives the real `loft --native` binary against a fresh temp
@@ -44,6 +44,16 @@ fn write_marker_script(dir: &std::path::Path, marker: &str) -> PathBuf {
 /// path so tests can poison or inspect it.
 fn cache_dir_for(script: &std::path::Path) -> PathBuf {
     script.parent().unwrap().join(".loft").join("cache")
+}
+
+/// The run executed a cached binary: the source-keyed fast path answered, or the binary cache
+/// did (the C build's `[loft-timing] binary-c <name> cache=hit` line).
+fn served_from_cache(stderr: &str) -> bool {
+    stderr.contains("native_source_key=hit")
+        || stderr.contains("native_binary_cache=hit")
+        || stderr
+            .lines()
+            .any(|l| l.contains("binary-c ") && l.contains("cache=hit"))
 }
 
 #[test]
@@ -129,7 +139,7 @@ fn second_run_reuses_safe_cache() {
     assert!(String::from_utf8_lossy(&out.stdout).contains(marker));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("native_source_key=hit") || stderr.contains("native_binary_cache=hit"),
+        served_from_cache(&stderr),
         "recompile happened when the cache was usable: {stderr}"
     );
 
@@ -148,8 +158,9 @@ fn second_run_reuses_safe_cache() {
 }
 
 /// A run that asks to keep the symbols (`LOFT_NATIVE_KEEP_SYMBOLS=1`, how a native profile
-/// gets readable frames) builds its own binary rather than reusing the stripped one a plain
-/// run cached: the strip decision is part of the binary's key, as `--native-debug` is.
+/// gets readable frames) is never served a stripped binary.  The C build strips nothing, so a
+/// plain run's binary already carries its symbols and both runs share it: one binary, with a
+/// symbol table (read where the format is ELF).
 #[test]
 fn a_symbolised_build_is_not_served_the_stripped_one() {
     let dir = tmp_subdir("keep_symbols");
@@ -165,28 +176,27 @@ fn a_symbolised_build_is_not_served_the_stripped_one() {
         }
         cmd.output().expect("run loft --native")
     };
-    let stripped = run(false);
-    assert!(String::from_utf8_lossy(&stripped.stdout).contains(marker));
+    let plain = run(false);
+    assert!(String::from_utf8_lossy(&plain.stdout).contains(marker));
     let kept = run(true);
     assert!(String::from_utf8_lossy(&kept.stdout).contains(marker));
-    let stderr = String::from_utf8_lossy(&kept.stderr);
-    assert!(
-        !stderr.contains("native_binary_cache=hit") && !stderr.contains("native_source_key=hit"),
-        "a symbolised run reused a cached binary: {stderr}"
-    );
-    let mut sizes: Vec<u64> = fa::read_dir(cache_dir_for(&script))
+    let binaries: Vec<_> = fa::read_dir(cache_dir_for(&script))
         .expect("read cache dir")
         .into_iter()
         .filter(|e| e.os_spelling().to_string_lossy().contains("native-"))
-        .filter_map(|e| fa::metadata(&e).ok().map(|m| m.len()))
         .collect();
-    sizes.sort_unstable();
-    assert_eq!(sizes.len(), 2, "one binary per strip decision: {sizes:?}");
-    // Where the symbols go to a `.pdb` beside the binary, both executables are one size.
-    assert!(
-        !loft::platform::native_symbols_in_the_binary() || sizes[1] > sizes[0],
-        "the symbolised binary carries its symbols: {sizes:?}"
+    assert_eq!(
+        binaries.len(),
+        1,
+        "one binary serves both runs: {binaries:?}"
     );
+    let bytes = fa::read(binaries[0].os_spelling()).expect("the binary");
+    if bytes.starts_with(b"\x7fELF") {
+        assert!(
+            bytes.windows(7).any(|w| w == b".symtab"),
+            "the binary a symbolised run is served carries its symbol table"
+        );
+    }
     let _ = fa::remove_dir_all(&dir);
 }
 

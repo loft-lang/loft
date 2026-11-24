@@ -152,7 +152,7 @@ pub(crate) struct Manifest {
 
 /// Record one materialised view at `file:line`, deduped on its row.
 fn note(data: &crate::data::Data, row: (String, String, String), file: &str, line: u32) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.materialised;
         {
             if !m.iter().any(|n| n.row == row) {
@@ -358,7 +358,7 @@ pub fn note_written_back_view(
     at: (&str, u32),
 ) {
     let row = (var.to_string(), container.to_string(), function.to_string());
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.written_back;
         {
             if !m.iter().any(|n| n.row == row && n.line == at.1) {
@@ -387,7 +387,7 @@ pub fn drain_materialised_views(
     data: &crate::data::Data,
     diags: &mut crate::diagnostics::Diagnostics,
 ) {
-    let rows = data.copies.with(|copies| {
+    let rows = data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.materialised;
         std::mem::take(&mut *m)
     });
@@ -404,7 +404,7 @@ pub fn drain_written_back_views(
     data: &crate::data::Data,
     diags: &mut crate::diagnostics::Diagnostics,
 ) {
-    let backs = data.copies.with(|copies| {
+    let backs = data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.written_back;
         std::mem::take(&mut *m)
     });
@@ -497,11 +497,11 @@ fn drain_view_notes(rows: Vec<ViewNote>, diags: &mut crate::diagnostics::Diagnos
 /// Forget the noted views unreported — a warm load replays the cold run's diagnostics, these
 /// among them, so a scope pass that noted them again would say each twice.
 pub fn clear_materialised_views(data: &crate::data::Data) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.materialised;
         m.clear()
     });
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let m = &mut copies.written_back;
         m.clear()
     });
@@ -574,7 +574,7 @@ pub fn record(data: &crate::data::Data, def_nr: u32, var: u16, type_nr: u16, ori
     if !crate::keys::copy_manifest_enabled() {
         return;
     }
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.sites;
         {
             s.push(CopySite {
@@ -590,7 +590,7 @@ pub fn record(data: &crate::data::Data, def_nr: u32, var: u16, type_nr: u16, ori
 /// Every copy emitted so far this compilation.
 #[must_use]
 pub fn sites(data: &crate::data::Data) -> Vec<CopySite> {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.sites;
         s.clone()
     })
@@ -600,15 +600,15 @@ pub fn sites(data: &crate::data::Data) -> Vec<CopySite> {
 /// ([`report`] calls it after each), so a generator is judged on the copies IT minted.  The
 /// census's verdicts stay: the second generator's copies are judged against them.
 pub fn clear(data: &crate::data::Data) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.sites;
         s.clear()
     });
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.self_binds;
         s.clear()
     });
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.elided_copies;
         s.clear()
     });
@@ -627,7 +627,7 @@ pub fn clear(data: &crate::data::Data) {
 /// `non_sentinel`'s uncleared memo (2026-09-25).
 pub fn begin_compilation(data: &crate::data::Data) {
     clear(data);
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.materialised;
         s.clear()
     });
@@ -644,7 +644,7 @@ fn lease_records_wanted() -> bool {
 /// Record that the parser erased `var = var` at `line` in `def_nr`.
 pub fn note_self_bind(data: &crate::data::Data, def_nr: u32, var: u16, line: u32) {
     if lease_records_wanted() {
-        data.copies.with(|copies| {
+        data.copies.with(|copies: &mut Manifest| {
             let s = &mut copies.self_binds;
             s.insert((def_nr, var, line))
         });
@@ -654,7 +654,7 @@ pub fn note_self_bind(data: &crate::data::Data, def_nr: u32, var: u16, line: u32
 /// The erased `x = x` statements of `def_nr`, as `(var, line)`.
 #[must_use]
 pub fn self_binds(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u32)> {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.self_binds;
         {
             s.iter()
@@ -668,7 +668,7 @@ pub fn self_binds(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u32)> {
 /// Record that the borrow elision deleted the copy `var = src` in `def_nr`.
 pub fn note_elided_copy(data: &crate::data::Data, def_nr: u32, var: u16, src: u16) {
     if lease_records_wanted() {
-        data.copies.with(|copies| {
+        data.copies.with(|copies: &mut Manifest| {
             let s = &mut copies.elided_copies;
             s.insert((def_nr, var, src))
         });
@@ -678,7 +678,7 @@ pub fn note_elided_copy(data: &crate::data::Data, def_nr: u32, var: u16, src: u1
 /// The elided whole-value copies of `def_nr`, as `(destination, source)`.
 #[must_use]
 pub fn elided_copies(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u16)> {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.elided_copies;
         {
             s.iter()
@@ -691,7 +691,7 @@ pub fn elided_copies(data: &crate::data::Data, def_nr: u32) -> Vec<(u16, u16)> {
 
 /// Note that the census gave the copy into `var` in function `def_nr` a lease verdict.
 pub fn note_lease_site(data: &crate::data::Data, def_nr: u32, var: u16) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.lease_sites;
         s.insert((def_nr, var))
     });
@@ -699,7 +699,7 @@ pub fn note_lease_site(data: &crate::data::Data, def_nr: u32, var: u16) {
 
 /// Note that the census judged what function `def_nr` returns.
 pub fn note_lease_return(data: &crate::data::Data, def_nr: u32) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.lease_returns;
         s.insert(def_nr)
     });
@@ -707,11 +707,11 @@ pub fn note_lease_return(data: &crate::data::Data, def_nr: u32) {
 
 /// Forget the census's verdicts (before a new census, between compilations in one process).
 pub fn clear_lease(data: &crate::data::Data) {
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.lease_sites;
         s.clear()
     });
-    data.copies.with(|copies| {
+    data.copies.with(|copies: &mut Manifest| {
         let s = &mut copies.lease_returns;
         s.clear()
     });
@@ -746,11 +746,11 @@ pub fn lease_uncovered(data: &crate::data::Data) -> (usize, Vec<CopySite>) {
             continue;
         }
         total += 1;
-        let judged = data.copies.with(|copies| {
+        let judged = data.copies.with(|copies: &mut Manifest| {
             let s = &mut copies.lease_sites;
             s.contains(&(site.def_nr, site.var))
         }) || called_function(data, site.def_nr, site.var).is_some_and(|callee| {
-            data.copies.with(|copies| {
+            data.copies.with(|copies: &mut Manifest| {
                 let r = &mut copies.lease_returns;
                 r.contains(&callee)
             })
