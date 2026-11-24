@@ -298,12 +298,13 @@ question that nothing cheaper can.  In order:
    falsify run (two more full builds in their own target directories) and the drop gate
    (dozens of native compiles) each fill the machine; run beside one another they slow
    every one of them and the build being waited on most of all.
-4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites
-   it touches, `cargo test --test ownership_drop_gate` on both backends for
-   anything that changes what a value is held in or when it is released, the poison and
-   stack sweeps (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`), the corpus census above, and both
-   clippy legs.  A gate first run on GitHub after the push costs a gate run, a fix build and
-   a red tip a sibling may already have joined.
+4. **A gate the PR's CI runs is proven there, not locally first** (owner): the pin tests of
+   the rewrites the change touches, the ownership drop gate (`tests/ownership_drop_gate.rs`,
+   part of the full suite), the rewrite census and both clippy legs are steps of every PR run,
+   so none is re-run here just to prove what that run proves.  Run one locally only while a
+   fix is aimed at it — a change to what a value is held in or when it is released is
+   iterated on against the drop gate's cells — and run the sweeps the PR does not
+   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`) when the change is in what they watch.
 5. **Receipts last.**  `scripts/falsify.sh` reads the working tree for its own build, so it
    runs after the fix is committed and while no source edit is pending.
 6. **One fix per push.**  A defect found while verifying is fixed in its own next push, not
