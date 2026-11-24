@@ -1,8 +1,8 @@
 diff --git a/selfhost/src/el_definitions.loft b/selfhost/src/el_definitions.loft
-index 7121c71f3..7d78cfaa3 100644
+index db30152b4..cf3059b44 100644
 --- a/selfhost/src/el_definitions.loft
 +++ b/selfhost/src/el_definitions.loft
-@@ -938,10 +938,18 @@ fn flat_expression(n: ir::Node) -> boolean {
+@@ -946,10 +946,18 @@ fn flat_expression(n: ir::Node) -> boolean {
  // value other than a plain scalar or a literal text — a vector, a record, a text assembled in a
  // buffer, anything that names a slot — are refused by name.
  fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integer?) {
@@ -23,7 +23,7 @@ index 7121c71f3..7d78cfaa3 100644
    was = e.context;
    e.context = -1;
    vars = el_vars::new_vars("__const_{name}", e.file);
-@@ -950,6 +958,25 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
+@@ -958,6 +966,25 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
    if el_types::is_unknown(x.tp) {
      return;
    }
@@ -49,7 +49,7 @@ index 7121c71f3..7d78cfaa3 100644
    plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
    // A value that names a slot of the scratch frame needs a temporary the use site does not have.
    slot = false;
-@@ -962,6 +989,17 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
+@@ -970,6 +997,17 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
      el::refuse(e, "a constant of this kind: {el_ex_base::type_kind(x.tp)}");
      return;
    }
@@ -67,7 +67,7 @@ index 7121c71f3..7d78cfaa3 100644
    semi = at;
    while semi < len(e.p.src) && !(e.p.src[semi] is Semi) {
      semi += 1;
-@@ -970,15 +1008,14 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
+@@ -978,15 +1016,14 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
    if e.first_pass {
      if d >= 0 {
        el::refuse(e, "a constant over an existing name");
@@ -86,8 +86,24 @@ index 7121c71f3..7d78cfaa3 100644
  }
  
  // `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
+diff --git a/selfhost/src/el_ex_base.loft b/selfhost/src/el_ex_base.loft
+index 6c7efd63e..5103401ba 100644
+--- a/selfhost/src/el_ex_base.loft
++++ b/selfhost/src/el_ex_base.loft
+@@ -925,6 +925,11 @@ pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> bo
+     // A vector member of a stack tuple (`b = a.0`).
+     NdTupleGet { var: _ } => true,
+     NdCall { def_nr, args } => {
++      // (`is_const_view`, loft#1686: a top-level vector constant's view of the write-locked
++      // constant store is read whole exactly like a bare variable — the bind copies.)
++      if el::def(e, def_nr).name == "OpConstRef" {
++        return true;
++      }
+       if el::def(e, def_nr).name != "OpGetField" {
+         return false;
+       }
 diff --git a/selfhost/src/el_ex_name.loft b/selfhost/src/el_ex_name.loft
-index 5925f5327..7f03cfa6d 100644
+index cfc43c9de..ec864b6c5 100644
 --- a/selfhost/src/el_ex_name.loft
 +++ b/selfhost/src/el_ex_name.loft
 @@ -434,6 +434,15 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text)
@@ -97,7 +113,7 @@ index 5925f5327..7f03cfa6d 100644
 +  // A vector constant (`parse_var_inner`'s constant arm, loft#1686): a view of the constant
 +  // store, `OpConstRef(d)`, borrowing a skip-free `const_view` anchor of this function that is
 +  // never assigned — nothing in this frame owns what it reads.
-+  if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 && el::def(e, d).returned[0] is TyVector && el_ir::unspan(el::def(e, d).code[0]) is NdBlock {
++  if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 && el_types::base(el::def(e, d).returned[0]) is TyVector {
 +    vct = el_types::without_deps(el::def(e, d).returned[0]);
 +    anchor = el_vars::create_unique(vars, "const_view", vct);
 +    el_vars::set_skip_free(vars, anchor, "parse_var_inner");
