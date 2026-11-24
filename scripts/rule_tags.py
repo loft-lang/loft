@@ -582,6 +582,7 @@ CENSUS_EXEMPT = {
     "R-PathRelease": ("unbuilt", "designed, not built"),
     "R-SharedCall": ("unbuilt", "only its narrow case is built, counted as R-PureReuse/shared"),
     "R-WorkView": ("unbuilt", "no code; the C's (R-TextBorrow) format clause covers the shape"),
+    "R-DecodeView": ("unbuilt", "src/lower plans the regions; no backend emits them, the rustc writer having been the one that did"),
 }
 
 
