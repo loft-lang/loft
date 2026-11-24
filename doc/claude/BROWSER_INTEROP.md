@@ -127,10 +127,11 @@ model does not need — see *The data boundary* and *Rejected alternatives*.)
 **Verified stronger (scoping pass):** the three items above are not even engine-
 *code* additions — they are realizable as a browser-target **library** on
 machinery `--html` already ships. A library's `wasm/host.js` bridge is inlined
-into the generated page generically (`src/parser/mod.rs:6567`,
-`src/main.rs:5716`); any reachable body-less `#native` is emitted as a host
-import with no allowlist (`src/generation/mod.rs:1152`); and the `(ptr,len)`
-push + len/copy poll primitives are proven by `web`'s browser WebSocket bridge.
+into the generated page generically (`[wasm.bridge] host_js`, read in
+`src/main.rs`'s `--html` branch); a library's C shim declares each host function
+it calls as a wasm import of a `loft_<x>` module, with no allowlist (built with
+`LOFT_BROWSER` defined); and the `(ptr,len)` push + len/copy poll primitives are
+proven by `web`'s browser WebSocket bridge (`src/c/loft_web_page.h`).
 So loft's `src/` needs **zero change** — the lone conditional touch (a *blocking*
 suspend import → the asyncify `--pass-arg` list in `src/main.rs`) is avoided by
 keeping every service poll-based. The *Verifiable build steps* below are the
@@ -140,16 +141,11 @@ proof: each runs against the stock installed loft.
 
 ## The input half as a shipped engine primitive — `host_input`
 
-The byte channel's **output** half already ships as an engine primitive:
-`loft_host_print` is hard-coded into the `--html` host-import set under the
-`loft_io` module (`src/generation/mod.rs:1152`), and the stdlib reaches it through
-the per-target `#rust` body of `OpPrint` (`default/01_code.loft:1125`). Its
-**input** half is missing: under `--html`, `arguments()` and `file()` return
-empty — both return heap values, so codegen emits them as graceful stubs
-(`src/generation/mod.rs:1187`), which the first browser consumer confirmed by
-dumping the WASM imports. So a headless `--html` program can emit a result but
-**cannot receive its input**. This is now **shipped** as `host_input()`, closing
-that gap for the **headless one-shot** shape: JavaScript owns the loop, and the
+The byte channel's **output** half is an engine primitive: on a page `println`
+reaches the page through the WASI layer (`doc/loft-wasi.js`), and `host_output`
+through the `loft_io.loft_host_output` import (`src/c/loft_host_io.h`). A page
+has no `arguments()`, so its **input** half is the engine primitive
+`host_input()`, for the **headless one-shot** shape: JavaScript owns the loop, and the
 input is complete before compute starts (a request/response kernel).
 
 **Why an engine primitive, not a library, for this shape.** The invariant above
@@ -224,15 +220,14 @@ loud test failure.
   that is *why* it is a native builtin, not an operator: interpreter text values
   on the stack are borrowed `&str`, so a freshly-read `String` can't cross
   `put_stack`; the dest-passing path (`env_variable`'s exact shape) allocates it
-  into the store instead. Native codegen inlines the `#rust` body
-  `stores.host_input_native()`, whose `--html` `cfg` arm calls the host imports.
+  into the store instead. The C implements it in `src/c/loft_host_io.h`, whose
+  `LOFT_BROWSER` arm calls the `loft_io` imports.
 - *JavaScript bridge.* `loft_host_input_len` / `loft_host_input_copy` in both the
   minimal engine-less shell (`src/main.rs`) and `buildLoftImports`
   (`doc/loft-gl-wasm.js`) read the bytes JS set on `globalThis.loftInput` before
   `loft_start`. A headless Web-Worker consumer supplies the same few lines in its
-  own imports object — no bridge crate. `loft_start` builds fresh `Stores` each
-  call (`src/generation/mod.rs:1567`), so one instance serves many requests (set
-  the input, call, read the output, repeat).
+  own imports object — no bridge crate. Each `loft_start` call runs `loft_init`
+  and the program's `main` again (`loft::c::emit_browser_program`).
 
 **The acceptance gate (the cure for the four silent backings).** `tests/host_input.rs`
 guards the interpreter == native byte-parity (plus the empty and UTF-8 cases) by

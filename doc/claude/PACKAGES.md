@@ -57,8 +57,8 @@ The timeline behind this doc (the original phase plan) is in [PACKAGES-history.m
 | `#native "symbol"` annotation | **Parsed** — bytecode dispatch NOT connected |
 | `extensions.rs` cdylib loader | **Designed** — feature-gated, not integrated |
 | WASM virtual filesystem | **JS side done** — Rust stubs return early |
-| Native codegen (`--native`) | **Working** — generates Rust, compiles with rustc |
-| WASM codegen (`--native-wasm`) | **Working** — targets wasm32-wasip2 |
+| Native codegen (`--native`) | **Working** — writes C, compiles with the host's C compiler |
+| WASM codegen (`--native-wasm`) | **Working** — the same C, built by clang for WASI |
 
 The gap: no package can currently ship native code that works across
 interpreter, native, and WASM targets from a single source.
@@ -591,7 +591,7 @@ is dlopened first wins the lookup.
 
 So the freshness question has to span every package that contributed code, not
 just the one that owns the artifact (`source_newer_than` /
-`source_content_hash`, `src/native_lib.rs`, take a *set* of package dirs — the
+`source_content_hash`, `src/opt/native_key.rs`, take a *set* of package dirs — the
 run path passes `pending_native`).  Asking only about the owner reported a
 dependent as fresh after its **dependency** was edited: the edited library
 rebuilt correctly, the dependent kept serving its stale inlined copy, and it won.
@@ -606,21 +606,20 @@ Two things made it expensive to see, and both are worth remembering:
   A small consumer that `use`s the edited library directly was always right.
   Size was a proxy for *graph shape*.
 - **The compile is fresh while the execution is stale.**  A syntax error in the
-  edited library still fails startup, and the *generated* `.rs` beside the stale
+  edited library still fails startup, and the *generated* source beside the stale
   `.so` shows the NEW code — so every "is it being re-read?" check passes.  The
   discriminator is `LOFT_NO_NATIVE_LIBS=1`: same run, same program, and the
   interpreter answers differently from the cdylib.
 
 The wider question costs one `stat` walk over the loaded packages (under a
-millisecond for a ten-package tree, against a `rustc` invocation).  It does mean
+millisecond for a ten-package tree, against a compile).  It does mean
 a dependency edit makes every dependent stale — which is the honest answer, since
 the dependent really does contain the edited code — and `dev-interpret-on-edit`
-still keeps `rustc` out of the loop until editing settles.
+still keeps the compiler out of the loop until editing settles.
 
-**An auto-built cdylib links its OWN copy of libloft, so every `static` in loft exists once
-per linkage unit.** A fact reached through a `#rust` body is compiled into whichever unit
-calls it — the main binary, or `native-auto/libloft_auto_<pkg>.so` — so a process-global
-table filled by the program is EMPTY from inside the package: `c_library_available` answered
+**An auto-built library links its OWN copy of loft's runtime, so every `static` in it exists
+once per linkage unit** — the main binary, or `native-auto/libloft_auto_<pkg>.so` — so a
+process-global table filled by the program is EMPTY from inside the package: `c_library_available` answered
 true from the program and false from the package that declared the library, on one run, with
 both backends green. "Agrees on `--interpret` and `--native`" is two configurations of three,
 and a counter fed in one copy and drained in the other wraps (loft#862). Keep such facts in

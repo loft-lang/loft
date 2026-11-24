@@ -57,3 +57,34 @@ measured.**
 | `target/release/loft prog.loft` | **off** (rule 4) | full stdlib parse, every run |
 | `cargo run -- prog.loft` | off (rule 3) | full stdlib parse, every run |
 | `LOFT_NO_CACHE=1 loft prog.loft` | off (rule 1) | full stdlib parse, every run |
+
+## The wasm runtime rlib build, retired with the rustc writer (@PLN225)
+
+While the rustc writer built `--html` and `--native-wasm`, those builds also ran `cargo` to
+build loft's own wasm runtime rlib, and the `LOFT_TIMING` report showed it.  The text as it
+stood:
+
+**`LOFT_TIMING=1` also reports the EXTERNAL build tools, with a reason each** (loft#1238).
+A `--html` or `--native-wasm` build shells out to `cargo`, `rustc` and `wasm-opt`, and until
+now the only channel was a per-event stderr line — right for a spawned process, useless for a
+reader watching a 25-second `--html` and wanting to know what it is doing.  The report is
+per-invocation, slowest first, and it names WHY each ran:
+
+```
+[loft-build] --html: 3 external invocation(s), 25.79s total
+[loft-build]     25.61s  cargo     libloft.rlib (wasm32-unknown-unknown)  loft's own build fingerprint moved (loft was rebuilt) — rlib is stale
+[loft-build]      0.18s  wasm-opt  prog_opt.wasm                          always runs — --asyncify is required for frame yield, not an optimisation
+[loft-build]      0.00s  lock      html                                   waiting for the global build lock
+```
+
+**What it made visible.**  `loft_build_fingerprint()` is a CONTENT HASH of `libloft.rlib` /
+the loft executable, so it moves on every loft rebuild — and it gates loft's own wasm runtime
+rlib.  The first `--html` / `--native-wasm` run after ANY loft source change therefore pays a
+full `cargo build` of that rlib (25.6 s here); the second is 0.55 s.  That is the price of the
+guarantee that a codegen change reaches an already-built artifact, not a defect, but it was
+invisible and it is why a wasm-shaped test can look like a hang.
+
+⚠ **Warm with the RELEASE binary.**  The cdylib key is profile-independent (`BUILD_ID` is the
+git-HEAD id, so debug/release/test share it), but `loft_build_fingerprint` — which gates the wasm
+runtime rlib — is a content hash of the binary, so a debug-warmed rlib leaves a release-driven
+test (`html_asyncify` runs `target/release/loft`) still cold.

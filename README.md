@@ -12,7 +12,7 @@
 ---
 
 **loft is a statically typed language with almost no type annotations.** The same source
-compiles to a native binary through rustc, to WebAssembly for the browser, or runs on a
+compiles to a native binary through C, to WebAssembly for the browser, or runs on a
 tree-walking interpreter for instant startup. It ships as a **distribution**: the compiler,
 a standard library, and **49 libraries** in a registry — graphics and 3D, an HTTP server and
 client, cryptography, text engines, geometry — each one itself written in loft, so they read,
@@ -80,11 +80,11 @@ unzip loft-*.zip && cd loft-*/                        # then run it in place:
 bin/loft --interpret examples/hello.loft              # bin\loft.exe on Windows
 ```
 
-**A downloaded bundle runs your program on the interpreter.** loft's default mode compiles
-through `rustc` when it can, and a bundle deliberately carries no native runtime, so it
-interprets instead — that is normal, not a fault to fix. `--interpret` asks for the
-interpreter directly and needs nothing but the bundle. `--native-c` compiles through C with
-the C compiler already on your machine and no Rust — the C runtime is inside the binary (on
+**Without a C compiler, a downloaded bundle runs your program on the interpreter.** loft's
+default mode compiles through C with the C compiler already on your machine, and interprets
+when there is none — that is normal, not a fault to fix. `--interpret` asks for the
+interpreter directly and needs nothing but the bundle. `--native` asks for the C build and
+needs no Rust — the C runtime is inside the binary (on
 Debian/Ubuntu `build-essential`; for `--native-wasm` add `clang lld wasi-libc
 libclang-rt-dev-wasm32`, and `binaryen` for `--html`; macOS and Windows lists are on the
 [install page](doc/install.html#native-c)). Keep `bin/` and `default/` together:

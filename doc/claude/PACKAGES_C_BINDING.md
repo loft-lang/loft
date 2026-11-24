@@ -7,18 +7,18 @@ The `#c` annotation and everything around it (numeric libraries, retention, `lib
 
 ### Direct C binding — `#c` (@PLN24)
 
-`#native` above is the **Rust** binding: a hand-written `extern "C"` fn compiled
-by rustc into a cdylib.  A planned sibling annotation, **`#c "<symbol>"`**, binds
-a loft function **straight to a C-library symbol — no Rust wrapper, no rustc, no
-libffi**.  loft-core `dlopen`s the system library and calls the symbol through a
+**`#c "<symbol>"`** binds a loft function **straight to a C-library symbol — no
+wrapper, no libffi** — and is how a package's native part is written (a package's
+own Rust native library is refused; @PLN225).  loft-core `dlopen`s the system library and calls the symbol through a
 small **fixed per-arity C-ABI caller** (`extern "C" fn(u64, …) -> u64`, one per
 arity — integer-class args collapse to a `u64` slot); the library is **pure loft**
 (`#c` decls) plus, for signatures the caller can't express (float / struct-by-
-value / varargs arguments), a `cc`-compiled **ANSI-C shim**.  Native-only — a
-wasm module cannot `dlopen` a shared library, so both wasm targets refuse a
-reachable `#c` call by name (see [below](#the-wasm-and-browser-targets--arc-e)).
+value / varargs arguments), a `cc`-compiled **ANSI-C shim**.  A wasm module
+cannot `dlopen` a shared library, so both wasm targets reach a package's shim but
+refuse a reachable call into a declared system library by name (see
+[below](#the-wasm-and-browser-targets--arc-e)).
 It is the foundation for binding system C libraries
-(databases, codecs, …) without the rustc toolchain, keeping loft-core minimal —
+(databases, codecs, …) with only a C compiler, keeping loft-core minimal —
 the linking tool lives in core, all complexity in the library + shim.
 
 **Two things the architecture probe settled**, before anyone writes a binding.
@@ -370,8 +370,8 @@ pub fn get_i64(b: const vector<u8>, at: integer) -> integer {
 ```
 
 A `#c_twin` gives a function that HAS a loft body a C routine the C backend
-calls in its place.  The body is the definition: the interpreter, `loft debug`
-and the rustc writer run it, and the routine must answer what the body answers
+calls in its place.  The body is the definition: the interpreter and `loft debug`
+run it, and the routine must answer what the body answers
 — a test runs both on the same inputs
 (`tests/c_emit.rs::a_c_twin_runs_its_body_and_the_c_backend_its_routine`).
 Use it for a primitive whose loft body is correct but whose compiled form must
@@ -405,8 +405,8 @@ The interpreter `dlopen`s each entry and keeps it loaded (a `#c` symbol is
 looked up through it); `--native` links the same list.  One declaration, both
 halves.  A binding to **libc needs no entry** — it is already in the process.
 
-Distinct from `[native] runtime-libs`, which names what a Rust cdylib needs
-present and only probes for it.
+Distinct from `[native] runtime-libs`, which names what a package's native library
+needs present and only probes for it.
 
 **A package declares no compile or link flags** (`@C158`).  There is no
 `cflags`, `ldflags` or per-platform `[c.<os>]` section: a shim compiles with
@@ -471,8 +471,7 @@ them is usually its own `shim`, which loft just built.
 
 **`shim`** names ANSI-C sources the package ships for the signatures the fixed
 trampolines cannot express — a `double` argument, a struct by value, varargs, an
-out-parameter, a caller-frees `char *` return.  loft compiles them with **`cc`,
-never rustc** (the whole point of `#c`), and the result is then registered
+out-parameter, a caller-frees `char *` return.  loft compiles them with **`cc`**, and the result is then registered
 *exactly like a `libs` entry*: nothing downstream can tell a shim from any other
 C library, so the interpreter's `dlopen`, the `--native` link line and the symbol
 resolver stay one code path.
@@ -491,44 +490,36 @@ parser reports it again, with the `use` site, if the package is actually used.
 #### The wasm and browser targets — arc E
 
 **A package's `[c] shim` reaches both wasm targets; a declared library does not.**  On
-`--native-wasm` (wasip2) and `--html` (the browser) loft compiles the shim's C sources to
-wasm32 objects itself — `clang --target=wasm32-unknown-unknown`, freestanding, against the
-headers of `src/c/wasm/` and loft's own small C library (`loft_wasm_libc.c`: the string
-functions, an allocator over the module's memory, `snprintf`, `abort`) — and links them
-into the module (`c_shim::wasm_objects`, cached under `native-auto/`).  The bindings of such
-a package are declared as typed externs at **wasm32's widths** (ILP32: `long` is 32 bits)
-and called directly, exactly as `--native` calls them.  So a library whose native part is a
-`[c] shim` of pure computation — `random`, `regex`, `crypto` — is a wasm and a browser
-library with no bridge crate, from the one C source.  A program links one copy of loft's
-small C library however many shims it carries (`tests/native.rs`
+`--native-wasm` and `--html` loft compiles the shim's C sources with the program's own C, in
+one clang run for the WASI target (`c_driver::build_wasm`), and calls its bindings
+directly, exactly as `--native` calls them.  So a library whose native part is a `[c] shim`
+— `random`, `regex`, `crypto` — is a wasm and a browser library from the one C source.  Two
+packages' shims link into one program without a duplicate symbol (`tests/native.rs`
 `two_c_shims_link_into_the_wasm_target`).
 
-**A shim built for a browser page sees `LOFT_BROWSER` defined** (the Rust writer's page and
-the C writer's alike; a `--native-wasm` module never), and there it may call the page's
-`loft_gl` imports — `__attribute__((import_module("loft_gl"), import_name("…")))` — which
+**A shim built for a browser page sees `LOFT_BROWSER` defined** (a `--native-wasm` module
+never), and there it may call the page's `loft_gl` imports —
+`__attribute__((import_module("loft_gl"), import_name("…")))` — which
 `doc/loft-gl-wasm.js` supplies: the engine's render service (BROWSER_INTEROP.md § The one
-invariant), not a library's own JavaScript.  graphics 0.10 is the user: its shim's GL
+invariant), not a library's own JavaScript.  graphics is the user: its shim's GL
 function table is filled from `gg_gl*` imports (one per GL entry point, of the GL
 signature) on a page, and through GLX on Linux.  `LOFT_WASM_CC` names another
 compiler than `clang`; `gcc` has no wasm backend.
 
-What the shim may use there is the C the small library carries: `<string.h>`, `<stdlib.h>`,
-`<stdio.h>`'s `snprintf` (a `stderr` write goes nowhere), and the freestanding headers
-clang itself provides (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>`).  A shim that
-opens a file, reads a clock or asks for entropy does not compile for wasm32, and that is the
-right answer — the browser has none of those — so such a package's bindings are **refused
-at the call** on the wasm targets, with the compiler's words in the message, while a program
-that never reaches them still builds (`imaging`, whose codec reads files).
+What the shim may use there is the WASI libc the program itself runs on: on
+`--native-wasm` the host's WASI runtime answers it, and on a page `doc/loft-wasi.js` does
+(output, clocks, randomness, the page filesystem; no sockets).  The freestanding, libc-less
+build of a shim the rustc writer's pages linked is recorded in
+[PACKAGES_C_BINDING-history.md](PACKAGES_C_BINDING-history.md).
 
 **A declared `[c] libs` / `optional-libs` entry is still refused at the call**, naming the
 loft function, the C symbol, the declaring package and the target:
 
 ```
-error: loft: `client_info` is bound to the C symbol 'mysql_get_client_info' with #c
-       (package `mariadb`), and the wasm (wasip2) target has no C ABI to reach it —
-       a wasm module cannot open a shared library. Give the library a wasm
-       implementation, host it out of process (@PLN119), or drop the
-       --native-wasm claim (@PLN24 arc E)
+`client_info` is bound to the C symbol 'mysql_get_client_info' with #c (package
+`mariadb`), and the wasm (wasip2) target has no C ABI to reach it — a wasm module
+cannot open a shared library.  Give the library a wasm implementation (a `[c] shim`),
+host it out of process, or drop the --native-wasm claim
 ```
 
 Refused at the CALL, so a declaration is still portable: a library may declare such
@@ -537,8 +528,8 @@ system library has no route: `wasm32-wasip2` links a libc, so a binding to `strl
 *resolve* — and then trapped, because the extern carried the host's widths; a symbol the
 sysroot does not export gave a raw linker error naming neither package nor library; and
 there is no `dlopen` in wasm to reach a system library with.  The routes for one are a
-**wasm implementation of the library** (a `[wasm.bridge]`) or **hosting the C out of
-process** ([@PLN119](https://github.com/loft-lang/plans/issues/119)).
+**wasm implementation of the library** (a `[c] shim`, with a `host_js` for what only the
+page can do) or **hosting the C out of process** ([@PLN119](https://github.com/loft-lang/plans/issues/119)).
 
 `c_library_available` compiles on both wasm targets and answers **false** there,
 so the guard an optional backend already writes keeps working when the same
@@ -561,9 +552,8 @@ graphics 0.11 is the user (`c/graphics_gl.c`, `GG_COCOA`).
 
 **A `#c` binding is gated by `native_ffi`, never by a `#cap` grant.**  A
 capability says what data a script may touch; a C call runs machine code loft
-cannot inspect, which is the line [`native_ffi`](SANDBOX.md) already draws for a
-Rust cdylib bridge — and `#c` is the stronger case, having no marshalling layer
-at all.  An allow-listed library (`allow_libs`) still admits its bindings: that
+cannot inspect, which is the line [`native_ffi`](SANDBOX.md) draws for any native
+library — and `#c` is the strongest case, having no marshalling layer at all.  An allow-listed library (`allow_libs`) still admits its bindings: that
 is the host vetting the library as a unit, exactly as for `#native`.
 
 **Status: done on both backends and defined on all four targets** — `--native`
@@ -572,4 +562,4 @@ interpreter resolves the symbol and calls it through a fixed ladder of per-arity
 trampolines.  The two produce identical results, which is the bar.  Design in [plans/24-c-abi-binding](plans/24-c-abi-binding/README.md) /
 [@PLN24](https://github.com/loft-lang/plans/issues/24) (first consumer: the
 MariaDB/PostgreSQL clients, @PLN23), matrix + probe in
-`tests/fixtures/c_abi/`.  `#native` remains today's path.
+`tests/fixtures/c_abi/`.  A package's native part is written this way: `#c` bindings over its `[c] shim`.
