@@ -95,7 +95,7 @@ env:
   # It only removes the incremental bloat from what gets compressed.
   CARGO_INCREMENTAL: "0"
   # loft's native-test binary cache, inside target/ so it is one known path.  Its
-  # entries are keyed on the rlib's CONTENT hash, so within a run the binaries a
+  # entries are keyed on the loft build that made them, so within a run the binaries a
   # test compiles are reused by the next; across runs only the Windows cargo cache
   # carries them (see "Restore cargo registry and build" in the `test` job).
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
@@ -415,9 +415,7 @@ jobs:
       # An ARCHIVE (cargo nextest archive, build once + reuse) was evaluated and
       # rejected: it SERIALISES the build ahead of the shards, so the projection
       # was 23.5 min against 21.5 for two concurrent builds — it trades wall clock
-      # for runner-minutes, the opposite of the goal.  It also cannot carry the
-      # auto-native tests, which shell out to `rustc --extern loft` and need
-      # `target/release/deps` (1412 rlibs, 1.8 GB) that the archive omits.
+      # for runner-minutes, the opposite of the goal.
       #
       # Legs come from `changes.legs`: two ubuntu shards per-PR (macOS + Windows are
       # daily + push-to-main, with placeholder contexts on PRs), all three unsharded
@@ -507,23 +505,16 @@ jobs:
       #     evicting main's, which every run restores.
       #   - `target/loft-native-cache` (the compiled native test binaries, 9-13 GB)
       #     is excluded from the Linux/macOS cargo cache.  Their key includes the
-      #     libloft.rlib content hash (tests/native.rs `cache_key`), so any commit
-      #     that touches loft's source misses every one of them anyway.
+      #     loft build that made them, so any commit that touches loft's source
+      #     misses every one of them anyway.
       #   - the save KEY is the restore step's `cache-primary-key`, not a second
       #     `hashFiles`: the warm-up step creates gitignored
       #     `tests/fixtures/libs/*/native/Cargo.lock` files, so the hash taken at
       #     save time never equalled the one the next restore looked for.
       #
-      # `~/.loft/build-cache` holds the built NATIVE cdylibs (graphics, glb,
-      # mesh3d, …) — the actual native-phase bottleneck (graphics alone is
-      # ~80-90s of cargo build, and on the cold suite run graphics rebuilds
-      # several times before the cache populates).  They link the PUBLISHED
-      # `loft-ffi` (not the local rlib), so they are stable across loft source
-      # changes — caching them is safe and they stay warm until a package
-      # version bumps (loft's own build-cache keying rebuilds a changed package
-      # even from a restored cache).  (A fixture rustc link is ~0.3s measured,
-      # so combining fixtures would save <90s — the cdylib builds are the
-      # minutes.)
+      # `~/.loft/build-cache` holds the libraries' built native parts; loft's own
+      # build-cache keying rebuilds a changed package even from a restored cache,
+      # so caching it is safe.
       #
       # `~/.loft/registry` (the EXTRACTED package sources) is deliberately NOT
       # cached: on Windows, restoring that dir leaves files in place and loft's
@@ -585,7 +576,7 @@ jobs:
             ${{ runner.os }}-cargo-
       # Drops target/'s BULK (the 4.5 GB dep/build artefacts + the ~9-min NTFS
       # save) but KEEPS `target/loft-native-cache` — loft's native-test binary
-      # cache (`LOFT_TMPDIR`, env above), keyed on the libloft.rlib content hash.
+      # cache (`LOFT_TMPDIR`, env above), keyed on the loft build that made them.
       # Dropping ALL of target/ (the first cut of this change) also dropped this,
       # so every per-test `--native` compile went cold and the Test step ballooned
       # ~700s → ~1200s, eating the cache-save win (measured on PR #413's Windows
@@ -614,8 +605,8 @@ jobs:
       # --all-targets` (all 445 test binaries), 7.6 to 8.5 min of each leg's 20 to 24, for a
       # test phase of 6 to 8 (CI_BUDGET.md § Each leg builds only the binaries it runs).  An
       # unsharded leg (push to main, the nightly matrix) still builds everything.  `html`
-      # and `wasi` say whether a binary of the leg runs an `--html` page or builds for
-      # wasi — which runtime rlibs the step below builds, and the wasm target with them.
+      # says whether a binary of the leg runs an `--html` page — whether the leg installs
+      # the wasm target below.
       - name: Shard
         id: shard
         shell: bash
@@ -623,11 +614,9 @@ jobs:
           if [ -n "${{ matrix.shard }}" ]; then
             echo "args=$(python3 scripts/ci_shards.py args ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
             echo "html=$(python3 scripts/ci_shards.py html ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
-            echo "wasi=$(python3 scripts/ci_shards.py wasi ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
           else
             echo "args=--all-targets" >> "$GITHUB_OUTPUT"
             echo "html=true" >> "$GITHUB_OUTPUT"
-            echo "wasi=true" >> "$GITHUB_OUTPUT"
           fi
           python3 scripts/ci_shards.py proof
       # `cargo test --no-run`, not `cargo build`: nextest runs the TEST artefacts, and for
@@ -638,8 +627,7 @@ jobs:
         run: cargo test --no-run ${{ steps.shard.outputs.args }}
 
       # No release build on a test leg: every test spawns the loft the test build made
-      # (`CARGO_BIN_EXE_loft`, `target/debug/loft`), whose `--native` links the rlib beside
-      # it in `deps/`.  Until 2026-10-20 twenty-two binaries spawned `target/release/loft`
+      # (`CARGO_BIN_EXE_loft`, `target/debug/loft`).  Until 2026-10-20 twenty-two binaries spawned `target/release/loft`
       # instead and skipped silently without it, so every leg compiled the crate a second
       # time in release (2.2 to 3.2 min) and warmed the wasm runtimes for both binaries.
 
@@ -656,82 +644,18 @@ jobs:
           python3 scripts/rule_tags.py phases --check
           python3 scripts/rewrite_census.py
 
-      # @P229 G3 reliability fix: pre-build every native lib package
-      # SEQUENTIALLY here, before the parallel nextest run.  Root cause: tests
-      # that run `loft --native`/`--check` call `auto_build_native`, which runs
-      # an UNLOCKED `cargo build` that re-resolves the whole dep tree
-      # ("Locking N packages / Adding ureq …").  Under parallel nextest, many
-      # of these fire at once, churning the shared ~/.cargo + target while a
-      # standalone `--check --lib lib` rustc link needs ureq/rustls rlibs →
-      # "required to be available in rlib format" (G3).  Pre-building here means
-      # `auto_build_native` sees the rlibs already exist and is a no-op during
-      # the suite — no concurrent re-resolution.  Same command + manifest
-      # `auto_build_native` uses, so the artefacts match.
-      - name: Pre-build native lib packages (avoid concurrent auto_build — G3)
-        # RESTORED 2026-08-28 at the new location.  The monorepo native libs moved to
-        # their chunk repos (@PLAN12 5b) and this step became a stub — but the thing it
-        # prevented came back with them.  A test that `use`s a native-backed package calls
-        # `auto_build_native`, which takes ONE global exclusive lock around its cargo
-        # build, so under parallel nextest many processes queue on it WHILE HOLDING a
-        # runner slot.  Measured on `tuxedo-work-2026-08-28`: 13 cdylibs rebuilding
-        # mid-suite and 85.1s of lock wait, worst single wait 26.9s — and a fresh loft
-        # binary stamps every cdylib stale, so this happens on every run, not rarely.
-        #
-        # Two halves, because the packages now live in two places:
-        #   in-tree  `tests/lib/*/native` — still here, still needed by the loader tests;
-        #   installed `~/.loft/registry/<pkg>-<ver>/native` — the new location, built into
-        #            `~/.loft/build-cache/<pkg>-<ver>/` by the 6b redirect.
-        #
-        # The second half goes through `loft --prebuild-natives` rather than a shell loop
-        # ON PURPOSE: the redirect (`native_target_root`) and the `[library] native` stem
-        # would both have to be re-derived here, and a second spelling of where a cdylib
-        # lands is exactly how this step would silently stop matching what the tests
-        # resolve.  The flag calls the same `resolve_native_lib` they do.
-        #
-        # Best-effort: a package that fails to build here is not fatal — the test that
-        # needs it retries and reports properly.  `|| true` keeps a warm-up from turning a
-        # green suite red.
-        #
-        # `shell: bash` because this body IS bash — a glob `for`, `[ -f … ]`, a subshell and
-        # `./target/release/loft`.  Windows defaults to PowerShell, which parses `for d in …`
-        # as its own `for` and stops at *"Missing opening '(' after keyword 'for'"*, so the
-        # step failed before running a single build and took `Install cargo-nextest` and
-        # `Test` down with it.  Invisible until now only because the job died two steps
-        # earlier, at Build.
-        shell: bash
-        run: |
-          set -u
-          # Half 1 — the in-tree native test packages, sequentially.
-          for d in tests/lib/*/native; do
-            [ -f "$d/Cargo.toml" ] || continue
-            echo "prebuild (in-tree): $d"
-            ( cd "$d" && cargo build --release -q ) || echo "  warn: $d failed — tests will retry"
-          done
-          # Half 2 — every installed registry package's cdylib, through the same
-          # resolver the tests reach (so the artefact and its freshness stamp match).
-          ./target/debug/loft --prebuild-natives || true
-
       # no-default-features check only needs to run on one OS — ubuntu
-      # covers it at a fraction of the Windows job's time.  Use `cargo
-      # check`, NOT `cargo build`: a `build --no-default-features` rewrites
-      # the canonical `target/debug/libloft.rlib` WITHOUT the
-      # `native-extensions` feature, dropping `loft::native_call`.  The
-      # native-library suite then spawns the debug `loft`, whose
-      # `--native` codegen links that clobbered rlib and fails
-      # `error[E0433]: cannot find native_call in loft` (Linux-only,
-      # because this step is Linux-only).  `cargo check` validates the
-      # no-default-features compile without producing the polluting rlib.
+      # covers it at a fraction of the Windows job's time.  `cargo check`,
+      # not `cargo build`: it validates the no-default-features compile
+      # without rebuilding the default-feature artefacts the tests run.
       - name: Check (no default features)
         if: runner.os == 'Linux'
         run: cargo check --no-default-features
 
-      # The `html_wasm` / `--html` tests build a wasm32-unknown-unknown rlib
-      # and compile against it.  Build it on ALL three OS: wasm32 is
-      # host-independent, and GitHub's macOS/Windows runner images now SHIP the
-      # wasm target pre-installed, so the test's "target not installed"
-      # self-skip no longer fires there — `loft --html` runs and fails E0463
-      # (rlib never built) instead of skipping.  Building everywhere closes
-      # that gap and actually exercises `--html` cross-platform.
+      # `--html` compiles through the C and clang, but the html tests still skip
+      # when `rustup target list --installed` lacks wasm32-unknown-unknown
+      # (html_wasm, html_asyncify, html_gl_imports): installing it keeps them
+      # running on every OS until their gate asks for the C toolchain instead.
       - name: Install wasm target (for html_wasm tests)
         if: ${{ steps.shard.outputs.html == 'true' }}
         run: rustup target add wasm32-unknown-unknown
@@ -739,13 +663,6 @@ jobs:
       # Warmed before the parallel suite, so no test builds them contended by every other test
       # (`make ci` runs the same step before its parallel section, loft#1238).  Non-fatal: a
       # test that finds nothing warm builds it itself, it only pays for it.
-      #
-      # The fixture libraries under tests/fixtures/libs are warmed through loft as well:
-      # a plain `cargo build` in their `native/` is not reused (loft stamps the cdylib it
-      # accepts, and rebuilt an unstamped one in 19 s, 4 CPU-min), and `--prebuild-natives`
-      # covers installed registry packages only.  Unwarmed, `html_fonts`' refusal test waited
-      # 157 s on the lock while another test built the graphics fixture.  A one-line
-      # `use <lib>;` program through `--check` builds and stamps each (then 0.1 s).
       #
       # The warming binary must be the one the SUITE runs: what it builds is keyed on that
       # loft's build fingerprint (`cache::loft_build_fingerprint`), and `cargo nextest run`
@@ -757,14 +674,7 @@ jobs:
         run: |
           cargo test --no-run ${{ steps.shard.outputs.args }}
           ./target/debug/loft cache warm --from tests \
-            || echo "warn: cache warm failed — the first test needing a package cdylib builds it itself"
-          for lib in tests/fixtures/libs/*/; do
-            name=$(basename "$lib")
-            [ -d "$lib/native" ] || continue
-            printf 'use %s;\nfn main() {}\n' "$name" > "$RUNNER_TEMP/warm_$name.loft"
-            ./target/debug/loft --lib tests/fixtures/libs --check "$RUNNER_TEMP/warm_$name.loft" \
-              || echo "warn: warming the $name fixture failed — its first test will build it"
-          done
+            || echo "warn: cache warm failed — the first test needing a package library builds it itself"
 
       # @PLN205 — web, server and ssh keep their natives in loft's `net` component, which a
       # development `loft` finds in target/components and never builds itself (`make
@@ -970,7 +880,7 @@ jobs:
 
       # `html_render` is NOT run here: it gates the committed
       # `doc/brick-buster.html`, and this job never rebuilds it, so the artefact is
-      # always older than the wasm rlib built above and the test always self-skips.
+      # always stale here and the test always self-skips.
       # It ran in the `gallery` job instead, right after `make game` produces a fresh
       # bundle (and where binaryen supplies the `wasm-opt` that build needs).
       # `html_asyncify` builds its own artefact, so it belongs here.
@@ -1119,7 +1029,7 @@ jobs:
             # rebuilt (vs a genuine cold miss).  The event name is
             # `<pkg>|stamped=<fp>|cur=<fp>`; sum the `cdylib miss` seconds of the
             # rejected packages = time reclaimable by re-keying the gate on the
-            # stable published loft-ffi version instead of the libloft.rlib hash.
+            # stable published loft-ffi version instead of the loft build.
             # A `cur=` that changes between two runs of the SAME commit would mean
             # a second, non-reproducible-build instability on top of the
             # per-commit flip.
@@ -1338,9 +1248,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
-      # The native tests link loft's RELEASE rlib and drive the release binary.
-      - name: Build (release loft binary + lib)
-        run: cargo build --release --lib --bin loft
+      # The native tests drive the release binary.
+      - name: Build (release loft binary)
+        run: cargo build --release --bin loft
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # `native_scripts_` is the script corpus, which the `test` job's `native` shard
@@ -1459,9 +1369,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
-      # `--lib` for the canonical `libloft.rlib` the native lane links (see the `test` job).
-      - name: Build the release loft binary and the runtime library the native lane links
-        run: cargo build --release --lib --bin loft
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
       - name: Every cell sits under a rule it cites
         run: python3 loft-suite/loft-suite check
       - name: Run the rules on the interpreter and the C backend
@@ -2131,17 +2040,15 @@ jobs:
       - name: make gallery
         run: make gallery
 
-      # Rebuilds doc/brick-buster.html via `loft --html` against a
-      # freshly built wasm32-unknown-unknown libloft.rlib, sanity-checks
-      # the output.  Protects the "click-to-play" experience just like
+      # Rebuilds doc/brick-buster.html via `loft --html` (the C, compiled
+      # by clang to wasm), sanity-checks the output.  Protects the "click-to-play" experience just like
       # `make gallery` protects the demo grid.
       - name: make game
         run: make game
-      # index/target_surface.json asks rustc which runtime methods the `--html` rlib has;
-      # `make game` has just built that rlib (`target/loft/html`, the same flags), so this
-      # costs the probe compile alone.  The derive runs its own wasm build for the surface
-      # only when `default/` moved, where builtins and ops are declared — this is the check
-      # on every other change.
+      # index/target_surface.json asks rustc which runtime methods the Rust runtime built for
+      # wasm32-unknown-unknown has (`target/loft/html`; the script builds it).  The derive runs
+      # its own wasm build for the surface only when `default/` moved, where builtins and ops
+      # are declared — this is the check on every other change.
       - name: Target surface is current
         run: >
           python3 scripts/gen_target_surface.py --check
