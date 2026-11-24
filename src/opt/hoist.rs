@@ -6602,6 +6602,7 @@ fn collect_chains(v: &Value, data: &Data, banned: &HashSet<u16>, out: &mut Vec<I
 #[cfg(test)]
 mod store_free_sentinel {
     use super::*;
+    use crate::opt::loop_records::is_scalar;
 
     /// Every native op whose operands and result are all scalars — `const` ones included —
     /// that the store-free gate still reads as a writer.  Such an op reaches state only
