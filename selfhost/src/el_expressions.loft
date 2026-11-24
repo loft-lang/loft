@@ -593,7 +593,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // (`state_route_delivery`: the selector's `MaterializeView` verdict at the tail, as Rust prints
   // it — the routes join then shows a verdict one side takes and the other does not.)
   if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && el_trace::on() {
-    el_trace::route(e, "classify_reference_delivery=MaterializeView");
+    // (At the body's end, the token after its `}` — where Rust's `state_route_delivery` and the
+    // classifier's routes stand — not at the function's line.)
+    mve = match e.p.nodes[vars.body] { SBlock { end } => end, _ => -1 };
+    if mve >= 0 && e.source != el::STD_SOURCE {
+      mvp = el::pos_at(e, mve + 1);
+      eprintln("state {if e.first_pass { 1 } else { 2 }} {mvp.line}:{mvp.pos} route classify_reference_delivery=MaterializeView");
+    } else {
+      el_trace::route(e, "classify_reference_delivery=MaterializeView");
+    }
   }
   vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
   if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
