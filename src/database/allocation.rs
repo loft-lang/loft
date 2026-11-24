@@ -3431,6 +3431,7 @@ impl Stores {
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
             #[cfg(feature = "op-census")]
             tap: worker_tap,
             run: super::RunDiagnostics::default(),

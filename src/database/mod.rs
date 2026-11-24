@@ -592,6 +592,8 @@ pub struct Stores {
     /// `@PLN226` — the program's engine host (`engine_host::EngineCx`): its kernel, client,
     /// build swap and sync classes.
     pub(crate) engine: crate::engine_host::EngineCx,
+    /// `@PLN226` — the program's web buffers (`web_bytes::WebCx`).
+    pub(crate) web: crate::web_bytes::WebCx,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -911,6 +913,7 @@ impl Clone for Stores {
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1781,6 +1784,7 @@ impl Stores {
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),

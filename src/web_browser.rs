@@ -13,7 +13,7 @@
 //! since memory can grow between two calls.
 
 use crate::database::Stores;
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 
 #[link(wasm_import_module = "loft_web")]
 unsafe extern "C" {
@@ -49,11 +49,15 @@ unsafe extern "C" {
     fn http_free(h: i32);
 }
 
-thread_local! {
-    static LAST_MSG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    static LAST_OP: RefCell<i64> = const { RefCell::new(0) };
-    static LAST_BODY: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    static LAST_HEADERS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+/// The calling program's web buffers (`Stores::web`).
+#[expect(
+    clippy::mut_from_ref,
+    reason = "the stores sit in an `UnsafeCell`, the writer's calling convention"
+)]
+fn web(cell: &UnsafeCell<Stores>) -> &mut crate::web_bytes::WebCx {
+    // SAFETY: the cell is the calling program's stores, which no other reference reaches
+    // while one of its natives runs.
+    unsafe { &mut (*cell.get()).web }
 }
 
 fn handle(h: i64) -> i32 {
@@ -71,7 +75,13 @@ fn copied(n: i32, copy: impl FnOnce(*mut u8)) -> Vec<u8> {
 
 /// A fetch run to completion — the page yields to its event loop until the answer is in — and
 /// its body and headers kept; the status, or 0 on a transport failure.
-fn http_run(method: &str, url: &str, body: &str, headers: &str) -> i64 {
+fn http_run(
+    web: &mut crate::web_bytes::WebCx,
+    method: &str,
+    url: &str,
+    body: &str,
+    headers: &str,
+) -> i64 {
     let h = unsafe {
         http_start(
             method.as_ptr(),
@@ -105,42 +115,41 @@ fn http_run(method: &str, url: &str, body: &str, headers: &str) -> i64 {
         http_headers_copy(h, p)
     });
     unsafe { http_free(h) };
-    LAST_BODY.with(|b| *b.borrow_mut() = body);
-    LAST_HEADERS.with(|b| *b.borrow_mut() = heads);
+    web.last_body = body;
+    web.last_headers = heads;
     status
 }
 
 /// The browser's twins, named as the library declares its natives.
 pub mod typed {
-    use super::{
-        LAST_BODY, LAST_HEADERS, LAST_MSG, LAST_OP, Stores, UnsafeCell, copied, handle, http_run,
-    };
+    use super::{Stores, UnsafeCell, copied, handle, http_run, web};
     use crate::web_bytes;
 
     pub fn n_http_do(
-        _cell: &UnsafeCell<Stores>,
+        cell: &UnsafeCell<Stores>,
         method: &str,
         url: &str,
         body: &str,
         headers: &str,
     ) -> i64 {
-        http_run(method, url, body, headers)
+        http_run(web(cell), method, url, body, headers)
     }
-    pub fn n_http_body(_cell: &UnsafeCell<Stores>) -> String {
-        LAST_BODY.with(|b| web_bytes::bytes_text(b.borrow().clone()))
+    pub fn n_http_body(cell: &UnsafeCell<Stores>) -> String {
+        web_bytes::bytes_text(web(cell).last_body.clone())
     }
-    pub fn n_http_headers(_cell: &UnsafeCell<Stores>) -> String {
-        LAST_HEADERS.with(|b| String::from_utf8_lossy(&b.borrow()).into_owned())
+    pub fn n_http_headers(cell: &UnsafeCell<Stores>) -> String {
+        String::from_utf8_lossy(&web(cell).last_headers).into_owned()
     }
     /// A `HEAD`'s `Content-Length`, or -1 — also when the page's CORS hides the header; the
     /// library's `http_size` then falls back to a range read.
-    pub fn n_http_head_size(_cell: &UnsafeCell<Stores>, url: &str) -> i64 {
-        let status = http_run("HEAD", url, "", "");
+    pub fn n_http_head_size(cell: &UnsafeCell<Stores>, url: &str) -> i64 {
+        let web = web(cell);
+        let status = http_run(web, "HEAD", url, "", "");
         if !(200..400).contains(&status) {
             return -1;
         }
-        LAST_HEADERS.with(|b| {
-            String::from_utf8_lossy(&b.borrow())
+        {
+            String::from_utf8_lossy(&web.last_headers)
                 .split('\n')
                 .find_map(|l| {
                     let (k, v) = l.split_once(':')?;
@@ -149,7 +158,7 @@ pub mod typed {
                         .then(|| v.trim().parse().ok())?
                 })
                 .unwrap_or(-1)
-        })
+        }
     }
     pub fn n_ws_connect(_cell: &UnsafeCell<Stores>, url: &str) -> i64 {
         i64::from(unsafe { super::ws_connect(url.as_ptr(), url.len()) })
@@ -160,7 +169,7 @@ pub mod typed {
     pub fn n_ws_client_send_binary(_cell: &UnsafeCell<Stores>, h: i64, msg: &str) -> u8 {
         u8::from(unsafe { super::ws_send_binary(handle(h), msg.as_ptr(), msg.len()) } == 1)
     }
-    pub fn n_ws_client_recv(_cell: &UnsafeCell<Stores>, h: i64) -> u8 {
+    pub fn n_ws_client_recv(cell: &UnsafeCell<Stores>, h: i64) -> u8 {
         let h = handle(h);
         if unsafe { super::ws_poll(h) } != 1 {
             return 0;
@@ -169,15 +178,16 @@ pub mod typed {
             super::ws_msg_copy(h, p)
         });
         let op = i64::from(unsafe { super::ws_opcode(h) });
-        LAST_MSG.with(|m| *m.borrow_mut() = bytes);
-        LAST_OP.with(|o| *o.borrow_mut() = op);
+        let web = web(cell);
+        web.last_msg = bytes;
+        web.last_op = op;
         1
     }
-    pub fn n_ws_client_message(_cell: &UnsafeCell<Stores>) -> String {
-        LAST_MSG.with(|m| web_bytes::bytes_text(m.borrow().clone()))
+    pub fn n_ws_client_message(cell: &UnsafeCell<Stores>) -> String {
+        web_bytes::bytes_text(web(cell).last_msg.clone())
     }
-    pub fn n_ws_client_opcode(_cell: &UnsafeCell<Stores>) -> i64 {
-        LAST_OP.with(|o| *o.borrow())
+    pub fn n_ws_client_opcode(cell: &UnsafeCell<Stores>) -> i64 {
+        web(cell).last_op
     }
     pub fn n_ws_client_close(_cell: &UnsafeCell<Stores>, h: i64) {
         unsafe { super::ws_close(handle(h)) };
@@ -187,20 +197,20 @@ pub mod typed {
     pub fn n_frame_yield(_cell: &UnsafeCell<Stores>) {
         unsafe { super::ws_yield() };
     }
-    pub fn n_pack_reset(_cell: &UnsafeCell<Stores>) {
-        web_bytes::pack_reset();
+    pub fn n_pack_reset(cell: &UnsafeCell<Stores>) {
+        web_bytes::pack_reset(web(cell));
     }
-    pub fn n_pack_u8(_cell: &UnsafeCell<Stores>, b: i64) {
-        web_bytes::pack_u8(b);
+    pub fn n_pack_u8(cell: &UnsafeCell<Stores>, b: i64) {
+        web_bytes::pack_u8(web(cell), b);
     }
-    pub fn n_pack_u16_le(_cell: &UnsafeCell<Stores>, v: i64) {
-        web_bytes::pack_u16_le(v);
+    pub fn n_pack_u16_le(cell: &UnsafeCell<Stores>, v: i64) {
+        web_bytes::pack_u16_le(web(cell), v);
     }
-    pub fn n_pack_u32_le(_cell: &UnsafeCell<Stores>, v: i64) {
-        web_bytes::pack_u32_le(v);
+    pub fn n_pack_u32_le(cell: &UnsafeCell<Stores>, v: i64) {
+        web_bytes::pack_u32_le(web(cell), v);
     }
-    pub fn n_pack_take(_cell: &UnsafeCell<Stores>) -> String {
-        web_bytes::pack_take()
+    pub fn n_pack_take(cell: &UnsafeCell<Stores>) -> String {
+        web_bytes::pack_take(web(cell))
     }
     pub fn n_byte_at(_cell: &UnsafeCell<Stores>, idx: i64, t: &str) -> i64 {
         web_bytes::byte_at(idx, t)

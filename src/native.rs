@@ -550,28 +550,31 @@ fn n_ws_client_close(stores: &mut Stores, stack: &mut DbRef) {
 // ── Pack helpers: the web library's byte helpers, shared by every target (`web_bytes`) ──
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-fn n_pack_reset(_stores: &mut Stores, _stack: &mut DbRef) {
-    crate::web_bytes::pack_reset();
+fn n_pack_reset(stores: &mut Stores, _stack: &mut DbRef) {
+    crate::web_bytes::pack_reset(&mut stores.web);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u8(stores: &mut Stores, stack: &mut DbRef) {
-    crate::web_bytes::pack_u8(stores.get::<i64>(stack));
+    let b = stores.get::<i64>(stack);
+    crate::web_bytes::pack_u8(&mut stores.web, b);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u16_le(stores: &mut Stores, stack: &mut DbRef) {
-    crate::web_bytes::pack_u16_le(stores.get::<i64>(stack));
+    let v = stores.get::<i64>(stack);
+    crate::web_bytes::pack_u16_le(&mut stores.web, v);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_u32_le(stores: &mut Stores, stack: &mut DbRef) {
-    crate::web_bytes::pack_u32_le(stores.get::<i64>(stack));
+    let v = stores.get::<i64>(stack);
+    crate::web_bytes::pack_u32_le(&mut stores.web, v);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_take(stores: &mut Stores, stack: &mut DbRef) {
-    let s = crate::web_bytes::pack_take();
+    let s = crate::web_bytes::pack_take(&mut stores.web);
     put_owned_text_or_dest(stores, stack, s);
 }
 
