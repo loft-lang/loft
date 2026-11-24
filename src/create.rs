@@ -1,23 +1,15 @@
-//! Rust code generator for native function bodies and operator dispatch.
-//\! @I68 — Native Rust generator
+//! The interpreter's operator code, generated from the standard library's `#rust` templates.
 //!
-//! - [`generate_lib`] — writes `tests/generated/text.rs` with the native
-//!   function table from `#rust` annotations in `default/*.loft`.
 //! - [`generate_code_to`] — writes `src/fill.rs` (the interpreter's
 //!   bytecode-operator dispatch table) from each operator's `#rust"..."`
 //!   annotation in `default/*.loft`.  It emits a `// @generated` header into the
 //!   file documenting this; see that header for the per-operator contract.
 //!
-//! Both are maintenance tools.  Regenerate `src/fill.rs` with `make fill` (the
-//! ignored [`regen_fill_rs`] test); its byte-for-byte freshness is enforced by
-//! `tests/issues.rs::fill_rs_up_to_date` and `::n9_generated_fill_matches_src`,
-//! and `tests/generated/text.rs` by `::native_rs_functions_up_to_date`.
-//!
-//! The same `#rust` templates are the single source for BOTH backends: this
-//! generator emits the interpreter bodies (`s: &mut State`), and native code
-//! generation (`src/generation/`) reuses the templates, rewriting `s.<method>`
-//! to `stores.*` / `*_runtime` via [`crate::generation`]'s
-//! `substitute_template_body`.
+//! A maintenance tool: regenerate `src/fill.rs` with `make fill` (the ignored
+//! [`regen_fill_rs`] test); its byte-for-byte freshness is enforced by
+//! `tests/issues.rs::fill_rs_up_to_date` and `::n9_generated_fill_matches_src`.  A
+//! non-operator `#rust` function is a primitive the interpreter registers in `src/native.rs`
+//! (`::native_rs_functions_up_to_date`).
 
 use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
 use crate::platform::process::{Program, Spawn};
@@ -51,71 +43,6 @@ fn operator_name(operator: &str) -> String {
     # Errors
     When the file cannot be written correctly.
 */
-pub fn generate_lib(data: &Data) -> std::io::Result<()> {
-    let mut into = crate::file_access::create("tests/generated/text.rs")?;
-    writeln!(
-        into,
-        "#![allow(clippy::cast_possible_wrap)]
-#![allow(non_snake_case)]
-use crate::database::Stores;
-use crate::keys::{{DbRef, Str}};
-use crate::state::{{Call, State}};
-
-pub const FUNCTIONS: &[(&str, Call)] = &["
-    )?;
-    for d_nr in 0..data.definitions() {
-        let d = data.def(d_nr);
-        let n = &d.name;
-        if !d.is_operator() && !d.rust.is_empty() {
-            writeln!(into, "    (\"{n}\", {n}),")?;
-        }
-    }
-    writeln!(
-        into,
-        "];
-
-pub fn init(state: &mut State) {{
-    for (name, implement) in FUNCTIONS {{
-        state.static_fn(name, *implement);
-    }}
-}}"
-    )?;
-    for d_nr in 0..data.definitions() {
-        let d = data.def(d_nr);
-        let n = &d.name;
-        if d.is_operator() || d.rust.is_empty() {
-            continue;
-        }
-        writeln!(into, "\nfn {n}(stores: &mut Stores, stack: &mut DbRef) {{")?;
-        for a in data.def(d_nr).attributes.iter().rev() {
-            let tp = data.rust_type(&a.typedef, &Context::Argument);
-            writeln!(into, "    let v_{} = stores.get::<{tp}>(stack);", a.name)?;
-            if let Type::RefVar(var) = &a.typedef
-                && let Type::Text(_) = **var
-            {
-                writeln!(
-                    into,
-                    "    let v_{} = stores.store_mut(&v_{}).addr_mut::<String>(v_{}.rec, v_{}.pos);",
-                    a.name, a.name, a.name, a.name
-                )?;
-            }
-        }
-        let mut res = data.def(d_nr).rust.clone();
-        replace_attributes(data, d_nr, &mut res);
-        if d.returned == Type::Void {
-            writeln!(into, "    {res}")?;
-        } else {
-            writeln!(into, "    let new_value = {{ {res} }};")?;
-            writeln!(into, "    stores.put(stack, new_value);")?;
-        }
-        writeln!(into, "}}")?;
-    }
-    drop(into);
-    let _ = Spawn::new(Program::search("rustfmt"))
-        .args(["--edition", "2024", "tests/generated/text.rs"])
-        .status();
-    Ok(())
-}
 
 fn replace_attributes(data: &Data, d_nr: u32, res: &mut String) {
     for a_nr in 0..data.attributes(d_nr) {
