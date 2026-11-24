@@ -125,7 +125,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // (So does a tail literal of numbers: each item is built AT the result's element — `fn f() ->
   // vector<u8> { [104, 101] }` pushes bytes.)
   scalar_elem = match el_types::base(result) { TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || match inner { TyEnum { is_ref } => !is_ref, _ => false }, _ => false };
-  lit_tail = ttail >= 0 && scalar_elem && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
+  // (…and a tail literal of records under a plain vector result: Rust's `parse_vector` is
+  // handed the result as its `var_tp`, its element temp typed by it — `_elm_1: ref(P)`.  A
+  // `vector<T>?` result's content is unknown there.)
+  rec_elem = !(result is TyOptional) && match el_types::base(result) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
+  lit_tail = ttail >= 0 && (scalar_elem || rec_elem) && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
