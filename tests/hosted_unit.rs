@@ -513,8 +513,12 @@ fn a_library_built_once_is_adopted_with_no_c_compiler() {
             .arg(root.join("tests/lib/hostedshim_main.loft"))
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_REQUIRE_NATIVE", "1");
+        // No compiler: none on PATH, and `LOFT_CC` naming one that does not exist.  An emptied
+        // PATH alone hides none that `LOFT_CC` names by its whole path: the Windows runners name
+        // MSYS2's gcc, which then still ran and failed without its tools, a refusal rather than
+        // no compiler; and unset, Windows looks for MSVC's `cl` past PATH.
         if let Some(p) = path {
-            cmd.env("PATH", p);
+            cmd.env("PATH", p).env("LOFT_CC", "loft-no-such-c-compiler");
         }
         let out = cmd.output().expect("run loft");
         (

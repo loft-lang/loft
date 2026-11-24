@@ -5087,7 +5087,13 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  inlined into that wrapper (`LOFT_HOT_INLINE`): wrapper and body are one
                  unit, which the compiler takes into a caller or not as a whole.  Hinted
                  alike, gcc could take the wrapper into a loop and call the body out of
-                 line, every argument handed over twice (stage `pack_instances` +25 %).  The
+                 line, every argument handed over twice (stage `pack_instances` +25 %).
+                 THE CYCLE CLAUSE: a body whose calls reach it again (`fact`, `is_even`
+                 through `is_odd`) keeps the `static inline` hint and is not forced: forced,
+                 its call through the wrapper is a cycle of forced inlining, which gcc 16 at
+                 -O3 compiles wrong where the wrapper pushes a frame (`fact(10)` answered
+                 181440 on Windows under `LOFT_STRICT_STORES`; `tests/leaf_chain.rs`).  Site
+                 `on_call_cycle` (`src/c/mod.rs`).  The
                  hint changes no
                  observable behaviour; what it moves is the C compiler's inlining
                  budget, so a small helper a hot loop calls — a push through an

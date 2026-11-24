@@ -26,6 +26,134 @@
 #endif
 #include <errno.h>
 
+#if defined(_WIN32)
+#include <wchar.h>
+#include <io.h>
+/* `@FR-Path-Utf8` on Windows — a path is UTF-8 in loft and UTF-16 to the OS, as Rust's `OsStr`
+ * hands it to the interpreter's calls: every call here that names a path takes the WIDE form
+ * (`_wfopen`, `_wstat64`, `_wfindfirst64`, `CreateFileW` …).  The ANSI form reads the bytes in
+ * the machine's code page, so a name outside it reached another file (`a\u{FFFD}.txt` written
+ * as `aï¿½.txt`) and a listed name outside it showed as `?`. */
+static wchar_t *loft_wpath(const char *s) {
+    size_t n = strlen(s), o = 0;
+    /* A UTF-8 byte gives at most one UTF-16 unit: four bytes are two units. */
+    wchar_t *w = (wchar_t *) malloc((n + 1) * sizeof(wchar_t));
+    if (!w) { fputs("loft: out of memory\n", stderr); abort(); }
+    const unsigned char *p = (const unsigned char *) s;
+    for (size_t i = 0; i < n;) {
+        uint32_t c = p[i];
+        size_t k = c < 0x80 ? 1 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 0;
+        if (k == 0 || i + k > n) { w[o++] = 0xFFFD; i++; continue; }
+        if (k > 1) c &= 0x3F >> (k - 1);
+        for (size_t j = 1; j < k; j++) c = (c << 6) | (p[i + j] & 0x3F);
+        i += k;
+        if (c >= 0x10000) {
+            c -= 0x10000;
+            w[o++] = (wchar_t) (0xD800 | (c >> 10));
+            w[o++] = (wchar_t) (0xDC00 | (c & 0x3FF));
+        } else {
+            w[o++] = (wchar_t) c;
+        }
+    }
+    w[o] = 0;
+    return w;
+}
+
+/* A name the OS gives in UTF-16 as loft shows it (malloc'd UTF-8): an unpaired surrogate — a
+ * name that is not text — is U+FFFD, as Rust's `to_string_lossy` shows it, and sets `*lossy`. */
+static char *loft_wname(const wchar_t *w, int *lossy) {
+    size_t n = wcslen(w), o = 0;
+    char *s = (char *) malloc(n * 3 + 1);
+    if (!s) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (size_t i = 0; i < n; i++) {
+        uint32_t c = (uint32_t) w[i];
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < n && w[i + 1] >= 0xDC00 && w[i + 1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + ((uint32_t) w[i + 1] - 0xDC00);
+            i++;
+        } else if (c >= 0xD800 && c < 0xE000) {
+            c = 0xFFFD;
+            *lossy = 1;
+        }
+        if (c < 0x80) s[o++] = (char) c;
+        else if (c < 0x800) { s[o++] = (char) (0xC0 | (c >> 6)); s[o++] = (char) (0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) {
+            s[o++] = (char) (0xE0 | (c >> 12));
+            s[o++] = (char) (0x80 | ((c >> 6) & 0x3F));
+            s[o++] = (char) (0x80 | (c & 0x3F));
+        } else {
+            s[o++] = (char) (0xF0 | (c >> 18));
+            s[o++] = (char) (0x80 | ((c >> 12) & 0x3F));
+            s[o++] = (char) (0x80 | ((c >> 6) & 0x3F));
+            s[o++] = (char) (0x80 | (c & 0x3F));
+        }
+    }
+    s[o] = 0;
+    return s;
+}
+
+static FILE *loft_fopen(const char *path, const char *mode) {
+    wchar_t *wp = loft_wpath(path), wm[8];
+    size_t i = 0;
+    for (; mode[i] && i < 7; i++) wm[i] = (wchar_t) (unsigned char) mode[i];
+    wm[i] = 0;
+    FILE *h = _wfopen(wp, wm);
+    int e = errno;
+    free(wp);
+    errno = e;
+    return h;
+}
+
+static int loft_wstat64(const char *path, struct _stat64 *st) {
+    wchar_t *wp = loft_wpath(path);
+    int r = _wstat64(wp, st), e = errno;
+    free(wp);
+    errno = e;
+    return r;
+}
+
+/* One call of `fn` (`_wmkdir`, `_wrmdir`, `_wremove`) on the path's wide form; `errno` is the
+ * call's. */
+static int loft_wcall(const char *path, int (*fn)(const wchar_t *)) {
+    wchar_t *wp = loft_wpath(path);
+    int r = fn(wp), e = errno;
+    free(wp);
+    errno = e;
+    return r;
+}
+
+/* The entries a `_wfindfirst64` pattern matches, each name as loft shows it (`loft_wname`). */
+typedef struct {
+    intptr_t h;
+    struct _wfinddata64_t fd;
+} loft_wfind;
+
+/* The first entry: its name (malloc'd) or null when the pattern matches nothing. */
+static char *loft_wfind_first(loft_wfind *f, const char *pattern, int *lossy) {
+    wchar_t *wp = loft_wpath(pattern);
+    f->h = _wfindfirst64(wp, &f->fd);
+    free(wp);
+    return f->h == -1 ? 0 : loft_wname(f->fd.name, lossy);
+}
+
+/* The next entry's name (malloc'd), or null at the end, which closes the search. */
+static char *loft_wfind_next(loft_wfind *f, int *lossy) {
+    if (f->h == -1) return 0;
+    if (_wfindnext64(f->h, &f->fd) != 0) {
+        _findclose(f->h);
+        f->h = -1;
+        return 0;
+    }
+    return loft_wname(f->fd.name, lossy);
+}
+
+static void loft_wfind_close(loft_wfind *f) {
+    if (f->h != -1) _findclose(f->h);
+    f->h = -1;
+}
+#else
+#define loft_fopen(path, mode) fopen(path, mode)
+#endif
+
 #define LOFT_FS_OK 0
 #define LOFT_FS_NOT_FOUND 1
 #define LOFT_FS_PERMISSION_DENIED 2
@@ -300,7 +428,7 @@ static char *loft_normalize(loft_cx *cx, loft_str raw, const char *base, int che
 static int loft_path_exists(loft_cx *cx, const char *path) {
 #if defined(_WIN32)
     struct _stat64 st;
-    return _stat64(path, &st) == 0;
+    return loft_wstat64(path, &st) == 0;
 #else
     struct stat st;
     return stat(path, &st) == 0;
@@ -389,19 +517,22 @@ static char *loft_case_clash(loft_cx *cx, const char *full) {
             const char *name = slash ? slash + 1 : prefix;
             size_t nn = strlen(name);
             if (!nn || (nn == 2 && name[1] == ':')) break;
-            struct _finddata_t fd;
-            intptr_t h = _findfirst(prefix, &fd);
-            if (h != -1) {
-                _findclose(h);
-                size_t fn = strlen(fd.name);
-                if ((fn != nn || memcmp(fd.name, name, nn) != 0) && loft_name_fold_eq(cx, name, nn, fd.name, fn)) {
+            loft_wfind fd;
+            int lossy = 0;
+            char *on_disk = loft_wfind_first(&fd, prefix, &lossy);
+            loft_wfind_close(&fd);
+            if (on_disk) {
+                size_t fn = strlen(on_disk);
+                int clash = (fn != nn || memcmp(on_disk, name, nn) != 0) && loft_name_fold_eq(cx, name, nn, on_disk, fn);
+                if (clash) {
                     loft_push_char(cx, &why, '`');
                     loft_push(cx, &why, name, nn);
                     loft_push_cstr(cx, &why, "` is spelled `");
-                    loft_push(cx, &why, fd.name, fn);
+                    loft_push(cx, &why, on_disk, fn);
                     loft_push_cstr(cx, &why, "` on disk");
-                    break;
                 }
+                free(on_disk);
+                if (clash) break;
             }
             if (!slash || slash == prefix) break;
             *slash = 0;
@@ -416,16 +547,20 @@ static char *loft_case_clash(loft_cx *cx, const char *full) {
         if (!pattern) { fputs("loft: out of memory\n", stderr); abort(); }
         memcpy(pattern, existing, xl);
         memcpy(pattern + xl, xl && existing[xl - 1] == '/' ? "*" : "/*", xl && existing[xl - 1] == '/' ? 2 : 3);
-        struct _finddata_t fd;
-        intptr_t d = _findfirst(pattern, &fd);
+        loft_wfind fd;
+        int lossy = 0;
+        char *en_name = loft_wfind_first(&fd, pattern, &lossy);
         free(pattern);
-        if (d != -1) {
+        if (en_name) {
             char *best = 0;
+            int unspellable = 0;
             size_t mn = strlen(missing);
-            do {
-                const char *en_name = fd.name;
+            for (; en_name; free(en_name), lossy = 0, en_name = loft_wfind_next(&fd, &lossy)) {
                 size_t en = strlen(en_name);
                 if (!strcmp(en_name, ".") || !strcmp(en_name, "..")) continue;
+                /* `@FR-Path-Utf8` — as the POSIX arm: the name does not exist as spelled, so an
+                 * entry that SHOWS as it is one whose real name is not text. */
+                if (lossy && en == mn && memcmp(en_name, missing, mn) == 0) unspellable = 1;
                 if ((en != mn || memcmp(en_name, missing, mn) != 0) && loft_name_fold_eq(cx, en_name, en, missing, mn)
                     && (!best || strcmp(en_name, best) < 0)) {
                     free(best);
@@ -433,8 +568,15 @@ static char *loft_case_clash(loft_cx *cx, const char *full) {
                     if (!best) { fputs("loft: out of memory\n", stderr); abort(); }
                     strcpy(best, en_name);
                 }
-            } while (_findnext(d, &fd) == 0);
-            _findclose(d);
+            }
+            loft_wfind_close(&fd);
+            if (unspellable) {
+                loft_push_char(cx, &why, '`');
+                loft_push_cstr(cx, &why, missing);
+                loft_push_cstr(cx, &why, "` is how loft shows a name that is not valid text, and names no file");
+                free(best);
+                best = 0;
+            }
 #else
         DIR *d = opendir(existing);
         if (d) {
@@ -537,7 +679,7 @@ static char *loft_file_path(loft_cx *cx, loft_ref f) {
 #include <io.h>
 #include <fcntl.h>
 struct _SECURITY_ATTRIBUTES;
-__declspec(dllimport) void *__stdcall CreateFileA(const char *name, unsigned long access, unsigned long share,
+__declspec(dllimport) void *__stdcall CreateFileW(const wchar_t *name, unsigned long access, unsigned long share,
                                                   struct _SECURITY_ATTRIBUTES *security, unsigned long disposition,
                                                   unsigned long flags, void *templ);
 __declspec(dllimport) int __stdcall CloseHandle(void *handle);
@@ -572,13 +714,15 @@ static loft_fh loft_fh_open(loft_cx *cx, const char *path, int how) {
     /* GENERIC_READ | GENERIC_WRITE, shared for reading, writing and deletion. */
     unsigned long disp = how == LOFT_OPEN_EMPTY ? 2ul : how == LOFT_OPEN_CREATE ? 4ul : 3ul;
     int ro = 0;
-    void *h = CreateFileA(path, 0xC0000000ul, 7ul, 0, disp, 0x80ul, 0);
+    wchar_t *wp = loft_wpath(path);
+    void *h = CreateFileW(wp, 0xC0000000ul, 7ul, 0, disp, 0x80ul, 0);
     if (h == (void *) (intptr_t) -1 && how == LOFT_OPEN_EXISTING) {
-        h = CreateFileA(path, 0x80000000ul, 7ul, 0, disp, 0x80ul, 0);
+        h = CreateFileW(wp, 0x80000000ul, 7ul, 0, disp, 0x80ul, 0);
         ro = 1;
     }
+    unsigned long e = h == (void *) (intptr_t) -1 ? GetLastError() : 0;
+    free(wp);
     if (h == (void *) (intptr_t) -1) {
-        unsigned long e = GetLastError();
         errno = e == 2 || e == 3 ? ENOENT : e == 5 ? EACCES : EIO;
         return -1;
     }
@@ -656,9 +800,9 @@ static int32_t loft_file_fd(loft_cx *cx, loft_ref f) {
 typedef FILE *loft_fh;
 
 static loft_fh loft_fh_open(loft_cx *cx, const char *path, int how) {
-    FILE *h = how == LOFT_OPEN_EMPTY ? fopen(path, "w+b") : fopen(path, "r+b");
-    if (!h && how == LOFT_OPEN_CREATE) h = fopen(path, "w+b");
-    if (!h && how == LOFT_OPEN_EXISTING) h = fopen(path, "rb");
+    FILE *h = how == LOFT_OPEN_EMPTY ? loft_fopen(path, "w+b") : loft_fopen(path, "r+b");
+    if (!h && how == LOFT_OPEN_CREATE) h = loft_fopen(path, "w+b");
+    if (!h && how == LOFT_OPEN_EXISTING) h = loft_fopen(path, "rb");
     return h;
 }
 
@@ -854,13 +998,13 @@ static int loft_stat(loft_cx *cx, const char *path, int64_t *size) {
 #elif defined(_WIN32)
     /* The CRT's own stat: a directory is one, where an `fopen` probe could only fail. */
     struct _stat64 st;
-    if (_stat64(path, &st) != 0) return 0;
+    if (loft_wstat64(path, &st) != 0) return 0;
     *size = (int64_t) st.st_size;
     if (st.st_mode & _S_IFDIR) return 4;
     if (st.st_mode & _S_IFREG) return 1;
     return 5;
 #else
-    FILE *h = fopen(path, "rb");
+    FILE *h = loft_fopen(path, "rb");
     if (!h) return 0;
     long n = fseek(h, 0, SEEK_END) == 0 ? ftell(h) : -1;
     fclose(h);
@@ -911,7 +1055,7 @@ static void loft_get_file_text(loft_cx *cx, loft_ref f, loft_text *out) {
     out->len = 0;
     char *path = loft_file_path(cx, f);
     if (!path) return;
-    FILE *h = fopen(path, "rb");
+    FILE *h = loft_fopen(path, "rb");
     if (!h) { free(path); return; }
     char buf[4096];
     size_t n;
@@ -1046,7 +1190,7 @@ static uint8_t loft_truncate_file(loft_cx *cx, loft_ref f, int64_t size) {
     int64_t old = 0;
     ok = loft_stat(cx, path, &old) == 1 && truncate(path, (off_t) (size < 0 ? 0 : size)) == 0;
 #else
-    FILE *r = fopen(path, "rb");
+    FILE *r = loft_fopen(path, "rb");
     ok = r != 0;
     if (ok) {
         size_t keep = size < 0 ? 0 : (size_t) size;
@@ -1055,7 +1199,7 @@ static uint8_t loft_truncate_file(loft_cx *cx, loft_ref f, int64_t size) {
         size_t got = fread(buf, 1, keep, r);
         (void) got;
         fclose(r);
-        FILE *w = fopen(path, "wb");
+        FILE *w = loft_fopen(path, "wb");
         ok = w && fwrite(buf, 1, keep, w) == keep;
         if (w) fclose(w);
         free(buf);
@@ -1107,9 +1251,14 @@ static int64_t loft_fs_delete(loft_cx *cx, loft_str raw) {
     int64_t code = LOFT_FS_OK;
 #if defined(LOFT_POSIX)
     if (unlink(path) != 0) code = loft_is_dir(cx, path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(cx, errno);
+#elif defined(_WIN32)
+    if (loft_wcall(path, _wremove) != 0) {
+        /* Windows' CRT reports a directory as a permission error: asked, as POSIX's arm asks. */
+        int e = errno;
+        code = loft_is_dir(cx, path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(cx, e);
+    }
 #else
     if (remove(path) != 0) {
-        /* Windows' CRT reports a directory as a permission error: asked, as POSIX's arm asks. */
         int e = errno;
         code = loft_is_dir(cx, path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(cx, e);
     }
@@ -1173,7 +1322,7 @@ static int64_t loft_fs_mkdir(loft_cx *cx, loft_str raw, int all) {
         for (p++; *p; p++) {
             if (*p != '/') continue;
             *p = 0;
-            if (_mkdir(path) != 0 && errno != EEXIST) {
+            if (loft_wcall(path, _wmkdir) != 0 && errno != EEXIST) {
                 *p = '/';
                 code = loft_fs_code(cx, errno);
                 free(path);
@@ -1181,11 +1330,11 @@ static int64_t loft_fs_mkdir(loft_cx *cx, loft_str raw, int all) {
             }
             *p = '/';
         }
-        struct _stat st;
-        code = _mkdir(path) == 0 || (errno == EEXIST && _stat(path, &st) == 0 && (st.st_mode & _S_IFDIR))
+        struct _stat64 st;
+        code = loft_wcall(path, _wmkdir) == 0 || (errno == EEXIST && loft_wstat64(path, &st) == 0 && (st.st_mode & _S_IFDIR))
             ? LOFT_FS_OK : loft_fs_code(cx, errno);
     } else {
-        code = _mkdir(path) == 0 ? LOFT_FS_OK : loft_fs_code(cx, errno);
+        code = loft_wcall(path, _wmkdir) == 0 ? LOFT_FS_OK : loft_fs_code(cx, errno);
     }
 #else
     (void) all;
@@ -1203,7 +1352,7 @@ static int64_t loft_fs_rmdir(loft_cx *cx, loft_str raw) {
 #if defined(LOFT_POSIX)
     if (rmdir(path) == 0) code = LOFT_FS_OK;
 #else
-    if (_rmdir(path) == 0) code = LOFT_FS_OK;
+    if (loft_wcall(path, _wrmdir) == 0) code = LOFT_FS_OK;
 #endif
     else if (errno == ENOENT) code = LOFT_FS_NOT_FOUND;
     else if (errno == EACCES || errno == EPERM) code = LOFT_FS_PERMISSION_DENIED;
@@ -1281,12 +1430,16 @@ static char **loft_dir_names(loft_cx *cx, const char *dir, size_t *n) {
     if (!pattern) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(pattern, dir, dl);
     memcpy(pattern + dl, "/*", 3);
-    struct _finddata_t fd;
-    intptr_t h = _findfirst(pattern, &fd);
+    loft_wfind fd;
+    int lossy = 0;
+    char *name = loft_wfind_first(&fd, pattern, &lossy);
     free(pattern);
-    if (h == -1) return loft_is_dir(cx, dir) ? (char **) calloc(1, sizeof(char *)) : 0;
-    do loft_dir_name_push(cx, &names, n, &cap, fd.name); while (_findnext(h, &fd) == 0);
-    _findclose(h);
+    if (!name) return loft_is_dir(cx, dir) ? (char **) calloc(1, sizeof(char *)) : 0;
+    /* `lossy` gathers over the listing: set once any name is not text. */
+    for (; name; free(name), name = loft_wfind_next(&fd, &lossy)) loft_dir_name_push(cx, &names, n, &cap, name);
+    /* `@FR-Path-Utf8` — one line names the directory that holds such a name, as the POSIX arm. */
+    if (lossy && loft_unspellable_first(cx, dir))
+        fprintf(stderr, "loft: `%s` holds a name that is not valid text; it is listed with U+FFFD in its place, and no path can name it (formal/paths.md)\n", dir);
 #else
     (void) dir;
     (void) cap;
@@ -1523,7 +1676,7 @@ static void loft_de6(loft_cx *cx, loft_ref r, int le, const uint8_t *d, size_t n
  * or null for a missing or unreadable one. */
 static loft_ref loft_read_bytes(loft_cx *cx, loft_str raw) {
     char *path = loft_resolve(cx, raw);
-    FILE *h = path ? fopen(path, "rb") : 0;
+    FILE *h = path ? loft_fopen(path, "rb") : 0;
     free(path);
     if (!h) return loft_ref_null(cx);
     /* The whole file first, then one exact claim of its length, an empty file's included
@@ -1560,14 +1713,54 @@ static loft_ref loft_read_bytes(loft_cx *cx, loft_str raw) {
 #if defined(LOFT_FOREIGN)
 #if defined(LOFT_POSIX_HOST)
 static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
+#elif defined(_WIN32)
+/* Declared as `windows.h` declares them, which loft_mapped.h brings in later in the unit. */
+__declspec(dllimport) void *__stdcall CreateFileMappingW(void *file, struct _SECURITY_ATTRIBUTES *security,
+                                                         unsigned long protect, unsigned long high,
+                                                         unsigned long low, const wchar_t *name);
+__declspec(dllimport) void *__stdcall MapViewOfFile(void *mapping, unsigned long access, unsigned long high,
+                                                    unsigned long low, size_t bytes);
+__declspec(dllimport) int __stdcall UnmapViewOfFile(const void *base);
+static void loft_unmap(void *bytes, size_t n) {
+    (void) n;
+    UnmapViewOfFile(bytes);
+}
 #endif
 
 /* file_map (Stores::fs_file_map): the whole file mapped read-only as a FOREIGN `vector<u8>` —
  * a store of its own whose slot names `LOFT_FOREIGN_REC`, the mapping its owner — or null for a
  * missing or unreadable one.  An empty file, or one that is not a regular file, is read as
- * read_bytes reads it; so is every file where there is no mmap. */
+ * read_bytes reads it; so is every file where there is no mmap.  Windows maps it too, as the
+ * interpreter's `memmap2` does there: read into a store of its own instead, the bytes reached a
+ * library call beside a vector of another store through that other store (`Stores::bridge_args`
+ * copies a FOREIGN vector into the store the library is handed, and only a foreign one). */
 static loft_ref loft_file_map(loft_cx *cx, loft_str raw) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(_WIN32)
+    char *path = loft_resolve(cx, raw);
+    if (!path) return loft_ref_null(cx);
+    struct _stat64 st;
+    if (loft_wstat64(path, &st) != 0 || (uint64_t) st.st_size > UINT32_MAX) {
+        free(path);
+        return loft_ref_null(cx);
+    }
+    if (st.st_size == 0 || !(st.st_mode & _S_IFREG)) {
+        free(path);
+        return loft_read_bytes(cx, raw);
+    }
+    size_t n = (size_t) st.st_size;
+    wchar_t *wp = loft_wpath(path);
+    free(path);
+    /* GENERIC_READ, shared for reading, writing and deletion, OPEN_EXISTING. */
+    void *h = CreateFileW(wp, 0x80000000ul, 7ul, 0, 3ul, 0x80ul, 0);
+    free(wp);
+    if (h == (void *) (intptr_t) -1) return loft_ref_null(cx);
+    /* PAGE_READONLY, then FILE_MAP_READ; the view keeps the mapping and the file alive. */
+    void *m = CreateFileMappingW(h, 0, 0x02ul, 0, 0, 0);
+    CloseHandle(h);
+    void *map = m ? MapViewOfFile(m, 0x04ul, 0, 0, n) : 0;
+    if (m) CloseHandle(m);
+    if (!map) return loft_ref_null(cx);
+#elif defined(LOFT_POSIX_HOST)
     char *path = loft_resolve(cx, raw);
     if (!path) return loft_ref_null(cx);
     int fd = open(path, O_RDONLY);
@@ -1586,6 +1779,8 @@ static loft_ref loft_file_map(loft_cx *cx, loft_str raw) {
     void *map = mmap(0, n, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (map == MAP_FAILED) return loft_ref_null(cx);
+#endif
+#if defined(_WIN32) || defined(LOFT_POSIX_HOST)
     loft_fowner *o = (loft_fowner *) malloc(sizeof *o);
     if (!o) { fputs("loft: out of memory\n", stderr); abort(); }
     o->refs = 1;
@@ -1613,7 +1808,7 @@ static loft_ref loft_file_map(loft_cx *cx, loft_str raw) {
 static uint8_t loft_write_bytes(loft_cx *cx, loft_str raw, loft_ref v) {
     char *path = loft_resolve(cx, raw);
     if (!path) return 0;
-    FILE *h = fopen(path, "wb");
+    FILE *h = loft_fopen(path, "wb");
     free(path);
     if (!h) return 0;
     int64_t n = loft_vec_len(cx, v);
@@ -1679,7 +1874,7 @@ static int64_t loft_mtime(loft_cx *cx, loft_str raw) {
     if (path && stat(path, &st) == 0 && st.st_mtime > 0) t = (int64_t) st.st_mtime;
 #elif defined(_WIN32)
     struct _stat64 st;
-    if (path && _stat64(path, &st) == 0 && st.st_mtime > 0) t = (int64_t) st.st_mtime;
+    if (path && loft_wstat64(path, &st) == 0 && st.st_mtime > 0) t = (int64_t) st.st_mtime;
 #endif
     free(path);
     return t;

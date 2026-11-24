@@ -288,6 +288,8 @@ pub(crate) struct Cx<'a> {
     /// `@FR-R-Inline`'s twin clause, its helper half: the small plain functions written with a
     /// `/*loft_hot:D*/` storage marker, resolved once every twin is written (`hot_helpers`).
     hot_candidates: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// `@FR-R-Inline`'s cycle clause: per function, whether its calls reach it again.
+    on_cycle: std::cell::RefCell<std::collections::HashMap<u32, bool>>,
     /// `@FR-R-RangedCall`'s gain test per callee (`opt::ranged_call::variant_gains`), memoised.
     pub(crate) rg_gains: std::cell::RefCell<std::collections::HashMap<u32, bool>>,
     /// The functions called in the body of a loop that calls an `__inv` twin: the twin is
@@ -490,6 +492,7 @@ impl<'a> Cx<'a> {
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            on_cycle: std::cell::RefCell::new(std::collections::HashMap::new()),
             rg_gains: std::cell::RefCell::new(std::collections::HashMap::new()),
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -5182,6 +5185,27 @@ fn always_inline_body(storage: &str) -> String {
     }
 }
 
+/// Whether `d`'s calls reach `d` again — directly, or through other functions with a body.
+fn on_call_cycle(cx: &Cx, d: u32) -> bool {
+    if let Some(&known) = cx.on_cycle.borrow().get(&d) {
+        return known;
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut todo: Vec<u32> = crate::debugger::callees(cx.data, d).into_iter().collect();
+    let mut found = false;
+    while let Some(f) = todo.pop() {
+        if f == d {
+            found = true;
+            break;
+        }
+        if seen.insert(f) {
+            todo.extend(crate::debugger::callees(cx.data, f));
+        }
+    }
+    cx.on_cycle.borrow_mut().insert(d, found);
+    found
+}
+
 /// `body` without its hand-over points (`FnWriter::expand_safepoints`).
 fn strip_safepoints(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
@@ -5225,7 +5249,10 @@ fn framed(
     // body out of line, every argument handed over a second time (stage `pack_instances`
     // +25 % when a frame lost its fn-ref mark and the wrapper fell under gcc's budget).  A
     // split body keeps the hint: its parts are not one unit.
-    let body_storage = if parts.is_some() {
+    // A body whose calls reach it again keeps the hint and no more: forced, its own call
+    // through the wrapper is a cycle of forced inlining, which gcc 16 at -O3 compiled wrong on
+    // Windows (`fact(10)` answered 181440 where the wrapper pushes a frame, `LOFT_CALL_CHAIN`).
+    let body_storage = if parts.is_some() || on_call_cycle(cx, d) {
         storage.to_string()
     } else {
         always_inline_body(storage)
