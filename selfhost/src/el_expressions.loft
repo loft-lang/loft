@@ -592,8 +592,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   expr_tail = el_ex_deliver::tail_syntax(e, vars.body) >= 0 && !(e.p.nodes[el_ex_deliver::tail_syntax(e, vars.body)] is SJump);
   // (`state_route_delivery`: the selector's `MaterializeView` verdict at the tail, as Rust prints
   // it — the routes join then shows a verdict one side takes and the other does not.)
-  if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && el_trace::on() {
-    el_trace::route(e, "classify_reference_delivery=MaterializeView");
+  if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) {
+    materialize_view_route(e, vars);
   }
   vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
   vars.ret_src = raw_tail(code);
@@ -850,6 +850,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
                 // into the buffer at the return — one that views a local, and one that owns
                 // its record, alike.  A parameter at the tail merges its borrow: not carried.)
                 copy = if !vars.vars[tv].argument { el_ex_null::copy_into_buffer(e, vars, el_ir::last(bl.operators), tv, buf, result) } else { null };
+                // (One viewing a local is the selector's `MaterializeView`, as on the first pass.)
+                if copy != null && el_ex_copy::views_local(vars, tv) && expr_tail && el_ex_copy::record_result(result) {
+                  materialize_view_route(e, vars);
+                  vars.mv_tail = true;
+                }
                 // A visible parameter the first pass merged into the result (`MergeAttr`) is
                 // handed back as it is: the result borrows it beside the buffer.
                 tpa = if vars.vars[tv].argument { attr_nr(el::def(e, e.context), el_vars::name_of(vars, tv)) } else { -1 };
@@ -2452,6 +2457,10 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
       mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret)));
       rename_onto(e, vars, rb, mw);
     }
+    // (The selector's verdict, reported where this road takes it; the classifier's ladder then
+    // follows on the copy's work ref, `vars.mv_tail`.)
+    materialize_view_route(e, vars);
+    vars.mv_tail = true;
     return code;
   }
   ba = attr_nr(el::def(e, d), "__retbuf");
@@ -2486,6 +2495,21 @@ pub fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -
 // parameters (one at least), record literals (each built in its own work ref — the first pass's
 // placeholder `null`) and the null sentinel: nothing is delivered into the buffer, the tail is
 // answered as it stands and the result borrows the parameters.  Null for any other tail.
+// (`state_route_delivery`: the selector's `MaterializeView` verdict at the tail, as Rust prints
+// it — at the body's end, the token after its `}`, where Rust's classifier routes stand.)
+fn materialize_view_route(e: el::El, vars: el_vars::Vars) {
+  if !el_trace::on() {
+    return;
+  }
+  mve = match e.p.nodes[vars.body] { SBlock { end } => end, _ => -1 };
+  if mve >= 0 && e.source != el::STD_SOURCE {
+    mvp = el::pos_at(e, mve + 1);
+    eprintln("state {if e.first_pass { 1 } else { 2 }} {mvp.line}:{mvp.pos} route classify_reference_delivery=MaterializeView");
+  } else {
+    el_trace::route(e, "classify_reference_delivery=MaterializeView");
+  }
+}
+
 pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? {
   d = e.context;
   bl = match code { NdBlock { block } => block[0], _ => return null };
