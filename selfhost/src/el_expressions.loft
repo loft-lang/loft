@@ -2140,6 +2140,13 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
           return ir::NdBlock { block: [ab] };
         }
       }
+      // (An arm that can leave — a `return` among its statements — is copied in at its tail
+      // value in Rust, its early exit building into the buffer itself (`leaving_branch`,
+      // `BuildIntoBuffer`): not carried, refused by name.)
+      if any_block && el_ex_copy::returns_in(ab.operators) > 0 {
+        el::refuse(e, "a record match arm that can leave, delivered into the return buffer");
+        return null;
+      }
       // (A whole block copied in is typed without the store its own literal mints.)
       if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
         ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
