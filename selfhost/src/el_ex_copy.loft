@@ -1025,6 +1025,21 @@ pub fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // by name.
 // `Parser::var_views_local`: does `v` borrow, through its deps and the stores minted for it
 // (`__vdb_N`, `__ref_N`: walked through), a local that is no parameter?
+// `Parser::var_views_an_argument` (loft#1482): a local whose own borrows name a parameter — a
+// call that hands its argument back (`buf = keep(v)`).  Renamed onto the buffer, the caller
+// would adopt a view of its own argument: it takes `Bind`, copied in.
+pub fn views_an_argument(vars: el_vars::Vars, v: integer) -> boolean {
+  if v < 0 || v >= len(vars.vars) || vars.vars[v].argument {
+    return false;
+  }
+  for d in el_types::deps(el_vars::tp(vars, v)) {
+    if d >= 0 && d < len(vars.vars) && vars.vars[d].argument {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
   work: vector<integer> = [v];
   at = 0;

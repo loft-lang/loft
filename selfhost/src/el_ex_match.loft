@@ -876,7 +876,8 @@ pub fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: 
     get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
   }
   // A tuple element is read as its record.
-  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
+  // (A vector element keeps the store its inner vector borrows, `vector<integer>["__vdb_3"]`.)
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, TyVector { inner: _ } => elem, _ => el_types::without_deps(elem) };
   // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
   step = if rev {
     el_ir::v_block([el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 1 }, i]), el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]), ir::NdInt { n: -2147483648 })], ir::TyInteger { spec: i32_spec() }, "rev step")
@@ -1472,7 +1473,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // A text or a plain record element is made through the vector (`OpNewRecord`), written, and
   // finished — each pass of the walk its own element.
   made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && !el::def(e, mdn).name.starts_with("__") { mdn } else { -1 }, _ => -1 };
-  made = (in_t is TyText || made_d >= 0) && !(b.tp is TyOptional);
+  // (So is a vector element: its handle zeroed, the body's vector copied in, `OpCopyRecord`.)
+  made_vec = in_t is TyVector && el_types::elem_name(e, in_t) != "" && !(b.tp is TyOptional);
+  made = (in_t is TyText || made_d >= 0 || made_vec) && !(b.tp is TyOptional);
   // (A record element keeps what its body VIEWS — a local it hands back — and not the work
   // ref a literal was built in; a text keeps its body's type as it is.)
   rec_t = if made_d >= 0 { el_types::with_deps(in_t, [for dp in el_types::deps(b.tp) if !el_vars::name_of(vars, dp).starts_with("__ref") { dp }]) } else { in_t };
@@ -1480,7 +1483,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if v >= 0 && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: if in_t is TyText { b.tp } else { rec_t }, dep: [] }) {
+  if v >= 0 && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: if in_t is TyText || made_vec { b.tp } else { rec_t }, dep: [] }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1510,7 +1513,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   // (A fill runs no loop and mints no `_comp_N`.)
-  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText { b.tp } else { rec_t }) };
+  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText || made_vec { b.tp } else { rec_t }) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if keyed {
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
@@ -1553,7 +1556,16 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
         _ => {}
       }
     }
-    steps += [el_ir::v_set(comp, body_code), el_ir::v_set(celm, el_ir::cl(e, "OpNewRecord", [dest, ek, ir::NdInt { n: 65535 }])), wr, el_ir::cl(e, "OpFinishRecord", [dest, ir::NdVar { n: celm }, ek, ir::NdInt { n: 65535 }])];
+    if made_vec {
+      ivk = el_ex_vector::append_row(e, in_t);
+      if ivk < 0 {
+        el::refuse(e, "a comprehension of vectors with no row for the element");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      steps += [el_ir::v_set(comp, body_code), el_ir::v_set(celm, el_ir::cl(e, "OpNewRecord", [dest, ek, ir::NdInt { n: 65535 }])), el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, ir::NdVar { n: celm }, ir::NdInt { n: ivk }]), el_ir::cl(e, "OpFinishRecord", [dest, ir::NdVar { n: celm }, ek, ir::NdInt { n: 65535 }])];
+    } else {
+      steps += [el_ir::v_set(comp, body_code), el_ir::v_set(celm, el_ir::cl(e, "OpNewRecord", [dest, ek, ir::NdInt { n: 65535 }])), wr, el_ir::cl(e, "OpFinishRecord", [dest, ir::NdVar { n: celm }, ek, ir::NdInt { n: 65535 }])];
+    }
   } else {
     steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, dest, ir::NdVar { n: comp }))];
   }
