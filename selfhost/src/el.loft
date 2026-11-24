@@ -121,6 +121,11 @@ pub struct El {
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
   pub unbacked: vector<integer>,
+  // The functions whose first pass held back naming the return buffer in their result (a literal
+  // tail, a trailing `return v`, arms of literals: Rust's first pass types those bare).  The
+  // second pass names it as the function starts, so a caller sees it whatever the body's
+  // delivery then does — a refused callee included.
+  pub owed_buffer: vector<integer>,
   // The program's functions whose first pass renamed a local or a call's answer onto the return
   // buffer (`classify_ret_promotion`'s `Bind` or `Rename`): a caller's first pass reads their answer as a
   // borrow of the buffer it hands them.
@@ -248,6 +253,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_at: [],
     refused_in: [],
     unbacked: [],
+    owed_buffer: [],
     p1_bind: [],
     cast_decls: [],
     decl_line: 0,

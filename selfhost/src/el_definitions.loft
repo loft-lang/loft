@@ -1792,6 +1792,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    // (The return buffer the first pass held back from the result is named before the body.)
+    if !e.first_pass && e.owed_buffer.contains(e.context) {
+      oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
+      oret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+      if oba >= 0 && !el_types::deps(oret).contains(oba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(oret, el_types::deps(oret) + [oba])];
+      }
+    }
     // `tuple_carries_heap`: a tuple parameter holding a collection is read through its own
     // `__tp_<name>` from the first statement on (made at the start of the first pass, before the body,
     // as Rust's `parse_function` makes it: the body's mentions of the name read the shadow).

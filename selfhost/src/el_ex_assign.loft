@@ -2558,11 +2558,6 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
     bound_tp = el_types::with_deps(bound_tp, kept);
   }
-  // (A local declared with its vector type keeps that type on the first pass when a call's
-  // answer rebinds it: `v: vector<Vh> = […]; v = vmkv(21)` borrows nothing there.)
-  if e.first_pass && vars.annotated.contains(v) && el_types::base(bound_tp) is TyVector && !(bound_tp is TyOptional) {
-    bound_tp = el_types::without_deps(bound_tp);
-  }
   el_ex_bind::rebuild_call_deps(e, vars, v, op, x);
   if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
