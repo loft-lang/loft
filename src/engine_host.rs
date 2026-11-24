@@ -74,7 +74,8 @@ struct Event {
 // The one invariant: `http_fetch` returns BEFORE any network I/O happens,
 // and the completion is delivered through the SAME queue / drain / budget
 // as every other event — a slow or stalled request can never stall the
-// loop.  The kernel is thread_local, so workers park completions in this
+// loop.  The kernel is the program's (`Stores::engine`), which a request
+// thread cannot reach, so the request threads park completions in this
 // global queue; each pump turn drains it into the host's event queue as
 // ordinary kind-3 events (cid = the request id).
 

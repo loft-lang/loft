@@ -44,12 +44,14 @@ as the first C-ABI argument, giving the native function access to store memory.
 For functions returning `Ref` with no `Ref` parameters (e.g. `rand_indices`),
 the dispatcher allocates a fresh store for the result automatically.
 
-### Thread-local state
+### How a callback finds the stores
 
-During a native call, a thread-local `CURRENT_STORES` holds a raw pointer
-to the interpreter's `Stores`. This enables the `LoftStore` allocation
-callbacks to reach back into the interpreter for `claim()` and `resize()`
-operations.
+The `LoftStore` handle carries the interpreter's `Stores` itself: `LoftStoreCtx`'s opaque word
+holds the store number in its low 16 bits and the `Stores` pointer above them, so the
+allocation callbacks (`claim()`, `resize()`, `reload()`) reach back into the stores of the call
+they serve — a `par` worker's call into its worker's own.  A native library reads only the low
+16 bits (`loft_ffi_store_nr`).  This needs 64-bit pointers; a 32-bit host runs one program per
+instance and publishes its `Stores` once.
 
 ---
 
@@ -190,7 +192,7 @@ the runtime side.
 The allocation callbacks bridge native code back into the interpreter:
 
 ```
-Native extension                    Interpreter (via thread-local)
+Native extension                    Interpreter (the Stores in the handle)
 ─────────────────                   ──────────────────────────────
 store.claim(words)
   → claim_fn(ctx, words)    ──→    Store::claim(words) → rec
@@ -199,8 +201,7 @@ store.claim(words)
   ← rec
 ```
 
-`LoftStoreCtx` encodes the `store_nr`; the thread-local `CURRENT_STORES`
-holds a pointer to the interpreter's `Stores` for the duration of the call.
+`LoftStoreCtx` encodes the `store_nr` and, above it, the `Stores` the handle was built from.
 
 ### Safety guarantees
 
@@ -212,8 +213,8 @@ The callback infrastructure provides two safety mechanisms:
    returns 0, `resize` returns the original record unchanged, and `reload`
    is a no-op.
 
-2. **RAII cleanup**: `dispatch_call` uses a guard struct whose `Drop` impl
-   clears `CURRENT_STORES`, ensuring the thread-local is reset even if the
+2. **No state outlives the call**: the handle is the only route back to the
+   stores, and it is built for one call, so nothing has to be reset after a
    native function or a callback panics.
 
 ---

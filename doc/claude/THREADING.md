@@ -179,6 +179,58 @@ program meaning two different things depending on the backend, and in the browse
 (depth 2, depth 3, and a text return — each against a hand-computed value, on both
 backends) and by the nested cell in `tests/wasm/par-thread-proof.sh`.
 
+### Each thread's own state
+
+No running program keeps state in a thread-local, on any backend: a thread's state is a value
+it is handed (`@FR-C-Own`, [formal/concurrency.md](formal/concurrency.md) § Each thread's own
+state).  A store is claimed on the main thread; a worker starts its own stores and reads the
+common ones, which nothing writes while it runs.  The guard is
+`tests/par_contexts.rs::no_state_is_a_thread_local`, which fails on any thread-local spelling
+in `src/` — Rust's `thread_local!`, or C thread storage in the runtime or the C it emits.
+
+**Every implementation reaches its context as an argument.**
+
+| Implementation | Its context | A worker's |
+|---|---|---|
+| Interpreter | the `State` and the `Stores` it holds | `Stores::clone_for_light_worker`, made before the worker starts: the parent's stores borrowed read-only, a few scratch stores its own |
+| C runtime | `loft_cx *cx`, first argument of every runtime and emitted function ([C_BACKEND.md](C_BACKEND.md), the store context) | `loft_par_job_init` makes it before the thread starts; `loft_cx_end` releases what it holds |
+| rustc writer | `cell: &UnsafeCell<Stores>`, first argument of every emitted function; its call frames, generator table and fn-ref buffers are `Stores::frames` and `Stores::native` | the interpreter's worker view |
+
+`cx` and `cell` are written at every call and in every signature, never supplied by a macro,
+which would hide the argument the way a thread-local hides the state.
+
+**Where state that once looked per-thread lives:**
+
+| State | Home |
+|---|---|
+| a compile pass's memo | `Data`, behind `PassCell`, `ScopedCell` or `PassAny`: a `Mutex`, because `Data` is shared with `par` workers; a clone starts empty |
+| a run's checks, reports, crash context, engine host, output capture, web buffers | the `Stores` (`checks`, `run`, `crash`, `engine`, `output`, `web`) |
+| a running interpreter's censuses, bind notes, text yields, live reload | the `State` |
+| the C emission's options | `UnitShape` |
+| a switch read from the environment | `env_once!`: one process-wide answer |
+| what a fatal signal reports | a table of atomic slots, one per running context (`crash_report::RUNNING`); a panic is reported with its position by the dispatch loop or compile step that catches it |
+
+**The C runtime's choices.**
+
+- The work-buffer parks are the main thread's: plain statics that a `par` worker and a hosted
+  bridge call never touch (`cx->no_park`).
+- A hosted unit's context belongs to the `Stores` that calls it (`HostedTable::cx_of`), as its
+  table view does.
+- A component (`libloft_net`) keeps one context of its own per caller context
+  (`loft_cx_make_v1`): it is compiled with its own switches, so its struct is laid out its own
+  way, and the caller's cannot be passed to it.
+- The TLS archive (`loft_tls.c`, `loft_ssh.c`) keeps its C ABI: its functions take no context.
+
+**A library's callback finds its caller's context in the store handle.**  The loft-ffi ABI
+fixes `opaque` as the store number: its low 16 bits (`loft_ffi_store_nr`), the interpreter's
+return-store bit above them (`CTX_RETURN_STORE`), and the context pointer above that
+(`loft_ffi_handle`; `extensions::native_call::handle_word`).  That needs 64-bit pointers; a
+32-bit host runs one program per instance and publishes its `Stores` once.
+
+What threads do share takes one of `@FR-C-Publish`'s forms — set before the workers start,
+merged after the join, one atomic word — and every lock that remains is listed, with its
+reason, in [LOCKS.md](LOCKS.md).
+
 ### Where the threads come from (@PLN117)
 
 One seam decides it: `parallel.rs::with_pool`.

@@ -8005,7 +8005,7 @@ impl State {
             let op = self.code::<u8>();
             // Publish the current bytecode position + op byte so that a
             // subsequent SIGSEGV/SIGABRT prints the crash location.
-            // Cheap: one thread-local store per op.
+            // Cheap: one store into this interpreter's crash slot per op.
             {
                 // The full opcode: a two-byte one's second byte is next in the stream, and is
                 // read for real below.

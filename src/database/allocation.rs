@@ -67,8 +67,8 @@ enum PagedKind {
 }
 
 // @PLN103 P3 — the `LOFT_STORES=timeline` runtime store timeline. A pure diagnostic
-// (gated on the env var), so its state lives thread-local rather than on `Stores` — no
-// struct/constructor ripple. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
+// (gated on the env var); its state is the run's (`Stores::run`, `RunDiagnostics::timeline`),
+// so a `par` worker's stores keep their own. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
 // REUSED slot index (P0.4), so `seq` (a monotonic alloc counter) disambiguates slot reuse.
 // `live` maps each live slot to its current seq so a free prints the SAME id as its alloc.
 #[derive(Default)]

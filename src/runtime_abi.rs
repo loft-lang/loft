@@ -14,7 +14,7 @@
 ///
 /// `None`: takes no implicit Stores parameter at all.  For pure helpers
 /// whose body never touches `Stores` (e.g. clock reads, constant
-/// returns, thread-local RNG access).  The codegen emits `fn_name(args)`
+/// returns).  The codegen emits `fn_name(args)`
 /// with no leading `cell` argument.  Strictly better than `Cell` for
 /// these fns: zero unused parameter, zero borrow churn.
 ///

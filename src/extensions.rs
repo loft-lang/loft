@@ -2542,10 +2542,10 @@ pub mod native_call {
         _priv: (),
     }
 
-    /// Set the thread-local current stores pointer for the
-    /// duration of the returned guard.  Generated code:
-    /// `let _guard = native_call::enter(stores);` immediately
-    /// before a cdylib call.
+    /// Name the program's stores for the duration of the returned guard, where the store
+    /// handle cannot carry them: on a 32-bit host the callbacks read [`PROGRAM_STORES`];
+    /// on a 64-bit one the handle holds them and this does nothing.  Generated code:
+    /// `let _guard = native_call::enter(stores);` immediately before a cdylib call.
     pub fn enter(stores: &mut Stores) -> StoresGuard {
         #[cfg(not(target_pointer_width = "64"))]
         PROGRAM_STORES.store(

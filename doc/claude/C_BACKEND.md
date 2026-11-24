@@ -836,8 +836,8 @@ in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) i
 the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and refuses the unit
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_rt.h` carries web's byte builder and reader (`pack_*`,
-`byte_at`): a per-thread buffer in the program, where the component call cost a crossing and a
-dynamic thread-local lookup per byte.  A `main(args: vector<text>)` is called with the program's
+`byte_at`): a buffer in the store context, where the component call cost a crossing per
+byte.  A `main(args: vector<text>)` is called with the program's
 arguments (`loft_arguments()`), as the interpreter calls it.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
 `lib/git` (`git_query`).  The web, server and ssh libraries' natives are not the runtime's:

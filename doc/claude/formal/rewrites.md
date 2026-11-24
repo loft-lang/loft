@@ -5665,13 +5665,10 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
 
   (R-NoThreads)  a C unit that runs no `par` loop on threads (`loft_par_run`) and reaches no
                  engine kernel — the two ways loft code runs on a second thread — is
-                 compiled with `LOFT_NO_THREADS`: the runtime's store table, frame stack and
-                 pools are plain statics instead of thread-locals (`LOFT_TLS`).  Only one
-                 thread reads them, so nothing observable changes; what moves is the cost of
-                 every store access, which on macOS reaches a thread-local through a call
-                 (`_tlv_get_addr`, 13 % of a record-building recursion's profile).  Measured
-                 on Apple silicon, clang: 21_tree `build_rec` −14.5 %; every routine of
-                 @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
+                 compiled with `LOFT_NO_THREADS`: it starts no thread and links no thread
+                 library (`LOFT_THREADS` stays undefined, `loft_cc.h`).  Its loft code runs on
+                 one thread either way, so nothing observable changes.  Switch
+                 `LOFT_NO_THREAD_FACT=1`.
 
   (R-CTail)      the C of a function writes each RELEASE TAIL two of its exits share once.
                  An exit's tail is the unbroken run of release statements straight before
@@ -5953,7 +5950,7 @@ insert; the type's heap facts are cached, so the answer is one lookup.  `insert_
 ```
 
 **In words.**  The runtime clause still asked, per copy, what the type is: its size, its
-heap facts, and the fn-ref hand-off flag, a thread-local read.  The emitter knows the type
+heap facts, and the fn-ref hand-off flag, a read of the context.  The emitter knows the type
 at the site, so it writes the copy as a few moves.  The flag is not consumed: it is set by
 an unresolved fn-ref call and consumed by the bind of that call's result, and a copy whose
 source is a variable is never that bind.  The address path writes past the copy
