@@ -589,6 +589,9 @@ pub struct Stores {
     /// ([`Stores::print_or_host`]).  The session sets it on every state it builds
     /// (`ReplSession::new_state`); a copy of the stores, a `par` worker's included, prints.
     pub output: Option<String>,
+    /// `@PLN226` — the program's engine host (`engine_host::EngineCx`): its kernel, client,
+    /// build swap and sync classes.
+    pub(crate) engine: crate::engine_host::EngineCx,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -907,6 +910,7 @@ impl Clone for Stores {
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
+            engine: crate::engine_host::EngineCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1776,6 +1780,7 @@ impl Stores {
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
+            engine: crate::engine_host::EngineCx::default(),
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),

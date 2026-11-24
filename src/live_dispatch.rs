@@ -608,13 +608,17 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
         .collect::<Vec<_>>()
         .join("|");
     eprintln!("loft-debug: paused in {}", hit.function);
-    crate::engine_host::debug_send(sub, &format!("D:hit {} {bindings}", hit.function));
+    crate::engine_host::debug_send(
+        &mut st.database.engine,
+        sub,
+        &format!("D:hit {} {bindings}", hit.function),
+    );
     loop {
-        crate::engine_host::debug_pump();
+        crate::engine_host::debug_pump(&mut st.database.engine);
         for cmd in debug_mailbox_drain() {
             match cmd {
                 DebugCmd::Resume(cid) => {
-                    crate::engine_host::debug_send(cid, "D:resumed");
+                    crate::engine_host::debug_send(&mut st.database.engine, cid, "D:resumed");
                     eprintln!("loft-debug: resumed");
                     return;
                 }
@@ -624,7 +628,11 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                         .iter()
                         .find(|(n, _)| *n == name)
                         .map_or("<unknown>", |(_, v)| v.as_str());
-                    crate::engine_host::debug_send(cid, &format!("D:eval {name}={val}"));
+                    crate::engine_host::debug_send(
+                        &mut st.database.engine,
+                        cid,
+                        &format!("D:eval {name}={val}"),
+                    );
                 }
                 DebugCmd::Reload(cid) => {
                     // The S3 poll-now: the world is swapped IN at a pause, so
@@ -637,6 +645,7 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                         debug_reapply_bps(st, data);
                     }
                     crate::engine_host::debug_send(
+                        &mut st.database.engine,
                         cid,
                         if grew {
                             "D:reload applied"
@@ -656,6 +665,7 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                         DEBUG_BPS.with(|b| b.borrow_mut().push(name.clone()));
                     }
                     crate::engine_host::debug_send(
+                        &mut st.database.engine,
                         cid,
                         &format!("D:{} bp {name}", if ok { "ok" } else { "err" }),
                     );
