@@ -1995,7 +1995,20 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
-  rt = if e.first_pass { el_types::with_deps(ret, []) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
+  // (`call_dependencies` on the first pass: a callee whose result borrows a parameter there —
+  // `fn keep(x) -> vector<T> { x }`, `MergeAttr` — answers a borrow of the argument handed it.)
+  p1: vector<integer> = [];
+  if e.first_pass {
+    for pi in el_types::deps(el_types::base(ret)) {
+      if pi >= 0 && pi < visible && pi < len(list) {
+        match el_ir::unspan(list[pi]!) {
+          NdVar { n: pv } => { if !p1.contains(pv) { p1 += [pv]; } },
+          _ => {}
+        }
+      }
+    }
+  }
+  rt = if e.first_pass { el_types::with_deps(ret, p1) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
   ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: buf }] }, rt)
 }
 

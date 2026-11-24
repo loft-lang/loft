@@ -437,7 +437,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           // store would die with the frame: `Bind`, the copy.  Mints are walked through.)
           // (So is one a call result is appended to inside a loop or an `if` arm,
           // `var_call_rebound_nested`.)
-          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n)) || el_ex_copy::views_a_local(vars, n) || (el_vars::tp(vars, n) is TyVector && el_ex_copy::appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false))) {
+          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n)) || el_ex_copy::views_a_local(vars, n) || el_ex_copy::views_an_argument(vars, n) || (el_vars::tp(vars, n) is TyVector && el_ex_copy::appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false))) {
             // `Bind`: the local is copied into the buffer at the tail, which the result borrows.
             el_trace::retpromo(e, vars, n, "Bind");
             if !el_types::deps(ret).contains(ba) {
@@ -874,6 +874,15 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   // `MergeAttr` on the first pass — the result borrows them, what a function parsed before this
   // one's second pass reads — and the second, the tail copied, borrows the buffer alone.)
   pleaves = if arms { syntax_param_leaves(e, vars, tail_syntax(e, vars.body)) } else { null };
+  // (A whole parameter at the tail, or a field of one, is that parameter too: `MergeAttr` on the
+  // first pass — `fn keep(x) -> vector<T> { x }` answers `["x"]` there — the buffer alone on the
+  // second, the tail copied in.)
+  if param {
+    proot = match tail { NdVar { n: ptn } => ptn, _ => place_root(e, tail) };
+    if proot >= 0 && vars.vars[proot].argument {
+      pleaves = [proot];
+    }
+  }
   if pleaves != null && len(pleaves!) > 0 {
     if e.first_pass {
       pds = el_types::deps(ret);
@@ -1415,12 +1424,23 @@ pub fn deliver_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, re
     // the body (`Bind` beside the renamed one) is copied in too, and the literal store it was
     // built in is freed (`materialize_vector_arms_into`).  The buffer itself (the local it was
     // renamed onto) is the answer as it stands.
+    // (`materialize_vector_arms_collect`'s `Var` arm: after the copy, every store the local's one
+    // dep list names that this frame owns — a literal's `__vdb_N`, a call's `__ref_N` — is
+    // freed; a parameter's is the caller's.)
     NdVar { n: av } => if av == rb { n } else {
-      lb = if vars.vars[av].argument { -1 } else { el_ex_copy::literal_backing(vars, av) };
+      frees: vector<ir::Node> = [];
+      if !vars.vars[av].argument && !vars.vars[av].skip_free {
+        for fd in el_types::deps(el_vars::tp(vars, av)) {
+          fnm = el_vars::name_of(vars, fd);
+          if fd != rb && !vars.vars[fd].argument && (starts_with(fnm, "__vdb_") || starts_with(fnm, "__ref_")) {
+            frees += [el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: fd }])];
+          }
+        }
+      }
       ir::NdInsert { items: [
         el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rb }]),
         el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: rb }, n, ir::NdInt { n: rec }])
-      ] + (if lb >= 0 { [el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: lb }])] } else { [] }) + [ir::NdVar { n: rb }] }
+      ] + frees + [ir::NdVar { n: rb }] }
     },
     _ => n
   }
