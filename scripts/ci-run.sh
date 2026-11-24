@@ -33,7 +33,7 @@ case "${1:-status}" in
       [ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && echo "note: another gate is running in $cwd — expect ~2x wall time"
     done
     # The seconds-long checks first (scripts/gate_preflight.sh): `make ci` reaches rustfmt only
-    # after rebuilding the native fixtures and both wasm rlibs, and a derived row after ~17
+    # after its first build, and a derived row after ~17
     # minutes, so a failure either finds costs a whole restart.  `CI_NO_PREFLIGHT=1` skips it.
     if [ -z "${CI_NO_PREFLIGHT:-}" ]; then
       scripts/gate_preflight.sh || { echo "gate NOT started"; exit 1; }
@@ -124,7 +124,7 @@ case "${1:-status}" in
         # FAILED with ZERO is three things, not one, and reading it as "the box" is wrong two
         # times out of three: `make ci` is fmt -> clippy -> test, so a FORMAT or a LINT failure
         # never reaches a test and still reports zero.  Both are the CODE and both are fixed in
-        # seconds; only what is left over — a stale rlib, a corrupt incremental cache, a full
+        # seconds; only what is left over — a torn build artefact, a corrupt incremental cache, a full
         # disk — is the box.  Measured the hard way: two agents on this box lost time to the
         # old wording within one hour, one sent to the format phase and one to the target dir,
         # each while holding a clippy or rustfmt error in the same verdict line.

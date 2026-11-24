@@ -61,10 +61,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # The cdylib tests link a hand-driven rustc against the canonical
-      # `target/debug/libloft.rlib`; `--all-targets` builds it plus every test
-      # binary.  `CARGO_BIN_EXE_loft` (used by n3_use_native) comes from the
-      # nextest build below.
+      # `--all-targets` builds every test binary.  `CARGO_BIN_EXE_loft` (used by
+      # n3_use_native) comes from the nextest build below.
       - name: Build test targets
         run: cargo build --all-targets
 

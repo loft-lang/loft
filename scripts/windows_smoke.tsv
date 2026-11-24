@@ -31,7 +31,6 @@ scripts/c_alloc_diff.py	--help
 scripts/c_lint_census.py	--help
 scripts/c_sweep.py	--help
 scripts/campaign_review.py	--help
-scripts/cargo_dep_files.sh	--help
 scripts/check-release-published.py	--help
 scripts/ci_shards.py	--help
 scripts/claim.py	--help

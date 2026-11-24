@@ -251,8 +251,7 @@ jobs:
             dist/*.zip.sha256
 
       # @PLN199 G2c — the published libraries, compiled by the binary this leg ships, so a
-      # user without `rustc` runs them compiled.  The binary is the bundle's, still in the
-      # target directory beside the rlib its build left in `deps/` (a bundle carries none).
+      # user without a C compiler runs them compiled.
       # It never holds the release back: a library that does not build runs interpreted,
       # which is what it does today — RELEASE_PUBLISH.md § Library artifacts.
       - name: Build the library artifacts

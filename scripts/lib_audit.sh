@@ -155,10 +155,10 @@ run_tests() {  # mode("interpret"|"native") pkgdir -> "VERDICT|note"
   out=$(cd "$pkg" && "$LOFT" "--$mode" test 2>&1); code=$?
   if [ "$code" -ne 0 ]; then
     # SKIP-ENV ONLY for a genuinely-absent toolchain — never for a real compile
-    # error.  The markers are narrow on purpose: 'can'\''t find crate FOR' is the
-    # E0463 toolchain phrasing, not 'in crate X' (a normal E0425), so a library
-    # build-script error stays a FAIL and keeps gating (it must not hide here).
-    if echo "$out" | grep -qiE "rustc.*command not found|can't find crate for|error: linker|LNK1181|libloft\.rlib"; then
+    # error.  The markers are narrow on purpose: the C backend's own "no C compiler"
+    # (src/c_driver.rs, src/c/hosted.rs) and a linker that cannot run, so a library's
+    # compile error stays a FAIL and keeps gating (it must not hide here).
+    if echo "$out" | grep -qiE "no C compiler|error: linker|LNK1181"; then
       echo "SKIP-ENV|toolchain absent"; return
     fi
     echo "FAIL|$(echo "$out" | grep -m1 -iE 'error\[|error:|panic|fail' | sed 's/^ *//' | cut -c1-70)"; return

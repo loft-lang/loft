@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
 # release-lib-artifacts — build the compiled artifacts of the published libraries with the
-# loft a release ships, so a user without `rustc` runs them compiled (@PLN199 G2c).
+# loft a release ships, so a user without a C compiler runs them compiled (@PLN199 G2c).
 #
 # For every library the registry publishes, at its latest non-yanked version, install it
 # into a scratch home and run a program
@@ -13,9 +13,8 @@
 # OUT/lib-artifacts-<triple>.json lists them — package, version, triple, stem, file, sha256,
 # loft_exe_id — for `gen-toolchain-entry.py --artifacts OUT` to put in the release's row.
 #
-# LOFT must be the binary the release ships, still beside the `libloft.rlib` it was built
-# with (`scripts/lean_build.sh --lib --bin loft`): a bundle carries no rlib, and an artifact
-# runs only in the loft that built it.  A library that does not build is reported and left
+# LOFT must be the binary the release ships (`scripts/lean_build.sh --bin loft`): an
+# artifact runs only in the loft that built it.  A library that does not build is reported and left
 # out — it runs interpreted — and the script exits 0; 2 when it cannot run at all.
 # `KEEP_WORK=1` keeps the scratch home and each package's install and run output, and says where.
 #
@@ -25,7 +24,7 @@
 #   --registry  where `loft install` fetches from (default: the signed registry)
 set -u
 case "${1:-}" in
-  -h|--help) sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '5,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 loft="" out="" index="" registry="" unsigned=""

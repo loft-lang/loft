@@ -86,7 +86,7 @@
       "ci": true,
       "job": "surface",
       "needs": ["wasm"],
-      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the PR's gallery job checks it on every change, after `make game` has built the same rlib"
+      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the PR's gallery job checks it on every change"
     },
     {
       "name": "browser-bundle",

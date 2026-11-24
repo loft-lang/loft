@@ -42,7 +42,7 @@
 # (`target/<profile>/.cargo-lock`, the flock every cargo build takes): a build that starts
 # meanwhile waits the seconds a sweep takes, and a checkout whose lock a build already holds is
 # left for the next round.  A process working inside a checkout that holds no lock — a test
-# binary, a `loft --native` run linking the rlib — also leaves it for the next round.
+# binary, a `loft --native` run — also leaves it for the next round.
 # Box-wide: every checkout's gate scratch (/var/tmp/loft-test-scratch-<tag>) whose gate is not
 # alive and that nothing wrote for 3 days (1 under LOW_GB) — a parked checkout's finished
 # runs, 133 GB of them on 2026-10-20 — then scripts/sweep_scratch.sh over every scratch location loft writes (its own standing
