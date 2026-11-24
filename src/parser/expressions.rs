@@ -5704,7 +5704,9 @@ use a separate collection or add after the loop"
                         // that has ended, it widened the ended one's variable: every read in
                         // the block that bound it non-null then stored "a nullable" value,
                         // and a later block's non-null bind stayed nullable.
-                        || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
+                        || self.vars.rebind_differs_in_absence(var_nr, &s_type)
+                        // `@FR-B-Scope`: a view of another base is another binding's type.
+                        || self.vars.rebind_views_another_base(var_nr, &s_type))))
         {
             let ended = var_nr;
             var_nr = self.rebind_after_block(var_nr, &s_type);
