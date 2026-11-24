@@ -14,7 +14,8 @@ tuxedo-pln204-int32 / -next), `merger` (joins and PRs).
   `assert` in a main-less file exited 0 on the interpreter), both taken into the PR by merger;
   loft#2626 (cf2da5152, silent-wrong: a `match`/`if` arm answering null on every path beside a
   value arm lost the sibling's value on the interpreter, or its own `return` on both backends) —
-  moves none of the porter's functions; not yet in the PR (merger takes fixes only; send it).
+  moves none of the porter's functions.  All three are in the PR (tuxedo-pr2622-next); R2, R10
+  and the handoffs wait for the next PR.
 - **Receipts** a-function-type-can-name-a-link-parameter / a-function-type-link-refusals
   re-derived (642eee930), taken by merger.
 - **PR held** on the owner's call about tuxedo-pln225's own 47 failing tests.
