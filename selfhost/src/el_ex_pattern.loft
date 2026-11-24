@@ -1231,6 +1231,9 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   if e.p.nodes[body!] is SIf && el_types::base(vars.arm_expect) is TyVector {
     vars.expect_node = body!;
     vars.expect = vars.arm_expect;
+  } else if el_types::base(vars.arm_expect) is TyVector {
+    // (A literal of records answering the arm is read against the expected vector too.)
+    el_ex_null::arm_expect(e, vars, body!, vars.arm_expect);
   }
   x = el_ex_assign::expression(e, vars, body!);
   vars.expect_node = kept_node;
