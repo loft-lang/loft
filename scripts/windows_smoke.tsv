@@ -107,6 +107,7 @@ scripts/test_speed.py	--help
 scripts/thirdparty.py	--help
 scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help
+scripts/unzip_keep_modes.py	--help
 scripts/validator-dryrun.py	--help
 scripts/wait_for.sh	--help
 scripts/warm_diff.sh	--help

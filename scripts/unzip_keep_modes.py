@@ -11,6 +11,10 @@ import os
 import sys
 import zipfile
 
+if len(sys.argv) != 3 or sys.argv[1] in ("-h", "--help"):
+    print("usage: python3 scripts/unzip_keep_modes.py <bundle.zip> <into-dir>")
+    sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
+
 with zipfile.ZipFile(sys.argv[1]) as z:
     for info in z.infolist():
         path = z.extract(info, sys.argv[2])
