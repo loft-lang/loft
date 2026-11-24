@@ -933,6 +933,41 @@ def main():
         for h in ranked[:12]:
             c = taken[h]
             print(f"    {h:30} {c['programs']:5} / {c['carried']:5} / {c['refusing']:5} / {c['missing']:5}")
+        # The route GATE: for the return-delivery classifiers Rust logs as `handler=verdict`, the
+        # verdict the port reports at the same site — not only whether it took the handler.  A site
+        # is a pass and a line (the n-th verdict of a handler on that line pairs with the n-th);
+        # `agree` = the same verdict, `kind` = the same variant with other fields, `differ`,
+        # `missing` (the port names no verdict there) and `port only`.
+        VALUE_HANDLERS = ("classify_ret_promotion", "classify_reference_delivery", "materialize_return_into")
+        vals = {h: collections.Counter() for h in VALUE_HANDLERS}
+        rows = []
+        kind_of = lambda v: re.split(r"[ {(]", v, maxsplit=1)[0]
+        for path, rs in ROUTES.items():
+            for h in VALUE_HANDLERS:
+                at = {"rust": collections.defaultdict(list), "port": collections.defaultdict(list)}
+                for side, ps, ln, col, text in rs:
+                    if side in at and text.startswith(h + "="):
+                        at[side][(ps, ln)].append((col, text[len(h) + 1:]))
+                for site in sorted(set(at["rust"]) | set(at["port"])):
+                    ra, pa = at["rust"].get(site, []), at["port"].get(site, [])
+                    for i in range(max(len(ra), len(pa))):
+                        rv = ra[i][1] if i < len(ra) else None
+                        pv = pa[i][1] if i < len(pa) else None
+                        verdict = ("agree" if rv == pv else "port only" if rv is None else "missing" if pv is None
+                                   else "kind" if kind_of(rv) == kind_of(pv) else "differ")
+                        vals[h][verdict] += 1
+                        if verdict != "agree":
+                            rows.append((path, h, site[0], site[1], rv or "", pv or "", verdict))
+        for h in VALUE_HANDLERS:
+            c = vals[h]
+            sites = sum(c[k] for k in ("agree", "kind", "differ", "missing"))
+            print(f"route values: {h} {c['agree']} of {sites} sites agree; {c['kind']} same kind, "
+                  f"{c['differ']} differ, {c['missing']} missing, {c['port only']} port only")
+        # `LOFT_ELAB_ROUTE_VALUES=<file>`: each site that does not agree, with both verdicts.
+        if os.environ.get("LOFT_ELAB_ROUTE_VALUES"):
+            with open(os.environ["LOFT_ELAB_ROUTE_VALUES"], "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write("\t".join(str(x) for x in r) + "\n")
         # `LOFT_ELAB_ROUTE_COVERAGE=<file>`: the whole table, one row per handler.
         if os.environ.get("LOFT_ELAB_ROUTE_COVERAGE"):
             cols = ["programs", "carried", "refusing", "missing", "sites", "both", "refused", "neither", "port only"]

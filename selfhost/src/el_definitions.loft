@@ -580,6 +580,48 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   // (A `value struct` is a struct as any other in the parsed image: its register treatment is
   // a later pass's.)
   if len(tvars) > 0 {
+    // Refused, but the TEMPLATE is registered first, as Rust's `parse_struct` declares it —
+    // its header bound (`bind_type_header`), its fields read over the placeholders, at the
+    // token after the header — so every later definition keeps Rust's number.
+    if e.first_pass && !value && el::def_nr(e, name) < 0 {
+      tnt = el::name_tok(e, at, name);
+      hd = tnt + 1;
+      depth = 0;
+      while hd < len(e.p.src) {
+        if e.p.src[hd] is Lt {
+          depth += 1;
+        } else if e.p.src[hd] is Gt {
+          depth -= 1;
+          if depth == 0 {
+            break;
+          }
+        }
+        hd += 1;
+      }
+      tpos = el::pos_at(e, hd + 1);
+      td = el::add_def(e, name, tpos, el::DT_STRUCT);
+      el::set_returned(e, td, ir::TyReference { n: td, dep: [] });
+      saved_tv = e.type_vars;
+      bound = true;
+      for tv in tvars {
+        match e.p.nodes[tv] {
+          STVar { name: tvn, bounds: tvb } => {
+            th = header_var(e, tvn, tvb, tpos);
+            if th < 0 {
+              bound = false;
+            } else {
+              e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+            }
+          },
+          _ => {}
+        }
+      }
+      e.b.data.definitions[td].def_type = el::DT_TYPE_TEMPLATE;
+      if bound {
+        parse_fields(e, td, fields);
+      }
+      e.type_vars = saved_tv;
+    }
     el::refuse(e, "a value struct or a struct template");
     return;
   }
@@ -775,7 +817,8 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
   if e.p.nodes[init] is SStructLit {
     e.dflt_vars += 1;
   }
-  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, _ => el_ex_null::node_start(e, init) };
+  // (An `if` or a `match` default stands at its keyword.)
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => el_ex_null::node_start(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
   e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
@@ -1538,6 +1581,18 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           } else {
             param_default(e, init!, t!)
           };
+          // A default refused for not being a constant is one Rust hoists
+          // (`default_replayable_in_place` fails): its `n___dflt_<fn>_<param>` is registered here
+          // all the same — on the first pass, the value discarded, the refusal standing — so
+          // every later definition keeps Rust's number.  (A method's carries its owner's name:
+          // not carried.)
+          method = len(arguments) > 0 && (arguments[0].name == "self" || arguments[0].name == "both");
+          // (A scalar, a text or a tuple default is replayed at each call, reading the earlier
+          // arguments in place: Rust hoists none of those.)
+          heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
+          if d == null && heap_default && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
+            _ = hoisted_default(e, "__dflt_{name}_{an}", tp!, init!);
+          }
           // (A default refused — the refusal stands — still leaves the function registered,
           // as Rust registers it: every definition after it keeps Rust's number.)
           if d != null {
