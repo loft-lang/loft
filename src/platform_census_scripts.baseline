@@ -63,8 +63,6 @@
 3 scripts/lint_sweep.py
 2 scripts/migrate_plan_refs.py
 2 scripts/migrate_plan_refs_code.py
-1 scripts/native_attrib.py
-2 scripts/p09_fast_gate.sh
 1 scripts/perf_check.py
 1 scripts/probe-local.sh
 4 scripts/probe_leg_report.sh

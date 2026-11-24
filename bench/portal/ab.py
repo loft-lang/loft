@@ -7,9 +7,8 @@
                                    [--cwd DIR] [--subject S] [--no-pin]
 
 A and B are bench binaries (the row protocol, bench/README.md § The row protocol): the C
-or Rust a hand-priced edit produced beside the one it was made from
-(`bench/portal/hand_price_c.sh`, `bench/portal/hand_price.sh`), or two runtimes' builds of
-the same unit.  The method is stats.py's: `--n` calibrated once (on A, so both run the same
+a hand-priced edit produced beside the one it was made from (`bench/portal/hand_price_c.sh`),
+or two runtimes' builds of the same unit.  The method is stats.py's: `--n` calibrated once (on A, so both run the same
 work), one discarded warm-up each, then `--samples` rounds in ALTERNATING order (A B, B A, …)
 so a drift in the machine's speed lands on both, every run pinned to the fastest core.
 Per routine it answers both medians, B/A with its RANGE (B's first quartile over A's third,
