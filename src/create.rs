@@ -38,12 +38,6 @@ fn operator_name(operator: &str) -> String {
     }
 }
 
-/**
-    Write a library file with the known library functions.
-    # Errors
-    When the file cannot be written correctly.
-*/
-
 fn replace_attributes(data: &Data, d_nr: u32, res: &mut String) {
     for a_nr in 0..data.attributes(d_nr) {
         let name = "@".to_string() + &data.attr_name(d_nr, a_nr);

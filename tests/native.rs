@@ -1,46 +1,30 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Native-backend integration tests.
+//! The `--native` (C backend) integration tests.
 //!
-//! These tests compile `.loft` files through the `--native` Rust code generator
-//! and run the resulting binaries.  They do **not** acquire `WRAP_LOCK`, so they
-//! run concurrently with the interpreter-based `wrap` tests — which is safe
-//! because native tests write only to `/tmp/loft_native_*` temp files and never
-//! touch the same files as the interpreter tests.
+//! The corpus tests run each `.loft` file through the `loft` binary the way a user does —
+//! `loft --tests <file> --native` for a file of test functions, `loft --native <file>` for a
+//! script-shaped program — so the program is compiled to C, built with the host C compiler
+//! and run.  The rest drive the C binding (`#c`), packaged C libraries and shipped programs
+//! through the same binary.  They do **not** acquire `WRAP_LOCK`: a corpus program's run
+//! holds [`common::source_run_lock`], which serialises it only against another run of the
+//! SAME file (the interpreter's, in `wrap`).
 
 extern crate loft;
 
-use loft::compile::byte_code;
 use loft::file_access as fa;
-use loft::generation::Output;
-use loft::parser::Parser;
-use loft::scopes;
-use loft::state::State;
 use std::io::Error;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 mod common;
-use common::cached_default;
 
-/// Process-wide mutex serialising the five high-level native tests
-/// (`native_dir`, `native_scripts`, `native_binary_script`,
-/// `native_tuple_return_script`, `native_tuple_script`).
+/// Process-wide mutex serialising this binary's native tests.
 ///
-/// Each test already parallelises internally via `thread::scope` over
-/// `available_parallelism()` rustc workers — running two such pools
-/// concurrently saturates the CPU twice over, so within ONE process
-/// this lock keeps that 2× over-subscription (and the ~140 s→~14 s
-/// blowup) away.
-///
-/// It does NOT, by itself, fix the flaky link failures that once looked
-/// like a deps-read race: the real cause was concurrent compiles of the
-/// SAME script stem writing the SAME `loft_native_<stem>_bin` output
-/// (`50-tuples.loft` is built by three tests), truncating each other's
-/// binary mid-link.  Across PROCESSES — nextest runs each test in its
-/// own — this in-process lock can't help; correctness there comes from
-/// `compile_native_job` compiling to a per-process temp and publishing
-/// via atomic `rename(2)`.  See @PLN11 § Discovered follow-ups F1.
+/// Each corpus test already runs [`c_lanes`] builds at once; two such pools in one process
+/// (`cargo test` runs tests as threads) would hold the CPU twice over.  Across processes —
+/// nextest runs each test in its own — the share is `threads-required` in
+/// `.config/nextest.toml` instead (`pool_tests_declare_their_lanes_to_nextest`).
 fn native_suite_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -54,172 +38,16 @@ fn native_suite_lock() -> &'static Mutex<()> {
 /// delete it the day that issue closes.
 const NATIVE_SKIP: &[&str] = &[];
 
-/// Script files to skip in native mode.
-const SCRIPTS_NATIVE_SKIP: &[&str] = &[
-    // 135-vector-u8-concat.loft was here for @P316 (`vector<u8>` element read
-    // with `?? <int>` mis-compiled); @P316 is fixed, so 135 now runs natively
-    // and doubles as the @P316 regression guard.
-    //
-    // 191-source-dir.loft runs natively as of @PLN9 Phase 1 — the exe-dir anchor
-    // (`Stores::source_dir_native` via `current_exe()`) makes `source_dir()`
-    // non-empty under `--native`, so it is no longer skipped here.
-    //
-    // A `#native` function with no library loaded is REFUSED by the native generator for the
-    // whole file (`compile_error!` naming the symbol) — that refusal is this file's native
-    // answer, while the interpreter runs it and fails the one `@EXPECT_FAIL` function.  The
-    // entry ends when the generator answers a missing library per FUNCTION, so the file's
-    // other functions compile and only the stub fails as `@EXPECT_FAIL` says.
-    "75-native-stub.loft",
-    // The rustc writer (`--native-rust`, retiring under @PLN225) answers a threaded `par`
-    // worker's record that holds a `reference<T>` with the reference reading null (c1: `l1:null`),
-    // measured on a build that predates STORE_MODEL D46's work too.  The interpreter and the C
-    // backend carry the file (`tests/c_alloc_order.rs`).  The entry ends with the writer.
-    "a-par-workers-record-results-reach-the-caller-with-their-stores.loft",
-];
-
-/// The `libloft.rlib` this test binary links and its dependency dirs, for a standalone
-/// `rustc` compile: the binary's own build only, so the rlib carries the features compiled
-/// into this test (S33), under either cargo layout — `loft::native_lib::linked_runtime`.
-fn find_loft_rlib() -> Option<(PathBuf, Vec<PathBuf>)> {
-    loft::native_lib::linked_runtime()
-}
-
-/// Collect additional `--extern name=path` arguments for optional feature dependencies.
+/// Script files in `tests/scripts/` that the C backend does not run.
 ///
-/// Collect additional `--extern name=path` arguments for optional feature dependencies.
-///
-/// When `rustc` compiles generated `.rs` files standalone, it only knows about crates
-/// explicitly declared via `--extern`.  Optional deps like `rand_core` and `rand_pcg`
-/// are available in the same deps/ directory as `libloft.rlib` but must be declared
-/// explicitly (S31).  This function scans deps/ and returns ALL non-loft rlibs as
-/// `(crate_name, rlib_path)` pairs.  All versions of each crate are included so that
-/// rustc can select the hash that matches what `libloft` was compiled against.
-fn collect_extra_externs(deps_dirs: &[PathBuf]) -> Vec<(String, PathBuf)> {
-    let mut result = Vec::new();
-    for entry in deps_dirs
-        .iter()
-        .filter_map(|d| fa::read_dir(d).ok())
-        .flatten()
-    {
-        let name = entry.file_name().unwrap_or_default().to_string();
-        if !name.starts_with("lib") || !name.ends_with(".rlib") || name.starts_with("libloft") {
-            continue;
-        }
-        // libFOO-HASH.rlib → crate name FOO (hyphens → underscores)
-        let without_lib = &name[3..];
-        let without_rlib = without_lib.trim_end_matches(".rlib");
-        let crate_name = if let Some(pos) = without_rlib.rfind('-') {
-            without_rlib[..pos].replace('-', "_")
-        } else {
-            without_rlib.replace('-', "_")
-        };
-        result.push((crate_name, entry.os_spelling()));
-    }
-    result
-}
-
-/// On Windows MSVC, locate build-script output directories for native import libraries.
-///
-/// When linking against `libloft.rlib` with standalone `rustc`, crates like `windows-sys`
-/// that emit native import libraries via their build scripts (e.g. `windows.0.48.5.lib`)
-/// are not automatically found.  Cargo normally passes the build-script output dirs as
-/// `-L native=…` linker arguments; we replicate that here.
-///
-/// Strategy: add every `out/` subdirectory of `target/{profile}/build/` as a `-L` path,
-/// plus each of their immediate subdirectories.  Some crates (e.g. `windows-targets`) place
-/// import libraries in a platform-specific subdirectory such as `out/x86_64-pc-windows-msvc/`
-/// rather than directly in `out/`.  Adding both levels covers all known layouts.
-fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> Vec<PathBuf> {
-    // One home for the scan, under either cargo layout: `platform::import_lib_search_dirs`.
-    rlib_info
-        .as_ref()
-        .map(|(rlib, _)| loft::platform::import_lib_search_dirs(rlib))
-        .unwrap_or_default()
-}
-
-/// This checkout's own native cache (`platform::native_cache_dir`): the generated `.rs`,
-/// the binaries and their keys live here, apart from every other checkout's and from the
-/// runtime's per-process scratch, so the sweep at a run's start touches only what this
-/// harness wrote.
-fn native_scratch() -> PathBuf {
-    loft::platform::native_cache_dir(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// The build this run compiles against, as the cache key sees it: the rlib's path and
-/// content hash.  A run whose stamp differs from the one the cache directory remembers
-/// sweeps the caches of the older build first (`platform::sweep_own_native_cache`) — once
-/// per process, because nextest starts a process per shard.
-fn sweep_older_build(rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) {
-    static SWEPT: OnceLock<()> = OnceLock::new();
-    SWEPT.get_or_init(|| {
-        let Some((rlib, _)) = rlib_info else { return };
-        let stamp = format!(
-            "{:016x}",
-            fnv64(rlib.to_string_lossy().as_bytes()) ^ rlib_content_hash(rlib)
-        );
-        let freed = loft::platform::sweep_own_native_cache(&native_scratch(), &stamp);
-        if freed > 0 {
-            println!(
-                "  swept {} MB of native caches built against an older loft",
-                freed >> 20
-            );
-        }
-    });
-}
-
-/// Programs this process skipped because the temp filesystem stayed short after every
-/// reclaim — reported apart from compile failures, which they are not (loft#1859).
-static LOW_SPACE_SKIPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Evict this checkout's least-recently-used cached binaries until `want` bytes are free;
-/// true when they are.  Says what it freed, once per call that freed anything.
-fn evict_for_room(scratch: &Path, want: u64) -> bool {
-    let freed = loft::platform::evict_own_native_cache(scratch, want);
-    if freed > 0 {
-        println!(
-            "  evicted {} MB of least-recently-used native caches for room",
-            freed >> 20
-        );
-    }
-    loft::platform::fs_avail_bytes(scratch).is_none_or(|a| a >= want)
-}
-
-/// Each in-flight compile peaks at ~1.2 GB of temp (rustc intermediates dominate).
-const PER_WORKER_TMP: u64 = 1280 * 1024 * 1024;
-
-/// Whether a binary that just ran may stay as a cache for the next run: only while the temp
-/// filesystem still holds room for a whole chunk of `workers` compiles above the floor.
-/// On a roomy disk this is always true; on a tight tmpfs (a 16 GB `/tmp` holds about 1 100 of
-/// the corpus's ~1 800 binaries) the run frees each binary once it has run, so the corpus
-/// finishes instead of filling the filesystem and skipping the rest (loft#1859).
-fn keep_after_run(scratch: &Path, workers: usize) -> bool {
-    let need = loft::platform::tmpfs_min_free_bytes() + PER_WORKER_TMP * workers as u64;
-    loft::platform::fs_avail_bytes(scratch).is_none_or(|a| a >= need)
-}
-
-/// Paths for one native compilation job.
-struct NativeJob {
-    stem: String,
-    /// The `.loft` program, whose run lock `run_native_job` holds (loft#1724).
-    source: PathBuf,
-    tmp_rs: PathBuf,
-    binary: PathBuf,
-    /// Sidecar file that stores the cache key written at compile time.
-    /// Path: `{binary}.key`.  Content: hex-encoded 64-bit FNV-1a hash of the
-    /// `.rs` source bytes concatenated with the rlib identity bytes.
-    key_file: PathBuf,
-    /// The program's `// @STORE_LIMIT:` — handed to the binary as `LOFT_STORE_LIMIT`.
-    store_limit: Option<u16>,
-    /// The program's `// @ARMED:` switches, set on its run ([`armed_switches`]).
-    armed: Vec<(String, String)>,
-}
+/// Empty: an entry names a file the C backend cannot carry, the open issue that explains it,
+/// and the condition that removes it.
+const SCRIPTS_NATIVE_SKIP: &[&str] = &[];
 
 /// Every `LOFT_X=v` on a `// @ARMED:` line: the run-time instruments a guard's defect is only
 /// visible under.  A stale address reads the old bytes until the allocator reuses the freed
 /// block, so a plain run of a use-after-free guard passes on the broken build too, while
 /// `LOFT_POISON=1` overwrites that block.  The language suite's runner reads the same line.
-/// Set on the RUN only: a switch the generator reads at compile time is not armed here, and
-/// the interpreter corpus runs in one process, where a per-program switch cannot be set.
 fn armed_switches(src: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in src.lines() {
@@ -256,742 +84,194 @@ fn armed_switches_reads_the_header_line_only() {
     );
 }
 
-/// FNV-1a 64-bit hash — deterministic, no external deps.
-fn fnv64(data: &[u8]) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325_u64;
-    for &b in data {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-/// Build the cache key from the current `.rs` content and rlib identity.
-///
-/// The key captures both what was compiled (`.rs` bytes) and what it was
-/// linked against (rlib path + CONTENT hash).  If either changes the key
-/// changes and the binary is recompiled.
-///
-/// BUILD2: keyed on rlib bytes, not mtime.  `actions/cache` persists `target/`
-/// but every CI run reruns `cargo build --release --lib`, which rewrites
-/// `libloft.rlib` with a fresh mtime even on a no-op rebuild — an mtime fold
-/// then misses and recompiles every native fixture.  rustc's rlib output is
-/// byte-deterministic for unchanged sources, so a content hash is stable across
-/// the no-op rebuild (warm-cache hit) while still invalidating when the binary
-/// actually changes (different bytes → different hash).  The rlib is read once
-/// per process via `rlib_content_hash`, not once per fixture.
-fn cache_key(rs_content: &[u8], rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> u64 {
-    let mut key = fnv64(rs_content);
-    if let Some((rlib, _)) = rlib_info {
-        key ^= fnv64(rlib.to_string_lossy().as_bytes());
-        key ^= rlib_content_hash(rlib);
-    }
-    key
-}
-
-/// FNV-1a hash of a file's bytes, memoised per path (the rlib is ~14MB and the
-/// same within a run).  Missing file → 0, matching the old no-op-on-missing.
-fn rlib_content_hash(path: &Path) -> u64 {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
-    let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = map.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(&h) = guard.get(path) {
-        return h;
-    }
-    let h = fa::read(path).map(|b| fnv64(&b)).unwrap_or(0);
-    guard.insert(path.to_path_buf(), h);
-    h
-}
-
-/// Phase 1 — parse the `.loft` file and generate its Rust source.
-///
-/// The generated `.rs` is written only when its content changes, so that the binary
-/// modification-time cache in Phase 2 is not unnecessarily invalidated.
-///
-/// Fails the test if the loft parse or scope-check step produces diagnostics.
-fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
-    let stem = fa::file_stem(entry).unwrap_or_default().replace('-', "_");
-    println!("native {entry:?}");
-
-    let mut p = Parser::new();
-    let (data, db) = cached_default();
-    p.data = data;
-    p.database = db;
-    // Honour `// @ARGS: --lib <dir>` lines at the top of the test file
-    // so scripts using `use foo::*` can locate fixtures alongside
-    // wrap.rs's loft_suite (e.g. tests/lib/importlib.loft for
-    // 88-imports.loft).  Only `--lib <dir>` is recognised; other
-    // CLI-side flags are ignored at this layer.
-    let mut store_limit = None;
-    let mut armed = Vec::new();
-    if let Ok(src) = fa::read_to_string(entry) {
-        p.data.limits = loft::limits::Limits::from_annotations(&src);
-        store_limit = loft::limits::Limits::store_limit_annotation(&src);
-        armed = armed_switches(&src);
-        for line in src.lines().take(20) {
-            if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
-                let mut tokens = args.split_whitespace();
-                while let Some(tok) = tokens.next() {
-                    if tok == "--lib"
-                        && let Some(dir) = tokens.next()
-                    {
-                        p.lib_dirs.push(dir.to_string());
-                    }
-                }
-            }
-        }
-    }
-    let start_def = p.data.definitions();
-    p.parse(&entry.to_string_lossy(), false);
-    // Two sources may each declare a function of the same name, and emitted Rust is one
-    // flat namespace.  `namespace_colliding_native_fns` is what settles that — the lowest
-    // source keeps the bare name, the rest become `n_s<N>_<name>` — and its own contract is
-    // that it runs after the two-pass parse and BEFORE a native emit.  Every `--native`
-    // path in `main.rs` calls it; this harness did not, so it emitted from a `Data` the
-    // compiler would never hand the generator: a module's own `main` stayed `n_main` beside
-    // the entry's, `duplicate_fn_names` saw a duplicate that no real build has, and the
-    // entry was emitted under a disambiguated ident while the template called the bare
-    // name (loft#1351).
-    p.data.namespace_colliding_native_fns();
-    for l in p.diagnostics.lines() {
-        println!("{l}");
-    }
-    if p.diagnostics.level() >= loft::diagnostics::Level::Error {
-        return Err(Error::from(std::io::ErrorKind::InvalidData));
-    }
-    scopes::check(&mut p.data, &mut p.database);
-    // Two sources may each declare a function of the same name, and emitted Rust is one
-    // flat namespace.  `namespace_colliding_native_fns` is what settles that — the lowest
-    // source keeps the bare name, the rest become `n_s<N>_<name>` — and its own contract is
-    // that it runs after the two-pass parse and BEFORE a native emit.  Every `--native`
-    // path in `main.rs` calls it; this harness did not, so it emitted from a `Data` the
-    // compiler would never hand the generator: a module's own `main` stayed `n_main` beside
-    // the entry's, `duplicate_fn_names` saw a duplicate that no real build has, and the
-    // entry was emitted under a disambiguated ident while the template called the bare
-    // name (loft#1351).
-    p.data.namespace_colliding_native_fns();
-    let mut state = State::new(p.database);
-    byte_code(&mut state, &mut p.data);
-    let end_def = p.data.definitions();
-    // The ENTRY FILE's `main`, not any `main` in the table.  `def_nr` is a global lookup
-    // and `use` parses a module's definitions into the same table, so a library that
-    // happens to declare `fn main()` could win it — and the generated Rust then called an
-    // `n_main` that was never emitted (`cannot find function n_main in this scope`,
-    // loft#1351).  `MAIN_SOURCE` is the entry; `2..` are the modules it imported.
-    let main_nr = (start_def..end_def)
-        .find(|d| {
-            let def = p.data.def(*d);
-            def.name == "n_main" && def.source() == loft::data::MAIN_SOURCE
-        })
-        .unwrap_or(end_def);
-    let has_main = main_nr < end_def;
-
-    // Collect zero-parameter user functions as test entry points.
-    let mut test_fns: Vec<(u32, String)> = Vec::new();
-    for d_nr in start_def..end_def {
-        let def = p.data.def(d_nr);
-        // Same narrowing, same reason: an imported module's zero-parameter void function
-        // is not this file's test.  `is_corpus_entry_point` excludes the STDLIB by path
-        // but says nothing about a `use`d library.
-        if def.source() != loft::data::MAIN_SOURCE {
-            continue;
-        }
-        // `Definition::is_corpus_entry_point` is the ONE answer, shared with
-        // `tests/wrap.rs`.  This side used to ask a WIDER question — no return filter — so
-        // every zero-parameter value-returning function in a main-less corpus file ran here
-        // and nowhere else: 165 of them across 66 files, each discarding the store it
-        // answers.  A differential whose two halves run different code cannot report a
-        // divergence, which is the whole reason the corpus is run twice (loft#1293).
-        if !def.is_corpus_entry_point() {
-            continue;
-        }
-        test_fns.push((d_nr, def.name.clone()));
-    }
-
-    let entry_defs: Vec<u32> = if has_main {
-        vec![main_nr]
-    } else {
-        test_fns.iter().map(|(d, _)| *d).collect()
+/// The environment a corpus program's annotations ask for, set on the `loft` run that
+/// compiles it and so inherited by the binary it builds: `// @LIMIT:` and `// @FRAME_LIMIT:`
+/// (the lowered compile limits, `LOFT_LIMIT` / `LOFT_FRAME_LIMIT`), `// @STORE_LIMIT:` (the
+/// run's store ceiling, `LOFT_STORE_LIMIT`) and the `// @ARMED:` switches.
+fn program_env(src: &str) -> Vec<(String, String)> {
+    let header = |key: &str| {
+        src.lines()
+            .take(20)
+            .find_map(|l| l.trim().strip_prefix(key))
+            .and_then(|v| v.trim().parse::<u32>().ok())
     };
-
-    // Generate Rust source into an in-memory buffer first.
-    let mut buf: Vec<u8> = Vec::new();
-    {
-        let mut out = Output::new(&p.data, &state.database);
-        out.output_native_reachable(&mut buf, start_def, end_def, &entry_defs)?;
-    }
-
-    // A file the GENERATOR itself refused cannot be a native job.  `compile_error!` is
-    // what loft emits for a shape `--native` cannot express — a `#native` fn with no
-    // registered implementation, a refused coroutine yield type — and the macro fails the
-    // build wherever it is expanded, so reachable-but-never-called is not a rescue.
-    //
-    // This is the honest form of the drop that `@EXPECT_FAIL` used to stand in for.  The
-    // annotation says a function is expected to FAIL; it never said the file could not be
-    // COMPILED, and reading it as if it did is what cost every sibling its coverage
-    // (loft#1311).  Keyed on the refusal itself, this also covers a file that carries no
-    // annotation at all.
-    if String::from_utf8_lossy(&buf).contains("compile_error!") {
-        return Err(Error::other(
-            "native codegen refused this file (compile_error! in the generated Rust)",
-        ));
-    }
-
-    // For test-style files without fn main(), generate a main() that calls
-    // each test function so the native binary is a valid executable.
-    // Skip functions marked with @EXPECT_FAIL in the source.
-    if !has_main && !test_fns.is_empty() {
-        use std::io::Write;
-        let src = fa::read_to_string(entry).unwrap_or_default();
-        // The SAME parser the interpreter runner reads the annotation with, so the two
-        // cannot disagree about which functions a file excuses.  A second parser here
-        // keyed on words-on-the-line could not see the documented
-        // `// @EXPECT_FAIL: <reason>` form — the token carries the colon — and came back
-        // empty for every file that used it (loft#1311).
-        let (expect_fail_fns, _file_level) = common::expect_fail_fns(&src);
-        // P199 — wrap Stores in UnsafeCell for the new ABI; the work
-        // buffers (`stores.null_named(...)`) need a temporary `&mut Stores`
-        // derived from the cell.
-        writeln!(buf, "\nfn main() {{")?;
-        writeln!(
-            buf,
-            "    let cell = std::cell::UnsafeCell::new(Stores::new());"
-        )?;
-        writeln!(
-            buf,
-            "    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
-        )?;
-        writeln!(buf, "    init(&cell);")?;
-        for (d_nr, name) in &test_fns {
-            let user_name = name.strip_prefix("n_").unwrap_or(name);
-            // Exact: the parser yields the name off the `fn` line, so a substring test
-            // would also skip a sibling whose name merely contains the excused one.
-            if expect_fail_fns.contains(user_name) {
-                writeln!(buf, "    // skipped (EXPECT_FAIL): {name}")?;
-            } else {
-                // Generate work-buffer locals for hidden __work_* / __ref_* parameters
-                // that text_return adds to text-returning functions.
-                let def = p.data.def(*d_nr);
-                let mut work_args = Vec::new();
-                for (i, attr) in def.attributes.iter().enumerate() {
-                    if attr.name.starts_with("__work_") {
-                        let wname = format!("_w_{user_name}_{i}");
-                        writeln!(buf, "    let mut {wname} = String::new();")?;
-                        work_args.push(format!("&mut {wname}"));
-                    } else if attr.name.starts_with("__ref_") {
-                        let wname = format!("_r_{user_name}_{i}");
-                        writeln!(buf, "    let mut {wname} = stores.null_named(\"{wname}\");")?;
-                        work_args.push(wname.to_string());
-                    }
-                }
-                if work_args.is_empty() {
-                    writeln!(buf, "    {name}(&cell);")?;
-                } else {
-                    writeln!(buf, "    {name}(&cell, {});", work_args.join(", "))?;
-                }
-            }
+    let mut env = Vec::new();
+    for (key, var) in [
+        ("// @LIMIT:", "LOFT_LIMIT"),
+        ("// @FRAME_LIMIT:", "LOFT_FRAME_LIMIT"),
+    ] {
+        if let Some(n) = header(key) {
+            env.push((var.to_owned(), n.to_string()));
         }
-        writeln!(buf, "}}")?;
     }
-
-    // Only write the .rs file when the content has changed.  This keeps the file's
-    // content stable across runs where the loft source hasn't changed, which
-    // means cache_key() produces the same hash and compile_native_job stays cached.
-    // scratch_dir honours LOFT_TMPDIR so the whole native run can be kept off a
-    // small /tmp tmpfs; all of these must agree on the same directory.
-    let scratch = native_scratch();
-    let tmp_rs = scratch.join(format!("loft_native_{stem}.rs"));
-    let existing = fa::read(&tmp_rs).unwrap_or_default();
-    if existing != buf {
-        // Atomic publish: write to a per-process temp then rename into place,
-        // so a concurrent process (nextest runs each test in its own process)
-        // compiling the same stem never reads a half-written source.  See the
-        // shared-output collision note in `compile_native_job`.
-        let tmp = scratch.join(format!("loft_native_{stem}_{}.rs.tmp", std::process::id()));
-        fa::write(&tmp, &buf)?;
-        fa::rename(&tmp, &tmp_rs)?;
-    } else {
-        // Reused unchanged, so its timestamp says when it was last WRITTEN — possibly hours
-        // ago.  `run_native_jobs` sweeps entries older than two minutes when the loft build
-        // changed, and it sweeps AFTER this point, so an untouched source was deleted under
-        // its own job: the first shard after an rlib change failed every script with
-        // "couldn't read …rs".  The timestamp tracks last USE, as it does for the binary.
-        loft::cache::touch_now(&tmp_rs);
+    if let Some(n) = loft::limits::Limits::store_limit_annotation(src) {
+        env.push(("LOFT_STORE_LIMIT".to_owned(), n.to_string()));
     }
-
-    let binary = scratch.join(format!("loft_native_{stem}_bin"));
-    let key_file = scratch.join(format!("loft_native_{stem}_bin.key"));
-    Ok(NativeJob {
-        stem,
-        source: entry.to_path_buf(),
-        tmp_rs,
-        binary,
-        key_file,
-        store_limit,
-        armed,
-    })
+    env.extend(armed_switches(src));
+    env
 }
 
-/// Return true if the cached binary is still valid for the current `.rs` content
-/// and rlib.  Uses a content-hash sidecar (`{binary}.key`) written at compile
-/// time — immune to clock skew and cross-machine binary copies.
-fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> bool {
-    // Binary must exist.
-    if !fa::exists(&job.binary) {
-        return false;
-    }
-    // Read the stored key from the sidecar.
-    let stored = match fa::read_to_string(&job.key_file) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => return false,
-    };
-    // Recompute the key from the current .rs content and rlib.
-    let rs_content = match fa::read(&job.tmp_rs) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let current_key = cache_key(&rs_content, rlib_info);
-    stored == format!("{current_key:016x}")
+/// How a corpus file runs on the C backend.
+#[derive(Clone, Copy)]
+enum CRun {
+    /// `loft --tests <file> --native`: the file's test functions, its `@ARGS` and its
+    /// `@EXPECT_*` annotations read by the test runner.
+    Tests,
+    /// `loft --native <file>`: the file as a program, the way a user runs it.
+    Program,
 }
 
-/// Phase 2 — compile the generated `.rs` file to a native binary with `rustc`.
-///
-/// Skips compilation when `binary_cache_valid` is true (binary is already up to date).
-/// The binary is kept on disk after use so that subsequent runs can hit the cache.
-///
-/// Returns `Ok(true)` when a valid binary is available, `Ok(false)` when `rustc` is
-/// not in PATH (caller should skip the run phase), and `Err` on a real compile failure.
-fn compile_native_job(
-    job: &NativeJob,
-    rlib_info: &Option<(PathBuf, Vec<PathBuf>)>,
-) -> std::io::Result<bool> {
-    if binary_cache_valid(job, rlib_info) {
-        println!("  cached  {}", job.stem);
-        // BUILD2: bump the binary's mtime on a cache HIT so its timestamp
-        // tracks last-USE, not last-compile.  A long-lived cache entry is
-        // hit (not recompiled) run after run, so without this its mtime
-        // would freeze at first-compile time and an age-based reaper would
-        // delete exactly the entries the cache most wants to keep warm.
-        // `touch_now` opens for WRITE: a read-only handle's `set_modified` is refused on
-        // Windows, and the error was discarded, so the bump silently did nothing there.
-        loft::cache::touch_now(&job.binary);
-        loft::cache::touch_now(&job.key_file);
-        return Ok(true);
-    }
-    // Preflight (Layer 2): never start a compile that could overflow a
-    // RAM-backed tmpfs and exhaust memory.  Reclaims loft's own stale
-    // artefacts first, then this checkout's least-recently-used cached
-    // binaries (a cache is worth less than the compile it would block);
-    // skips the program if space is still low.
-    let scratch = native_scratch();
-    if !loft::platform::native_compile_space_ok(&scratch)
-        && !evict_for_room(&scratch, loft::platform::tmpfs_min_free_bytes())
-    {
-        LOW_SPACE_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        println!(
-            "  SKIP {} — low temp space in {} (set LOFT_TMPFS_MIN_FREE_MB to tune)",
-            job.stem,
-            scratch.display()
-        );
-        return Ok(false);
-    }
-    // nextest runs each test in its own process, so the native tests that share
-    // a stem — `native_tuple_script`, `native_tuple_return_script`, and
-    // `native_scripts` all compile `50-tuples.loft` — would otherwise have
-    // their rustc/lld processes write the SAME `loft_native_<stem>_bin` output
-    // concurrently, truncating each other's binary mid-link (observed as a
-    // SIGBUS in `rust-lld` / `linking with cc failed`).  The in-process
-    // `native_suite_lock()` only serialises them WITHIN one process.  Compile
-    // to a per-process temp and publish atomically (rename) below, so concurrent
-    // processes never share a mutable output file — keeping full parallelism
-    // without a nextest serial group.
-    let pid = std::process::id();
-    let binary_tmp = scratch.join(format!("loft_native_{}_{pid}_bin", job.stem));
-    // PLAN49 follow-up — build the rustc args into a file passed via
-    // `rustc @argfile` instead of as a long command line.  Windows
-    // `CreateProcessW` enforces a 32 KB command-line limit; on CI runners
-    // the rustc `--extern <crate>=<rlib-path>` list + `-L` search paths
-    // from `find_native_lib_dirs` (windows-targets build-script outputs)
-    // routinely approaches that limit, and a runner-image bump on
-    // 2026-05-29 pushed it over, killing every native test with
-    // `Os { code: 206, kind: InvalidFilename }`.  The argfile pattern
-    // is cross-platform (Linux + macOS happily accept it too) and
-    // immune to cmdline length.
-    let mut args: Vec<String> = vec![
-        "--edition=2024".to_string(),
-        "-C".to_string(),
-        "debuginfo=0".to_string(),
-        "-C".to_string(),
-        "opt-level=0".to_string(),
-    ];
-    // Layer 1: strip the linked binary's debug info from libloft.rlib + std, useless to a
-    // run-and-check test.  A stripped binary is still 12–14 MB — loft's runtime at
-    // opt-level 0 — so a full corpus needs about 22 GB of scratch.  Opt out with
-    // LOFT_NATIVE_KEEP_SYMBOLS=1 when debugging a native crash (the generated
-    // .rs is always kept for recompilation).
-    if loft::platform::native_strip_symbols() {
-        args.push("-C".to_string());
-        args.push("strip=symbols".to_string());
-    }
-    // LOFT_CRANELIFT=1 — use the Cranelift codegen backend for much faster compilation.
-    // Requires a nightly toolchain with `rustup component add rustc-codegen-cranelift-preview`.
-    if std::env::var_os("LOFT_CRANELIFT").is_some() {
-        args.push("-Z".to_string());
-        args.push("codegen-backend=cranelift".to_string());
-    }
-    args.push("-o".to_string());
-    args.push(binary_tmp.display().to_string());
-    args.push(job.tmp_rs.display().to_string());
-    if let Some((rlib, deps_dir)) = rlib_info {
-        args.push("--extern".to_string());
-        args.push(format!("loft={}", rlib.display()));
-        for d in deps_dir {
-            args.push("-L".to_string());
-            args.push(d.display().to_string());
-        }
-        // S31: pass --extern for optional feature deps (rand_core, rand_pcg, etc.) so that
-        // generated code using `random` or `png` features compiles without E0433 errors.
-        for (crate_name, rlib_path) in collect_extra_externs(deps_dir) {
-            args.push("--extern".to_string());
-            args.push(format!("{crate_name}={}", rlib_path.display()));
-        }
-    }
-    // On Windows MSVC, build-script output dirs holding native import libs (e.g.
-    // `windows.0.48.5.lib` from `windows-sys`) must be passed explicitly to standalone
-    // rustc — cargo adds them automatically via `cargo:rustc-link-search`, but we don't.
-    for dir in find_native_lib_dirs(rlib_info) {
-        args.push("-L".to_string());
-        args.push(dir.display().to_string());
-    }
-    // Write one arg per line.  rustc's argfile parser is whitespace-
-    // separated; newline-separated is a strict subset and is what
-    // every other tool (clang, gcc) accepts too.  Paths containing
-    // whitespace get quoted defensively.
-    let argfile_path = scratch.join(format!("loft_native_{}_{pid}_args.txt", job.stem));
-    let argfile_contents = args
-        .iter()
-        .map(|s| {
-            if s.contains(char::is_whitespace) {
-                format!("\"{}\"", s.replace('"', "\\\""))
-            } else {
-                s.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    fa::write(&argfile_path, argfile_contents)?;
-    let compile_out = match loft::platform::process::harness_command("rustc")
-        .arg(format!("@{}", argfile_path.display()))
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("  rustc not found — skipping native test for {}", job.stem);
-            let _ = fa::remove_file(&argfile_path);
-            return Ok(false);
-        }
-        Err(e) => {
-            let _ = fa::remove_file(&argfile_path);
-            return Err(e);
-        }
-    };
-    let _ = fa::remove_file(&argfile_path);
-    if !compile_out.status.success() {
-        let stderr = String::from_utf8_lossy(&compile_out.stderr);
-        eprintln!("rustc failed for {}:\n{stderr}", job.stem);
-        let _ = fa::remove_file(&binary_tmp);
-        let _ = fa::remove_file(&job.binary);
-        let _ = fa::remove_file(&job.key_file);
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-    // Publish the freshly-linked binary atomically: rename the per-process temp
-    // over the shared cache path.  rename(2) swaps the directory entry, so a
-    // concurrent process executing or linking the old binary keeps its inode
-    // (no in-place truncation → no SIGBUS) and the cache path is always a
-    // complete binary.
-    fa::rename(&binary_tmp, &job.binary)?;
-    // Write the cache key so future runs can skip recompilation when nothing
-    // changed — also via temp + rename so a concurrent `binary_cache_valid`
-    // reader never sees a half-written key.
-    let rs_content = fa::read(&job.tmp_rs).unwrap_or_default();
-    let key = cache_key(&rs_content, rlib_info);
-    let key_tmp = scratch.join(format!("loft_native_{}_{pid}_bin.key.tmp", job.stem));
-    if fa::write(&key_tmp, format!("{key:016x}")).is_ok() {
-        let _ = fa::rename(&key_tmp, &job.key_file);
-    }
-    Ok(true)
+/// A `// @SCRIPT` file has top-level statements and no test functions: it runs as a program.
+fn script_shaped(src: &str) -> bool {
+    src.lines().any(|l| l.starts_with("// @SCRIPT"))
 }
 
-/// Phase 3 — run a compiled native binary and check its exit status.
+/// Build and run `entry` on the C backend; `Err` carries the run's stdout and stderr.
 ///
-/// The binary is kept on disk after running so it can be reused as a compilation
-/// cache on the next invocation (see `binary_cache_valid`).
-fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let _run_lock = common::source_run_lock(&job.source);
-    // Under `LOFT_NATIVE_LEAK_CHECK` the binary reports the stores it left behind at exit
-    // (`NATIVE_LEAK_CHECK_TAIL`), but only as a warning on stderr, with exit 0.  The run's
-    // output is read here so that report fails the program, the way the interpreter corpus
-    // fails a script with a store left at exit — a leak check that warns and passes is no
-    // gate.  Without the switch the output goes straight through, as it always has.
-    let leak_check = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some();
-    let mut cmd = loft::platform::process::harness_command(&job.binary);
-    cmd.current_dir(&cwd);
-    if let Some(n) = job.store_limit {
-        cmd.env("LOFT_STORE_LIMIT", n.to_string());
-    }
-    for (k, v) in &job.armed {
+/// Under `LOFT_NATIVE_LEAK_CHECK` a store left at exit fails the program, as it fails a
+/// script on the interpreter: the binary reports it on stderr with exit 0.
+fn run_on_c(entry: &Path, how: CRun) -> Result<(), String> {
+    let src = fa::read_to_string(entry).map_err(|e| format!("{}: {e}", entry.display()))?;
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    match how {
+        CRun::Tests => cmd.arg("--tests").arg(entry).arg("--native"),
+        CRun::Program => cmd.arg("--native").arg(entry),
+    };
+    cmd.env("LOFT_TIMEOUT", "300");
+    for (k, v) in program_env(&src) {
         cmd.env(k, v);
     }
-    let (run_status, leaked) = if leak_check {
-        let out = cmd.output()?;
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        print!("{}", String::from_utf8_lossy(&out.stdout));
-        eprint!("{stderr}");
-        let leaked = stderr
-            .lines()
-            .find(|l| l.contains("stores not freed at program exit"))
-            .map(str::to_string);
-        (out.status, leaked)
-    } else {
-        (cmd.status()?, None)
-    };
-    if !run_status.success() {
-        eprintln!(
-            "native binary failed for {} (exit {:?})",
-            job.stem,
-            run_status.code()
-        );
-        return Err(Error::from(std::io::ErrorKind::Other));
+    let _run_lock = common::source_run_lock(entry);
+    let out = cmd
+        .output()
+        .map_err(|e| format!("{}: could not start loft: {e}", entry.display()))?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let leaked = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some()
+        && stderr.contains("stores not freed at program exit");
+    if out.status.success() && !leaked {
+        return Ok(());
     }
-    if let Some(line) = leaked {
-        eprintln!("native binary for {} leaked at exit: {line}", job.stem);
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-    Ok(())
+    Err(format!(
+        "{} ({}{}):\n{}{stderr}",
+        entry.display(),
+        out.status,
+        if leaked { ", stores left at exit" } else { "" },
+        String::from_utf8_lossy(&out.stdout),
+    ))
 }
 
-/// Compile and run in parallel, one chunk of `concurrency` programs at a time: a chunk's
-/// binaries run before the next chunk compiles, so a run never holds more fresh binaries than
-/// the cache has room for.  Compiling EVERY program first put the whole corpus (~1 800
-/// binaries, ~22 GB) on the temp filesystem at once; a 16 GB tmpfs filled about 1 100 in and
-/// the rest were skipped as `compile failed` (loft#1859).
-/// How many of `jobs` native compiles [`run_native_jobs`] runs at once.
-fn native_lanes(jobs: usize) -> usize {
-    // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
-    // just min(share, jobs); on a tight RAM-backed tmpfs it clamps down so N
-    // concurrent compiles can't exhaust memory and hang the machine.  The share is
-    // what nextest was told (`common::lanes`), never the bare core count: 24 lanes
-    // per chunk beside a 24-slot pool was the storm that hung the box (@PLN193 P0).
-    let cpu_max = common::lanes::lanes(usize::MAX);
-    loft::platform::native_worker_count(cpu_max, jobs, &native_scratch(), PER_WORKER_TMP)
+/// How many C builds a corpus test runs at once: the cores, at most 8, and under nextest the
+/// share `.config/nextest.toml` declares for it (`common::lanes`).
+fn c_lanes(jobs: usize) -> usize {
+    common::lanes::lanes(8).min(jobs.max(1))
 }
 
-fn run_native_jobs(
-    jobs: Vec<NativeJob>,
-    rlib_info: Option<(PathBuf, Vec<PathBuf>)>,
-) -> std::io::Result<()> {
-    let scratch = native_scratch();
-    let concurrency = native_lanes(jobs.len());
-    let rlib_ref = &rlib_info;
-    sweep_older_build(rlib_ref);
-    let skips_before = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed);
-
-    let mut compile_fail = 0usize;
-    let mut compile_ok = 0usize;
-    let mut freed_after_run = 0u64;
-    let mut run_errors: Vec<String> = Vec::new();
-    for chunk in jobs.chunks(concurrency) {
-        let compiled: Vec<bool> = std::thread::scope(|s| {
-            chunk
-                .iter()
-                .map(|job| s.spawn(|| compile_native_job(job, rlib_ref)))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|h| matches!(h.join(), Ok(Ok(true))))
-                .collect()
-        });
-        let ready: Vec<&NativeJob> = chunk
-            .iter()
-            .zip(&compiled)
-            .filter(|(_, ok)| **ok)
-            .map(|(job, _)| job)
-            .collect();
-        compile_fail += chunk.len() - ready.len();
-        compile_ok += ready.len();
-        // The run pool is bounded by the same worker count: one thread per ready job at once
-        // (~1300) is what a macOS runner did not absorb — the LAST scripts alphabetically
-        // failed to run, varying with load.  A run peaks far below a rustc invocation, so
-        // this is a ceiling rather than a throttle.
-        let chunk_errors: Vec<String> = std::thread::scope(|s| {
-            ready
-                .iter()
-                .map(|job| s.spawn(|| run_native_job(job)))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .zip(ready.iter())
-                .filter_map(|(h, job)| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(Error::from(std::io::ErrorKind::Other)))
-                        .err()
-                        .map(|_| job.stem.clone())
-                })
-                .collect()
-        });
-        run_errors.extend(chunk_errors);
-        // Free the temp filesystem DURING the run: a binary that has run stays as next run's
-        // cache only while a whole chunk's compiles still fit.  The generated `.rs` stays.
-        if !keep_after_run(&scratch, concurrency) {
-            for job in &ready {
-                if let Ok(meta) = fa::metadata(&job.binary)
-                    && fa::remove_file(&job.binary).is_ok()
-                {
-                    freed_after_run += meta.len();
-                    let _ = fa::remove_file(&job.key_file);
+/// Run every `(file, how)` on the C backend across [`c_lanes`] threads, then fail with every
+/// failure — one file's failure does not hide another's.
+fn run_all_on_c(jobs: &[(PathBuf, CRun)]) -> std::io::Result<()> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let failures: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..c_lanes(jobs.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((entry, how)) = jobs.get(i) else {
+                        break;
+                    };
+                    let began = std::time::Instant::now();
+                    let verdict = run_on_c(entry, *how);
+                    println!(
+                        "  {:6.1}s  {} {}",
+                        began.elapsed().as_secs_f64(),
+                        if verdict.is_ok() { "ok  " } else { "FAIL" },
+                        entry.display()
+                    );
+                    if let Err(e) = verdict {
+                        failures
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .push((i, e));
+                    }
                 }
-            }
+            });
         }
-    }
-    let low_space = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed) - skips_before;
-    let compile_fail = compile_fail - low_space;
-    let run_ok = compile_ok - run_errors.len();
+    });
+    let mut failures = failures.into_inner().unwrap_or_else(|p| p.into_inner());
+    failures.sort_by_key(|(i, _)| *i);
     println!(
-        "\nnative result: {run_ok} passed, {compile_fail} compile failed, {} run failed, \
-         {low_space} skipped for temp space; {} total",
-        run_errors.len(),
+        "\nC result: {} passed, {} failed; {} total",
+        jobs.len() - failures.len(),
+        failures.len(),
         jobs.len()
     );
-    if freed_after_run > 0 {
-        println!(
-            "  temp space is short in {}: freed {} MB of binaries once they had run (not cached)",
-            scratch.display(),
-            freed_after_run >> 20
-        );
+    if failures.is_empty() {
+        return Ok(());
     }
-    if !run_errors.is_empty() {
-        println!("  run failures: {}", run_errors.join(", "));
+    for (_, e) in &failures {
+        println!("\n{e}");
     }
-    // Fail if any program failed to compile or run, or was never built: a skipped program
-    // was not verified, so a corpus with skips is not green.
-    if compile_fail > 0 || low_space > 0 || !run_errors.is_empty() {
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-    Ok(())
+    Err(Error::other(format!(
+        "{} of {} programs failed on the C backend: {}",
+        failures.len(),
+        jobs.len(),
+        failures
+            .iter()
+            .map(|(i, _)| jobs[*i].0.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
 }
 
-/// Build and run one example through the real `loft --native` binary, the way a
-/// user does, and require exit 0.
-///
-/// This file's own emit path builds a **self-contained crate**: it generates the
-/// `.rs` itself and hands rustc loft's own rlib and nothing else. An example that
-/// imports a library therefore does not link — `use random` leaves
-/// `can't find crate for loft_random` (E0463) — because the flags that would
-/// resolve it are missing: the package's `-L native=<build cache>`,
-/// `-l dylib=loft_<pkg>` and the two rpaths, plus the C-ABI codegen switch
-/// `Output::native_cabi` that decides which call form is emitted for a library
-/// call in the first place.
-///
-/// Those flags are not a constant. They are derived per package by
-/// `src/native_utils.rs`, which is `pub(crate)` — an integration test cannot call
-/// it, and re-deriving them here would be a SECOND copy of package resolution,
-/// free to drift from the one the `loft` binary actually uses. Delegating keeps
-/// one home for that logic and tests the command a user types.
-///
-/// The trade is real and is why this is not the default path: no shared binary
-/// cache, no cross-file rustc parallelism, and a cdylib rebuild when the
-/// library's artefact is stale. It is worth it only for the files the emit path
-/// cannot build at all.
-///
-/// Returns `Ok(false)` when `rustc` is absent, matching `compile_native_job` — and the CALLER
-/// must treat that as a failure, as `run_native_jobs` does, or the value matches while the
-/// consequence does not.
-fn run_via_loft_binary(entry: &Path) -> std::io::Result<bool> {
-    if loft::platform::process::harness_command("rustc")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        println!(
-            "  rustc not found — skipping native test for {}",
-            entry.display()
-        );
-        return Ok(false);
-    }
-    // Bounded, because `--native` shells out to rustc and cargo, either of which
-    // can hang; the rest of this file inherits the suite watchdog instead.
-    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--native")
-        .arg(entry)
-        .env("LOFT_TIMEOUT", "300")
-        .output()?;
-    if !out.status.success() {
-        eprintln!(
-            "`loft --native {}` failed (exit {:?}):\n{}{}",
-            entry.display(),
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
-        );
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-    println!("  delegated  {}", entry.display());
-    Ok(true)
-}
-
-/// Compile and run every `.loft` file in `tests/docs/` through the native Rust
-/// backend (`--native` mode), skipping files listed in `NATIVE_SKIP`.
-///
-/// Runs concurrently with interpreter-based wrap tests (no WRAP_LOCK).
-/// FAILS if `rustc` is not in PATH: a file that could not be built lands in `compile_fail`,
-/// and a suite that reported a pass for tests it never compiled would be worse than a red
-/// one.  A cache HIT is not that case — it runs the binary it already has.
-#[test]
-fn native_dir() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
+/// The sorted `.loft` files of `dir`; `None` when the directory is absent.
+fn loft_files(dir: &str) -> Option<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = fa::read_dir(dir)
+        .ok()?
         .into_iter()
         .map(|e| e.os_spelling())
         .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
-    let rlib_info = find_loft_rlib();
+    Some(files)
+}
+
+/// Build and run every `.loft` file in `tests/docs/` on the C backend, skipping files listed
+/// in `NATIVE_SKIP`.  A file that cannot be built or whose run fails is a failure: a suite
+/// that reported a pass for a program it never ran would be worse than a red one.
+#[test]
+fn native_dir() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     let mut jobs = Vec::new();
-    for entry in files {
+    for entry in loft_files("tests/docs").ok_or_else(|| Error::other("no tests/docs"))? {
         let name = fa::file_name(&entry).unwrap_or_default();
         if NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (native skip list — see NATIVE_SKIP)");
             continue;
         }
-        jobs.push(prepare_native_test(&entry)?);
+        let src = fa::read_to_string(&entry)?;
+        let how = if script_shaped(&src) {
+            CRun::Program
+        } else {
+            CRun::Tests
+        };
+        jobs.push((entry, how));
     }
-    run_native_jobs(jobs, rlib_info)
+    run_all_on_c(&jobs)
 }
 
-/// Compile and run every `.loft` file in `tests/reference/` natively — the reference pages'
-/// samples (@PLN176 phase 2), the `--native` half of `wrap::reference`.  An `@EXPECT_ERROR`
-/// file is skipped as everywhere on this backend (the refusal is the interpreter's to
-/// prove); a `// @SCRIPT` file (top-level statements, no `fn main`) is a shape the test
-/// harness's parser does not model, so it is compiled and run as the binary does it —
-/// `loft --native <file>` — and its exit status is the verdict.
+/// Build and run every `.loft` file in `tests/reference/` on the C backend — the reference
+/// pages' samples, the `--native` half of `wrap::reference`.  An `@EXPECT_ERROR` file is
+/// skipped (the refusal is the interpreter's to prove); a `// @SCRIPT` file runs as a program.
 #[test]
 fn native_reference() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match fa::read_dir("tests/reference") {
-        Ok(rd) => rd
-            .into_iter()
-            .map(|e| e.os_spelling())
-            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-            .collect(),
-        Err(_) => return Ok(()),
+    let Some(files) = loft_files("tests/reference") else {
+        return Ok(());
     };
-    files.sort();
-    let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
         let src = fa::read_to_string(&entry)?;
@@ -999,25 +279,14 @@ fn native_reference() -> std::io::Result<()> {
             println!("skip {entry:?} (expected error — the interpreter proves the refusal)");
             continue;
         }
-        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
-            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-                .arg("--native")
-                .arg(&entry)
-                .env("LOFT_TIMEOUT", "300")
-                .output()?;
-            assert!(
-                out.status.success(),
-                "script-shaped reference sample {} failed on --native:\n{}{}",
-                entry.display(),
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            println!("script {entry:?} ran natively");
-            continue;
-        }
-        jobs.push(prepare_native_test(&entry)?);
+        let how = if script_shaped(&src) {
+            CRun::Program
+        } else {
+            CRun::Tests
+        };
+        jobs.push((entry, how));
     }
-    run_native_jobs(jobs, rlib_info)
+    run_all_on_c(&jobs)
 }
 
 /// Compile and run every code sample of `doc/learn-loft.md` natively — the `--native` half of
@@ -1034,134 +303,73 @@ fn native_learn_loft_samples() {
     assert!(failed.is_empty(), "{}", failed.join("\n\n"));
 }
 
-/// Compile and run every `.loft` file in `tests/comparisons/` natively — the comparison pages'
-/// claims, the `--native` half of `wrap::comparisons`.  Every file there is script-shaped
-/// (`// @SCRIPT`), so each runs as the binary runs it.
+/// Build and run every `.loft` file in `tests/comparisons/` on the C backend — the comparison
+/// pages' claims, the `--native` half of `wrap::comparisons`.  Every file there is
+/// script-shaped (`// @SCRIPT`), so each runs as a program.
 #[test]
 fn native_comparisons() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match fa::read_dir("tests/comparisons") {
-        Ok(rd) => rd
-            .into_iter()
-            .map(|e| e.os_spelling())
-            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-            .collect(),
-        Err(_) => return Ok(()),
+    let Some(files) = loft_files("tests/comparisons") else {
+        return Ok(());
     };
-    files.sort();
-    let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
         let src = fa::read_to_string(&entry)?;
-        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
-            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-                .arg("--native")
-                .arg(&entry)
-                .env("LOFT_TIMEOUT", "300")
-                .output()?;
-            assert!(
-                out.status.success(),
-                "script-shaped comparison program {} failed on --native:\n{}{}",
-                entry.display(),
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            println!("script {entry:?} ran natively");
-            continue;
-        }
-        jobs.push(prepare_native_test(&entry)?);
+        let how = if script_shaped(&src) {
+            CRun::Program
+        } else {
+            CRun::Tests
+        };
+        jobs.push((entry, how));
     }
-    run_native_jobs(jobs, rlib_info)
+    run_all_on_c(&jobs)
 }
 
-/// Compile and run every extracted feature example in `tests/docs/features/`
-/// through the native backend — the native half of @PLN92 strand-3's
-/// "example-must-run" guard (@I81).  These files are generated from
-/// `loft-lang/features` issues by `tools/features/gen.loft`; only complete-program
-/// examples land here (library / syntax fragments are mirrored but not tested).
-/// Silent no-op if the directory is absent; skips silently if `rustc` is absent.
+/// Build and run every extracted feature example in `tests/docs/features/` on the C backend —
+/// the native half of the features catalogue's "example-must-run" guard (@I81).  These files
+/// are generated from `loft-lang/features` issues by `tools/features/gen.loft`; only
+/// complete-program examples land here.  An example that imports a library (a `use` line)
+/// runs as a program, `loft --native <file>`, the way its reader would run it.  A no-op when
+/// the directory is absent.
 #[test]
 fn native_features() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match fa::read_dir("tests/docs/features") {
-        Ok(rd) => rd
-            .into_iter()
-            .map(|e| e.os_spelling())
-            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-            .collect(),
-        Err(_) => Vec::new(),
+    let Some(files) = loft_files("tests/docs/features") else {
+        return Ok(());
     };
-    files.sort();
-    let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
-    let mut delegated: Vec<PathBuf> = Vec::new();
     for entry in files {
-        // An example that imports a library is built by the `loft` binary rather than
-        // by this file's emit path, which cannot link one — see `run_via_loft_binary`.
+        let src = fa::read_to_string(&entry)?;
         // Selected by the `use` RULE, not by filename, so the next library example is
         // covered without an edit here.
-        let imports_library = fa::read_to_string(&entry)
-            .map(|src| src.lines().any(|l| l.trim_start().starts_with("use ")))
-            .unwrap_or(false);
-        if imports_library {
-            delegated.push(entry);
-            continue;
-        }
-        jobs.push(prepare_native_test(&entry)?);
+        let imports_library = src.lines().any(|l| l.trim_start().starts_with("use "));
+        let how = if imports_library || script_shaped(&src) {
+            CRun::Program
+        } else {
+            CRun::Tests
+        };
+        jobs.push((entry, how));
     }
-    // Both halves run before either verdict is returned, so a failure in one does not
-    // hide a failure in the other.
-    let emitted = run_native_jobs(jobs, rlib_info);
-    let mut failed: Vec<String> = Vec::new();
-    for entry in &delegated {
-        // `Ok(false)` — no rustc, so the example was never built — counts as a FAILURE, the
-        // same as it does on the emit half, where it lands in `compile_fail`.  Testing only
-        // `.is_err()` let the two halves read one return value two ways: a missing toolchain
-        // failed the emitted examples and was ignored for the delegated ones, so this half
-        // reported a pass having run nothing.  These are the examples that IMPORT a library,
-        // which is the case least covered elsewhere and the one worth failing loudly for.
-        match run_via_loft_binary(entry) {
-            Ok(true) => {}
-            Ok(false) | Err(_) => failed.push(entry.display().to_string()),
-        }
-    }
-    if !failed.is_empty() {
-        eprintln!("delegated native failures: {}", failed.join(", "));
-        return Err(Error::from(std::io::ErrorKind::Other));
-    }
-    emitted
+    run_all_on_c(&jobs)
 }
 
-/// Compile and run every `.loft` file in `tests/scripts/` through the native Rust
-/// backend (`--native` mode), skipping files listed in `SCRIPTS_NATIVE_SKIP`.
-///
-/// Runs concurrently with interpreter-based wrap tests (no WRAP_LOCK).
-/// FAILS if `rustc` is not in PATH: a file that could not be built lands in `compile_fail`,
-/// and a suite that reported a pass for tests it never compiled would be worse than a red
-/// one.  A cache HIT is not that case — it runs the binary it already has.
+/// Build and run one chunk of the `.loft` files in `tests/scripts/` on the C backend,
+/// skipping files listed in `SCRIPTS_NATIVE_SKIP`.
 ///
 /// CHUNKED: `native_scripts_00` … take every [`NATIVE_SCRIPT_CHUNKS`]-th script of the sorted
 /// corpus from their own offset, so each script is in exactly one chunk and each chunk grows
-/// with 1/N of the corpus.  One test over the whole corpus took 1879 s cold on the Windows
-/// runner, where the duration gate allows a test HALF its 600 s limit; twelve chunks grew to
-/// 304-316 s each there (~1.7 s of rustc per script), and twenty-four to 313 s for the
-/// heaviest, so the count follows the corpus up.  Each script is its own binary, so no
-/// cross-script coverage is lost by splitting.
+/// with 1/N of the corpus; a chunk is held to `common::timing::CHUNK_BUDGET`.  Each script is
+/// its own binary, so no cross-script coverage is lost by splitting.
 fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = fa::read_dir("tests/scripts")?
-        .into_iter()
-        .map(|e| e.os_spelling())
-        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-        .collect();
-    files.sort();
-    let files: Vec<PathBuf> = files
+    let files: Vec<PathBuf> = loft_files("tests/scripts")
+        .ok_or_else(|| Error::other("no tests/scripts"))?
         .into_iter()
         .enumerate()
         .filter(|(i, _)| i % NATIVE_SCRIPT_CHUNKS == chunk)
@@ -1186,93 +394,52 @@ fn native_limits_at_full_size() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
-        .into_iter()
-        .map(|e| e.os_spelling())
-        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
-        .collect();
-    files.sort();
+    let files =
+        loft_files("tests/limits_full").ok_or_else(|| Error::other("no tests/limits_full"))?;
     native_scripts_run(
         files,
         common::timing::Suite::unbounded("native_limits_at_full_size"),
     )
 }
 
-/// Compile and run `files` on `--native`, with the corpus's skip rules, reported through
-/// `suite`: one line per program generated, one for the batch that compiles and runs them.
+/// Build and run `files` on the C backend with the script corpus's skip rules, reported
+/// through `suite` as one batch.
+///
+/// A file that is not meant to run says so — `@EXPECT_ERROR`, a file-level `@EXPECT_FAIL`,
+/// or a row in `SCRIPTS_NATIVE_SKIP` with its reason; every other file that fails to build
+/// or run is a failure.  A fn-level `@EXPECT_FAIL` names one function, which the test runner
+/// skips; its siblings still run.
 fn native_scripts_run(files: Vec<PathBuf>, suite: common::timing::Suite) -> std::io::Result<()> {
-    let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
-    let mut not_generated: Vec<String> = Vec::new();
     for entry in files {
         let name = fa::file_name(&entry).unwrap_or_default();
         if SCRIPTS_NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (scripts native skip list — see SCRIPTS_NATIVE_SKIP)");
             continue;
         }
-        // Skip files with intentional compile errors or expected failures.
-        // Native mode compiles the whole file into one binary and can't
-        // tolerate per-function panics like the interpreter runner can.
-        //
+        let src = fa::read_to_string(&entry)?;
         // Read the annotation the way `wrap` reads it (`common::expect_tag`), not with a
-        // `contains` over the whole source: a file that merely NAMES the tag in prose —
-        // "this file used to be an @EXPECT_ERROR case" — declares nothing, and skipping
-        // on the mention silently dropped five scripts from this suite, including
-        // `93-vector-advanced.loft` and its forty-nine assertions.
-        if let Ok(src) = fa::read_to_string(&entry) {
-            if common::declares_expect_error(&src) {
-                println!("skip {entry:?} (has @EXPECT_ERROR)");
-                continue;
-            }
-            // Only a FILE-LEVEL `@EXPECT_FAIL` drops the file.  A fn-level one names a
-            // single function, and the documented contract is that its siblings still
-            // must pass — so dropping the whole file cost every sibling its native
-            // coverage, silently (loft#1311).  The fn itself is skipped in
-            // `prepare_native_test`, which reads the same parser.
-            if common::expect_fail_fns(&src).1 {
-                println!("skip {entry:?} (has file-level @EXPECT_FAIL)");
-                continue;
-            }
+        // `contains` over the whole source: a file that merely NAMES the tag in prose
+        // declares nothing.
+        if common::declares_expect_error(&src) {
+            println!("skip {entry:?} (has @EXPECT_ERROR)");
+            continue;
         }
-        // A file that cannot be generated is a FAILURE, not a skip.  Printing `skip` here hid
-        // four committed guards whose native leg panicked in the generator (loft#1841): each
-        // recorded exit 0 when written, and the suite read green while none of them ran.
-        // A file that is not meant to build declares it — `@EXPECT_ERROR`, a file-level
-        // `@EXPECT_FAIL`, or a row in `SCRIPTS_NATIVE_SKIP` with its reason — above.
-        //
-        // Compiled on a thread with the `loft` CLI's own stack — the main thread's 8 MiB on
-        // Linux, where a test thread has 2 MiB — so a program the CLI compiles is not refused
-        // here for the depth of its expressions (a 100-term nested sum needs more than 2 MiB
-        // on aarch64).  A panic joins as `Err`, the same verdict `catch_unwind` gave.
-        let name = fa::file_name(&entry).unwrap_or_default();
-        let unit = suite.begin(&format!("{name} (generate)"));
-        let prepared = std::thread::scope(|sc| {
-            std::thread::Builder::new()
-                .stack_size(8 << 20)
-                .spawn_scoped(sc, || prepare_native_test(&entry))
-                .expect("spawn the compile thread")
-                .join()
-        });
-        suite.end(&format!("{name} (generate)"), unit);
-        match prepared {
-            Ok(Ok(job)) => jobs.push(job),
-            Ok(Err(e)) => not_generated.push(format!("{entry:?} (prepare error: {e})")),
-            Err(_) => not_generated.push(format!("{entry:?} (codegen panic)")),
+        if common::expect_fail_fns(&src).1 {
+            println!("skip {entry:?} (has file-level @EXPECT_FAIL)");
+            continue;
         }
+        let how = if script_shaped(&src) {
+            CRun::Program
+        } else {
+            CRun::Tests
+        };
+        jobs.push((entry, how));
     }
-    let batch = format!("rustc + run, {} programs", jobs.len());
+    let batch = format!("C build + run, {} programs", jobs.len());
     let unit = suite.begin(&batch);
-    let lanes = native_lanes(jobs.len());
-    let ran = run_native_jobs(jobs, rlib_info);
-    suite.end_parallel(&batch, unit, lanes);
-    if !not_generated.is_empty() {
-        println!("  not generated: {}", not_generated.join(", "));
-        return Err(std::io::Error::other(format!(
-            "{} script(s) could not be generated for --native: {}",
-            not_generated.len(),
-            not_generated.join(", ")
-        )));
-    }
+    let ran = run_all_on_c(&jobs);
+    suite.end_parallel(&batch, unit, c_lanes(jobs.len()));
     ran?;
     suite.finish()
 }
@@ -1487,65 +654,6 @@ fn pool_tests_declare_their_lanes_to_nextest() {
     }
 }
 
-/// N8a: native code generation for tuple types.
-///
-/// Runs `tests/scripts/50-tuples.loft` through the native Rust backend end-to-end.
-/// Ignored until N8a.1 (`rust_type(Type::Tuple)` fix) and N8a.2 (`TupleGet`/`TuplePut`
-/// emit) are implemented.  When un-ignored, `50-tuples.loft` and `46-caveats.loft`
-/// are removed from `SCRIPTS_NATIVE_SKIP`.
-#[test]
-fn native_tuple_script() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    let rlib_info = find_loft_rlib();
-    let entry = std::path::Path::new("tests/scripts/50-tuples.loft");
-    let job = prepare_native_test(entry)?;
-    // Ok(false) = skipped (rustc absent, or Layer-2 low-space guard) — not a
-    // failure; a real compile error returns Err.  Skip the run in that case.
-    if !compile_native_job(&job, &rlib_info)? {
-        return Ok(());
-    }
-    run_native_job(&job)
-}
-
-/// S35: native binary I/O script.
-///
-/// Runs `tests/scripts/20-binary.loft` through the native Rust backend end-to-end.
-/// Exercises the Insert-return pattern (Set(rv, Insert([Set(_read_34, Null), Block])))
-/// fixed in S35: output_set now hoists inner ops as statements before the assignment.
-#[test]
-fn native_binary_script() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    let rlib_info = find_loft_rlib();
-    let entry = std::path::Path::new("tests/scripts/20-binary.loft");
-    let job = prepare_native_test(entry)?;
-    // Ok(false) = skipped (rustc absent, or Layer-2 low-space guard) — not a
-    // failure; a real compile error returns Err.  Skip the run in that case.
-    if !compile_native_job(&job, &rlib_info)? {
-        return Ok(());
-    }
-    run_native_job(&job)
-}
-
-/// @PLN24 arc C — a `#c` binding calls a real C symbol from native-compiled loft,
-/// with no Rust wrapper and no rustc in any library.
-///
-/// Bound to **libc**, deliberately: it is linked into every Rust binary, so this
-/// proves the whole path — declaration, typed `extern "C"`, marshalling, call —
-/// with no build step and nothing to install.
-///
-/// `atoi("-1")` is the cell that matters. A C `int` return read back as a bare
-/// `u64` — what a signature-blind caller does — is 4294967295, a plausible large
-/// positive that every `>= 0` check accepts; it is the shape that silently
-/// defeated `loft-libs-net`'s `server::listen`. It comes back as -1 here only
-/// because the declared width goes into the extern, so rustc truncates at the
-/// ABI and the cast then sign-extends. That is the plan's invariant, executing.
-///
-/// `write(1, ptr, count)` covers the other half: a loft `vector` crosses as a
-/// pointer AND a count, because C carries no length.
 /// The POSIX `write(2)` binding as the generated sources below spell it.
 const POSIX_WRITE: &str = r#"#c "write" "long(int, const void*, size_t)""#;
 
@@ -1573,12 +681,25 @@ fn for_host(src: &str) -> String {
     }
 }
 
+/// A `#c` binding calls a real C symbol from a `--native` (C) program, with no wrapper.
+///
+/// Bound to **libc**, deliberately: every program links it, so this proves the whole path —
+/// declaration, typed C prototype, marshalling, call — with no build step and nothing to
+/// install.
+///
+/// `atoi("-1")` is the cell that matters. A C `int` return read back as a bare `u64` — what
+/// a signature-blind caller does — is 4294967295, a plausible large positive that every
+/// `>= 0` check accepts; it is the shape that silently defeated `loft-libs-net`'s
+/// `server::listen`. It comes back as -1 only because the declared width reaches the call,
+/// so the result is truncated at the ABI and then sign-extended.
+///
+/// `write(1, ptr, count)` covers the other half: a loft `vector` crosses as a pointer AND a
+/// count, because C carries no length.
 #[test]
 fn native_c_binding_calls_libc() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let rlib_info = find_loft_rlib();
     let path = std::env::temp_dir().join("loft_pln24_c_binding.loft");
     fa::write(
         &path,
@@ -1597,12 +718,11 @@ fn native_c_binding_calls_libc() -> std::io::Result<()> {
          }\n",
         ),
     )?;
-    let job = prepare_native_test(&path)?;
-    // Ok(false) = skipped (rustc absent / low space) — not a failure.
-    if !compile_native_job(&job, &rlib_info)? {
-        return Ok(());
-    }
-    let out = loft::platform::process::harness_command(&job.binary).output()?;
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--native")
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "300")
+        .output()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
@@ -1628,15 +748,13 @@ fn native_c_binding_calls_libc() -> std::io::Result<()> {
     Ok(())
 }
 
-/// @PLN24 arc B — the interpreter calls the same C symbols, and answers the
-/// SAME thing.
+/// The interpreter calls the same C symbols as the C backend, and answers the SAME thing.
 ///
 /// The interpreter has no compiler at the call site, so it resolves the symbol
 /// and calls it through the fixed per-arity trampolines the architecture probe
 /// validated. This test is the parity half: identical stdout from both
 /// backends, cell for cell, which is the bar a `#c` binding has to meet before
-/// it can be said to work at all. Before arc B, `strlen("hello")` compiled
-/// under `--interpret` and answered **7562**.
+/// it can be said to work at all.
 ///
 /// The `neg` cell carries the whole reason the declaration has a signature: the
 /// interpreter reads a raw `u64` return register, so `atoi("-1")` arrives as
@@ -1689,14 +807,18 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
         "the bytes after an interior NUL must cross with the text: {out}"
     );
 
-    // The parity half. `prepare_native_test` may skip (no rustc / low space),
-    // and a skipped comparison must not read as agreement.
-    let job = prepare_native_test(&path)?;
-    if !compile_native_job(&job, &find_loft_rlib())? {
-        return Ok(());
-    }
-    let native = loft::platform::process::harness_command(&job.binary).output()?;
+    // The parity half, on the C backend.
+    let native = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--native")
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "300")
+        .output()?;
     let nout = String::from_utf8_lossy(&native.stdout);
+    assert!(
+        native.status.success(),
+        "--native failed: {nout}\n{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
     assert_eq!(
         out, nout,
         "the two backends must answer identically, cell for cell"
@@ -3985,32 +3107,23 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
     Ok(())
 }
 
-/// @PLN24 arc E — a wasm target gets a NAMED refusal, and only where a `#c`
-/// binding is actually called.
+/// A wasm target gets a NAMED refusal, and only where a `#c` binding is actually called.
 ///
-/// This is an EMISSION test on purpose: it needs no wasm toolchain, so the
-/// guarantee is checked on every machine that runs the suite rather than only on
-/// one that can cross-compile. The end-to-end halves live in `html_wasm.rs`.
+/// A wasm module cannot open a shared library, so a `#c` call there is either a symbol the
+/// WASI libc happens to export — which links and traps, wasm32 being a third data model
+/// (ILP32) — or one it does not export, which fails at the link naming no package.  Neither
+/// tells a reader what is wrong, so the C backend refuses the reachable call by name at
+/// emission, before any wasm toolchain is asked for — the guarantee is checked on every
+/// machine that runs the suite.  The end-to-end halves live in `html_wasm.rs`.
 ///
-/// Three separate failures used to come out of here, and a reader could not tell
-/// any of them from a bug in their own program:
-///
-/// * a symbol the wasm sysroot happens to export (`strlen`) LINKED — with a
-///   warning — and trapped at the call (`signature_mismatch: strlen`), because
-///   wasm32 is a third data model (ILP32) and the extern carried the host's
-///   widths;
-/// * one it does not export gave a raw `rust-lld: undefined symbol`;
-/// * a package declaring `[c] optional-libs` gave `E0433: cannot find c_call in
-///   loft` once per symbol — for bindings the program never called.
-///
-/// So the assertions are in three parts: the reachable call is refused by name,
-/// nothing in the file reaches for `c_call` or declares a C extern, and the
-/// availability tables survive (they are what makes `c_library_available`
-/// compile, and asking it is the idiom the refusal points an author towards).
+/// Three parts: on the HOST target the same program builds and answers (the calibration —
+/// a refusal that fired everywhere would otherwise read as a pass); on wasm the called
+/// binding is refused naming the function, the symbol, the target and its flag; and the
+/// binding that is only declared is not named.
 #[test]
-fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
+fn a_c_binding_is_refused_by_name_on_a_wasm_target() -> std::io::Result<()> {
     let dir = std::env::temp_dir().join(format!("loft_pln24_arce_{}", std::process::id()));
-    fa::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir)?;
     let src_path = dir.join("arce.loft");
     fa::write(
         &src_path,
@@ -4018,63 +3131,47 @@ fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
         "fn used(s: text) -> integer;    #c \"strlen\" \"size_t(const char*)\"\n\
          fn unused(v: integer) -> integer; #c \"abs\" \"int(int)\"\n\
          fn main() { println(\"{used(\\\"hello\\\")}\") }\n",
-    )
-    .unwrap();
-    let mut p = Parser::new();
-    p.parse_dir("default", true, false).unwrap();
-    p.parse(src_path.to_str().unwrap(), false);
-    assert!(
-        p.diagnostics.level() < loft::diagnostics::Level::Error,
-        "the declaration itself must stay legal on every target: {:?}",
-        p.diagnostics.lines()
-    );
-    scopes::check(&mut p.data, &mut p.database);
-    let mut state = State::new(p.database);
-    byte_code(&mut state, &mut p.data);
-    let main_nr = p.data.def_nr("n_main");
-    let till = p.data.definitions();
-
-    let emit = |wasm: bool| -> String {
-        let mut buf: Vec<u8> = Vec::new();
-        let mut out = Output::new(&p.data, &state.database);
-        out.wasm_wasi = wasm;
-        out.output_native_reachable(&mut buf, 0, till, &[main_nr])
-            .expect("emit");
-        String::from_utf8(buf).expect("utf8")
+    )?;
+    let loft = |args: &[&std::ffi::OsStr]| {
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args(args)
+            .arg(&src_path)
+            .env("LOFT_TIMEOUT", "300")
+            .output()
     };
 
-    // The calibration half: on the HOST target the same program emits the real
-    // binding.  Without this a refusal that fired everywhere would read as a pass.
-    let host = emit(false);
+    let host = loft(&["--native".as_ref()])?;
+    let host_out = String::from_utf8_lossy(&host.stdout);
     assert!(
-        host.contains("#[link_name = \"strlen\"]")
-            && !host.contains("cannot open a shared library"),
-        "the host target must still emit the typed extern and no refusal"
+        host.status.success() && host_out.trim() == "5",
+        "the host target must build the binding and call it: {host_out}\n{}",
+        String::from_utf8_lossy(&host.stderr)
     );
 
-    let wasm = emit(true);
+    let wasm_out = dir.join("arce.wasm");
+    let wasm = loft(&[
+        "--native".as_ref(),
+        "--native-wasm".as_ref(),
+        wasm_out.as_os_str(),
+    ])?;
+    let refusal = String::from_utf8_lossy(&wasm.stderr);
     assert!(
-        wasm.contains("`used` is bound to the C symbol 'strlen' with #c")
-            && wasm.contains("wasm (wasip2)")
-            && wasm.contains("--native-wasm")
-            && wasm.contains("cannot open a shared library"),
-        "the reachable call must be refused by name: {wasm}"
+        !wasm.status.success(),
+        "a wasm build of a called `#c` binding must be refused: {refusal}"
     );
     assert!(
-        !wasm.contains("loft::c_call"),
-        "nothing may reach for `c_call` — it is not in a wasm build, and this is \
-         what broke a program for merely DECLARING an optional-library binding"
+        refusal.contains("`used` is bound to the C symbol 'strlen' with #c")
+            && refusal.contains("wasm (wasip2)")
+            && refusal.contains("--native-wasm")
+            && refusal.contains("cannot open a shared library"),
+        "the reachable call must be refused by name: {refusal}"
     );
     assert!(
-        !wasm.contains("#[link_name = \"strlen\"]") && !wasm.contains("#[link_name = \"abs\"]"),
-        "no C extern may be declared: one the sysroot satisfies links and then traps"
-    );
-    assert!(
-        wasm.contains("static __C_LIBS") && wasm.contains("static __C_LIB_SYMS"),
-        "the availability tables stay on every target — `c_library_available` \
-         reads them, and it used to fail to compile under --html for want of them"
+        !refusal.contains("`unused`"),
+        "a binding that is only declared must not be refused: {refusal}"
     );
     let _ = fa::remove_dir_all(&dir);
+    Ok(())
 }
 
 /// @PLN24 arc D — loft compiles the ANSI-C shim itself, with `cc` and no rustc.
@@ -4258,7 +3355,7 @@ fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()>
         flag: Option<&'static str>,
         recompile: bool,
     }
-    let mut legs = vec![
+    let legs = [
         Leg {
             name: "interpreter",
             flag: None,
@@ -4269,14 +3366,12 @@ fn a_test_run_opens_a_relative_lib_librarys_c_libraries() -> std::io::Result<()>
             flag: None,
             recompile: true,
         },
-    ];
-    if find_loft_rlib().is_some() {
-        legs.push(Leg {
+        Leg {
             name: "native",
             flag: Some("--native"),
             recompile: false,
-        });
-    }
+        },
+    ];
     for Leg {
         name: leg,
         flag,
@@ -4371,10 +3466,12 @@ fn an_installed_optional_library_beside_a_shim_is_available_on_both_backends() -
     // its shim is not open when the question is asked — the dynamic half of the defect.  A
     // program that calls into the package after asking binds it at start and was right.
     let want = "libc true absent false one 1\n";
-    let mut legs = vec![("--interpret", "1"), ("--interpret", "0")];
-    if find_loft_rlib().is_some() {
-        legs.extend([("--native", "1"), ("--native", "0")]);
-    }
+    let legs = [
+        ("--interpret", "1"),
+        ("--interpret", "0"),
+        ("--native", "1"),
+        ("--native", "0"),
+    ];
     let mut wrong = Vec::new();
     for (backend, cabi) in legs {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
@@ -4408,13 +3505,12 @@ fn a_loft_wrapper_over_a_c_binding_compiles() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none()
-        || loft::platform::process::harness_command("cc")
-            .arg("--version")
-            .output()
-            .is_err()
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
     {
-        println!("a_loft_wrapper_over_a_c_binding_compiles: skipped (no rustc / cc)");
+        println!("a_loft_wrapper_over_a_c_binding_compiles: skipped (no cc)");
         return Ok(());
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
@@ -4799,31 +3895,27 @@ fn a_float_return_binds_and_a_float_argument_still_does_not() -> std::io::Result
     Ok(())
 }
 
-/// @PLN28: unbounded recursion in native-compiled code must surface loft's typed
-/// `call stack overflow` (exit non-zero) — the same cap the interpreter enforces —
-/// NOT the opaque Rust `fatal runtime error: stack overflow, aborting`.  The
-/// generated `main` runs on a large-stack thread so the `MAX_CALL_DEPTH` guard in
-/// `cr_call_push` fires cleanly before the OS stack is exhausted.
+/// Unbounded recursion in a `--native` (C) program surfaces loft's typed `call stack
+/// overflow` and a non-zero exit — the same cap the interpreter enforces — not a raw abort
+/// of the process when the OS stack runs out.
 #[test]
 fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let rlib_info = find_loft_rlib();
-    // Write to a temp file, NOT tests/scripts/ (which the success-runners sweep —
-    // an infinitely-recursing script would break them).
+    // Written to a temp file, NOT tests/scripts/ (which the success-runners sweep — an
+    // infinitely-recursing script would break them).
     let path = std::env::temp_dir().join("loft_native_stack_overflow_guard.loft");
     fa::write(
         &path,
         "fn recur(n: integer) -> integer { m = recur(n + 1); return m + 1; }\n\
          fn main() { x = recur(0); print(\"{x}\"); }\n",
     )?;
-    let job = prepare_native_test(&path)?;
-    // Ok(false) = skipped (rustc absent / low space) — not a failure.
-    if !compile_native_job(&job, &rlib_info)? {
-        return Ok(());
-    }
-    let out = loft::platform::process::harness_command(&job.binary).output()?;
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--native")
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "300")
+        .output()?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),
@@ -4834,53 +3926,19 @@ fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
         "expected loft's typed stack-overflow diagnostic; stderr: {stderr}"
     );
     assert!(
-        !stderr.contains("fatal runtime error"),
-        "must NOT be the raw Rust stack-overflow abort; stderr: {stderr}"
+        !stderr.contains("fatal runtime error")
+            && !stderr.contains("Segmentation fault")
+            && !stderr.contains("Abort trap"),
+        "must NOT be a raw stack-overflow abort; stderr: {stderr}"
     );
     Ok(())
 }
 
-/// N8a.3: native tuple-returning functions.
-///
-/// The same 50-tuples.loft script will include a tuple-returning function once
-/// N8a.3 is implemented.  This is a placeholder: un-ignored together with
-/// native_tuple_script when the updated script passes.
-#[test]
-fn native_tuple_return_script() -> std::io::Result<()> {
-    let _guard = native_suite_lock()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    let rlib_info = find_loft_rlib();
-    let entry = std::path::Path::new("tests/scripts/50-tuples.loft");
-    let job = prepare_native_test(entry)?;
-    // Ok(false) = skipped (rustc absent, or Layer-2 low-space guard) — not a
-    // failure; a real compile error returns Err.  Skip the run in that case.
-    if !compile_native_job(&job, &rlib_info)? {
-        return Ok(());
-    }
-    run_native_job(&job)
-}
-
-// Initiative 03 Phase 2: the native Moros editor driver lives at
-// `lib/graphics/examples/moros_editor.loft` and compiles end-to-end
-// via `loft --native --path <repo>/ --lib <repo>/lib`.  Manual
-// verification on a machine with a display server: the binary opens
-// a 1024×768 window rendering the 7×7 hex starter map; WASD orbits
-// the camera; Esc exits.  An automated compile-regression needs the
-// `prepare_native_test` harness to pass `--path <repo>` for sibling-
-// module resolution (`use render;` works only from inside the
-// graphics package's own src/ or examples/ dirs) — deferred to
-// Phase 5 polish; see doc/claude/plans/03-native-moros-editor/.
-
-/// Library packages whose tests do NOT yet compile/run under `--native`.
-/// These are pre-existing native-codegen / binding / runtime gaps (NOT linkage
-/// gaps — the `#native`-crate linkage was fixed via
-/// `native_utils::add_native_extern_flags` in the test runner, which recovered
-/// graphics/shapes/server/web/moros_render/moros_sim).  Tracked under @P321.
+/// Library packages whose tests do not compile or run under `--native`.
 const LIB_PKGS_NATIVE_SKIP: &[&str] = &[
     // (empty) An entry here names a package whose tests do not compile or run
     // under `--native`, the open issue that explains it, and the condition that
-    // removes it.  Every package listed before ran green again by 2026-06.
+    // removes it.
 ];
 
 /// Specific library test FILES skipped under `--native` (the rest of the
@@ -4909,7 +3967,6 @@ fn native_lib_test_skipped(entry: &Path) -> bool {
     LIB_TESTS_NATIVE_SKIP.contains(&key.as_str())
 }
 
-/// Native counterpart of `wrap.rs::library_suite`: compile + run every
 /// Run `loft [extra_args] test <stem>` for a lib package in a UNIQUE temp CWD —
 /// a `.loft_test_tmp_*` SIBLING inside `lib/` (so the package's relative deps
 /// `../<name>` still resolve to the real packages), with the package's contents
@@ -4961,21 +4018,12 @@ fn run_lib_test_in_temp_cwd(
 }
 
 /// loft#878 — a test file that names a helper the way its LIBRARY does must still
-/// compile under `--native`.
+/// compile and run under `--native`.
 ///
-/// Emitted Rust is one flat namespace, so two same-named fns from different files get a
-/// file-hash suffix on the DEFINITION (`disambiguated_fn_ident`, #305).  One call
-/// emitter re-derived the identifier from `callee.name()` instead of going through
-/// `Output::fn_ident`, so the call named a `fn` that had been emitted under another —
-/// `error[E0425]: cannot find function n_defaulted in this scope`, on a package whose
-/// interpreter suite was green.
-///
-/// The shape is narrow, which is why the reporter's own minimisation came out green and
-/// is recorded here rather than repeated: it needs the colliding call to take the
-/// ADOPT-or-COPY bind (`{ let _dst = …; let _src = <callee>(cell, …)`), which is the one
-/// emitter that bypassed the chokepoint.  A first bind of a call result goes through
-/// `calls.rs` and was always right.  Here the callee returns a LOCAL bound from another
-/// call, which is what puts the caller's assignment on the adopt path.
+/// A compiled program is one flat namespace, so two same-named fns from different files
+/// need distinct names in it, and every call must name the one its source resolved to.
+/// The colliding call here takes the adopt-or-copy bind — the callee returns a LOCAL bound
+/// from another call — which is the shape that once named the wrong definition.
 ///
 /// Both halves are asserted: the library's private `defaulted(W) -> boolean` is REACHED
 /// (through `cell`, which the test calls), and the test-local `defaulted(integer) -> W`
@@ -4987,10 +4035,6 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!("shadowed-fn-name guard: skipped (no libloft.rlib / rustc unavailable)");
-        return Ok(());
-    }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_878_{pid}"));
     let _ = fa::remove_dir_all(&root);
@@ -5053,24 +4097,16 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     Ok(())
 }
 
-/// `lib/<pkg>/tests/*.loft` under `--native`, skipping packages/files with known
-/// native-codegen gaps (`LIB_*_NATIVE_SKIP`, @P321).  Shells out
-/// `cd lib/<pkg> && loft --native test <stem>` so it reuses the CLI's package
-/// resolution AND the `#native`-crate linkage (`add_native_extern_flags`).
-///
-/// Holds `native_suite_lock` so it serialises with the other native suites
-/// (shared `/tmp` rlib + binary cache).  Skips silently when `rustc` / the loft
-/// rlib are unavailable, like `native_scripts`.
+/// The native counterpart of `wrap.rs::library_suite`: every `lib/<pkg>/tests/*.loft` under
+/// `--native`, skipping the packages and files `LIB_*_NATIVE_SKIP` lists.  Shells out
+/// `cd lib/<pkg> && loft --native test <stem>` so it reuses the CLI's package resolution and
+/// library linkage.  Holds `native_suite_lock` so it serialises with the other native suites.
 // @speed 2.5
 #[test]
 fn native_library_suite() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none() {
-        println!("native_library_suite: skipped (no libloft.rlib / rustc unavailable)");
-        return Ok(());
-    }
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let mut files: Vec<PathBuf> = Vec::new();
     for pkg in fa::read_dir("lib")? {
@@ -5093,7 +4129,6 @@ fn native_library_suite() -> std::io::Result<()> {
     files.sort();
     let mut failures: Vec<String> = Vec::new();
     let mut ran = 0;
-    let mut env_skips: Vec<(String, String)> = Vec::new();
     for entry in files {
         if native_lib_test_skipped(&entry) {
             println!("skip {entry:?} (LIB_*_NATIVE_SKIP — @P321)");
@@ -5109,30 +4144,6 @@ fn native_library_suite() -> std::io::Result<()> {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        // Windows: the windows-targets crate emits a search path that
-        // doesn't survive the test-binary link step (LNK1181: cannot
-        // open input file 'windows.0.NN.0.lib').  Environmental, not a
-        // code regression — mirrors the toolchain-skip pattern in
-        // tests/exit_codes.rs.  loft test wraps the rustc error as
-        // "native compile: error: linking with `link.exe` failed: exit
-        // code: 1181" — the raw "LNK1181" symbol from cc's separate
-        // stderr may not survive the capture.  Match both forms.
-        if combined.contains("LNK1181") || combined.contains("link.exe` failed: exit code: 1181") {
-            // Capture the actual linker error lines, not just the generic
-            // label — without this the skip is a SILENT green (nextest hides
-            // a passing test's stdout), so a regression of G2's fix would
-            // look identical to a clean pass.  The detail is surfaced by the
-            // CI "Surface environmental test skips" step via the ledger below.
-            let detail: Vec<&str> = combined
-                .lines()
-                .filter(|l| l.contains("1181") || l.contains("LNK") || l.contains("link.exe"))
-                .take(3)
-                .collect();
-            println!("skip {entry:?} (Windows windows-targets LNK1181 — environmental)");
-            env_skips.push((format!("{entry:?}"), detail.join(" | ")));
-            ran -= 1;
-            continue;
-        }
         // `loft test` exits 0 even on a caught crash; detect failure by markers.
         let failed = !out.status.success()
             || combined.contains("SIGSEGV")
@@ -5152,15 +4163,7 @@ fn native_library_suite() -> std::io::Result<()> {
             failures.join("\n  ")
         )));
     }
-    if !env_skips.is_empty() {
-        common::record_env_skips("native_library_suite", "LNK1181", &env_skips);
-        println!(
-            "native_library_suite: {ran} passed, {} skipped (environmental — LNK1181)",
-            env_skips.len()
-        );
-    } else {
-        println!("native_library_suite: {ran} native library tests passed");
-    }
+    println!("native_library_suite: {ran} native library tests passed");
     Ok(())
 }
 
@@ -5433,13 +4436,12 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if find_loft_rlib().is_none()
-        || loft::platform::process::harness_command("cc")
-            .arg("--version")
-            .output()
-            .is_err()
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
     {
-        println!("a_shipped_c_library_travels_with_the_program: skipped (no rustc / cc)");
+        println!("a_shipped_c_library_travels_with_the_program: skipped (no cc)");
         return Ok(());
     }
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
@@ -5584,87 +4586,19 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
     Ok(())
 }
 
-/// loft#742 — a NESTED vector field must reference the content type the
-/// compiler recorded, not one rebuilt from the loft `Type`.
-///
-/// `type_def_nr` cannot see an element's `forced_size`, so rebuilding the
-/// nesting produced `db.vector(db.vector(<plain integer>))` for BOTH
-/// `vector<vector<integer>>` and `vector<vector<integer(-32768, 32767)>>` —
-/// the wrong element width, and a `vector<vector<integer>>` minted at an id
-/// the compiler had assigned to something else, which shifted every runtime
-/// type id after it.
-///
-/// The check is `LOFT_STRICT_SCHEMA_IDS`, which turns the `init()` schema
-/// comparison into a hard failure at the first divergence — the same gate that
-/// found this. Asserting the program's OUTPUT alone would not catch it: these
-/// programs print correct answers today, because nothing happened to bake an
-/// id at or past the shift.
-#[test]
-fn a_nested_narrow_vector_field_keeps_the_type_ids_aligned() {
-    if loft::platform::process::harness_command("rustc")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("skip: rustc unavailable (--native needs it)");
-        return;
-    }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Each of these carries a differently-shaped nested narrow vector, and each
-    // drifted by a different amount before the fix.
-    //
-    // loft#923 added the fourth: a `vector<τ?>` ELEMENT drifted for the same
-    // reason one level up. The emitter tested the element type without peeling
-    // its `Optional`, so a `vector<vector<integer>?>` missed the nested-vector
-    // arm and the generic path minted a type the program never named. It belongs
-    // in THIS list rather than beside its own script, because a drift is invisible
-    // to the program's output and only this env makes it fail.
-    for script in [
-        "tests/scripts/184-nested-narrow-int-vector.loft",
-        "tests/scripts/624-nested-narrow-width.loft",
-        "tests/scripts/432-untyped-vector-literal-arg.loft",
-        "tests/scripts/923-nullable-vector-element-schema.loft",
-    ] {
-        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg("--native")
-            .arg(root.join(script))
-            .env("LOFT_STRICT_SCHEMA_IDS", "1")
-            .env("LOFT_NO_CACHE", "1")
-            .output()
-            .expect("run the loft binary");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            !stderr.contains("diverges from the compiler"),
-            "{script}: the generated schema drifted from the compiler's.\n{stderr}"
-        );
-        assert!(
-            out.status.success(),
-            "{script}: exited non-zero.\n{}\n{stderr}",
-            String::from_utf8_lossy(&out.stdout)
-        );
-    }
-}
-
 /// loft#1311 — a FN-LEVEL `@EXPECT_FAIL` excuses one function, not the whole file.
 ///
-/// Two defects met here.  The suite dropped the file for ANY declaration of the tag, and
-/// the finer per-function mechanism underneath it — which emits
-/// `// skipped (EXPECT_FAIL): {name}` in place of a call — could not parse the documented
-/// `// @EXPECT_FAIL: <reason>` form, because its hand-rolled `split_whitespace` looked for
-/// the bare token and the documented one carries a colon.  So the skip-set was empty for
-/// every file written the documented way, and the drop above it silently cost each of
-/// those files' passing functions their native coverage.
-///
-/// The guard reads the GENERATED main, which is where the contract is decidable: the
-/// excused function must appear as a skip, and every sibling must still be called.
-/// Asserting only that the file was prepared would pass with the skip-set still empty.
+/// The documented `// @EXPECT_FAIL: <reason>` form under a declaration names that one
+/// function: the script corpus must not drop the file for it, and `loft --tests <file>
+/// --native` must skip the excused function while every sibling still runs and passes.
+/// The control is the same file with a sibling broken, which must fail — so a run that
+/// skipped the whole file cannot pass.
 #[test]
-fn a_fn_level_expect_fail_keeps_its_siblings_in_the_native_suite() {
+fn a_fn_level_expect_fail_keeps_its_siblings_in_the_native_suite() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
 
-    // The documented colon form is the one the old parser could not read.
     let src = "\
 fn test_1311_sibling_before() { assert(1 == 1, \"before\"); }
 
@@ -5688,97 +4622,50 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
     let (_, header_level) = common::expect_fail_fns("// @EXPECT_FAIL: whole file\nfn t() { }\n");
     assert!(header_level, "a header tag must still read as file-level");
 
-    let scratch = loft::platform::scratch_dir();
-    let entry = scratch.join("loft1311_fn_level_expect_fail.loft");
-    fa::write(&entry, src).expect("write the probe script");
-
-    let job = prepare_native_test(&entry).expect("a fn-level @EXPECT_FAIL must still prepare");
-    let generated = fa::read_to_string(&job.tmp_rs).expect("read the generated Rust");
-
-    assert!(
-        generated.contains("// skipped (EXPECT_FAIL): n_test_1311_excused"),
-        "the excused fn must be skipped, not called:\n{generated}"
-    );
-    for sibling in ["n_test_1311_sibling_before", "n_test_1311_sibling_after"] {
-        assert!(
-            generated.contains(&format!("{sibling}(&cell)")),
-            "sibling {sibling} lost its native coverage:\n{generated}"
-        );
-    }
-
-    let _ = fa::remove_file(&entry);
-}
-
-/// A generation run's per-definition facts are about ONE program.
-///
-/// `non_sentinel::callee_returns_non_sentinel` memoised "does this function ever return
-/// null?" per definition NUMBER in a thread-local that nothing cleared, and this harness
-/// generates the whole corpus in one thread — so a script's `fn n_int() -> integer? { return
-/// null; }` was answered from an EARLIER script whose definition of the same number never
-/// returned null, and `n_int() ?? 99` was emitted as `if true` (`407-cluster-d-null-sentinel-
-/// roundtrip` read null where it asked for 99, in `native_scripts_04` only, and only for the
-/// chunk order a join produced).  A single `loft --native` run never showed it.
-///
-/// Two programs whose `f` gets the SAME definition number — one returning a literal, one
-/// returning null — generated one after the other in this thread.  The second must keep its
-/// null test.
-#[test]
-fn a_generation_run_does_not_read_the_previous_programs_facts() {
-    let dir = std::env::temp_dir().join(format!("loft_gen_memo_{}", std::process::id()));
-    fa::create_dir_all(&dir).unwrap();
-    let emit = |name: &str, body: &str| -> (u32, String) {
-        let src = dir.join(name);
-        fa::write(
-            &src,
-            format!("fn f() -> integer? {{ {body} }}\nfn main() {{ x = f() ?? 99; println(\"{{x}}\"); }}\n"),
-        )
-        .unwrap();
-        let mut p = Parser::new();
-        p.parse_dir("default", true, false).unwrap();
-        p.parse(src.to_str().unwrap(), false);
-        assert!(
-            p.diagnostics.level() < loft::diagnostics::Level::Error,
-            "{:?}",
-            p.diagnostics.lines()
-        );
-        scopes::check(&mut p.data, &mut p.database);
-        let mut state = State::new(p.database);
-        byte_code(&mut state, &mut p.data);
-        let main_nr = p.data.def_nr("n_main");
-        let f_nr = p.data.def_nr("n_f");
-        let till = p.data.definitions();
-        let mut buf: Vec<u8> = Vec::new();
-        let mut out = Output::new(&p.data, &state.database);
-        out.output_native_reachable(&mut buf, 0, till, &[main_nr])
-            .expect("emit");
-        (f_nr, String::from_utf8(buf).expect("utf8"))
+    let dir = std::env::temp_dir().join(format!("loft1311_{}", std::process::id()));
+    fa::create_dir_all(&dir)?;
+    let run = |name: &str, body: &str| -> std::io::Result<(bool, String)> {
+        let entry = dir.join(name);
+        fa::write(&entry, body)?;
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--tests")
+            .arg(&entry)
+            .arg("--native")
+            .env("LOFT_TIMEOUT", "300")
+            .output()?;
+        Ok((
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        ))
     };
-    let (f_first, first) = emit("first.loft", "return 5;");
-    let (f_second, second) = emit("second.loft", "return null;");
-    assert_eq!(
-        f_first, f_second,
-        "the two `f`s must share a definition number, or the cell tests nothing"
-    );
-    // Calibration: the literal-returning `f` IS proven non-null, so its test folds away.
+    let (ok, report) = run("fn_level.loft", src)?;
     assert!(
-        !first.contains("op_conv_bool_from_int((var___ncc"),
-        "the first program's `f` returns a literal: its `??` test should fold, or this cell cannot tell a stale fact from none"
+        ok && report.contains("2 passed") && report.contains("1 skipped"),
+        "the excused fn must be skipped and both siblings must run and pass:\n{report}"
     );
+    let (ok, report) = run(
+        "fn_level_broken.loft",
+        &src.replace("assert(2 == 2", "assert(2 == 3"),
+    )?;
     assert!(
-        second.contains("op_conv_bool_from_int((var___ncc"),
-        "the second program's `f` returns null, so `f() ?? 99` must keep its null test — it was folded from the first program's fact"
+        !ok && report.contains("test_1311_sibling_after"),
+        "a broken sibling must fail the run, naming it:\n{report}"
     );
     let _ = fa::remove_dir_all(&dir);
+    Ok(())
 }
 
-/// @PLN24 arc E, the shim route — a package's `[c] shim` on the wasip2 target: loft compiles
-/// the shim's C to wasm32 objects (`c_shim::wasm_objects`, with its own freestanding libc),
-/// links them into the module, and the bindings are called directly at wasm32's widths.  The
+/// A package's `[c] shim` on the wasm target: loft compiles the shim's C into the module
+/// beside the program's own C, and the bindings are called directly at wasm32's widths.  The
 /// fixture's four crossings — a scalar, a `char *` return, a vector in by pointer and count,
 /// a vector of records as bytes — answer under `wasmtime` what the interpreter answers.
-/// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
+/// Skips without a wasm32 C toolchain or `wasmtime`.
 #[test]
-#[ignore = "a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's `release-gate-sweeps` job"]
+#[ignore = "a wasm32 build of a whole program — runs nightly in miri.yml's `release-gate-sweeps` job"]
 fn a_c_shim_links_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)
@@ -5786,18 +4673,8 @@ fn a_c_shim_links_into_the_wasm_target() -> std::io::Result<()> {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    if !have("clang") || !have("wasmtime") {
-        eprintln!("skipped: needs clang and wasmtime");
-        return Ok(());
-    }
-    let sysroot = loft::platform::process::harness_command("rustc")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    if !fa::is_dir(PathBuf::from(&sysroot).join("lib/rustlib/wasm32-wasip2")) {
-        eprintln!("skipped: the wasm32-wasip2 target is not installed");
+    if loft::platform::wasm_c_toolchain().triple.is_none() || !have("wasmtime") {
+        eprintln!("skipped: needs a wasm32 C toolchain (clang and a WASI sysroot) and wasmtime");
         return Ok(());
     }
     let libdir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
@@ -5844,6 +4721,7 @@ fn main() {\n\
         String::from_utf8_lossy(&build.stderr)
     );
     let run = loft::platform::process::harness_command("wasmtime")
+        .args(["-W", "exceptions=y"])
         .arg(&wasm)
         .output()?;
     assert!(
@@ -5860,12 +4738,12 @@ fn main() {\n\
     Ok(())
 }
 
-/// Two packages with a `[c] shim` link into one wasm program (loft#2280).  Each package's wasm
-/// objects carry loft's wasm C library; linking both copies failed with `duplicate symbol:
-/// loft_w_strlen`.  `lcshim2` needs `strlen` from that library, `lcshim` brings its own copy.
-/// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
+/// Two packages with a `[c] shim` link into one wasm program (loft#2280): neither package's
+/// C may bring a symbol the other, or the program, also defines (`duplicate symbol`).
+/// `lcshim2` needs `strlen`, `lcshim` brings its own copy.  Skips without a wasm32 C
+/// toolchain or `wasmtime`.
 #[test]
-#[ignore = "a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's `release-gate-sweeps` job"]
+#[ignore = "a wasm32 build of a whole program — runs nightly in miri.yml's `release-gate-sweeps` job"]
 fn two_c_shims_link_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)
@@ -5873,18 +4751,8 @@ fn two_c_shims_link_into_the_wasm_target() -> std::io::Result<()> {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    if !have("clang") || !have("wasmtime") {
-        eprintln!("skipped: needs clang and wasmtime");
-        return Ok(());
-    }
-    let sysroot = loft::platform::process::harness_command("rustc")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    if !fa::is_dir(PathBuf::from(&sysroot).join("lib/rustlib/wasm32-wasip2")) {
-        eprintln!("skipped: the wasm32-wasip2 target is not installed");
+    if loft::platform::wasm_c_toolchain().triple.is_none() || !have("wasmtime") {
+        eprintln!("skipped: needs a wasm32 C toolchain (clang and a WASI sysroot) and wasmtime");
         return Ok(());
     }
     let libdir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
@@ -5915,6 +4783,7 @@ fn main() {\n\
         String::from_utf8_lossy(&build.stderr)
     );
     let run = loft::platform::process::harness_command("wasmtime")
+        .args(["-W", "exceptions=y"])
         .arg(&wasm)
         .output()?;
     assert_eq!(

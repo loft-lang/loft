@@ -379,9 +379,7 @@ fn print_help() {
     println!("  --tests file.loft             run all tests in a single file");
     println!("  --tests file.loft::name       run a single test function");
     println!("  --tests file.loft::{{a,b}}      run specific test functions");
-    println!(
-        "  --tests --native              like --tests but compile each file to native Rust and"
-    );
+    println!("  --tests --native              like --tests but compile each file through C and");
     println!("                                run the binary (skips @EXPECT_FAIL tests)");
     println!("  --no-warnings                 suppress warnings (in run mode and --tests output)");
     println!(
