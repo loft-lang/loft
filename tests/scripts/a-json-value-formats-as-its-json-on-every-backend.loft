@@ -9,6 +9,11 @@
 //                        nested containers).
 // Axes it HOLDS FIXED:   the value comes from `json_parse`.
 // Hand-computed: RFC 8259 compact text in document order; the pretty form indents two spaces.
+//
+// @falsified-at: 278e8731b — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-json-value-formats-as-its-json-on-every-backend.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
 
 struct Wj { tag: text, body: JsonValue }
 
