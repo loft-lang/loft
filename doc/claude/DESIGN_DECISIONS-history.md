@@ -1114,6 +1114,10 @@ erases the native-speed advantage — and a concrete measurement shows this matt
 for a real consumer.  "WASM needs native libs" is not a trigger (WASM is a
 separate model, always AOT).
 
+**2026-11-24, `@C170`.**  The build fingerprint named the `libloft.rlib` content hash and the
+`rustc` version while libraries compiled through the rustc writer; they compile through the C
+backend since it retired, and the entry names the loft build's identity instead.
+
 ---
 
 ## C72 — REPL session resume does not persist RNG generator state
@@ -2294,6 +2298,10 @@ truth), a fresh plan, NOT @PLN81's "everything → emitters, delete the template
 
 **Moved from the register.**  The library reading the 2026-07-08 decision rested on never held: the parser accepted `#rust` only in `default/`, and no published library used it (owner, 2026-09-29).
 
+**2026-11-24, `@C170`.**  With the rustc writer retired, a library's native part is a C `[c] shim`
+bound by `#c`; the entry no longer names `#native` with a native crate as the route, and says
+what the templates still are: the interpreter's operator source.
+
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
 ### Question
@@ -2881,6 +2889,9 @@ new line on a program run: `loft --version` gains a `native:` line naming the to
 its absence), the `loft test` summary names the missing `rustc` where it named the command,
 and `loft new --native` lists it first in its next steps, since `native/` is a Rust crate.
 One text, `native_lib::NO_RUSTC`, says it in all three.
+
+**2026-11-24, `@C170`.**  The decision was taken for `rustc`; since the rustc writer retired
+the native toolchain is the C compiler, and the entry names it.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
@@ -4198,6 +4209,9 @@ representation: a value after a fault IS the contract, and a rewrite that change
 changes semantics.  The two rulings are one principle read from both sides — everything
 the program cannot observe is the compiler's, everything it can is the language's.
 
+**2026-11-24, `@C170`.**  The boundary list named "a `#rust` native"; a library's native part is
+C since the rustc writer retired, so the entry names a native function.
+
 ## C123 — one name has one body per receiver type; `both` is how a function takes both spellings
 
 **Catalogue:** @F16 (method and function calls) · INC#8 · `formal/calls.md` (F-OneBody)
@@ -4705,6 +4719,10 @@ nothing recorded it, while @C122, `(R-Escape)`, `(R-ValueRecord)` and every stor
 on it.  Recorded so a future proposal that opens a representation door has to name the rewrites
 it invalidates.
 
+**2026-11-24, `@C170`.**  The entry said a package binds Rust only through `#native` and its own
+native crate; with the rustc writer retired a package binds native code through `#c` and its C
+`[c] shim`.
+
 ## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
 
 Decided 2026-10-04 by the owner, while planning how slow routines become ordinary bugs (@PLN185):
@@ -5052,6 +5070,10 @@ interpreter and the compiled targets as siblings.  Cross-unit inlining stays opt
 into `src/opt/` one item set at a time, each move checked byte-identical over every program's
 IR and bytecode; it brought the references from `opt` to the Rust writer to zero.
 
+**2026-11-24, `@C170`.**  The entry named the backends `rust`, later `c`, and gave the C
+writer as the reason for the split; with the rustc writer retired, `c` is the one compiled
+backend.
+
 ## C154 — Store memory is not filled; only a store whose bytes leave the process is written whole
 
 Decided 2026-10-24 by the owner: *"I still want to remove any zero fill when possible, even if
@@ -5193,3 +5215,6 @@ ruling the same day settled what the writer's other route becomes: every library
 through the C backend instead of rustc (@C71's mechanism changes, not its model).
 
 **Revisit trigger.** As the entry states.
+
+**2026-11-24.**  The retirement is done: the entry's decision says the writer IS retired and
+names the refusals, and its **Holds at** names the sites and the guard that landed with the plan.

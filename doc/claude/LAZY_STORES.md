@@ -440,7 +440,7 @@ function, and a miss calls it* — on a fact rather than a preference.
 So the source is a **Rust-side interface**, and the SQL driver sits behind loft's
 existing `#c` machinery, called from Rust: `c_call::resolve` and the per-arity
 trampolines are already Rust APIs, so core drives a C library with no crate, no
-rustc and no re-entrancy. Core needs to send a derived string and read back a row
+compile step and no re-entrancy. Core needs to send a derived string and read back a row
 — a handful of C entry points — and WHICH library provides them is configuration,
 the same shape `[c] optional-libs` uses.
 

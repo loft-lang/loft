@@ -40,10 +40,10 @@ AND a relocation scheme is prototyped without the global-index brittleness.  Dec
 ## C71 — Native libraries compile, scripts interpret — the steady-state execution model
 
 **Decision.** Stable libraries compile to native once, cached per library and keyed on the loft
-build fingerprint (`libloft.rlib` content hash, rustc version, target, features — never git HEAD or
+build fingerprint (the loft build's identity, target, features — never git HEAD or
 mtime); the user's script interprets.  The choice is automatic: code that cannot cross falls back to
 the interpreter silently.  WASM and `--html` stay whole-program compiled.  **Why.** Native speed
-where code is stable, no `rustc` per edit, and the shared store heap passes `DbRef`s unmarshalled.
+where code is stable, no C compile per edit, and the shared store heap passes `DbRef`s unmarshalled.
 
 **Revisit when.** A dispatch-coverage audit shows the boundary cannot express a critical class
 of library API without marshalling cost that erases the speed gain, measured for a real
@@ -100,10 +100,11 @@ surface is the transport set; a new name fails its CI until someone adds it on p
 ## C87 — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
 
 **Decision.** The `#rust"..."` template path stays as the STANDARD LIBRARY's way to write an
-operator or builtin in one line.  It is not a library route: outside `default/`, `#rust` and
-`#iterator` are refused by name, and the refusal points at `#native` with a native crate, which
-reaches all four targets.  A native crate bridges a capability loft lacks; it is never a speed-up
-for a routine loft can express (`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).
+operator or builtin in one line: the interpreter's operator source (`src/create.rs` generates
+`src/fill.rs` from it) and the marker of a primitive `src/native.rs` registers.  It is not a
+library route: outside `default/`, `#rust` and `#iterator` are refused by name, and a library's
+native part is C — a `[c] shim` with each function bound by `#c`.  A native part bridges a
+capability loft lacks; it is never a speed-up for a routine loft can express (`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).
 **Why.** Migrating the ~200 templates to per-Op emitters makes a new operator cost a struct and a
 registration instead of one line; the emission-bug class is better served by hardening the path.
 
@@ -152,8 +153,7 @@ missing C compiler instead of staying silent: the second line of `loft --version
 "install a compiler" on a run that succeeds is noise, not a warning; gating on a per-user marker
 file was rejected because a fresh container has no `~/.loft`.
 
-**Revisit when.** No trigger recorded.  Decided 2026-07-24 for `rustc`; the native toolchain is the
-C compiler since the rustc writer retired (`@C170`) — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
+**Revisit when.** No trigger recorded.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
 **Holds at:** `src/main.rs`'s fallback arm (`BuildError::NoCompiler`); `c_driver::native_toolchain`;
 `tests/exit_codes.rs::a_missing_c_compiler_falls_back_to_the_interpreter_unless_native_is_required`
 and `::a_missing_c_compiler_is_named_where_the_developer_looks`.
@@ -217,7 +217,7 @@ moves for both backends at once, as @C106 requires.  Decided 2026-08-10 — [rec
 — never representation or copy count.  A rewrite needs only its conditions, validated on the IR, and
 declines otherwise.  A construction escaping the unit keeps the promised representation; which API
 is a boundary is a BUILD fact (`--ship` compiles its loft libraries into the unit; a
-`#rust` native, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
+native function, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
 program cannot observe is the compiler's; what it can is the language's (@C120, other side).
 
 **Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
@@ -227,7 +227,7 @@ Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
 
 **Decision.** No loft construct lets a program observe how a value is represented: no address,
 no raw buffer, no layout, no `unsafe` block.  A Rust body belongs to the standard library
-(`#rust`, @C87); a package binds Rust only through `#native` and its own native crate.
+(`#rust`, @C87); a package binds native code only through `#c` and its C `[c] shim`.
 Representation is observable at exactly two boundaries: a package's native code, and a store
 whose bytes persist or are mapped from a file — there the store layout IS the contract, read
 back by another run, process or tool.  Everywhere else a value's representation is the
@@ -354,11 +354,10 @@ nullable clause, guard `tests/scripts/a-nullable-record-returns-its-fields-in-re
 a rewrite the interpreter can use, and every analysis more than one backend asks, lives in `opt`,
 the layer below the interpreter and every compiled target.  A decision only a compiled target
 makes (which records travel as values, which loops hoist a vector header, which walks stream)
-lives in `lower`, as data.  A backend (`rust`, later `c`) holds only how those decisions are
+lives in `lower`, as data.  A backend (`c`) holds only how those decisions are
 spelled.  The interpreter and the compiled targets are siblings: neither names the other.
-**Why.** A second code generator (ANSI C, @PLN91 strand 5) must share the decisions without
-reaching into the Rust writer, and every optimisation the interpreter can use must still reach
-it.  An analysis kept inside one writer is either copied by the next writer or pulls the next
+**Why.** A compiled target must share the decisions without reaching into another writer, and
+every optimisation the interpreter can use must still reach it.  An analysis kept inside one writer is either copied by the next writer or pulls the next
 writer into the first.
 **Revisit when.** A compiled target needs an analysis whose answer differs per target in a way
 data cannot carry; or the split costs measured speed at a boundary that an opt-in `#inline`
@@ -535,15 +534,22 @@ over the split budget.  Decided 2026-11-19 — [record](DESIGN_DECISIONS-history
 **Decision.** Every backend answers every program the same.  When keeping a backend would need
 a choice between that equality and the backend — a language change it cannot carry without
 rewriting what it emits — the backend retires; the language does not bend to it, and no
-deviation is recorded for it.  Applied first to the rustc writer, which retires (@PLN225), and
-with it every rewrite only that writer applies.  Libraries stay compiled, through the C backend.
+deviation is recorded for it.  Applied to the rustc writer, which is retired (@PLN225), and with
+it every rewrite only that writer applied: `--native-rust` and `LOFT_NATIVE_BACKEND=rust` are
+refused with a message naming `--native`, and a library's native part is a C `[c] shim`.  The
+two backends are the interpreter and the C.  Libraries stay compiled, through the C backend.
+The `#rust "…"` templates in `default/*.loft` stay: they are the interpreter's operator source
+(`src/create.rs` generates `src/fill.rs`) and mark a primitive `src/native.rs` registers.
 **Why.** Two backends that disagree make every answer conditional on the build, and a recorded
-deviation is a promise nobody keeps.  The rustc writer holds an owned text as a `String`, which
+deviation is a promise nobody keeps.  The rustc writer held an owned text as a `String`, which
 has no spelling for an absent text other than a content; making a null text an identity
 (security #61) would mean converting every text operation it emits, for a backend the C backend
 already replaces on every target.
 **Revisit when.** A backend is needed for a target no other backend reaches, and keeping it equal
 costs less than reaching that target another way.  Decided 2026-11-21 — [record](DESIGN_DECISIONS-history.md#c170--a-backend-stays-only-while-it-is-semantically-equal-to-the-others).
-**Holds at:** `@C170` — [plans/225-retire-rustc-writer/](plans/225-retire-rustc-writer/README.md),
-which removes the writer; the sites and the guard (a CI job with no `rustc` beyond building
-loft) land with its phases.
+**Holds at:** `@C170` — the refusal of `--native-rust`, `--show-rust` and
+`LOFT_NATIVE_BACKEND=rust` in `src/main.rs`; the CI legs that compile every `--native` test
+through the C (`.github/workflows/ci.yml`); [plans/225-retire-rustc-writer/](plans/225-retire-rustc-writer/README.md),
+which removed the writer; guard
+`tests/c_emit.rs::a_scalar_program_written_as_c_answers_what_the_interpreter_answers` (both
+backends held to hand-computed values).
