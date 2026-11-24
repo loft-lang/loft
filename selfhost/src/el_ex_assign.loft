@@ -2711,10 +2711,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
 // `@FR-B-Scope`, loft#1700: does this bind, after `old`'s block ended, start a binding of its own
 // — a loop's variable at any type; a known type its old binding refuses, that the first pass
 // could not type it against yet (`rebind_split_unforced`), or (an undeclared bind only) that
-// differs from it only in absence?  The new binding (`rebind_after_block`, named by the token
+// differs from it only in absence or views another base (`views_another_base`)?  The new binding (`rebind_after_block`, named by the token
 // `tok` ends at), or `old`.  The plain bind and the declared one both ask (Rust's two sites).
 pub fn split_ended_bind(e: el::El, vars: el_vars::Vars, old: integer, t: ir::TypeT, tok: integer, plain: boolean) -> integer {
-  if el_vars::was_loop_var(vars, old) || (!el_types::is_unknown(t) && (el_ex_closure::retype_refused(e, vars, old, t) || el_ex_closure::rebind_split_unforced(e, vars, old, t, tok) || (plain && el_ex_closure::differs_in_absence(e, vars, old, t)))) {
+  if el_vars::was_loop_var(vars, old) || (!el_types::is_unknown(t) && (el_ex_closure::retype_refused(e, vars, old, t) || el_ex_closure::rebind_split_unforced(e, vars, old, t, tok) || (plain && el_ex_closure::differs_in_absence(e, vars, old, t)) || (plain && el_ex_closure::views_another_base(e, vars, old, t)))) {
     return el_ex_closure::rebind_after_block(e, vars, old, t, tok);
   }
   old

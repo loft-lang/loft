@@ -689,6 +689,26 @@ pub fn differs_in_absence(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::Ty
   }
 }
 
+// `Function::rebind_views_another_base` (`@FR-B-Scope`, loft#2627): does a bind after `nr`'s
+// block ended VIEW a different value than the ended binding did — both name a base in their
+// deps, and the two dep sets share none?  Then it is another binding, of its own type.
+pub fn views_another_base(e: el::El, vars: el_vars::Vars, nr: integer, t: ir::TypeT) -> boolean {
+  if vars.vars[nr].argument || vars.annotated.contains(nr) {
+    return false;
+  }
+  old = el_types::deps(el_vars::tp(vars, nr));
+  new = el_types::deps(t);
+  if len(old) == 0 || len(new) == 0 {
+    return false;
+  }
+  for d in old {
+    if new.contains(d) {
+      return false;
+    }
+  }
+  true
+}
+
 // `Parser::rebind_names`: the spelling `old` is bound under …
 fn rebind_spelling(vars: el_vars::Vars, old: integer) -> text {
   bound = el_vars::name_of(vars, old);
