@@ -5586,7 +5586,7 @@ fn print<const F: bool>(s: &mut State) {
     #[cfg(all(not(feature = "wasm"), not(target_arch = "wasm32")))]
     s.database.print_or_host(v_v1.str());
     #[cfg(all(not(feature = "wasm"), target_arch = "wasm32", target_os = "wasi"))]
-    crate::codegen_runtime::host_print(v_v1.str());
+    crate::host_print::host_print(v_v1.str());
     #[cfg(feature = "wasm")]
     s.database.print_or_host(v_v1.str());
 }

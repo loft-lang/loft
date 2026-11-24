@@ -75,7 +75,7 @@ pub struct HostTable {
     /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
     /// `codegen_runtime` forwards to once installed, so a generator handle means the same
     /// frame on both sides.
-    pub coroutines: crate::codegen_runtime::CoroutineHost,
+    pub coroutines: crate::coroutine_host::CoroutineHost,
     pub call_ref: unsafe extern "C" fn(
         stores: *mut Stores,
         d_nr: u32,

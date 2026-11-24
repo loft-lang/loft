@@ -1535,7 +1535,7 @@ fn n_store_load_untrusted(stores: &mut Stores, stack: &mut DbRef) {
 /// in the file while still showing the summary on screen.
 fn n_eprint(stores: &mut Stores, stack: &mut DbRef) {
     let v = stores.get::<Str>(stack);
-    crate::codegen_runtime::host_eprint(v.str());
+    crate::host_print::host_eprint(v.str());
 }
 
 // `directory` / `user_directory` / `program_directory` build their answer in the caller's

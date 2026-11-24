@@ -590,8 +590,8 @@ pub struct Stores {
     /// (`call_frames::NativeFrames`); empty for an interpreted one.
     pub frames: crate::call_frames::NativeFrames,
     /// `@PLN226` — a generated program's generator frames and fn-ref return buffers
-    /// (`codegen_runtime::NativeRun`), the twins of the interpreter's `State` tables.
-    pub(crate) native: crate::codegen_runtime::NativeRun,
+    /// (`coroutine_host::NativeRun`), the twins of the interpreter's `State` tables.
+    pub(crate) native: crate::coroutine_host::NativeRun,
     /// `@PLN226` — the crash context of the interpreter that runs on these stores
     /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
     pub crash: crate::crash_report::CrashCx,
@@ -931,7 +931,7 @@ impl Clone for Stores {
             bridge_labels: self.bridge_labels.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             frames: crate::call_frames::NativeFrames::default(),
-            native: crate::codegen_runtime::NativeRun::default(),
+            native: crate::coroutine_host::NativeRun::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),
@@ -1375,7 +1375,7 @@ impl Stores {
     pub fn print_or_host(&mut self, text: &str) {
         match self.output.as_mut() {
             Some(out) => out.push_str(text),
-            None => crate::codegen_runtime::host_print(text),
+            None => crate::host_print::host_print(text),
         }
     }
 
@@ -1810,7 +1810,7 @@ impl Stores {
             bridge_labels: std::sync::Arc::default(),
             bt_hints: crate::btree::WalkHints::default(),
             frames: crate::call_frames::NativeFrames::default(),
-            native: crate::codegen_runtime::NativeRun::default(),
+            native: crate::coroutine_host::NativeRun::default(),
             crash: crate::crash_report::CrashCx::default(),
             output: None,
             engine: crate::engine_host::EngineCx::default(),

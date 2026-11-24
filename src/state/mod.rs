@@ -2632,7 +2632,7 @@ impl State {
     /// interpreter's own advance pushes it; exhaustion answers the same typed null.  The
     /// gate admits only the yields read here (`native_gate::generator_crosses`).
     fn native_coroutine_next(&mut self, gen_ref: DbRef, packed_size: u32) {
-        use crate::codegen_runtime as cr;
+        use crate::coroutine_host as cr;
         let size = packed_size & 0xFF;
         let tag = packed_size >> 8;
         match (tag, size) {
@@ -2669,7 +2669,7 @@ impl State {
     #[must_use]
     pub fn coroutine_exhausted(&self, gen_ref: &DbRef) -> bool {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref, &self.database);
+            return crate::coroutine_host::coroutine_is_exhausted(*gen_ref, &self.database);
         }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return true; // null iterator is exhausted
@@ -2694,7 +2694,7 @@ impl State {
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_retain(gen_ref, &mut self.database);
+            return crate::coroutine_host::coroutine_retain(gen_ref, &mut self.database);
         }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()

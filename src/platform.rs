@@ -3573,7 +3573,7 @@ mod darwin_wait {
 
 /// Write `s` to standard error, ignoring a write that cannot land.
 ///
-/// The counterpart of `codegen_runtime::host_print`, and it does NOT exit: stderr being closed
+/// The counterpart of `host_print::host_print`, and it does NOT exit: stderr being closed
 /// says nothing about the program's own output, so `prog 2>/dev/full` or a reader that stopped
 /// reading the diagnostics stream must not end the run.  What it must never do is panic — a
 /// panic whose message cannot be printed is what turns a broken pipe into a SIGABRT and a crash

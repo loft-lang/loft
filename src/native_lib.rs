@@ -465,7 +465,7 @@ pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable, 
         return 0;
     }
     let _ = __HOST.set(table);
-    loft::codegen_runtime::forward_coroutines(table.coroutines);
+    loft::coroutine_host::forward_coroutines(table.coroutines);
     1
 }
 
@@ -480,7 +480,7 @@ fn __host() -> &'static loft::native_lib::HostTable {
 mod __coro {
     use loft::database::Stores;
     use loft::keys::DbRef;
-    pub fn alloc_coroutine_held(cell: &std::cell::UnsafeCell<Stores>, coro: Box<dyn loft::codegen_runtime::LoftCoroutine>) -> DbRef { (super::__host().coroutines.alloc_held)(cell, coro) }
+    pub fn alloc_coroutine_held(cell: &std::cell::UnsafeCell<Stores>, coro: Box<dyn loft::coroutine_host::LoftCoroutine>) -> DbRef { (super::__host().coroutines.alloc_held)(cell, coro) }
     pub fn coroutine_retain(g: DbRef, s: &mut Stores) -> DbRef { (super::__host().coroutines.retain)(g, s) }
     pub fn coroutine_next_i64(g: DbRef, s: &mut Stores) -> i64 { (super::__host().coroutines.next_i64)(g, s) }
     pub fn coroutine_next_into(g: DbRef, s: &mut Stores, d: &mut [i64]) -> bool { (super::__host().coroutines.next_into)(g, s, d) }
@@ -1257,7 +1257,7 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool, own_ids: bool) -> S
         // registers in ITS coroutine table (the cdylib's is a copy of its own), writing the
         // handle into `ret`.
         Type::Iterator(_, _) => format!(
-            "let __b: Box<Box<dyn loft::codegen_runtime::LoftCoroutine>> = Box::new({expr});\n    \
+            "let __b: Box<Box<dyn loft::coroutine_host::LoftCoroutine>> = Box::new({expr});\n    \
              unsafe {{ (__host().coroutine_adopt)(stores, Box::into_raw(__b).cast(), ret) }};"
         ),
         // Text return: the inner fn returns a `Str` pointing into a local work

@@ -287,10 +287,10 @@ impl HostedGen {
     }
 }
 
-impl crate::codegen_runtime::LoftCoroutine for HostedGen {
+impl crate::coroutine_host::LoftCoroutine for HostedGen {
     fn next_i64(&mut self, stores: &mut Stores) -> i64 {
         self.step(stores)
-            .map_or(crate::codegen_runtime::COROUTINE_EXHAUSTED, |a| a.scalar)
+            .map_or(crate::coroutine_host::COROUTINE_EXHAUSTED, |a| a.scalar)
     }
 
     fn next_text(&mut self, stores: &mut Stores) -> String {
@@ -329,7 +329,7 @@ unsafe extern "C" fn hosted_gen_adopt(
     free: crate::host_abi::GenFree,
     ret: *mut LibArg,
 ) {
-    let coro: Box<dyn crate::codegen_runtime::LoftCoroutine> = Box::new(HostedGen {
+    let coro: Box<dyn crate::coroutine_host::LoftCoroutine> = Box::new(HostedGen {
         stores,
         slot,
         kind,
@@ -339,7 +339,7 @@ unsafe extern "C" fn hosted_gen_adopt(
     });
     // SAFETY: as `hosted_table`; `Stores` is the `UnsafeCell`'s only field.
     let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
-    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, coro);
+    let handle = crate::coroutine_host::alloc_coroutine_held(cell, coro);
     // SAFETY: the bridge's answer slot.
     unsafe { (*ret).dbref = handle };
     let stores = unsafe { &mut *stores };
@@ -398,14 +398,14 @@ unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
 /// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
 /// thread's bridge call for one of the interpreter's (`COROUTINE_STORE`), which a library is
 /// handed only through such a call.
-pub(crate) const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
-    crate::codegen_runtime::CoroutineHost {
-        alloc_held: crate::codegen_runtime::CoroutineHost::HERE.alloc_held,
-        alloc: crate::codegen_runtime::CoroutineHost::HERE.alloc,
+pub(crate) const HOST_COROUTINES: crate::coroutine_host::CoroutineHost =
+    crate::coroutine_host::CoroutineHost {
+        alloc_held: crate::coroutine_host::CoroutineHost::HERE.alloc_held,
+        alloc: crate::coroutine_host::CoroutineHost::HERE.alloc,
         retain: host_coroutine_retain,
         free: host_coroutine_free,
         next_i64: host_coroutine_next_i64,
-        next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
+        next_into: crate::coroutine_host::CoroutineHost::HERE.next_into,
         next_dbref: host_coroutine_next_dbref,
         next_text: host_coroutine_next_text,
         exhausted: host_coroutine_exhausted,
@@ -430,13 +430,13 @@ pub(crate) fn interpreter_for(
 
 pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
+        return (crate::coroutine_host::CoroutineHost::HERE.next_i64)(gen_ref, stores);
     };
     // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
     match v.len() {
-        0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
+        0 => crate::coroutine_host::COROUTINE_EXHAUSTED,
         1 => i64::from(v[0]),
         _ => i64::from_ne_bytes(v[..8].try_into().unwrap_or_default()),
     }
@@ -444,7 +444,7 @@ pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i6
 
 pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
+        return (crate::coroutine_host::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
     };
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
@@ -457,7 +457,7 @@ pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> 
 
 pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     let Some(st) = interpreter_for(gen_ref, stores) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
+        return (crate::coroutine_host::CoroutineHost::HERE.next_text)(gen_ref, stores);
     };
     // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
     let yielded = st.advance_for_native(gen_ref);
@@ -472,21 +472,21 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
 pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_exhausted(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref, stores),
+        None => (crate::coroutine_host::CoroutineHost::HERE.exhausted)(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_retain(gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref, stores),
+        None => (crate::coroutine_host::CoroutineHost::HERE.retain)(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
     match interpreter_for(gen_ref, stores) {
         Some(st) => st.free_coroutine(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
+        None => (crate::coroutine_host::CoroutineHost::HERE.free)(gen_ref, stores),
     }
 }
 
@@ -532,10 +532,10 @@ pub(crate) unsafe extern "C" fn host_coroutine_adopt(
     coro: *mut std::ffi::c_void,
     ret: *mut LibArg,
 ) {
-    let coro: Box<Box<dyn crate::codegen_runtime::LoftCoroutine>> =
+    let coro: Box<Box<dyn crate::coroutine_host::LoftCoroutine>> =
         unsafe { Box::from_raw(coro.cast()) };
     let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
-    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, *coro);
+    let handle = crate::coroutine_host::alloc_coroutine_held(cell, *coro);
     unsafe { (*ret).dbref = handle };
 }
 

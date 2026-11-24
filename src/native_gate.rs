@@ -255,7 +255,7 @@ fn is_bridge_type(t: &Type) -> bool {
         return is_ref_scalar(inner) || crate::data::is_dbref(inner.base());
     }
     // @PLN199 D3 — a generator handle, interpreted or compiled: both advance through the
-    // host's table (`codegen_runtime::CoroutineHost`).
+    // host's table (`coroutine_host::CoroutineHost`).
     if let Type::Iterator(elem, _) = t.base() {
         return generator_crosses(elem);
     }
