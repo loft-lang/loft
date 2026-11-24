@@ -737,7 +737,7 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 
-layer	elab-functions	agree	13822	of	22808
+layer	elab-functions	agree	13823	of	22808
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -14561,7 +14561,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13515	of	18761
+layer	elab-pass1	agree	13516	of	18762
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
