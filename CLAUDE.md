@@ -42,7 +42,6 @@ delete a tracked file of theirs. Report back in our docs, not in their files.
 ```bash
 cargo run --bin loft -- prog.loft        # run  |  -- repl  |  -- introspect prog.loft  |  -- --help
 loft debug prog.loft:12 [--lib dir]      # stop at line 12, read/edit the frame — INSTEAD of println (DEBUG.md)
-make check-rlib                          # before a bare `cargo test`: is libloft.rlib current?
 ./scripts/find_problems.sh --changed     # the tight loop: the subjects your diff touches (seconds)
 ./scripts/find_problems.sh --subject <n> # one area; `--bg|--peek|--wait` the full suite in the background
 scripts/ci-run.sh start | recheck        # ONE gate per change of unknown reach; after it, recheck — never restart

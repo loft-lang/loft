@@ -736,57 +736,27 @@ jobs:
         if: ${{ steps.shard.outputs.html == 'true' }}
         run: rustup target add wasm32-unknown-unknown
 
-      # The wasm runtime rlibs the leg's tests link — `loft --html` the html shape, built
-      # into its own `target/loft/html`; `--native-wasm` the wasi shape — each keyed on the
-      # running loft's build fingerprint (NATIVE.md), so built by that loft (`cache warm
-      # --runtime <shape>`) and only on a leg with a test that uses it.  SIDE BY SIDE: each
-      # is a release build of the crate for one target, 1m45 on the runner, and one of them
-      # does not saturate four cores; one after the other they were 3.7 min of every leg
-      # that needed both (run 39411552589).
-      - name: Build the wasm runtime rlibs the leg's tests link (html, wasi — side by side)
-        if: ${{ steps.shard.outputs.html == 'true' || steps.shard.outputs.wasi == 'true' }}
-        shell: bash
-        run: |
-          pids=""
-          if [ "${{ steps.shard.outputs.html }}" = "true" ]; then
-            ./target/debug/loft cache warm --runtime html & pids="$pids $!"
-          fi
-          if [ "${{ steps.shard.outputs.wasi }}" = "true" ]; then
-            ./target/debug/loft cache warm --runtime wasi & pids="$pids $!"
-          fi
-          for pid in $pids; do
-            wait "$pid" || echo "warn: a runtime rlib build failed — the first test that links it builds it itself"
-          done
-
-      # The `--html` runtime rlib is keyed on loft's build fingerprint, which moves on every
-      # commit; the warm step stamps the rlib built above with it.  Unwarmed, the first `--html` test in each
-      # shard built it inside the parallel suite, contended by every other test's rustc, and
-      # the rest queued on the global build lock: `html_gl_imports` took 257 s and then 307 s,
-      # past the duration gate's 300 s.  Built here alone it is ~1 min; this is the step
-      # `make ci` runs before its parallel section (loft#1238).  Non-fatal: a test that finds
-      # no fresh rlib still builds one itself, it only pays for it.
+      # Warmed before the parallel suite, so no test builds them contended by every other test
+      # (`make ci` runs the same step before its parallel section, loft#1238).  Non-fatal: a
+      # test that finds nothing warm builds it itself, it only pays for it.
       #
-      # The fixture libraries under tests/fixtures/libs are warmed the same way, through loft:
+      # The fixture libraries under tests/fixtures/libs are warmed through loft as well:
       # a plain `cargo build` in their `native/` is not reused (loft stamps the cdylib it
       # accepts, and rebuilt an unstamped one in 19 s, 4 CPU-min), and `--prebuild-natives`
       # covers installed registry packages only.  Unwarmed, `html_fonts`' refusal test waited
       # 157 s on the lock while another test built the graphics fixture.  A one-line
       # `use <lib>;` program through `--check` builds and stamps each (then 0.1 s).
       #
-      # The warming binary must be the one the SUITE runs.  The --html runtime rlib is keyed on the
-      # hash of the `libloft.rlib` beside the running loft (`cache::loft_build_fingerprint`),
-      # and `cargo nextest run` without `--release` runs `target/debug/loft` — so a warm by
-      # `target/release/loft` filled a key no test ever asked for, and reported "current".
-      # Measured: `w1_1_html_export_produces_file` took 238 s on ubuntu and 353 s on macOS
-      # (past the duration gate) building the rlib inside the suite; warmed by the suite's own
-      # binary it takes under a second.  `cargo build --tests` is that binary with the test
-      # build's feature set, and nextest reuses it rather than building again.  It is the only
-      # binary a test spawns, so the only one warmed.
-      - name: Warm loft's --html runtime rlib and the tests' package cdylibs
+      # The warming binary must be the one the SUITE runs: what it builds is keyed on that
+      # loft's build fingerprint (`cache::loft_build_fingerprint`), and `cargo nextest run`
+      # without `--release` runs `target/debug/loft`, so a warm by `target/release/loft` fills
+      # a key no test asks for.  `cargo build --tests` is that binary with the test build's
+      # feature set, and nextest reuses it rather than building again.
+      - name: Warm the tests' package libraries
         shell: bash
         run: |
           cargo test --no-run ${{ steps.shard.outputs.args }}
-          ./target/debug/loft cache warm --from tests --no-runtime \
+          ./target/debug/loft cache warm --from tests \
             || echo "warn: cache warm failed — the first test needing a package cdylib builds it itself"
           for lib in tests/fixtures/libs/*/; do
             name=$(basename "$lib")

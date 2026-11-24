@@ -59,8 +59,7 @@ python3 bench/stats.py --lanes rust,c,cship --no-local \
   --loft "$PWD/target/release/loft"                         # the same run, nothing recorded
 ```
 
-`stats.py`'s default lanes are these three; the Rust generator is measured only when named
-(`--lanes native,rust`).  Compare only like with like — a checked-lane number is not a ship-lane
+`stats.py`'s default lanes are these three.  Compare only like with like — a checked-lane number is not a ship-lane
 number, and neither is a number from another host: the machine is part of every row, and the
 Rust twin itself runs at a different speed on each, which moves every ratio.
 
@@ -117,18 +116,13 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    leaves the cache ([INTERPRETER_PERFORMANCE.md § What to
    optimise](INTERPRETER_PERFORMANCE.md#what-to-optimise-the-data-that-leaves-the-cache)).
    Name it from the CURRENT emission: a profile expires as rules land (a store share measured
-   before the work-buffer rules priced a fix that then measured level).  **`make gap-report
-   ARGS="--bench <lane> --fn <op>"`** does this for one routine: its instructions against
-   its twin's, split into what the loft lines compile to, the runtime inlined into them and
-   the runtime called, the loft lines that carry them, and every rule decline in those
-   functions — a store, copy or check still emitted is a rule that declined it, and the
-   reason is the work item.  Read its split before picking a fix: a step of 5–10 % on a
-   routine still a factor off its twin is working on the wrong row, and the missing piece
-   is wherever the rest of the gap lives.  For now only the null-integer cost is left alone
+   before the work-buffer rules priced a fix that then measured level).  A step of 5–10 % on a
+   routine still a factor off its twin is working on the wrong row: find where the rest of the
+   gap lives before picking a fix.  For now only the null-integer cost is left alone
    (worklist § Focus).
 4. **Hand-write the efficient form first** — in loft, or as the IR the rewrite would produce —
    for that one case, read what it compiles to on BOTH backends (`--interpret --dump`,
-   `--native-emit`, `bench/portal/hand_price.sh`) and time it.  That is the prize, and the
+   `--emit-c`, `bench/portal/hand_price_c.sh`) and time it.  That is the prize, and the
    proof the target shape is fast.  If the hand-written form is not faster, the named work was
    not the cost: go back to step 3.  The hand form changes only what the rule would change —
    one that also drops checked arithmetic prices a rewrite no rule may build (`slope_path`:
@@ -307,42 +301,6 @@ Two instruments are out of scope there and say so rather than going quiet: `--na
 runs (nothing to sample — no dispatch loop) and `LOFT_ALLOC_SITES` (it ranks a
 *process-wide* peak by bytecode position, and a suite's peak may have been reached in any
 of its runs, so those positions have no single `Data` to resolve against).
-
-### Attributing a bench ROW — `--names` on the native build (@PLN158)
-
-`perf` names `n_<yours>` only while the function still exists as a symbol.  A shipped
-build (`--ship`) is lean and fully optimised, and rustc INLINES a small routine
-into the loop that calls it — a bench lane's `main` — so `perf annotate` shows the lane's
-float math with no way to say which row's it is.  Two rows of the consumer lane
-(`mesh_aabb`, `enum_match`) were measured unattributable that way (`round-3.md`), and the
-whole record class sat behind them.
-
-`loft --ship --names` is the instrument: every generated loft function carries
-`#[inline(never)]` (loft#954's attribute, which the browser build uses so a trap's frames
-resolve), so each row has a symbol and `perf` attributes its samples to it.  A MEASUREMENT
-build, never one that ships — the attribute costs exactly the inlining it names.  The
-recipe, on one core:
-
-```bash
-loft --ship --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
-bench/portal/hand_price.sh /tmp/lane.rs /tmp/lane          # the shipped flags
-perf record -F 15000 -e cycles:u -o /tmp/lane.data -- taskset -c 0 /tmp/lane --n 200
-perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the row's share
-perf annotate -i /tmp/lane.data --stdio -s consumer::n_c_mesh_aabb__inv    # its instructions
-```
-
-A PACKAGE's bench links its libraries' native halves, and which ones, from where, only the
-compile itself knows.  `LOFT_NATIVE_RUSTC_ARGS=<file>` makes a native compile write its
-`rustc` arguments there, one a line, and `hand_price.sh` replays them on the emitted file
-when given the list as a third argument (its header has the three commands).
-
-Read the row's TWIN when one exists (`n_<row>__inv`, `@FR-R-Callee`): the lane calls the
-twin, and the plain function carries no samples.  Check first that the named build times
-the row the same as the plain one (it did, both rows, to 0.3 %) — an attribute that moved
-the row would be measuring something else.  What it found on its first use: `mesh_aabb`'s
-5.3 ns a vertex was six null-aware float compares spelled as four NaN tests and a
-short-circuit each, which LLVM cannot make branchless; respelled as one null test over
-operands bound first (`OpLtFloat`'s template), the row went 38.7 → 20.9 µs, 4.81× → 2.73×.
 
 ### The two ways a profile can lie, and what it now says instead
 
@@ -624,25 +582,6 @@ while a checkpoint is keyed to the loft function the operator was WRITTEN in. Th
 one question a sampler on optimised code cannot answer, and the reason to keep this
 instrument beside the normal one.
 
-### `scripts/native_attrib.py` — the release binary, charged to loft lines
-
-The third instrument answers what the two above cannot answer together: **on the build that
-ships, which loft LINE drives the runtime's cycles?**  A self-time profile of a release
-binary names runtime routines (`OpDatabase`, `vector_add`) but not the line that called them,
-and it counts a runtime helper inlined into a program function as program.  This tool reads
-`perf record --call-graph fp`, expands every frame to its inline chain with
-`llvm-symbolizer`, and charges each sample to the innermost frame of the emitted program —
-whose `// loft:<file>:<line>` comment names the line.  It prints the runtime share by family
-of the entry the program called, by loft function, and by loft line.
-
-It needs frame pointers and line tables in the program AND in the runtime rlib it links, or
-every chain stops at the runtime boundary; the build recipe is in the script's header
-(`cargo build --profile profiling --lib` with `-Cforce-frame-pointers=yes`, then the release
-rustc line with `-Cdebuginfo=1 -Cforce-frame-pointers=yes`).  Frame pointers cost a few per
-cent, so quote SHARES from this build and TIMES from the release one.  The worked example is
-@PLN164 § P0b: it moved the drawing `parse` row's store family from 9 % (self time) to 20 %
-(entry-inclusive) and found half of it minted at function entry on paths that never used it.
-
 ### Count before you time
 
 For an *asymptotic* question — "why is this quadratic?" — a profiler is the wrong first tool.
@@ -773,21 +712,6 @@ history is the density of the commits, which is why `--record` exists.
 > says why).  That state is correct and 5–23× slower on text routines, so **`bench/stats.py`**
 > refuses an interpreter lane where none dispatched (`--allow-declined-stdlib` measures that
 > state on purpose).
-
-### Validating a codegen change — the single-file Rust-emit harness
-
-Emit the program with `--native-emit` to a standalone `.rs` file and compile it with
-`rustc --edition=2024 -O --extern loft=…/libloft.rlib -L target/release/deps`.  Each codegen
-variant (a call left out, `ops::op_add_int(a, b)` replaced by `a + b`) is then an edit to that
-one file, timed as a binary directly, with no build-system or compiler edit per variant.  Use
-it to price a codegen change before writing it in `src/generation/`
-(`bench/portal/hand_price.sh` wraps it).
-
-Time the binary the release ships: bare `--native` is the semantics build, about 10× slower in
-wall-clock on runtime-heavy work than `--ship`, and that gap is not a codegen
-question.
-
----
 
 ## How the interpreter executes
 

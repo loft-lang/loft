@@ -246,8 +246,8 @@ it APPLIES.  A receipt the code moved out from under is cured at PR time, on a r
 each join: `.github/workflows/receipts.yml` (`scripts/receipts_ci.py`) re-applies every stale
 patch by a clean three-way merge, re-scores it with `falsify.sh --patch` — under every
 `LOFT_X=value` its receipt's **ARMED** label names, so a receipt that needs a switch is scored
-the way it was recorded (`FALSIFY_NATIVE=rust` there scores the native half on the rustc leg,
-for a defect only that writer has) — and then runs
+the way it was recorded (`FALSIFY_NATIVE=rust` there is refused: the rustc writer is gone, and
+such a guard is falsified again on the C leg or the interpreter) — and then runs
 `doc_hygiene::every_patch_receipt_still_applies` (ignored per commit for that reason).  A
 dispatch on the branch commits the refreshed patches back (`scripts/derive-ci.sh --workflow
 receipts.yml`); the PR's own run fails only on a WILD SWING — a guard its patch fails to
@@ -641,10 +641,6 @@ Each is one rule; the measured incident behind it is in
 - **A `--lib <dir>` override is DROPPED when the cwd has its own `lib/`** (first-wins,
   `parser/mod.rs::lib_path`).  Prove the flag is honoured by pointing it at a copy that CANNOT
   run; work from a directory without `lib/` (loft#1352, loft#930, loft#963).
-- **An ad-hoc `--native` run LINKS `libloft.rlib`, which `cargo build --bin loft` does not
-  rebuild.**  The two backends then "agree" because one is not being tested.  Run
-  `make check-rlib` before treating any ad-hoc native result as evidence; iterate with
-  `cargo build --release --lib --bin loft`.
 - **A stale test binary masks a diagnostic-message change.**  Run the affected binary from a
   build you watched relink, or `cargo clean -p loft` first.
 - **A temp probe named after a HASH of its source shares a truncation window** with every test

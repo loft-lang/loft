@@ -4174,3 +4174,81 @@ is how N4 and N5 were found (commenting out `cr_call_push`, replacing `op_add_in
 and it surfaced the `--native` against `--native-release` gap (`-O` missing from the default
 mode), fixed in `ae34bdb1` (`make index` uses `--native-release`).  P2's interpreter half
 (`(R-StackBase)`) was delivered on 2026-10-01.
+
+## Instruments of the retired rustc writer (moved 2026-11-24)
+
+These read or built the Rust the `--native-rust` writer emitted; the writer is retired
+(@PLN225) and the tools with it (`bench/portal/hand_price.sh`, `scripts/native_attrib.py`,
+`make gap-report`).
+
+#### Attributing a bench ROW — `--names` on the native build (@PLN158)
+
+`perf` names `n_<yours>` only while the function still exists as a symbol.  A shipped
+build (`--ship`) is lean and fully optimised, and rustc INLINES a small routine
+into the loop that calls it — a bench lane's `main` — so `perf annotate` shows the lane's
+float math with no way to say which row's it is.  Two rows of the consumer lane
+(`mesh_aabb`, `enum_match`) were measured unattributable that way (`round-3.md`), and the
+whole record class sat behind them.
+
+`loft --ship --names` is the instrument: every generated loft function carries
+`#[inline(never)]` (loft#954's attribute, which the browser build uses so a trap's frames
+resolve), so each row has a symbol and `perf` attributes its samples to it.  A MEASUREMENT
+build, never one that ships — the attribute costs exactly the inlining it names.  The
+recipe, on one core:
+
+```bash
+loft --ship --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
+bench/portal/hand_price.sh /tmp/lane.rs /tmp/lane          # the shipped flags
+perf record -F 15000 -e cycles:u -o /tmp/lane.data -- taskset -c 0 /tmp/lane --n 200
+perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the row's share
+perf annotate -i /tmp/lane.data --stdio -s consumer::n_c_mesh_aabb__inv    # its instructions
+```
+
+A PACKAGE's bench links its libraries' native halves, and which ones, from where, only the
+compile itself knows.  `LOFT_NATIVE_RUSTC_ARGS=<file>` makes a native compile write its
+`rustc` arguments there, one a line, and `hand_price.sh` replays them on the emitted file
+when given the list as a third argument (its header has the three commands).
+
+Read the row's TWIN when one exists (`n_<row>__inv`, `@FR-R-Callee`): the lane calls the
+twin, and the plain function carries no samples.  Check first that the named build times
+the row the same as the plain one (it did, both rows, to 0.3 %) — an attribute that moved
+the row would be measuring something else.  What it found on its first use: `mesh_aabb`'s
+5.3 ns a vertex was six null-aware float compares spelled as four NaN tests and a
+short-circuit each, which LLVM cannot make branchless; respelled as one null test over
+operands bound first (`OpLtFloat`'s template), the row went 38.7 → 20.9 µs, 4.81× → 2.73×.
+
+
+#### `scripts/native_attrib.py` — the release binary, charged to loft lines
+
+The third instrument answers what the two above cannot answer together: **on the build that
+ships, which loft LINE drives the runtime's cycles?**  A self-time profile of a release
+binary names runtime routines (`OpDatabase`, `vector_add`) but not the line that called them,
+and it counts a runtime helper inlined into a program function as program.  This tool reads
+`perf record --call-graph fp`, expands every frame to its inline chain with
+`llvm-symbolizer`, and charges each sample to the innermost frame of the emitted program —
+whose `// loft:<file>:<line>` comment names the line.  It prints the runtime share by family
+of the entry the program called, by loft function, and by loft line.
+
+It needs frame pointers and line tables in the program AND in the runtime rlib it links, or
+every chain stops at the runtime boundary; the build recipe is in the script's header
+(`cargo build --profile profiling --lib` with `-Cforce-frame-pointers=yes`, then the release
+rustc line with `-Cdebuginfo=1 -Cforce-frame-pointers=yes`).  Frame pointers cost a few per
+cent, so quote SHARES from this build and TIMES from the release one.  The worked example is
+@PLN164 § P0b: it moved the drawing `parse` row's store family from 9 % (self time) to 20 %
+(entry-inclusive) and found half of it minted at function entry on paths that never used it.
+
+
+#### Validating a codegen change — the single-file Rust-emit harness
+
+Emit the program with `--native-emit` to a standalone `.rs` file and compile it with
+`rustc --edition=2024 -O --extern loft=…/libloft.rlib -L target/release/deps`.  Each codegen
+variant (a call left out, `ops::op_add_int(a, b)` replaced by `a + b`) is then an edit to that
+one file, timed as a binary directly, with no build-system or compiler edit per variant.  Use
+it to price a codegen change before writing it in `src/generation/`
+(`bench/portal/hand_price.sh` wraps it).
+
+Time the binary the release ships: bare `--native` is the semantics build, about 10× slower in
+wall-clock on runtime-heavy work than `--ship`, and that gap is not a codegen
+question.
+
+---

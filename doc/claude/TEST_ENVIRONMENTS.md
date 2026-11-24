@@ -202,7 +202,7 @@ unit, the build script's output under `run/`, and no `target/<profile>/deps/`; o
 an existing tree still have `deps/`.  Every reader of the build directory takes both:
 `src/cargo_layout.rs` for the native toolchain, the cache and the tests
 (`dependency_dirs`, `build_units`, `runtime_profile_dir`, `rlib_meta_header`), and
-`scripts/cargo_dep_files.sh` for `runtime_bundle.sh`, `make install` and `find_problems.sh`.
+`scripts/cargo_dep_files.sh` for `make install` and `find_problems.sh`.
 A new reader goes through one of the two; a path spelled `deps/` by hand breaks on the default
 layout (`E0463: can't find crate for loft`, or `E0514` where a stale `deps/` from another
 rustc is still there).  The history of the switch is in

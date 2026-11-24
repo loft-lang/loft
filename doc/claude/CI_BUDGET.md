@@ -455,10 +455,9 @@ half — `make sweep-scratch`), delete scratch whose durable copy exists, and bo
 `CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 ./scripts/find_problems.sh --subject <name>`
 finishes later and finishes.  A killed run is no verdict, exactly as above.
 
-What a GitHub run cannot do: measure a ratio (`make speed` is a report and stays local;
-the native/Rust ratio gate, `scripts/native_ratio.sh --gate`, runs LAST in the local
-`make ci` and is deliberately not mirrored in ci.yml, because a shared runner's timing is
-noise and a flaking timing gate is one people learn to ignore) or read this box's scratch.  What it does that a local
+What a GitHub run cannot do: measure a ratio (`make speed` and `bench/stats.py` are reports
+and stay local, because a shared runner's timing is noise and a flaking timing gate is one
+people learn to ignore) or read this box's scratch.  What it does that a local
 run cannot: run cold, on a machine nobody else is using, and leave a verdict that
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
@@ -476,7 +475,7 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
 |---|---|---|
 | does it compile, what does the type checker say | `cargo check --bin loft` | ~1 min on a quiet box (its artefacts are separate from a build's: the first check in a session warms them, ~1 min more) |
 | what does the fixed binary DO — `--interpret`, `--native`, `introspect`, `--native-emit` | `cargo build --bin loft` (dev): `target/debug/loft` runs `--native` against the `deps/` rlib this build wrote | 3–6 min alone; 24 min beside a sibling's dependency build |
-| a release binary | `cargo build --release --bin loft` | 20–40 min — needed ONLY to refresh `target/release/libloft.rlib` for the `cargo test --release` native suites; `make check-rlib` says when |
+| a release binary | `cargo build --release --bin loft` | 20–40 min — needed by the tests that spawn `target/release/loft` |
 | the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build and the release rlib.  The curated set builds no wasm rlib: its `--html` / `--native-wasm` tests go through the C, and the Rust-writer ones live in `mod rust_writer` (nightly).  `--subject <name>` / `--changed` build the wasm rlibs only when a selected binary drives a page |
 | one area | `find_problems.sh --subject <name>` | seconds to a minute |
 | the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
@@ -518,13 +517,10 @@ threshold is 15 %, the noisy rows are flagged, and a move is one that repeats.  
 box idle for a measurement, and then for the suite, is how a verified unit sat for two hours
 (the history companion has the measurement).
 
-**The three traps that turned one perf-check into three:**
+**The traps that turned one perf-check into three:**
 
 * a lane crashes — that is a DEFECT in the change, found by the run doing its job; fix it,
   and rerun only that lane (`ARGS="--package DIR=NAME"`), never the set;
-* `no method named …` in a native lane's `rustc` after a new op — the bare
-  `target/release/libloft.rlib` the lanes link is STALE (`cargo build --bin loft` never
-  refreshes it); `cargo build --release --lib` first, and `make check-rlib` says when;
 * `no baseline to compare with` — this host has no committed results row; the A/B is then
   `perf_check.py --baseline <saved on-run.tsv>` with the switches OFF, on the flagged lanes
   named explicitly (`--package …`, `--only …`), because with the switches off the census
@@ -656,9 +652,7 @@ the full matrix as ONE test of 3,661 cells took 421 s and tripped
 `scripts/test_duration_gate.py`, and as seven tests beside one another four of them ran
 into the 600 s limit — which is why the tests sample the C backend.  It is in the per-PR test legs as any test binary.
 The rest of the C backend is the night's: `miri.yml`'s `slot-matrix-c` runs `gate --full`, every
-cell on both backends against the same baseline, and reports in the daily digest.  The rustc writer is the night's
-too: `slot-matrix-rust` runs `gate --rust --full`, every cell on that writer, against its own
-baseline.  The wider
+cell on both backends against the same baseline, and reports in the daily digest.  The wider
 runs below have no baseline of their own and are run by hand:
 
 | Run | Cells | Both backends |
@@ -678,7 +672,7 @@ a cell that loops costs its limit and is named, and cannot hold the leg.
 |---|---|---|
 | **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`),  several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on the interpreter and the C backend through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193; its rustc-native leg runs on the daily schedule), **the C backend sweep** (`c-sweep`: every corpus program through the C backend in its three macro modes against the interpreter, four shards of about ten minutes; advisory, @PLN203 C8) | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
-| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, the C backend's poison and ASan sweeps (`c-sweep-unsound`, four poison shards and eight ASan ones), debug-assertions, valgrind memcheck sweep (release binary, both backends), the slot matrix with every cell on the C backend (`slot-matrix-c`, @PLN221) and on the rustc writer (`slot-matrix-rust`), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
+| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, the C backend's poison and ASan sweeps (`c-sweep-unsound`, four poison shards and eight ASan ones), debug-assertions, valgrind memcheck sweep (release binary, both backends), the slot matrix with every cell on the C backend (`slot-matrix-c`, @PLN221), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta, nightly and the MSRV building loft), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **once per PR, on dispatch** (`miri.yml`, `pr_head: true`) | the nightly jobs a pull_request run skips, on the PR's head commit; reports as `nightly / PR head` and in the PR's `Nightly health` comment, never a required check; its jobs start once the PR's own runs on that commit have theirs on runners (`pr-ci-started`) ([DEVELOPMENT.md § The PR-head nightly](DEVELOPMENT.md#the-pr-head-nightly)) | `workflow_dispatch` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
 | **Sundays 05:30** | `registry-validation` (scope `contract`) — from the contract boundary on (`CONTRACT_FLOOR` in `scripts/registry_matrix_versions.py`), the newest release of each API line: under the soft freeze loft does not break a release that works, so one release per API checks the promise.  Older releases are held (a pin or a lock resolves them) but not tested; `full`, every published version, is by hand (`workflow_dispatch`) | `schedule` |
