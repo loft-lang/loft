@@ -502,7 +502,7 @@ impl State {
     pub fn clear_stack_text(&mut self) {
         let pos = self.code::<u16>();
         let v1 = self.string_ref_mut(pos);
-        v1.clear();
+        crate::text_null::clear(v1);
     }
 
     #[inline]
@@ -633,7 +633,7 @@ impl State {
 
     pub fn clear_text(&mut self) {
         let pos = self.code::<u16>();
-        self.string_mut(pos).clear();
+        crate::text_null::clear(self.string_mut(pos));
     }
 
     /// #629 follow-up — free the entry fn's hidden TEXT return buffer, addressed by

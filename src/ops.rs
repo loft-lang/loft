@@ -772,8 +772,7 @@ pub fn append_text(dst: &mut String, src: &str) {
         return;
     }
     if crate::text_null::is_null(src) {
-        dst.clear();
-        dst.push_str(crate::text_null::null_str());
+        crate::text_null::set_null(dst);
         return;
     }
     dst.push_str(src);

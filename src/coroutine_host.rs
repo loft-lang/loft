@@ -52,7 +52,7 @@ pub trait LoftCoroutine {
     /// Advance a text-yielding generator one step.  Returns the yielded
     /// `String`, or `STRING_NULL` (`"\0"`) when the generator is exhausted.
     fn next_text(&mut self, _stores: &mut Stores) -> String {
-        crate::text_null::null_str().to_string()
+        crate::text_null::null_string()
     }
 
     /// Advance a Reference-yielding generator one step.  Returns the yielded
@@ -399,7 +399,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     advance_native(
         gen_ref,
         stores,
-        crate::text_null::null_str().to_string(),
+        crate::text_null::null_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
             let done = crate::text_null::is_null(&val) && coro.done();

@@ -25,6 +25,33 @@ pub fn null_str() -> &'static str {
     unsafe { std::str::from_utf8_unchecked(&NULL_TEXT) }
 }
 
+/// The null text as an owned `String`.
+#[inline]
+#[must_use]
+pub fn null_string() -> String {
+    null_str().to_owned()
+}
+
+/// Make `s` the null text.
+#[inline]
+pub fn set_null(s: &mut String) {
+    s.clear();
+    s.push_str(null_str());
+}
+
+/// Make `s` the empty text `""`, a null one too: the start of every assignment to a text.
+#[inline]
+pub fn clear(s: &mut String) {
+    s.clear();
+}
+
+/// An owned copy of `s` that keeps a null text null.
+#[inline]
+#[must_use]
+pub fn own(s: &str) -> String {
+    if is_null(s) { null_string() } else { s.to_owned() }
+}
+
 /// Is `s` the null text?
 #[inline]
 #[must_use]
