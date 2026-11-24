@@ -519,7 +519,7 @@ impl Stores {
     }
 
     // Native + `wasm32-wasip2` (WASI filesystem via `--dir` preopens): std::fs works under
-    // wasip2, so this implementation covers `target_os = "wasi"` too (@P334) — the
+    // wasip2, so this implementation covers `target_os = "wasi"` too — the
     // wasm-unknown stub would answer every exists()/file() there as missing.
     #[cfg(not(host_fs))]
     pub fn get_file(&mut self, file: &DbRef) -> bool {

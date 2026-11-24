@@ -6,7 +6,7 @@
 //! names — and the facts around it (the target root, the missing-system-library diagnostic).
 //! The parser asks it when it resolves a `use`, so it sits in the core layer; loading the
 //! library and calling into it stay in `extensions` (@PLN191).  A package's own native
-//! library, built by cargo or shipped prebuilt, is no longer loaded (@PLN225).
+//! library, built by cargo or shipped prebuilt, is not loaded.
 
 /// Compute the target dir for a package's
 /// native cdylib/rlib build.

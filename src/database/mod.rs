@@ -1942,7 +1942,7 @@ impl Stores {
         Some(full)
     }
 
-    /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`, for code that has
+    /// The Stores-side counterpart of `State::raise`, for code that has
     /// `&mut Stores` but no `&mut State` (the `*_runtime` helpers, store allocation).
     ///
     /// **Position is `None`**: there is no bytecode pc to look one up by, so the diagnostic
@@ -3620,7 +3620,7 @@ impl Stores {
     }
 
     /// `const_refs[d_nr]` for code that only has `&mut Stores` — the counterpart of
-    /// `State::const_ref_at`.  @P275.
+    /// `State::const_ref_at`.
     #[must_use]
     pub fn const_ref_at_runtime(&self, d_nr: usize) -> DbRef {
         self.const_refs[d_nr]

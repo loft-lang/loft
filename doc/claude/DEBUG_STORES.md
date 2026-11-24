@@ -298,7 +298,7 @@ Run sanitizer/nightly builds through **`scripts/asan.sh`**, which sets
 `CARGO_TARGET_DIR=target/asan` so nightly artifacts never land in the shared
 `target/`.  Compiled libraries a stray build left behind go with
 `loft cache prune --all` (the whole-cache sweep; plain `loft cache prune` keeps
-the live generation and drops only what this loft cannot select — see loft#861).
+the live generation and drops only what this loft cannot select).
 
 Reading the results: CLI-spawning tests fail en masse if the stdlib symlink
 is missing (lens artifact, not a finding); confirm any surprising cell

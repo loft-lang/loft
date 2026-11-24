@@ -7349,7 +7349,7 @@ fn main() {
     // A memory bound beside the time bound, but only when asked for: an explicit
     // `LOFT_MEMORY_LIMIT` caps an ordinary run too (`store_budget::apply_env_limit_if_set`).
     loft::store_budget::apply_env_limit_if_set();
-    // Plan-07 phase 1 step 1.20 / phase 3 — an interpreter that panics names the loft
+    // An interpreter that panics names the loft
     // source position of the op it was dispatching (`State::dispatch`).
     loft::crash_report::tell_panic_positions();
     let argv: Vec<String> = env::args_os()

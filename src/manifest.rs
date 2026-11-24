@@ -543,9 +543,9 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             message,
         });
     }
-    // @PLN225 — a package's own native library (`[library] native`, `[native] crate` and the
-    // tables that go with them: a cdylib cargo built, or one shipped prebuilt) is no longer
-    // built, fetched or loaded: the manifest holds none, and the parse that reads it refuses
+    // A package's own native library (`[library] native`, `[native] crate` and the tables
+    // that go with them: a cdylib cargo built, or one shipped prebuilt) is not built, fetched
+    // or loaded: the manifest holds none, and the parse that reads it refuses
     // the package at the declaration (`Parser::read_manifest`).  A `[native] component`
     // names a library loft ships, not one of the package's own.
     if m.native_component.is_none()

@@ -32,7 +32,7 @@ impl State {
                     .get_str(store.get_u32_raw(file.rec, file.pos + 24))
                     .to_owned()
             };
-            // @P349: consult the page's files first — `compile_and_run` hands the run every
+            // Consult the page's files first — `compile_and_run` hands the run every
             // file passed to the playground/gallery (the program's bundled data,
             // `Stores::page_files`).  Without this, runtime `file("x").content()` only hit the
             // JS `fs_read_text` host bridge, which the browser playground does not provide →
@@ -926,7 +926,7 @@ impl State {
                 db.store_nr, db.rec, db.pos,
             );
         }
-        // @PLAN51 Cluster II Step 2 — handle u16::MAX sentinel inputs,
+        // Handle u16::MAX sentinel inputs,
         // so the bytecode VM's `database` opcode accepts the
         // sentinel a caller-side `OpInitRefSentinel` reset
         // produces.  Without this, `clear()` below would OOB into

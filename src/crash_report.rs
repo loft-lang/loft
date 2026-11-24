@@ -172,7 +172,7 @@ impl CrashCx {
         op_name_of(self.current().op_code)
     }
 
-    /// Plan-07 phase 1 step 1.20 / phase 3 — the interpreter's fault-site spans, so a fault
+    /// The interpreter's fault-site spans, so a fault
     /// can print `at file:line:col` for the offending pc.  `None` clears them.
     pub fn set_spans(&mut self, spans: Option<Arc<Spans>>) {
         let at = spans
@@ -182,7 +182,7 @@ impl CrashCx {
         self.spans = spans;
     }
 
-    /// Plan-07 phase 1 step 1.20 / phase 3 — the source position of the construct that
+    /// The source position of the construct that
     /// CONTAINS `pc`.
     ///
     /// `None` when no spans are set or no recorded span covers `pc`.  Answering `None` is the
@@ -360,7 +360,7 @@ impl Drop for Running {
 /// binary or an embedder, whose panics are its own to report, does not.
 static PANIC_POSITIONS: AtomicBool = AtomicBool::new(false);
 
-/// Plan-07 phase 1 step 1.20 / phase 3 — an interpreter that panics names the loft source
+/// An interpreter that panics names the loft source
 /// position of the op it was dispatching, after the panic's own message.  It prints a position
 /// only when a recorded span COVERS the pc, and otherwise says nothing: the span table is
 /// sparse, so an inherited answer names whatever statement happened to be wrapped last
@@ -696,7 +696,7 @@ fn report_context(w: &mut Writer, cx: &CrashCx) {
         let _ = w.str(")");
     }
     let _ = w.str("\n");
-    // Plan-07 phase 3 — the span AND the pc it was recorded at.  The lookup is "the last span
+    // The span AND the pc it was recorded at.  The lookup is "the last span
     // at or before pc", which is only the crash site when a span actually covers that pc — and
     // the table is sparse (one entry per statement, and none at all for regions no statement
     // produced).  Unqualified, it reported loft#806's fault at `default/05_coroutine.loft:18:27`,
@@ -709,7 +709,7 @@ fn report_context(w: &mut Writer, cx: &CrashCx) {
         .then(|| unsafe { &*spans })
         .and_then(|m| m.range(..=ctx.pc).next_back())
         .map(|(at, (p, _))| (*at, *p));
-    // Plan-07 phase 3 — emit `at file:line:col` when the source span lookup succeeded.
+    // Emit `at file:line:col` when the source span lookup succeeded.
     // Truncate file path to fit; the user can still grep for it.
     if let Some((span_pc, pos)) = source_loc.as_ref() {
         let _ = w.str("  at:      ");
