@@ -13,6 +13,15 @@
 #define LOFT_PG_TRIE 1
 #define LOFT_PG_RADIX 2
 
+/* `LOFT_LOADER_STATS=1`: what a load asked its source for, as the interpreter's loaders say it
+ * (DATABASE.md § the working-set loaders) — `head` names the call and its answer, then the bytes
+ * and requests the reader fetched (loft_paged.h) and the image's size. */
+static void loft_pg_stats(loft_cx *cx, const loft_pg *r, const char *head) {
+    if (!getenv("LOFT_LOADER_STATS")) return;
+    fprintf(stderr, "%s bytes_fetched=%llu requests=%llu file=%llu\n", head, (unsigned long long) r->fetched,
+            (unsigned long long) r->requests, (unsigned long long) r->size);
+}
+
 /* Stores::refuse_paged: a refusal, which reads as 0 like an absent key, said on stderr. */
 static void loft_pg_refuse(loft_cx *cx, const char *path, const char *reason) {
     fprintf(stderr, "store loader: refusing %s — %s; loaded NOTHING (a refusal, not an absent key)\n", path, reason);
@@ -293,14 +302,24 @@ static int loft_pg_load_one(loft_cx *cx, loft_pg *r, const loft_tdesc *T, loft_r
 }
 
 /* store_load_key / store_load_keys / store_load_key_text / store_load_keys_text: each key's
- * entry, through one reader; the count found. */
+ * entry, through one reader; the count found.  `label` names the call in the loader stats — the
+ * single text key's line names its key, as the interpreter's does — and 0 says nothing. */
 static int64_t loft_pg_load_keys(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
                                  const char *refusal, uint16_t content, const loft_key *keys, int nk, int kind,
-                                 const loft_kv *kv, int64_t n) {
+                                 const loft_kv *kv, int64_t n, const char *label) {
     loft_pg r;
     int64_t loaded = 0;
     if (!loft_pg_begin(cx, &r, local, path, sc, refusal)) return 0;
     for (int64_t i = 0; i < n; i++) loaded += loft_pg_load_one(cx, &r, T, local, content, keys, nk, kind, &kv[i]);
+    if (label) {
+        char head[256];
+        if (strcmp(label, "store_load_key_text") == 0 && n == 1 && kv[0].kind == LOFT_KV_TEXT)
+            snprintf(head, sizeof head, "%s: key=\"%.*s\" found=%s", label, (int) (kv[0].s.len > 128 ? 128 : kv[0].s.len),
+                     kv[0].s.p, loaded ? "true" : "false");
+        else
+            snprintf(head, sizeof head, "%s: asked=%lld loaded=%lld", label, (long long) n, (long long) loaded);
+        loft_pg_stats(cx, &r, head);
+    }
     loft_pg_close(cx, &r);
     return loaded;
 }
@@ -331,7 +350,8 @@ static int64_t loft_pg_load_key_list(loft_cx *cx, const loft_tdesc *T, loft_ref 
                                      loft_ref list, int text) {
     int64_t n;
     loft_kv *kv = loft_pg_key_list(cx, list, text, &n);
-    int64_t got = loft_pg_load_keys(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n);
+    int64_t got = loft_pg_load_keys(cx, T, local, path, sc, refusal, content, keys, nk, kind, kv, n,
+                                    text ? "store_load_keys_text" : "store_load_keys");
     free(kv);
     return got;
 }
@@ -351,6 +371,10 @@ static int64_t loft_pg_load_prefix(loft_cx *cx, const loft_tdesc *T, loft_ref lo
         for (size_t i = 0; i < found.n; i++) loaded += loft_pg_copy_entry(cx, &r, T, local, content, keys, nk, LOFT_PG_TRIE, found.p[i], 8);
         free(found.p);
     }
+    char head[256];
+    snprintf(head, sizeof head, "store_load_prefix: \"%.*s\" limit=%lld loaded=%lld", (int) (pre.len > 128 ? 128 : pre.len), pre.p,
+             (long long) limit, (long long) loaded);
+    loft_pg_stats(cx, &r, head);
     loft_pg_close(cx, &r);
     return loaded;
 }
@@ -360,7 +384,7 @@ static int64_t loft_pg_load_prefix(loft_cx *cx, const loft_tdesc *T, loft_ref lo
 static int64_t loft_pg_load_box_kv(loft_cx *cx, const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
                                    const char *refusal, uint16_t content, const loft_key *keys, int nk,
                                    const loft_kv *f, int64_t nf, const loft_kv *t, int64_t nt, int64_t limit,
-                                   const char *type_name) {
+                                   const char *type_name, int stats) {
     loft_pg r;
     int64_t loaded = 0;
     if (!loft_pg_begin(cx, &r, local, path, sc, refusal)) return 0;
@@ -391,6 +415,15 @@ static int64_t loft_pg_load_box_kv(loft_cx *cx, const loft_tdesc *T, loft_ref lo
             free(found.p);
         }
     }
+    if (stats) {
+        char head[512];
+        int at = snprintf(head, sizeof head, "store_load_box: [");
+        for (int64_t a = 0; a < nf && at < 400; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) f[a].i);
+        at += snprintf(head + at, sizeof head - at, "]..[");
+        for (int64_t a = 0; a < nt && at < 450; a++) at += snprintf(head + at, sizeof head - at, "%s%lld", a ? ", " : "", (long long) t[a].i);
+        snprintf(head + at, sizeof head - at, "] limit=%lld loaded=%lld", (long long) limit, (long long) loaded);
+        loft_pg_stats(cx, &r, head);
+    }
     loft_pg_close(cx, &r);
     return loaded;
 }
@@ -400,7 +433,7 @@ static int64_t loft_pg_load_box(loft_cx *cx, const loft_tdesc *T, loft_ref local
                                 loft_ref till, int64_t limit, const char *type_name) {
     int64_t nf, nt;
     loft_kv *f = loft_pg_key_list(cx, from, 0, &nf), *t = loft_pg_key_list(cx, till, 0, &nt);
-    int64_t loaded = loft_pg_load_box_kv(cx, T, local, path, sc, refusal, content, keys, nk, f, nf, t, nt, limit, type_name);
+    int64_t loaded = loft_pg_load_box_kv(cx, T, local, path, sc, refusal, content, keys, nk, f, nf, t, nt, limit, type_name, 1);
     free(f);
     free(t);
     return loaded;

@@ -785,11 +785,11 @@ impl FnWriter<'_> {
                 // A point is the degenerate box, and it loads every record at that point.
                 let load = if radix {
                     format!(
-                        "n > 0 ? loft_pg_load_box_kv(cx, loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, key, n, key, n, -1, {coll_name}) : 0"
+                        "n > 0 ? loft_pg_load_box_kv(cx, loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, key, n, key, n, -1, {coll_name}, 0) : 0"
                     )
                 } else {
                     format!(
-                        "n == 1 ? loft_pg_load_keys(cx, loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, {kind}, key, 1) : 0"
+                        "n == 1 ? loft_pg_load_keys(cx, loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, {kind}, key, 1, 0) : 0"
                     )
                 };
                 let f = format!("loft_lazy_fetch{k}");
@@ -927,14 +927,14 @@ impl FnWriter<'_> {
         Ok(match name {
             "n_store_load_key" => E::new(
                 format!(
-                    "(uint8_t) (loft_pg_load_keys(cx, {head}, {kind}, (loft_kv[]) {{ loft_kv_int(cx, {}) }}, 1) > 0)",
+                    "(uint8_t) (loft_pg_load_keys(cx, {head}, {kind}, (loft_kv[]) {{ loft_kv_int(cx, {}) }}, 1, 0) > 0)",
                     as_int(next()?)?
                 ),
                 K::Bool,
             ),
             "n_store_load_key_text" => E::new(
                 format!(
-                    "(uint8_t) (loft_pg_load_keys(cx, {head}, {kind}, (loft_kv[]) {{ loft_kv_text(cx, {}) }}, 1) > 0)",
+                    "(uint8_t) (loft_pg_load_keys(cx, {head}, {kind}, (loft_kv[]) {{ loft_kv_text(cx, {}) }}, 1, \"store_load_key_text\") > 0)",
                     as_view(next()?)?
                 ),
                 K::Bool,
