@@ -26,7 +26,7 @@ corresponding-routine ruling), the sub-kinds that make it up, and the cells to p
 | R7 | a function returning a record from something other than a literal | 35 | 27 / 52 | el_expressions.loft:784 | porter |
 | R8 | a literal of something other than a declared struct | 32 | 32 / 84 | el_ex_into.loft:99, el_ex_object.loft:430 | porter |
 | R9 | the definitions a refused construct never registers (the `beside numbers` pool) | — | 2339 beside | per site, below | tester |
-| R10 | the 32-bit regime's lowering (`a \`#width 32\` file`) | 3 alone | — | el_definitions.loft:92 | open |
+| R10 | the 32-bit regime's lowering (`a \`#width 32\` file`) | 0 | — | el_definitions.loft:92 | tester — built |
 
 ## R1 — names across a used library
 
@@ -140,6 +140,9 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
 
 ## R10 — the 32-bit regime
 
-The port refuses a `#width 32` file (`OpNarrow32` on every integer operation and the 32-bit
-widths are not ported, @PLN217); it records the regime and each function's `width32` fact.  It
-alone blocks three programs.  Open: the owner decides whether it is ported now.
+Built (d067d87a8): a `#width 32` file is lowered as the Rust front end lowers it — W-Name,
+W-Lit, W-Count, W-Op, W-Call (both sides), W-Store, `@FR-I-Narrow-U32`'s guard, and the
+`@FR-I-Join` integer union in `if_expr`.  Every regime program with a Rust image agrees; the two
+`@EXPECT_ERROR` cells have none.  Not carried: the regime under `LOFT_WIDTH=32` for the standard
+library, and the `match` arms' join (`join_arm_into`'s union and `arm_fits_named_width`), which
+no corpus program reaches yet.
