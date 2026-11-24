@@ -30,12 +30,6 @@
 #     (Miri is single-threaded; ASan/guard are not race detectors).  Needs an
 #     instrumented std (-Zbuild-std), sanitizer flag target-scoped so host
 #     proc-macros stay clean.
-#   - native-asan — ASan over the `--native` GENERATED binary (@PLN54 S6): the
-#     in-process interpreter ASan job is blind to `--native` (a separate,
-#     uninstrumented process).  LOFT_NATIVE_ASAN=1 compiles the generated binary
-#     with -Zsanitizer=address so an OOB / UAF store access the codegen emits is
-#     caught, not silent.  (S9's mixed-boundary cdylib shares the mechanism —
-#     blocked on a proc-macro -L fix; see plans/54-.../NATIVE_ASAN_DESIGN.md.)
 #   - debug-asserts — loft's ~200 internal `debug_assert!`s (@PLN54 S5b): the H5
 #     numbering law, Store::valid()/addr() bounds, poison/UAF invariants — its OWN
 #     correctness contract, compiled OUT of every normal test build
@@ -1240,84 +1234,6 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
-  native-asan:
-    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
-    if: ${{ !inputs.pr_head }}
-    # @windows-exempt: a Linux-only tool (AddressSanitizer on --native)
-    # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
-    name: Native-backend ASan (--native codegen)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-
-      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
-      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
-      - if: runner.os == 'Windows'
-        uses: ./.github/actions/windows-gcc
-
-      # Nightly was needed for `-Zsanitizer=address` on the GENERATED native binary.
-      - name: Install Rust stable + nightly
-        uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@nightly
-
-      - name: Install mold
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
-
-      - name: Cache cargo registry and build
-        id: cargo-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-native-asan-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ubuntu-native-asan-cargo-
-
-      # ⚠ LOFT_NATIVE_ASAN (below) belonged to the retired rustc writer; the C backend does
-      # not read it, so this sweep compiles and runs the corpus WITHOUT a sanitizer until the
-      # C backend has its own ASan switch.
-      - name: Build the loft host binary
-        env:
-          RUSTUP_TOOLCHAIN: nightly
-        run: cargo build --release --bin loft
-
-      # @PLN54 S6 — loft's `--native` codegen emits Rust that accesses the store by
-      # raw pointer; a codegen bug producing an out-of-bounds / use-after-free store
-      # access runs SILENT today because `--native` is a separate, uninstrumented
-      # process the in-process interpreter `asan` job cannot see.  LOFT_NATIVE_ASAN=1
-      # makes loft compile the generated binary with `-Zsanitizer=address` (nightly),
-      # so that class is caught.  The curated corpus is the store-heavy shapes (vectors/structs/enums/collections/
-      # text/match) + the 131/132 UAF regression scripts — the exact class ASan
-      # catches.  detect_leaks=0: the interpreter has known live-at-exit allocations
-      # (S4 owns that triage).  Validated locally + a raw-pointer-OOB positive control
-      # confirms ASan fires here.  (S9's mixed-boundary cdylib ASan shares this
-      # mechanism but is blocked on a proc-macro `-L` fix — NATIVE_ASAN_DESIGN.md.)
-      - name: Native ASan sweep (curated --native corpus)
-        env:
-          LOFT_NATIVE_ASAN: '1'
-          RUSTUP_TOOLCHAIN: nightly
-          ASAN_OPTIONS: 'detect_leaks=0'
-        run: |
-          set -euo pipefail
-          for s in 01-integers 02-floats 03-text 04-booleans 05-enums 06-structs \
-                   10-match 11-vectors 12-collections 13-map-filter-reduce \
-                   124-vector-amortised-growth 131-keyed-nested-struct-uaf \
-                   132-vector-elemset-inline-literal-uaf 138-vector-of-vector-single; do
-            echo "::group::--native ASan $s"
-            ./target/release/loft --native "tests/scripts/$s.loft"
-            echo "::endgroup::"
-          done
-      - name: Save cargo cache (main only)
-        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   valgrind:
     # @windows-exempt: a Linux-only tool (valgrind); Windows has the store-heap ceiling
@@ -1954,7 +1870,7 @@ jobs:
     # list_that_reads_them` fails when they disagree, and when a job carries no
     # class at all, so a new gate cannot be added without answering the question.
     # Reclassifying is a one-word edit to the marker, and it is meant to be one.
-    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms]
+    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -2044,7 +1960,7 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
+            valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
@@ -2061,7 +1977,7 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
+            valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
@@ -2113,7 +2029,7 @@ jobs:
             done
             echo
             echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
-            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms."
+            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms."
             echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

@@ -489,10 +489,9 @@ fn register_native_stubs(state: &mut State, data: &Data) {
         let stub: fn(&mut Stores, &mut DbRef) = {
             |stores: &mut Stores, _db: &mut DbRef| {
                 panic!(
-                    "native function {} not loaded. Either (a) its library's native cdylib is \
-                     missing or stale — commonly built against a different libloft.rlib; \
-                     rebuild with `make rebuild-native-cdylibs`, or `cargo build --release` \
-                     in the library's `native/` dir — or (b) a freed store was read and its \
+                    "native function {} not loaded. Either (a) its library's compiled unit is \
+                     missing or was built by another loft — rebuild it with \
+                     `loft build-native <package>` — or (b) a freed store was read and its \
                      poisoned contents were used as the call index, in which case the real \
                      fault is a store lifetime bug that happened EARLIER. Tell them apart: \
                      if the run is green with LOFT_POISON unset, or an earlier line reports \
