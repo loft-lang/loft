@@ -712,7 +712,7 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 
-layer	elab-functions	agree	12865	of	21299
+layer	elab-functions	agree	12883	of	21299
 elab-functions	agree	lib/git/src/git.loft::(schema)
 elab-functions	agree	lib/git/src/git.loft::Change
 elab-functions	agree	lib/git/src/git.loft::Commit
@@ -1738,6 +1738,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-i
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft::Span
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft::main_vector<N>
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft::n_bound
+elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft::n_main
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft::vector<N>
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::In
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::Memo
@@ -8360,6 +8361,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-t
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_owned_build
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_owned_literal
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_ref_twin
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_a_branch_arm_that_binds_a_view_delivers_it
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_a_copied_rebinding_still_delivers
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_a_projection_of_an_inline_call_result_survives_the_return
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_a_tuple_element_bound_to_a_local_survives_the_return
@@ -8986,6 +8988,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::n_branchy
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::n_head2
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::n_keep
+elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::n_main
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::n_odd
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft::vector<Item>
 elab-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-reads-its-length-where-the-body-can-change-it.loft::(schema)
@@ -10229,11 +10232,23 @@ elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::Shape1493
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::main_vector<BoxF1493>
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::main_vector<integer(0, 255)>
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_both_arms
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_element_of_a_local
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_first_arm
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_from_call
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_function_tail
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_head1493
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_heads1493
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_if_arm
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_literal_filled
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_main
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_mk1493
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_nested
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_nullable
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_outer_local
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_records
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_text_field
+elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::n_views_a_parameter
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::vector<BoxF1493>
 elab-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft::n_k_bound
@@ -12026,6 +12041,7 @@ elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::main_vector<vector<integer>>
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::n_grow
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::n_gsl
+elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::n_main
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::n_total
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft::vector<vector<integer>>
@@ -13236,6 +13252,7 @@ elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-st
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::main_vector<Val>
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::n_hdr
+elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::n_main
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::n_show
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::n_total
 elab-functions	agree	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft::vector<Val>
@@ -13482,6 +13499,7 @@ elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-win
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_bsum
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_enc_len
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_hd
+elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_main
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_texts
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::vector<Item>
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::vector<integer(0, 255)>
@@ -13579,7 +13597,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13886	of	19201
+layer	elab-pass1	agree	13886	of	19220
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
