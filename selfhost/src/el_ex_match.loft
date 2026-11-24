@@ -4338,7 +4338,7 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   rec_out = !(out is TyOptional) && struct_ref(e, el_types::base(out)) >= 0 && el::def(e, struct_ref(e, el_types::base(out))).def_type == el::DT_STRUCT;
   // (…and a vector: each answer copied whole into its fresh element, `OpCopyRecord` at the
   // element vector's type.)
-  vec_out = !(out is TyOptional) && el_types::base(out) is TyVector && el_ex_base::type_def_nr(e, el_types::base(out)) >= 0;
+  vec_out = !(out is TyOptional) && el_types::base(out) is TyVector && element_vector_known(e, out) >= 0;
   out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out || vec_out;
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
@@ -4410,7 +4410,7 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
     if vec_out {
       // (The fresh element vector starts empty, then takes the answer's items.)
       steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
-      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: el::def(e, out_d).known_type }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: element_vector_known(e, out) }])];
     } else if text_out {
       steps += [el_ex_pattern::elem_write(e, out, sv, ir::NdVar { n: comp })];
     } else {
@@ -4425,6 +4425,15 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   ops += [fill, el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
   bt = el_vars::tp(vars, res);
   ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
+
+// The known type of the element vector `t` (`vector<text>`'s own, not the generic `vector`'s):
+// what `OpCopyRecord` copies a whole element vector at; -1 where it has no definition.
+fn element_vector_known(e: el::El, t: ir::TypeT) -> integer {
+  inner = match el_types::base(t) { TyVector { inner: i } => i, _ => return -1 };
+  nm = el_types::elem_name(e, inner);
+  vd = if nm == "" { -1 } else { el::def_nr(e, "vector<{nm}>") };
+  if vd < 0 { -1 } else { el::def(e, vd).known_type }
 }
 
 // The type of the hoisted copy a `map` / `filter` / `reduce` walks: the source's, borrowing the
@@ -4458,7 +4467,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
   // (…and a vector: a kept element copied whole into its fresh element, as `map_call`'s.)
-  in_vec = !(in_elem is TyOptional) && el_types::base(in_elem) is TyVector && el_ex_base::type_def_nr(e, el_types::base(in_elem)) >= 0;
+  in_vec = !(in_elem is TyOptional) && el_types::base(in_elem) is TyVector && element_vector_known(e, in_elem) >= 0;
   by_value = d < 0;
   if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec || in_vec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
     el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
@@ -4520,7 +4529,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
     if in_vec {
       steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
-      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: el::def(e, in_d).known_type }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: element_vector_known(e, in_elem) }])];
     } else if in_text {
       steps += [el_ex_pattern::elem_write(e, in_elem, sv, ir::NdVar { n: comp })];
     } else {
