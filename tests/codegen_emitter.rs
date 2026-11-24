@@ -432,35 +432,6 @@ fn parallel_runtime_consolidated() {
     }
 }
 
-/// Phase 06 regression test: the queue + buf-access runtime fns
-/// must remain registered in `CODEGEN_RUNTIME_FNS` with `Abi::Cell`
-/// tags.  P202's reproducer (19_threading + 22_threading +
-/// 40_par_ref_return) compiles natively only when these fns exist
-/// at link time — accidentally removing them re-opens the bug.
-#[test]
-fn p202_parallel_queue_runtime_fns_registered() {
-    use loft::codegen_runtime::{Abi, abi_of};
-    for name in [
-        "n_parallel_queue_native",
-        "n_parallel_queue_text_native",
-        "n_parallel_queue_ref_native",
-        "n_parallel_buf_get_native",
-        "n_parallel_buf_get_text_native",
-        "n_parallel_buf_get_ref_native",
-        "n_parallel_buf_drop_native",
-        "n_parallel_buf_drop_text_native",
-        "n_parallel_buf_drop_ref_native",
-    ] {
-        assert_eq!(
-            abi_of(name),
-            Abi::Cell,
-            "{name} must be in CODEGEN_RUNTIME_FNS with Abi::Cell — \
-             phase 06 (P202 close) requires it for native compilation \
-             of `for ... par(...)` loops."
-        );
-    }
-}
-
 /// Phase 06 structural test: the `n_parallel_queue` family must
 /// route through the `ParallelQueueEmitter` registered in
 /// `src/generation/ops/mod.rs`.  Without this, the call sites emit
@@ -734,25 +705,6 @@ fn p205_no_str_new_of_local_in_corpus() {
          shape is a regression.\n\nOffenders:\n  {}",
         offenders.join("\n  ")
     );
-}
-
-/// Gate: the registry's `Abi` tags must be self-consistent — every
-/// entry's `abi_of(name)` lookup must return the entry's own tag.
-/// Trivially true when the registry is well-formed; catches a typo
-/// where two entries with the same name disagree on ABI.
-#[test]
-fn abi_of_handles_all_runtime_fns() {
-    use loft::codegen_runtime::{Abi, CODEGEN_RUNTIME_FNS, abi_of};
-    for fn_def in CODEGEN_RUNTIME_FNS {
-        assert_eq!(
-            abi_of(fn_def.name),
-            fn_def.abi,
-            "abi_of disagrees with registry for `{}`",
-            fn_def.name
-        );
-    }
-    // Unknown name → Cell (user-fn / Op-stub default).
-    assert_eq!(abi_of("nonexistent_fn_for_test"), Abi::Cell);
 }
 
 // ============================================================

@@ -25,7 +25,7 @@ const PKG: &str = "tests/lib/native_pkg";
 const CELLS: &str = "tests/lib/native_pkg/tests/174-foreign-bridge.loft";
 
 fn fixture_built() -> bool {
-    let so = loft::native_lib::platform_cdylib_name("loft_native_test");
+    let so = loft::opt::native_key::platform_cdylib_name("loft_native_test");
     let p = std::path::Path::new(PKG)
         .join("native/target/release")
         .join(so);

@@ -80,7 +80,7 @@ fn parser_native_pkg_parses_without_error() {
 fn fixture_lib_path() -> Option<String> {
     let path = format!(
         "tests/lib/native_pkg/native/target/release/{}",
-        loft::native_lib::platform_cdylib_name("loft_native_test")
+        loft::opt::native_key::platform_cdylib_name("loft_native_test")
     );
     let p = std::path::Path::new(&path);
     if !fa::exists(p) {

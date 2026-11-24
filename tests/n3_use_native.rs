@@ -72,7 +72,7 @@ fn cdylib_present(dir: &std::path::Path) -> bool {
 
 /// [`cdylib_present`] for the package named `pkg`.
 fn cdylib_present_for(dir: &std::path::Path, pkg: &str) -> bool {
-    let named = loft::native_lib::platform_cdylib_name(&format!("loft_auto_{pkg}"));
+    let named = loft::opt::native_key::platform_cdylib_name(&format!("loft_auto_{pkg}"));
     let (prefix, ext) = named
         .rsplit_once('.')
         .expect("a cdylib name has an extension");
@@ -1533,7 +1533,7 @@ fn a_packages_artifact_directory_stays_bounded() {
     // the twelve rustc builds below are the whole cost, and running them twice put ~12s
     // on the PR's critical path — `n3_use_native` sits in nextest's single-slot
     // `heavy-serial` group, so that is 12s nothing else can overlap with.
-    let shim = native_auto.join(loft::native_lib::platform_cdylib_name(
+    let shim = native_auto.join(loft::opt::native_key::platform_cdylib_name(
         "mathnative_shim_00000000deadbeef",
     ));
     assert!(
