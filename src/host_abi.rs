@@ -56,8 +56,8 @@ impl LibArg {
 /// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
 ///
 /// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
-/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
-/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
+/// layout on both sides (the same rlib builds both), but every process-wide `static` in libloft
+/// exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
 /// sides must agree on therefore crosses as a function of the HOST, reached through this
 /// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
 /// calls its `loft_shared_init`).

@@ -3429,6 +3429,7 @@ impl Stores {
             wired: self.wired.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
+            output: None,
             #[cfg(feature = "op-census")]
             tap: worker_tap,
             run: super::RunDiagnostics::default(),

@@ -904,6 +904,10 @@ pub struct Store {
     /// `LOFT_VERIFY_STACK`: the records of this store that moved during the current operator,
     /// `(old, new)` (`stack_verify::note_relocation`); its interpreter drains them after the op.
     pub(crate) relocated: Vec<(u32, u32)>,
+    /// @PLN134 — the byte offsets a radix traversal of this store read, while a measurement
+    /// records them (`radix_tree::touch_begin`); `None` otherwise.
+    #[cfg(test)]
+    pub(crate) touched: std::cell::RefCell<Option<std::collections::BTreeSet<u32>>>,
     /// @PLN174 — the foreign bytes this store serves under [`FOREIGN_REC`], or `None` for
     /// every ordinary store.  Set by [`Store::make_foreign`], dropped by
     /// [`Store::release_foreign`] at the handle's free.
@@ -1535,6 +1539,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         store.init(); // one free block spanning the store: claims empty, free_root = 0
         store
@@ -1752,6 +1758,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         if init {
             store.init();
@@ -1872,6 +1880,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         // `(S-Frame)`: the chain tiles the file, checked before `fl_rebuild` walks it.
         store.validate_structure()?;
@@ -2009,6 +2019,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         // @PLN97 arc G Phase 2 — fail-closed structural validation of an
         // UNTRUSTED buffer, ALWAYS-ON and BEFORE `fl_rebuild`.  A crafted
@@ -3863,6 +3875,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 
@@ -3964,6 +3978,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 
@@ -4039,6 +4055,8 @@ impl Store {
             init_shadow: Vec::new(),
             discard: Vec::new(),
             relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 

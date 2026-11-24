@@ -584,6 +584,11 @@ pub struct Stores {
     /// `@PLN226` — the crash context of the interpreter that runs on these stores
     /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
     pub crash: crate::crash_report::CrashCx,
+    /// `@PLN226` — a debug session's capture of the program's output (`--rpc`, `serve`): while
+    /// `Some`, the `print` builtin appends here instead of writing stdout
+    /// ([`Stores::print_or_host`]).  The session sets it on every state it builds
+    /// (`ReplSession::new_state`); a copy of the stores, a `par` worker's included, prints.
+    pub output: Option<String>,
     /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
     /// shared with every store it makes live (`Store::tap`).
     #[cfg(feature = "op-census")]
@@ -901,6 +906,7 @@ impl Clone for Stores {
             wired: self.wired.clone(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
+            output: None,
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::new(self.tap.child()),
             run: RunDiagnostics::default(),
@@ -1330,6 +1336,16 @@ impl Stores {
     /// Install an externally-allocated `Store` into this `Stores`'
     /// allocations table.  Returns the parent-side `store_nr`.
     ///
+    /// The `print` builtin: into the debug session's capture when it captures
+    /// ([`Self::output`]), else the host's stdout.  The stdlib's `print` template calls this, so
+    /// neither the interpreter nor a generated program names the debug server that captures.
+    pub fn print_or_host(&mut self, text: &str) {
+        match self.output.as_mut() {
+            Some(out) => out.push_str(text),
+            None => crate::codegen_runtime::host_print(text),
+        }
+    }
+
     /// `LOFT_VERIFY_STACK`: did a record of a live store move since the last drain?  Asked
     /// after every op, so it is a scan of flags with no allocation.
     #[must_use]
@@ -1759,6 +1775,7 @@ impl Stores {
             wired: std::sync::Arc::default(),
             bt_hints: crate::btree::WalkHints::default(),
             crash: crate::crash_report::CrashCx::default(),
+            output: None,
             #[cfg(feature = "op-census")]
             tap: std::sync::Arc::default(),
             run: RunDiagnostics::default(),

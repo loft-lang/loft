@@ -3579,46 +3579,6 @@ pub fn wasm_host_log(msg: &str) {
     let _ = msg;
 }
 
-thread_local! {
-    /// While `Some`, the loft `print` builtin appends here instead of writing stdout —
-    /// so the program's output can be drained into `output` events.  `None` (the default)
-    /// is one branch on the print path.
-    static OUTPUT_SINK: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Called by the `print` builtin (`codegen_runtime::print_or_host`): route the program's output to the capture
-/// sink when one is active (returns `true`), else let the caller write stdout (`false`).
-#[must_use]
-pub fn print_or_capture(text: &str) -> bool {
-    OUTPUT_SINK.with(|s| {
-        let mut b = s.borrow_mut();
-        if let Some(buf) = b.as_mut() {
-            buf.push_str(text);
-            true
-        } else {
-            false
-        }
-    })
-}
-
-/// Start capturing this thread's program output (`rpc`, `serve`).
-pub fn capture_begin() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = Some(String::new()));
-}
-/// Stop capturing; what was captured and not taken is dropped.
-pub fn capture_end() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = None);
-}
-/// Take the captured program output since the last drain (empty if none / not capturing).
-pub fn capture_take() -> String {
-    OUTPUT_SINK.with(|s| {
-        s.borrow_mut()
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
-    })
-}
-
 /// macOS's native `main`: the program runs on its
 /// [`NATIVE_MAIN_STACK`](crate::codegen_runtime::NATIVE_MAIN_STACK) thread, as everywhere,
 /// and the MAIN thread runs its run loop — AppKit makes and drives a window on the main thread

@@ -2056,7 +2056,7 @@ pub fn log_fatal(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 fn OpPrint(v1: text) io#append;
 #cold
-#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\ncrate::codegen_runtime::print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
+#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nstores.print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
 #loft"print(v1 ?? \"\");"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.

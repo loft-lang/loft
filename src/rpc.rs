@@ -15,17 +15,16 @@
 //! every request is one engine method (the protocol invariant: no UI-only, no agent-only
 //! semantics).
 //!
-//! The debugged program's `print` output is captured (the thread-local sink below) and
-//! streamed as `output` events, so it never corrupts the protocol stream on stdout.
+//! The debugged program's `print` output is captured by the session
+//! (`ReplSession::capture_begin`) and streamed as `output` events, so it never corrupts the
+//! protocol stream on stdout.
 
 use crate::json::{ParseError, Parsed};
 use crate::repl::ReplSession;
 use std::io::{BufRead, Write};
 
-// The capture sink `print` writes into lives in `platform` (core): the interpreter's `print`
-// asks it through `codegen_runtime::print_or_host` without naming this module.
-pub use crate::platform::print_or_capture;
-use crate::platform::{capture_begin, capture_end, capture_take};
+// The capture `print` writes into is the running state's (`Stores::output`): the `print`
+// builtin asks its own stores (`Stores::print_or_host`) without naming this module.
 
 /// An in-process debug session driven one wire-protocol line at a time — the seam both
 /// [`run_rpc`] (NDJSON on stdio) and the `loft-dap` DAP adapter drive the engine through,
@@ -50,7 +49,7 @@ impl DebugDriver {
     pub fn new(stdlib_dir: &str, lib_dirs: &[String]) -> std::io::Result<Self> {
         let mut session = ReplSession::new_with_libs(stdlib_dir, lib_dirs)?;
         session.debug_stepping(true);
-        capture_begin();
+        session.capture_begin();
         Ok(Self { session })
     }
 
@@ -83,7 +82,7 @@ impl DebugDriver {
 
 impl Drop for DebugDriver {
     fn drop(&mut self) {
-        capture_end();
+        self.session.capture_end();
     }
 }
 
@@ -145,9 +144,9 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
             // prints its value to the capture sink, so drain anything pending first, then
             // drain again after to capture *this* eval's output (the value / any prints),
             // keeping REPL output distinct from a program `run`'s streamed output.
-            let _ = capture_take();
+            let _ = session.capture_take();
             let outcome = session.repl_eval(text(&parsed, "input").unwrap_or(""), true);
-            let printed = capture_take();
+            let printed = session.capture_take();
             let mut extra = format!("\"context\":\"{}\"", outcome.context);
             if outcome.more {
                 extra.push_str(",\"more\":true");
@@ -193,10 +192,10 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
             // `testSummary`.  Drain the capture sink around the run so the tests' own `print`
             // output doesn't leak into the program console.
             let file = text(&parsed, "file").unwrap_or("");
-            let _ = capture_take();
+            let _ = session.capture_take();
             match session.run_file_tests(file) {
                 Ok(results) => {
-                    let _ = capture_take();
+                    let _ = session.capture_take();
                     out.push(resp_ok(id, ""));
                     let (mut pass_count, mut fail_count) = (0u32, 0u32);
                     for t in &results {
@@ -220,10 +219,10 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
             // `file` to the nearest loft.toml, run every tests/*.loft.  Each result event
             // carries its `file` so the panel can group; the summary adds the file count.
             let file = text(&parsed, "file").unwrap_or("");
-            let _ = capture_take();
+            let _ = session.capture_take();
             match session.run_suite(file) {
                 Ok(by_file) => {
-                    let _ = capture_take();
+                    let _ = session.capture_take();
                     out.push(resp_ok(id, ""));
                     let (mut pass_count, mut fail_count) = (0u32, 0u32);
                     let files = by_file.len();
@@ -403,7 +402,7 @@ fn set_breakpoints(session: &mut ReplSession, parsed: &Parsed) -> String {
 
 /// After a run/continue/step, emit the program output + tracepoints + the stop verdict.
 fn report(session: &mut ReplSession, step_reason: &str, paused: bool, out: &mut Vec<String>) {
-    let captured = capture_take();
+    let captured = session.capture_take();
     for chunk in captured.split_inclusive('\n') {
         let line = chunk.strip_suffix('\n').unwrap_or(chunk);
         if !line.is_empty() {

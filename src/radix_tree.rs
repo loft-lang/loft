@@ -419,23 +419,19 @@ pub(crate) fn node_off(node: u32) -> u32 {
 // one decides whether a trie can be paged.
 //
 // `#[cfg(test)]`, so production keeps the bare `get_u32_raw`. Off unless a
-// measurement calls `touch_begin`; recording is what makes it cost anything.
+// measurement calls `touch_begin`; recording is what makes it cost anything.  The
+// offsets are the read store's own (`Store::touched`).
+
+/// Start recording the offsets read in `store`, discarding anything from a previous window.
 #[cfg(test)]
-thread_local! {
-    static TOUCHED: std::cell::RefCell<Option<std::collections::BTreeSet<u32>>> =
-        const { std::cell::RefCell::new(None) };
+pub(crate) fn touch_begin(store: &Store) {
+    *store.touched.borrow_mut() = Some(std::collections::BTreeSet::new());
 }
 
-/// Start recording touched offsets, discarding anything from a previous window.
+/// The distinct offsets read in `store` since [`touch_begin`], and stop recording.
 #[cfg(test)]
-pub(crate) fn touch_begin() {
-    TOUCHED.with(|t| *t.borrow_mut() = Some(std::collections::BTreeSet::new()));
-}
-
-/// The distinct offsets read since [`touch_begin`], and stop recording.
-#[cfg(test)]
-pub(crate) fn touch_end() -> std::collections::BTreeSet<u32> {
-    TOUCHED.with(|t| t.borrow_mut().take().unwrap_or_default())
+pub(crate) fn touch_end(store: &Store) -> std::collections::BTreeSet<u32> {
+    store.touched.borrow_mut().take().unwrap_or_default()
 }
 
 /// @PLN134 — node ids in BREADTH-FIRST order, so a measurement can ask what a
@@ -736,22 +732,20 @@ pub fn rtree_relayout(store: &mut Store, tree: u32) -> bool {
 }
 
 #[cfg(test)]
-fn touch(off: u32) {
-    TOUCHED.with(|t| {
-        if let Ok(mut b) = t.try_borrow_mut()
-            && let Some(s) = b.as_mut()
-        {
-            s.insert(off);
-        }
-    });
+fn touch(store: &Store, off: u32) {
+    if let Ok(mut b) = store.touched.try_borrow_mut()
+        && let Some(s) = b.as_mut()
+    {
+        s.insert(off);
+    }
 }
 
 #[cfg(not(test))]
 #[inline(always)]
-fn touch(_off: u32) {}
+fn touch(_store: &Store, _off: u32) {}
 
 fn node_bit(store: &Store, tree: u32, node: u32) -> u32 {
-    touch(node_off(node));
+    touch(store, node_off(node));
     store.get_u32_raw(tree, node_off(node))
 }
 
@@ -773,7 +767,7 @@ pub(crate) fn child_off(node: u32, dir: bool) -> u32 {
 }
 
 fn child(store: &Store, tree: u32, node: u32, dir: bool) -> Child {
-    touch(child_off(node, dir));
+    touch(store, child_off(node, dir));
     Child::decode(store.get_i32_raw(tree, child_off(node, dir)))
 }
 

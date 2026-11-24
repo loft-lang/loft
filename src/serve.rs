@@ -7,7 +7,7 @@
 //! a minimal shell (the file's source + a **Run** button + a **Program** console); the
 //! shell opens a WebSocket and drives the *same* protocol the `--rpc` stdio server does —
 //! one JSON request per text frame, one engine method per request ([`crate::rpc::handle`]).
-//! Program `print` rides the same capture sink as `--rpc` ([`crate::rpc::print_or_capture`])
+//! Program `print` rides the same capture as `--rpc` ([`crate::repl::ReplSession::capture_begin`])
 //! and streams back as `output` events, so it never collides with the protocol traffic.
 //!
 //! The transport is the only new thing here: the engine, the protocol, and the message
@@ -53,7 +53,7 @@ pub fn run_serve(
     // logging, not stream corruption — and the per-request `catch_unwind` already turns it
     // into a `terminated` event for the browser.  (A global hook would also leak across the
     // process, e.g. hiding panic messages in a parallel test run.)
-    crate::platform::capture_begin();
+    session.capture_begin();
     eprintln!("loft debug --serve: open http://127.0.0.1:{port}/ in a browser");
     for conn in crate::net_profile::accepting(&listener, "serve/accept") {
         let Ok(stream) = conn else { continue };
@@ -61,7 +61,7 @@ pub fn run_serve(
         // down — drop it and keep serving.
         let _ = serve_connection(&stream, &mut session, &shell, port);
     }
-    crate::platform::capture_end();
+    session.capture_end();
     Ok(())
 }
 

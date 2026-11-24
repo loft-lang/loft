@@ -1791,6 +1791,11 @@ pub struct ReplSession {
     /// user can inspect the frame, edit a value, and step.  `None` unless paused.
     /// Boxed because `State` is large and the paused case is rare.
     paused: Option<Box<State>>,
+    /// `@PLN226` — the output of the finished runs since the last [`Self::capture_take`], while
+    /// the session captures ([`Self::capture_begin`]).
+    captured: String,
+    /// The session captures its programs' output ([`Self::capture_begin`]).
+    capturing: bool,
     /// @PLN63 RX — whether reverse stepping is armed for this session.  Applied to the
     /// paused `State` before each step (so its ring fills), so a later `step_back` can
     /// reverse it.  Off by default (a normal debug session pays no snapshot cost).
@@ -1945,6 +1950,8 @@ impl ReplSession {
             last_hits: Vec::new(),
             stepping: false,
             paused: None,
+            captured: String::new(),
+            capturing: false,
             workspace_file: None,
             game: None,
             world_file: None,
@@ -1986,8 +1993,60 @@ impl ReplSession {
     /// a path that compiled without wiring ran `x = rand(0, 9)` into "native function
     /// `n_rand` not loaded" while `println("{rand(0, 9)}")` one input earlier worked — the
     /// statement path wired, the binding-snapshot path did not.
+    /// Capture the output of the programs this session runs, for `output` events (`--rpc`,
+    /// `serve`), instead of writing stdout.  The capture is the session's own: every state it
+    /// builds captures (`Stores::output`, [`Self::new_state`]), and hands what it printed back
+    /// to the session ([`Self::keep_output`]).
+    pub fn capture_begin(&mut self) {
+        self.capturing = true;
+    }
+
+    /// Stop capturing; what was captured and not taken is dropped.
+    pub fn capture_end(&mut self) {
+        self.capturing = false;
+        self.captured.clear();
+    }
+
+    /// A state over `db` that captures its output when the session does: the one way the
+    /// session builds a state.
+    fn new_state(&self, db: crate::database::Stores) -> State {
+        let mut state = State::new(db);
+        if self.capturing {
+            state.database.output = Some(String::new());
+        }
+        state
+    }
+
+    /// The program output captured since the last call, oldest first: the finished runs', then
+    /// the held paused run's.  Empty when the session does not capture.
+    pub fn capture_take(&mut self) -> String {
+        let mut out = std::mem::take(&mut self.captured);
+        if let Some(live) = self
+            .paused
+            .as_deref_mut()
+            .and_then(|s| s.database.output.as_mut())
+        {
+            out.push_str(&std::mem::take(live));
+        }
+        out
+    }
+
+    /// Keep what `state` printed into the session's capture, before the state is dropped.
+    fn keep_output(&mut self, state: &mut State) {
+        if let Some(out) = state.database.output.as_mut() {
+            self.captured.push_str(&std::mem::take(out));
+        }
+    }
+
+    /// Drop the held paused run, keeping what it printed.
+    fn drop_paused(&mut self) {
+        if let Some(mut state) = self.paused.take() {
+            self.keep_output(&mut state);
+        }
+    }
+
     fn runnable_state(&mut self) -> State {
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         compile::byte_code(&mut state, &mut self.parser.data);
         self.wire_natives(&mut state);
         state
@@ -2031,6 +2090,8 @@ impl ReplSession {
             last_hits: Vec::new(),
             stepping: false,
             paused: None,
+            captured: String::new(),
+            capturing: false,
             workspace_file: None,
             game: None,
             world_file: None,
@@ -2149,6 +2210,7 @@ impl ReplSession {
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
         let mut state = self.runnable_state();
         state.execute_argv(&name, &self.parser.data, &[]);
+        self.keep_output(&mut state);
         let out = if state.database.runtime_error.take().is_some() {
             None
         } else {
@@ -2411,7 +2473,7 @@ impl ReplSession {
         let mut out = Vec::with_capacity(targets.len());
         for (name, line) in targets {
             let mut data = parser.data.clone();
-            let mut state = State::new(parser.database.clone());
+            let mut state = self.new_state(parser.database.clone());
             compile::byte_code(&mut state, &mut data);
             crate::interp::extensions::load_all(&mut state, pending_native.clone());
             crate::interp::extensions::wire_native_fns(&mut state, &data);
@@ -2429,6 +2491,7 @@ impl ReplSession {
                     .unwrap_or_default();
                 (fault, msg)
             }));
+            self.keep_output(&mut state);
             let (passed, message) = match result {
                 Ok((false, _)) => (true, None),
                 Ok((true, m)) => (
@@ -2727,7 +2790,7 @@ impl ReplSession {
     #[must_use]
     pub fn breakable_lines_in_file(&mut self, file: &str) -> Vec<u32> {
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         compile::byte_code(&mut state, &mut self.parser.data);
         state.breakable_lines_in_file(file, &self.parser.data)
     }
@@ -2990,7 +3053,7 @@ impl ReplSession {
         }
         self.counter = next;
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-        let mut build = State::new(self.parser.database.clone());
+        let mut build = self.new_state(self.parser.database.clone());
         compile::byte_code(&mut build, &mut self.parser.data);
         // Force the value above BOTH stores' high-water → its slots are free in live.
         let floor = live_top.max(build.database.high_water());
@@ -3000,6 +3063,7 @@ impl ReplSession {
         // buffer: the entry teardown must not free what we are about to read.
         build.keep_entry_return();
         build.execute_argv(&name, &self.parser.data, &[]);
+        self.keep_output(&mut build);
         let root = if build.database.runtime_error.take().is_some() {
             None
         } else {
@@ -3063,7 +3127,7 @@ impl ReplSession {
         state.set_reverse(armed);
         let still = state.debug_step(mode, &self.parser.data);
         if !still {
-            self.paused = None;
+            self.drop_paused();
         }
         still
     }
@@ -3639,7 +3703,7 @@ impl ReplSession {
     /// Abandon a paused debug session, dropping the held state — used to recover the
     /// REPL after a debug operation panics.  The breakpoints stay set.
     pub fn abort_debug(&mut self) {
-        self.paused = None;
+        self.drop_paused();
     }
 
     /// Resolve + set the session's breakpoint specs on a freshly-compiled `state`
@@ -3994,6 +4058,7 @@ impl ReplSession {
                 self.resolve_pause();
                 return Ok(());
             }
+            self.keep_output(&mut state);
             if debug {
                 self.last_hits = state.debug_hits().to_vec();
                 for hit in &self.last_hits {
@@ -4369,6 +4434,7 @@ impl ReplSession {
         let mut state = self.runnable_state();
         state.keep_entry_return();
         state.execute_argv(&name, &self.parser.data, &[]);
+        self.keep_output(&mut state);
         // The RHS just ran (its side effect happened once).  A fault here is a
         // real binding error — surface it, don't fall back to source (which would
         // re-run the fault on every later observe and poison the session).
@@ -4528,7 +4594,7 @@ impl ReplSession {
         let Some(store) = self.session_store.take() else {
             return;
         };
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         let slot = state.database.adopt_store(store);
         let db = crate::keys::DbRef {
             store_nr: slot,
@@ -4583,7 +4649,7 @@ impl ReplSession {
     pub fn env_value(&mut self, name: &str) -> Option<String> {
         let entry = self.env.get(name)?.clone();
         let store = self.session_store.take()?;
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         let slot = state.database.adopt_store(store);
         let db = crate::keys::DbRef {
             store_nr: slot,
@@ -4917,7 +4983,7 @@ impl ReplSession {
     pub fn env_display(&mut self, name: &str) -> Option<String> {
         let entry = self.env.get(name)?.clone();
         let store = self.session_store.take()?;
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         let slot = state.database.adopt_store(store);
         let db = crate::keys::DbRef {
             store_nr: slot,
@@ -5267,7 +5333,7 @@ impl ReplSession {
     /// `:slots` commands (reuses phase 01's `introspect`).
     pub fn introspect(&mut self, section: Section, fn_filter: Vec<String>) {
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-        let mut state = State::new(self.parser.database.clone());
+        let mut state = self.new_state(self.parser.database.clone());
         compile::byte_code(&mut state, &mut self.parser.data);
         let end_def = self.parser.data.definitions();
         let opts = Options {
