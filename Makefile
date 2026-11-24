@@ -1204,7 +1204,7 @@ nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twi
 # against this tree's release binary (`LOFT=` names another).  CI runs it at the commit
 # `tests/loft-suite.pin` names; by hand it runs whatever that checkout has.
 #   make suite                                # every rule cell, interpreter
-#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends (the rlib must be current)
+#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends
 #   make suite ARGS="--chapter ownership"
 .PHONY: suite
 suite:  ## @PLN193: the language suite beside this checkout (../loft-suite or LOFT_SUITE_DIR) against target/release/loft
