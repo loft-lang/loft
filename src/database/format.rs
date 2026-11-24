@@ -781,11 +781,13 @@ impl Stores {
         while more {
             let (name, _, value_at) = rd.member(start)?;
             if name == "$value" {
-                self.read_refs
-                    .as_mut()
-                    .map(|r| r.path = vec!["$value".to_string()]);
+                if let Some(r) = self.read_refs.as_mut() {
+                    r.path = vec!["$value".to_string()];
+                }
                 self.read_into(rd, failed, value_at, tp, tp, u16::MAX, result, value_at)?;
-                self.read_refs.as_mut().map(|r| r.path.clear());
+                if let Some(r) = self.read_refs.as_mut() {
+                    r.path.clear()
+                }
             } else if name == "$refs" {
                 self.read_refs_list(rd, failed, result, value_at)?;
             } else {

@@ -3162,9 +3162,9 @@ impl Stores {
             let res = self.record_new(to, rec_tp, field);
             let seen = failed.len();
             // `@FR-F-Read-Ref` — an element's position is its segment of the path.
-            self.read_refs
-                .as_mut()
-                .map(|r| r.path.push(idx.to_string()));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.path.push(idx.to_string())
+            }
             self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
             self.read_refs.as_mut().map(|r| r.path.pop());
             // An element that did not fit keeps its slot, so the elements after it keep
@@ -3226,7 +3226,9 @@ impl Stores {
                 more = rd.next_member(start)?;
                 continue;
             }
-            self.read_refs.as_mut().map(|r| r.path.push(name.clone()));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.path.push(name.clone())
+            }
             if top_level.is_some()
                 && let Some(f_nr) = self.record_fields(tp).iter().position(|f| f.name == name)
                 && matches!(
@@ -3327,24 +3329,20 @@ impl Stores {
         let mut idx = 0usize;
         while let Some(value_at) = next {
             let ptr = format!("#/$refs/{idx}");
-            let tp = self
-                .read_refs
-                .as_mut()
-                .map(|r| {
-                    r.pending
-                        .iter()
-                        .find(|(_, p, _)| *p == ptr)
-                        .map(|(_, _, t)| *t)
-                })
-                .flatten();
+            let tp = self.read_refs.as_ref().and_then(|r| {
+                r.pending
+                    .iter()
+                    .find(|(_, p, _)| *p == ptr)
+                    .map(|(_, _, t)| *t)
+            });
             match tp {
                 Some(tp) if (tp as usize) < self.types.len() => {
                     let words = 1 + u32::from(self.types[tp as usize].size).div_ceil(8);
                     let rec = self.claim(to, words);
                     self.set_default_value(tp, &rec);
-                    self.read_refs
-                        .as_mut()
-                        .map(|r| r.path = vec!["$refs".to_string(), idx.to_string()]);
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path = vec!["$refs".to_string(), idx.to_string()];
+                    }
                     self.read_into(rd, failed, value_at, tp, tp, u16::MAX, &rec, value_at)?;
                 }
                 _ => {
@@ -3354,7 +3352,9 @@ impl Stores {
             next = rd.next_item(start)?;
             idx += 1;
         }
-        self.read_refs.as_mut().map(|r| r.path.clear());
+        if let Some(r) = self.read_refs.as_mut() {
+            r.path.clear()
+        }
         Ok(())
     }
 
@@ -3383,12 +3383,12 @@ impl Stores {
             .allocations
             .get_mut(store_nr as usize)
             .is_some_and(|s| s.note_referenced_new(rec));
-        self.read_refs.as_mut().map(|r| {
+        if let Some(r) = self.read_refs.as_mut() {
             r.at.insert(path, (DbRef { store_nr, rec, pos }, tp));
             if fresh {
                 r.marked.push((store_nr, rec));
             }
-        });
+        }
     }
 
     /// `@FR-F-Read-Ref` — write every parked reference: the record its pointer names, or a
@@ -3474,9 +3474,9 @@ impl Stores {
             _ => None,
         };
         if let Some(p) = pointer {
-            self.read_refs
-                .as_mut()
-                .map(|r| r.pending.push((slot, p, target)));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.pending.push((slot, p, target))
+            }
         } else {
             failed.push(WalkErr {
                 at: key_at,
@@ -3583,9 +3583,9 @@ impl Stores {
                     // The element's segment joins the error's path as it unwinds: pushed per
                     // element on the way in, it was a formatted `String` per array item that
                     // only a failing walk reads.
-                    self.read_refs
-                        .as_mut()
-                        .map(|r| r.path.push(idx.to_string()));
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path.push(idx.to_string())
+                    }
                     let walked = self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at);
                     self.read_refs.as_mut().map(|r| r.path.pop());
                     walked.map_err(|mut e| {
@@ -3810,7 +3810,7 @@ impl Stores {
         // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
         // read) keeps the same path and parks the same references as `read_struct`.
         self.read_place(to.store_nr, rec, fld, tp);
-        let tracked = self.read_refs.as_mut().map(|_| ()).is_some();
+        let tracked = self.read_refs.is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
@@ -3839,9 +3839,9 @@ impl Stores {
                             && key == "$ref"
                         {
                             let target = f.target;
-                            self.read_refs
-                                .as_mut()
-                                .map(|r| r.pending.push((slot, ptr.clone(), target)));
+                            if let Some(r) = self.read_refs.as_mut() {
+                                r.pending.push((slot, ptr.clone(), target))
+                            }
                             break;
                         }
                         return Err(WalkErr {
@@ -3849,7 +3849,9 @@ impl Stores {
                             path: vec![name.clone()],
                         });
                     }
-                    self.read_refs.as_mut().map(|r| r.path.push(name.clone()));
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path.push(name.clone())
+                    }
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
