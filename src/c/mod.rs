@@ -2222,10 +2222,12 @@ fn emit_unit_with(
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
     // The runtime is a library every unit carries whole: a helper this program does not call
-    // is no defect of it, so gcc and clang are told not to report one there — and only there,
-    // the program's own functions after it are reported.  `LOFT_C_LINT=all` lifts it.
+    // is no defect of it, and neither is a helper that takes the store context first without
+    // reading it (every runtime function does, `@PLN226`), so gcc and clang are told not to
+    // report those there — and only there, the program's own functions after it are reported.
+    // `LOFT_C_LINT=all` lifts it.
     out.push_str(
-        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#endif\n",
     );
     if let Some(define) = split::above_define() {
         out.push_str(&define);
@@ -2242,7 +2244,7 @@ fn emit_unit_with(
     }
     if !cx.upgrades.borrow().is_empty() {
         out.push_str(
-            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { return loft_ptypes; }\n",
+            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { (void) cx; return loft_ptypes; }\n",
         );
     }
     if reflects {

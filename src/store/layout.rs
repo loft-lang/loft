@@ -81,7 +81,7 @@ fn c_offsets() -> Option<String> {
     }
     // `loft_store.h` declares the locked-write refusal `loft_rt.h` defines; an offset probe
     // writes nothing, so it links against a stub.
-    src += "static int loft_locked_write(void) { return 0; }\n";
+    src += "static int loft_locked_write_on(loft_cx *cx, uint8_t kind) { (void) cx; (void) kind; return 0; }\n";
     src += "#include <stddef.h>\nint main(void) {\n";
     for (f, _) in rust_offsets() {
         let _ = writeln!(

@@ -1446,7 +1446,7 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
     if (loft_ehc.udp >= 0) {
         static int64_t drop_seen = -1;
         static uint64_t received = 0;
-        int64_t drop_nth;
+        loft_word drop_nth;
         LOFT_PUB_GET(drop_seen, drop_nth);
         if (drop_nth < 0) {
             const char *v = getenv("LOFT_UDP_DROP_NTH");

@@ -1769,7 +1769,7 @@ impl<'a> FnWriter<'a> {
                 let e = self.nested(|w| w.expr(&expr, ind))?;
                 let h = format!("h{}", self.decls.len() + 1);
                 self.decls
-                    .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
+                    .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0 }};"));
                 self.line(ind, &format!("{h} = loft_vh_of(cx, {});", as_ref(e)?));
                 if self.pending_grown.contains(&path) {
                     self.grown_headers.insert(h.clone());
@@ -3745,7 +3745,7 @@ impl<'a> FnWriter<'a> {
         });
         let h = format!("h{}", self.decls.len() + 1);
         self.decls
-            .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
+            .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0 }};"));
         let base = if let Some((src, base)) = held {
             self.line(ind, &format!("{h} = {src};"));
             base
