@@ -1619,9 +1619,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     // (`build_comprehension_code`'s value form allocates through `vector_db`, not `insert_new`:
     // its element keeps borrowing the `_vec_N` it was minted for.)
     if made {
-      // (A vector element's temp bound into a local is typed as the body's vector itself.)
+      // (A vector element's temp bound into a local is typed as the body's vector, borrowing
+      // the destination's store as a record element's does — not the body literal's own.)
       if made_vec && !as_value {
-        el_vars::set_var_type(vars, celm, b.tp);
+        el_vars::set_var_type(vars, celm, el_types::with_deps(el_types::without_deps(b.tp), [if had_store { v } else { db }]));
       } else {
         el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store || as_value { v } else { db }] });
       }
@@ -4346,7 +4347,7 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   // A function VALUE (a local, a lambda with captures) is held in `_map_fn_N` first, minted
   // before the walk's own temporaries, and called through it (`callback_call_ref`).
   by_value = d < 0;
-  if !in_ok || !out_ok || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !(el_convert::plain_scalar(in_elem) && el_convert::plain_scalar(out)) {
+  if !in_ok || !out_ok || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !(el_convert::plain_scalar(in_elem) && (el_convert::plain_scalar(out) || vec_out)) {
     el::refuse(e, "a `map` over or to an element of this kind: {type_kind(in_elem)} to {type_kind(out)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4513,9 +4514,10 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
+  // (`parse_filter` mints the kept element's `_comp_N` before the result's store.)
   comp = el_vars::create_unique(vars, "comp", if in_text || in_rec || in_vec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
   el_vars::set_defined(vars, comp);
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
   w = ir::NdVar { n: res };
   steps: vector<ir::Node> = [
     el_ir::v_set(elm_v, nx!),
