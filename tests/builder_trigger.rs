@@ -41,12 +41,20 @@ fn project(tag: &str, script: &str) -> PathBuf {
     dir
 }
 
+/// A working directory outside any project and holding nothing: the shared temp directory can
+/// hold another test's package, which a bare call's resolution would read.
+fn empty_cwd() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("loft_builder_cwd_{}", std::process::id()));
+    let _ = fa::create_dir_all(&dir);
+    dir
+}
+
 fn run(dir: &std::path::Path, backend: &str) -> (bool, String, String) {
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg(backend)
         .arg(dir.join("p.loft"))
         .env("LOFT_TIMEOUT", "120")
-        .current_dir(std::env::temp_dir())
+        .current_dir(empty_cwd())
         .output()
         .expect("spawn loft");
     (
@@ -164,7 +172,7 @@ fn a_registry_dependency_fires_its_type_and_builder_triggers() {
             .arg(dir.join("p.loft"))
             .env("LOFT_TIMEOUT", "120")
             .env("LOFT_HOME", &home)
-            .current_dir(std::env::temp_dir())
+            .current_dir(empty_cwd())
             .output()
             .expect("spawn loft");
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -242,7 +250,7 @@ fn a_lib_flag_copy_fires_its_own_method_triggers() {
             .env("LOFT_TIMEOUT", "120")
             .env("LOFT_HOME", &home)
             .env("LOFT_NO_CACHE", "1")
-            .current_dir(std::env::temp_dir())
+            .current_dir(empty_cwd())
             .output()
             .expect("spawn loft");
         (
@@ -313,7 +321,7 @@ fn run_trigger(
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_HOME", home)
         .env("LOFT_NO_CACHE", "1")
-        .current_dir(std::env::temp_dir())
+        .current_dir(empty_cwd())
         .output()
         .expect("spawn loft");
     (

@@ -41,7 +41,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FALSIFIED = ROOT / "tests/falsified"
 # A receipt may carry a hunk of retired source (tests/falsified_retired_paths.txt: the generated
 # compiled stdlib, the rustc writer): left out (`falsify.sh` leaves out the same).
-RETIRED = [l.strip() for l in (ROOT / "tests/falsified_retired_paths.txt").read_text().splitlines()
+RETIRED = [l.strip() for l in (ROOT / "tests/falsified_retired_paths.txt").read_text(encoding="utf-8").splitlines()
            if l.strip() and not l.startswith("#")]
 EXCLUDES = [f"--exclude={p}" for p in RETIRED]
 

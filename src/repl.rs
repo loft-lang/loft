@@ -5765,7 +5765,7 @@ mod completion_tests {
     fn colon_command_arg_completes_identifier() {
         let line = ":slots db";
         let (start, out) = complete_word(&model(), line, line.len());
-        assert_eq!(start, 6);
+        assert_eq!(start, 7);
         assert_eq!(out, vec!["dbl".to_string()]);
     }
 
