@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function answering its parameter or a call on a view of it (`unspan(inner)`)
+// borrows the parameter on pass 1; on pass 2 Rust binds the buffer, copying every arm into it,
+// so a caller's result borrows nothing.  A call on a parameter instead merges (`fe`).
+// Prints: 5 9
+
+enum N { Leaf { v: integer }, Span { inner: N }, If { c: N, t: N } }
+struct S { n: integer }
+fn unspan(n: N) -> N { match n { Span { inner } => unspan(inner), _ => n } }
+fn bound(code: N) -> integer {
+  match code {
+    If { c: _, t } => {
+      ut = unspan(t);
+      match ut { Leaf { v } => v, _ => -1 }
+    },
+    _ => -2
+  }
+}
+fn fe(a: S, b: S, n: integer) -> S { if n == 0 { a } else { fe(b, a, n - 1) } }
+fn main() { println("{bound(If { c: Leaf { v: 1 }, t: Span { inner: Leaf { v: 5 } } })} {fe(S { n: 4 }, S { n: 9 }, 1).n}"); }
