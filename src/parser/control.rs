@@ -610,6 +610,30 @@ pub(super) fn arm_body_is_null(code: &Value) -> bool {
     }
 }
 
+/// Does every path of `code` answer the bare `null` or leave — a `return`, `break`, `continue`
+/// or halt — so the arm's own code carries no value of the join's type?  A nested `match` (an
+/// `if` chain) whose arms are all `null` or `return` is one.  Such an arm keeps its code and
+/// takes the join's typed null BEHIND it: replacing it dropped its `return` (both backends
+/// answered null), and leaving it untyped left the interpreter's chain reading a slot the arm
+/// never wrote.  `@FR-N-Join`'s null arm, for an arm that is not the literal.
+pub(super) fn yields_only_null(data: &crate::data::Data, code: &Value) -> bool {
+    match code.unspan() {
+        Value::Null | Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
+        Value::Block(bl) if bl.name == FORWARD_CALL => false,
+        Value::Block(bl) => {
+            is_block_divergent(&bl.operators)
+                || bl
+                    .operators
+                    .last()
+                    .is_some_and(|o| yields_only_null(data, o))
+        }
+        Value::If(_, then_b, else_b) => {
+            yields_only_null(data, then_b) && yields_only_null(data, else_b)
+        }
+        other => is_halt_call(data, other),
+    }
+}
+
 /// The name of the block that spells a pass-1 PLACEHOLDER arm: a `match` arm calling a function
 /// declared further down, which pass 1 cannot type and builds no IR for.  Left as the bare
 /// `Value::Null` it was handed, it read as the `null` literal — to the arm joins (loft#2305) and to
@@ -6768,7 +6792,16 @@ impl Parser {
                         // DbRef sentinel.  `null`'s catch-all answers a bare
                         // `Value::Null`, which pushes nothing, and the join then read an
                         // uninitialised 12-byte slot as a live reference.
-                        bl.operators[p] = self.null_value(&false_type);
+                        let typed = self.null_value(&false_type);
+                        if !matches!(bl.operators[p].unspan(), Value::Null)
+                            && yields_only_null(&self.data, &bl.operators[p])
+                        {
+                            // An arm of no type that is no `null` literal — a nested `match`
+                            // whose paths answer null or return — keeps its code.
+                            bl.operators.push(typed);
+                        } else {
+                            bl.operators[p] = typed;
+                        }
                     }
                     bl.result = false_type.clone();
                 }
