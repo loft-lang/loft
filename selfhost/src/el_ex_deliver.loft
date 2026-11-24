@@ -49,13 +49,8 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   if !e.first_pass {
     want = match el_types::base(result) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
     have = match code { NdBlock { block: cb } => match el_types::base(cb[0].result[0] ?? ir::TyVoid) { TyVector { inner: hi } => hi, _ => ir::TyVoid }, _ => ir::TyVoid };
-    // A record literal answered by a function whose vector is NULLABLE: Rust types its
-    // elements through the `?` otherwise — not carried: refused by name.
-    lit_tail = match code { NdBlock { block: ob } => match ob[0].operators[-1] ?? ir::NdNull { NdBlock { block: ib } => ib[0].name == "Vector", _ => false }, _ => false };
-    if result is TyOptional && lit_tail && el_types::base(want) is TyReference {
-      el::refuse(e, "a literal of records answered by a function whose vector is nullable");
-      return code;
-    }
+    // (A record literal answered by a function whose vector is NULLABLE keeps its element temp
+    // bare, `vars.bare_literal`, as Rust's: delivered as any `vector<T>?` literal tail.)
     wn = el_types::elem_name(e, want);
     hn = el_types::elem_name(e, have);
     if wn != "" && hn != "" && wn != hn {

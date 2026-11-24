@@ -130,6 +130,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `vector<T>?` result's content is unknown there.)
   rec_elem = !(result is TyOptional) && match el_types::base(result) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
   lit_tail = ttail >= 0 && (scalar_elem || rec_elem) && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
+  // (A tail literal of records under a `vector<T>?` result: the content is unknown there, so its
+  // element temp stays bare — `vars.bare_literal`.)
+  if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
+    vars.bare_literal = ttail;
+  }
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
