@@ -1740,14 +1740,15 @@ pub fn tail_syntax(e: el::El, body: integer) -> integer {
 }
 
 // Is a body's last statement `return <vector literal or comprehension>`?
-// Does the syntax under `i` hold a `return` that answers a value other than `null`?
+// Does the syntax under `i` hold a `return` of a call (`return items(…)`, `return v.keys()`)?
+// A `return` of a literal, a local or `null` names no buffer on Rust's first pass.
 fn value_return_syntax(e: el::El, i: integer) -> boolean {
   if i < 0 {
     return false;
   }
   match e.p.nodes[i] {
     SJump { kind, e: x } => {
-      if kind == "return" && x != null && !(e.p.nodes[x!] is SNull) {
+      if kind == "return" && x != null && (e.p.nodes[x!] is SCall || match e.p.nodes[x!] { SMember { call } => call, _ => false }) {
         return true;
       }
     },
