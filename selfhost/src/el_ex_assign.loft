@@ -403,6 +403,19 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       return ex(el_ir::v_block(l, result, "block"), result);
     }
   }
+  // loft#1494: a value block whose tail reads a vector OUT OF a local it defines
+  // (`{ b = BoxF { … }; b.items }`) hands its consumer a view into a store it frees on the way
+  // out: the tail is copied into a local of its own first (`materialize_collection_value`).
+  if context != "return from block" && el_types::base(t) is TyVector && !(t is TyOptional) && len(l) > 1 {
+    froot = field_tail_root(e, l[-1]);
+    if froot >= 0 && !vars.vars[froot].argument && defines_var(l[0..len(l) - 1], froot) {
+      m = el_ex_call::materialize_collection(e, vars, l[-1], t);
+      l[-1] = m.code;
+      // (Bound from a call, a fresh value: `t = m.tp` beside `t = rx!.tp` above — one name bound
+      // to views in two sibling blocks — compiled `t` wrong even where neither ran, loft#2627.)
+      t = el_types::with_deps(m.tp, el_types::deps(m.tp));
+    }
+  }
   // A function body that ends in a jump is typed as its declared result, and so is a
   // generator's: what it answers is the iterator its `yield`s feed, not its last statement.
   if context == "return from block" && t is TyNever && !(result is TyVoid) && !el_types::is_unknown(result) {
@@ -599,6 +612,36 @@ pub fn branch_terminals(n: ir::Node, out: vector<integer>) {
     },
     _ => {}
   }
+}
+
+// `field_place`: the local a projection of fields (and constant- or variable-indexed elements)
+// is rooted at — the path not empty — else -1.
+fn field_tail_root(e: el::El, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetField" && len(args) == 3 && el_ir::unspan(args[1]!) is NdInt {
+        return match el_ir::unspan(args[0]!) { NdVar { n: v } => v, _ => field_tail_root(e, args[0]!) };
+      }
+      if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(args) == 3 && (el_ir::unspan(args[2]!) is NdInt || el_ir::unspan(args[2]!) is NdVar) {
+        return match el_ir::unspan(args[0]!) { NdVar { n: v } => v, _ => field_tail_root(e, args[0]!) };
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// `block_defines_var`: a statement among `l` binds `v`.
+fn defines_var(l: vector<ir::Node>, v: integer) -> boolean {
+  for op in l {
+    match el_ir::unspan(op) {
+      NdSet { var } => { if var == v { return true; } },
+      NdInsert { items } => { if defines_var(items, v) { return true; } },
+      _ => {}
+    }
+  }
+  false
 }
 
 // The loop of `parse_block_inner` meets the closing `}` too: a later line moves the parser's

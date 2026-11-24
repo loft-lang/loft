@@ -29,6 +29,7 @@ use el_ex_copy;
 use el_ex_bind;
 use el_ex_closure;
 use el_ex_into;
+use el_ex_deliver;
 
 // `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
 // `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
@@ -2563,7 +2564,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   }
   // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
   // back are what the result borrows.
-  if e.first_pass && heap_def(el_types::base(result)) >= 0 && len(out) > 0 {
+  // (So does a vector match at a function's tail: its leaves are what `ref_return` classifies on
+  // this pass, `Bind` or `Rename`.)
+  vec_tail = node >= 0 && el_types::base(result) is TyVector && el_ex_deliver::tail_syntax(e, vars.body) == node;
+  if e.first_pass && (heap_def(el_types::base(result)) >= 0 || vec_tail) && len(out) > 0 {
     // A wildcard arm is the chain's last value, not an `if` beside a `null`.
     fc = ir::NdNull;
     for a in rev(out) {
@@ -2880,6 +2884,10 @@ pub fn match_fallback(e: el::El, rbase: ir::TypeT) -> ir::Node? {
   // (`null_value`: a struct enum's null — a `__nullable<S>` slot's too — is the reference
   // sentinel.)
   if el_types::struct_enum_def(rbase) >= 0 {
+    return el_ir::cl(e, "OpNullRefSentinel", []);
+  }
+  // (…and a vector's, the match falling past every arm: the vector null.)
+  if rbase is TyVector {
     return el_ir::cl(e, "OpNullRefSentinel", []);
   }
   el_convert::null_of(e, rbase)

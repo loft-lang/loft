@@ -374,6 +374,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if local >= 0 {
       el_trace::retpromo(e, vars, local, "Bind");
     }
+    // (A field of a local record at the tail: `Bind` on the record, copied in at the end.)
+    if field_tail && local < 0 {
+      el_trace::retpromo(e, vars, place_root(e, tail), "Bind");
+    }
     if (literal || local >= 0 || field_tail || cview) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && el_ex_copy::returned_local(vars, tail) >= 0 {
@@ -496,7 +500,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     b = ir::NdVar { n: rb };
     src = if local >= 0 { ir::NdVar { n: local } } else { tail };
     if !cview {
-      el_trace::retpromo(e, vars, local, "Bind");
+      el_trace::retpromo(e, vars, if local >= 0 { local } else { place_root(e, tail) }, "Bind");
     }
     bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, src, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
     bl.result = [own];
@@ -806,6 +810,35 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     tail = null_arms_as_sentinel(e, tail);
     bl.operators[-1] = el_ir::respan(bl.operators[-1]!, tail);
   }
+  // `classify_ret_promotion` over a branch tail's leaves, in arm order (the first pass): a leaf
+  // of the buffer's own shape — a vector local, a call's `__ref_N` — before any `Bind` is renamed
+  // onto the buffer (`Rename`, not carried: refused by name); every other leaf (a record a
+  // projection reads through, `b` of `b.items`) is `Bind`, copied in at its arm.
+  ptail = match tail { NdBlock { block: pmb } => if (pmb[0].name == "scalar_match" || pmb[0].name == "match") && len(pmb[0].operators) > 0 { el_ir::unspan(pmb[0].operators[-1]!) } else { tail }, _ => tail };
+  if e.first_pass && !param && ptail is NdIf && built_arm(e, vars, ptail) {
+    bound = false;
+    // (`arm_join_type`: the first arm's own markers stand; a later arm's record local, defined
+    // inside that arm, is no borrow of the join.)
+    leaves: vector<integer> = [];
+    for arm in branch_arms(ptail, []) {
+      for lv in branch_leaves(e, vars, arm, leaves) {
+        if !leaves.contains(lv) && (arm#index == 0 || !arm_defines(arm, lv) || len(hidden_ref_args(e, vars, last_value(arm))) > 0) {
+          leaves += [lv];
+        }
+      }
+    }
+    want = el_types::without_deps(el_types::base(result));
+    for lf in leaves {
+      // (`wrong_shape_for_buffer`: only a local of the return's own type can BE the buffer.)
+      shaped = el_types::is_equal(e, el_types::without_deps(el_types::base(el_vars::tp(vars, lf))), want) && !(el_vars::tp(vars, lf) is TyOptional) && !starts_with(el_vars::name_of(vars, lf), "___blk_val");
+      if shaped && !bound {
+        el::refuse(e, "a vector branch tail whose first leaf takes the return buffer (Rename)");
+        return null;
+      }
+      el_trace::retpromo(e, vars, lf, "Bind");
+      bound = true;
+    }
+  }
   // The first pass's `if` is a placeholder: its arms are read off the syntax.
   // An arm may answer a whole vector parameter too (`materialize_vector_arms_into`): copied
   // into the buffer where the arm ends, the body borrowing the parameters its arms answer.
@@ -841,7 +874,7 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   }
   // A `null` arm of a vector that is not declared nullable is delivered another way (the
   // literal's own store renamed onto the buffer, cleared at the head): refused by name.
-  if arms && !(result is TyOptional) && null_arm(e, tail) {
+  if arms && !(result is TyOptional) && null_arm(e, tail) && literal_arm(tail) {
     el::refuse(e, "a vector `if` tail with a `null` arm in a function whose vector is not nullable");
     return code;
   }
@@ -887,6 +920,11 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   }
   // Read before the tail is rewritten: `tail` views the statement the delivery replaces.
   borrowed = arm_params(tail, []);
+  // (An arm answering a local, a call's or a projection's vector delivers it into the buffer,
+  // which the body then answers.)
+  if len(borrowed) == 0 && built_arm(e, vars, tail) {
+    borrowed = [rb];
+  }
   bl.operators[-1] = deliver_arms(e, vars, tail, rb, rec);
   answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
   bl.result = [if result is TyOptional { ir::TyOptional { inner: answered } } else { answered }];
@@ -998,7 +1036,7 @@ pub fn deliverable_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean 
   match n {
     NdSpan { inner } => deliverable_arms(e, vars, inner),
     NdIf { cond: _, t, f } => deliverable_arms(e, vars, t) && deliverable_arms(e, vars, f),
-    NdVar { n: v } => vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyVector,
+    NdVar { n: v } => (vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyVector) || arm_vector_local(e, vars, v),
     NdBlock { block } => {
       ops = block[0].operators;
       if len(ops) == 0 {
@@ -1009,7 +1047,125 @@ pub fn deliverable_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean 
         deliverable_arms(e, vars, ops[-1]!)
       }
     },
-    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    NdInsert { items } => len(items) > 0 && deliverable_arms(e, vars, items[-1]!),
+    // (`materialize_vector_arms_collect`: a projection is copied in; a call handed a buffer of its
+    // own (`__ref_N`) builds into the function's instead.)
+    NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0,
+    _ => false
+  }
+}
+
+// A vector local of the body an arm answers (`materialize_vector_arms_collect`'s `Var` arm): not
+// the buffer, not borrowing it.
+fn arm_vector_local(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
+  !vars.vars[v]!.argument && el_types::base(el_vars::tp(vars, v)) is TyVector && !(el_vars::tp(vars, v) is TyOptional)
+}
+
+// `collect_hidden_ref_args`: the call's arguments that are a buffer of its own (`__ref_N`, a work
+// ref of this body).
+fn hidden_ref_args(e: el::El, vars: el_vars::Vars, n: ir::Node) -> vector<integer> {
+  r: vector<integer> = [];
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      for a in args {
+        match el_ir::unspan(a) {
+          NdVar { n: av } => { if starts_with(el_vars::name_of(vars, av), "__ref_") && !vars.vars[av].argument { r += [av]; } },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// The arms of an `if` chain, in order.
+fn branch_arms(n: ir::Node, out: vector<ir::Node>) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => branch_arms(inner, out),
+    NdIf { cond: _, t, f } => branch_arms(f, out + [t]),
+    _ => out + [n]
+  }
+}
+
+// The value an arm ends in, through its blocks.
+fn last_value(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => last_value(inner),
+    NdBlock { block } => if len(block[0].operators) > 0 { last_value(block[0].operators[-1]!) } else { n },
+    NdInsert { items } => if len(items) > 0 { last_value(items[-1]!) } else { n },
+    _ => n
+  }
+}
+
+// Does the arm bind `v` among its statements (a local of its own)?
+fn arm_defines(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSpan { inner } => arm_defines(inner, v),
+    NdBlock { block } => {
+      for op in block[0].operators {
+        if arm_defines(op, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSet { var } => var == v,
+    NdInsert { items } => { for it in items { if arm_defines(it, v) { return true; } } false },
+    _ => false
+  }
+}
+
+// The locals a branch tail's value is reached through, in arm order (`ref_return`'s `ls`): a
+// vector local, a call's own buffer, the root of a projection out of a local — parameters left
+// out, each once.
+fn branch_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, out: vector<integer>) -> vector<integer> {
+  r = out;
+  match n {
+    NdSpan { inner } => { r = branch_leaves(e, vars, inner, r); },
+    NdIf { cond: _, t, f } => { r = branch_leaves(e, vars, f, branch_leaves(e, vars, t, r)); },
+    NdBlock { block } => { if block[0].name != "Vector" && len(block[0].operators) > 0 { r = branch_leaves(e, vars, block[0].operators[-1]!, r); } },
+    NdInsert { items } => { if len(items) > 0 { r = branch_leaves(e, vars, items[-1]!, r); } },
+    NdVar { n: v } => { if !vars.vars[v].argument && !r.contains(v) { r += [v]; } },
+    NdCall { def_nr } => {
+      hr = hidden_ref_args(e, vars, n);
+      if len(hr) > 0 {
+        for h in hr {
+          if !r.contains(h) {
+            r += [h];
+          }
+        }
+      } else if projection_op(el::def(e, def_nr).name) {
+        pr = place_root(e, n);
+        if pr >= 0 && !vars.vars[pr].argument && !r.contains(pr) {
+          r += [pr];
+        }
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// An arm among the `if`'s answering a body local, a buffered call or a projection.
+fn built_arm(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => built_arm(e, vars, inner),
+    NdIf { cond: _, t, f } => built_arm(e, vars, t) || built_arm(e, vars, f),
+    NdBlock { block } => block[0].name != "Vector" && len(block[0].operators) > 0 && built_arm(e, vars, block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && built_arm(e, vars, items[-1]!),
+    NdVar { n: v } => arm_vector_local(e, vars, v),
+    NdCall { def_nr } => projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0,
+    _ => false
+  }
+}
+
+// A literal arm among the `if`'s (a `Vector` block).
+fn literal_arm(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => literal_arm(inner),
+    NdIf { cond: _, t, f } => literal_arm(t) || literal_arm(f),
+    NdBlock { block } => block[0].name == "Vector" || (len(block[0].operators) > 0 && literal_arm(block[0].operators[-1]!)),
     _ => false
   }
 }
@@ -1177,6 +1333,34 @@ pub fn deliver_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, re
       }
       bl.operators[-1] = deliver_arms(e, vars, bl.operators[-1]!, rb, rec);
       ir::NdBlock { block: [bl] }
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return n;
+      }
+      items[len(items) - 1] = deliver_arms(e, vars, items[-1]!, rb, rec);
+      ir::NdInsert { items: items }
+    },
+    NdCall { def_nr, args } => {
+      // A call handed a buffer of its own builds into the function's: the buffer substituted,
+      // its work ref retired (`substitute_work_ref`, `unregister_work_ref`).
+      hr = hidden_ref_args(e, vars, n);
+      if len(hr) > 0 {
+        c = n;
+        for h in hr {
+          if h != rb {
+            c = el_ex_base::rename_var(c, h, rb);
+            el_vars::unregister_work_ref(vars, h);
+          }
+        }
+        return c;
+      }
+      // A projection is copied in (`is_projection_op`).
+      if projection_op(el::def(e, def_nr).name) {
+        b = ir::NdVar { n: rb };
+        return ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, n, ir::NdInt { n: rec }]), b] };
+      }
+      n
     },
     // A parameter an arm answers is copied into the buffer; it keeps its own store.  A local of
     // the body (`Bind` beside the renamed one) is copied in too, and the literal store it was
