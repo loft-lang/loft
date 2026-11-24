@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the live tier (flips, live edits) runs the interpreter inside a Rust-writer build, so those cells run with LOFT_NATIVE_BACKEND=rust; the build swap is also run on the C (`s5_c_*`), and the rest of the C kernel is c_emit's and c_https's.
+// `@C170`: live edits, breakpoints and the `D!:` debugger run on the interpreter (`--interpret`); the C build has no live tier, so the cells that flipped a compiled function into one (@PLN225 R4) keep their interpreter and C halves only.  The build swap runs on the C (`s5_c_*`), and the rest of the C kernel is c_emit's and c_https's.
 
 // The kernel lifecycle suite is unix-only v1: the swap machinery rides
 // SO_REUSEPORT + process groups (killpg cleans the --native grandchildren),
@@ -157,45 +157,35 @@ fn s1_native_baseline_matches_interpreted() {
     run_kernel_scenario(common::bind_port(18094), false);
 }
 
-/// @PLN18 08 scenario S3 — edit the interpreted fn; the MIXED build keeps
-/// running.  The flip target is interpreted from startup (`LOFT_FLIP_FNS`);
-/// the test then EDITS the source file under the serving kernel: a good
+/// @PLN18 08 scenario S3 — edit a fn under the serving kernel: a good
 /// edit (+1 -> +100) applies live — observed as the world counter's STEP
 /// changing while the counter itself stays monotone (continuity: no
 /// restart, no reset); a broken edit (a real parse ERROR) keeps the +100
 /// body serving; a signature change is rejected (call sites embed frame
-/// sizes).  The timeline is differential: the interpreted leg (the original
-/// tier-0 reload path) passes the SAME milestones.  Application is
-/// asynchronous (dispatch-path poll vs the interp loop's op counter), so
-/// the legs assert step timelines + reload milestones, not raw vectors;
+/// sizes).  Application is asynchronous (the interp loop's op counter), so
+/// the leg asserts a step timeline + reload milestones, not raw vectors;
 /// the stderr file is the synchronization point for the REJECTED edits.
+/// `@C170`: the live edit is the interpreter's; the compiled leg that flipped
+/// the fn into the rustc writer's live tier went with the writer (@PLN225 R4).
 // @speed 5.2
 #[test]
 fn s3_live_edit_under_native_baseline() {
-    let native = run_s3_scenario(common::bind_port(18097), false);
-    let interp = run_s3_scenario(common::bind_port(18098), true);
+    let run = run_s3_scenario(common::bind_port(18098));
     assert!(
-        native.stderr.contains("live-dispatch: n_bump_events"),
-        "the native leg must dispatch through the interpreter:\n{}",
-        native.stderr
+        run.stderr.contains("'bump_events' v1 live"),
+        "the good edit must reload:\n{}",
+        run.stderr
     );
-    for (leg, run) in [("native", &native), ("interp", &interp)] {
-        assert!(
-            run.stderr.contains("'bump_events' v1 live"),
-            "{leg}: the good edit must reload:\n{}",
-            run.stderr
-        );
-        assert!(
-            run.stderr.contains("kept its old body"),
-            "{leg}: the broken edit must be refused:\n{}",
-            run.stderr
-        );
-        assert!(
-            run.stderr.contains("changed its signature"),
-            "{leg}: the signature change must be refused:\n{}",
-            run.stderr
-        );
-    }
+    assert!(
+        run.stderr.contains("kept its old body"),
+        "the broken edit must be refused:\n{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("changed its signature"),
+        "the signature change must be refused:\n{}",
+        run.stderr
+    );
 }
 
 fn s3_fixture(port: u16, bump_decl: &str, bump_stmt: &str) -> String {
@@ -274,7 +264,7 @@ fn s3_await_stderr(ws: &TcpStream, last: &mut i64, path: &std::path::Path, needl
     }
 }
 
-fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
+fn run_s3_scenario(port: u16) -> S2Run {
     if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return S2Run {
@@ -291,13 +281,7 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1");
-    if interpret {
-        cmd.arg("--interpret");
-    } else {
-        cmd.env("LOFT_LIVE_FLIP", "1")
-            .env("LOFT_FLIP_FNS", "bump_events")
-            .env("LOFT_DISPATCH_DEBUG", "1");
-    }
+    cmd.arg("--interpret");
     cmd.process_group(0); // own group, so Guard can kill driver + grandchild
     let child = cmd
         .arg("--no-warnings")
@@ -500,266 +484,8 @@ impl Drop for S5Hygiene {
     }
 }
 
-// @speed 1.8
-#[test]
-fn s5_native_swap_under_running_world() {
-    if !fa::exists(loft_bin()) {
-        eprintln!("skipping: release loft not built");
-        return;
-    }
-    // Both stems carry a PORT, and the two ports are not the same one: a prior run's orphan
-    // sits on this checkout's CANONICAL port (`test_port`, pure), while our own child lands on
-    // whatever `bind_port` could actually take — which differs exactly when an orphan already
-    // holds the canonical one, the case the sweep exists for.
-    s5_kill_stale(&format!("/.loft/cache/eh_s5_{}-", common::test_port(18100))); // a stale orphan from a prior run shares the port
-    std::thread::sleep(Duration::from_millis(200));
-    let port = common::bind_port(18100);
-    reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
-    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5_{port}-"), Some(port)); // OUR swap child dies at exit
-    // A test-OWNED always-fails binary: /bin/false varies across platforms
-    // and runners (macOS CI refused it — forensics pending); a temp script
-    // is deterministic everywhere this unix-only suite runs.
-    let bad_bin = test_tmp().join(format!("eh_s5_false_{port}.sh"));
-    fa::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fa::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let bad_bin = bad_bin.to_string_lossy().into_owned();
-    // v2 also GROWS the world (@PLN196 step 8): `bonus` is added with a default computed
-    // from the record, so the swap must carry the world through the converter — the old
-    // JSON snapshot left a field it did not have at null.
-    let fixture = |ver: &str| {
-        let (bonus_field, bonus_reply) = if ver == "v2" {
-            (
-                ", bonus: integer = $.events * 10",
-                "if ev.payload == \"bonus\" { engine_host::send(ev.cid, \"bonus:{w.bonus}\"); return; }",
-            )
-        } else {
-            ("", "")
-        };
-        format!(
-            r#"
-use engine_host;
-struct W {{ events: integer not null, ticks: integer not null{bonus_field} }}
-fn bump_events(w: W) -> integer {{
-  w.events = w.events + 1;
-  w.events
-}}
-fn main() {{
-  w = W {{ events: 0, ticks: 0 }};
-  resumed = engine_host::swap_world(w);
-  engine_host::run({port}, 10000,
-    fn(ev: engine_host::Event) {{
-      if ev.kind != 1 {{ return; }}
-      n = bump_events(w);
-      if ev.payload == "rebuild" {{
-        engine_host::send(ev.cid, "rebuild:{{engine_host::rebuild_start()}}");
-        return;
-      }}
-      if ev.payload == "status" {{
-        engine_host::send(ev.cid, "status:{{engine_host::rebuild_status()}}");
-        return;
-      }}
-      if ev.payload == "swap" {{
-        engine_host::send(ev.cid, "swap:{{engine_host::swap_start(engine_host::rebuild_artifact())}}");
-        return;
-      }}
-      if ev.payload == "badpath" {{
-        engine_host::send(ev.cid, "badpath:{{engine_host::swap_start("/nonexistent/binary")}}");
-        return;
-      }}
-      if ev.payload == "badswap" {{
-        engine_host::send(ev.cid, "badswap:{{engine_host::swap_start("{bad_bin}")}}");
-        return;
-      }}
-      {bonus_reply}
-      engine_host::send(ev.cid, "{ver}:{{ev.payload}}#{{n}}t{{w.ticks}}");
-    }},
-    fn() {{ w.ticks = w.ticks + 1; }});
-}}
-"#
-        )
-    };
-    let prog = test_tmp().join(format!("eh_s5_{port}.loft"));
-    fa::write(&prog, fixture("v1")).unwrap();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let err_path = test_tmp().join(format!("eh_s5_{port}.err"));
-    let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
-    cmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_FLIP_FNS", "bump_events")
-        .env("LOFT_DISPATCH_DEBUG", "1");
-    cmd.process_group(0);
-    let child = cmd
-        .arg("--no-warnings")
-        .arg("--lib")
-        .arg(root.join("lib"))
-        .arg(&prog)
-        .current_dir(&root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(err_file))
-        .spawn()
-        .expect("spawn kernel");
-    let _guard = Guard(Some(child));
-
-    let stderr_now = || fa::read_to_string(&err_path).unwrap_or_default();
-    let mut count = 0i64; // every event bumps the world counter
-    let ws = ws_connect(port);
-    let ask = |ws: &TcpStream, msg: &str, count: &mut i64| -> String {
-        ws_send(ws, msg);
-        *count += 1;
-        ws_recv(ws)
-    };
-    // The flipped baseline serves (S2 still alive under this fixture).
-    let r = ask(&ws, "a", &mut count);
-    assert_eq!(
-        r,
-        format!("v1:a#{count}t")
-            .rsplit_once('t')
-            .unwrap()
-            .0
-            .to_string()
-            + "t"
-            + r.rsplit_once('t').unwrap().1,
-        "shape — first-ask flake probe: raw={r:?} count={count}; subprocess stderr:\n{}",
-        stderr_now()
-    );
-    assert!(r.starts_with(&format!("v1:a#{count}t")), "baseline: {r}");
-    assert!(stderr_now().contains("live-dispatch: n_bump_events"));
-
-    // Rollback leg 1: a missing artifact is refused outright (no freeze).
-    assert_eq!(ask(&ws, "badpath", &mut count), "badpath:false");
-    // Rollback leg 2: a build that dies before serving.  The freeze defers
-    // the next replies; they drain after the rollback (recv timeout rides
-    // it).  The world must keep counting and the old build keep serving.
-    let badswap = ask(&ws, "badswap", &mut count);
-    assert_eq!(
-        badswap,
-        "badswap:true",
-        "swap_start must accept the test's false-binary; server stderr:\n{}",
-        fa::read_to_string(&err_path).unwrap_or_default()
-    );
-    let r = ask(&ws, "b", &mut count);
-    assert!(
-        r.starts_with(&format!("v1:b#{count}t")),
-        "post-rollback: {r}"
-    );
-    assert!(
-        stderr_now().contains("rolled back"),
-        "the dead build must roll back:\n{}",
-        stderr_now()
-    );
-
-    // S3+S4: live edit, then background rebuild to ready.
-    fa::write(&prog, fixture("v2")).unwrap();
-    assert_eq!(ask(&ws, "rebuild", &mut count), "rebuild:true");
-    let deadline = vm_deadline(300);
-    loop {
-        let st = ask(&ws, "status", &mut count);
-        if st == "status:2" {
-            break;
-        }
-        assert!(Instant::now() < deadline, "rebuild never ready");
-        std::thread::sleep(Duration::from_millis(300));
-    }
-
-    // THE SWAP.  The ack arrives before the freeze; the world counter and
-    // tick stamp in the LAST pre-swap reply are the continuity anchors.
-    let r = ask(&ws, "c", &mut count);
-    assert!(r.starts_with(&format!("v1:c#{count}t")), "pre-swap: {r}");
-    let t_pre: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
-    assert_eq!(ask(&ws, "swap", &mut count), "swap:true");
-    // The world is frozen after the swap event: its counter is `count` from here.
-    let frozen = count;
-
-    // Wait for the handover: the old process closes this connection.
-    ws.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-    let gap_start = Instant::now();
-    while ws_try_recv(&ws).is_some() {}
-    // Reconnect into the NEW build (seat-reconnect semantics; measure it).
-    // Full-attempt retry: a dial in the dual-bind overlap can land on the
-    // dying process and drop mid-upgrade.
-    let reconnect_deadline = vm_deadline(10);
-    let new_ws = loop {
-        if let Some(ws) = ws_try_connect(port) {
-            break ws;
-        }
-        if Instant::now() >= reconnect_deadline {
-            // Diagnostics: who exists, who listens, what the server said.
-            let ps = loft::platform::process::harness_command("pgrep")
-                .args(["-af", "eh_s5_18100"])
-                .output();
-            let ss = loft::platform::process::harness_command("ss")
-                .args(["-tlnp"])
-                .output();
-            panic!(
-                "never reconnected into the new build\n--- pgrep:\n{}\n--- ss -tlnp:\n{}\n--- server stderr tail:\n{}",
-                String::from_utf8_lossy(&ps.map(|o| o.stdout).unwrap_or_default()),
-                String::from_utf8_lossy(&ss.map(|o| o.stdout).unwrap_or_default())
-                    .lines()
-                    .filter(|l| l.contains("18100"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stderr_now()
-                    .lines()
-                    .rev()
-                    .take(8)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    let gap = gap_start.elapsed();
-    eprintln!("S5 swap gap (close -> serving reconnect): {gap:?}");
-    assert!(
-        gap < Duration::from_secs(3),
-        "the swap gap must stay under the keepalive timeout: {gap:?}"
-    );
-
-    // Continuity: the new build serves v2 meaning over the SAME world —
-    // counter exactly +1 (nothing lost, nothing duplicated), ticks never
-    // reset.
-    let marker = stderr_now();
-    let r = ask(&new_ws, "d", &mut count);
-    assert!(
-        r.starts_with(&format!("v2:d#{count}t")),
-        "the new build must serve the new meaning over the OLD world: {r}"
-    );
-    let t_post: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
-    // The added field took its default from the converted record: the counter at the freeze.
-    assert_eq!(
-        ask(&new_ws, "bonus", &mut count),
-        format!("bonus:{}", frozen * 10),
-        "the grown world's added field holds its computed default:\n{}",
-        stderr_now()
-    );
-    assert!(
-        t_post >= t_pre,
-        "tick stamp must cross the swap monotonically ({t_pre} -> {t_post})"
-    );
-    assert!(
-        marker.contains("loft-swap: world restored from"),
-        "the new build must restore the snapshot:\n{marker}"
-    );
-    // Dispatch reset: bump_events is COMPILED in the new build — no interp
-    // dispatches after the handover marker.
-    let full = stderr_now();
-    let after = full.split("handing over").nth(1).unwrap_or("");
-    let _ = ask(&new_ws, "e", &mut count); // drive one more dispatch window
-    assert!(
-        !after.contains("live-dispatch:"),
-        "the swap must reset the dispatch tier:\n{after}"
-    );
-    drop(_guard);
-    let _ = fa::remove_file(&prog);
-    let _ = fa::remove_file(&err_path);
-}
+// `s5_native_swap_under_running_world` went with the rustc writer (@PLN225 R4): its swap is
+// `s5_c_swap_under_running_world` below, and its dispatch assertions were the writer's live tier.
 
 /// @PLN18 08-S5 on the C backend — the same swap under a running world, every build a C one: the
 /// serving build rebuilds its edited source in the background through the driver
@@ -1411,7 +1137,7 @@ fn main() {{
 /// so under LOFT_DEBUG_CONTROL=1 it binds a loopback listener and announces
 /// "engine_host: debug control on 127.0.0.1:<port>" on stdout (the editor
 /// scrapes that line exactly like a server's port announce).  The SAME D!:
-/// protocol drives it: bp (entry, name-keyed, implies the flip) -> hit with
+/// protocol drives it: bp (entry, name-keyed) -> hit with
 /// frame bindings while the client's tick is HELD (its mini-pump keeps the
 /// server connection alive) -> eval -> resume -> a SECOND hit (still armed,
 /// still serving) -> quit over the channel.
@@ -1460,7 +1186,7 @@ fn main() {{
         .expect("spawn server");
     let _sguard = Guard(Some(server));
 
-    // The COMPILED debuggable client: tick_step is the breakpoint target.
+    // The debuggable client, on the interpreter (`@C170`): tick_step is the breakpoint target.
     let cli_prog = test_tmp().join(format!("eh_s7c_cli_{port}.loft"));
     fa::write(
         &cli_prog,
@@ -1489,11 +1215,10 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s7c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s7c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_DEBUG_CONTROL", "1")
-        .env("LOFT_DISPATCH_DEBUG", "1");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1");
     ccmd.process_group(0);
     let client = ccmd
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
@@ -1567,14 +1292,16 @@ fn main() {{
 }
 
 /// @PLN18 08 scenario S8 — THE STANDING DIFFERENTIAL: one meaning scenario
-/// executed in four tier states — interpreted, compiled, mixed (the S2/S3
-/// standing state: a fn flipped to the interpreter), and post-swap (the
-/// process REPLACED mid-sequence via a control-channel self-swap) — with
-/// byte-equal game transcripts.  Goal D's sweep extended to the mixed
-/// states; it pins "a target change is observable only as speed"
-/// permanently.  Positive controls per leg: the mixed leg must really
-/// dispatch through the interpreter; the swap leg must really restore the
-/// world across a new process.
+/// executed in four tier states — interpreted, compiled, interpreted-swap (an
+/// interpreted process REPLACED mid-sequence by its compiled build through a
+/// control-channel self-swap), and post-swap (a compiled process replaced the
+/// same way) — with byte-equal game transcripts.  Goal D's sweep extended to
+/// the mixed states; it pins "a target change is observable only as speed"
+/// permanently.  Positive control per swap leg: it must really restore the
+/// world across a new process.  The rustc writer's mixed state (a compiled fn
+/// flipped into its live tier) went with the writer (@PLN225 R4); `@C170` puts
+/// the development tier in the interpreter, and its swap into the C build is
+/// the mixed state now.
 // @speed 1.1
 #[test]
 fn s8_standing_four_state_differential() {
@@ -1587,7 +1314,7 @@ fn s8_standing_four_state_differential() {
     let legs = [
         ("interpreted", common::bind_port(18110)),
         ("compiled", common::bind_port(18111)),
-        ("mixed", common::bind_port(18112)),
+        ("interpreted-swap", common::bind_port(18112)),
         ("post-swap", common::bind_port(18113)),
     ];
     let mut transcripts = Vec::new();
@@ -1644,17 +1371,15 @@ fn main() {{
             cmd.arg("--interpret");
         }
         "compiled" => {}
-        "mixed" => {
-            cmd.env("LOFT_LIVE_FLIP", "1")
-                .env("LOFT_FLIP_FNS", "bump_events")
-                .env("LOFT_DISPATCH_DEBUG", "1");
+        "interpreted-swap" => {
+            cmd.arg("--interpret").env("LOFT_DEBUG_CONTROL", "1");
         }
         "post-swap" => {
-            cmd.env("LOFT_LIVE_FLIP", "1")
-                .env("LOFT_DEBUG_CONTROL", "1");
+            cmd.env("LOFT_DEBUG_CONTROL", "1");
         }
         _ => unreachable!(),
     }
+    let swaps = mode.ends_with("swap");
     cmd.process_group(0);
     let child = cmd
         .arg("--no-warnings")
@@ -1676,9 +1401,9 @@ fn main() {{
     ws_send(&ws, "b");
     replies.push(ws_recv(&ws));
 
-    let tail_ws = if mode == "post-swap" {
-        // THE SELF-SWAP between b and c: rebuild the UNCHANGED source (a
-        // cache hit on the artifact this very process runs), swap to it —
+    let tail_ws = if swaps {
+        // THE SELF-SWAP between b and c: rebuild the UNCHANGED source (for a
+        // compiled process, a cache hit on the artifact it runs), swap to it —
         // a new process under the same world — then finish the sequence.
         let ctl = ws_connect(port);
         ws_send(&ctl, "D!:rebuild");
@@ -1720,22 +1445,15 @@ fn main() {{
 
     // Per-leg positive controls: the tier state must be REAL, not silent.
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
-    match mode {
-        "mixed" => assert!(
-            stderr.contains("live-dispatch: n_bump_events"),
-            "the mixed leg must dispatch through the interpreter:\n{stderr}"
-        ),
-        "post-swap" => {
-            assert!(
-                stderr.contains("loft-swap: world restored"),
-                "the swap leg must restore the world:\n{stderr}"
-            );
-            assert!(
-                stderr.contains("handing over"),
-                "the swap leg must hand over:\n{stderr}"
-            );
-        }
-        _ => {}
+    if swaps {
+        assert!(
+            stderr.contains("loft-swap: world restored"),
+            "the {mode} leg must restore the world:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("handing over"),
+            "the {mode} leg must hand over:\n{stderr}"
+        );
     }
     let _ = fa::remove_file(&prog);
     let _ = fa::remove_file(&err_path);
@@ -1756,13 +1474,15 @@ fn scopeguard_kill(stem: String) -> impl Drop {
 
 /// @PLN18 08 scenario S7 — the debugger loop end-to-end (@PLN16 6b/6c
 /// convergence): a scripted control-channel session against a serving
-/// compiled kernel, asserting each stage IN ORDER — breakpoint hit with
+/// interpreted kernel (`@C170`: the debugger lives in the interpreter),
+/// asserting each stage IN ORDER — breakpoint hit with
 /// frame bindings (the pause's mini-pump keeps mechanics alive), frame
 /// eval, live edit acknowledged through the pause (the S3 poll-now),
 /// resume, the SECOND hit proving breakpoint re-resolution across the
 /// reload (offsets moved, identity did not), rebuild driven over the
-/// channel, swap — and a post-swap breakpoint hitting in the NEW build
-/// over the RESTORED world.
+/// channel, swap — and the NEW build, compiled, serving the edit over the
+/// RESTORED world.  The compiled build has no breakpoints, so the rustc
+/// writer's post-swap hit is not asked of it (@PLN225 R4).
 // @speed 2.4
 #[test]
 fn s7_debugger_loop_end_to_end() {
@@ -1771,7 +1491,7 @@ fn s7_debugger_loop_end_to_end() {
         return;
     }
     // The canonical port for the prior run's orphan, the resolved one for our own child —
-    // see `s5_native_swap_under_running_world` for why they are two different numbers.
+    // see `s5_c_swap_under_running_world` for why they are two different numbers.
     s5_kill_stale(&format!("/.loft/cache/eh_s7_{}-", common::test_port(18108)));
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18108);
@@ -1810,12 +1530,11 @@ fn main() {{
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
-    cmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_LIVE_RELOAD", "1")
-        .env("LOFT_DEBUG_CONTROL", "1")
-        .env("LOFT_DISPATCH_DEBUG", "1");
+    cmd.env("LOFT_LIVE_RELOAD", "1")
+        .env("LOFT_DEBUG_CONTROL", "1");
     cmd.process_group(0);
     let child = cmd
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
@@ -1890,16 +1609,15 @@ fn main() {{
         assert!(Instant::now() < deadline, "rebuild never ready");
     }
 
-    // Stage 8: swap over the channel; both seats reconnect into the new
-    // build and the debugger RE-ARMS — still debuggable after the swap.
+    // Stage 8: swap over the channel; the seat reconnects into the new build.
     ws_send(&ctl, "D!:swap auto");
     assert_eq!(ws_recv(&ctl), "D:swap true");
     ctl.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     while ws_try_recv(&ctl).is_some() {}
     let reconnect_deadline = vm_deadline(10);
-    let (ctl2, game2) = loop {
-        if let (Some(c), Some(g)) = (ws_try_connect(port), ws_try_connect(port)) {
-            break (c, g);
+    let game2 = loop {
+        if let Some(g) = ws_try_connect(port) {
+            break g;
         }
         assert!(
             Instant::now() < reconnect_deadline,
@@ -1907,18 +1625,9 @@ fn main() {{
         );
         std::thread::sleep(Duration::from_millis(100));
     };
-    ws_send(&ctl2, "D!:bp bump_events");
-    assert_eq!(ws_recv(&ctl2), "D:ok bp bump_events");
 
-    // Stage 9: the post-swap hit, over the RESTORED world (events=101).
+    // Stage 9: the new build serves the edit over the RESTORED world (events=101).
     ws_send(&game2, "c");
-    let hit3 = ws_recv(&ctl2);
-    assert!(
-        hit3.starts_with("D:hit bump_events") && hit3.contains("101"),
-        "post-swap hit over the restored world: {hit3}"
-    );
-    ws_send(&ctl2, "D!:resume");
-    assert_eq!(ws_recv(&ctl2), "D:resumed");
     assert_eq!(ws_recv(&game2), "got:c#201");
 
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
@@ -2122,30 +1831,22 @@ fn main() {{
     let _ = fa::remove_file(&err_path);
 }
 
-/// @PLN18 08 scenario S2 — the debugger pushes one fn to the interpreter,
-/// LIVE, under a serving kernel.  The flip target (`bump_events(w: W) ->
-/// integer`) mutates the shared world; the event counter must count
-/// monotonically across compiled -> interp -> compiled (state continuity is
-/// the whole claim).  The flip is driven by a CONTROL INPUT (a WS message ->
-/// `live_flip`), and is observable ONLY via the `LOFT_DISPATCH_DEBUG`
-/// sentinel — the meaning transcript is byte-identical to the interpreted
-/// run of the same fixture (the differential leg).
+/// @PLN18 08 scenario S2 — `live_flip` asked LIVE under a serving kernel.
+/// The flip target (`bump_events(w: W) -> integer`) mutates the shared world;
+/// the event counter must count monotonically across every flip request
+/// (state continuity is the whole claim).  The flip is driven by a CONTROL
+/// INPUT (a WS message -> `live_flip`), and the meaning transcript of the
+/// compiled run is byte-identical to the interpreted run of the same fixture
+/// (the differential leg).  The compiled build has no live tier to flip into
+/// (`@C170`), so the rustc writer's dispatch sentinel is not asked of it
+/// (@PLN225 R4): the flip answers false there, as on the interpreter.
 #[test]
 fn s2_live_flip_under_serving_kernel() {
     let native = run_s2_scenario(18095, false);
     let interp = run_s2_scenario(18096, true);
     assert_eq!(
         native.replies, interp.replies,
-        "S2 differential: a tier flip must be meaning-invisible"
-    );
-    assert!(
-        native.stderr.contains("live-dispatch: n_bump_events"),
-        "the native leg must really dispatch through the interpreter:\n{}",
-        native.stderr
-    );
-    assert!(
-        !interp.stderr.contains("live-dispatch"),
-        "the interpreted leg has no live dispatch"
+        "S2 differential: a flip request must be meaning-invisible"
     );
 }
 
@@ -2204,9 +1905,6 @@ fn main() {{
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
-    } else {
-        cmd.env("LOFT_LIVE_FLIP", "1")
-            .env("LOFT_DISPATCH_DEBUG", "1");
     }
     cmd.process_group(0); // own group, so Guard can kill driver + grandchild
     let child = cmd
@@ -2223,8 +1921,8 @@ fn main() {{
 
     let ws = ws_connect(port);
     let mut replies = Vec::new();
-    // compiled -> flip -> interp -> unflip -> compiled; the counter must
-    // cross every tier boundary without a gap or repeat (1..=5).
+    // a -> flip -> b -> unflip -> c; the counter must cross every flip
+    // request without a gap or repeat (1..=5).
     for msg in ["a", "flip", "b", "unflip", "c"] {
         ws_send(&ws, msg);
         replies.push(ws_recv(&ws));
@@ -2238,8 +1936,8 @@ fn main() {{
             "unflip-ack#4",
             "got:c#5"
         ],
-        "the world's counter must be continuous across tier flips ({})",
-        if interpret { "interp" } else { "native+flip" }
+        "the world's counter must be continuous across flip requests ({})",
+        if interpret { "interp" } else { "native" }
     );
     drop(_guard); // kill now so the stderr file is complete
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
@@ -2674,9 +2372,9 @@ fn main() {{
 }
 
 // @PLN98 — the debugger driven THROUGH A GAME-SERVER SETUP: a running engine_host
-// kernel (the server) with the live tier, debugged over the SAME WebSocket a
+// kernel (the server) on the interpreter (`@C170`), debugged over the SAME WebSocket a
 // client connects on, via the REAL `D!:` control channel (debug_cmd_dispatch +
-// debug_pause_loop). A client sets a breakpoint on a flipped game fn; a game event
+// debug_pause_loop). A client sets a breakpoint on a game fn; a game event
 // triggers it; the server PAUSES (`D:hit` carries the live frame); the client evals
 // a frame local and resumes; the game continues with the right result. This is the
 // server-side of the browser relay, end-to-end on loopback — no browser needed.
@@ -2715,10 +2413,9 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
-        .env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_FLIP_FNS", "hit_me")
         .env("LOFT_DEBUG_CONTROL", "1")
         .process_group(0)
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
