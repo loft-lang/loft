@@ -2384,7 +2384,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     // (`unique_elm_var`: an element of a record type is typed as that record from the first
     // mint — an item whose type the first pass does not know yet, a call declared below, leaves it so.)
     elm_rec = match el_types::base(declared) { TyReference { n: drn } => if drn > 0 && el::def(e, drn).def_type == el::DT_STRUCT { drn } else { 0 }, _ => 0 };
-    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_rec, dep: [v] }) };
+    // (…a struct enum's as its enum, `ref(E)`.)
+    elm_enum = match el_types::base(declared) { TyEnum { n: den, is_ref } => if is_ref { den } else { -1 }, _ => -1 };
+    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", if elm_enum >= 0 { ir::TyEnum { n: elm_enum, is_ref: true, dep: [v] } } else { ir::TyReference { n: elm_rec, dep: [v] } }) };
     // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
     // one record made through it, what `child_allocs` counts.
     if e.first_pass && !value {
