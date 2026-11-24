@@ -1713,14 +1713,54 @@ static loft_ref loft_read_bytes(loft_cx *cx, loft_str raw) {
 #if defined(LOFT_FOREIGN)
 #if defined(LOFT_POSIX_HOST)
 static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
+#elif defined(_WIN32)
+/* Declared as `windows.h` declares them, which loft_mapped.h brings in later in the unit. */
+__declspec(dllimport) void *__stdcall CreateFileMappingW(void *file, struct _SECURITY_ATTRIBUTES *security,
+                                                         unsigned long protect, unsigned long high,
+                                                         unsigned long low, const wchar_t *name);
+__declspec(dllimport) void *__stdcall MapViewOfFile(void *mapping, unsigned long access, unsigned long high,
+                                                    unsigned long low, size_t bytes);
+__declspec(dllimport) int __stdcall UnmapViewOfFile(const void *base);
+static void loft_unmap(void *bytes, size_t n) {
+    (void) n;
+    UnmapViewOfFile(bytes);
+}
 #endif
 
 /* file_map (Stores::fs_file_map): the whole file mapped read-only as a FOREIGN `vector<u8>` —
  * a store of its own whose slot names `LOFT_FOREIGN_REC`, the mapping its owner — or null for a
  * missing or unreadable one.  An empty file, or one that is not a regular file, is read as
- * read_bytes reads it; so is every file where there is no mmap. */
+ * read_bytes reads it; so is every file where there is no mmap.  Windows maps it too, as the
+ * interpreter's `memmap2` does there: read into a store of its own instead, the bytes reached a
+ * library call beside a vector of another store through that other store (`Stores::bridge_args`
+ * copies a FOREIGN vector into the store the library is handed, and only a foreign one). */
 static loft_ref loft_file_map(loft_cx *cx, loft_str raw) {
-#if defined(LOFT_POSIX_HOST)
+#if defined(_WIN32)
+    char *path = loft_resolve(cx, raw);
+    if (!path) return loft_ref_null(cx);
+    struct _stat64 st;
+    if (loft_wstat64(path, &st) != 0 || (uint64_t) st.st_size > UINT32_MAX) {
+        free(path);
+        return loft_ref_null(cx);
+    }
+    if (st.st_size == 0 || !(st.st_mode & _S_IFREG)) {
+        free(path);
+        return loft_read_bytes(cx, raw);
+    }
+    size_t n = (size_t) st.st_size;
+    wchar_t *wp = loft_wpath(path);
+    free(path);
+    /* GENERIC_READ, shared for reading, writing and deletion, OPEN_EXISTING. */
+    void *h = CreateFileW(wp, 0x80000000ul, 7ul, 0, 3ul, 0x80ul, 0);
+    free(wp);
+    if (h == (void *) (intptr_t) -1) return loft_ref_null(cx);
+    /* PAGE_READONLY, then FILE_MAP_READ; the view keeps the mapping and the file alive. */
+    void *m = CreateFileMappingW(h, 0, 0x02ul, 0, 0, 0);
+    CloseHandle(h);
+    void *map = m ? MapViewOfFile(m, 0x04ul, 0, 0, n) : 0;
+    if (m) CloseHandle(m);
+    if (!map) return loft_ref_null(cx);
+#elif defined(LOFT_POSIX_HOST)
     char *path = loft_resolve(cx, raw);
     if (!path) return loft_ref_null(cx);
     int fd = open(path, O_RDONLY);
@@ -1739,6 +1779,8 @@ static loft_ref loft_file_map(loft_cx *cx, loft_str raw) {
     void *map = mmap(0, n, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (map == MAP_FAILED) return loft_ref_null(cx);
+#endif
+#if defined(_WIN32) || defined(LOFT_POSIX_HOST)
     loft_fowner *o = (loft_fowner *) malloc(sizeof *o);
     if (!o) { fputs("loft: out of memory\n", stderr); abort(); }
     o->refs = 1;
