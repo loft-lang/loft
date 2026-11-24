@@ -13037,8 +13037,9 @@ extern crate loft;"
         // @PLAN12 phase 3.5a (2026-05-24) — LoftStore forwarding for
         // store-allocating cdylib returns (Type::Vector / Type::Reference).
         // The cdylib needs a LoftStore handle to alloc the returned vector
-        // / struct.  Construct one via `loft::native_call` and set up
-        // CURRENT_STORES for the cdylib's callbacks via the RAII `enter` guard.
+        // / struct.  Construct one via `loft::native_call`, whose handle carries the
+        // program's stores to the cdylib's callbacks (the RAII `enter` guard publishes them
+        // on a 32-bit target).
         // When no Reference/Vector arg is present (random's n_rand_indices
         // case), allocate against a store minted for the answer.
         //
@@ -13250,7 +13251,7 @@ extern crate loft;"
             write!(w, "  unsafe {{ String::from_utf8_unchecked(_bytes) }}")?;
         } else if returns_loft_ref {
             // Convert cdylib's LoftRef return to a DbRef.  `_guard`
-            // (Drop) clears CURRENT_STORES at function exit.  Transmute
+            // (Drop) ends the call's publish at function exit.  Transmute
             // is INLINED at the from_loft_ref call site — naming
             // `loft_ffi::LoftRef` as a type annotation in the
             // generated source triggers rustc's

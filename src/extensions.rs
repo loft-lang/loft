@@ -1958,19 +1958,6 @@ fn bridge_ref_handle(
 
 // ── Store callback infrastructure for FFI allocation ─────────────────────
 
-// Thread-local raw pointer to the interpreter's Stores during a native call.
-// Set before calling a native function, cleared after it returns.
-//
-// Ungated on purpose, unlike the `ffi_*` callbacks below that read it: it is also
-// the backing store for [`native_call`], which generated code links on a target
-// that has no `dlopen` and therefore no `native-extensions` (loft#967).  The interpreter's
-// own bridge calls carry their `Stores` in the handle ([`ffi_handle_stores`]); this cell is
-// the rustc writer's, and goes with it (@PLN225).
-std::thread_local! {
-    pub(crate) static CURRENT_STORES: std::cell::Cell<*mut crate::database::Stores> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
 /// Start logging the claims made in store `store_nr` until [`claim_log_end`].
 ///
 /// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
@@ -2275,7 +2262,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
 /// @PLAN12 phase 3.5a (2026-05-24) — added so the `--native` codegen
 /// can drive store-allocating cdylib calls (e.g. `n_rand_indices`,
 /// `n_load_png`).  The interpreter's `dispatch_via_bridge` does the same
-/// thing inline (`make_loft_store` + `CURRENT_STORES` setup); this module
+/// thing inline (`make_loft_store`, the `Stores` in the handle); this module
 /// exposes the same machinery as a `pub` API constructing
 /// `loft_ffi::LoftStore` directly (the interpreter still uses the local
 /// `#[repr(C)]` `LoftStore` mirror for its internal dispatch).
@@ -2285,7 +2272,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
 /// let _guard = loft::native_call::enter(stores);
 /// let ls = loft::native_call::build_store(stores, store_nr);
 /// let r = unsafe { external_crate::n_some_fn(ls, arg1, arg2) };
-/// // _guard's Drop clears CURRENT_STORES.
+/// // the handle carries `stores` to the library's callbacks.
 /// ```
 ///
 /// Not gated on `native-extensions`, though it sits among the loader's private
@@ -2299,6 +2286,43 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
 pub mod native_call {
     use crate::database::Stores;
 
+    /// `@PLN226` — a 32-bit target's program stores for its handles ([`handle_word`]): such a
+    /// target runs one program per instance, whose stores [`enter`] publishes in one atomic
+    /// word (`@FR-C-Publish`).
+    #[cfg(not(target_pointer_width = "64"))]
+    static PROGRAM_STORES: std::sync::atomic::AtomicPtr<Stores> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+    /// `@PLN226` — the handle word for store `ctx` of `stores`.  On a 64-bit target the
+    /// `Stores` pointer rides above the store number (bit 16 is `CTX_RETURN_STORE`, the
+    /// pointer's lowest bit, zero in an aligned `Stores`), as the interpreter's bridge calls
+    /// carry theirs (`ffi_handle_stores`); a 32-bit target has no room there
+    /// ([`PROGRAM_STORES`]).
+    fn handle_word(stores: &mut Stores, ctx: usize) -> usize {
+        #[cfg(target_pointer_width = "64")]
+        {
+            ctx | (std::ptr::from_mut::<Stores>(stores) as usize) << 16
+        }
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let _ = stores;
+            ctx
+        }
+    }
+
+    /// The `Stores` the handle `ctx` belongs to ([`handle_word`]).
+    fn handle_stores<'a>(ctx: loft_ffi::LoftStoreCtx) -> &'a mut Stores {
+        #[cfg(target_pointer_width = "64")]
+        let ptr = (ctx._opaque as usize >> 16 & !1) as *mut Stores;
+        #[cfg(not(target_pointer_width = "64"))]
+        let ptr = {
+            let _ = ctx;
+            PROGRAM_STORES.load(std::sync::atomic::Ordering::Relaxed)
+        };
+        // SAFETY: the handle was built from the live `&mut Stores` of the call it serves.
+        unsafe { &mut *ptr }
+    }
+
     /// C-ABI callback equivalent to `super::ffi_claim` but typed
     /// against `loft_ffi::LoftStoreCtx` so the resulting
     /// `loft_ffi::LoftStore` can be passed to a generated-code
@@ -2306,13 +2330,11 @@ pub mod native_call {
     unsafe extern "C" fn ffi_claim_pub(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 {
         let store_nr = ctx._opaque as usize as u16;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                let store = &mut stores.allocations[store_nr as usize];
-                let rec = store.claim(words);
-                super::claim_log_note(stores, store_nr, None, rec);
-                rec
-            })
+            let stores = handle_stores(ctx);
+            let store = &mut stores.allocations[store_nr as usize];
+            let rec = store.claim(words);
+            super::claim_log_note(stores, store_nr, None, rec);
+            rec
         }))
         .unwrap_or(0)
     }
@@ -2320,13 +2342,11 @@ pub mod native_call {
     unsafe extern "C" fn ffi_resize_pub(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u32) -> u32 {
         let store_nr = ctx._opaque as usize as u16;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                let store = &mut stores.allocations[store_nr as usize];
-                let to = store.resize(rec, words);
-                super::claim_log_note(stores, store_nr, Some(rec), to);
-                to
-            })
+            let stores = handle_stores(ctx);
+            let store = &mut stores.allocations[store_nr as usize];
+            let to = store.resize(rec, words);
+            super::claim_log_note(stores, store_nr, Some(rec), to);
+            to
         }))
         .unwrap_or(rec)
     }
@@ -2338,19 +2358,17 @@ pub mod native_call {
     ) {
         let store_nr = ctx._opaque as usize as u16;
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &*c.get() };
-                let store = &stores.allocations[store_nr as usize];
-                unsafe {
-                    *out_ptr = store.base_ptr();
-                    *out_size = store.capacity_words();
-                }
-            });
+            let stores = handle_stores(ctx);
+            let store = &stores.allocations[store_nr as usize];
+            unsafe {
+                *out_ptr = store.base_ptr();
+                *out_size = store.capacity_words();
+            }
         }));
     }
 
     /// The foreign-vector callback for generated code (@PLN174 F5): the same body as
-    /// the interpreter's `ffi_foreign`, over the `CURRENT_STORES` cell `enter` set.
+    /// the interpreter's `ffi_foreign`, over the `Stores` its handle names.
     unsafe extern "C" fn ffi_foreign_pub(
         ctx: loft_ffi::LoftStoreCtx,
         ptr: *mut u8,
@@ -2360,18 +2378,17 @@ pub mod native_call {
         release: unsafe extern "C" fn(*mut u8, usize, usize),
     ) -> loft_ffi::LoftRef {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                super::adopt_foreign_block(
-                    stores,
-                    ctx._opaque as usize,
-                    ptr,
-                    len,
-                    cap,
-                    elem_size,
-                    release,
-                )
-            })
+            let stores = handle_stores(ctx);
+            // The block's store number and return flag, without the pointer above them.
+            super::adopt_foreign_block(
+                stores,
+                ctx._opaque as usize & 0x1_ffff,
+                ptr,
+                len,
+                cap,
+                elem_size,
+                release,
+            )
         }))
         .unwrap_or(loft_ffi::LoftRef {
             store_nr: 0,
@@ -2381,11 +2398,10 @@ pub mod native_call {
     }
 
     /// Construct a `loft_ffi::LoftStore` handle pointing at the
-    /// store identified by `store_nr`.  Callbacks read from the
-    /// `CURRENT_STORES` thread-local — call `enter()` before this
-    /// to set it up.
+    /// store identified by `store_nr`; its callbacks reach `stores` through the handle
+    /// (`handle_stores`).  Call [`enter`] first: a 32-bit target publishes the stores there.
     #[must_use]
-    pub fn build_store(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+    pub fn build_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStore {
         build_store_ctx(stores, store_nr, store_nr as usize)
     }
 
@@ -2393,7 +2409,7 @@ pub mod native_call {
     /// return (@PLN174 F5): the context word carries [`super::CTX_RETURN_STORE`], so a
     /// foreign answer is adopted into that store rather than into a second one.
     #[must_use]
-    pub fn build_store_for_return(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+    pub fn build_store_for_return(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStore {
         build_store_ctx(
             stores,
             store_nr,
@@ -2470,7 +2486,7 @@ pub mod native_call {
         /// The store handle for the call: the pinned store, or the one minted for it,
         /// announced as the return store ([`super::CTX_RETURN_STORE`]).
         #[must_use]
-        pub fn store(&self, stores: &Stores) -> loft_ffi::LoftStore {
+        pub fn store(&self, stores: &mut Stores) -> loft_ffi::LoftStore {
             let (nr, minted) = self
                 .args
                 .as_ref()
@@ -2496,17 +2512,20 @@ pub mod native_call {
         }
     }
 
-    fn build_store_ctx(stores: &Stores, store_nr: u16, ctx: usize) -> loft_ffi::LoftStore {
-        let store = stores.store(&crate::keys::DbRef {
-            store_nr,
-            rec: 0,
-            pos: 0,
-        });
+    fn build_store_ctx(stores: &mut Stores, store_nr: u16, ctx: usize) -> loft_ffi::LoftStore {
+        let (ptr, size) = {
+            let store = stores.store(&crate::keys::DbRef {
+                store_nr,
+                rec: 0,
+                pos: 0,
+            });
+            (store.base_ptr(), store.capacity_words())
+        };
         loft_ffi::LoftStore {
-            ptr: store.base_ptr(),
-            size: store.capacity_words(),
+            ptr,
+            size,
             ctx: loft_ffi::LoftStoreCtx {
-                _opaque: ctx as *mut (),
+                _opaque: handle_word(stores, ctx) as *mut (),
             },
             claim_fn: Some(ffi_claim_pub),
             reload_fn: Some(ffi_reload_pub),
@@ -2515,10 +2534,10 @@ pub mod native_call {
         }
     }
 
-    /// RAII guard: sets `CURRENT_STORES` on entry, clears on drop.
-    /// One per cdylib call; nested calls are NOT supported (would
-    /// stomp the thread-local).  Native codegen emits one per
-    /// call-site, scoped via `let _guard = native_call::enter(stores);`.
+    /// RAII guard around one cdylib call: on a 32-bit target it publishes the program's
+    /// stores for the call's handles (`PROGRAM_STORES`) and clears them on drop; on a 64-bit
+    /// target the handle carries them and the guard does nothing.  Native codegen emits one
+    /// per call site, scoped via `let _guard = native_call::enter(stores);`.
     pub struct StoresGuard {
         _priv: (),
     }
@@ -2528,14 +2547,20 @@ pub mod native_call {
     /// `let _guard = native_call::enter(stores);` immediately
     /// before a cdylib call.
     pub fn enter(stores: &mut Stores) -> StoresGuard {
-        let ptr = std::ptr::from_mut::<Stores>(stores);
-        super::CURRENT_STORES.with(|c| c.set(ptr));
+        #[cfg(not(target_pointer_width = "64"))]
+        PROGRAM_STORES.store(
+            std::ptr::from_mut::<Stores>(stores),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        #[cfg(target_pointer_width = "64")]
+        let _ = stores;
         StoresGuard { _priv: () }
     }
 
     impl Drop for StoresGuard {
         fn drop(&mut self) {
-            super::CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
+            #[cfg(not(target_pointer_width = "64"))]
+            PROGRAM_STORES.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
