@@ -193,6 +193,13 @@ jobs:
       - name: Install the WASI threads sysroot
         run: timeout 600 make wasi-threads-sysroot
 
+      # `--html` builds through the C and clang for wasm32-wasi (@PLN203 C6), as html-thread-proof.sh
+      # and html-unavailable-builtin.sh do; without it those two refuse at the build.
+      - name: Install the C backend's wasm toolchain
+        run: >
+          timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
+          clang lld wasi-libc libclang-rt-dev-wasm32
+
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 
