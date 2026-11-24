@@ -20,7 +20,6 @@
 #![allow(unused_parens)]
 
 use crate::btree;
-use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{DbRef, Str};
 use crate::ops;
@@ -5972,7 +5971,7 @@ fn set_keyed_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::radix_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5985,10 +5984,7 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_bytes(
-        &v_r,
-        &s.database.allocations,
-    ));
+    let new_value = i64::from(crate::radix_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6001,7 +5997,7 @@ fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6014,7 +6010,7 @@ fn length_trie_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 

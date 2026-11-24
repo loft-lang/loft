@@ -3626,8 +3626,12 @@ pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
         fn CFRunLoopRun();
     }
     extern "C" fn never(_timer: *mut c_void, _info: *mut c_void) {}
+    /// The main thread's stack: the OS main-thread stack (~8 MiB) overflows at a few thousand
+    /// recursive loft calls, below the `MAX_CALL_DEPTH` (10 000) guard; a virtual,
+    /// lazily-committed 512 MiB holds 10 000 frames, so the depth guard fires first.
+    const MAIN_STACK: usize = 512 * 1024 * 1024;
     std::thread::Builder::new()
-        .stack_size(crate::codegen_runtime::NATIVE_MAIN_STACK)
+        .stack_size(MAIN_STACK)
         .spawn(move || {
             let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok();
             std::process::exit(i32::from(!ok));

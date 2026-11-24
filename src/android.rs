@@ -249,7 +249,6 @@ impl AndroidTarget {
             .join("libc++_shared.so")
     }
 
-
     /// The activity library `built` delivered as `out_path`: packaged into a signed APK when
     /// the output names one, else copied as the bare `.so`.  Shared by the rustc path and the
     /// C path: neither the manifest nor the signing knows which compiler wrote the library.
@@ -639,8 +638,6 @@ fn highest_platform(dir: &Path) -> Option<(PathBuf, u32)> {
     }
     best.map(|(n, jar)| (jar, n))
 }
-
-
 
 /// The NDK prebuilt-toolchain host tag for the machine loft runs on.  Android
 /// NDKs since r23 ship only x86_64 host toolchains (there is no aarch64-host or

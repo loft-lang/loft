@@ -72,7 +72,7 @@ impl State {
             // read a binary file in complete silence (loft#829).  A refused path reads as
             // no text (`@FR-Path-Refuse`, logged by `resolve_path`).
             match path_string {
-                Some(p) => crate::codegen_runtime::read_file_text_into(&p, buf),
+                Some(p) => crate::fs_ops::read_file_text_into(&p, buf),
                 None => buf.clear(),
             }
         }

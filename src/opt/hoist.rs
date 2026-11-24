@@ -78,7 +78,7 @@ pub const REF_COMPARE_OPS: [&str; 4] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef
 
 pub(crate) use crate::opt::writes::{
     blocks_header_hoist, call_writes_store, frees_a_record, in_place_only_writer, is_text_set,
-    native_op_is_store_free, null_buffer_alloc, retbuf_only_writer,
+    null_buffer_alloc, retbuf_only_writer,
 };
 pub use crate::opt::writes::{in_place_copy, may_write_store};
 

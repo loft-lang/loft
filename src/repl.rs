@@ -505,9 +505,9 @@ fn run_example<W: Write>(
 
 /// The `:`-commands Tab completion offers when the line starts with `:`.
 #[cfg(not(target_arch = "wasm32"))]
-const REPL_COMMANDS: [&str; 15] = [
-    "quit", "help", "reset", "fns", "vars", "type", "break", "bytecode", "rust", "slots",
-    "features", "libs", "api", "ops", "doc",
+const REPL_COMMANDS: [&str; 14] = [
+    "quit", "help", "reset", "fns", "vars", "type", "break", "bytecode", "slots", "features",
+    "libs", "api", "ops", "doc",
 ];
 
 /// The completion model the live completer matches against, rebuilt by the
@@ -776,7 +776,7 @@ fn process_line<W: Write>(
                 chrome,
                 "commands: :quit  :help  :reset  :fns  :vars  :type <expr>  \
                  :break <fn>[:<line>] [if <cond>]  :trace <fn> <expr>,…  \
-                 :bytecode [fn]  :rust [fn]  :slots [fn]\n\
+                 :bytecode [fn]  :slots [fn]\n\
                  what there is: :features [word]  :libs  :api <library> [word]  :ops <Type>  \
                  :doc <name> [run]"
             )?,
@@ -846,7 +846,6 @@ fn process_line<W: Write>(
                 writeln!(chrome, "session reset.")?;
             }
             "bytecode" => session.introspect(Section::Bytecode, filter),
-            "rust" => session.introspect(Section::Rust, filter),
             "slots" => session.introspect(Section::Slots, filter),
             "ownership" => session.introspect(Section::Ownership, filter),
             "fns" => session.list_fns(),
@@ -5328,8 +5327,8 @@ impl ReplSession {
     }
 
     /// Compile the current session and emit one introspection `section`
-    /// (bytecode / Rust / slots / types) to stdout, optionally restricted to
-    /// named functions — the engine behind the REPL's `:bytecode` / `:rust` /
+    /// (bytecode / slots / types) to stdout, optionally restricted to
+    /// named functions — the engine behind the REPL's `:bytecode` /
     /// `:slots` commands (reuses phase 01's `introspect`).
     pub fn introspect(&mut self, section: Section, fn_filter: Vec<String>) {
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
@@ -5339,7 +5338,6 @@ impl ReplSession {
         let opts = Options {
             sections: vec![section],
             fn_filter,
-            rust: Some(crate::generation::introspect_rust),
             ..Options::new()
         };
         let _ =
@@ -5762,10 +5760,10 @@ mod completion_tests {
     }
 
     /// A `:command` with an argument falls through to identifier completion of
-    /// the argument (e.g. `:rust db` completes a fn name).
+    /// the argument (e.g. `:slots db` completes a fn name).
     #[test]
     fn colon_command_arg_completes_identifier() {
-        let line = ":rust db";
+        let line = ":slots db";
         let (start, out) = complete_word(&model(), line, line.len());
         assert_eq!(start, 6);
         assert_eq!(out, vec!["dbl".to_string()]);

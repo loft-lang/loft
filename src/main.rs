@@ -33,7 +33,6 @@
 use loft::base64;
 use loft::data;
 use loft::file_access as fa;
-use loft::generation;
 use loft::interp::compile;
 use loft::interp::extensions;
 use loft::log_config;
@@ -3394,10 +3393,6 @@ echo "  external lib         -> loft publish + open a registry PR."
     }
     println!();
     println!("Next steps:");
-    if native && !loft::native_lib::rustc_available() {
-        // @C102 — `native/` is a Rust crate: say so where the developer is setting it up.
-        println!("  # native/ is Rust: {}", loft::native_lib::NO_RUSTC);
-    }
     println!("  cd {name}");
     println!("  loft test           # exercises the smoke test");
     println!("  $EDITOR src/{name}.loft   # add your library's API");
@@ -4404,19 +4399,6 @@ fn native_source_key_fingerprint(
     debug_name.hash(&mut h);
     native_utils::native_cabi_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
-    loft::cache::rustflags_fingerprint().hash(&mut h);
-    loft::cache::release_rustc_args().hash(&mut h);
-    // Every runtime rlib a build could link, not the one it would choose: choosing asks the
-    // live `rustc` which copy it can read (loft#2033), a process launch this key — computed
-    // on the way to EXECUTING a cached binary — has no use for.  A change to either copy
-    // moves the key; the choice itself is made where a build links.
-    for rlib in native_utils::runtime_rlib_candidates() {
-        rlib.hash(&mut h);
-        fa::metadata(&rlib)
-            .and_then(|m| m.modified())
-            .ok()
-            .hash(&mut h);
-    }
     h.finish()
 }
 
@@ -4771,15 +4753,9 @@ fn handle_cache(argv: &[String], i: &mut usize) {
 /// Never fails the caller. A package that cannot be warmed is simply built by the test that
 /// needs it, exactly as before, so this is an optimisation with no new failure mode.
 /// `cache warm`'s arguments: the packages wanted (`--from <dir>` collects a tree's, a bare
-/// name adds one) and the runtime rlibs — `None` for every shape whose target is installed,
-/// `Some(names)` for `--runtime html,wasi`, and `--no-runtime` the empty list: a CI leg that
-/// runs no `--html` or wasi test skips two release builds of ~1m45 each (`ci_shards.py warm`).
-fn cache_warm_args(
-    argv: &[String],
-    from: usize,
-) -> (std::collections::BTreeSet<String>, Option<Vec<String>>) {
+/// name adds one).
+fn cache_warm_args(argv: &[String], from: usize) -> std::collections::BTreeSet<String> {
     let mut wanted = std::collections::BTreeSet::new();
-    let mut runtimes: Option<Vec<String>> = None;
     let mut idx = from;
     while idx < argv.len() {
         let a = argv[idx].as_str();
@@ -4788,68 +4764,21 @@ fn cache_warm_args(
                 collect_used_packages(std::path::Path::new(dir), &mut wanted);
                 idx += 1;
             }
-        } else if a == "--no-runtime" {
-            runtimes = Some(Vec::new());
-        } else if a == "--runtime" {
-            if let Some(list) = argv.get(idx + 1) {
-                runtimes = Some(list.split(',').map(|s| s.trim().to_string()).collect());
-                idx += 1;
-            }
         } else if !a.starts_with('-') {
             wanted.insert(a.to_string());
         }
         idx += 1;
     }
-    (wanted, runtimes)
+    wanted
 }
 
 fn cache_warm(argv: &[String], from: usize) {
-    let (wanted, runtimes) = cache_warm_args(argv, from);
+    let wanted = cache_warm_args(argv, from);
 
     let mut built = 0usize;
     let mut skipped = 0usize;
 
-    // 1. loft's own wasm runtime rlibs — one per shape, and only where the target is installed.
-    //    A missing target is a skip, not a failure: a box without that target has no wasm test
-    //    to warm for. `HtmlThreads` is deliberately absent — it needs a nightly `-Z build-std`,
-    //    which is far too big a thing to start implicitly before a test run.
-    let installed = Spawn::new(Program::search("rustup"))
-        .args(["target", "list", "--installed"])
-        .run(b"")
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    for shape in [
-        native_utils::WasmRuntimeShape::Wasi,
-        native_utils::WasmRuntimeShape::Html,
-    ] {
-        if runtimes
-            .as_ref()
-            .is_some_and(|names| !names.iter().any(|n| n == shape.name()))
-        {
-            continue;
-        }
-        if !installed.lines().any(|l| l.trim() == shape.triple()) {
-            println!(
-                "  skip  {} — {} not installed",
-                shape.name(),
-                shape.triple()
-            );
-            skipped += 1;
-            continue;
-        }
-        if native_utils::ensure_loft_runtime_rlib(shape).is_some() {
-            built += 1;
-        } else {
-            println!(
-                "  warn  {} — could not build its runtime rlib",
-                shape.name()
-            );
-            skipped += 1;
-        }
-    }
-
-    // 2. Package cdylibs: USED by the corpus, and already on disk under a stale key.
+    // Package cdylibs: USED by the corpus, and already on disk under a stale key.
     let home = loft_home();
     let build_cache = home.join("build-cache");
     let registry = home.join("registry");
@@ -5477,9 +5406,6 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
     }
     dirs
 }
-
-
-
 
 /// @PLN16 M5a — `loft debug <file>:<line>`: load the file, break at `file:line`, run
 /// `main()` to the breakpoint, and drop into the interactive `(dbg)` prompt.  Reads its
@@ -7854,7 +7780,6 @@ fn main() {
     let mut introspect_sections: Vec<loft::interp::introspect::Section> = Vec::new();
     let mut introspect_why: Option<String> = None;
     let mut introspect_bytecode_out: Option<String> = None;
-    let mut introspect_rust_out: Option<String> = None;
     let mut introspect_slots_out: Option<String> = None;
     let mut introspect_types_out: Option<String> = None;
     let mut introspect_diff_against: Option<String> = None;
@@ -7914,9 +7839,8 @@ fn main() {
             println!("loft {}", loft::manifest::LOFT_RUNNING_VERSION);
             // @C102 — the toolchain a native build would use, on the line after the version
             // (a reader of the first line alone sees what it always saw).
-            match loft::native_lib::rustc_version() {
-                Some(v) => println!("native: {v}"),
-                None => println!("native: {}", loft::native_lib::NO_RUSTC),
+            match c_driver::native_toolchain() {
+                Ok(v) | Err(v) => println!("native: {v}"),
             }
             return;
         } else if a == "--migrate-long" {
@@ -8053,8 +7977,10 @@ fn main() {
             introspect_sections.push(loft::interp::introspect::Section::Bytecode);
         } else if a == "--bc-roundtrip" {
             introspect_sections.push(loft::interp::introspect::Section::Roundtrip);
-        } else if a == "--show-rust" {
-            introspect_sections.push(loft::interp::introspect::Section::Rust);
+        } else if a == "--show-rust" || a == "--rust-out" {
+            // `@C170` — the rustc writer is retired; the C a program compiles to is one flag away.
+            eprintln!("loft: {a} no longer exists: `--native-emit <file.c>` writes the C");
+            std::process::exit(2);
         } else if a == "--show-slots" {
             introspect_sections.push(loft::interp::introspect::Section::Slots);
         } else if a == "--show-types" {
@@ -8077,9 +8003,6 @@ fn main() {
             introspect_json = true;
         } else if a == "--bytecode-out" {
             introspect_bytecode_out = argv.get(i).cloned();
-            i += 1;
-        } else if a == "--rust-out" {
-            introspect_rust_out = argv.get(i).cloned();
             i += 1;
         } else if a == "--slots-out" {
             introspect_slots_out = argv.get(i).cloned();
@@ -9708,12 +9631,10 @@ fn main() {
             deny_warnings,
             &lib_dirs,
             project.as_deref(),
-            if !native_mode {
-                test_runner::TestBackend::Interpreter
-            } else if native_c {
+            if native_mode {
                 test_runner::TestBackend::NativeC
             } else {
-                test_runner::TestBackend::NativeRust
+                test_runner::TestBackend::Interpreter
             },
             &native_lib_paths,
         );
@@ -10417,14 +10338,14 @@ fn main() {
             continue;
         }
         if let Some(trace) = std::env::var_os("LOFT_TRACE_NATIVE_GATE") {
-            loft::native_lib::trace_partition(&p.data, pkg_dir);
+            loft::native_gate::trace_partition(&p.data, pkg_dir);
             // @PLN199 F1 — `=only` reports the partition and builds nothing: the census
             // (`make gate-census`) asks it of every published library, with no `rustc`.
             if trace == "only" {
                 continue;
             }
         }
-        let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
+        let export = loft::opt::native_key::library_export_set(&p.data, pkg_dir);
         // `@PLN206 P4` — a hosted C unit carries the functions its bridge carries; the rest
         // of the library interprets, and is neither built nor marked.
         let export = {
@@ -12184,7 +12105,6 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let opts = loft::interp::introspect::Options {
             sections: introspect_sections.clone(),
             bytecode_out: introspect_bytecode_out.clone(),
-            rust_out: introspect_rust_out.clone(),
             slots_out: introspect_slots_out.clone(),
             types_out: introspect_types_out.clone(),
             diff_against: introspect_diff_against.clone(),
@@ -12205,7 +12125,6 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             all_fns: introspect_all_fns,
             lib_dirs: Vec::new(),
             install_dir: String::new(),
-            rust: Some(loft::generation::introspect_rust),
         };
         let end_def = p.data.definitions();
         if let Err(e) = loft::interp::introspect::emit_all(&mut p.data, &mut state, end_def, &opts)

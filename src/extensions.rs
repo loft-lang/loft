@@ -1904,7 +1904,16 @@ fn bridge_heap_answer(
     use loft_ffi::LoftTag;
     let db = match ret.tag {
         LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
-            crate::codegen_runtime::from_loft_record(ret.as_ref())
+            let r = ret.as_ref();
+            if r.is_null() {
+                crate::keys::DbRef::NULL
+            } else {
+                crate::keys::DbRef {
+                    store_nr: r.store_nr,
+                    rec: r.rec,
+                    pos: r.pos,
+                }
+            }
         }
         LoftTag::Ref => bridge_ref_handle(stores, ret.as_ref()),
         _ => return None,

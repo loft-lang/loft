@@ -36,7 +36,6 @@ pub mod sql_source;
 mod structures;
 pub use structures::BridgeArgs;
 mod types;
-pub(crate) use types::DBREF_BORROW;
 
 pub use allocation::{CLEAR_KEYED_VIEW, FILL_KEYED_SOURCE, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};

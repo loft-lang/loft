@@ -132,14 +132,6 @@ pub struct NativeRun {
     held: Vec<Vec<DbRef>>,
     /// The buffer [`alloc_coroutine_held`] fills before the frame has a slot.
     held_scratch: Vec<DbRef>,
-    /// The return buffers a fn-ref dispatch arm allocated and the callee DELIVERED through,
-    /// innermost frame last ([`cr_fnref_buf`]).  A frame's own buffers are the entries above
-    /// the mark [`FnRefBufGuard`] took at entry — a watermark rather than a frame number, so
-    /// nothing has to agree about depth.
-    pub(crate) fnref_bufs: Vec<(DbRef, u64)>,
-    /// @PLN150 — the store the most recent fn-ref call handed back that it did NOT mint
-    /// ([`cr_fnref_minted`]).
-    pub(crate) fnref_borrowed: Option<DbRef>,
 }
 
 impl Clone for NativeRun {
@@ -147,18 +139,6 @@ impl Clone for NativeRun {
     fn clone(&self) -> Self {
         NativeRun::default()
     }
-}
-
-/// The run-time tables of the program running over `cell`.
-#[inline]
-#[expect(
-    clippy::mut_from_ref,
-    reason = "the generated program's `UnsafeCell<Stores>` is its one context"
-)]
-pub(crate) fn run_of(cell: &std::cell::UnsafeCell<Stores>) -> &mut NativeRun {
-    // SAFETY: generated code holds `cell` for the whole run and calls this between its own
-    // statements; the borrow ends with the statement that took it.
-    unsafe { &mut (*cell.get()).native }
 }
 
 /// Give back the argument holds of the frame in slot `idx` (`@FR-G-Arg-Rebind`): the frame
@@ -264,116 +244,6 @@ pub fn alloc_coroutine(stores: &mut Stores, coro: Box<dyn LoftCoroutine>) -> DbR
         rec: idx as u32,
         pos: generation,
     }
-}
-
-/// Free one heap local an abandoned generator still owns (loft#835).
-///
-/// A nested generator handle routes back to the coroutine table so its own locals are
-/// released too; anything else is an ordinary store.  Called only from a generated
-/// `drop_stores`, which has already checked the field is set.
-pub fn coroutine_drop_local(stores: &mut Stores, db: DbRef, name: &str) {
-    if db.store_nr == NATIVE_COROUTINE_STORE {
-        free_native_coroutine(db, stores);
-    } else if db.store_nr != u16::MAX && (db.store_nr as usize) < stores.allocations.len() {
-        stores.free_named(&db, name);
-    }
-}
-
-/// [`coroutine_drop_local`] for a generator that owns more than one heap local: two of them
-/// can hold ONE store — a lazily-lowered loop's record buffer (`__ref_*`) and the local that
-/// adopted the record the call built in it — and releasing that store twice frees a slot
-/// another record may already hold.  `seen` collects the stores this `drop_stores` has
-/// released; a nested generator handle is keyed by its table slot as well, because every
-/// handle shares the one coroutine store number.
-pub fn coroutine_drop_local_once(
-    stores: &mut Stores,
-    db: DbRef,
-    name: &str,
-    seen: &mut Vec<(u16, u32)>,
-) {
-    let key = if db.store_nr == NATIVE_COROUTINE_STORE {
-        (db.store_nr, db.rec)
-    } else {
-        (db.store_nr, 0)
-    };
-    if seen.contains(&key) {
-        return;
-    }
-    seen.push(key);
-    coroutine_drop_local(stores, db, name);
-}
-
-/// Copy the `tp` record `src` into the generator's snapshot store `snap` and answer the
-/// copy's handle.  An eager factory runs its whole loop before the consumer reads a
-/// value, so a pushed handle to a per-iteration local would alias the local's FINAL
-/// state; the copy pins the value as it was at the yield.  One store per generator —
-/// allocated by the first snapshot, every later one a record claimed in it — so a long
-/// loop costs records, not store slots.  A null yield stays null.
-pub fn coroutine_snapshot(
-    cell: &std::cell::UnsafeCell<Stores>,
-    snap: &mut DbRef,
-    src: DbRef,
-    tp: i32,
-) -> DbRef {
-    if src.store_nr == u16::MAX {
-        return src;
-    }
-    let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let tp = tp as u16;
-    if snap.store_nr == u16::MAX {
-        *snap = stores.null();
-        stores.clear(snap);
-        stores.allocations[snap.store_nr as usize].set_known_type(tp);
-    }
-    // Same record shape `OpDatabase` claims: a word of header, then `size` bytes.
-    let size = stores.enum_parent_size(tp);
-    let r = stores.claim(snap, 1 + u32::from(size).div_ceil(8));
-    stores.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(tp));
-    stores.set_default_value(tp, &r);
-    crate::codegen_runtime::OpCopyRecord(cell, src, r, i32::from(tp));
-    r
-}
-
-/// [`coroutine_snapshot`] of a value the generator HANDS over (`(G-Own)`): a fresh record in
-/// a store of its own that nothing else holds, so the snapshot is a move and that store is
-/// released here.  Its resource travels with the snapshot, so no drop hook runs.
-pub fn coroutine_snapshot_moved(
-    cell: &std::cell::UnsafeCell<Stores>,
-    snap: &mut DbRef,
-    src: DbRef,
-    tp: i32,
-) -> DbRef {
-    let r = coroutine_snapshot(cell, snap, src, tp);
-    if src.store_nr != u16::MAX {
-        let stores: &mut Stores = unsafe { &mut *cell.get() };
-        if (src.store_nr as usize) < stores.allocations.len() {
-            stores.free_named(&src, "__yield");
-        }
-    }
-    r
-}
-
-/// Hand the consumer an eagerly-collected value of its own — `formal/coroutines.md`
-/// `(G-Own)`: what an advance produces is the consumer's, which releases it, while an eager
-/// factory keeps every value in ONE snapshot store the generator releases.  So each value
-/// leaves in a fresh store: a copy of its snapshot record, typed `tp` as
-/// [`coroutine_snapshot`] typed it.  A null stays null.
-pub fn coroutine_hand_out(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, tp: i32) -> DbRef {
-    if src.store_nr == u16::MAX {
-        return src;
-    }
-    let own = crate::codegen_runtime::OpDatabase(cell, DbRef::NULL, tp);
-    crate::codegen_runtime::OpCopyRecord(cell, src, own, tp);
-    own
-}
-
-/// Release a generator's snapshot store (see [`coroutine_snapshot`]) — at exhaustion,
-/// and from `drop_stores` when the generator is abandoned.  Idempotent.
-pub fn coroutine_release_snapshots(stores: &mut Stores, snap: &mut DbRef) {
-    if snap.store_nr != u16::MAX && (snap.store_nr as usize) < stores.allocations.len() {
-        stores.free_named(snap, "__snap");
-    }
-    *snap = DbRef::NULL;
 }
 
 /// Free a native coroutine handle: release the heap locals the generator still owns, then

@@ -40,19 +40,6 @@ pub(crate) fn meta_header_of_blob(blob: &[u8]) -> Option<MetaHeader> {
     })
 }
 
-/// The metadata header of an `.rmeta` file: its first few KiB, never the whole file (the full
-/// metadata of loft's own crate is tens of MB).
-pub(crate) fn rmeta_meta_header(rmeta: &std::path::Path) -> Option<MetaHeader> {
-    use std::io::Read;
-    let mut head = Vec::with_capacity(4096);
-    crate::file_access::open(rmeta)
-        .ok()?
-        .take(4096)
-        .read_to_end(&mut head)
-        .ok()?;
-    meta_header_of_blob(&head)
-}
-
 /// The metadata header of an rlib's `lib.rmeta` member.  The archive is walked by SEEKING past
 /// each member — a stable rlib opens with a symbol table of several MB, and the rlib itself is
 /// tens of MB — and only the member's first few KiB are read.
