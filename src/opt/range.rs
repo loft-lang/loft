@@ -474,17 +474,20 @@ fn call_range<F: RangeFacts + ?Sized>(
         return None;
     }
     let memo_key = (std::ptr::from_ref(def) as usize, elem, key);
-    if let Some(hit) = data.range_memo.with(|m| m.calls.get(&memo_key).copied()) {
+    if let Some(hit) = data
+        .range_memo
+        .with(|m: &mut RangeMemo| m.calls.get(&memo_key).copied())
+    {
         return hit;
     }
     // `range_vars` re-enters `range` at depth 0, so `depth` cannot bound this recursion:
     // an explicit nesting count does, and the memo entry is marked IN PROGRESS (unranged)
     // before the analysis, so a recursive callee meets itself as unranged instead of
     // analysing itself again (cbor's `encode` crashed the compiler on the stack).
-    if data.range_memo.with(|m| m.long_depth) >= CALL_DEPTH {
+    if data.range_memo.with(|m: &mut RangeMemo| m.long_depth) >= CALL_DEPTH {
         return None;
     }
-    data.range_memo.with(|m| {
+    data.range_memo.with(|m: &mut RangeMemo| {
         m.calls.insert(memo_key.clone(), None);
         m.long_depth += 1;
     });
@@ -529,7 +532,7 @@ fn call_range<F: RangeFacts + ?Sized>(
         }
     }
     let answer = if ok { out } else { None };
-    data.range_memo.with(|m| {
+    data.range_memo.with(|m: &mut RangeMemo| {
         m.long_depth -= 1;
         m.calls.insert(memo_key, answer);
     });
@@ -781,7 +784,7 @@ fn seed_while_counters(
 /// Forget every memoised call range: a new run is about a new program.  Called by
 /// [`super::begin_program`], beside `non_sentinel::begin_generation`.
 pub(crate) fn begin_generation(data: &Data) {
-    data.range_memo.with(|m| m.calls.clear());
+    data.range_memo.with(|m: &mut RangeMemo| m.calls.clear());
 }
 
 /// `LOFT_NO_RANGED_CALLS=1` — `@FR-R-RangedCall` off: no callee body longer than one

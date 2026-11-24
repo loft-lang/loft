@@ -5420,9 +5420,14 @@ impl Clone for DefsMemo {
 }
 
 impl DefsMemo {
-    fn with<R>(&self, f: impl FnOnce(&mut DefsMemoSlot) -> R) -> R {
-        f(&mut self
-            .0
+    /// The memo of `data`'s program, by the handle a [`DefsMemoScope`] keeps.
+    fn of(data: &Data) -> std::sync::Arc<std::sync::Mutex<DefsMemoSlot>> {
+        data.defs_memo.with(|d: &mut DefsMemo| d.0.clone())
+    }
+
+    /// Run `f` on `data`'s memo slot.
+    fn with<R>(data: &Data, f: impl FnOnce(&mut DefsMemoSlot) -> R) -> R {
+        f(&mut Self::of(data)
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
@@ -5445,9 +5450,9 @@ pub(crate) struct DefsMemoScope {
 }
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    let prev = data.defs_memo.with(|m| m.replace((d_nr, None)));
+    let prev = DefsMemo::with(data, |m| m.replace((d_nr, None)));
     DefsMemoScope {
-        memo: data.defs_memo.0.clone(),
+        memo: DefsMemo::of(data),
         prev,
     }
 }
@@ -5556,7 +5561,7 @@ fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
 /// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
 /// `Data` and this function is open; `None` otherwise.
 fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
-    let open = data.defs_memo.with(|m| match m {
+    let open = DefsMemo::with(data, |m| match m {
         Some((n, got)) if *n == d_nr => Some(got.clone()),
         _ => None,
     })?;
@@ -5564,7 +5569,7 @@ fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
         return Some(defs);
     }
     let defs = std::sync::Arc::new(function_defs(data, d_nr));
-    data.defs_memo.with(|m| {
+    DefsMemo::with(data, |m| {
         if let Some((n, got)) = m
             && *n == d_nr
         {

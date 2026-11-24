@@ -5814,6 +5814,36 @@ impl<T: Default> PassCell<T> {
     }
 }
 
+/// A per-program memo of a pass above the core layer, held by `Data` without naming the pass's
+/// type: the core layer names no higher one (`tests/extraction_hygiene.rs`).  The pass names
+/// its type at each use, and the first use makes it `T::default()`; a clone of the `Data`
+/// starts it empty, as a [`PassCell`] does.
+#[derive(Default)]
+pub struct PassAny(std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>);
+
+impl Clone for PassAny {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PassAny {
+    /// Run `f` on the memo, made `T::default()` on first use.
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: Default + Send + 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let memo = slot.get_or_insert_with(|| Box::new(T::default()));
+        f(memo
+            .downcast_mut::<T>()
+            .expect("a pass memo is read as the one type its pass names"))
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6099,12 +6129,12 @@ pub struct Data {
     /// @PLN187 — the name-only types ([`Self::is_name_only`]).
     name_only: NameOnlyCache,
     /// `@PLN226` — the range analysis's call memo (`opt::range`).
-    pub(crate) range_memo: PassCell<crate::opt::range::RangeMemo>,
+    pub(crate) range_memo: PassAny,
     /// `@PLN226` — the non-null analysis's answers (`opt::non_sentinel`).
-    pub(crate) nn_memo: PassCell<crate::opt::non_sentinel::NnMemo>,
+    pub(crate) nn_memo: PassAny,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
-    pub(crate) defs_memo: crate::use_analysis::DefsMemo,
+    pub(crate) defs_memo: PassAny,
     /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
     catching_up: PassCell<HashSet<u32>>,
     /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
@@ -6112,7 +6142,7 @@ pub struct Data {
     /// How deep `ret_adopt::buffer_complete` is nested in itself.
     pub(crate) buffer_complete_depth: PassCell<u32>,
     /// `@PLN226` — the copy manifest of this compilation (`copy_manifest`).
-    pub(crate) copies: PassCell<crate::copy_manifest::Manifest>,
+    pub(crate) copies: PassAny,
 }
 
 #[must_use]
@@ -6828,13 +6858,13 @@ impl Data {
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
             name_only: NameOnlyCache::default(),
-            range_memo: PassCell::default(),
-            nn_memo: PassCell::default(),
-            defs_memo: crate::use_analysis::DefsMemo::default(),
+            range_memo: PassAny::default(),
+            nn_memo: PassAny::default(),
+            defs_memo: PassAny::default(),
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),
-            copies: PassCell::default(),
+            copies: PassAny::default(),
         }
     }
 
