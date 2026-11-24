@@ -149,7 +149,9 @@ one of the points named here.
                 host, takes and parks nothing.
   (C-Boundary)  state that crosses a library boundary belongs to the CALLER's context: a hosted
                 unit keeps a context per interpreter `Stores` that calls it; a component keeps one
-                of its own per caller context, made by it and handed to its every symbol first; a
+                of its own per caller context, made by it and handed to its every symbol first —
+                the caller of a hosted unit's call being the `Stores` that called the unit, so the
+                program and the libraries it runs as hosted units reach one context of it; a
                 library native's callback finds the caller's context in the store handle it was
                 given.  The context is never found by asking which thread is running.
   (C-Publish)   data more than one thread reads and any may write — a lazily resolved symbol, a

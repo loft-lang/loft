@@ -1800,7 +1800,8 @@ static void loft_cx_end(loft_cx *cx) {
 #if defined(LOFT_FFI)
     free(cx->ffi_log_recs);
 #endif
-    for (int i = 0; i < cx->ncomps; i++) cx->comps[i].end(cx->comps[i].cx);
+    for (int i = 0; i < cx->ncomps; i++)
+        if (cx->comps[i].end) cx->comps[i].end(cx->comps[i].cx);
     free(cx->scratches);
     free(cx->pg_refusal);
     free(cx->vc_starts);

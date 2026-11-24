@@ -260,7 +260,13 @@ static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const
 /* A component's context for this caller context (`@FR-C-Boundary`): made by the component's own
  * `loft_cx_make_v1` the first time this context calls into it, handed to each of its symbols
  * first, and ended by its `loft_cx_end_v1` with this context (`loft_cx_end`).  The component
- * keeps its connection tables and answers there, so a `par` worker's are its own. */
+ * keeps its connection tables and answers there, so a `par` worker's are its own.
+ *
+ * In a hosted unit the caller is the interpreter thread whose `Stores` called in, and a unit's
+ * context is that `Stores`' own: the unit takes the component context that `Stores` keeps,
+ * keyed by the component's `make` as the interpreter's own calls key it
+ * (`extensions::call_bridge`), so a connection the library accepted is the one the program's own
+ * call to the component sends on.  The `Stores` ends it; the entry here borrows it (no `end`). */
 static void *loft_component_cx(loft_cx *cx, const char *path, const char *file) {
     for (int i = 0; i < cx->ncomps; i++)
         if (strcmp(cx->comps[i].path, path) == 0) return cx->comps[i].cx;
@@ -275,6 +281,13 @@ static void *loft_component_cx(loft_cx *cx, const char *path, const char *file) 
     memcpy(&make, &m, sizeof make);
     memcpy(&end, &e, sizeof end);
     cx->comps[cx->ncomps].path = path;
+#if defined(LOFT_HOSTED)
+    if (cx->host_stores) {
+        cx->comps[cx->ncomps].end = 0;
+        cx->comps[cx->ncomps].cx = loft_hosted->cx_of(cx->host_stores, m, make, end);
+        return cx->comps[cx->ncomps++].cx;
+    }
+#endif
     cx->comps[cx->ncomps].end = end;
     cx->comps[cx->ncomps].cx = make();
     return cx->comps[cx->ncomps++].cx;
