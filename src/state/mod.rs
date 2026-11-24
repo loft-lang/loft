@@ -491,6 +491,9 @@ pub struct State {
     /// `LOFT_TRACE_BIND` — the notes of each bind being lowered: a frame per `generate_set`,
     /// since a value's own lowering can contain binds of its own (`codegen.rs`).
     pub(crate) bind_notes: Vec<Vec<String>>,
+    /// `@PLN226` — how deep the interpreted twins `LOFT_HOSTED_VERIFY` runs on this
+    /// interpreter are nested (`hosted_verify::twin_call`).
+    pub(crate) twin_depth: u32,
     /// Where the function being generated starts, so a bind row's line is a line of that
     /// function: a bind before its first line marker (a hoisted null init) names line 0.
     pub(crate) bind_fn_start: u32,
@@ -1012,6 +1015,7 @@ impl State {
             call_back_text: String::new(),
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
+            twin_depth: 0,
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
@@ -9305,6 +9309,7 @@ impl State {
             call_back_text: String::new(),
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
+            twin_depth: 0,
             bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,

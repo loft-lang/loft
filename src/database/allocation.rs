@@ -3404,6 +3404,7 @@ impl Stores {
             in_bridge: 0,
             host_state: std::ptr::null_mut(),
             claim_log: None,
+            read_refs: None,
             wired: self.wired.clone(),
             run: super::RunDiagnostics::default(),
             render: std::cell::RefCell::default(),

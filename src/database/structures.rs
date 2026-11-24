@@ -118,15 +118,6 @@ pub(super) struct ReadRefs {
     pub marked: Vec<(u16, u32)>,
 }
 
-thread_local! {
-    pub(super) static READ_REFS: std::cell::RefCell<Option<ReadRefs>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-pub(super) fn with_read_refs<R>(f: impl FnOnce(&mut ReadRefs) -> R) -> Option<R> {
-    READ_REFS.with(|c| c.borrow_mut().as_mut().map(f))
-}
-
 /// The pointer of `path`, as the writer spells it (`format::json_pointer`).
 pub(super) fn read_pointer(path: &[String]) -> String {
     let mut p = String::from("#");
@@ -3171,9 +3162,11 @@ impl Stores {
             let res = self.record_new(to, rec_tp, field);
             let seen = failed.len();
             // `@FR-F-Read-Ref` — an element's position is its segment of the path.
-            with_read_refs(|r| r.path.push(idx.to_string()));
+            self.read_refs
+                .as_mut()
+                .map(|r| r.path.push(idx.to_string()));
             self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
-            with_read_refs(|r| r.path.pop());
+            self.read_refs.as_mut().map(|r| r.path.pop());
             // An element that did not fit keeps its slot, so the elements after it keep
             // their positions: a leaf holds null — what the `JsonValue` walk writes for
             // it — and a record keeps the fields that fit beside the defaults of those
@@ -3225,7 +3218,7 @@ impl Stores {
         let mut found_more: Vec<u16> = Vec::new();
         // `@FR-F-Read-Ref` — this record's pointer is the path it is read at.
         self.read_place(to.store_nr, rec, fld, tp);
-        let top_level = with_read_refs(|r| r.path.is_empty());
+        let top_level = self.read_refs.as_mut().map(|r| r.path.is_empty());
         while more {
             let (name, key_at, value_at) = rd.member(start)?;
             if top_level == Some(true) && name == "$refs" {
@@ -3233,7 +3226,7 @@ impl Stores {
                 more = rd.next_member(start)?;
                 continue;
             }
-            with_read_refs(|r| r.path.push(name.clone()));
+            self.read_refs.as_mut().map(|r| r.path.push(name.clone()));
             if top_level.is_some()
                 && let Some(f_nr) = self.record_fields(tp).iter().position(|f| f.name == name)
                 && matches!(
@@ -3259,7 +3252,7 @@ impl Stores {
                 } else {
                     found_more.push(f_nr as u16);
                 }
-                with_read_refs(|r| r.path.pop());
+                self.read_refs.as_mut().map(|r| r.path.pop());
                 more = rd.next_member(start)?;
                 continue;
             }
@@ -3303,7 +3296,7 @@ impl Stores {
             } else {
                 rd.parse_value(value_at)?;
             }
-            with_read_refs(|r| r.path.pop());
+            self.read_refs.as_mut().map(|r| r.path.pop());
             more = rd.next_member(start)?;
         }
         let base = DbRef {
@@ -3334,19 +3327,24 @@ impl Stores {
         let mut idx = 0usize;
         while let Some(value_at) = next {
             let ptr = format!("#/$refs/{idx}");
-            let tp = with_read_refs(|r| {
-                r.pending
-                    .iter()
-                    .find(|(_, p, _)| *p == ptr)
-                    .map(|(_, _, t)| *t)
-            })
-            .flatten();
+            let tp = self
+                .read_refs
+                .as_mut()
+                .map(|r| {
+                    r.pending
+                        .iter()
+                        .find(|(_, p, _)| *p == ptr)
+                        .map(|(_, _, t)| *t)
+                })
+                .flatten();
             match tp {
                 Some(tp) if (tp as usize) < self.types.len() => {
                     let words = 1 + u32::from(self.types[tp as usize].size).div_ceil(8);
                     let rec = self.claim(to, words);
                     self.set_default_value(tp, &rec);
-                    with_read_refs(|r| r.path = vec!["$refs".to_string(), idx.to_string()]);
+                    self.read_refs
+                        .as_mut()
+                        .map(|r| r.path = vec!["$refs".to_string(), idx.to_string()]);
                     self.read_into(rd, failed, value_at, tp, tp, u16::MAX, &rec, value_at)?;
                 }
                 _ => {
@@ -3356,7 +3354,7 @@ impl Stores {
             next = rd.next_item(start)?;
             idx += 1;
         }
-        with_read_refs(|r| r.path.clear());
+        self.read_refs.as_mut().map(|r| r.path.clear());
         Ok(())
     }
 
@@ -3369,7 +3367,7 @@ impl Stores {
     /// as named now: a removal during the read then keeps its position, no later record takes
     /// it, and the pointer finds a removed record instead of a stranger.
     fn read_place(&mut self, store_nr: u16, rec: u32, pos: u32, tp: u16) {
-        let Some((path, old)) = with_read_refs(|r| {
+        let Some((path, old)) = self.read_refs.as_mut().map(|r| {
             let p = read_pointer(&r.path);
             let old = r.at.get(&p).map(|(d, _)| *d);
             (p, old)
@@ -3385,7 +3383,7 @@ impl Stores {
             .allocations
             .get_mut(store_nr as usize)
             .is_some_and(|s| s.note_referenced_new(rec));
-        with_read_refs(|r| {
+        self.read_refs.as_mut().map(|r| {
             r.at.insert(path, (DbRef { store_nr, rec, pos }, tp));
             if fresh {
                 r.marked.push((store_nr, rec));
@@ -3398,7 +3396,7 @@ impl Stores {
     /// reference's, or one the document itself replaced.  A reference is stored through
     /// [`Self::set_db_ref`], as every other one is, so its record is marked as named.
     pub(super) fn resolve_read_refs(&mut self, failed: &mut Vec<WalkErr>) {
-        let Some(ctx) = READ_REFS.with(|c| c.borrow_mut().take()) else {
+        let Some(ctx) = self.read_refs.take() else {
             return;
         };
         let mut named: std::collections::HashSet<(u16, u32)> = std::collections::HashSet::new();
@@ -3476,7 +3474,9 @@ impl Stores {
             _ => None,
         };
         if let Some(p) = pointer {
-            with_read_refs(|r| r.pending.push((slot, p, target)));
+            self.read_refs
+                .as_mut()
+                .map(|r| r.pending.push((slot, p, target)));
         } else {
             failed.push(WalkErr {
                 at: key_at,
@@ -3583,9 +3583,11 @@ impl Stores {
                     // The element's segment joins the error's path as it unwinds: pushed per
                     // element on the way in, it was a formatted `String` per array item that
                     // only a failing walk reads.
-                    with_read_refs(|r| r.path.push(idx.to_string()));
+                    self.read_refs
+                        .as_mut()
+                        .map(|r| r.path.push(idx.to_string()));
                     let walked = self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at);
-                    with_read_refs(|r| r.path.pop());
+                    self.read_refs.as_mut().map(|r| r.path.pop());
                     walked.map_err(|mut e| {
                         e.path.insert(0, format!("[{idx}]"));
                         e
@@ -3808,7 +3810,7 @@ impl Stores {
         // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
         // read) keeps the same path and parks the same references as `read_struct`.
         self.read_place(to.store_nr, rec, fld, tp);
-        let tracked = with_read_refs(|_| ()).is_some();
+        let tracked = self.read_refs.as_mut().map(|_| ()).is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
@@ -3837,7 +3839,9 @@ impl Stores {
                             && key == "$ref"
                         {
                             let target = f.target;
-                            with_read_refs(|r| r.pending.push((slot, ptr.clone(), target)));
+                            self.read_refs
+                                .as_mut()
+                                .map(|r| r.pending.push((slot, ptr.clone(), target)));
                             break;
                         }
                         return Err(WalkErr {
@@ -3845,7 +3849,7 @@ impl Stores {
                             path: vec![name.clone()],
                         });
                     }
-                    with_read_refs(|r| r.path.push(name.clone()));
+                    self.read_refs.as_mut().map(|r| r.path.push(name.clone()));
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -3864,7 +3868,7 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
-                    with_read_refs(|r| r.path.pop());
+                    self.read_refs.as_mut().map(|r| r.path.pop());
                     if f_nr < 64 {
                         found |= 1 << f_nr;
                     } else {

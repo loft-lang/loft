@@ -732,13 +732,13 @@ impl Stores {
 
     /// [`Self::read_text`] on the current thread's stack.
     fn read_text_here(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
-        use super::structures::{READ_REFS, ReadRefs};
+        use super::structures::ReadRefs;
         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
         let mut failed = Vec::new();
         // `@FR-F-Read-Ref` — a type that can hold a reference reads pointers and `$refs`.
         let refs = self.reaches_reference(tp, &mut Vec::new());
         if refs {
-            READ_REFS.with(|c| *c.borrow_mut() = Some(ReadRefs::default()));
+            self.read_refs = Some(ReadRefs::default());
         }
         let wrapped =
             refs && !matches!(
@@ -753,7 +753,7 @@ impl Stores {
         if refs {
             self.resolve_read_refs(&mut failed);
         }
-        READ_REFS.with(|c| c.borrow_mut().take());
+        self.read_refs = None;
         read.and_then(|()| rd.finish())
             .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
         if failed.is_empty() {
@@ -777,14 +777,15 @@ impl Stores {
         tp: u16,
         result: &DbRef,
     ) -> Result<(), crate::json::Fault> {
-        use super::structures::with_read_refs;
         let (start, mut more) = rd.open_object();
         while more {
             let (name, _, value_at) = rd.member(start)?;
             if name == "$value" {
-                with_read_refs(|r| r.path = vec!["$value".to_string()]);
+                self.read_refs
+                    .as_mut()
+                    .map(|r| r.path = vec!["$value".to_string()]);
                 self.read_into(rd, failed, value_at, tp, tp, u16::MAX, result, value_at)?;
-                with_read_refs(|r| r.path.clear());
+                self.read_refs.as_mut().map(|r| r.path.clear());
             } else if name == "$refs" {
                 self.read_refs_list(rd, failed, result, value_at)?;
             } else {
