@@ -4,5 +4,5 @@ export const GALLERY_EXAMPLES = {
 };
 
 export const GALLERY_LIST = [
-  { key: "25-brick-buster", name: "Brick Buster — Full-featured sprite-based version", desc: "multi-hit bricks, ball speed ramp, combo multiplier," }
+  { key: "25-brick-buster", name: "Brick Buster — Full-featured sprite-based version", desc: "multi-hit bricks, ball speed ramp, combo multiplier,", page: "brick-buster.html" }
 ];

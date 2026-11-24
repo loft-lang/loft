@@ -46,6 +46,14 @@ fn basename_noext(path: text) -> text {
   result
 }
 
+/// The page `make game` builds for the game in `tools/<dir>/` (`doc/<dir>.html`, through the
+/// C), or "" when it has none.  A game with its own page runs as that page: the browser bundle
+/// cannot load a library's C part, and the page carries the game whole, sound included.
+fn own_page(dir: text) -> text {
+  if file("doc/{dir}.html").format == Format.NotExists { return ""; }
+  "{dir}.html"
+}
+
 fn main() {
   parent = file("tools");
   out = file("doc/gallery-examples.js");
@@ -54,6 +62,7 @@ fn main() {
   titles: vector<text> = [];
   descs: vector<text> = [];
   sources: vector<text> = [];
+  pages: vector<text> = [];
 
   for sub in parent.files() {
     if sub.format != Format.Directory { continue; }
@@ -84,6 +93,7 @@ fn main() {
       titles += [title];
       descs += [desc];
       sources += [source];
+      pages += [own_page(basename_noext(sub.path))];
     }
   }
 
@@ -104,7 +114,12 @@ fn main() {
     d = escape_js(descs[i]);
     k = keys[i];
     if i > 0 { result += "," + nl; }
-    result += "  {{ key: \"{k}\", name: \"{t}\", desc: \"{d}\" }}";
+    pg = pages[i];
+    if pg == "" {
+      result += "  {{ key: \"{k}\", name: \"{t}\", desc: \"{d}\" }}";
+    } else {
+      result += "  {{ key: \"{k}\", name: \"{t}\", desc: \"{d}\", page: \"{pg}\" }}";
+    }
   }
   result += nl + "];" + nl;
 

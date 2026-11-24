@@ -173,7 +173,7 @@ select {
 <script type="module">
 import init, { Game } from './pkg/loft.js?v=02bfbb7e252c';
 import { initLoftGL } from './loft-gl.js?v=917a52668ad4';
-import { GALLERY_EXAMPLES, GALLERY_LIST } from './gallery-examples.js?v=997df6476118';
+import { GALLERY_EXAMPLES, GALLERY_LIST } from './gallery-examples.js?v=9c3b0cc3f00d';
 import { createHost } from './loft-rt.js?v=5c94f0e5117d';
 
 // ── The page's own filesystem and host ───────────────────────────────────────
@@ -336,6 +336,10 @@ let loftReady = false;
 // .gitattributes Linguist override).
 const urlParams = new URLSearchParams(window.location.search);
 const preselect = urlParams.get('example');
+// A game built into a page of its own runs there (gallery-examples.js `page`): this bundle
+// cannot load a library's C part, and the page carries the game whole, sound included.
+const ownPage = preselect && (GALLERY_LIST.find((ex) => ex.key === preselect) || {}).page;
+if (ownPage) window.location.replace(ownPage);
 const autorun = urlParams.get('autorun') === '1';
 
 if (preselect && GALLERY_EXAMPLES[preselect]) {
