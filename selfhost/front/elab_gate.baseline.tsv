@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	d5b0b3076eed6780b24a3fd2434f67e3f311a52e
 
-layer	elab	agree	1409	of	2139
+layer	elab	agree	1415	of	2142
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -20,7 +20,7 @@ elab	refused	lib/process/tests/lines.loft
 elab	refused	lib/process/tests/run.loft
 elab	refused	lib/process/tests/start.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft
-elab	refused	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
+elab	unaligned	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft
 elab	refused	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-literal-that-embeds-its-own-old-value-keeps-that-value.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft
@@ -81,7 +81,6 @@ elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and
 elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft
 elab	refused	loft-suite/rules/calls/F-Args/insert-takes-its-arguments-before-the-vector-grows.loft
 elab	refused	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft
-elab	refused	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft
 elab	refused	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft
 elab	refused	loft-suite/rules/calls/F-Default/1758-a-text-tuple-default-answers-what-its-argument-would.loft
 elab	refused	loft-suite/rules/calls/F-Default/a-default-is-well-formed-wherever-the-same-argument-is.loft
@@ -212,7 +211,6 @@ elab	refused	loft-suite/rules/heap/H-Drop/a-record-a-value-branch-or-a-field-lit
 elab	refused	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft
-elab	refused	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft
 elab	refused	loft-suite/rules/heap/H-Free/an-early-exit-frees-what-the-frame-owns-whoever-would-fill-it-later.loft
 elab	refused	loft-suite/rules/heap/H-Free/each-pass-frees-the-answer-it-copied.loft
@@ -376,7 +374,6 @@ elab	refused	loft-suite/rules/ownership/O-Complete/2408-a-store-rebound-away-on-
 elab	refused	loft-suite/rules/ownership/O-Complete/2467-a-call-that-copies-its-answer-owns-it-wherever-it-is-bound.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2467-an-enum-join-of-a-call-and-a-view-owns-the-call.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft
-elab	refused	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft
 elab	refused	loft-suite/rules/ownership/O-Deps/1335-a-fn-ref-return-of-any-shape-maps-its-deps-into-the-caller.loft
 elab	refused	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-binding-borrows-its-subject.loft
@@ -420,8 +417,6 @@ elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-rebuilt-in-a-
 elab	refused	loft-suite/rules/ownership/O-Witness/a-discharged-projection-rebound-from-a-call-is-witnessed.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft
-elab	refused	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft
-elab	refused	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-walk-over-a-list-is-a-view-of-the-list-it-was-bound-to.loft
 elab	refused	loft-suite/rules/rewrites/R-Demote/a-demoted-node-answers-what-the-copy-would-for-copies-and-every-cycle.loft
@@ -550,7 +545,10 @@ elab	refused	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-e
 elab	refused	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft
 elab	refused	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft
 elab	refused	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-names-its-arguments-as-written.loft
+elab	refused	loft-suite/rules/types/W-Lit/a-literal-checks-at-the-width-it-is-expected-at.loft
 elab	refused	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft
+elab	refused	loft-suite/rules/types/W-Name/a-regime-file-names-32-bits-and-asks-64-by-name.loft
+elab	refused	loft-suite/rules/types/W-Op/a-32-bit-result-out-of-range-reads-null.loft
 elab	refused	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft
 elab	refused	tests/docs/01-keywords.loft
 elab	refused	tests/docs/02-text.loft
@@ -726,7 +724,6 @@ elab	refused	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft
 elab	refused	tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
 elab	refused	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft
 elab	refused	tests/scripts/an-append-twin-writes-through-its-callers-window.loft
-elab	refused	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft
 elab	refused	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft
 elab	refused	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft
 elab	refused	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
@@ -737,7 +734,7 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 
-layer	elab-functions	agree	13823	of	22808
+layer	elab-functions	agree	13889	of	22646
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -957,7 +954,6 @@ elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::n_b19_the_view_rules_still_view
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::n_main
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::vector<B19Inner>
-elab-functions	agree	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::Block
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::Code
@@ -1039,6 +1035,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-bran
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_block_arms
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_by_chain
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_by_match
+elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_chain_of
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_cl
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_coalesce_reassign
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft::n_dl
@@ -2313,18 +2310,6 @@ elab-functions	agree	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the
 elab-functions	agree	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft::n_test_dnl
 elab-functions	agree	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft::n_test_dout
 elab-functions	agree	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft::n_test_dv
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::(schema)
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::H
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::R
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_deep
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_fn_level
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_nested
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_nullable
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_param_src
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_per_pass
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_straight
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_tail_is_read
-elab-functions	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_test_a_text_copied_out_of_a_blocks_record_frees_the_record
 elab-functions	agree	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft::Big
 elab-functions	agree	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft::P95
 elab-functions	agree	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft::Size95
@@ -2684,6 +2669,10 @@ elab-functions	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft::n_fr2562_so
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft::n_fr2562_tail
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft::n_fr2562_val
+elab-functions	agree	loft-suite/rules/calls/F-Ret/2585c-an-early-return-of-a-constant-is-the-callers-copy.loft::NAME
+elab-functions	agree	loft-suite/rules/calls/F-Ret/2585c-an-early-return-of-a-constant-is-the-callers-copy.loft::NUMS
+elab-functions	agree	loft-suite/rules/calls/F-Ret/2585c-an-early-return-of-a-constant-is-the-callers-copy.loft::WORDS
+elab-functions	agree	loft-suite/rules/calls/F-Ret/2585c-an-early-return-of-a-constant-is-the-callers-copy.loft::n_name
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::(schema)
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::Dec
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::In
@@ -3481,8 +3470,15 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::t_6Holder_OpDropAll
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::Box
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::E
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::GV
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::S
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::Two
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::__closure_of_closure_0
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::__closure_of_hash_0
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::__closure_of_index_0
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::__closure_of_sorted_0
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::n___lambda_of_closure_0
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::n_check
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::H
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::S
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::__closure_by_value_0
@@ -3639,6 +3635,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-capture
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_0
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_1
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_2
+elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_text_elements_and_a_call_before_0
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_text_elements_and_a_call_before_1
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_without_a_record_the_concat_is_in_place_0
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_twice_0
@@ -4805,6 +4802,18 @@ elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vecto
 elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vector-to-the-builtins-that-walk-one-and-to-an-index.loft::n_test_a_slice_of_a_call_runs_the_call_once
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::(schema)
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::P1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::PTS1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::TABLE1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::WORDS1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::main_vector<P1917>
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_len1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_main
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_num1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_pt1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_test_a_text_result_from_a_text_constant
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_test_the_length_of_a_constant
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_word1917
+elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::vector<P1917>
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::(schema)
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::RowS
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::main_vector<RowS>
@@ -5482,8 +5491,6 @@ elab-functions	agree	loft-suite/rules/heap/H-Free/a-literal-field-read-before-it
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft::n_wrapex
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft::vector<Bl>
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft::vector<Node>
-elab-functions	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::(schema)
-elab-functions	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::P
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft::(schema)
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft::F
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft::NCall
@@ -8279,9 +8286,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-ca
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::n_test_the_answer_is_a_copy
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::n_view_node
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::vector<Ty>
-elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::Box
-elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::In
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::Ms
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::NrE
@@ -8523,6 +8527,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-val
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_base_reassigned_after_the_bind
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_base_reminted_while_the_borrower_is_live
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_closure_mint_arm_beside_a_join_arm_is_freed
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_closure_mint_arm_beside_a_variable_arm_is_freed
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_coalesce_hoist_owns_a_call_subject
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_declared_local_re_bound_from_a_join_in_a_loop
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_local_bound_at_two_sites_from_two_bases
@@ -9067,13 +9072,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-append
 elab-functions	agree	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft::n_test_onto_existing_bytes
 elab-functions	agree	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft::vector<vector<text>>
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::BASE
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::Col
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::Green
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::H
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::R
-elab-functions	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::Red
 elab-functions	agree	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft::Lv
 elab-functions	agree	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft::Pt
@@ -9449,6 +9447,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::H
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::In
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::Leaf
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::NAMES
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::O
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::Outer
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::P
@@ -9457,15 +9456,31 @@ elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::S
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::T
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::Wr
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::main_vector<H>
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::main_vector<P>
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_chain
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_chain_glob
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_either
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_exits
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_fill
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_glob
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_grow
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_lit3
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_mk
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_none
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_opt
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_pass
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_recs
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_rep
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_schain
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_sfill
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_tags
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_total_of
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_two
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_words
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_wrap
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::vector<H>
+elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::vector<P>
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::Bag
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::Box
@@ -10109,6 +10124,25 @@ elab-functions	agree	loft-suite/rules/types/N-Decl/1380-an-else-if-chain-answers
 elab-functions	agree	loft-suite/rules/types/N-Decl/1380-an-else-if-chain-answers-in-its-first-arms-type.loft::n_test_a_nullable_arm_makes_the_join_nullable
 elab-functions	agree	loft-suite/rules/types/N-Decl/1380-an-else-if-chain-answers-in-its-first-arms-type.loft::n_test_an_inferred_local_takes_the_agreeing_chain_type
 elab-functions	agree	loft-suite/rules/types/N-Decl/1380-an-else-if-chain-answers-in-its-first-arms-type.loft::n_test_two_variants_in_a_chain_join_to_their_enum
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CF
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CI
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CU
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CV
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CVF
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::CW
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::T
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::TN
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::i_4text_n_assert_eq
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::i_7integer_n_assert_eq
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_a_struct_table_with_narrow_fields
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_other_declared_constants_are_unchanged
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_sixteen_bit_constants_hold_their_edges
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_sum_u8
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::vector<integer(-32768, 32767)>
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::vector<integer(-32768, 32767)?>
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::vector<integer(0, 255)>
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::vector<integer(0, 255)?>
+elab-functions	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::vector<integer(0, 65535)>
 elab-functions	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::Grid
 elab-functions	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::P
 elab-functions	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::__tuple<integer,integer>
@@ -10891,12 +10925,15 @@ elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-buil
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_chain
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_mk
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_words
+elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-checks-at-the-width-it-is-expected-at.loft::R
+elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-checks-at-the-width-it-is-expected-at.loft::n_wide
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::main_vector<integer(0, 4294967295)>
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::n_main
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::n_test_a_u32_operand_sets_the_literals_width
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::n_test_an_i64_operand_sets_the_literals_width
 elab-functions	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::vector<integer(0, 4294967295)>
+elab-functions	agree	loft-suite/rules/types/W-Op/a-32-bit-result-out-of-range-reads-null.loft::R
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_fold_wo
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_main
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_or_wo
@@ -11235,6 +11272,7 @@ elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_10
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_11
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_2
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_3
+elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_4
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_5
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_6
 elab-functions	agree	tests/docs/26-closures.loft::n___lambda_main_7
@@ -13612,6 +13650,7 @@ elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_hash_lookup_2
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_iteration_0
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_iteration_1
+elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_iteration_2
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_multi_capture_0
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_sorted_index_lookup_0
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n___lambda_test_sorted_index_lookup_1
@@ -13815,6 +13854,18 @@ elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::main
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::main_vector<vector<single>>
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::vector<single>
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::vector<vector<single>>
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::B_BASE
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::B_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::F_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::I_BASE
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::I_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::S_BASE
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::S_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::T_BASE
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::T_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::V_BASE
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::V_LATER
+elab-functions	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::n_twenty_one
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::(schema)
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::A
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::Anon
@@ -14296,6 +14347,20 @@ elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller
 elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::vector<Leaf>
 elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::vector<Mid>
 elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::(schema)
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Box
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Ints
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Lst
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::NAMES
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::NUMS
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Outer
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Pnl
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::Src
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_from_src
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_isum
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_panel
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_pick
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_tlen
+elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_wrote_first
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::(schema)
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::C98Vec
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::HID_C
@@ -14459,7 +14524,6 @@ elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-win
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_texts
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::vector<Item>
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::(schema)
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::(schema)
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::AoBag
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_inside_a_loop_appends_on_its_own_turns
@@ -14561,7 +14625,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13516	of	18762
+layer	elab-pass1	agree	13591	of	18895
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -14789,6 +14853,9 @@ elab-pass1	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-th
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::n_trace_path
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::t_2Dh_OpDrop
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::t_2Eh_OpDrop
+elab-pass1	agree	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft::n_get
+elab-pass1	agree	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft::n_mk
+elab-pass1	agree	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft::n_mk_text
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::n_keep_param
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::n_len_of
 elab-pass1	agree	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft::n_test_block_over_a_local_copies
@@ -15564,9 +15631,12 @@ elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_nullable
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_param_src
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_per_pass
+elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_reads_param
+elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_returns_one
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_straight
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_tail_is_read
 elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_test_a_text_copied_out_of_a_blocks_record_frees_the_record
+elab-pass1	agree	loft-suite/rules/calls/F-Call/a-calls-frame-frees-exactly-what-it-owns.loft::n_test_owned_locals_and_a_pinned_store
 elab-pass1	agree	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-record-it-fills.loft::n_describe95
 elab-pass1	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft::n_t_int
 elab-pass1	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft::n_t_mul
@@ -15902,6 +15972,7 @@ elab-pass1	agree	loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-of-a-local-delivers-its-own-value.loft::n_test_a_struct_enum_tail
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft::n_fr2562_so
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft::n_fr2562_val
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/2585c-an-early-return-of-a-constant-is-the-callers-copy.loft::n_name
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::n_main
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::n_test_a_field_projection
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft::n_test_a_loop_over_both_arms
@@ -16837,6 +16908,8 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::n_test_local_view
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::n_test_match
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::n_test_view_arm
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::n___lambda_of_closure_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft::n_check
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::n___lambda_by_value_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::n___lambda_hooked_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft::n___lambda_hooked_1
@@ -16946,6 +17019,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-lo
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_1
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_every_rebind_spelling_2
+elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_text_elements_and_a_call_before_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_text_elements_and_a_call_before_1
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_twice_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_twice_self_0
@@ -17289,6 +17363,10 @@ elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-o
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_the_first_arm_waits_for_the_second
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_what_an_arm_builds_and_reads
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_wait2568
+elab-pass1	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_len1917
+elab-pass1	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_main
+elab-pass1	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_num1917
+elab-pass1	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::n_word1917
 elab-pass1	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::n_add5
 elab-pass1	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::n_add7
 elab-pass1	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::n_by_int
@@ -18482,6 +18560,12 @@ elab-pass1	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-
 elab-pass1	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::n_test_every_discharge
 elab-pass1	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::n_tsz
 elab-pass1	agree	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft::n_sz
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_pick
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_test_a_constant_outlives_every_call
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_test_a_discarded_call_result_is_freed
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_test_a_loop_body_record_dies_each_pass
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_test_a_rebind_frees_what_it_displaces
+elab-pass1	agree	loft-suite/rules/heap/H-Free/a-store-is-freed-once-wherever-it-dies.loft::n_test_an_older_store_is_freed_while_a_newer_one_lives
 elab-pass1	agree	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft::n_base
 elab-pass1	agree	loft-suite/rules/heap/H-Free/a-tail-match-answer-materialised-into-a-work-ref-is-freed-once.loft::n_unspan
 elab-pass1	agree	loft-suite/rules/heap/H-Free/an-early-exit-frees-what-the-frame-owns-whoever-would-fill-it-later.loft::n_depth_of
@@ -19864,6 +19948,7 @@ elab-pass1	agree	loft-suite/rules/operational/E-Eq/1581-a-concrete-not-equal-der
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/1581-a-concrete-not-equal-derives-from-a-user-op-eq.loft::t_2W2_OpEq
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/2500-a-stored-reference-to-a-struct-enum-reads-as-its-record.loft::n_kind
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-discharged-local-compared-in-an-else-if-compiles-on-native.loft::n_main
+elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-discharged-local-compared-in-an-else-if-compiles-on-native.loft::n_settle
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-discharged-local-compared-in-an-else-if-compiles-on-native.loft::n_show
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-compares-by-its-fields.loft::t_1V_label
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-compares-by-its-fields.loft::t_1V_sum
@@ -20337,6 +20422,24 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-le
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::n_test_a_view_of_one_of_two_fields
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::n_test_no_return_inside_the_match
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft::n_test_the_answer_is_a_copy
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n___lambda_keep_0
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_check
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_coalesce_arg
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_find
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_grow
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_keep
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_shout
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_block_arm
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_coalesce_arg
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_comprehension
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_global_arm
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_one_path
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_text_join
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_vec_append
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_vec_loop
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_vec_rebind
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_test_write_through
+elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft::n_write_through
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::n_keyed_bound
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::n_keyed_inline
 elab-pass1	agree	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft::n_main
@@ -21309,6 +21412,16 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-CompleteWrite/a-reused-record-is-wr
 elab-pass1	agree	loft-suite/rules/rewrites/R-CompleteWrite/a-struct-enum-field-is-covered-only-by-a-write-as-wide-as-it.loft::n_leaf
 elab-pass1	agree	loft-suite/rules/rewrites/R-CompleteWrite/a-struct-enum-field-is-covered-only-by-a-write-as-wide-as-it.loft::n_ut
 elab-pass1	agree	loft-suite/rules/rewrites/R-CompleteWrite/a-variant-literal-writes-every-byte-any-variant-reads.loft::n_sums
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_appends
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_forwards
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_reads
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_reads_const
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_rec_writes
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_test_k2
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_test_k3
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_test_k5
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_writes_after
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft::n_writes_before
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-function-answers-a-view-no-write-reaches.loft::n_scribble
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-function-answers-a-view-no-write-reaches.loft::n_test_a_record_constant_in_a_loop
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-function-answers-a-view-no-write-reaches.loft::n_test_a_write_copies_at_the_bind
@@ -21334,6 +21447,13 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-view-becomes-a-cop
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-view-becomes-a-copy-wherever-it-escapes.loft::n_test_a_read_only_bind_is_the_view
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-view-becomes-a-copy-wherever-it-escapes.loft::n_test_a_writing_parameter_takes_a_copy
 elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-constant-view-becomes-a-copy-wherever-it-escapes.loft::n_test_text_elements
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_isum
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_main
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_t1
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_t4
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_t5
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_t6
+elab-pass1	agree	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft::n_t7
 elab-pass1	agree	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft::n_bound
 elab-pass1	agree	loft-suite/rules/rewrites/R-CopyView/a-bind-from-a-link-is-a-copy-of-its-referent.loft::n_test_a_join_of_a_link_and_a_view
 elab-pass1	agree	loft-suite/rules/rewrites/R-CopyView/a-bind-from-a-link-is-a-copy-of-its-referent.loft::n_test_a_local_link_written_after_the_bind
@@ -21982,6 +22102,12 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-call-through-a-fn-typed-par
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-call-through-a-fn-typed-parameter-is-never-the-place.loft::n_test_an_identity_through_a_fn_parameter
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_exits
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_fill
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_glob
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_grow
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_sfill
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_total_of
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_two
+elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::n_words
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft::n_grow
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft::n_main
 elab-pass1	agree	loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft::n_rounds
@@ -23179,6 +23305,9 @@ elab-pass1	agree	loft-suite/rules/types/N-Decl/1380c-a-match-arm-answers-in-its-
 elab-pass1	agree	loft-suite/rules/types/N-Decl/1380c-a-match-arm-answers-in-its-siblings-type.loft::n_test_the_conversion_reaches_an_argument_and_a_return
 elab-pass1	agree	loft-suite/rules/types/N-Decl/153-n-decl-refuses-a-later-nullable-write.loft::n_f
 elab-pass1	agree	loft-suite/rules/types/N-Decl/153-n-decl-refuses-a-later-nullable-write.loft::n_main
+elab-pass1	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_other_declared_constants_are_unchanged
+elab-pass1	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_sixteen_bit_constants_hold_their_edges
+elab-pass1	agree	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft::n_sum_u8
 elab-pass1	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::n_cell_get
 elab-pass1	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::n_cell_set
 elab-pass1	agree	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft::n_grid_check
@@ -23775,6 +23904,7 @@ elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_5float_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_ty
+elab-pass1	agree	loft-suite/rules/types/W-Lit/a-literal-checks-at-the-width-it-is-expected-at.loft::n_wide
 elab-pass1	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft::n_test_an_i64_operand_sets_the_literals_width
 elab-pass1	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_fold_wo
@@ -26370,6 +26500,7 @@ elab-pass1	agree	tests/scripts/947-feature-worked-examples.loft::n_word947f
 elab-pass1	agree	tests/scripts/947-feature-worked-examples.loft::t_9Report947_render947
 elab-pass1	agree	tests/scripts/95-alias-copy.loft::n_ac_identity
 elab-pass1	agree	tests/scripts/95-alias-copy.loft::n_test_aliased_return_copies
+elab-pass1	agree	tests/scripts/962-const-initialised-from-a-later-name.loft::n_twenty_one
 elab-pass1	agree	tests/scripts/974-accessor-returned-record-borrows-its-container.loft::n_i974_bare_hash
 elab-pass1	agree	tests/scripts/974-accessor-returned-record-borrows-its-container.loft::n_i974_deep
 elab-pass1	agree	tests/scripts/974-accessor-returned-record-borrows-its-container.loft::n_i974_direct
@@ -27191,6 +27322,9 @@ elab-pass1	agree	tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continu
 elab-pass1	agree	tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft::n_e9
 elab-pass1	agree	tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft::n_keep
 elab-pass1	agree	tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft::n_main
+elab-pass1	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_isum
+elab-pass1	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_tlen
+elab-pass1	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::n_wrote_first
 elab-pass1	agree	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft::n_b2
 elab-pass1	agree	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft::n_leaves
 elab-pass1	agree	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft::n_main
@@ -27867,6 +28001,12 @@ elab-pass1	agree	tests/scripts/a-zero-length-test-counts-no-characters.loft::n_c
 elab-pass1	agree	tests/scripts/a-zero-length-test-counts-no-characters.loft::n_c4
 elab-pass1	agree	tests/scripts/an-append-loop-keeps-one-window.loft::n_ck
 elab-pass1	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_bsum
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_builds
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_const_first
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_isum
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_main
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_pick
+elab-pass1	agree	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft::n_wrote_first
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_inside_a_loop_appends_on_its_own_turns
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_not_taken_appends_nothing
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_taken_appends_once
