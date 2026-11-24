@@ -5,8 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# The shipped tier's rustc arguments, the list loft compiles in (src/native_release_args.txt).
-mapfile -t RELEASE_ARGS < <(grep -vE '^[[:space:]]*(#|$)' "$PROJECT_ROOT/src/native_release_args.txt")
+# The C compiler of the loft-native lane, and its flags (bench/stats.py's `c` lane).
+CC="${CC:-cc}"
 
 # Auto-detect loft binary: env override → project target/release → PATH
 if [[ -n "${LOFT_BIN:-}" ]]; then
@@ -24,17 +24,6 @@ elif [[ -d "$PROJECT_ROOT/default" ]]; then
   STDLIB_PATH="$PROJECT_ROOT/"
 else
   STDLIB_PATH=""
-fi
-
-# Auto-detect libloft.rlib for native compilation: project target/release → installed share/loft
-if [[ -n "${LOFT_LIB_DIR:-}" ]]; then
-  LOFT_LIB="$LOFT_LIB_DIR"
-elif [[ -f "$PROJECT_ROOT/target/release/libloft.rlib" ]]; then
-  LOFT_LIB="$PROJECT_ROOT/target/release"
-elif [[ -f "/usr/local/share/loft/libloft.rlib" ]]; then
-  LOFT_LIB="/usr/local/share/loft"
-else
-  LOFT_LIB=""
 fi
 
 SKIP_PYTHON=0
@@ -75,7 +64,7 @@ Options:
 Environment:
   LOFT_BIN        Path to the loft binary (default: target/release/loft)
   LOFT_STDLIB     Path to the stdlib root directory (default: project root)
-  LOFT_LIB_DIR    Directory containing libloft.rlib (default: target/release or /usr/local/share/loft)
+  CC              The C compiler of the loft-native lane (default: cc)
 
 Output columns: bench | python | loft-interp | loft-native | loft-wasm | rust
 (milliseconds per OP; for statistics — repeats, spread, a ratio with its range — use bench/stats.py)
@@ -99,6 +88,7 @@ done
 HAS_LOFT=0
 HAS_PYTHON=0
 HAS_RUST=0
+HAS_CC=0
 HAS_WASMTIME=0
 
 if command -v "$LOFT" > /dev/null 2>&1; then
@@ -117,6 +107,12 @@ if command -v rustc > /dev/null 2>&1; then
   HAS_RUST=1
 else
   echo "warning: rustc not found — rust target will be skipped"
+fi
+
+if command -v "$CC" > /dev/null 2>&1; then
+  HAS_CC=1
+else
+  echo "warning: no C compiler $CC — loft-native target will be skipped"
 fi
 
 WASMTIME=""
@@ -188,19 +184,14 @@ run_bench() {
   local build_dir="$dir/.loft"
 
   # loft native
-  if [[ $HAS_LOFT -eq 1 && $HAS_RUST -eq 1 && -n "$LOFT_LIB" && $NO_BUILD -eq 0 && -f "$dir/bench.loft" ]]; then
+  if [[ $HAS_LOFT -eq 1 && $HAS_CC -eq 1 && $NO_BUILD -eq 0 && -f "$dir/bench.loft" ]]; then
     mkdir -p "$build_dir"
-    native_rs="$build_dir/bench.rs"
-    # The rustc emitter, named by `--native-rust`: `--native-emit` writes through the selected
-    # writer, the C backend by default, and its C is not Rust.
-    "$LOFT" --native-emit "$native_rs" --native-rust --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
-    if [[ -f "$native_rs" ]]; then
-      rustc "${RELEASE_ARGS[@]}" --edition=2024 \
-        --extern "loft=$LOFT_LIB/libloft.rlib" \
-        $(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import stats; print(" ".join(stats.dependency_search_args(sys.argv[2])))' "$SCRIPT_DIR" "$LOFT_LIB") \
-        -o "$build_dir/bench_bin" \
-        "$native_rs" > /dev/null 2>&1 || true
-      rm -f "$native_rs"
+    native_c="$build_dir/bench.c"
+    # The C unit, compiled as bench/stats.py's `c` lane compiles it.
+    "$LOFT" --emit-c "$native_c" "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
+    if [[ -f "$native_c" ]]; then
+      "$CC" -std=c11 -O3 -o "$build_dir/bench_bin" "$native_c" -lm > /dev/null 2>&1 || true
+      rm -f "$native_c"
     fi
   fi
   if [[ -f "$build_dir/bench_bin" ]]; then

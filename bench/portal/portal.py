@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""portal.py — ONE page that says where loft-native stands against Rust, by CLASS.
+"""portal.py — ONE page that says where loft's compiled code stands against Rust, by CLASS.
 
     python3 bench/portal/portal.py measure [stats.py options]      # e.g. --only 13,15
     python3 bench/portal/portal.py measure --routine check_request,cbor/decode
@@ -250,8 +250,9 @@ def render():
     w("> may be compared, and the bar: [formal/performance.md](formal/performance.md) `(Perf-Like)`,")
     w("> `(Perf-Weight)`.  The plan this page is the report of: @PLN158.\n")
     w(f"**The bar:** every routine within **{CEILING:.0f}×** its Rust twin, and — the owner's goal — every")
-    w(f"routine within **{BAR:.0f}×**.  A ratio is native ns/op over the twin's, medians of pinned, calibrated,")
-    w("interleaved samples; both lanes printed the same result hash or the row would not be here.\n")
+    w(f"routine within **{BAR:.0f}×**.  A ratio is the C ship lane's ns/op over the twin's (the retired rustc")
+    w("writer's on a row measured before it went), medians of pinned, calibrated, interleaved samples; both")
+    w("lanes printed the same result hash or the row would not be here.\n")
 
     def judge(rows):
         judged, unclassified = [], []
@@ -350,13 +351,12 @@ def render():
             if doc:
                 w(f"Why it is slow, priced, and what to build: "
                   f"[analysis/{doc}](../../bench/portal/analysis/{doc})\n")
-            # The optional columns, each present when the run measured its lane: SHIP (@PLN201),
-            # the routine compiled as a game's release build would be, the fault checks dropped
-            # (`--lanes …,ship`); C and C SHIP (@PLN200), the C99 backend's checked and probed
-            # builds against the same Rust twin (`--lanes …,c,cship`).  A checked C row whose
-            # hash is not the twin's is a validation failure and says so.
+            # The optional columns, each present when the run measured its lane: C and C SHIP
+            # (@PLN200), the C99 backend's checked and probed builds against the same Rust twin
+            # (`--lanes …,c,cship`).  A checked C row whose hash is not the twin's is a
+            # validation failure and says so.
             extra = [(lane, head) for lane, head in
-                     (("ship", "ship × Rust"), ("c", "C × Rust"), ("cship", "C ship × Rust"))
+                     (("c", "C × Rust"), ("cship", "C ship × Rust"))
                      if any(r.get(f"{lane}_ratio") or r.get(f"{lane}_hash") for r in rs)]
             ship_head = "".join(f" {head} |" for _, head in extra)
             ship_rule = "---:|" * len(extra)
@@ -377,7 +377,7 @@ def render():
                     else:
                         ship_cell += " — |"
                 w(f"| `{r['routine']}` | {r['bench']} | {r['pop']} | **{r['ratio_f']:.2f}** |{ship_cell} "
-                  f"{float(r['ratio_lo']):.2f}–{float(r['ratio_hi']):.2f}{flags} | {fmt_ns(r['native_ns'])} | "
+                  f"{float(r['ratio_lo']):.2f}–{float(r['ratio_hi']):.2f}{flags} | {fmt_ns(r.get('native_ns') or r['cship_ns'])} | "
                   f"{fmt_ns(r['rust_ns'])} | {verdict_mark(r['ratio_f'])} | {r['what']} |")
             w("")
         if any_older:
