@@ -27,8 +27,8 @@ counts are recorded for reading; only the set is judged.
 
 *decided-in* is not stored: it is read from the code each time, as the families of the source
 files that cite the rule (`@FR-<Entry>`, `rule_tags.py sites`) — a shared analysis (`ir`),
-the interpreter (`interp`), a writer (`c`, `rust`).  A rule decided in a shared analysis and
-applied by a writer is the cheapest to move into the IR: only its emission changes home.
+the interpreter (`interp`), the C writer (`c`).  A rule decided in a shared analysis and
+applied by the writer is the cheapest to move into the IR: only its emission changes home.
 
 `formal/rewrites.md` `## Applied by` is rendered from the table (`--render`), one row per
 register entry, so the register states each rule's phase from the measurement and nowhere else;
@@ -132,8 +132,6 @@ def family(path):
     p = path.split("src/", 1)[-1]
     if p.startswith("c/"):
         return "c"
-    if p.startswith(("generation/",)) or p in ("codegen_runtime.rs",):
-        return "rust"
     if p.startswith(("state/",)) or p in ("fill.rs", "ops.rs", "stack.rs", "keys.rs"):
         return "interp"
     return "ir"
@@ -147,7 +145,7 @@ def decided_in(entries):
     out = {}
     for entry in entries:
         fams = {family(f) for f, _ in sites.get(entry, [])}
-        out[entry] = [f for f in ("ir", "interp", "c", "rust") if f in fams]
+        out[entry] = [f for f in ("ir", "interp", "c") if f in fams]
     return out
 
 
