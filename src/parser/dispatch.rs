@@ -513,7 +513,7 @@ impl Parser {
             let text = self
                 .lexer
                 .source_text(file.as_str())
-                .map_or_else(|| Self::read_source(file.as_str()), str::to_string);
+                .map_or_else(|| self.read_source(file.as_str()), str::to_string);
             let mut counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             let mut after_fn = false;

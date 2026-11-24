@@ -324,3 +324,19 @@ December read; the two gates have no trend to extrapolate until they have run.
 - **`store.rs:1640` armed row (the "keyed armed UAF", 7 files)** — RESOLVED 2026-06-12 (4cba84c5): three mechanisms (header-as-`room` accessor → `Store::record_words`; parallel s_pos array header stomp; OpDatabase bytes-vs-words under-claim = a real release OOB write).  Armed corpus 12 → 5 files.
 - **Plan-57 vector store-lifetime watermark** — CLOSED (@PLN2; rc removal complete).
 - **Plan-53 cluster 1 + the aligned-V2 allocator half of cluster 2** — fixed/validating; the S4 half is queue #4.
+
+## Moved out with the rustc writer's retirement (2026-11-24, @PLN225)
+
+The differential-oracle gate, closed:
+
+- **`main` on the differential oracle — ✅ GREEN (2026-07-10).**
+  `tests/oracle/27-native-tailcall-return-heap.loft` was the `a7_match_arm_tail` divergence
+  (a `-> text` fn whose tail `match` arm calls a caller-buffer callee → rustc E0599); it was
+  fixed in `b1426f9e` (#548) on `main` (`if_tail_yields_text` now sees through the `scalar_match`
+  block) and pinned by `loft-suite/attic/scripts/536-text-match-tail-buffer-callee.loft`.
+  `oracle_corpus_agrees_across_backends` passes both backends. The corpus cell added by @PLN97 did
+  its job.
+
+The queue's row 10, closed:
+
+| 10 | **Pass-3 de-dup tail** — **TRIAGED CLEAN 2026-06-17.** Every named candidate is already resolved: `generation/ops` post-plan-57 rc remnants — **gone** (no rc code left); `value_reads_var` — already centralised (`data.rs::reads_var`, replaced `scopes::value_reads_var` + two more); `base_var_of` — already unified (`data.rs::base_var`); the variables size-table — DECIDED a non-dup vs `byte_width` (PASS2 wave 5, different facts); `towards_set` dual discriminators + the codegen_runtime mirrors — INTENTIONAL (interp-vs-native, #328). The H3 flag-setter "five homes" (#316/#323) is the one residual de-dup, opportunistic. Nothing actionable stands open. | S each | ✅ triaged clean | module rows in [STABILITY_SWEEP § Module work list](STABILITY_SWEEP.md) + [STABILITY_PASS2 § Work list](STABILITY_PASS2.md) |

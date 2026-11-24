@@ -11,12 +11,12 @@
 //! `if c { a } else { b }` resolves to the arm that ran.  Code a pass inserted without a span
 //! of its own resolves to the line of the statement it sits in (`line N`, no column).  The
 //! table is built once at the end of code generation (`compile::store_trace_names`), only when
-//! one of the instruments is on, and published per thread beside the crash hook's span table (`State::publish_source_spans`).
+//! one of the instruments is on, and published into the interpreter's crash context beside its
+//! span table (`State::publish_source_spans`).
 
-use std::cell::RefCell;
+use crate::crash_report::CrashCx;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::sync::Arc;
 
 /// One generated function's code range.
 struct Func {
@@ -34,10 +34,6 @@ pub struct PcNames {
     vars: BTreeMap<u32, (String, u32)>,
     /// `pc -> line` of each statement's first op (the code generator's `line_numbers`).
     lines: BTreeMap<u32, u32>,
-}
-
-thread_local! {
-    static PUBLISHED: RefCell<Option<Arc<PcNames>>> = const { RefCell::new(None) };
 }
 
 /// Is any instrument on that reads the table?  Asked once per compile.
@@ -75,13 +71,9 @@ impl PcNames {
     }
 }
 
-/// Make `names` the table this thread's reports read; `None` clears it.
-pub fn publish(names: Option<Arc<PcNames>>) {
-    PUBLISHED.with(|p| *p.borrow_mut() = names);
-}
-
-fn with_names<R>(f: impl FnOnce(&PcNames) -> Option<R>) -> Option<R> {
-    PUBLISHED.with(|p| p.borrow().as_deref().and_then(f))
+/// `f` over the names the interpreter of `cx` published (`CrashCx::pc_names`), if any.
+fn with_names<R>(cx: &CrashCx, f: impl FnOnce(&PcNames) -> Option<R>) -> Option<R> {
+    cx.pc_names.as_deref().and_then(f)
 }
 
 /// The function `pc` lies in, with its first pc and its source file.
@@ -102,15 +94,15 @@ struct Loc {
 
 /// The position of `pc`: the innermost span covering it, else the line of the statement it
 /// sits in, never a position from another function.
-fn locate(pc: u32) -> Option<Loc> {
-    if let Some(p) = crate::crash_report::source_loc_for_pc(pc) {
+fn locate(cx: &CrashCx, pc: u32) -> Option<Loc> {
+    if let Some(p) = cx.source_loc_for_pc(pc) {
         return Some(Loc {
             file: p.file.as_str(),
             line: p.line,
             col: Some(p.pos),
         });
     }
-    with_names(|n| {
+    with_names(cx, |n| {
         let (start, func) = func_at(n, pc)?;
         let (_, line) = n.lines.range(start..=pc).next_back()?;
         Some(Loc {
@@ -128,10 +120,12 @@ fn base(file: &str) -> &str {
 /// `pc` as a reader looks it up: `` `fn` file:line:col (pc=N) ``, or `` `fn` file line L
 /// (pc=N) `` when only the statement's line is known.
 #[must_use]
-pub fn site(pc: u32) -> String {
-    let func =
-        with_names(|n| func_at(n, pc).map(|(_, f)| format!("`{}` ", f.name))).unwrap_or_default();
-    match locate(pc) {
+pub fn site(cx: &CrashCx, pc: u32) -> String {
+    let func = with_names(cx, |n| {
+        func_at(n, pc).map(|(_, f)| format!("`{}` ", f.name))
+    })
+    .unwrap_or_default();
+    match locate(cx, pc) {
         Some(Loc {
             file,
             line,
@@ -147,8 +141,8 @@ pub fn site(pc: u32) -> String {
 }
 
 /// `line:col` (or `line L`) alone, for a jump's target.
-fn site_short(pc: u32) -> String {
-    match locate(pc) {
+fn site_short(cx: &CrashCx, pc: u32) -> String {
+    match locate(cx, pc) {
         Some(Loc {
             line, col: Some(c), ..
         }) => format!("{line}:{c} (pc={pc})"),
@@ -161,8 +155,8 @@ fn site_short(pc: u32) -> String {
 
 /// The source line `pc` resolves to, with a caret under its column, indented for a report.
 #[must_use]
-pub fn excerpt(pc: u32) -> Option<String> {
-    let loc = locate(pc)?;
+pub fn excerpt(cx: &CrashCx, pc: u32) -> Option<String> {
+    let loc = locate(cx, pc)?;
     let text = crate::file_access::read_to_string(loc.file).ok()?;
     let line = text.lines().nth(loc.line.checked_sub(1)? as usize)?;
     let gutter = loc.line.to_string();
@@ -182,8 +176,8 @@ pub fn excerpt(pc: u32) -> Option<String> {
 /// store op was handed, first operand first.  Empty when an operand is not a plain variable
 /// read (a field, a call's answer).
 #[must_use]
-pub fn operands_at(pc: u32) -> Vec<String> {
-    with_names(|n| {
+pub fn operands_at(cx: &CrashCx, pc: u32) -> Vec<String> {
+    with_names(cx, |n| {
         let mut out = Vec::new();
         let mut at = pc;
         while let Some((&p, (name, len))) = n.vars.range(..at).next_back() {
@@ -202,8 +196,8 @@ pub fn operands_at(pc: u32) -> Vec<String> {
 /// The variable a free at `pc` released, or `` `a` (unless `w` names it) `` for a free
 /// guarded by a witness; `None` when the freed reference was not a plain variable.
 #[must_use]
-pub fn freed_variable(pc: u32) -> Option<String> {
-    match operands_at(pc).as_slice() {
+pub fn freed_variable(cx: &CrashCx, pc: u32) -> Option<String> {
+    match operands_at(cx, pc).as_slice() {
         [] => None,
         [v] => Some(format!("`{v}`")),
         [v, w, ..] => Some(format!("`{v}` (unless `{w}` names it)")),
@@ -262,7 +256,7 @@ impl Path {
 
     /// The last `max` steps of the frame at `depth`, one line each.
     #[must_use]
-    pub fn render(&self, depth: usize, max: usize) -> Vec<String> {
+    pub fn render(&self, cx: &CrashCx, depth: usize, max: usize) -> Vec<String> {
         let mine: Vec<&(Step, u32)> = self
             .steps
             .iter()
@@ -287,8 +281,8 @@ impl Path {
             };
             out.push(format!(
                 "{}: {what} to {}{times}",
-                site_short(s.pc),
-                site_short(s.to)
+                site_short(cx, s.pc),
+                site_short(cx, s.to)
             ));
         }
         out

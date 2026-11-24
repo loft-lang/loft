@@ -486,23 +486,12 @@ pub enum Value {
     FnRefDnr(u16),
     /// Parallel { arm1; arm2; } — each arm runs concurrently.
     Parallel(Vec<Value>),
-    /// Plan 09 phase 00 step 0.7 — codegen-internal "raw expression"
-    /// passthrough.
+    /// A "raw expression": a pre-emitted expression string a code
+    /// generator would splice in verbatim.
     ///
-    /// Holds a pre-emitted Rust expression string that emits verbatim
-    /// when reached by `output_code_inner`.  Used exclusively by
-    /// fn-ref dispatch in `src/generation/emit.rs` to inject
-    /// pre-evaluated `let _farg_N` bindings as synthetic arg `Value`s
-    /// into per-arm calls that route through `emit_op` /
-    /// `output_call_user_fn`.
-    ///
-    /// **Not produced by the parser.**  Created only during native
-    /// code generation, lives only on the codegen stack, and is
-    /// consumed by `output_code_inner` which writes its string
-    /// directly to the writer with no further transformation.  Other
-    /// walkers (scopes.rs liveness, pre_eval.rs, parser passes) never
-    /// see this variant — the catch-all `_ =>` arms in those walkers
-    /// suffice as a defensive default.
+    /// **Not produced by the parser** nor by any pass; the walkers
+    /// (scopes.rs liveness, pre_eval.rs, parser passes) cover it with
+    /// their catch-all `_ =>` arms.
     RawExpr(String),
 }
 
@@ -3950,8 +3939,8 @@ mod tuple_stack_layout_tests {
 /// target of a detach, so [`crate::variables::owns_literal_backing_store`] is what separates
 /// the two spellings of one call.
 ///
-/// One home, read by BOTH displacement frees — `generation::dispatch`'s `owned_ref_reassign`
-/// and `state::codegen`'s `owned_ref` — because a shape one backend excludes and the other
+/// One home, read by BOTH displacement frees through `Function::owns_displaced_store` — the
+/// C's `displacing_rebind` and `state::codegen`'s `owned_ref` — because a shape one backend excludes and the other
 /// does not is the divergence @FR-O-NoDiverge forbids.  The native gate already names the
 /// shape it wants in prose (*"a fresh-store-producing rhs"*); a sentinel call is not one, and
 /// this is that sentence made checkable.
@@ -4988,9 +4977,8 @@ impl Definition {
     /// known (`State::fn_call_ref`).  One home for the count, so the two sides of that ABI
     /// cannot disagree about what a buffer is.
     /// @PLN10 Phase A — a USER function returning text with no hidden work buffer ("nwb"):
-    /// on `--native` it returns an owned `String` (`generation::def_returns_owned_text`),
-    /// and through the shared-store bridge it needs the caller's destination
-    /// (`Parser::crosses_text_bridge`).  One home, so the two cannot disagree.
+    /// through the shared-store bridge it needs the caller's destination
+    /// (`Parser::crosses_text_bridge`).
     #[must_use]
     pub fn returns_bufferless_text(&self) -> bool {
         // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
@@ -5053,12 +5041,9 @@ impl Definition {
     ///   DEPS_INVENTORY corpus probe found zero of these) → conservatively
     ///   borrowed (never free a maybe-borrowed source), with a debug scream.
     ///
-    /// This collapses the three structurally-identical derivations that used to
-    /// live separately (interp `state/codegen.rs` ×2, native
-    /// `generation/dispatch.rs` ×1) into one fact — see
-    /// [STABILITY_REDFLAGS](../doc/claude/STABILITY_REDFLAGS.md) Cluster A (A.4).
-    /// Both backends translate the SAME answer, so they cannot diverge on the
-    /// out-of-range / hidden-only edge.
+    /// One fact for every reader — see
+    /// [STABILITY_REDFLAGS](../doc/claude/STABILITY_REDFLAGS.md) Cluster A (A.4) —
+    /// so the backends cannot diverge on the out-of-range / hidden-only edge.
     #[must_use]
     pub fn returns_borrowed_view(&self) -> bool {
         let attrs = self.attributes();
@@ -5814,6 +5799,92 @@ impl<T: Default> PassCell<T> {
     }
 }
 
+/// `@PLN226` — a pass's memo that holds only inside a SPAN: [`Self::open`] sets it and answers a
+/// guard that puts the previous value back when dropped, so a nested span leaves the outer one
+/// intact.  The guard keeps a handle, not the `Data`, so the code inside the span may still
+/// borrow the `Data` mutably; each span's own doc says why no body it reads changes inside it.
+/// Held without naming the pass's type, as [`PassAny`] is: the core layer names no higher one
+/// (`tests/extraction_hygiene.rs`).  A clone of the `Data` starts it empty, as [`PassCell`] does.
+#[derive(Default)]
+pub struct ScopedCell(std::sync::Arc<std::sync::Mutex<ScopedSlot>>);
+
+/// A [`ScopedCell`]'s value and the boxes of spans that ended: a span that opens again takes a
+/// spare of its type and writes its value into it, so a pass that opens one span per function
+/// allocates its box once, not once per function.
+#[derive(Default)]
+pub struct ScopedSlot {
+    open: Option<Box<dyn std::any::Any + Send>>,
+    spare: Vec<Box<dyn std::any::Any + Send>>,
+}
+
+impl Clone for ScopedCell {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl ScopedCell {
+    /// Run `f` on the open span's value, `None` outside any span.
+    ///
+    /// # Panics
+    /// When one memo is read as two types: each field has one pass, which names one type.
+    pub fn with<T: 'static, R>(&self, f: impl FnOnce(Option<&mut T>) -> R) -> R {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(slot.open.as_mut().map(|v| {
+            v.downcast_mut::<T>()
+                .expect("a span memo is read as the one type its pass names")
+        }))
+    }
+
+    /// Open a span holding `value` until the answered guard drops.
+    pub fn open<T: Send + 'static>(&self, value: T) -> ScopedSpan {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let boxed: Box<dyn std::any::Any + Send> =
+            match slot.spare.iter().rposition(|b| b.is::<T>()) {
+                Some(at) => {
+                    let mut b = slot.spare.swap_remove(at);
+                    if let Some(v) = b.downcast_mut::<T>() {
+                        *v = value;
+                    }
+                    b
+                }
+                None => Box::new(value),
+            };
+        let prev = slot.open.replace(boxed);
+        drop(slot);
+        ScopedSpan {
+            cell: self.0.clone(),
+            prev,
+        }
+    }
+}
+
+/// The open span of a [`ScopedCell`]; dropping it restores the value the span replaced.
+#[must_use]
+pub struct ScopedSpan {
+    cell: std::sync::Arc<std::sync::Mutex<ScopedSlot>>,
+    prev: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl Drop for ScopedSpan {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        let mut slot = self
+            .cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(ended) = std::mem::replace(&mut slot.open, prev) {
+            slot.spare.push(ended);
+        }
+    }
+}
+
 /// A per-program memo of a pass above the core layer, held by `Data` without naming the pass's
 /// type: the core layer names no higher one (`tests/extraction_hygiene.rs`).  The pass names
 /// its type at each use, and the first use makes it `T::default()`; a clone of the `Data`
@@ -6091,9 +6162,7 @@ pub struct Data {
     pub wasm_bridge_packages: Vec<(String, String)>,
     /// lib_plan-29 W1c: WASM bridge routes — loft `#native` symbol
     /// (e.g. `n_load_png`) → `(crate_name, bridge_fn)`.  Read by
-    /// `src/generation/mod.rs::output_native_direct_call` for the
-    /// `wasm_browser=true` path; replaces the hard-coded `WASM_BRIDGE_FNS`
-    /// const.
+    /// `host_imports` and `extensions`.
     pub wasm_bridge_routes: HashMap<String, (String, String)>,
     /// lib_plan-29 W2: absolute paths to per-library JS host-imports
     /// files (resolved from `[wasm.bridge].host_js` relative to each
@@ -6134,7 +6203,14 @@ pub struct Data {
     pub(crate) nn_memo: PassAny,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
-    pub(crate) defs_memo: PassAny,
+    pub(crate) defs_memo: ScopedCell,
+    /// `@PLN226` — every callee's return class and definitions walk inside a span in which no
+    /// body changes (`use_analysis::ownership_memo_scope`).
+    pub(crate) span_memo: ScopedCell,
+    /// `@PLN226` — the parameter-write summary (`parser::param_writes_summary`).
+    pub(crate) param_writes: ScopedCell,
+    /// `@PLN226` — the written-parameter summary (`use_analysis::written_params_summary`).
+    pub(crate) written_params: ScopedCell,
     /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
     catching_up: PassCell<HashSet<u32>>,
     /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
@@ -6499,28 +6575,6 @@ impl NarrowSlot {
             }
         }
     }
-
-    /// Native: the stored bytes for the wide value `expr`.
-    #[must_use]
-    pub fn encode_rust(self, expr: &str) -> String {
-        let (enc, _, takes_min) = self.fns();
-        if takes_min {
-            format!("loft::narrow::{enc}(({expr}) as i64, {}_i32)", self.min)
-        } else {
-            format!("loft::narrow::{enc}(({expr}) as i64)")
-        }
-    }
-
-    /// Native: the wide value of the stored bytes `expr`.
-    #[must_use]
-    pub fn decode_rust(self, expr: &str) -> String {
-        let (_, dec, takes_min) = self.fns();
-        if takes_min {
-            format!("loft::narrow::{dec}({expr}, {}_i32)", self.min)
-        } else {
-            format!("loft::narrow::{dec}({expr})")
-        }
-    }
 }
 
 pub fn is_scalar(tp: &Type) -> bool {
@@ -6860,7 +6914,10 @@ impl Data {
             name_only: NameOnlyCache::default(),
             range_memo: PassAny::default(),
             nn_memo: PassAny::default(),
-            defs_memo: PassAny::default(),
+            defs_memo: ScopedCell::default(),
+            span_memo: ScopedCell::default(),
+            param_writes: ScopedCell::default(),
+            written_params: ScopedCell::default(),
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),
@@ -9386,7 +9443,7 @@ impl Data {
 
     /// The marker that separates a bound HOLDER's method namespace from a concrete type's
     /// (loft#1153).  `#` cannot occur in a loft identifier, so no user type can produce it, and
-    /// `generation::sanitize` maps it before anything reaches Rust.
+    /// `opt::names::rust_fn_ident` maps it before any name is emitted.
     const HOLDER_MARK: &'static str = "#g";
 
     /// The largest parameter count (receiver included) a bound-method stub is probed for.
@@ -14839,7 +14896,7 @@ impl Data {
             Type::Iterator(_, _) => "Iterator",
             Type::Keys => "&[Key]",
             // @PLN25: `Optional(τ)` shares its base's Rust type (sentinel storage) — mirrors
-            // the `generation::rust_type` twin. Missing this panicked the native bridge
+            // the `rust_spelling::rust_type` twin. Missing this panicked the native bridge
             // generator on an `integer?`/`text?` attribute.
             Type::Optional(inner) => return self.rust_type(inner, context),
             _ => panic!("Incorrect type {}", tp.name(self)),

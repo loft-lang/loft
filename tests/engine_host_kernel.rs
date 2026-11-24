@@ -1480,9 +1480,9 @@ fn scopeguard_kill(stem: String) -> impl Drop {
 /// eval, live edit acknowledged through the pause (the S3 poll-now),
 /// resume, the SECOND hit proving breakpoint re-resolution across the
 /// reload (offsets moved, identity did not), rebuild driven over the
-/// channel, swap — and the NEW build, compiled, serving the edit over the
-/// RESTORED world.  The compiled build has no breakpoints, so the rustc
-/// writer's post-swap hit is not asked of it (@PLN225 R4).
+/// channel, swap — and the program interpreted again, serving the edit over the
+/// RESTORED world and hitting a breakpoint set in it: the session keeps its
+/// debugger across a rebuild (`@C170`).
 // @speed 2.4
 #[test]
 fn s7_debugger_loop_end_to_end() {
@@ -1629,6 +1629,21 @@ fn main() {{
     // Stage 9: the new build serves the edit over the RESTORED world (events=101).
     ws_send(&game2, "c");
     assert_eq!(ws_recv(&game2), "got:c#201");
+
+    // Stage 10: the successor is the program interpreted again, so the session keeps its
+    // debugger across the swap: a breakpoint set over a new control connection is hit there.
+    let ctl2 = ws_connect(port);
+    ws_send(&ctl2, "D!:bp bump_events");
+    assert_eq!(ws_recv(&ctl2), "D:ok bp bump_events");
+    ws_send(&game2, "d");
+    let hit3 = ws_recv(&ctl2);
+    assert!(
+        hit3.starts_with("D:hit bump_events"),
+        "a hit in the swapped-in process: {hit3}"
+    );
+    ws_send(&ctl2, "D!:resume");
+    assert_eq!(ws_recv(&ctl2), "D:resumed");
+    assert_eq!(ws_recv(&game2), "got:d#301");
 
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(
@@ -1826,6 +1841,156 @@ fn main() {{
         format!("artifact:{path}"),
         "unchanged source must yield the SAME artifact (hash-stable)"
     );
+    drop(_guard);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
+}
+
+/// A development game switches to full speed and back without losing its world (`@C170`).
+/// The game is served on the interpreter, where its debugger lives; `D!:swap fast` hands the
+/// running world to its shipped build (`rebuild fast`, `--ship`), so its speed is the speed it
+/// ships at — a semantics build is refused for it — and
+/// `D!:swap dev` hands it back to the program interpreted again, debugger and all.  Each leg
+/// is told by what only that tier answers: a flip of a function that exists is `true` on the
+/// interpreter and `false` on the C, and a breakpoint is hit only on the interpreter.  The
+/// world's counter carries across both swaps (1, then 2, then 3).
+// @speed 2.4
+#[test]
+fn a_dev_game_switches_to_full_speed_and_back() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    s5_kill_stale(&format!("/.loft/cache/eh_s9_{}-", common::test_port(18117)));
+    std::thread::sleep(Duration::from_millis(200));
+    let port = common::bind_port(18117);
+    reap_port(port);
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s9_{port}-"), Some(port));
+    let src = format!(
+        r#"
+use engine_host;
+struct W {{ events: integer not null, ticks: integer not null }}
+fn bump_events(w: W) -> integer {{
+  w.events = w.events + 1;
+  w.events
+}}
+fn main() {{
+  w = W {{ events: 0, ticks: 0 }};
+  resumed = engine_host::swap_world(w);
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind != 1 {{ return; }}
+      n = bump_events(w);
+      engine_host::send(ev.cid, "got:{{ev.payload}}#{{n}}");
+    }},
+    fn() {{ w.ticks = w.ticks + 1; }});
+}}
+"#
+    );
+    let prog = test_tmp().join(format!("eh_s9_{port}.loft"));
+    fa::write(&prog, src).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let err_path = test_tmp().join(format!("eh_s9_{port}.err"));
+    let err_file = fa::create(&err_path).unwrap();
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.env("LOFT_OFFLINE", "1")
+        .env("LOFT_LIVE_RELOAD", "1")
+        .env("LOFT_DEBUG_CONTROL", "1");
+    cmd.process_group(0);
+    let child = cmd
+        .arg("--interpret")
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(err_file))
+        .spawn()
+        .expect("spawn kernel");
+    let _guard = Guard(Some(child));
+    let reconnect = |what: &str| {
+        let deadline = vm_deadline(20);
+        loop {
+            if let Some(g) = ws_try_connect(port) {
+                break g;
+            }
+            assert!(Instant::now() < deadline, "never reconnected into {what}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    let swap = |ctl: &TcpStream, to: &str| {
+        // Full speed is the shipped build: `rebuild fast` builds it (`--ship`).
+        ws_send(
+            ctl,
+            if to == "fast" {
+                "D!:rebuild fast"
+            } else {
+                "D!:rebuild"
+            },
+        );
+        assert_eq!(ws_recv(ctl), "D:rebuild started");
+        let deadline = vm_deadline(300);
+        loop {
+            std::thread::sleep(Duration::from_millis(300));
+            ws_send(ctl, "D!:rebuild?");
+            let st = ws_recv(ctl);
+            if st == "D:rebuild 2" {
+                break;
+            }
+            assert!(st == "D:rebuild 1", "rebuild status: {st}");
+            assert!(Instant::now() < deadline, "rebuild never ready");
+        }
+        ws_send(ctl, &format!("D!:swap {to}"));
+        assert_eq!(ws_recv(ctl), "D:swap true", "swap {to}");
+        ctl.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        while ws_try_recv(ctl).is_some() {}
+    };
+
+    // Dev, on the interpreter: a flip of a function that exists answers true.
+    let ctl = ws_connect(port);
+    let game = ws_connect(port);
+    ws_send(&game, "a");
+    assert_eq!(ws_recv(&game), "got:a#1");
+    ws_send(&ctl, "D!:flip bump_events");
+    assert_eq!(ws_recv(&ctl), "D:flip true", "the dev game is interpreted");
+    // No shipped build is ready, so full speed refuses: a speed measured on a semantics
+    // build would not be the speed the game ships at.
+    ws_send(&ctl, "D!:swap fast");
+    assert_eq!(
+        ws_recv(&ctl),
+        "D:swap false",
+        "full speed waits for `rebuild fast`"
+    );
+
+    // Fast: the world moves to the C build, which flips nothing.
+    swap(&ctl, "fast");
+    let game = reconnect("the fast build");
+    let ctl = ws_connect(port);
+    ws_send(&game, "b");
+    assert_eq!(
+        ws_recv(&game),
+        "got:b#2",
+        "the world carried into the fast build"
+    );
+    ws_send(&ctl, "D!:flip bump_events");
+    assert_eq!(ws_recv(&ctl), "D:flip false", "the fast build is the C");
+
+    // Dev again: the world comes back, and so does the debugger.
+    swap(&ctl, "dev");
+    let game = reconnect("the dev build");
+    let ctl = ws_connect(port);
+    ws_send(&ctl, "D!:bp bump_events");
+    assert_eq!(ws_recv(&ctl), "D:ok bp bump_events");
+    ws_send(&game, "c");
+    let hit = ws_recv(&ctl);
+    assert!(
+        hit.starts_with("D:hit bump_events"),
+        "a hit after the way back: {hit}"
+    );
+    ws_send(&ctl, "D!:resume");
+    assert_eq!(ws_recv(&ctl), "D:resumed");
+    assert_eq!(ws_recv(&game), "got:c#3", "the world carried back");
     drop(_guard);
     let _ = fa::remove_file(&prog);
     let _ = fa::remove_file(&err_path);

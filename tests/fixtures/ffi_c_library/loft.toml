@@ -1,8 +1,8 @@
 # A library whose native part is C behind the loft-ffi ABI (loft-ffi/include/loft_ffi.h),
-# shipped PREBUILT: tests/ffi_c_library.rs builds native/ffi_c_library.c into
-# prebuilt/<host-triple>/ of a scratch copy, as a library's CI would, and runs one program on
-# every backend (@PLN205 L0a).  `[native] crate` names no crate on disk: it marks the package's
-# natives as linked by C-ABI for the compiled backends.
+# found as a component loft ships beside its binary: tests/ffi_c_library.rs builds
+# native/ffi_c_library.c into a scratch components directory (`LOFT_COMPONENTS`) and runs one
+# program on every backend (@PLN205 L0a, L1.1).  A package's own native library
+# (`[library] native`, `[native] crate`) is refused (@PLN225).
 [package]
 name = "ffi_c_library"
 version = "0.1.0"
@@ -10,7 +10,6 @@ loft = ">=2026.10.0"
 
 [library]
 entry = "src/ffi_c_library.loft"
-native = "loft_ffi_c_library"
 
 [native]
-crate = "loft-ffi-c-library"
+component = "ffi_c_library"

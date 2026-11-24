@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  *
  * The native part of `c_scalar_pkg`: three C functions behind `#c` declarations.  The
- * values are the oracles the package's tests assert (src/native_scalar_pkg.loft). */
+ * values are the oracles the package's tests assert (tests/answer.loft). */
 #include <stdint.h>
 
 int64_t ns_answer(void) {

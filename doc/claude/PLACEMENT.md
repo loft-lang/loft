@@ -252,10 +252,10 @@ differently:
 | backend | table | keyed by |
 |---|---|---|
 | interpreter | `src/native.rs` | the native SYMBOL |
-| `--native` | `CODEGEN_RUNTIME_FNS` + a typed twin | the loft DEF NAME |
+| `--native` | `in_binary_native` (`src/c/mod.rs`) + its `loft_*` function in the C runtime | the native SYMBOL |
 
 Miss the second and the library is interpreter-only — silently, until something
-compiles it. A `&text` out-parameter arrives at the typed twin as `&mut String`.
+compiles it.
 
 ## Instruments and gates
 

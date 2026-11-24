@@ -225,7 +225,7 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    `git -C ../loft-libs-<chunk> worktree add --detach <scratch>/<chunk> origin/main`.  Never the
    sibling checkout itself: another agent may have uncommitted work there.
 2. **Loft — the one under development**: this tree's `target/release/loft`, not the installed
-   one.  `make check-rlib` first when native runs are part of it.
+   one.
 3. **Dependencies — only what `loft.toml` declares**, resolved from the registry at the declared
    version (`loft install` in the package directory).  A dependency you are changing in the same
    arc gets an explicit `--lib <its worktree>` for that run.  `advice[undeclared-dependency]`
@@ -315,11 +315,11 @@ bump instead).  Automates §4a–4b; afterwards an own lib is picked up by
 
 Flags:
 
-- `--native` — adds `native/Cargo.toml` + `native/build.rs` +
-  `native/src/lib.rs` for the Rust cdylib.  Cargo deps already
-  point at the registry versions of `loft-ffi` /
-  `loft-ffi-build` — the scaffolded native crate works
-  immediately on `cargo build --release` post-publish.
+- `--native` — adds a native part in C: `c/<name>.c`, listed under
+  `[c] shim` in `loft.toml`, a `pub fn answer()` bound to it by a `#c`
+  declaration, and a `test_answer` calling it.  loft builds the C with
+  `cc`; no Rust crate (a package's own Rust native library is refused,
+  PACKAGES.md § Goals).
 - `--chunk` — adds `.github/workflows/library-ci.yml` with the
   canonical CI template (mold + loft source build +
   `loft --interpret --tests tests` + `loft --native --tests
@@ -876,8 +876,6 @@ Before you ship a version:
       `index.json` — not only in a local cache or a registry PR.  A dependency that
       has not landed yet turns every consumer's install red; hold the push until it
       has.
-- [ ] `native/Cargo.toml` names no machine-local `path =` dependency.  It builds on
-      the publishing machine and nowhere else.
 - [ ] README, doc comments on every `pub fn` / `pub struct`.
 - [ ] CHANGELOG note for the version (free-form).
 - [ ] Local re-package produces a byte-identical sha256 across
@@ -957,9 +955,7 @@ over walk-up `loft.lock`.  `LOFT_OFFLINE=1` blocks
 auto-install.  That chain picks the VERSION; where the compiler looks for a
 `use` at all, and which location wins, is [PACKAGES.md § Resolution order](PACKAGES.md#resolution-order).
 
-**Native crate fails to build from `~/.loft/registry/.../native/`**
-— the cargo build redirects to `~/.loft/build-cache/<pkg>-<ver>/`
-(per Phase 6b's `auto_build_native` redirect).  Check that
-`~/.loft/build-cache/` is writable + that `loft-ffi` /
-`loft-ffi-build` are reachable on crates.io (or via your
-configured `[source]` mirror).
+**`use <pkg>;` refuses the package's `loft.toml` at `[library] native` or `[native] crate`**
+— the package declares a native library of its own in Rust, which loft does not build or
+load.  Write its native part in C under `[c] shim` (PACKAGES_C_BINDING.md), or install a
+release of the package that has one.

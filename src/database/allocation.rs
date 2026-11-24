@@ -67,8 +67,8 @@ enum PagedKind {
 }
 
 // @PLN103 P3 — the `LOFT_STORES=timeline` runtime store timeline. A pure diagnostic
-// (gated on the env var), so its state lives thread-local rather than on `Stores` — no
-// struct/constructor ripple. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
+// (gated on the env var); its state is the run's (`Stores::run`, `RunDiagnostics::timeline`),
+// so a `par` worker's stores keep their own. A per-logical-store id is `<store_nr>.<seq>`: `store_nr` is a
 // REUSED slot index (P0.4), so `seq` (a monotonic alloc counter) disambiguates slot reuse.
 // `live` maps each live slot to its current seq so a free prints the SAME id as its alloc.
 #[derive(Default)]
@@ -770,7 +770,7 @@ impl Stores {
             && (data.store_nr as usize) < self.allocations.len()
             && !self.is_stack_store(data.store_nr)
             && self.allocations[data.store_nr as usize].live
-            && !self.allocations[data.store_nr as usize].read_only
+            && !self.allocations[data.store_nr as usize].is_locked()
             && !self.allocations[data.store_nr as usize].is_free_protected()
         {
             self.free(data);
@@ -953,12 +953,12 @@ impl Stores {
         store.set_known_type(u16::MAX);
         #[cfg(feature = "op-census")]
         {
-            store.trace_worker = crate::store_census::worker();
-            crate::store_census::alloc_event(format_args!(
-                "N {} {}",
-                store.trace_name(),
-                store.capacity_words()
-            ));
+            store.trace_worker = self.tap.worker();
+            store.tap = Some(self.tap.clone());
+            crate::store_census::alloc_event(
+                store.tap.as_deref(),
+                format_args!("N {} {}", store.trace_name(), store.capacity_words()),
+            );
         }
         // @PLN154 phase 3 — the slot's own number, stamped where the slot goes live so a
         // record relocation can name the store it happened in.
@@ -1257,64 +1257,10 @@ impl Stores {
                 data.store_nr
             );
         }
-        // A `par` worker's stores are merged back at the join, so a worker keeps none.
-        // A keyed rebind's released slot holds the OLD collection, which no buffer refill
-        // takes up (`spare_store` is a record buffer's): parked, it was still live at exit.
-        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
-            self.free(data);
-        } else {
-            self.park_spare(data.store_nr);
-        }
+        self.free(data);
         true
     }
 
-    /// `@FR-R-RefillBuffer` — keep the store a rebind exchange released (`spare_store`); the
-    /// one kept before is freed, so at most one is held.
-    fn park_spare(&mut self, store_nr: u16) {
-        // A parked store's content is dead: the `File`s in it release their handles here
-        // (`@FR-H-Handle`), since the leak report counts the spare as the runtime's own.
-        #[cfg(not(host_fs))]
-        self.release_file_leases(&DbRef {
-            store_nr,
-            rec: 1,
-            pos: 8,
-        });
-        if let Some(old) = self.spare_store.replace(store_nr) {
-            self.free(&DbRef {
-                store_nr: old,
-                rec: 1,
-                pos: 8,
-            });
-        }
-    }
-
-    /// `@FR-R-RebindBuffer` — release a hidden buffer that holds the store a rebind handed
-    /// on, the way the exchange it replaced releases its own: parked as the spare when it is
-    /// a root store the exchange could have parked (`(R-RefillBuffer)`), freed otherwise.
-    pub fn park_or_free(&mut self, db: &DbRef, name: &str) {
-        if db.store_nr == u16::MAX || (db.store_nr as usize) >= self.allocations.len() {
-            return;
-        }
-        if (db.rec, db.pos) == (1, 8)
-            && crate::keys::refill_buffer_enabled()
-            && !self.disable_slot_reuse
-            && !self.is_stack_store(db.store_nr)
-            && self.allocations[db.store_nr as usize].content_swappable(true)
-            && self.lazy_sources.is_empty()
-            && !self.const_refs.iter().any(|r| r.store_nr == db.store_nr)
-        {
-            self.park_spare(db.store_nr);
-        } else {
-            self.free_named(db, name);
-        }
-    }
-
-    /// `@FR-R-RefillBuffer` — the kept store, when it holds a root of type `tp`: handed out
-    /// as is, its previous value still in it, for a callee whose literal writes every field.
-    /// `@FR-R-RefillBuffer`'s live clause — may a buffer handed in LIVE be refilled where it
-    /// is: it is its store's root (`1@8`) of exactly the type being minted, in an ordinary
-    /// store nothing pins (no file, foreign bytes, lock or recording), so it is a previous
-    /// value of the same type that the admitted group rewrites whole.
     /// Is `tp` a vector WRAPPER — the one-field `main_vector<T>` record a collection literal
     /// is built in?  Its mint into a live place is [`Self::mint_at_place`].
     #[must_use]
@@ -1393,97 +1339,6 @@ impl Stores {
         self.remove_claims(db, tp);
         self.store_mut(db).set_u32_raw(db.rec, db.pos, 0);
         true
-    }
-
-    pub fn refill_keeps(&self, db: &DbRef, tp: u16) -> bool {
-        (db.rec, db.pos) == (1, 8)
-            && (db.store_nr as usize) < self.allocations.len()
-            && !self.is_stack_store(db.store_nr)
-            && self.allocations[db.store_nr as usize].known_type == tp
-            && self.allocations[db.store_nr as usize].content_swappable(false)
-            && !self.is_frame_held(db.store_nr)
-    }
-
-    /// `@FR-R-RefillText`'s collection clause — the entry of a refilling callee whose return
-    /// buffer is a one-field wrapper of `vector<E>`, `E` a record of scalars and texts, with its
-    /// vector field at byte `field`.  A live buffer the mint keeps (`refill_keeps`, the test
-    /// `OpDatabaseRefill` asks) keeps its ELEMENTS: the length becomes 0 and the old length `K`
-    /// is answered — slot `i < K` still owns its texts, and the build's element text sets refill
-    /// them.  Only slots under the length are trusted: past it, a removal leaves a stale copy
-    /// of a live element.  Any other buffer is released as the clause's absence releases it
-    /// (the releasing clear) and answers 0.
-    pub fn refill_keep_open(&mut self, buf: &DbRef, tp: u16, field: u32) -> u32 {
-        if buf.store_nr == u16::MAX || buf.rec == 0 {
-            return 0;
-        }
-        if !(crate::keys::refill_buffer_enabled() && self.refill_keeps(buf, tp)) {
-            self.clear_vector_release(buf);
-            return 0;
-        }
-        let store = self.store_mut(buf);
-        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
-        if v_rec == 0 {
-            return 0;
-        }
-        let keep = store.get_u32_raw(v_rec, 4);
-        store.set_u32_raw(v_rec, 4, 0);
-        keep
-    }
-
-    /// The exit of [`Self::refill_keep_open`]'s build: the texts the kept slots `[len, keep)`
-    /// still own — the slots this call did not refill — are released and their slots zeroed,
-    /// so nothing past the length owns heap again.  `size` is the element's width, `texts`
-    /// its text slots' offsets.  A vector that grew past `keep` has no such slot.
-    pub fn refill_keep_close(
-        &mut self,
-        buf: &DbRef,
-        field: u32,
-        keep: u32,
-        size: u32,
-        texts: &[u32],
-    ) {
-        if keep == 0 || buf.store_nr == u16::MAX || buf.rec == 0 {
-            return;
-        }
-        let store = self.store_mut(buf);
-        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
-        if v_rec == 0 {
-            return;
-        }
-        let len = store.get_u32_raw(v_rec, 4);
-        for i in len..keep {
-            for off in texts {
-                let at = 8 + i * size + off;
-                let old = store.get_u32_raw(v_rec, at);
-                if old != 0 {
-                    store.delete(old);
-                    store.set_u32_raw(v_rec, at, 0);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
-        let s = self.spare_store?;
-        if self.allocations[s as usize].known_type != tp {
-            return None;
-        }
-        self.spare_store = None;
-        // `@FR-H-FreeTwice`'s other half — the kept store goes out as a NEW value, so it takes
-        // a new allocation stamp, as a store going live does.  `cr_fnref_minted` tells a store a
-        // fn-ref callee minted from one that was already there by this stamp: with the old one,
-        // a callee's result built in the spare read as borrowed, went on no hand-up list and
-        // was released by nobody (`heap_sound`'s `rebound_then_called` on rustc `--native`).
-        // `LOFT_NO_SPARE_RESTAMP=1` keeps the old stamp.
-        if !crate::env_once!(std::env::var_os("LOFT_NO_SPARE_RESTAMP").is_some()) {
-            self.stores_allocated += 1;
-            self.allocations[s as usize].alloc_serial = self.stores_allocated;
-        }
-        Some(DbRef {
-            store_nr: s,
-            rec: 1,
-            pos: 8,
-        })
     }
 
     /// `@FR-H-SwapIn` — may a root record of type `tp` move to another slot with its store's
@@ -1859,9 +1714,9 @@ impl Stores {
         // Each free resolved to its function, source position and the variable it released
         // (`store_trace`), so the two sites can be read without `introspect`.
         let at = |pc: u32| {
-            let by = crate::store_trace::freed_variable(pc)
+            let by = crate::store_trace::freed_variable(&self.crash, pc)
                 .map_or_else(String::new, |v| format!(" by {v}"));
-            format!("{}{by}", crate::store_trace::site(pc))
+            format!("{}{by}", crate::store_trace::site(&self.crash, pc))
         };
         // The names cost a table per compile, so only `LOFT_REFREE_FAILS=1` builds it.
         let names = if crate::keys::refree_names() {
@@ -1987,24 +1842,27 @@ impl Stores {
             // with the distance back to the entry, because unlabelled it reads as an
             // exact position and the map is sparse enough to be several statements
             // out — inside the stdlib, a different file entirely (loft#1262).
-            let at = crate::crash_report::nearest_source_loc_for_pc(self.alloc_pc).map_or_else(
-                || format!("pc={}", self.alloc_pc),
-                |(recorded_at, p)| {
-                    let back = self.alloc_pc.saturating_sub(recorded_at);
-                    let how_near = if back == 0 {
-                        String::new()
-                    } else {
-                        format!(", nearest span pc-{back}")
-                    };
-                    format!(
-                        "{}:{}:{} (pc={}{how_near})",
-                        p.file, p.line, p.pos, self.alloc_pc
-                    )
-                },
-            );
+            let at = self
+                .crash
+                .nearest_source_loc_for_pc(self.alloc_pc)
+                .map_or_else(
+                    || format!("pc={}", self.alloc_pc),
+                    |(recorded_at, p)| {
+                        let back = self.alloc_pc.saturating_sub(recorded_at);
+                        let how_near = if back == 0 {
+                            String::new()
+                        } else {
+                            format!(", nearest span pc-{back}")
+                        };
+                        format!(
+                            "{}:{}:{} (pc={}{how_near})",
+                            p.file, p.line, p.pos, self.alloc_pc
+                        )
+                    },
+                );
             // The opcode is exact, so print both: the line orients the reader, the op
             // says what actually ran.
-            let op = crate::crash_report::last_op_name();
+            let op = self.crash.last_op_name();
             let op = if op.is_empty() {
                 String::new()
             } else {
@@ -2184,14 +2042,17 @@ impl Stores {
         // store, an incomplete walk, and one carrying a durable `.dmeta`
         // sidecar whose recorded length and CRC must not be truncated behind
         // its back, so every case this must not touch says no inside that call.
-        if store.is_file_backed() && !store.read_only {
+        if store.is_file_backed() && !store.is_locked() {
             store.reclaim_tail();
         }
         store.live = false;
         store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("F {}", store.trace_name()));
+        crate::store_census::alloc_event(
+            store.tap.as_deref(),
+            format_args!("F {}", store.trace_name()),
+        );
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {
@@ -2358,7 +2219,13 @@ impl Stores {
             if !build.allocations[si].live {
                 continue; // a transient the constructor claimed then freed
             }
-            let moved = std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg_attr(not(feature = "op-census"), allow(unused_mut))]
+            let mut moved =
+                std::mem::replace(&mut build.allocations[si], Store::new_freed_sentinel());
+            #[cfg(feature = "op-census")]
+            {
+                moved.tap = Some(self.tap.clone());
+            }
             self.allocations[si] = moved;
             self.clear_free_bit(slot);
             if slot + 1 > self.max {
@@ -2415,10 +2282,6 @@ impl Stores {
                 continue; // stack store — always alive
             }
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
-                continue;
-            }
-            // The kept store of `@FR-R-RefillBuffer` is the runtime's, not a leaked value.
-            if self.spare_store == Some(s_nr as u16) {
                 continue;
             }
             if s.live {
@@ -2677,6 +2540,7 @@ impl Stores {
         if crate::keys::strict_stores() && !s.live {
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -2874,7 +2738,7 @@ impl Stores {
         // Pick the scratch store: a read-only/exposed source needs a separate writable
         // home (claiming into it would panic and could move its buffer, invalidating the
         // exposed view).  `database(1)` hands back a fresh owned store.
-        let scratch_store = if self.store(hash_ref).read_only {
+        let scratch_store = if self.store(hash_ref).is_locked() {
             self.database(1).store_nr
         } else {
             hash_ref.store_nr
@@ -2929,7 +2793,7 @@ impl Stores {
         // Pick the scratch store: a read-only/exposed source needs a separate writable
         // home (claiming into it would panic and could move its buffer, invalidating the
         // exposed view).  `database(1)` hands back a fresh owned store.
-        let scratch_store = if self.store(hash_ref).read_only {
+        let scratch_store = if self.store(hash_ref).is_locked() {
             self.database(1).store_nr
         } else {
             hash_ref.store_nr
@@ -3120,7 +2984,7 @@ impl Stores {
             self.free(scratch);
             return;
         }
-        if store.read_only || store.is_free_protected() {
+        if store.is_locked() || store.is_free_protected() {
             return;
         }
         // Offset 4 of the header — the rec-nr vector.  Read before the header
@@ -3142,6 +3006,7 @@ impl Stores {
             let s = &self.allocations[r.store_nr as usize];
             crate::keys::strict_store_violation(
                 &self.checks,
+                &self.crash,
                 r.store_nr,
                 r.rec,
                 r.pos,
@@ -3367,6 +3232,13 @@ impl Stores {
                 free_bits[word] |= 1u64 << bit;
             }
         }
+        // The worker's own instruments, shared by every store in its table.
+        #[cfg(feature = "op-census")]
+        let worker_tap = std::sync::Arc::new(self.tap.child());
+        #[cfg(feature = "op-census")]
+        for s in &mut allocations {
+            s.tap = Some(worker_tap.clone());
+        }
         WorkerStores::new(Stores {
             types: self.types.clone(),
             names: self.names.clone(),
@@ -3400,6 +3272,26 @@ impl Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::coroutine_host::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: worker_tap,
             run: super::RunDiagnostics::default(),
             render: std::cell::RefCell::default(),
             const_refs: self.const_refs.clone(),
@@ -3431,7 +3323,6 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
-            spare_store: None,
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
@@ -3497,7 +3388,7 @@ impl Stores {
             && let Ok([src, dst]) = self
                 .allocations
                 .get_disjoint_mut([rec.store_nr as usize, to.store_nr as usize])
-            && !dst.read_only
+            && !dst.is_locked()
         {
             let src: &Store = src;
             for &(off, size) in plan {
@@ -3568,7 +3459,7 @@ impl Stores {
             return false;
         }
         let vstore = &self.allocations[vec.store_nr as usize];
-        if vstore.read_only
+        if vstore.is_locked()
             || vstore.is_foreign()
             || vstore.shadow_armed()
             || self.allocations[src.store_nr as usize].is_foreign()
@@ -3728,7 +3619,7 @@ impl Stores {
             return false;
         }
         let vstore = &self.allocations[vec.store_nr as usize];
-        if vstore.read_only || vstore.is_foreign() || vstore.shadow_armed() {
+        if vstore.is_locked() || vstore.is_foreign() || vstore.shadow_armed() {
             return false;
         }
         let vec_rec = vstore.collection_rec(vec.rec, vec.pos);
@@ -4845,7 +4736,7 @@ impl Stores {
             // store is never that store's root at `1@8`, and its known type is the host's.
             if !s.live
                 || s.pinned
-                || s.read_only
+                || s.is_locked()
                 || s.is_file_backed()
                 || s.is_foreign()
                 || s.known_type != tp
@@ -4889,11 +4780,8 @@ impl Stores {
     /// operand carries.
     ///
     /// The bit is set by the parser, which is the only layer that can ask the
-    /// schema whether the field being cleared is a secondary view. Both backends
-    /// call THIS — the interpreter through the `#rust` template in
-    /// `default/01_code.loft`, the native generator through
-    /// `codegen_runtime::OpClearKeyed` — so the decode exists once and the two
-    /// cannot drift.
+    /// schema whether the field being cleared is a secondary view. The interpreter
+    /// calls THIS through the `#rust` template in `default/01_code.loft`.
     pub fn remove_claims_keyed(&mut self, rec: &DbRef, raw_tp: u16) {
         self.remove_claims_mode(
             rec,
@@ -5211,8 +5099,8 @@ impl Stores {
             return;
         };
         let src_oob = src.and_then(|s| self.first_oob_text(s, tp));
-        let (pc, _op, _d) = crate::crash_report::last_context();
-        let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
+        let (pc, _op, _d) = self.crash.last_context();
+        let line = self.crash.source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
         if self
             .run
@@ -5624,7 +5512,7 @@ impl Stores {
         Some(true)
     }
 
-    /// `@FR-R-RefillText` (a) — the byte offsets of a `tp` record's TEXT slots, nested inline
+    /// The byte offsets of a `tp` record's TEXT slots, nested inline
     /// records flattened, when text is the only heap the type can own: `None` for a
     /// collection, a heap-owning enum payload or a field the heap-slot plan cannot express.
     #[must_use]
@@ -5636,32 +5524,6 @@ impl Stores {
                 HeapSlot::Collection(_) | HeapSlot::Tag(..) => None,
             })
             .collect()
-    }
-
-    /// `@FR-R-RefillText`'s vector clause — the offsets of `tp`'s vector fields when every
-    /// field that owns heap is a plain `vector<E>` whose elements own none (no text, no
-    /// collection, no linked group); `None` for any other heap, inline sub-records included.
-    #[must_use]
-    pub fn vector_slots(&self, tp: u16) -> Option<Vec<u32>> {
-        let Parts::Struct(fields) = &self.types.get(tp as usize)?.parts else {
-            return None;
-        };
-        let mut out = Vec::new();
-        for f in fields {
-            if !self.type_owns_heap(f.content) {
-                continue;
-            }
-            if !f.other_indexes.is_empty() {
-                return None;
-            }
-            match &self.types.get(f.content as usize)?.parts {
-                Parts::Vector(elem) if !self.type_owns_heap(*elem) && !self.is_linked(*elem) => {
-                    out.push(u32::from(f.position));
-                }
-                _ => return None,
-            }
-        }
-        Some(out)
     }
 
     /// A type's heap slots, derived on the first ask and cached on its row.
@@ -6649,7 +6511,7 @@ impl Stores {
             if !s.live {
                 return Err("store is free");
             }
-            if s.read_only || s.is_borrowed() {
+            if s.is_locked() || s.is_borrowed() {
                 return Err("store is read-only or borrowed");
             }
             if s.known_type == u16::MAX {

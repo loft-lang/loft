@@ -1263,9 +1263,9 @@ mod pages {
 
         /// One query's node reads and its results, in one recording window.
         fn query_touch(&self, pre: &str) -> (BTreeSet<u32>, Vec<u32>) {
-            rt::touch_begin();
+            rt::touch_begin(&self.store);
             let hits = self.query(pre);
-            (rt::touch_end(), hits)
+            (rt::touch_end(&self.store), hits)
         }
     }
 

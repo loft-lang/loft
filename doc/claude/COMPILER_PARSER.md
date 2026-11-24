@@ -247,9 +247,9 @@ the pass-2 initialiser.
 
 ### Synthesised-identity stability — the counter-coupling hazard
 
-A recurring bug class spans the parser **and** the native backend. Both synthesise
-named things — temporary variables (parser) and hoisted sub-expressions (native
-pre-eval) — and both historically derived a synthesised thing's **identity from a
+A recurring bug class spans the parser **and** a code generator. Both synthesise
+named things — temporary variables (parser) and hoisted sub-expressions (the retired rustc
+writer's pre-eval) — and both historically derived a synthesised thing's **identity from a
 mutable counter that two independent traversals had to read in lock-step**. When the
 two traversals disagree about the counter's state, the identities desync silently.
 
@@ -263,8 +263,8 @@ Three instances seen so far:
 
 **Shared root.** Identity is *re-derived from a counter by two traversals* that are
 coupled only by the fragile bet that the counter is in the same state both times.
-`try_subst_pre_eval` (`src/generation/pre_eval.rs`) makes this literal: to recognise a
-node it rewinds `self.counter` and **re-runs codegen, then string-compares the output** —
+The rustc writer's `try_subst_pre_eval` made this literal: to recognise a
+node it rewound `self.counter` and **re-ran codegen, then string-compared the output** —
 so a node's identity is "the exact text it emits at counter K," a property of the *walk*,
 not of the *node*.
 

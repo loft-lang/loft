@@ -417,7 +417,13 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  `loft_ffi::LoftStore::foreign_vector_from_owned`), and a foreign vector
                  HANDED to a bridge as an argument is copied for the call
                  (`Stores::bridge_args`): a cdylib reads a vector by pointer arithmetic
-                 on the one store it is given.
+                 on the one store it is given.  For the same reason every OTHER heap
+                 argument — a vector or a record — that lies in another store than that
+                 one is deep-copied into it for the call, by its type, and written back
+                 over the original after the call when its parameter is not `const`
+                 (`Stores::bridge_copy_in` / `bridge_move_back`, the C's
+                 `loft_ffi_move_in` / `loft_ffi_move_back`): `cat(v, w)` of two locals
+                 concatenates the two, as a call of a loft function does.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
 negative bounds LOFT_DATA.md § Vectors (@P384) + STDLIB.md § text slice.

@@ -15,6 +15,8 @@ store-lifetime fix follows: [§ Every new defect](#every-new-defect-updates-the-
 The ownership model these records describe is [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md); its
 formal rules are [formal/ownership.md](formal/ownership.md).  The checker that reads the
 records grows out of the existing oracle in `src/ownership_cfg.rs`.
+The lowerings of the retired rustc writer that this doc once described are in
+[STORE_RECORDS-history.md](STORE_RECORDS-history.md).
 
 ## Why a record, and not more checks over `deps`
 
@@ -150,7 +152,7 @@ that summary, so the holder and the record's own local are two names for one sto
 (`LOFT_RECORDS_NO_FN_RETURN=1` reads such an answer as holding nothing).
 A finding names the source line it was first seen at, and a re-free or a use after the end names
 the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
-of a block is its value is one reading shared with the C and rustc writers
+of a block is its value is one reading shared with the C writer
 (`op_sets::is_release_statement`): a release after the value, a witness's with its reset
 included, yields none.
 A call the interpreter brackets only on its copy arm (F9c, F7-copy, R2b) is read bracketed there
@@ -276,16 +278,7 @@ field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning
 read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.  A literal
 buffer adopted by a renamed return buffer that is assigned again takes no free, its guard against
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
-On rustc `--native`, a call arm inside `output_set`'s `_old_<name>` stash leaves the displaced
-store to that stash (`Output::old_stash_var`); `LOFT_NATIVE_INNER_DISPLACED_FREE=1` frees it in
-the arm too.  The records read IR, which both spellings share, so they cannot see this one.
-Nor the next two, also rustc `--native` only: a call bind that aliases a borrowed view into a
-never-free local (`adopt` is `true`) leaves `call_bind_owns` false, so a runtime-Join local's
-owned-store tracker does not take the caller's store as its own
-(`LOFT_NATIVE_VIEW_ALIAS_OWNS=1` does); and a guarded free of such a local
-(`OpFreeRefIfDistinct`) lets its tracker go of the store it releases
-(`LOFT_NATIVE_GUARDED_FREE_KEEPS_TRACKER=1` keeps it) — each switch re-frees a sub-rule run's
-answer (P-Rule `borrowed`, `mixed_run`).  A
+A
 record update built in a temporary (`Unit { hp: …, ..u }` as a value) gives the temporary a store
 of its own and copies the base in, which on a return buffer is the caller's store, refilled
 (`parse_object_update`); `LOFT_NO_UPDATE_TEMP_COPY=1` binds a whole-variable base instead, which
@@ -468,8 +461,8 @@ An IR `Set(v, value)` does not say what happens to stores.  The code generator d
 30 named lowerings (`LOFT_TRACE_BIND` prints the one each assignment takes): bind `v` to the
 value, deep-copy the value into a fresh store of `v`'s own and free the source, adopt the
 store a callee minted, move, and more.  The choice reads the facts the records must not
-trust (`deps`, `return_adopts_fresh_store`), and the Rust-native (`src/generation/`) and C
-(`src/c/`) backends repeat it in their own code.
+trust (`deps`, `return_adopts_fresh_store`), and the C backend (`src/c/`) repeats it in its
+own code.
 
 So the IR is not yet a full description of a function's stores, and a record built from it
 alone mis-reads every assignment whose lowering copies.  Measured: `x = f(e)` where `f`
@@ -515,15 +508,7 @@ protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), 
 writer compares against them: a callee that re-points a `&` argument and answers its old
 store hands that store to the copy, and one that answers the new store hands over a store the
 argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
-leaks the first and frees the second while the argument holds it.  The rustc writer reads it for whether a reassignment frees what it displaces
-(`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
-(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
-runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
-owner witness then takes the answer as its own where it is no other argument's store
-(`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
-`_disp_` stash already releases the displaced store (`old_stash_var`).  A reassignment from
-another variable's record copies only where `re_bind` copies it (R2c), the owner witness asking
-the same (`var_copy_taken`; `LOFT_NATIVE_OWN_VAR_COPY=1`).  And `re_bind` itself frees nothing a
+leaks the first and frees the second while the argument holds it.  `re_bind` itself frees nothing a
 keyed local displaces when its null init minted nothing and every value it is bound to is a null
 or a borrow (`__kvb_N = b.0`): it never holds a store (`LOFT_KEYED_VIEW_DISPLACED_FREE=1`).  A writer row's `lowering=` asks
 `bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
@@ -558,8 +543,7 @@ interpreter arm it has no entry for.  The judgment is two tables in `scripts/bin
 
 A new arm on either side is added to the table it belongs in, with the rule that settles it.
 The nightly `Lowering census` job runs the whole suite; `tests/bind_census.rs` holds one
-program on every PR and proves the check can fail.  The rustc writer's census
-(`--writer native`) is a report and has no table.
+program on every PR and proves the check can fail.
 
 ## Phases
 

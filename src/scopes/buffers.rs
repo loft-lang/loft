@@ -503,9 +503,9 @@ fn place_in_if(
 }
 
 /// Is `av` the buffer of a call a `for` loop ITERATES (`for f in make(…) { … }`)?  Such a
-/// buffer is the native emitter's to place (@PLN157 § V-j, `hoist::move_appends`): it starts
-/// as the sentinel and is claimed in the destination's store at the loop, so a guarded mint
-/// in front of the loop would be a second owner of the same slot.
+/// buffer is the emitter's to place (`@FR-R-ElemFirst`'s loop source, as
+/// `parser::result_buffer` declines it): it starts as the sentinel and is claimed at the loop,
+/// so a guarded mint in front of the loop would be a second owner of the same slot.
 fn iterates_a_call_into(ops: &[Value], av: u16) -> bool {
     ops.iter().any(|op| {
         op.any_node(&mut |n| {

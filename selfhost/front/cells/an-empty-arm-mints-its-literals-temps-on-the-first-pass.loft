@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an empty `[]` arm mints its `_vec_N`/`_elm_N` on the first pass, the temp typed by the vector the arm becomes.
+// Prints: [1] 1 0 [1] ["a"]
+
+struct P { x: integer }
+fn e1(c: boolean) -> vector<integer> { if c { [1] } else { [] } }
+fn e2(c: boolean) -> vector<P> { if c { [P { x: 1 }] } else { [] } }
+fn e3(c: boolean) -> vector<P> { if c { [] } else { [P { x: 1 }] } }
+fn e4(c: boolean) -> vector<integer> { match c { true => [1], _ => [] } }
+fn e5(c: boolean) -> vector<P>? { if c { [P { x: 1 }] } else { [] } }
+fn e6(c: boolean) -> vector<text> { if c { ["a"] } else { [] } }
+fn main() { println("{e1(true)} {len(e2(true))} {len(e3(true))} {e4(true)} {e6(true)}"); }

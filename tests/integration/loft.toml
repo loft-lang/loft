@@ -16,9 +16,9 @@ version = "0.0.0"
 loft    = ">=0.8"
 
 [dependencies]
-# Floors at the first releases that carry `pub` on what this reads: a field is private
-# to its file without it (C140).
-web           = ">=0.4.5"
-server        = ">=0.7.4"
+# Floors at the first releases that carry `pub` on what this reads (a field is private
+# to its file without it, C140) and a C native part (a Rust one is refused).
+web           = ">=0.5.0"
+server        = ">=0.8.0"
 game_protocol = ">=0.1.7"
 hex_world     = ">=0.2.3"

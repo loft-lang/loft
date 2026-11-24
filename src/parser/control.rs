@@ -1133,9 +1133,9 @@ impl Parser {
                 }
                 l.push(Value::Line(line));
                 self.line = line;
-                // loft#665 piece 3 — publish where the compiler is, so an internal
-                // panic points at the user's line instead of a compiler source file.
-                crate::crash_report::note_compile_pos(self.lexer.pos());
+                // loft#665 piece 3 — where the parse is, so an internal panic points at the
+                // user's line instead of a compiler source file (`parse_file`).
+                self.compile_pos = Some(*self.lexer.pos());
             }
             if self.lexer.has_token(";") {
                 continue;
@@ -2705,13 +2705,9 @@ impl Parser {
             // P236: when the body's tail is a `Value::If(...)` (or
             // `match`, which lowers to nested `If`) and the function
             // returns a heap-owned reference, unify the branches'
-            // work-refs so all paths share one return slot.  Without
-            // this, native codegen drops the if/else's value and
-            // returns the typed null sentinel.  See `unify_if_branches_work_refs`
-            // for the full rationale.  Wrap in `Value::Return(...)` so
-            // the existing `Return(If(...))` native codegen at
-            // `src/generation/emit.rs:166-182` emits
-            // `return if cond { ... } else { ... }` correctly.
+            // work-refs so all paths share one return slot (see
+            // `unify_if_branches_work_refs`), and wrap the tail in
+            // `Value::Return(...)` so it returns the chosen branch's value.
             // `base`, because the question is whether the RETURN is heap-shaped, and a
             // nullable one is: `S?` holds the same record as `S` (@FR-L-Null, layout(τ) =
             // layout(τ?)).  Asked bare, every `τ?` tail kept a work-ref per arm plus a
@@ -11523,11 +11519,6 @@ impl Parser {
     /// `??`); the interpreter, which keeps the value on its stack, is correct in all of
     /// them — an accept/reject divergence.
     ///
-    /// A `match` on a TEXT subject only *appeared* to work: freeing the subject copy emits
-    /// an `OpFreeText` after the value, which incidentally trips `has_trailing_void` in
-    /// `generation::emit`, which materialises the block.  The subject's type has nothing to
-    /// do with the arm temporary's lifetime — that is what makes it a proxy, not the fact.
-    ///
     /// Rewriting each arm leaf to `Set(q, leaf)` yields exactly the shape the `if` TAIL
     /// already emits (`*var_q = …;` per arm), which native compiles.  Returns `true` when
     /// it rewrote `code`, which is then a VOID branch of `Set`s.
@@ -14578,9 +14569,7 @@ impl Parser {
             // rather than answering quietly.
             //
             // The message names `break` and NOT a bare `return;` because only `break` is a
-            // working cure — `detect_lazy_for` (generation/coroutine.rs) rejects a `return`
-            // outright, so such a generator falls back to the eager buffer, whose factory
-            // cannot emit a mid-body return either (its type is `Box<dyn LoftCoroutine>`).
+            // working cure.
             if !self.first_pass && matches!(r_type, Type::Iterator(_, _)) {
                 diagnostic!(
                     self.lexer,
@@ -15125,8 +15114,8 @@ impl Parser {
     /// Extract the assert condition expression from the source line.
     /// Reads the line at `pos.file:pos.line`, finds `assert(`, and extracts
     /// the text up to the matching `)`.
-    fn extract_assert_expr(pos: &crate::lexer::Position) -> String {
-        let line = Self::read_source_line(pos.file.as_str(), pos.line);
+    fn extract_assert_expr(&self, pos: &crate::lexer::Position) -> String {
+        let line = self.read_source_line(pos.file.as_str(), pos.line);
         // Find "assert(" and extract the condition
         if let Some(start) = line.find("assert(") {
             let after = start + 7; // skip "assert("
@@ -15187,16 +15176,13 @@ impl Parser {
     }
 
     /// Read a single source line from a file (or VirtFS under WASM).
-    fn read_source_line(file: &str, line: u32) -> String {
-        #[cfg(feature = "wasm")]
-        {
-            if let Some(content) = crate::wasm::virt_fs_get(file) {
-                return content
-                    .lines()
-                    .nth(line as usize - 1)
-                    .unwrap_or("")
-                    .to_string();
-            }
+    fn read_source_line(&self, file: &str, line: u32) -> String {
+        if let Some(content) = self.lexer.page_file(file) {
+            return content
+                .lines()
+                .nth(line as usize - 1)
+                .unwrap_or("")
+                .to_string();
         }
         if let Ok(content) = crate::file_access::read_to_string(file) {
             content
@@ -15230,7 +15216,7 @@ impl Parser {
                 list[1].clone()
             } else {
                 // Extract the assert expression from the source line.
-                let expr = Self::extract_assert_expr(call_pos);
+                let expr = self.extract_assert_expr(call_pos);
                 Value::str(&expr)
             };
             if self.first_pass {
@@ -15260,7 +15246,7 @@ impl Parser {
             if matches!(message.unspan(), Value::Text(_)) {
                 *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
             } else {
-                let condition = Value::str(&Self::extract_assert_expr(call_pos));
+                let condition = Value::str(&self.extract_assert_expr(call_pos));
                 let pass = Value::Call(
                     d_nr,
                     vec![

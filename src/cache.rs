@@ -698,92 +698,20 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
     Some(h.finalize().into())
 }
 
-/// @PLN11 Arc N / N0 — locate `libloft.rlib` for THIS build (dev `target/<prof>/`,
-/// its `deps/`, or an installed `<prefix>/share/loft/`).
-fn loft_rlib_path() -> Option<std::path::PathBuf> {
-    let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
-    rlib_path_in(&exe_dir)
-}
-
-/// [`loft_rlib_path`] for a loft binary at `exe_dir`.  The uplifted `libloft.rlib` is made the
-/// newest per-unit rlib FIRST ([`crate::cargo_layout::refresh_runtime_uplift`], what every build
-/// that links it does), so the fingerprint is of the rlib a build links.  Reading it before a
-/// refresh hashed a stale uplift a restored cache left, and the first build afterwards refreshed
-/// it: two answers in one tree — CI's `cache warm --runtime html` stamped the wasm runtime with
-/// the stale one, and the first `--html` test rebuilt it for seven minutes while another waited.
-fn rlib_path_in(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    crate::cargo_layout::refresh_runtime_uplift(exe_dir);
-    // The same debris rule `toolchain::find_loft_rlib` applies (#304: both name one rlib).
-    let debris = crate::cargo_layout::classic_deps_is_debris(exe_dir)
-        && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());
-    if let Some(found) = rlib_candidates(exe_dir)
-        .into_iter()
-        .skip(usize::from(debris))
-        .find(|c| crate::file_access::exists(c))
-    {
-        return Some(found);
-    }
-    if crate::file_access::file_name(exe_dir).as_deref() == Some("bin") {
-        let share = exe_dir
-            .parent()?
-            .join("share")
-            .join("loft")
-            .join("libloft.rlib");
-        if crate::file_access::exists(&share) {
-            return Some(share);
-        }
-    }
-    None
-}
-
-/// Candidate `libloft.rlib` locations for a loft binary at `exe_dir`, most
-/// authoritative first.
-///
-/// `deps/libloft.rlib` MUST come before the uplifted `<profile>/libloft.rlib`
-/// (#304): the deps copy is what every binary links and what
-/// `native_lib::find_loft_rlib` hands to cdylib builds, while the uplifted copy
-/// is only refreshed by an explicit `cargo build --lib`.  `cargo test` rebuilds
-/// the lib (dev-dep-unified features) into `deps/` and re-uplifts the *binary*
-/// but NOT the rlib, so after any `src/` change the uplifted copy describes a
-/// loft that no longer exists.  Fingerprinting that stale file made
-/// [`loft_build_fingerprint`] validate native cdylibs against a different rlib
-/// than they are built against — the full-`make test` viewer crash.  The
-/// uplifted path stays as a fallback for trees without `deps/` (e.g. a
-/// hand-copied binary + rlib pair).
-fn rlib_candidates(exe_dir: &std::path::Path) -> [std::path::PathBuf; 2] {
-    [
-        exe_dir.join("deps").join("libloft.rlib"),
-        exe_dir.join("libloft.rlib"),
-    ]
-}
-
-/// @PLN11 Arc N / N0 — the canonical fingerprint of THIS loft build, for
-/// native-artifact validity (@C71 "build fingerprint").  A native artifact links
-/// `libloft.rlib`, so it is valid only against the loft build whose rlib it links:
-/// this is the rlib's **content** hash (sha256 → `u64`), memoised per process.  A
-/// loft codegen/runtime change, a rustc bump, or a cross-target build all rewrite
-/// the rlib bytes (cargo rebuilds it), so all flip the fingerprint.  This is the
-/// single seam the native-artifact cache — and, eventually, the library
-/// validation layer — consults; do NOT key on mtime or git-`BUILD_ID` (both miss
-/// an *uncommitted* dev rebuild, which is exactly when the stale-link bites).
-///
-/// Falls back to the loft **binary**'s content hash when the rlib can't be located
-/// (a `--bin`-built dev loft, whose only rlib is the *hashed* `deps/libloft-<hash>.rlib`
-/// — not the bare `libloft.rlib` [`loft_rlib_path`] looks for).  The binary is rebuilt
-/// together with the rlib, so its hash flips on the same changes: a valid staleness
-/// signal.  This matters because the old `0`-when-absent path made
-/// [`native_artifact_fingerprint_matches`] **match anything**, silently reusing a stale
-/// cdylib → the `native function not loaded` stub (the M1c viewer failure).  Only reaches
-/// `0` if neither rlib nor exe can be hashed; a source-less prebuilt install never hits
-/// this gate (it loads its committed `.so` via the prebuilt path), so the fallback can't
-/// force a doomed rebuild there.
+/// The canonical fingerprint of THIS loft build, for compiled-artifact validity (@C71 "build
+/// fingerprint"): the loft executable's **content** hash (sha256 → `u64`), memoised per process.
+/// A library's hosted C unit and the standard library's unit are built against the C runtime this
+/// binary carries, so they are valid only for the build that made them; a runtime change, a
+/// compiler change or a cross-target build all rewrite the binary.  Never mtime or a git
+/// `BUILD_ID`: both miss an uncommitted dev rebuild, which is exactly when a stale unit bites.
+/// `0` only when the executable cannot be read, and then said once.
 #[must_use]
 pub fn loft_build_fingerprint() -> u64 {
     use std::sync::OnceLock;
     static FP: OnceLock<u64> = OnceLock::new();
     *FP.get_or_init(|| {
-        let fp = loft_rlib_path()
-            .or_else(|| std::env::current_exe().ok())
+        let fp = std::env::current_exe()
+            .ok()
             .map_or(0, |p| stamped_content_fp(&p));
         if fp == 0 {
             // The `fp == 0` path makes `native_artifact_fingerprint_matches`
@@ -791,9 +719,9 @@ pub fn loft_build_fingerprint() -> u64 {
             // disk regardless of the loft build that produced it.  That is the
             // stale-link footgun; never let it pass unannounced.
             eprintln!(
-                "loft: warning — cannot fingerprint this loft build (no readable \
-                 libloft.rlib or executable); native artifacts cannot be staleness-checked \
-                 and are reused as-is. If results look stale, run `loft cache prune --all`."
+                "loft: warning — cannot fingerprint this loft build (its executable cannot be \
+                 read); compiled libraries cannot be staleness-checked and are reused as-is. \
+                 If results look stale, run `loft cache prune --all`."
             );
         }
         fp
@@ -898,41 +826,6 @@ pub fn rustflags_fingerprint() -> u64 {
         "/remap=",
         env!("LOFT_BUILD_REMAPPED")
     ))
-}
-
-/// `LOFT_NATIVE_RELEASE_FLAGS` — extra `rustc` arguments for the SHIPPED tier
-/// (`--ship` and every generated library cdylib), split on whitespace: a
-/// MEASUREMENT switch for trying a code-generation flag over a whole portal run
-/// (`-C llvm-args=-align-all-functions=6`) before it is made a default.  Empty when unset.
-/// Every cache key that names a release binary folds [`native_release_flags_fingerprint`]
-/// (over [`release_rustc_args`], this list appended),
-/// so a run with other flags never adopts this one's binary.
-#[must_use]
-pub fn native_release_flags() -> Vec<String> {
-    std::env::var("LOFT_NATIVE_RELEASE_FLAGS")
-        .map(|v| v.split_whitespace().map(str::to_string).collect())
-        .unwrap_or_default()
-}
-
-/// The shipped tier's `rustc` arguments: `src/native_release_args.txt` (the one list the
-/// performance scripts read too), then [`native_release_flags`].
-#[must_use]
-pub fn release_rustc_args() -> Vec<String> {
-    let mut args: Vec<String> = include_str!("native_release_args.txt")
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(str::to_string)
-        .collect();
-    args.extend(native_release_flags());
-    args
-}
-
-/// The fingerprint of [`release_rustc_args`]: what a cached release artifact's key folds, so
-/// a binary built with other arguments is never adopted.
-#[must_use]
-pub fn native_release_flags_fingerprint() -> u64 {
-    rustflags_fp_of(&release_rustc_args().join(" "))
 }
 
 /// Pure core of [`rustflags_fingerprint`] (takes the flag string so it is testable).
@@ -1095,81 +988,6 @@ pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> 
     crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-}
-
-/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
-/// there is no working `rustc`.  Asked once per process, and the ONE place loft asks it:
-/// a launch of `rustc` costs more than a warm start of loft itself, so a run that executes a
-/// program must never reach here.  `LOFT_TIMING=1` reports each launch (`rustc_probe=`), which
-/// is how a start-up that pays one shows it.
-#[must_use]
-pub fn rustc_version() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static VERSION: OnceLock<Option<String>> = OnceLock::new();
-    VERSION
-        .get_or_init(|| {
-            let started = std::time::Instant::now();
-            let version = crate::platform::process::Spawn::new(
-                crate::platform::process::Program::search("rustc"),
-            )
-            .arg("--version")
-            .run(b"")
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("rustc")
-                    .trim()
-                    .to_string()
-            });
-            if crate::platform::timing_enabled() {
-                eprintln!(
-                    "LOFT_TIMING rustc_probe={:.2}ms",
-                    started.elapsed().as_secs_f64() * 1000.0
-                );
-            }
-            version
-        })
-        .as_deref()
-}
-
-/// The reason [`rustc_mismatch`] gives when there is no `rustc` at all — a missing toolchain,
-/// which no runtime rebuild can cure, as opposed to a changed one.
-pub const RUSTC_NOT_FOUND: &str = "rustc not found";
-
-/// The rustc this loft was BUILT with (the `LOFT_BUILD_RUSTC` stamp from
-/// build.rs) vs the one a plain `rustc` resolves RIGHT NOW — which depends
-/// on PATH and rustup's cwd-sensitive toolchain overrides, so it can
-/// differ between two invocations of the same loft binary (the repo's
-/// `rust-toolchain.toml` pin vs the rustup default in `/tmp`).  Every
-/// build that links the SVH-locked `libloft.rlib` is DOOMED under a
-/// mismatch (rustc E0514, "compiled by an incompatible version") — so
-/// build paths ask this BEFORE spawning, and skip to the interpreter with
-/// a one-line reason instead of spewing a compiler error and leaving a
-/// half-written target.  `None` = proceed (matching, or no stamp to
-/// compare); `Some(reason)` = mismatch / no usable rustc.  Memoised: the
-/// answer cannot change within a process.
-#[must_use]
-pub fn rustc_mismatch() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static REASON: OnceLock<Option<String>> = OnceLock::new();
-    REASON
-        .get_or_init(|| {
-            let stamp = option_env!("LOFT_BUILD_RUSTC").unwrap_or("");
-            if stamp.is_empty() {
-                return None;
-            }
-            match rustc_version() {
-                Some(v) if v == stamp.trim() => None,
-                Some(v) => Some(format!(
-                    "rustc changed since this loft was built ({stamp} → {v})"
-                )),
-                None => Some(RUSTC_NOT_FOUND.to_string()),
-            }
-        })
-        .as_deref()
 }
 
 /// @PLN11 Arc N / N0 — clear a native build target whose existing artifact
@@ -1853,19 +1671,6 @@ mod tests {
         let _ = crate::file_access::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn rlib_candidates_prefer_deps_over_uplifted() {
-        // #304 — the fingerprint must hash `deps/libloft.rlib` (the copy every
-        // binary links and `native_lib::find_loft_rlib` builds cdylibs against),
-        // not the uplifted `<profile>/libloft.rlib`: `cargo test` rewrites the
-        // deps copy and the binary but leaves the uplifted copy stale, so the
-        // old uplifted-first order validated cdylibs against a dead loft build.
-        let exe_dir = std::path::Path::new("target/release");
-        let [first, second] = rlib_candidates(exe_dir);
-        assert_eq!(first, exe_dir.join("deps").join("libloft.rlib"));
-        assert_eq!(second, exe_dir.join("libloft.rlib"));
-    }
-
     /// The wasm runtime rlib serves every loft build of one source tree: a release and a
     /// debug binary alternating keep both stamps (no lock, no cargo per call), a real
     /// rebuild forgets every build that does not match it, and the set stays bounded.
@@ -1895,31 +1700,6 @@ mod tests {
             40 + RUNTIME_FPS_KEPT as u64 - 1
         ));
         let _ = crate::file_access::remove_dir_all(&dir);
-    }
-
-    /// The rlib a fingerprint reads is the newest per-unit rlib, not a stale uplift a restored
-    /// cache left: one tree, one answer, whether or not a build has refreshed the uplift yet.
-    /// Reading the stale uplift stamped CI's warmed wasm runtime with a fingerprint no test
-    /// computed, and the first `--html` test rebuilt it while another waited 416 s.
-    #[test]
-    fn the_fingerprinted_rlib_is_the_newest_unit_not_a_stale_uplift() {
-        let p = std::env::temp_dir().join(format!("loft_fp_uplift_{}", std::process::id()));
-        let _ = crate::file_access::remove_dir_all(&p);
-        let unit_out = p.join("build").join("loft").join("abcd").join("out");
-        crate::file_access::create_dir_all(&unit_out).unwrap();
-        crate::file_access::write(p.join("libloft.rlib"), b"the stale uplift").unwrap();
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
-        crate::file_access::set_modified(p.join("libloft.rlib"), old).unwrap();
-        crate::file_access::write(unit_out.join("libloft.rlib"), b"the newest unit").unwrap();
-        let found = super::rlib_path_in(&p).expect("an rlib");
-        let bytes = crate::file_access::read(&found).unwrap();
-        let _ = crate::file_access::remove_dir_all(&p);
-        assert_eq!(
-            bytes,
-            b"the newest unit",
-            "fingerprinted {}",
-            found.display()
-        );
     }
 
     #[test]

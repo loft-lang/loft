@@ -622,6 +622,9 @@ pub fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, ro
   match n {
     NdReturn { inner } => match el_ir::unspan(inner) {
       NdVar { n: v } => if v != buf && !vars.vars[v].argument && (el_types::base(el_vars::tp(vars, v)) is TyVector) { ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: buf }, ir::NdVar { n: v }, ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
+      // A top-level constant's view (`return NUMS`, `is_const_view`, loft#2585): copied into the
+      // buffer, which is returned — never the write-locked constant store itself.
+      NdCall { def_nr: cd } => if el::def(e, cd).name == "OpConstRef" { ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: buf }]), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: buf }, el_ir::unspan(inner), ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
       // A fresh literal (`return [1]`) is copied into the buffer at its end — its own store
       // freed — and the block answers the buffer (`materialize_vector_arms_into`).
       NdBlock { block } => {
@@ -925,6 +928,11 @@ pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> bo
     // A vector member of a stack tuple (`b = a.0`).
     NdTupleGet { var: _ } => true,
     NdCall { def_nr, args } => {
+      // (`is_const_view`, loft#1686: a top-level vector constant's view of the write-locked
+      // constant store is read whole exactly like a bare variable — the bind copies.)
+      if el::def(e, def_nr).name == "OpConstRef" {
+        return true;
+      }
       if el::def(e, def_nr).name != "OpGetField" {
         return false;
       }
@@ -2242,6 +2250,7 @@ pub fn int4_rows(e: el::El, t: ir::TypeT) {
         }
       }
     },
+    TyOptional { inner: ioi } => match ioi { TyInteger { spec: ios } => { if el_types::narrow_width(ios) > 0 { ict = el_schema::content_type(e, t); if ict >= 0 { el_schema::vector_type(e, ict); } } }, _ => {} },
     _ => {}
   }
 }
@@ -2270,6 +2279,8 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
       if n == "" { n = registration_name(e, inner); }
       if n == "" { "" } else { "vector<{n}>" }
     },
+    // (A generator handle, which `elem_name` does not spell: `iterator<…>`.)
+    TyIterator { step: _ } => el_types::type_key_name(e, t),
     _ => el_types::elem_name(e, t)
   }
 }
@@ -2366,15 +2377,27 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
 pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
   sp = el_types::tuple_spelling_e(e, elems, ", ");
-  if sp == "" {
-    el::refuse(e, "a vector of tuples with a member of this kind");
-    return null;
-  }
   tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
   // `vector_def`'s position: the `]`, or — for a declared element or an empty `[]` — the token
   // before the `[`, read before the literal is.
   cb = closing_bracket(e, tok);
   pos = el::pos_at(e, if cb == tok + 1 || declared { tok - 1 } else { cb });
+  if sp == "" {
+    // Refused, but the tuple's record, `vector<(…)>` and `main_vector<(…)>` are registered
+    // first, as Rust's `vector_def` registers them for any element: every definition after them
+    // keeps Rust's number.
+    rn = el_types::type_key_name(e, t);
+    if rn != "" && el::def_nr(e, "main_vector<{rn}>") < 0 {
+      rtd = el_types::tuple_def(e, elems, pos);
+      el_schema::make_vector_def(e, t, rn, pos, true);
+      rvd = el::def_nr(e, "vector<{rn}>");
+      if rvd >= 0 && rtd >= 0 {
+        e.b.data.definitions[rvd].parent = rtd;
+      }
+    }
+    el::refuse(e, "a vector of tuples with a member of this kind");
+    return null;
+  }
   td = el_types::tuple_def(e, elems, pos);
   nm = "({sp})";
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
@@ -2481,7 +2504,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     // A nullable struct enum is its enum's record (null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else if el_types::int4(spec) { 4 } else { 8 }, TyFloat => 8, TyBoolean => 1, TyText { dep: _ } => 4, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else if el_types::int4(spec) { 4 } else { 8 }, TyFloat => 8, TyBoolean => 1, TyText { dep: _ } => 4, _ => -1 },
     _ => -1
   }
 }
@@ -2505,6 +2528,11 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
         _ => {}
       }
     },
+    _ => {}
+  }
+  // (A `vector<u8?>` holds its elements in the nullable row, `vector<byte<0,true>>`.)
+  match t {
+    TyOptional { inner: nni } => match nni { TyInteger { spec: nns } => if el_types::narrow_width(nns) > 0 { nc = el_schema::nullable_narrow_element(e, nns); return if nc < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[nc].name}>") }; }, _ => {} },
     _ => {}
   }
   // (So is a `vector<C?>` of a plain enum, as the `vector<C>` it is.)
@@ -2539,6 +2567,9 @@ pub fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
         args += [ir::NdInt { n: spec.min }];
       }
     },
+    // (A nullable narrow element: the start its nullable row stores, `OpGetByteNullable` /
+    // `OpGetShort`.)
+    TyOptional { inner: ri } => match ri { TyInteger { spec: rs } => { if el_types::narrow_width(rs) > 0 { args += [ir::NdInt { n: el_types::nullable_start(rs) }]; } }, _ => {} },
     _ => {}
   }
   el_ir::cl(e, read_op(t), args)
@@ -2556,7 +2587,7 @@ pub fn read_op(t: ir::TypeT) -> text {
     TyCharacter => "OpGetCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
     // A nullable plain integer element is read as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpGetInt4" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", TyText { dep: _ } => "OpGetText", _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByteNullable" } else if el_types::narrow_width(spec) == 2 { "OpGetShort" } else if el_types::int4(spec) { "OpGetInt4" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", TyText { dep: _ } => "OpGetText", _ => "" },
     _ => ""
   }
 }
@@ -2613,6 +2644,23 @@ pub fn keyed_kind(t: ir::TypeT) -> boolean {
 // `IntegerSpec::signed32`, the type an integer literal answers.
 pub fn i32_spec() -> ir::IntegerSpec {
   ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 }
+}
+
+// `Data::body_width32`: is definition `d`'s body under the 32-bit regime — written in a file
+// under it, outside the standard library?  (An instance keeps its template's position.)
+pub fn body_width32(e: el::El, d: integer) -> boolean {
+  wd = el::def(e, d);
+  len(e.width32_files) > 0 && wd.source != el::STD_SOURCE && e.width32_files.contains(wd.position.file)
+}
+
+// `Parser::count_type` (`@FR-W-Count`, `@FR-W-Lit`): the type of a plain integer literal and of
+// every count or counter the compiler makes itself — the regime's `i32` (`IntegerSpec::i32`, its
+// width forced to 4) in a file under the 32-bit regime, else the `signed32` template.
+pub fn count_type(e: el::El) -> ir::TypeT {
+  if el_types::regime32(e) {
+    return ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 4 } };
+  }
+  ir::TyInteger { spec: i32_spec() }
 }
 
 // `IntegerSpec::wide`, the type a 64-bit literal answers.

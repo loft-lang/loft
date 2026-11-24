@@ -47,6 +47,8 @@ const enableTrace = argv.includes('--trace');
 const wasm = fs.readFileSync(wasmPath);
 const trace = [];
 let instance = null;
+// A threaded page's imported memory (below); null for a page whose module exports its own.
+let sharedMem = null;
 
 // @P321(c) Phase 3b — minimal PNG decoder so wasm_repro can stand in for
 // the browser's createImageBitmap.  Supports 8-bit Grayscale / RGB / RGBA /
@@ -197,7 +199,7 @@ if (process.env.LOFT_INPUT)
 const loftGlExplicit = {
   host_asset_exists(pp, pl) {
     if (!instance) return 0;
-    const mem = instance.exports.memory;
+    const mem = (sharedMem || instance.exports.memory);
     const name = basename(decoder.decode(new Uint8Array(mem.buffer, pp, pl)));
     return assets[name] ? 1 : 0;
   },
@@ -209,7 +211,7 @@ const stubs = {
     // a read answering the proxy's blanket 0 would mean "an empty file that
     // exists" rather than "absent", which is the one distinction every file
     // test in this harness turns on.
-    ...loftFSImports(() => instance.exports.memory),
+    ...loftFSImports(() => (sharedMem || instance.exports.memory)),
     // @PLN97: store_load_url_trusted's fetch import is now in every --html
     // wasm; this repro never fetches, so stub to the error sentinel so the
     // module still links (an absent import would LinkError at instantiate).
@@ -234,7 +236,7 @@ const stubs = {
     loft_host_print: (ptr, len) => {
       if (enableTrace) trace.push(`loft_host_print(${ptr}, ${len})`);
       if (instance) {
-        const mem = instance.exports.memory;
+        const mem = (sharedMem || instance.exports.memory);
         const bytes = new Uint8Array(mem.buffer, ptr, len);
         const s = new TextDecoder().decode(bytes);
         if (!enableTrace) process.stdout.write(s);
@@ -247,7 +249,7 @@ const stubs = {
     loft_host_input_copy: (ptr) => {
       const b = inQ.shift();
       if (b && instance)
-        new Uint8Array(instance.exports.memory.buffer, ptr, b.length).set(b);
+        new Uint8Array((sharedMem || instance.exports.memory).buffer, ptr, b.length).set(b);
     },
     // loft->JS structured messages (host_output): the harness LOOPBACK —
     // every message is echoed straight back into the input queue as
@@ -256,7 +258,7 @@ const stubs = {
     loft_host_output: (ptr, len) => {
       if (!instance) return;
       const s = new TextDecoder().decode(
-        new Uint8Array(instance.exports.memory.buffer, ptr, len));
+        new Uint8Array((sharedMem || instance.exports.memory).buffer, ptr, len));
       if (enableTrace) trace.push(`loft_host_output(${JSON.stringify(s)})`);
       inQ.push(new TextEncoder().encode("echo:" + s));
     },
@@ -325,7 +327,7 @@ try {
 // `ctrl` wraps the asset table the same way the production preamble
 // does; `getMem` returns the instance's memory once instantiated.
 const reproCtrl = { assets };
-const reproGetMem = () => (instance ? instance.exports.memory : { buffer: new ArrayBuffer(0) });
+const reproGetMem = () => (instance ? (sharedMem || instance.exports.memory) : { buffer: new ArrayBuffer(0) });
 for (const reg of globalThis.LOFT_WASM_EXTENSIONS) {
   try {
     reg(stubs, reproCtrl, reproGetMem);
@@ -335,6 +337,16 @@ for (const reg of globalThis.LOFT_WASM_EXTENSIONS) {
 }
 
 const mod = new WebAssembly.Module(wasm);
+// A page that runs `par` on Web Workers (@C3) imports its memory, shared, and starts its
+// threads through the page (`wasi.thread-spawn`, `loft_page.pool_idle`).  Node starts no
+// pool: every spawn is refused, and `par` runs on the main thread, as on a browser host
+// without cross-origin isolation.
+if (WebAssembly.Module.imports(mod).some((i) => i.kind === 'memory')) {
+  sharedMem = new WebAssembly.Memory({ initial: 4096, maximum: 16384, shared: true });
+  stubs.env = Object.assign(stubs.env || {}, { memory: sharedMem });
+  stubs.wasi = Object.assign(stubs.wasi || {}, { 'thread-spawn': () => -1 });
+  stubs.loft_page = Object.assign(stubs.loft_page || {}, { pool_idle: () => {} });
+}
 try {
   instance = new WebAssembly.Instance(mod, stubs);
 } catch (e) {

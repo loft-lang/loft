@@ -18,8 +18,8 @@
 //!     that lands on one stops being right by luck: two of the three shapes panic on
 //!     `0xDEADBEEF` and the third answers `null`. Set per-test, so it costs nothing suite-wide
 //!     and does not depend on anyone remembering to arm a sweep.
-//!   - **Static** ([`the_returned_text_is_read_before_the_free`]). The emitted Rust must read
-//!     the element BEFORE the `OpFreeRef` of its container, which is deterministic in an
+//!   - **Static** ([`the_returned_text_is_read_before_the_free`]). The emitted C must read
+//!     the element BEFORE the `loft_free_var` of its container, which is deterministic in an
 //!     ordinary build — it does not depend on whether a freed store happened to be reused,
 //!     which is exactly what let this through every gate the project runs.
 //!
@@ -31,6 +31,8 @@
 //! `returned_text_poison_clean_native` and `the_returned_text_is_read_before_the_free`. Both
 //! value tests and the interpreter's poison run are green on the broken build, which is the
 //! measurement that says a value-only guard for this defect would be worthless.
+//! The static oracle read the rustc writer's output then; it reads the emitted C now, and
+//! fails on that C with the container's `loft_free_var` moved above the element read.
 
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -111,31 +113,52 @@ fn returned_text_poison_clean_native() {
 
 // ── Static: the order of the two statements, which no value can show ─────────────────
 
-/// The deterministic half. In the emitted Rust the element read must come BEFORE the
-/// `OpFreeRef` that releases the container it reads through. A value oracle cannot see this
-/// at all: both orders answer `"a"` until something reuses the bytes.
+/// The deterministic half. In the emitted C the element read must come BEFORE the
+/// `loft_free_var` that releases the container it reads through. A value oracle cannot see
+/// this at all: both orders answer `"a"` until something reuses the bytes.
 #[test]
 fn the_returned_text_is_read_before_the_free() {
     let path = write_temp("static", MINIMAL);
+    let c_out = std::env::temp_dir().join(format!("loft_1235_static_{}.c", std::process::id()));
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("introspect")
+        .arg("--native-emit")
+        .arg(&c_out)
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")
         .output()
-        .expect("failed to invoke loft introspect");
+        .expect("failed to invoke loft --native-emit");
     let _ = fa::remove_file(&path);
-    assert!(out.status.success(), "introspect must exit 0");
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let body = text
-        .split("fn n_m1235(cell:")
-        .nth(1)
-        .expect("the generated function must be in the introspect output");
+    let text = fa::read_to_string(&c_out).unwrap_or_else(|_| {
+        panic!(
+            "--native-emit must write the C (exit {:?}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    let _ = fa::remove_file(&c_out);
+    // The definition (not the prototype) of `n_m1235` or the form it is lowered to: a text
+    // return writes through the caller's buffer (`n_m1235__wr`).
+    let start = text
+        .lines()
+        .scan(0usize, |at, l| {
+            let here = *at;
+            *at += l.len() + 1;
+            Some((here, l))
+        })
+        .find(|(_, l)| l.starts_with("static ") && l.contains(" n_m1235") && l.ends_with(") {"))
+        .map(|(at, _)| at)
+        .expect("the generated function must be in the emitted C");
+    let end = text[start..]
+        .find("\n}\n")
+        .map_or(text.len(), |e| start + e);
+    let body = &text[start..end];
     let read = body
-        // `vec_get_or_raise_at_runtime` since C80 (the read names its line), or the bare form.
-        .find("vec_get_or_raise")
+        .find("loft_vec_get")
         .expect("the element read must be emitted");
     let free = body
-        .find("OpFreeRef(cell,var___vdb_1")
+        .lines()
+        .find(|l| l.contains("loft_free_var(") && l.contains("___vdb_"))
+        .and_then(|l| body.find(l))
         .expect("the container's free must be emitted");
     assert!(
         read < free,

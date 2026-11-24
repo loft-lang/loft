@@ -134,9 +134,10 @@ pub(crate) fn c_literals(c: &str) -> Vec<String> {
             }
             b'"' => {
                 let mut lit = Vec::new();
-                // A text constant of the program is `loft_lit("…", n)`; a fault's location
+                // A text constant of the program is `loft_lit(cx, "…", n)`; a fault's location
                 // (`"game.loft", 120`) is not, and names a source file, never one opened.
-                let constant = c[..i].ends_with("loft_lit(");
+                let before = &c[..i];
+                let constant = before.ends_with("loft_lit(cx, ") || before.ends_with("loft_lit(");
                 i += 1;
                 while i < b.len() && b[i] != b'"' {
                     if b[i] == b'\\' && i + 1 < b.len() {

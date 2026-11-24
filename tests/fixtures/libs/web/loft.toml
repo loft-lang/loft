@@ -3,34 +3,8 @@ name = "web"
 version = "0.1.1"
 loft = ">=0.8"
 
+# Local patch (@PLN225): the pinned tag declares a Rust native part (`[library] native`,
+# `[native] crate`), which loft no longer builds or loads — a package declaring one is
+# refused.  The snapshot keeps its loft source; its `#native` functions have no library.
 [library]
 entry = "src/web.loft"
-native = "loft_web"
-
-[native]
-crate = "loft-web"
-
-# @PLAN12 phase 2 (2026-05-24) — declarative source of truth for the
-# library's native `n_*` symbols.  Walked by `tests/extraction_hygiene.rs`
-# to auto-populate FORBIDDEN_LIBRARY_SYMBOLS.  Format:
-#   loft_fn_name = "n_<symbol>"
-[native.functions]
-http_do = "n_http_do"
-http_body = "n_http_body"
-ws_client_connect_native = "n_ws_connect"
-ws_client_send_native = "n_ws_client_send"
-ws_client_send_binary_native = "n_ws_client_send_binary"
-ws_client_recv_native = "n_ws_client_recv"
-ws_client_message_native = "n_ws_client_message"
-ws_client_opcode_native = "n_ws_client_opcode"
-ws_client_close_native = "n_ws_client_close"
-sleep_ms = "n_sleep_ms"
-pack_reset = "n_pack_reset"
-pack_u8 = "n_pack_u8"
-pack_u16_le = "n_pack_u16_le"
-pack_u32_le = "n_pack_u32_le"
-pack_take = "n_pack_take"
-byte_at = "n_byte_at"
-ws_group_clear_native = "n_ws_group_clear"
-ws_group_add_native = "n_ws_group_add"
-ws_group_poll_native = "n_ws_group_poll"

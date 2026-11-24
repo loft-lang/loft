@@ -739,7 +739,7 @@ pub fn entry_ints(
     let bucket = bucket?;
     if entries.inline {
         // A locked store's refusal is the general insert's to make (`@FR-H-WriteLocked`).
-        if keys::store(hash, stores).read_only {
+        if keys::store(hash, stores).is_locked() {
             return None;
         }
         let (claim, at) = inline_slot_for(hash, claim, tag, stores);
@@ -826,7 +826,7 @@ pub fn entry_one_int(
     }
     let at = bucket?;
     if h.inline {
-        if store.read_only {
+        if store.is_locked() {
             return None;
         }
         let used =
@@ -935,7 +935,7 @@ pub fn entry_str(
     }
     let bucket = bucket?;
     if entries.inline {
-        if keys::store(hash, stores).read_only {
+        if keys::store(hash, stores).is_locked() {
             return None;
         }
         let (claim, at) = inline_slot_for(hash, claim, tag, stores);
@@ -1589,8 +1589,8 @@ pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -
 
 /// `@FR-R-TypedKeyed` — [`find`] for a key of ONE integer field, handed over as the value
 /// itself: the entry point of a caller that already knows the collection's kind and its key's
-/// (`codegen_runtime::OpGetHashLong`, which `--native` emits for a `hash<T[k]>` whose one
-/// key is an integer).  Nothing is built to be taken apart again — no `Content`, no
+/// (`OpGetHashLong`, for a `hash<T[k]>` whose one key is an integer; the C's twin is
+/// `loft_h_find_i64`).  Nothing is built to be taken apart again — no `Content`, no
 /// `FastKey` chosen and then re-dispatched — so it is the table's three header reads, the
 /// hash, and the walk.  `None` when `key` is not one of the integer widths
 /// [`keys::fast_key`] lists; the caller then takes [`find`].
@@ -2831,7 +2831,7 @@ fn inline_insert_int(
     value: i64,
     stores: &mut [Store],
 ) -> u32 {
-    if keys::store(hash, stores).read_only {
+    if keys::store(hash, stores).is_locked() {
         return 0;
     }
     let base = unsafe { keys::store(hash, stores).base_ptr().add(claim as usize * 8) }.cast_const();

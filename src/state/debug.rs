@@ -1442,7 +1442,7 @@ impl State {
                             log,
                             "    [exit  #{n}: fn={in_fn} returned with the store live; its path:]"
                         )?;
-                        for line in path.render(prev_depth, 12) {
+                        for line in path.render(&self.database.crash, prev_depth, 12) {
                             writeln!(log, "        {line}")?;
                         }
                         holder_depth = Some(depth);
@@ -1501,7 +1501,11 @@ impl State {
                             via.join("<")
                         )?;
                         if config.trace_store.is_some() {
-                            writeln!(log, "        {}", crate::store_trace::site(code))?;
+                            writeln!(
+                                log,
+                                "        {}",
+                                crate::store_trace::site(&self.database.crash, code)
+                            )?;
                             holder_depth = Some(self.call_stack.len());
                             path.restart(self.call_stack.len());
                             log.flush()?;
@@ -1521,13 +1525,19 @@ impl State {
                             "    [free  #{s_nr} at pc={code} op={op_base} fn={in_fn} (allocated at {origin})]"
                         )?;
                         if config.trace_store.is_some() {
-                            let by = crate::store_trace::freed_variable(code)
+                            let by = crate::store_trace::freed_variable(&self.database.crash, code)
                                 .map_or_else(String::new, |v| format!(" by {v}"));
-                            writeln!(log, "        {}{by}", crate::store_trace::site(code))?;
-                            if let Some(x) = crate::store_trace::excerpt(code) {
+                            writeln!(
+                                log,
+                                "        {}{by}",
+                                crate::store_trace::site(&self.database.crash, code)
+                            )?;
+                            if let Some(x) = crate::store_trace::excerpt(&self.database.crash, code)
+                            {
                                 writeln!(log, "{x}")?;
                             }
-                            let lines = path.render(self.call_stack.len(), 12);
+                            let lines =
+                                path.render(&self.database.crash, self.call_stack.len(), 12);
                             if !lines.is_empty() {
                                 writeln!(log, "        the path this frame took:")?;
                                 for line in lines {

@@ -313,9 +313,15 @@ impl Stores {
     fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content]) -> DbRef {
         let below = btree::find_record(data, true, &self.allocations, self.keys(db), key);
         let rec = if below == 0 {
-            btree::first_record(data, &self.allocations)
+            btree::first_record(&self.bt_hints, data, &self.allocations)
         } else {
-            btree::next_record(data, &self.allocations, self.keys(db), below)
+            btree::next_record(
+                &self.bt_hints,
+                data,
+                &self.allocations,
+                self.keys(db),
+                below,
+            )
         };
         let result = DbRef {
             store_nr: data.store_nr,
@@ -448,9 +454,15 @@ impl Stores {
             Parts::Index(_, _) => {
                 // The cursor is the RECORD, never a slot: a walk survives removals by key.
                 let n = if *pos == i32::MAX {
-                    btree::first_record(data, &self.allocations)
+                    btree::first_record(&self.bt_hints, data, &self.allocations)
                 } else {
-                    btree::next_record(data, &self.allocations, self.keys(db), *pos as u32)
+                    btree::next_record(
+                        &self.bt_hints,
+                        data,
+                        &self.allocations,
+                        self.keys(db),
+                        *pos as u32,
+                    )
                 };
                 if n == 0 {
                     return DbRef {
@@ -573,7 +585,7 @@ impl Stores {
             && value.store_nr != u16::MAX
             && !self.is_stack_store(value.store_nr)
             && self.allocations[value.store_nr as usize].live
-            && !self.allocations[value.store_nr as usize].read_only
+            && !self.allocations[value.store_nr as usize].is_locked()
             && !self.allocations[value.store_nr as usize].is_free_protected()
         {
             self.free(value);
@@ -847,7 +859,7 @@ impl Stores {
             && src.store_nr != u16::MAX
             && !self.is_stack_store(src.store_nr)
             && self.allocations[src.store_nr as usize].live
-            && !self.allocations[src.store_nr as usize].read_only
+            && !self.allocations[src.store_nr as usize].is_locked()
             && !self.allocations[src.store_nr as usize].is_free_protected()
         {
             self.free(src);

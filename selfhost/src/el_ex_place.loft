@@ -576,6 +576,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     c = call_op(e, vars, op[..-1], [el_ir::unspan(p.code), x.code], [pt, x.tp]);
+    c = el_ex_call::width32_op(e, op[..-1], pt, x.tp, c);
     x = c;
   }
   if e.first_pass {
@@ -1640,6 +1641,11 @@ pub fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer 
       if nm == "OpVectorRef" && len(args) == 2 {
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => heap_def(inner), _ => -1 };
       }
+      // A keyed collection's record found by its key (`h[k]`, `OpGetRecord(h, <type>, n, keys…)`):
+      // the collection's element record.
+      if nm == "OpGetRecord" && len(args) >= 2 {
+        return el_types::keyed_elem(el_types::base(place_type(e, vars, args[0])));
+      }
       -1
     },
     _ => -1
@@ -1656,6 +1662,11 @@ pub fn place_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT {
       nm = el::def(e, def_nr).name;
       if (nm == "OpGetVector" && len(args) == 3) || (nm == "OpVectorRef" && len(args) == 2) {
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => inner, _ => ir::TyVoid };
+      }
+      // (A keyed lookup's record, `h[k]`: the collection's element.)
+      if nm == "OpGetRecord" && len(args) >= 2 {
+        kd = el_types::keyed_elem(el_types::base(place_type(e, vars, args[0])));
+        return if kd >= 0 { ir::TyReference { n: kd, dep: [] } } else { ir::TyVoid };
       }
       if nm == "OpGetField" && len(args) == 3 {
         rd = heap_def(el_types::base(place_type(e, vars, args[0])));
@@ -1946,10 +1957,6 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       }
       return ex(el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: v }, x.code]), ir::TyVoid);
     }
-    if stack {
-      el::refuse(e, "a rendered append to a promoted text buffer");
-      return ex(ir::NdNull, ir::TyVoid);
-    }
     parts: vector<ir::Node> = [];
     el_ex_vector::concat_operand(e, vars, parts, v, x);
     return ex(ir::NdInsert { items: parts }, ir::TyVoid);
@@ -2013,6 +2020,7 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     return ex(ir::NdNull, ir::TyVoid);
   }
   r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [sv, x.tp]);
+  r = el_ex_call::width32_op(e, bin, sv, x.tp, r);
   el_vars::drop_use(vars, v);
   // `(N-Join)`: an inferred local stepped by a value that may be null (`s += a / b`) is `τ?`, as
   // `change_var_type`'s nullable arm makes it (`compound_null_store`); a declared slot keeps its

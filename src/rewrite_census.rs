@@ -12,14 +12,13 @@
 //! `fired(rule, n)` is called where a rewrite is ADMITTED — once per site it will rewrite,
 //! never at a decline — with the `R-…` name of its rule in `doc/claude/formal/rewrites.md`,
 //! and `R-…/clause` for a clause worth counting apart.  `LOFT_REWRITE_CENSUS=<file>` writes
-//! `rule<TAB>count` lines there when the native source has been generated; unset, a call is
+//! `rule<TAB>count` lines there when the C source has been generated; unset, a call is
 //! one cached test.
 //!
 //! `LOFT_REWRITE_CENSUS_FN=<file>` writes the same admissions split by WHERE they were
 //! decided — `phase<TAB>function<TAB>rule<TAB>count` — so a routine's rewrites can be read
-//! off the functions it runs (`scripts/interp_gap.py`).  The phase is `native` for a body the
-//! rustc writer emits and `c` for one the C writer emits (the interpreter never sees either
-//! form), `interp` for a body the interpreter's bytecode generator writes (compiled code never
+//! off the functions it runs (`scripts/interp_gap.py`).  The phase is `c` for a body the C
+//! writer emits (the interpreter never sees that form), `interp` for a body the interpreter's bytecode generator writes (compiled code never
 //! sees that form), `ir` for the scope pass's per-body rewrites (both backends run them), and
 //! `parse` for everything decided before any of them.
 //!
@@ -60,7 +59,7 @@ static DECLINED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::n
 static ADMITTED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
 
 /// While one lives, admissions are credited to `function` in `phase` (`"ir"`, `"interp"`,
-/// `"c"`, `"native"`);
+/// `"c"`);
 /// outside every such scope they are `parse`-phase with no function.
 pub struct InBody {
     prev: Option<(&'static str, String)>,
@@ -96,8 +95,8 @@ fn by_fn_target() -> Option<&'static str> {
 }
 
 /// Counting is suspended while one of these lives: an emission made FOR something other than
-/// the program — a dependency package's native crate, built in-process on a cold artefact
-/// cache — would otherwise count that package once per crate that includes it, and only on
+/// the program — a dependency library's unit, built in-process on a cold artefact cache —
+/// would otherwise count that package once per crate that includes it, and only on
 /// the runs whose cache missed (measured: 1702 bodies against 868 warm, one process).
 pub struct Pause;
 

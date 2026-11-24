@@ -477,6 +477,25 @@ fn build_key(c: &str, cc: &str, flags: &[String], links: &[String]) -> String {
     })
 }
 
+/// `@C102` — the toolchain a native build would use, for the places a developer looks
+/// (`loft --version`, the `loft test` summary): the C compiler's first `--version` line, or why
+/// native builds are unavailable when no compiler runs.
+pub(crate) fn native_toolchain() -> Result<String, String> {
+    let cc = cc_program();
+    let msvc = dialect(&cc) == Dialect::Msvc;
+    let mut probe = cc_spawn(&cc);
+    if !msvc {
+        probe.push_arg("--version");
+    }
+    match probe.run(b"") {
+        Ok(o) if msvc || o.status.success() => Ok(cc_identity(&cc)),
+        _ => Err(format!(
+            "no C compiler (`{cc}` could not be run), so native builds are unavailable; {}",
+            loft::platform::c_host_toolchain_cure()
+        )),
+    }
+}
+
 /// The compiler's first `--version` line, or its name when it reports none.  Asked once per
 /// process.
 pub(crate) fn cc_identity(cc: &str) -> String {
@@ -592,6 +611,18 @@ fn staged_dep_headers(
     Some(dir)
 }
 
+/// Who runs a wasm32 module the C is built into.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WasmHost {
+    /// A WASI host (`--native-wasm`).
+    Wasi,
+    /// A browser page (`--html`).
+    Page,
+    /// A browser page that runs `par` on Web Workers (@C3, plans/227): built for
+    /// `wasm32-wasip1-threads` on imported shared memory, with the page pool (`LOFT_PAGE_POOL`).
+    ThreadedPage,
+}
+
 /// `--native-wasm` through the C (@PLN203 C6): the unit built for WASI by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
@@ -606,9 +637,11 @@ pub(crate) fn build_wasm(
     out: &std::path::Path,
     shim_sources: &[String],
     ship: bool,
-    browser: bool,
+    host: WasmHost,
     names: bool,
 ) -> Result<(), String> {
+    let browser = host != WasmHost::Wasi;
+    let threads = host == WasmHost::ThreadedPage;
     let tc = wasm_toolchain();
     let cc = tc.cc.clone();
     if !tc.links {
@@ -626,7 +659,7 @@ pub(crate) fn build_wasm(
     // carry it.
     let jumps = !c.contains("#define LOFT_NO_JUMPS");
     let mut cmd = Spawn::new(Program::os(&cc));
-    cmd.push_arg(format!("--target={}", tc.triple));
+    push_wasm_target(&mut cmd, tc, threads)?;
     cmd.push_args([
         "-std=c11",
         if ship { "-O3" } else { "-O2" },
@@ -666,9 +699,6 @@ pub(crate) fn build_wasm(
     if browser {
         cmd.push_arg("-DLOFT_BROWSER");
     }
-    if let Some(root) = &tc.sysroot {
-        cmd.push_arg(format!("--sysroot={root}"));
-    }
     if let Some(ld) = &tc.ld {
         cmd.push_arg(format!("--ld-path={ld}"));
     }
@@ -684,6 +714,11 @@ pub(crate) fn build_wasm(
     // layout): an overflow then traps below address 0 instead of running down into the data —
     // a page's asyncify save region among it (loft#950).
     cmd.push_args(["-Wl,-z,stack-size=8388608", "-Wl,--stack-first", "-lm"]);
+    // A threaded page's memory is the page's, shared with each worker's instance of the module;
+    // its bound is the one a page reserves for it (1 GiB).
+    if threads {
+        cmd.push_arg("-Wl,--import-memory,--shared-memory,--max-memory=1073741824");
+    }
     if jumps {
         cmd.push_arg("-lsetjmp");
     }
@@ -704,7 +739,39 @@ pub(crate) fn build_wasm(
     if ran.status.success() {
         return Ok(());
     }
-    let said = String::from_utf8_lossy(&ran.stderr);
+    Err(wasm_build_failure(
+        &cc,
+        &String::from_utf8_lossy(&ran.stderr),
+    ))
+}
+
+/// The target and sysroot a module is built for: `wasm32-wasip1-threads` with the threads
+/// sysroot and the page pool (`LOFT_PAGE_POOL`, @C3) for a threaded page, else the toolchain's.
+fn push_wasm_target(cmd: &mut Spawn, tc: &WasmToolchain, threads: bool) -> Result<(), String> {
+    let root = if threads {
+        cmd.push_args([
+            "--target=wasm32-wasip1-threads",
+            "-pthread",
+            "-DLOFT_PAGE_POOL",
+        ]);
+        Some(loft::platform::wasm_threads_sysroot().ok_or_else(|| {
+            "--html: no WASI sysroot for wasm32-wasip1-threads — run `make wasi-threads-sysroot`, \
+             or name one in LOFT_WASI_THREADS_SYSROOT"
+                .to_string()
+        })?)
+    } else {
+        cmd.push_arg(format!("--target={}", tc.triple));
+        tc.sysroot.as_deref()
+    };
+    if let Some(root) = root {
+        cmd.push_arg(format!("--sysroot={root}"));
+    }
+    Ok(())
+}
+
+/// What a failed wasm32 build of the C says: a missing sysroot, linker or builtins library is a
+/// toolchain to install, anything else a defect of the C backend.
+fn wasm_build_failure(cc: &str, said: &str) -> String {
     // A missing sysroot, linker or builtins library is a toolchain to install, not a defect.
     let missing = [
         "wasm-ld",
@@ -719,17 +786,17 @@ pub(crate) fn build_wasm(
     .iter()
     .any(|m| said.contains(m));
     if missing {
-        return Err(format!(
+        return format!(
             "--native-wasm: the wasm32 toolchain is incomplete; {}.\n{}",
             loft::platform::c_wasm_toolchain_cure(),
             said.trim_end()
-        ));
+        );
     }
-    Err(format!(
+    format!(
         "`{cc}` rejected the C this program was written as for wasm32 — a defect of the C \
          backend (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
         said.trim_end()
-    ))
+    )
 }
 
 /// The Android entry the unit is linked with (`android_main`, stdout into logcat, the glue's

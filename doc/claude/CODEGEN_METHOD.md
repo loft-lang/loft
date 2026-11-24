@@ -226,9 +226,9 @@ IS the proof you changed nothing emitted.**
    is what makes the diff *exercise* the branches you restructured — a path the
    corpus misses cannot be caught if the refactor breaks it. Keep it under the
    plan's [bytecode-comparisons/](plans/85-store-lifetime-retirement/bytecode-comparisons/).
-2. **Capture BEFORE.** `loft introspect corpus.loft > before.txt`. One capture
-   covers both backends — the dump carries the IR + bytecode AND the generated
-   native Rust. Confirm the corpus runs clean on `--interpret` and `--native`
+2. **Capture BEFORE.** `loft introspect corpus.loft > before.txt` (the IR + bytecode) and
+   `loft --native-emit before.c corpus.loft` (the generated C): the two captures cover
+   both backends. Confirm the corpus runs clean on `--interpret` and `--native`
    (`LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK`) so the baseline is leak-free.
 
    ⚠ **First, prove the capture is deterministic** — run it TWICE on the same
@@ -273,7 +273,7 @@ leaks it surfaced (#448 c5 and its mirror) were closed under the matrix.
 A rule added to a walk that runs over every function fires in every KIND of function, and a
 matrix whose cells all stand in one kind of body leaves the others unmeasured.  Before
 pushing a change that admits a new shape, emit the whole corpus with the old binary and the
-new one (`loft --native-emit <out.rs> <file>` over `tests/scripts` and `tests/docs`, run from a
+new one (`loft --native-emit <out.c> <file>` over `tests/scripts` and `tests/docs`, run from a
 scratch copy of `tests/`), list the files whose emission differs, and run exactly those on
 both backends — a `fn main` file through `--interpret` and `--native`, a `fn test_*` file
 through `loft --tests <file>` and `loft --tests --native <file>`.  The list is the change's
@@ -287,12 +287,11 @@ A release build of the whole crate is the expensive step, so each build must ans
 question that nothing cheaper can.  In order:
 
 1. **Name the cause from an artifact, not a guess.**  Before any build: reproduce by hand,
-   read the IR (`loft introspect`) and the emitted Rust (`--native-emit`) of the failing
+   read the IR (`loft introspect`) and the emitted C (`--native-emit`) of the failing
    function, and point at the node or line that is wrong.  A fix built on a hypothesis that
    the artifact never showed is a build that may change nothing.
 2. **Compile questions go to `cargo check`**, not to a build, and correctness questions to
-   the dev profile: it links its own `libloft.rlib` and runs the loft library with the same
-   debug assertions off, so it answers every gate below.  A release build answers a SPEED
+   the dev profile, which answers every gate below.  A release build answers a SPEED
    question, or builds a binary that ships.
 3. **One heavy job at a time.**  A build, a corpus census, a `cargo test` of many binaries, a
    falsify run (two more full builds in their own target directories) and the drop gate
@@ -333,7 +332,7 @@ The discipline — capture THREE IRs into files (not grep snippets), then two di
    simpler shape of the same thing: `fn f(b: Box) -> vector { b.rows }` for a
    borrowed vector return). Save all three under the plan's
    [bytecode-comparisons/](plans/85-store-lifetime-retirement/bytecode-comparisons/);
-   one `loft introspect` capture carries IR + interp bytecode + native Rust.
+   a `loft introspect` capture carries IR + interp bytecode, and `--native-emit` the C.
 2. **BEFORE → NOW** answers *"did my change do what I intended, and only that?"*
 3. **NOW → PROVEN** answers *"what is still different = the bug."* Read the divergence
    structurally (buffer var identity, block dep type, delivery shape), not just op-by-op.
@@ -443,18 +442,16 @@ ownership — each is a type fact that should drive codegen mechanically.
 |---|---|
 | an analysis or a rewrite the interpreter can use, or one several backends ask | `opt` (`src/opt/`, and the IR passes beside it) |
 | a decision only a compiled target makes (value records, header hoists, streamed walks) | `lower`, as data |
-| how a decision is written in the target language | the backend (`src/generation/` for Rust) |
+| how a decision is written in the target language | the backend (`src/c/` for C) |
 | a layout that compiled code and the interpreter both link | the runtime (`host_abi`) |
 | a step that needs the interpreter AND a compiled target (adopt or build an artifact) | the driver, which composes the two halves (`native_artifact`) |
 
 The interpreter and the compiled targets are siblings: neither names the other.
-What emitted code names in the runtime, and what of it lies outside the runtime set, is
-[RUNTIME_SURFACE.md](RUNTIME_SURFACE.md) (`make runtime-surface`).
 Code outside the interpreter reaches it through `src/interp.rs` alone
 ([INTERMEDIATE.md § The interpreter's contract](INTERMEDIATE.md#the-interpreters-contract)).
 `python3 scripts/crate_layers.py check` holds the layering, and its budget of references that
-still cross may only fall.  A new analysis written inside the Rust writer is the wrong home even
-when only the Rust writer asks it today, if the interpreter could use it.
+still cross may only fall.  A new analysis written inside the C writer is the wrong home even
+when only the C writer asks it today, if the interpreter could use it.
 
 ---
 

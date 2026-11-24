@@ -6,17 +6,14 @@
 // Usage:  node tools/check_html_bundle.mjs <path/to/bundle.html>
 //
 // Exit 0 = the embedded WASM is shippable; non-zero with a diagnostic = it is
-// not.  This catches the two toolchain footguns that produced a broken
-// doc/brick-buster.html in the past (see @P337):
+// not.  This catches the two ways a doc/brick-buster.html shipped broken
+// (see @P337):
 //
-//   1. rlib STOMP — `make wasm` (wasm-pack, `feature=wasm`) and `loft --html`
-//      write the SAME target/wasm32-unknown-unknown/release/libloft.rlib with
-//      incompatible feature sets.  If `--html` links the wasm-bindgen variant,
-//      the bundle imports `__wbindgen_placeholder__` (35+ entries) which the
-//      embedded loft-gl-wasm.js glue does not provide → the page fails to
-//      instantiate ("Import ... __wbindgen_placeholder__: module is not an
-//      object").  A correct --html bundle imports ONLY `loft_gl` + `loft_io`, and the
-//      WASI host its page provides.
+//   1. AN IMPORT THE PAGE DOES NOT SUPPLY — the page provides `loft_gl`,
+//      `loft_io` and the WASI host the C backend's module needs; a module that
+//      imports anything else (the wasm-bindgen placeholders a build linked by
+//      mistake once did) fails to instantiate ("Import ... : module is not an
+//      object").
 //
 //   2. MISSING asyncify — if `wasm-opt` (binaryen) was not on PATH at build
 //      time, the `--asyncify` pass never ran, so there is no frame-yield.  The
@@ -53,20 +50,24 @@ try {
 
 // (1) Import modules must be exactly the raw extern bridges the HTML provides: `loft_gl` and
 // `loft_io`, and `wasi_snapshot_preview1` where the page carries its WASI host (a module the C
-// backend wrote, through clang's WASI libc).
+// backend wrote, through clang's WASI libc).  A page whose module runs `par` on Web Workers
+// (plans/227) also imports its shared memory (`env`), the libc's thread start (`wasi`) and the
+// pool's idle call (`loft_page`), which the page's thread script answers.
 const importMods = [...new Set(WebAssembly.Module.imports(mod).map((i) => i.module))];
 const pageWasi = html.includes('imports.wasi_snapshot_preview1');
+const pagePool = html.includes("'thread-spawn'");
 const badMods = importMods.filter(
-  (mm) => mm !== 'loft_gl' && mm !== 'loft_io' && !(mm === 'wasi_snapshot_preview1' && pageWasi),
+  (mm) =>
+    mm !== 'loft_gl' &&
+    mm !== 'loft_io' &&
+    !(mm === 'wasi_snapshot_preview1' && pageWasi) &&
+    !(['env', 'wasi', 'loft_page'].includes(mm) && pagePool),
 );
 if (badMods.length) {
   console.error(
     `FAIL: unexpected import module(s) ${JSON.stringify(badMods)}.\n` +
-      '       The wasm32-unknown-unknown libloft.rlib was built with the `wasm`\n' +
-      '       (wasm-bindgen) feature — most likely `make wasm` stomped it.\n' +
-      '       Rebuild the rlib in the --html shape, then re-run --html:\n' +
-      '         cargo build --release --target wasm32-unknown-unknown --lib \\\n' +
-      '             --no-default-features --features random',
+      '       The page supplies only `loft_gl`, `loft_io` and its WASI host, so this\n' +
+      '       bundle will not instantiate in the browser.  Rebuild it with `loft --html`.',
   );
   process.exit(1);
 }
@@ -85,8 +86,17 @@ if (!exps.includes('asyncify_start_unwind')) {
 // (3) Sanity: instantiate with no-op stub imports (no GL/host work runs here).
 try {
   const stub = new Proxy({}, { get: () => new Proxy({}, { get: () => () => 0 }) });
+  // An imported memory is a memory (a threaded page's), at least as large as a page declares.
+  const memImport = WebAssembly.Module.imports(mod).find((i) => i.kind === 'memory');
+  const imports = memImport
+    ? new Proxy({}, {
+      get: (_, m) => (m === memImport.module
+        ? { [memImport.name]: new WebAssembly.Memory({ initial: 4096, maximum: 16384, shared: true }) }
+        : stub[m]),
+    })
+    : stub;
   // eslint-disable-next-line no-new
-  new WebAssembly.Instance(mod, stub);
+  new WebAssembly.Instance(mod, imports);
 } catch (e) {
   console.error(`FAIL: bundle does not instantiate even with stub imports: ${e.message}`);
   process.exit(1);

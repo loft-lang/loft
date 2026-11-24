@@ -30,12 +30,6 @@
 #     (Miri is single-threaded; ASan/guard are not race detectors).  Needs an
 #     instrumented std (-Zbuild-std), sanitizer flag target-scoped so host
 #     proc-macros stay clean.
-#   - native-asan — ASan over the `--native` GENERATED binary (@PLN54 S6): the
-#     in-process interpreter ASan job is blind to `--native` (a separate,
-#     uninstrumented process).  LOFT_NATIVE_ASAN=1 compiles the generated binary
-#     with -Zsanitizer=address so an OOB / UAF store access the codegen emits is
-#     caught, not silent.  (S9's mixed-boundary cdylib shares the mechanism —
-#     blocked on a proc-macro -L fix; see plans/54-.../NATIVE_ASAN_DESIGN.md.)
 #   - debug-asserts — loft's ~200 internal `debug_assert!`s (@PLN54 S5b): the H5
 #     numbering law, Store::valid()/addr() bounds, poison/UAF invariants — its OWN
 #     correctness contract, compiled OUT of every normal test build
@@ -748,17 +742,6 @@ jobs:
       # nextest (not `cargo test`): matches the other sanitizer jobs — skips
       # doctests, emits the JUnit report, and isolates each test in its own
       # process (a cleaner poison signal, no cross-test arena carryover).
-      # `loft_suite` runs scripts that `use` a library with a NATIVE cdylib, and a
-      # cdylib built against a different `libloft.rlib` is not loadable.  This job
-      # restores a cached `target/` and never rebuilt them, so `register_native_stubs`
-      # panicked mid-`execute_argv` — and under LOFT_POISON the freed records that
-      # unwind left behind read back as 0xDEADBEEF, turning a stale artefact into a
-      # SIGSEGV that looks exactly like the arena use-after-free this gate hunts
-      # (loft#920).  The local gate has always rebuilt them first; so does this one now,
-      # and the poison sweep is green over the same corpus with them current.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
       - name: Poison sweep (LOFT_POISON=1, interpreter corpus)
         env:
           LOFT_POISON: '1'
@@ -819,12 +802,9 @@ jobs:
       # and its exit leaks lived there unseen.  Each corpus program is compiled and run with
       # LOFT_POISON=1 (a freed record reads 0xDEADBEEF) and LOFT_NATIVE_LEAK_CHECK=1, which
       # makes `tests/native.rs` fail a program that leaves a store at exit — the warning alone
-      # exits 0.  The generated crates link this build's libloft.rlib, so it is built here.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
-      - name: Build the loft binary and runtime rlib
-        run: cargo build --release --bin loft --lib
+      # exits 0.
+      - name: Build the loft binary
+        run: cargo build --release --bin loft
 
       - name: Poison + leak sweep (--native corpus)
         env:
@@ -938,30 +918,6 @@ jobs:
         env:
           LOFT: ${{ github.workspace }}/target/release/loft
         run: python3 scripts/slot_matrix.py gate --full
-
-  slot-matrix-rust:
-    # @windows-exempt: the matrix generates platform-free loft; the rustc writer's platform questions are the toolchain matrix's
-    # @nightly-class: report — a statement the rustc writer emits wrongly for one form of operand, which the language suite reads only once a day
-    name: Slot matrix, every cell on the rustc writer
-    if: github.event_name != 'pull_request'
-    needs: pr-ci-started
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install mold + sqlite
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
-      - name: Build the release loft binary and the runtime library the rustc writer links
-        run: cargo build --release --lib --bin loft
-      # @PLN221 — the per-PR tests never run the rustc writer; this leg runs every cell of the
-      # matrix on it, against its own baseline, `scripts/slot_matrix.rust.baseline`
-      # (SLOT_MATRIX.md § The gate).
-      - name: The gate, every cell on the rustc writer
-        env:
-          LOFT: ${{ github.workspace }}/target/release/loft
-        run: python3 scripts/slot_matrix.py gate --rust --full
 
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
@@ -1116,9 +1072,6 @@ jobs:
       # never written, a release walk over a slot just minted, a raw record whose header a write
       # overran — fails loudly and deterministically.  The free-side twin is the `poison` job
       # above.  Both backends: half of what this found was native-only (the par workers).
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
       - name: Poison-claim sweep (LOFT_POISON_CLAIM=1, both backends)
         env:
           LOFT_POISON_CLAIM: '1'
@@ -1196,11 +1149,7 @@ jobs:
       # checked read reports.
       #
       # Same lean surface as the poison job, and for the same reasons: native / wasm / html
-      # tests spawn separate binaries that never reach this path, and `library_suite` needs
-      # cdylibs a cached `target/` did not build.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
-
+      # tests spawn separate binaries that never reach this path.
       - name: Stack-shadow sweep (LOFT_VERIFY_STACK=1, interpreter corpus)
         env:
           LOFT_VERIFY_STACK: '1'
@@ -1285,98 +1234,6 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
-  native-asan:
-    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
-    if: ${{ !inputs.pr_head }}
-    # @windows-exempt: a Linux-only tool (AddressSanitizer on --native)
-    # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
-    name: Native-backend ASan (--native codegen)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-
-      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
-      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
-      - if: runner.os == 'Windows'
-        uses: ./.github/actions/windows-gcc
-
-      # Nightly is needed for `-Zsanitizer=address` on the GENERATED native binary,
-      # and it must build the runtime rlib TOO — see the build step below for why.
-      - name: Install Rust stable + nightly
-        uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@nightly
-
-      - name: Install mold
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
-
-      - name: Cache cargo registry and build
-        id: cargo-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-native-asan-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ubuntu-native-asan-cargo-
-
-      # Built with NIGHTLY, the same toolchain the sweep compiles the generated crate
-      # with.  An rlib is SVH-locked to one rustc, so the generated crate can only
-      # `extern crate loft` against an rlib built by the SAME compiler: the job used to
-      # build the rlib on stable and compile against it on nightly, which worked only
-      # while the two rustcs happened to agree on crate metadata.  They stopped —
-      # stable 1.97.1 vs nightly 1.99.0 — and every run failed `E0514: found crate
-      # `loft` compiled by an incompatible version of rustc`, on any diff.  A toolchain
-      # roll must not be able to redden a gate that exists to catch codegen bugs.
-      #
-      # (loft's own auto-rebuild does not save this, and the reason is loft#706: its
-      # staleness check compares the rustc that built the loft BINARY with the current
-      # one, not the rustc that built the RLIB it is about to link.  Those are the same
-      # build normally, so when they diverge loft sees nothing to do and hands rustc an
-      # incompatible rlib.  Build them together and the question never arises.)
-      - name: Build loft host binary + runtime rlib
-        env:
-          RUSTUP_TOOLCHAIN: nightly
-        run: cargo build --release --bin loft --lib
-
-      # @PLN54 S6 — loft's `--native` codegen emits Rust that accesses the store by
-      # raw pointer; a codegen bug producing an out-of-bounds / use-after-free store
-      # access runs SILENT today because `--native` is a separate, uninstrumented
-      # process the in-process interpreter `asan` job cannot see.  LOFT_NATIVE_ASAN=1
-      # makes loft compile the generated binary with `-Zsanitizer=address` (nightly),
-      # so that class is caught.  ASan tolerates linking the generated crate against
-      # the uninstrumented libloft.rlib (no -Zbuild-std needed, unlike TSan).  The
-      # curated corpus is the store-heavy shapes (vectors/structs/enums/collections/
-      # text/match) + the 131/132 UAF regression scripts — the exact class ASan
-      # catches.  detect_leaks=0: the interpreter has known live-at-exit allocations
-      # (S4 owns that triage).  Validated locally + a raw-pointer-OOB positive control
-      # confirms ASan fires here.  (S9's mixed-boundary cdylib ASan shares this
-      # mechanism but is blocked on a proc-macro `-L` fix — NATIVE_ASAN_DESIGN.md.)
-      - name: Native ASan sweep (curated --native corpus)
-        env:
-          LOFT_NATIVE_ASAN: '1'
-          RUSTUP_TOOLCHAIN: nightly
-          ASAN_OPTIONS: 'detect_leaks=0'
-        run: |
-          set -euo pipefail
-          for s in 01-integers 02-floats 03-text 04-booleans 05-enums 06-structs \
-                   10-match 11-vectors 12-collections 13-map-filter-reduce \
-                   124-vector-amortised-growth 131-keyed-nested-struct-uaf \
-                   132-vector-elemset-inline-literal-uaf 138-vector-of-vector-single; do
-            echo "::group::--native ASan $s"
-            ./target/release/loft --native "tests/scripts/$s.loft"
-            echo "::endgroup::"
-          done
-      - name: Save cargo cache (main only)
-        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   valgrind:
     # @windows-exempt: a Linux-only tool (valgrind); Windows has the store-heap ceiling
@@ -1415,18 +1272,10 @@ jobs:
           key: ubuntu-valgrind-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-valgrind-cargo-
 
-      # The binary the release ships, plus the runtime rlib its native half links: the
-      # sweep compiles each tests/docs document with `--native` against libloft.rlib and
-      # hands the compiled program to memcheck.  Built together so the rlib is from the
-      # same rustc as the binary (the native-asan job above records why).
-      - name: Build loft release binary + runtime rlib
-        run: cargo build --release --bin loft --lib
-
-      # A script that `use`s a library with a native cdylib needs that cdylib built
-      # against THIS rlib, or it panics before it runs anything (loft#920) — and a run
-      # that never allocates cannot be seen to leak.
-      - name: Rebuild the native cdylibs against this libloft.rlib
-        run: make rebuild-native-cdylibs
+      # The binary the release ships: the sweep compiles each tests/docs document with
+      # `--native` and hands the compiled program to memcheck.
+      - name: Build the loft release binary
+        run: cargo build --release --bin loft
 
       # `scripts/valgrind-sweep.sh` is the release's `M-valgrind` gate as one command
       # (RELEASE.md § Memory safety): every script and document under memcheck, on the
@@ -1529,12 +1378,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
 
-      # Library artifact code names none of its program's numbers, over the WHOLE corpus.  The
-      # per-commit suite checks every 32nd program; its `#[ignore]` reason names this job.
-      - name: Library code names no program numbers — whole corpus
-        if: ${{ !cancelled() }}
-        run: cargo test --release --test lib_ids -- --ignored
-
       # `[c] shim`s linked into the wasm32 target (wasmtime runs them): one package's, and two
       # packages' in one program.  Whole-program wasm builds, too slow for the per-commit suite.
       - name: C shims link into the wasm target
@@ -1552,13 +1395,12 @@ jobs:
 
       # Four heavy gates whose `#[ignore]` reason names this job: each needs rustc per
       # program or a long poison run, so they sit over the PR ceiling, and until they ran
-      # here nothing ran them at all.  `--native` links the canonical
-      # `target/release/libloft.rlib`, which `cargo test` does not produce, so build it
-      # first (as ci.yml's test job does).  The fuzzing leg rebuilds the lib with an extra
-      # feature, so it runs last.
-      - name: Build the native link rlib
+      # here nothing ran them at all.  The tests that spawn `target/release/loft` need it
+      # built first.  The fuzzing leg rebuilds the lib with an extra feature, so it runs
+      # last.
+      - name: Build the release loft binary
         if: ${{ !cancelled() }}
-        run: cargo build --release --lib --bin loft
+        run: cargo build --release --bin loft
 
       - name: Leak, cross-mode — both backends leak-free
         if: ${{ !cancelled() }}
@@ -1727,10 +1569,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `msrv` resolves to Cargo.toml's `rust-version` — the oldest stable `--native`
-        # is proven on.  A user one stable behind is the common case, and `--native`
-        # compiles a user's program with THEIR rustc, so beta and nightly alone tested
-        # the future and never the past.
+        # `msrv` resolves to Cargo.toml's `rust-version` — the oldest stable loft is proven
+        # to build and run on.  Someone building loft one stable behind is the common case, so
+        # beta and nightly alone tested the future and never the past.
         toolchain: [beta, nightly, msrv]
     steps:
       - uses: actions/checkout@v5
@@ -1778,34 +1619,6 @@ jobs:
       # `build_script_build` for exactly this, drowning the real
       # toolchain-churn signal the matrix exists to catch.
       #
-      # `--skip a_private_scope_end_hook_in_a_library_runs`: the SAME exclusion the
-      # asan and asan-leak jobs already carry for this test, for the same reason and
-      # not a new one (loft#855).  It spawns loft to BUILD a library cdylib, which
-      # links `libloft.rlib` — and this job only ever runs `cargo test`, which builds
-      # the lib into `deps/` for the test binaries and never produces the rlib that
-      # `native_lib::find_loft_rlib` looks for.  So the spawned build dies on
-      # "libloft.rlib not found for this build" before it can execute a single loft
-      # op: an ENVIRONMENT result, not toolchain drift, which is all this matrix
-      # exists to detect.  Adding `cargo build --release --lib` does NOT fix it —
-      # measured: it clears "not found" and then fails `E0463: can't find crate for
-      # libloading`, because `cargo test` and `cargo build --lib` unify features
-      # differently, so the uplifted rlib's dependency set is not the one in `deps/`.
-      # The sibling `a_delegating_producer_binds_its_companion_cleanly` PASSES here
-      # and so is deliberately NOT skipped — a skip for a green test would cost
-      # coverage and buy nothing.
-      # The GENERATED Rust is compiled by the `rustc` the native pipeline spawns, which is the
-      # default toolchain unless told otherwise: under a matrix toolchain it could not read the
-      # rlib that toolchain had just built (E0463) and fell back to a cached stable one that
-      # predated the tree (`E0425 op_pow_int`).  One toolchain for the build and the pipeline.
-      # The restored `target/` is keyed on Cargo.lock and saved only on a miss, so its loft
-      # rlibs are main's from whenever the lock last changed.  `native_lib::find_loft_rlib`
-      # prefers an unhashed `libloft.rlib`, then the newest hashed one — a cached rlib wins over
-      # the one this build makes, and generated code naming a runtime function the cached
-      # library lacks fails to compile (`E0599 vector_record_append`, the branch probe for
-      # PR #2069).  Dropped here, the only loft rlib is the one `cargo test` builds below.
-      - name: Drop the cached loft rlibs
-        run: rm -f target/release/libloft.rlib target/release/deps/libloft-*.rlib target/release/deps/libloft-*.rmeta target/release/build/loft/*/out/libloft.rlib target/release/build/loft/*/out/libloft.rmeta
-
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.tc.outputs.toolchain }}
@@ -1814,21 +1627,7 @@ jobs:
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip fill_rs_up_to_date --skip n9_generated_fill_matches_src
           --skip native_rs_functions_up_to_date --skip library_suite
-          --skip a_private_scope_end_hook_in_a_library_runs
 
-      # The toolchain matrix compiles GENERATED Rust in the OS temp dir; when
-      # a leg fails, that generated source is the diagnosis and is otherwise
-      # lost with the runner.
-      - name: Upload generated sources on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-native-src-${{ matrix.toolchain }}
-          path: |
-            /tmp/loft_native_*.rs
-            /tmp/loft_*_test.rs
-          if-no-files-found: ignore
-          retention-days: 14
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -1885,14 +1684,13 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # `make index` runs `target/release/loft --ship` (it exits 1
-      # with "host loft binary missing" otherwise), and that native compile
-      # links `target/release/libloft.rlib` — so build BOTH the binary and the
-      # canonical lib.  This job previously relied on a CACHED binary and so
+      # with "host loft binary missing" otherwise), so build the binary.
+      # This job previously relied on a CACHED binary and so
       # failed `make index` whenever the cache missed cold (a latent bug the
       # run_id cache-key change exposed, NOT the rpc-ghost); building it
       # explicitly makes the leg cache-independent.
-      - name: Build host loft binary + lib (required by `make index`)
-        run: cargo build --release --lib --bin loft
+      - name: Build host loft binary (required by `make index`)
+        run: cargo build --release --bin loft
       - name: Index hygiene (broken @-tags + markdown links)
         run: cargo nextest run --profile ci --test index_hygiene
 
@@ -2072,7 +1870,7 @@ jobs:
     # list_that_reads_them` fails when they disagree, and when a job carries no
     # class at all, so a new gate cannot be added without answering the question.
     # Reclassifying is a one-word edit to the marker, and it is meant to be one.
-    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms]
+    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -2162,8 +1960,8 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
+            valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -2179,8 +1977,8 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
+            valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -2231,7 +2029,7 @@ jobs:
             done
             echo
             echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
-            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms."
+            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, valgrind, debug-asserts, c-sweep-unsound, c-sweep-platforms."
             echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

@@ -9,9 +9,8 @@
 //! TUPLE: a function returning one builds `(a, b, c)` where it filled a `__retbuf`, a local
 //! bound from such a call is a tuple read by `TupleGet`, and a by-value parameter of such a
 //! record is received as a tuple.  The record, the caller's buffer store and the frees that
-//! released it leave the IR, so the interpreter claims no store for the call — the work
-//! `--native` already avoided with its own generator-side rewrite
-//! (`generation::hoist::value_records`).
+//! released it leave the IR, so the interpreter claims no store for the call — as `--native`
+//! does from the same plan (`opt::value_records`).
 //!
 //! ONE admission: the candidates are exactly what `value_records` admits — its `fns` for
 //! results and its `params` for parameters, whose soundness gate (nothing the callee reaches

@@ -58,6 +58,11 @@ pub(crate) struct FieldSinks {
     /// projection place the literal is written into: the literal is parsed again, built apart
     /// and copied in (`Parser::inplace_place_declined`).
     decline_place: bool,
+    /// @PLN91 — why the literal left its destination (`build_apart` / `decline_place`), and
+    /// what each field that reads the place did, for the `literal_into_place` state route.
+    apart_reason: &'static str,
+    decline_reason: &'static str,
+    place_notes: Vec<String>,
     /// The literal is written into a PROJECTION place (`place_hint`), which can decline to the
     /// build-apart road (`decline_place`); a whole-variable destination cannot.
     projection_place: bool,
@@ -6222,6 +6227,7 @@ impl Parser {
                 if let Some((w, hit)) = outer_watch {
                     if self.rebuild_watch_hit {
                         sinks.build_apart = true;
+                        sinks.apart_reason = "rebuild_watch";
                     }
                     self.rebuild_watch = w;
                     self.rebuild_watch_hit = hit;
@@ -6315,6 +6321,7 @@ impl Parser {
                 && self.ir_has_user_call(&value)
             {
                 sinks.build_apart = true;
+                sinks.apart_reason = "release_before_call";
             }
             // loft#2117 — for a PROJECTION place, a staged heap read is a copy, not a view.  A
             // COLLECTION field is primed: its value is built in the field after every
@@ -6350,6 +6357,7 @@ impl Parser {
                     && self.data.def_type(td_nr) == DefType::EnumValue
                 {
                     sinks.decline_place = true;
+                    sinks.decline_reason = "variant_reads_place";
                     false
                 } else if xoff == crate::use_analysis::ANY_FIELD {
                     // loft#2527 — an element of the root itself (`e[0] = Node { v: 8, next:
@@ -6361,15 +6369,25 @@ impl Parser {
                         && let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists)
                     {
                         value = Value::Var(o);
+                        if self.state_trace_on() {
+                            sinks.place_notes.push(format!("{field}:copied_first"));
+                        }
                         false
                     } else {
+                        if primed && self.state_trace_on() {
+                            sinks.place_notes.push(format!("{field}:element_primed"));
+                        }
                         !primed
                     }
                 } else if primed {
                     sinks.decline_place = true;
+                    sinks.decline_reason = "primed_reads_place";
                     false
                 } else if let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists) {
                     value = Value::Var(o);
+                    if self.state_trace_on() {
+                        sinks.place_notes.push(format!("{field}:copy_staged"));
+                    }
                     false
                 } else {
                     true
@@ -6378,6 +6396,9 @@ impl Parser {
                 false
             };
             if staged {
+                if self.state_trace_on() {
+                    sinks.place_notes.push(format!("{field}:staged"));
+                }
                 let tmp = self.vars.work_refs(&exp_tp, &mut self.lexer);
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);
@@ -7074,14 +7095,14 @@ impl Parser {
             // whose container is a field DbRef (a vector inside an enum payload) has
             // no container VARIABLE to depend on, so a dep-only test read it as
             // owning.  `owns_store` is the one predicate that answers it, shared with
-            // `generation::dispatch` so parser and codegen cannot drift (loft#664).
+            // the C backend so parser and codegen cannot drift (loft#664).
             // @FR-L-CapHeap (loft#1447) — in-place reuse of the slot's store is licensed
             // only while this local is the store's SOLE holder.  A closure record built
             // over it is a second holder, and `(L-CapHeap)` says that record answers the
             // value it was BUILT with — so re-minting the same store here would make it
             // answer the rebind.  Asked as its own predicate rather than by widening
             // `owns_store`, which answers the FREE question and is shared with
-            // `generation::dispatch`.  The `else if` below carries the same term, so a
+            // the C backend.  The `else if` below carries the same term, so a
             // captured local ROUTES to the fresh-buffer arm instead of falling between the
             // two — without it the field initialisers write into uninitialised storage,
             // which is the failure that branch's own comment describes.
@@ -7397,6 +7418,16 @@ impl Parser {
                     || self.lexer.peek_token(",")
                     || self.lexer.peek_token(")")))
         {
+            if self.state_trace_on() {
+                self.state_route(&if sinks.build_apart {
+                    format!(
+                        "literal_into_place=apart(build_apart:{})",
+                        sinks.apart_reason
+                    )
+                } else {
+                    "literal_into_place=apart(postfix)".to_string()
+                });
+            }
             self.lexer.revert(link);
             self.abandon_work_refs(work, work_p2);
             *code = Value::Var(v_nr);
@@ -7412,11 +7443,33 @@ impl Parser {
         if sinks.decline_place
             && let Some(hint) = place_hint.take()
         {
+            if self.state_trace_on() {
+                self.state_route(&format!(
+                    "literal_into_place=apart(decline_place:{})",
+                    sinks.decline_reason
+                ));
+            }
             self.lexer.revert(link);
             self.abandon_work_refs(work, work_p2);
             *code = hint;
             self.inplace_place_declined = true;
             return self.parse_object(td_nr, code);
+        }
+        // @PLN91 — the literal stays in its destination: a projection place, or the whole local.
+        if self.state_trace_on()
+            && (place_hint.is_some() || (in_place_var.is_some() && !self.inplace_hint_declined))
+        {
+            let at = if place_hint.is_some() {
+                "place"
+            } else {
+                "local"
+            };
+            let notes = if sinks.place_notes.is_empty() {
+                String::new()
+            } else {
+                format!(";{}", sinks.place_notes.join(","))
+            };
+            self.state_route(&format!("literal_into_place=in_place({at}{notes})"));
         }
         // #437 splice: every vector-field header zeroed as one block, directly
         // after the prelude and before the first field's value.  loft#924's group

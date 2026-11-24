@@ -80,8 +80,7 @@ always.
 1. Design doc (plans/ slot): enumerate every consumer of "does this fn
    have a hidden buffer?" — `add_defaults`, `collect_hidden_ref_args`,
    `nrvo_collapse_tail_set`, `filter_hidden`, codegen's `OpReturn` width
-   logic, the cdylib export wrappers (`native_lib.rs` marshals by
-   attribute list), fn-ref dispatch, `introspect`.  Count the
+   logic, a compiled library's exported entry points, fn-ref dispatch, `introspect`.  Count the
    re-assertion sites per DESIGN_PROTOCOL.
 2. Add the attr unconditionally in `parse_fn_signature` (pass 1, before
    any body parses).  `ref_return` shrinks to: decide what flows INTO the
@@ -258,8 +257,8 @@ found in pass 3.
 **The violated invariant**: *one semantics, one implementation.*  The
 fill.rs generation covers OPCODES (one `#rust` template per op — this
 part is healthy).  Above the opcode level, lowering decisions are
-implemented independently three times: bytecode (`state/codegen.rs`),
-native (`src/generation/`), wasm (native + bridge variations).
+implemented independently twice: bytecode (`state/codegen.rs`) and the
+C writer (`src/c/`, which also builds the wasm and browser targets).
 
 **Evidence this cycle alone**: #260 needed PAIRED fixes (native prologue
 + interp `OpInitRefSentinel`); the x=x fix had to be hoisted to the
@@ -419,7 +418,7 @@ SingleNan, TextNull, DbRefRec0, DbRefSentinel }` with `null_stored()/encode()/de
 `sentinel(tp)->NullEnc` beside `IntegerSpec::byte_width`. Convert one consumer family
 at a time behind `debug_assert_eq!(table_derived, hardcoded)` cross-checks.
 Consumers: `store.rs` set_*/get_*, `fill.rs` conv_*_from_null, `state/codegen.rs::
-emit_typed_null`, `generation/mod.rs::default_native_value`, `database/structures.rs::
+emit_typed_null`, the C writer's null emission (`src/c/`), `database/structures.rs::
 set_default_value`, `database/types.rs` byte/short/short_raw/int.
 
 **Design decision — narrow fixed-width ints are MEMORY-ALLOCATION types; null is
@@ -427,11 +426,11 @@ the ALL-ONES byte, and nullability only shifts the `min` offset (2026-06-17).**
 
 For the `forced_size` aliases (`u8`/`i8`/`u16`/`i16`) the storage width is FIXED —
 a `u8` is one byte, always, nullable or not; storage NEVER widens for nullability.
-The design is chosen for **rustc-codegen simplicity**, not for matching the value
+The design is chosen for **compiled-code simplicity**, not for matching the value
 range a reader expects from the type's name:
 
 - **Null is stored as the all-ones byte** (`255` for 1-byte, `65535` for 2-byte),
-  uniformly for EVERY narrow type.  So in generated Rust, storing and testing null
+  uniformly for EVERY narrow type.  So in generated code, storing and testing null
   is ONE type-independent instruction — `byte == all-ones → null` — directly in
   memory, no per-type branch.  *(`set_byte`: `val == i32::MIN → 255`.)*
 - **A non-null value decodes as `read + min`**; `min` is the only thing that
@@ -512,19 +511,6 @@ backends:
 Final shape: not-null keeps the full native range; nullable is symmetric for signed
 (`-127..=127`, `-32767..=32767`) and top-trimmed for unsigned (`0..=254`,
 `0..=65534`); the all-ones byte is the one uniform sentinel, only `min` shifts.
-
-**Follow-up DONE (`f6f660f8`): the inline `Struct{..}.x` byte-field read on
-native.**  The pre-eval/hoisting path (`generation/dispatch.rs`) hoisted a
-store-mutating call arg into a `_harg_*` temp and emitted the CALL form
-`OpGetByteNullable(cell, _harg, …)` for ANY `Value::Call` — including inline
-`#rust` ops (byte/short field reads), which have no callable fn, so native
-compilation failed with "not found in scope".  It predated this work (broke plain
-`OpGetByte` too) and was NOT narrow-int-specific.  Fixed by gating that path on
-`def_fn.rust().is_empty()`: only true user-fn / `codegen_runtime` Op-stub calls
-take the call-form hoist; inline `#rust` ops fall through to the normal emit, which
-inlines the template (its own `let db = @v1; …` sequences the mutating arg before
-the read borrow).  Regression `loft-suite/attic/scripts/inline-construct-narrow-read.loft`
-(both backends, all four narrow widths × nullable/not-null/null).
 
 **Developer communication — DONE (`ea4a74fe` compile-time, `1b8a3792` runtime).**
 A narrow sentinel is invisible to the user (§ design), so a value that *lands* on
@@ -637,7 +623,7 @@ the mechanism behind the `viewer_markdown` flaky-cdylib collision.
 **Mitigation (M, redesign)** — decouple to a stable `LoftStore` handle: the same
 C-ABI indirection the exec path already uses, so the cdylib↔host interaction
 crosses a versioned handle, not a raw pointer.  Design in
-[NATIVE_ARTIFACT_IDENTITY.md § Resolution](NATIVE_ARTIFACT_IDENTITY.md#resolution-separate-the-api-id-from-the-rust-part-link-the-cdylib-by-c-abi)
+[NATIVE_ARTIFACT_IDENTITY.md § Resolution](NATIVE_ARTIFACT_IDENTITY-history.md#resolution-separate-the-api-id-from-the-rust-part-link-the-cdylib-by-c-abi)
 + [@PLN26](https://github.com/loft-lang/plans/issues/26).  Sibling of
 [H8](#h8--the-raw-storesallocations-surface): both are "raw `Stores` state needs
 an interface" — H9 is the FFI-boundary site, H8 the in-process `allocations`

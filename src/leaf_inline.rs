@@ -9,7 +9,7 @@
 //! parameters, locals and result are integers, floats, singles, booleans or characters, and
 //! whose body is a block of assignments and a result built only from operators, variables
 //! and literals — with `if` and nested blocks allowed, a final `return` read as the result,
-//! and nothing else: no user call (so it is a `(R-Leaf)`), no loop, no store, no text.  The
+//! and nothing else: no user call, no loop, no store, no text.  The
 //! body is copied over fresh caller locals; an argument that is a literal — or a plain
 //! variable, when no argument can write — for a parameter the body never assigns, is read in
 //! place instead, and the literal operations that makes adjacent fold.  Arguments keep their order: each non-literal one is bound before the
@@ -547,7 +547,7 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
 /// A leaf body's statements with each computed value wrapped in a `Span` at the line of the
 /// marker before it, inside nested blocks and `if` arms too; a value that already has a span
 /// keeps it.  `@FR-R-InlineLeaf`: the markers are dropped at the call so the CALLER's lines
-/// stay its own, and a fault's position comes from these spans — exact, as `(R-Leaf)` settled,
+/// stay its own, and a fault's position comes from these spans — exact,
 /// and the same with the pass off (`LOFT_NO_INLINE_LEAF`), which @C120 asks of every rewrite.
 fn located(ops: &[Value], file: crate::lexer::FileName, line: u32) -> Vec<Value> {
     let mut at = line;

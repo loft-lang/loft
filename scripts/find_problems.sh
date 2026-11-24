@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# The native backend the tests compile through: the C, as on CI's PR gate (@PLN203);
-# `LOFT_NATIVE_BACKEND=` (set, empty) puts rustc-native back for one run.
+# The native backend the tests compile through: the C, named as CI's PR gate names it (@PLN203).
 export LOFT_NATIVE_BACKEND="${LOFT_NATIVE_BACKEND-c}"
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
@@ -104,31 +103,6 @@ REPO_TAG="$REPO_SLUG.$REPO_HASH"
 # collided on fixed ports and the red read as a browser bug.  Set `LOFT_TEST_PORT_OFFSET` by
 # hand to pin a band.
 
-# FFI toolchain guard (E0514 self-heal).  A nightly / sanitizer build run into the
-# shared `target/` leaves `target/release/deps/libloft_ffi-*.rlib` compiled by a
-# different rustc than the active one.  The native test harness links that rlib via
-# direct rustc (out of cargo's fingerprint), and its mtime looks fresh — so neither
-# cargo nor mtime rebuilds it, and every native test fails E0514 ("incompatible
-# version of rustc").  Detect the mismatch from the rlib's embedded version and
-# delete the stale rlib so the next build recompiles it with the active rustc.
-# Prevent the pollution in the first place with scripts/asan.sh (isolated target dir).
-ffi_toolchain_guard() {
-  local active rlib built cleaned=0
-  active=$(rustc -vV | sed -n 's/^release: //p')
-  [[ -n "$active" ]] || return 0
-  for rlib in $("$REPO_ROOT"/scripts/cargo_dep_files.sh "$REPO_ROOT"/target/release 'libloft_ffi-*.rlib'); do
-    [[ -e "$rlib" ]] || continue
-    built=$(strings "$rlib" 2>/dev/null | grep -oiE 'rustc [0-9]+\.[0-9]+\.[0-9]+(-nightly)?' | head -1 | sed 's/^rustc //I')
-    if [[ -n "$built" && "$built" != "$active" ]]; then
-      echo "ffi-guard: libloft_ffi built by rustc $built ≠ active $active — removing stale rlib(s) so cargo rebuilds. Use scripts/asan.sh (isolated target dir) to avoid this." >&2
-      "$REPO_ROOT"/scripts/cargo_dep_files.sh "$REPO_ROOT"/target/release 'libloft_ffi-*.rlib' | xargs -r rm -f
-      cleaned=1
-      break
-    fi
-  done
-  return 0
-}
-
 # Keep native/wasm compiles OFF a small /tmp tmpfs.  The native test harness
 # writes generated `.rs` + cached binaries via `scratch_dir()` (LOFT_TMPDIR,
 # else temp_dir()), and rustc/rust-lld put their link intermediates under
@@ -174,28 +148,10 @@ INVOKED_AT=$(date +%s)
 # `N`, and every timing line this script wrote there was garbage.
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 
-# Refresh every derived artefact that the test suite depends on before
-# running it.  There are three classes of stale artefact, each of which
-# has caused a cascade of misleading test failures in the past:
-#
-#   1. Sibling cdylibs under lib/*/native/ — loaded by
-#      `extensions::load_all`, linked by `--native`.  Source gains a
-#      symbol → rustc: "cannot find function X in crate Y".
-#   2. Test fixture cdylibs under tests/lib/*/native/ — native_loader
-#      tests detect this and panic with a clear message, but one
-#      detection panic per test is still one per test.
-#   3. The wasm32-unknown-unknown rlib used by html_wasm tests —
-#      the html_wasm suite checks staleness before running.
-#   4. target/release/libloft.rlib — the one `--native` and the cdylib
-#      tests link.  This step used to rebuild two of the three rlibs and
-#      PRINT a timing row for each, which reads as "the rlibs are
-#      handled"; the native one — the only rlib an ordinary `--bin loft`
-#      edit loop makes stale — was the one left out, hidden behind the
-#      two rows naming the ones it did build.  A whole green verdict was
-#      read off a run whose native half linked a library four commits
-#      old (2026-09-06) — `make check-rlib` says so in a second, but
-#      only if you think to run it, and after the run it only tells
-#      you the cycle was wasted.
+# Build what the test suite runs before running it: the dev library, the
+# release `loft` when a selected binary spawns it, and the library's unit
+# tests.  A library's compiled part is a hosted C unit loft builds on first
+# use, keyed on the loft build that asks, so nothing else is derived here.
 #
 # Cargo is incremental, so each step is ~free on a clean tree.  Logs
 # go to /tmp/loft_cdylib.log so the test log stays focused on test
@@ -204,7 +160,7 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 # problem with a specific rebuild command.
 # Per-step wall-clock timings accumulate in /tmp/loft_timings.txt and
 # stream live to stderr so a slow `--bg` start is visible.  Format:
-#   `  cdylib lib/server/native       3.4s`  (always >= 0.1s precision)
+#   `  release loft binary            3.4s`  (always >= 0.1s precision)
 # A `=== Wall-clock timing summary ===` block prints at run/wait end.
 TIMINGS_FILE=/tmp/loft_timings.$REPO_TAG.txt
 # Every test's duration and status from the latest run: `status<TAB>seconds<TAB>binary<TAB>test`.
@@ -223,8 +179,8 @@ test_runner_cmd() {
     # a source edit cost THREE builds of the 267 test binaries — release for this loop,
     # dev for `cargo build --all-targets`, test for nextest — and none of the three was
     # reused by the next.  Now one build serves the loop and the gate.  The release
-    # `loft` binary + `libloft.rlib` are still built by rebuild_native_cdylibs, because
-    # the native harness links the release rlib and some tests spawn target/release/loft.
+    # `loft` binary is still built by rebuild_native_cdylibs, because some tests spawn
+    # target/release/loft.
     # `--status-level pass`: every test's line, with its duration, lands in the log, so each
     # run says what it spent where (`=== Slowest test binaries ===` in the summary and
     # $TEST_TIMES_FILE) — a run that hits the cap names its slow tests itself, with no second
@@ -254,7 +210,7 @@ test_runner_cmd() {
 # per-run artifacts that otherwise accumulate run over run.  Owned by THIS
 # repo's tests only, so the sweep can be unconditional.  Then make sure the
 # disk has room for the run (scripts/disk_headroom.sh): a run that starts on
-# a full disk reports truncated objects and missing rlibs as test failures —
+# a full disk reports truncated objects and missing artefacts as test failures —
 # 71 of them in one run, 2026-09-28 — and the reclaim escalates only as far as
 # the shortfall needs, this checkout's own scratch included when no gate is
 # alive.  Below its floor it refuses, and so does the run: `set -e` is off in
@@ -291,35 +247,25 @@ rebuild_one() {
 }
 
 # @PLN159 phase I — what the current selection needs beyond the dev build.
-# Sets NEED_RELEASE (a selected binary spawns `target/release/loft`) and NEED_WASM
-# (a selected binary is a wasm/html one, or drives `--html` / `--native-wasm`).
-# The full run needs everything.  The curated run needs the release rlib and NOT the wasm
-# rlibs: it leaves out the heavy page builders and every `mod rust_writer` test, so its
-# `--html` / `--native-wasm` tests are the C backend's (clang, no loft rlib), and a Rust-writer
-# page test belongs in `mod rust_writer` (TESTING.md § The compiled backend a test runs on).
-# A `--subject` / `--changed` selection skips by READING the selected sources, not by
-# guessing from the subject's name.
+# Sets NEED_RELEASE (a selected binary spawns `target/release/loft`).  The full and the
+# curated run need it.  A `--subject` / `--changed` selection skips by READING the selected
+# sources, not by guessing from the subject's name.
 NEED_RELEASE=1
-NEED_WASM=1
 selection_needs() {
-  NEED_RELEASE=1; NEED_WASM=1
+  NEED_RELEASE=1
   case "${SELECT_LABEL:-curated}" in
     subject:*|changed:*) ;;
-    curated) NEED_WASM=0; return 0 ;;
     *) return 0 ;;
   esac
   local b src
-  NEED_RELEASE=0; NEED_WASM=0
+  NEED_RELEASE=0
   for b in $(grep -oE 'binary\([a-z0-9_]+\)' <<<"${TEST_SELECT:-}" | sed -E 's/binary\((.*)\)/\1/' | sort -u); do
     src="$REPO_ROOT/tests/$b.rs"
-    [[ -f "$src" ]] || { NEED_RELEASE=1; NEED_WASM=1; return 0; }
+    [[ -f "$src" ]] || { NEED_RELEASE=1; return 0; }
     # A SPAWN of the release binary — `join("target/release/loft")` or a
     # `harness_command(…release/loft…)` (or `Command::new`) on a non-comment line.  `parse_errors`,
     # `testing` and `exit_codes` only NAME the path in a comment or a string.
     grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|(Command::new|harness_command)\([^)]*release/loft' && NEED_RELEASE=1
-    if [[ "$b" =~ wasm|html|deliver|browser|gl_|android ]] || grep -qE -- '"--html"|"--native-wasm"|wasm32|"--deliver"' "$src"; then
-      NEED_WASM=1
-    fi
   done
   return 0
 }
@@ -330,7 +276,6 @@ rebuild_native_cdylibs() {
   local log=/tmp/loft_cdylib.$REPO_TAG.log
   : > "$log"
   : > "$TIMINGS_FILE"
-  local any_src_cdylib=0
   local timing_dir
   timing_dir=$(mktemp -d /tmp/loft_timings.XXXXXX)
   local rebuild_start_ns
@@ -383,100 +328,40 @@ rebuild_native_cdylibs() {
     fi
   }
 
-  # 1. Sibling cdylibs under lib/*/native/
-  for manifest in "$repo_root"/lib/*/native/Cargo.toml; do
-    [[ -f "$manifest" ]] || continue
-    any_src_cdylib=1
-    local dir
-    dir=$(dirname "$manifest")
-    local rel="${dir#"$repo_root"/}"
-    echo "== rebuild $dir ==" >> "$log"
-    schedule "cdylib $rel" "$dir" "cd '$dir' && cargo build --release -q"
-  done
-
-  # 2. Test fixture cdylibs under tests/lib/*/native/
-  while IFS= read -r manifest; do
-    [[ -f "$manifest" ]] || continue
-    # Skip git-ignored manifests: orphaned generated fixtures left over from old
-    # runs (e.g. tests/test_native_pkg/ from a prior plugin-ABI) are not part of
-    # the tracked build and may no longer compile against the current tree.
-    git -C "$repo_root" check-ignore -q "$manifest" 2>/dev/null && continue
-    any_src_cdylib=1
-    local dir
-    dir=$(dirname "$manifest")
-    local rel="${dir#"$repo_root"/}"
-    echo "== rebuild $dir ==" >> "$log"
-    schedule "cdylib $rel" "$dir" "cd '$dir' && cargo build --release -q"
-  done < <(find "$repo_root/tests" -name Cargo.toml -not -path '*/target/*' 2>/dev/null)
-
   # @PLN159 phase I — build only what the SELECTION needs.  Measured: after a
-  # one-file edit, `--subject parser` spent 158 s here (the release rlib, and the
-  # two wasm rlibs in parallel) before 13 s of tests, and a parser test uses none
-  # of them.  The loft the tests spawn is the test-profile binary
-  # (`CARGO_BIN_EXE_loft`), which resolves its rlib beside itself in target/debug;
-  # the release rlib serves only the binaries that spawn `target/release/loft`,
-  # and the wasm rlibs only the html/wasm suites.  `selection_needs` reads the
-  # selected binaries' sources for exactly those two facts; the curated run needs
-  # the release rlib only, the full run everything.
+  # one-file edit, `--subject parser` spent 158 s here before 13 s of tests, and a
+  # parser test spawns no release binary.  The loft the tests spawn is the
+  # test-profile binary (`CARGO_BIN_EXE_loft`); the release build serves only the
+  # binaries that spawn `target/release/loft`.  `selection_needs` reads the selected
+  # binaries' sources for that fact; the curated and the full run need it.
   selection_needs
 
-  # 3. The wasm32-unknown-unknown rlib used by the html_wasm suite.
-  #    Only rebuild if the target directory already exists — the very
-  #    first run lets the --html driver build it so we don't impose a
-  #    wasm-target install on developers who never touch the HTML gate.
-  if [[ "$NEED_WASM" == 0 ]]; then
-    printf '  %-44s %s\n' "wasm rlibs" "skipped — the selection has no Rust-writer wasm/html test" >&2
-  fi
-  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/loft/html/wasm32-unknown-unknown" ]]; then
-    echo "== rebuild wasm32-unknown-unknown rlib (the --html shape) ==" >> "$log"
-    schedule "wasm32 rlib" "$repo_root" \
-      "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html -q"
-  fi
-
-  # 3b. The wasm32-wasip2 rlib that `--native-wasm` links (html_wasm's wasip2 cells).
-  #     A DIFFERENT triple from 3, and it was missing here: any change to the loft lib
-  #     left this rlib stale, so the first suite run after one failed with a compile
-  #     error inside the generated wasm program ("no method named <the new fn>") that
-  #     looks like a real regression and disappears on a re-run.  Same guard as above:
-  #     only rebuild when the target dir already exists, so a developer who never
-  #     touches the wasm gate is not made to install the target.
-  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/wasm32-wasip2" ]]; then
-    echo "== rebuild wasm32-wasip2 rlib ==" >> "$log"
-    schedule "wasip2 rlib" "$repo_root" \
-      "cd '$repo_root' && cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random -q"
-  fi
-
-  # 4. The rlib beside the loft the tests spawn.  The test-profile `loft` in
-  #    target/debug resolves `target/debug/libloft.rlib`, the UPLIFTED copy only a
-  #    `--lib` build writes — and since `[profile.dev]` and `[profile.test]` share
-  #    artifacts (@PLN159 phase A) this is the same compile nextest is about to do,
-  #    so it costs the compile once and the uplift after that (~1 s when current).
-  echo "== rebuild dev libloft.rlib ==" >> "$log"
-  schedule "dev rlib" "$repo_root" \
+  # 1. The dev library, alone.  `[profile.dev]` and `[profile.test]` share artifacts
+  #    (@PLN159 phase A), so this is the compile nextest is about to do, done first so
+  #    it does not overlap the two test builds of step 3 (~1 s when current).
+  echo "== rebuild the dev library ==" >> "$log"
+  schedule "dev library" "$repo_root" \
     "cd '$repo_root' && cargo build --lib -q"
 
-  # 4b. target/release/libloft.rlib AND target/release/loft — only for a selection
-  #     that spawns the release binary (29 binaries: the html/browser/engine_host
-  #     suites and a few CLI ones).  Both, because the old step rebuilt the release
-  #     LIB and never the BINARY those tests run, so under the loop they measured
-  #     whatever `make ci` last built — a stale-binary verdict nothing reported.
-  #     The release profile is not incremental: this is the 90–160 s step the
-  #     selection now skips when it can.
+  # 2. target/release/loft — only for a selection that spawns the release binary (the
+  #    html/browser/engine_host suites and a few CLI ones), so under the loop those tests
+  #    do not measure whatever `make ci` last built.  The release profile is not
+  #    incremental: this is the 90–160 s step the selection skips when it can.
   if [[ "$NEED_RELEASE" == 1 ]]; then
-    echo "== rebuild release libloft.rlib + loft ==" >> "$log"
-    schedule "release rlib + loft binary" "$repo_root" \
-      "cd '$repo_root' && cargo build --release --lib --bin loft -q"
+    echo "== rebuild release loft ==" >> "$log"
+    schedule "release loft binary" "$repo_root" \
+      "cd '$repo_root' && cargo build --release --bin loft -q"
   else
-    printf '  %-44s %s\n' "release rlib + loft binary" "skipped — no selected binary spawns target/release/loft" >&2
+    printf '  %-44s %s\n' "release loft binary" "skipped — no selected binary spawns target/release/loft" >&2
   fi
 
   # Wait for any parallel rebuilds (none unless LOFT_PARALLEL_REBUILD=1, in which case
   # `wait` exits after the slowest).  Serial builds have already finished.
   for pid in ${jobs[@]+"${jobs[@]}"}; do wait "$pid"; done
 
-  # 5. The library's own unit tests, ALONE, after every rebuild above (also under
+  # 3. The library's own unit tests, ALONE, after every rebuild above (also under
   #    LOFT_PARALLEL_REBUILD=1).  Three compiles of the whole crate size each take 4–6 GB:
-  #    the library (step 4), its `cfg(test)` build, and the `loft` binary's test build.
+  #    the library (step 1), its `cfg(test)` build, and the `loft` binary's test build.
   #    Cargo starts a dependent as soon as the library's metadata exists, so left to the
   #    runner the last two overlapped each other (and, while the library rebuilt on every
   #    command in a worktree, the library too): a 14 GiB box fell to 0.5 GB available and
@@ -509,10 +394,6 @@ rebuild_native_cdylibs() {
     "(rebuild_native_cdylibs total wall-clock)" \
     "$(( rebuild_ms / 1000 ))" "$(( rebuild_ms % 1000 ))" \
     | tee -a "$TIMINGS_FILE" >&2
-
-  if [[ "$any_src_cdylib" -eq 0 ]]; then
-    echo "no sibling cdylibs found — skipping freshness step" >&2
-  fi
 }
 
 # Extract a compact failure summary from the raw log.
@@ -812,10 +693,6 @@ if [[ "${1:-}" == "--wait" ]]; then
   exit 0
 fi
 
-# Self-heal a cross-toolchain-polluted loft_ffi rlib before any build (run + --bg
-# modes; --peek/--wait already exited above without building).
-ffi_toolchain_guard
-
 # `--bg`: start the run in the background and return immediately.
 if [[ "${1:-}" == "--bg" ]]; then
   LOG="${2:-$LOG_DEFAULT}"
@@ -828,7 +705,7 @@ if [[ "${1:-}" == "--bg" ]]; then
   # Remove stale bytecode caches so tests always compile fresh.
   find tests/ -name '*.loftc' -delete 2>/dev/null || true
   find /tmp -maxdepth 1 -name '*.loftc' -delete 2>/dev/null || true
-  # Refresh sibling cdylibs before forking; see rebuild_native_cdylibs
+  # Build what the run needs before forking; see rebuild_native_cdylibs
   # for the rationale.  Runs in the foreground so the caller sees build
   # errors immediately, not 90 s later inside the test log.
   rebuild_native_cdylibs

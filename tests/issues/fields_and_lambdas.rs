@@ -1022,8 +1022,13 @@ fn fill_rs_up_to_date() {
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
-    let generated = loft::create::generate_code_to(&p.data, "tests/generated/fill_check.rs")
-        .expect("generate_code_to failed");
+    let generated = loft::create::generate_code_to(
+        &p.data,
+        &std::env::temp_dir()
+            .join(format!("loft_fill_check_{}.rs", std::process::id()))
+            .to_string_lossy(),
+    )
+    .expect("generate_code_to failed");
     let current = fa::read_to_string("src/fill.rs").expect("cannot read src/fill.rs");
     assert_eq!(
         current, generated,
@@ -1038,8 +1043,13 @@ fn op_layout_rs_up_to_date() {
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
-    let generated = loft::create::generate_layout_to(&p.data, "tests/generated/op_layout_check.rs")
-        .expect("generate_layout_to failed");
+    let generated = loft::create::generate_layout_to(
+        &p.data,
+        &std::env::temp_dir()
+            .join(format!("loft_op_layout_check_{}.rs", std::process::id()))
+            .to_string_lossy(),
+    )
+    .expect("generate_layout_to failed");
     let current = fa::read_to_string("src/op_layout.rs").expect("cannot read src/op_layout.rs");
     assert_eq!(
         current, generated,

@@ -148,8 +148,8 @@ minutes on the dev profile, tens of minutes on release, which is not incremental
 ladder with every build and check, its measured cost and the rules it gives is
 [CI_BUDGET.md § What a build and each check costs here](CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder);
 the dev binary serves the whole loop (`--interpret`, `--native`, `introspect`,
-`--native-emit`), and a release build is for the rlib the native test suites link, once per
-fix.  ⚠ A bare `loft p.loft` on a box with `rustc` runs NATIVE (`--help`: "native is
+`--native-emit`), and a release build is for the release test run (`find_problems.sh`), once
+per fix.  ⚠ A bare `loft p.loft` on a box with a C compiler runs NATIVE (`--help`: "native is
 default"), so a probe meant for the interpreter says `--interpret`; a "plain" run set beside
 a `--native` run measures one backend twice, and an interpreter-only defect then reads as
 a test-runner effect.  Tests that depend on release-only behaviour (parallel timing windows, perf
@@ -485,19 +485,17 @@ Example: when investigating why a dead-assignment warning stopped firing, adding
 `eprintln!` to `in_use` and `track_write` immediately revealed an extra `uses` increment
 from a captured variable re-read, and the backtrace pointed to the exact `parse_var` call.
 
-### When interp codegen is opaque or hangs — read the native-generated Rust
+### When interp codegen is opaque or hangs — read the generated C
 
 `LOFT_LOG=static` shows the bytecode, but a *codegen* bug (wrong channel, missing
-cast, a termination test that never fires) is usually easier to see as Rust than as
+cast, a termination test that never fires) is usually easier to see as C than as
 bytecode — and if codegen itself loops, there is no complete bytecode to read.
 
-`loft --check --native <file>` runs the **native** backend, which emits readable Rust and
-stops at the `rustc` diagnostics (a bare `--check` compiles the loft only). The generated source persists at `loft_native_*.rs` in the
-build temp dir (`$LOFT_TMPDIR`, default `loft-<uid>` under the system temp, a directory only
-you can enter; the path is printed in any
-`E0xxx`). It encodes the same for-loop / yield / dispatch logic the interpreter
-compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
-sentinel, or a doomed loop condition is visible directly.
+`loft --native-emit out.c <file>` writes the C the native backend generates and exits
+(`LOFT_KEEP_NATIVE_C=1` keeps the source of a build the C compiler rejected). It encodes the
+same for-loop / yield / dispatch logic the interpreter compiles to bytecode, but as
+named-variable C — so a type mismatch, a wrong sentinel, or a doomed loop condition is
+visible directly.
 
 The gate and `find_problems.sh` set `LOFT_TMPDIR` to `/var/tmp/loft-test-scratch-<checkout>.<id>`,
 so the native test harness's cache (`loft_native_cache_<hash>`) from a gate is NOT the one a
@@ -507,11 +505,11 @@ prints `swept … MB`.
 
 Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) is
 blocked in this sandbox, and `perf` needs `perf_event_paranoid <= 2` (the default is 4;
-`make profile` names the sysctl) — without it you cannot backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
+`make profile` names the sysctl) — without it you cannot backtrace or sample a live hang. The generated C — or env-gated counter-panics
 (§ above) — is the substitute.
 
 Worked example (#401): an `iterator<float>` for-loop hung the interpreter at codegen.
-The native `.rs` showed the loop as `let var_x: f64 = coroutine_next_i64(..); if
+The rustc writer's `.rs` showed the loop as `let var_x: f64 = coroutine_next_i64(..); if
 !var_x.is_nan() { … } break;` — a NaN value-sentinel termination reading an i64
 channel — which exposed the root (the value-sentinel only terminates when the
 element type's null sentinel matches the i64 transport's) in one read, after gdb/perf
@@ -934,7 +932,7 @@ test` / `--tests` arms the watchdog at 300s automatically (a hung test or loopin
 compile in the suite can't be killed interactively).
 
 When you run loft **ad-hoc** in an agent session — a `/tmp` probe, a one-shot
-script, and especially `--native` (it shells out to `rustc`, which can hang on a
+script, and especially `--native` (it shells out to the C compiler, which can hang on a
 pathological program) — **bound it yourself**, or a runaway hangs the session:
 
 ```bash

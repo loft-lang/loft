@@ -235,34 +235,6 @@ fn arc_b_contract_current_loads_clean() {
     );
 }
 
-/// P129: native_packages must not contain duplicate crate entries.
-/// A package with `[native] crate` parsed through lib_path_manifest should
-/// not produce a second entry if register_native_manifest already added it.
-#[test]
-fn p129_no_duplicate_native_packages() {
-    let s = sep_str();
-    let mut p = Parser::new();
-    p.parse_dir("default", true, true).unwrap();
-    p.lib_dirs = vec![format!("tests{s}lib")];
-    // Parse a file that uses the native_crate_pkg package.
-    p.parse(
-        &format!("tests{s}lib{s}native_crate_import_main.loft"),
-        false,
-    );
-    scopes::check(&mut p.data, &mut p.database);
-    // Count occurrences of the crate name — must be exactly 1.
-    let count = p
-        .data
-        .native_packages
-        .iter()
-        .filter(|(c, _)| c == "loft-native-crate-test")
-        .count();
-    assert!(
-        count <= 1,
-        "P129: native_packages has {count} entries for loft-native-crate-test, expected at most 1"
-    );
-}
-
 /// Regression: struct field types in use-loaded packages must resolve correctly.
 /// Multiple structs + #native declarations + functions with return null.
 #[test]

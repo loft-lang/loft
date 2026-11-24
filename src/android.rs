@@ -249,131 +249,6 @@ impl AndroidTarget {
             .join("libc++_shared.so")
     }
 
-    /// Wrap the emitted program `rs_path` in a `NativeActivity` cdylib and build
-    /// it into `out_path` — the whole `--native-android` pipeline. `main.rs` only
-    /// emits the program `.rs` and calls this. The output type is the extension:
-    /// `.apk` → a signed, installable APK (needs the Android SDK + a JDK); anything
-    /// else → the bare `.so` (needs only the NDK).
-    ///
-    /// Generates a tiny cargo crate under `<tree>/target/loft/android-app/` whose
-    /// crate root IS the emitted program (its `fn main` intact) plus the fixed
-    /// [`ANDROID_MAIN_TAIL`] entry, with `android-activity` + a lean `loft` path
-    /// dep, then `cargo build --release --target <triple>`. Cargo (not hand-rolled
-    /// rustc) owns the `android-activity` dep tree and the cross-build of loft, so
-    /// there is no transitive-rlib bookkeeping here.
-    pub(crate) fn build(
-        &self,
-        rs_path: &Path,
-        out_path: &Path,
-        native_packages: &[(String, String)],
-        ship: bool,
-    ) -> Result<(), String> {
-        let tree = crate::native_utils::loft_source_tree().ok_or_else(|| {
-            "loft: --native-android needs loft's source tree to cross-build its Android \
-             runtime; run it from a loft checkout (a downloaded release ships no Android \
-             runtime)."
-                .to_string()
-        })?;
-        let crate_dir = tree.join("target").join("loft").join("android-app");
-        let src_dir = crate_dir.join("src");
-        crate::file_access::create_dir_all(&src_dir).map_err(|e| format!("loft: create {e}"))?;
-
-        // Serialise on the SAME lock the package / runtime auto-builds use: the
-        // crate dir is shared across runs (so cargo caches android-activity + loft),
-        // so concurrent `--native-android` runs must not clobber each other's lib.rs.
-        let _build_lock = crate::file_access::open_with(
-            std::env::temp_dir().join("loft-native-build.lock"),
-            std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(false),
-        )
-        .ok();
-        if let Some(f) = &_build_lock {
-            let _ = f.lock();
-        }
-
-        // A windowing native package (lib/graphics) needs the `AndroidApp` handed to
-        // it before the program runs (the OS entry lives here, not in the package —
-        // see android_gl.rs); the entry tail passes it via `loft_gl_android_set_app`.
-        let needs_gl_app = native_packages
-            .iter()
-            .any(|(c, _)| c == "loft-graphics-native");
-
-        // Crate root = the emitted program (its crate-level `#![allow]` attrs and
-        // `fn main` stay valid at the root) + `extern crate <pkg>` for each native
-        // package (the C-ABI call path names the package's symbols by `#[link_name]`
-        // but never `use`s the crate, so force-link its rlib) + the android_main tail.
-        let program = crate::file_access::read_to_string(rs_path)
-            .map_err(|e| format!("loft: read emitted program {e}"))?;
-        let mut externs = String::new();
-        for (c, _) in native_packages {
-            use std::fmt::Write as _;
-            let _ = writeln!(externs, "extern crate {};", c.replace('-', "_"));
-        }
-        let lib_rs = format!("{program}\n{externs}{}", android_main_tail(needs_gl_app));
-        crate::file_access::write(src_dir.join("lib.rs"), lib_rs)
-            .map_err(|e| format!("loft: write {e}"))?;
-        crate::file_access::write(
-            crate_dir.join("Cargo.toml"),
-            cargo_toml(&tree, native_packages, ship),
-        )
-        .map_err(|e| format!("loft: write {e}"))?;
-
-        let linker = self.linker();
-        let mut cmd = Spawn::new(Program::search("cargo"))
-            .args(["build", "--release", "--target", &self.triple])
-            .cwd(&PathText::from_os(&crate_dir))
-            .env("ANDROID_NDK_ROOT", &self.ndk)
-            .env("ANDROID_NDK_HOME", &self.ndk)
-            .env(cargo_linker_var(&self.triple), &linker)
-            .env(format!("CC_{}", self.triple), &linker)
-            .env(
-                format!("CXX_{}", self.triple),
-                self.toolchain_bin()
-                    .join(format!("{}{}-clang++", self.triple, self.api)),
-            )
-            .env(
-                format!("AR_{}", self.triple),
-                self.toolchain_bin().join("llvm-ar"),
-            )
-            // Host RUSTFLAGS (target-cpu etc.) are host-specific and would break the
-            // Android build. Replace them with just the one link-arg the Android
-            // cdylib needs: link the NDK's `libc++_shared` so a C++ dependency
-            // (rodio's `oboe` audio backend) resolves `__cxa_pure_virtual` etc.
-            // `package_apk` bundles `libc++_shared.so` next to the app `.so`.
-            // link-args are ignored for the rlib deps, so this only affects the cdylib.
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .env("RUSTFLAGS", "-Clink-arg=-lc++_shared")
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit());
-        let status = cmd
-            .status()
-            .map_err(|e| format!("loft: cannot run cargo for --native-android: {e}"))?;
-        if !status.success() {
-            return Err(format!(
-                "loft: Android build failed for {} (generated crate kept at {} — inspect \
-                 src/lib.rs).",
-                self.triple,
-                crate_dir.display()
-            ));
-        }
-        let built = crate_dir
-            .join("target")
-            .join(&self.triple)
-            .join("release")
-            .join("libloft_android_app.so");
-        let package = Package {
-            staging: &crate_dir,
-            keystore_dir: &crate_dir,
-            debuggable: false,
-            assets: &[],
-            libs: &[],
-            internet: false,
-        };
-        self.finish(&built, &package, out_path)
-    }
-
     /// The activity library `built` delivered as `out_path`: packaged into a signed APK when
     /// the output names one, else copied as the bare `.so`.  Shared by the rustc path and the
     /// C path: neither the manifest nor the signing knows which compiler wrote the library.
@@ -764,205 +639,6 @@ fn highest_platform(dir: &Path) -> Option<(PathBuf, u32)> {
     best.map(|(n, jar)| (jar, n))
 }
 
-/// The generated crate's `Cargo.toml`: a `cdylib` NativeActivity app depending on
-/// `android-activity` (+ logging + libc), a lean `loft` path dep (B1 runtime:
-/// `random` + `threading`, no `ring`/registry), and each of the program's native
-/// packages as a **path (rlib) dep** — the generated code names them with `extern
-/// crate` (the non-C-ABI path), and linking them as rlibs (not sealed cdylibs)
-/// unifies `android-activity` so the graphics backend and the entry share one
-/// `AndroidApp` type. `[patch.crates-io]` points the packages' `loft-ffi` /
-/// `loft-ffi-macros` at loft's own copies so there is ONE `loft-ffi` (no colliding
-/// `StableCrateId`). The empty `[workspace]` stops cargo walking up into the loft
-/// package that contains this directory. Paths are Debug-quoted via `String` (not
-/// `Path`, which the lint rejects as lossy) so they land as escaped TOML strings.
-///
-/// `ship` (`--ship`) builds the release profile as every shipped loft binary is compiled —
-/// opt-level 3 in one codegen unit (`src/native_release_args.txt`); otherwise opt-level 2.
-fn cargo_toml(tree: &Path, native_packages: &[(String, String)], ship: bool) -> String {
-    let profile = if ship {
-        "opt-level = 3\ncodegen-units = 1\n"
-    } else {
-        "opt-level = 2\n"
-    };
-    let tree_s = tree.display().to_string();
-    let mut pkg_deps = String::new();
-    for (crate_name, pkg_dir) in native_packages {
-        let native_dir = Path::new(pkg_dir).join("native").display().to_string();
-        pkg_deps.push_str(&format!("{crate_name} = {{ path = {native_dir:?} }}\n"));
-    }
-    // The C-ABI call marshalling names `loft_ffi::LoftStr` etc., so the generated
-    // crate needs `loft-ffi` in scope (loft's own copy — the `[patch]` unifies it).
-    if !native_packages.is_empty() {
-        let ffi = tree.join("loft-ffi").display().to_string();
-        pkg_deps.push_str(&format!("loft-ffi = {{ path = {ffi:?} }}\n"));
-    }
-    // Native packages (e.g. lib/graphics) dispatch their registered functions
-    // through `loft::native_call`, which is behind the `native-extensions` feature —
-    // add it so the generated `extern crate <pkg>` calls resolve.
-    let loft_features = if native_packages.is_empty() {
-        "\"random\", \"threading\""
-    } else {
-        "\"random\", \"threading\", \"native-extensions\""
-    };
-    let patch = if native_packages.is_empty() {
-        String::new()
-    } else {
-        let ffi = tree.join("loft-ffi").display().to_string();
-        let ffi_macros = tree.join("loft-ffi-macros").display().to_string();
-        format!(
-            "\n[patch.crates-io]\n\
-             loft-ffi = {{ path = {ffi:?} }}\n\
-             loft-ffi-macros = {{ path = {ffi_macros:?} }}\n"
-        )
-    };
-    format!(
-        "[package]\n\
-         name = \"loft_android_app\"\n\
-         version = \"0.0.0\"\n\
-         edition = \"2024\"\n\
-         publish = false\n\n\
-         [workspace]\n\n\
-         [lib]\n\
-         crate-type = [\"cdylib\"]\n\n\
-         [dependencies]\n\
-         android-activity = {{ version = \"0.6\", features = [\"native-activity\"] }}\n\
-         log = \"0.4\"\n\
-         android_logger = \"0.14\"\n\
-         libc = \"0.2\"\n\
-         loft = {{ path = {tree_s:?}, default-features = false, features = [{loft_features}] }}\n\
-         {pkg_deps}\n\
-         [profile.release]\n\
-         {profile}\
-         {patch}"
-    )
-}
-
-/// The Android `NativeActivity` entry, appended to the emitted program's crate root.
-/// `android-activity` (native-activity) exports `ANativeActivity_onCreate` and calls
-/// this `android_main` on a dedicated thread; we run the loft program's `main` in it
-/// and forward the program's stdout into logcat so `print()` shows up in `adb logcat`.
-///
-/// When the program uses the graphics backend (`needs_gl_app`), the entry first hands
-/// the `AndroidApp` to it via `loft_gl_android_set_app` (the seam in
-/// `lib/graphics`'s `android_gl.rs`), so `loft_gl_create_window` can reach the
-/// `ANativeWindow`. Sound because loft links the graphics crate as a unified rlib on
-/// Android (see `cargo_toml`), so the `AndroidApp` type is shared.
-fn android_main_tail(needs_gl_app: bool) -> String {
-    let set_app = if needs_gl_app {
-        "    unsafe extern \"C\" { fn loft_gl_android_set_app(app_ptr: *const std::ffi::c_void); }\n\
-         \x20   unsafe { loft_gl_android_set_app(&app as *const _ as *const std::ffi::c_void); }\n"
-    } else {
-        ""
-    };
-    [ANDROID_TAIL_PREFIX, set_app, ANDROID_TAIL_SUFFIX].concat()
-}
-
-const ANDROID_TAIL_PREFIX: &str = r#"
-// ---- @PLN106 B2/B3: Android NativeActivity entry (emitted by --native-android) ----
-
-// @PLN106 — the android-activity glue spawns `android_main` with `std::thread::spawn` (Rust's
-// default ~2MB stack), and loft runs `__run` INLINE on that thread (it owns the ALooper — a
-// spawned big-stack thread would panic in the graphics poll). So deep recursion overflows.
-// Enlarge that thread's stack to the desktop `NATIVE_MAIN_STACK` (512 MiB) by setting
-// `RUST_MIN_STACK` from a `.init_array` constructor that runs at `.so` load — BEFORE the glue's
-// spawn reads (and std caches) the default stack size.
-#[used]
-#[unsafe(link_section = ".init_array")]
-static __LOFT_ANDROID_STACK_CTOR: extern "C" fn() = {
-    extern "C" fn ctor() {
-        unsafe { libc::setenv(c"RUST_MIN_STACK".as_ptr(), c"536870912".as_ptr(), 1); }
-    }
-    ctor
-};
-
-fn __loft_android_redirect_stdio_to_logcat() {
-    #[link(name = "log")]
-    unsafe extern "C" {
-        fn __android_log_write(prio: i32, tag: *const libc::c_char, text: *const libc::c_char) -> i32;
-    }
-    let mut fds = [0i32; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return;
-    }
-    let (rd, wr) = (fds[0], fds[1]);
-    unsafe {
-        libc::dup2(wr, libc::STDOUT_FILENO);
-        libc::dup2(wr, libc::STDERR_FILENO);
-        libc::close(wr);
-    }
-    std::thread::spawn(move || {
-        const TAG: &[u8] = b"loft-stdout\0";
-        let mut buf = [0u8; 1024];
-        let mut line: Vec<u8> = Vec::new();
-        loop {
-            let n = unsafe { libc::read(rd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n <= 0 {
-                break;
-            }
-            for &b in &buf[..n as usize] {
-                if b == b'\n' {
-                    line.push(0);
-                    unsafe {
-                        __android_log_write(
-                            4, // ANDROID_LOG_INFO
-                            TAG.as_ptr() as *const libc::c_char,
-                            line.as_ptr() as *const libc::c_char,
-                        );
-                    }
-                    line.clear();
-                } else {
-                    line.push(b);
-                }
-            }
-        }
-    });
-}
-
-// `AndroidApp` is not `#[repr(C)]`, but `android-activity`'s glue is what calls this
-// `android_main` (across a Rust ABI it controls), so the C-FFI-safety lint is moot.
-#[allow(improper_ctypes_definitions)]
-#[unsafe(no_mangle)]
-extern "C" fn android_main(app: android_activity::AndroidApp) {
-    use android_activity::{MainEvent, PollEvent};
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("loft"),
-    );
-    log::info!("loft --native-android: android_main reached");
-    __loft_android_redirect_stdio_to_logcat();
-"#;
-
-/// The rest of the entry: run the program's `main`, then keep the activity alive.
-/// `android_main_tail` splices the graphics seam (if any) between the prefix and this.
-const ANDROID_TAIL_SUFFIX: &str = r#"    // Run the loft program (its `fn main`); stdout is now piped into logcat.
-    main();
-    log::info!("loft --native-android: program returned");
-    // Stay alive to drain lifecycle events (a real app renders here) until the OS
-    // destroys the activity, so the process does not exit out from under the app.
-    loop {
-        let mut destroy = false;
-        app.poll_events(Some(std::time::Duration::from_millis(250)), |event| {
-            if let PollEvent::Main(MainEvent::Destroy) = event {
-                destroy = true;
-            }
-        });
-        if destroy {
-            break;
-        }
-    }
-}
-"#;
-
-/// The cargo linker override env var for a triple, e.g. `aarch64-linux-android`
-/// → `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`.
-fn cargo_linker_var(triple: &str) -> String {
-    format!(
-        "CARGO_TARGET_{}_LINKER",
-        triple.to_uppercase().replace('-', "_")
-    )
-}
-
 /// The NDK prebuilt-toolchain host tag for the machine loft runs on.  Android
 /// NDKs since r23 ship only x86_64 host toolchains (there is no aarch64-host or
 /// 32-bit build), so every supported host maps to its `*-x86_64` tag.
@@ -973,6 +649,15 @@ fn host_tag() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{app_assets, needs_internet};
+
+    /// The C the C backend writes for the program `src`.
+    fn emitted_c(src: &str) -> String {
+        let mut p = loft::parser::Parser::new();
+        p.parse_dir("default", true, false).expect("stdlib");
+        p.parse_str(src, "<app>", false);
+        loft::scopes::check(&mut p.data, &mut p.database);
+        loft::c::emit_browser_program(&p.data, &p.database).expect("the program emits as C")
+    }
 
     /// An app asks for the network exactly when its C reaches it: a URL fetch of the runtime, the
     /// engine host's, or a component's natives; a program that does none of these asks for none.
@@ -1011,10 +696,10 @@ mod tests {
         };
         // No list: what the program's C names, and nothing else.
         assert_eq!(names("", &[]), Ok(vec![]));
-        assert_eq!(
-            names("loft_lit(\"data/b.txt\", 10)", &[]),
-            Ok(vec!["data/b.txt".to_string()])
-        );
+        // The C the emitter writes for a program that names the file, never a hand-written
+        // spelling of it: a text constant's spelling in the C is what the scan reads.
+        let c = emitted_c("fn main() { p = \"data/b.txt\"; println(\"{p}\"); }");
+        assert_eq!(names(&c, &[]), Ok(vec!["data/b.txt".to_string()]));
         let report =
             crate::file_access::read_to_string(dir.join("game-report.txt")).expect("report");
         assert!(report.contains("data/b.txt"), "{report}");

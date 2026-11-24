@@ -2056,7 +2056,7 @@ pub fn log_fatal(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 fn OpPrint(v1: text) io#append;
 #cold
-#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\ncrate::codegen_runtime::print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
+#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nstores.print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::host_print::host_print(@v1);\n#[cfg(feature = \"wasm\")]\nstores.print_or_host(@v1);"
 #loft"print(v1 ?? \"\");"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.
@@ -2076,7 +2076,7 @@ pub fn println(v1: text) io#append {
 /// / progress / summary lines from machine-readable stdout
 /// (JSON, structured data piped to downstream consumers).
 pub fn eprint(v1: text) io#append;
-#rust"crate::codegen_runtime::host_eprint(@v1)"
+#rust"crate::host_print::host_eprint(@v1)"
 #impure(host_io)
 
 /// Writes v followed by a newline to standard ERROR.
@@ -2210,14 +2210,14 @@ fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds
 // null into the slot; otherwise deep-copies like OpCopyRecord.  Interpreter-only —
-// the native backend handles the same case inline in `generation::dispatch`.
+// the C backend emits its own bind inline.
 fn OpCopyRefOrNull(src: reference, pos: const u16, tp: const u16);
 // @PLN85 — bind a `??`-join call return into an owned slot with a runtime
 // arg-aliasing guard.  `witness` is the argument the return may borrow (the
 // ownership oracle's resolved base); `src` is the call result.  Adopts `src` when
 // it is fresh (the owned arm); deep-copies into a fresh store at `pos` when `src`
 // aliases `witness` (the borrow arm) so the append's source-free hits the copy.
-// Interpreter-only — the native backend does the same inline in `generation::dispatch`.
+// Interpreter-only — the C backend does the same inline (`c::body`).
 fn OpBindOrCopy(witness: reference, src: reference, pos: const u16, tp: const u16);
 fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
 #cold
@@ -2287,7 +2287,7 @@ type trie;
 // after `type spatial` so the parameter type resolves.
 fn OpLengthSpatial(r: spatial) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
+#rust"i64::from(crate::radix_db::count(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in a spatial (radix / Morton tree) collection.
 pub fn len(self: const spatial) -> integer {
@@ -2296,7 +2296,7 @@ pub fn len(self: const spatial) -> integer {
 #pure
 fn OpSizeSpatial(r: spatial) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+#rust"i64::from(crate::radix_db::table_bytes(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a spatial index: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
@@ -2309,7 +2309,7 @@ pub fn size(self: const spatial) -> integer {
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
+#rust"i64::from(crate::trie_db::count(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
@@ -2318,7 +2318,7 @@ pub fn len(self: const trie) -> integer {
 #pure
 fn OpSizeTrie(r: trie) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+#rust"i64::from(crate::trie_db::table_bytes(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a trie: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for

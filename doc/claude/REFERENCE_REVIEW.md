@@ -663,7 +663,7 @@ the manifest settles it.**
 
 ⚠ **A page written before a default changed keeps teaching the old one.** *"The interpreter
 runs programs immediately, but for compute-heavy work you can compile to a native binary
-instead"* — `loft prog.loft` already compiles through `rustc` when it can find it, which is
+instead"* — `loft prog.loft` already compiles through C when it finds a C compiler, which is
 what `--help` says and what chapter 34 teaches. The flag table listed `--native` and never
 `--interpret`, so the page had no name for the thing it said you were already getting.
 

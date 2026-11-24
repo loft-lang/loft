@@ -214,9 +214,8 @@ pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
     // @PLN10 — render the text null sentinel ("\0") as `null`, mirroring
     // `format_long`'s `i64::MIN → null`.  A loft text equal to `STRING_NULL`
     // IS null (the content-based null model — `conv_bool_from_text`), so the
-    // substitution is consistent with `?? ` / `!`.  Both backends route text
-    // interpolation through this fn (interp `OpFormatText` + the native
-    // `generation/text.rs` emitter), so this one site fixes both.
+    // substitution is consistent with `?? ` / `!`.  The interpreter's
+    // `OpFormatText` routes text interpolation through this fn.
     let val = if val == crate::store::STRING_NULL {
         "null"
     } else {
@@ -293,19 +292,7 @@ pub fn op_cast_int_from_single(val: f32) -> i64 {
 
 #[inline]
 #[must_use]
-pub fn op_cast_long_from_single(val: f32) -> i64 {
-    if val.is_nan() { i64::MIN } else { val as i64 }
-}
-
-#[inline]
-#[must_use]
 pub fn op_cast_int_from_float(val: f64) -> i64 {
-    if val.is_nan() { i64::MIN } else { val as i64 }
-}
-
-#[inline]
-#[must_use]
-pub fn op_cast_long_from_float(val: f64) -> i64 {
     if val.is_nan() { i64::MIN } else { val as i64 }
 }
 
@@ -476,97 +463,6 @@ pub fn range_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
         "range proof: plain {op} answered {plain} where the checked form answers {checked} — the proof admitted an operation that faults"
     );
     plain
-}
-
-/// `LOFT_HOIST_VERIFY=1` inside a guarded plain nest (`@FR-R-BoundedNest`): the plain
-/// operator's answer beside the checked template's, so a guard that admitted a nest whose
-/// arithmetic faults is caught at the operator that faulted, not read off a wrong result.
-///
-/// # Panics
-///
-/// When the two answers differ — the nest's guard admitted an operation that faults, which
-/// is the defect this instrument exists to surface.  Never in the emitted default.
-#[inline]
-#[must_use]
-pub fn nest_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
-    assert!(
-        plain == checked,
-        "bounded nest: plain {op} answered {plain} where the checked form answers {checked} — the guard admitted an operation that faults"
-    );
-    plain
-}
-
-/// `@FR-R-FaultFlag` — the reruns after which a site stops trying its fast copy.  A loop whose
-/// nulls are common flags every time, so it pays the fast copy at most this many times.
-const FAULT_FLAG_TRIES: u32 = 8;
-
-/// `@FR-R-FaultFlag` — should this site skip its fast copy and run the statement as written?
-/// Under `--dev-soft-halt` an integer overflow REPORTS, and the fast copy never reports, so
-/// that mode always takes the exact statement; otherwise a site skips once it has rerun
-/// [`FAULT_FLAG_TRIES`] times.
-#[inline]
-#[must_use]
-pub fn fault_flag_skip(reruns: &std::sync::atomic::AtomicU32) -> bool {
-    reruns.load(std::sync::atomic::Ordering::Relaxed) >= FAULT_FLAG_TRIES || dev_soft_halt()
-}
-
-/// `@FR-R-FaultFlag` — count one exact run of a site, up to the point where it stops trying.
-#[cold]
-pub fn fault_flag_rerun(reruns: &std::sync::atomic::AtomicU32) {
-    if reruns.load(std::sync::atomic::Ordering::Relaxed) < FAULT_FLAG_TRIES {
-        reruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// `@FR-R-FaultFlag` — a template's recoverable raise, in a fast copy: the fault is not
-/// reported here but flagged, and the exact rerun reports it once.
-#[inline]
-pub fn fault_flag_raise(flag: &mut bool, _kind: crate::runtime_error::RuntimeErrorKind) {
-    *flag = true;
-}
-
-#[inline]
-#[must_use]
-pub fn op_add_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_add(v2), "+", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_min_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_sub(v2), "-", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_mul_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_mul(v2), "*", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_div_long_nn(v1: i64, v2: i64) -> i64 {
-    if v2 != 0 {
-        checked_long!(v1.checked_div(v2), "/", v1, v2)
-    } else {
-        i64::MIN
-    }
-}
-
-#[inline]
-#[must_use]
-pub fn op_rem_long_nn(v1: i64, v2: i64) -> i64 {
-    if v2 != 0 {
-        checked_long!(v1.checked_rem(v2), "%", v1, v2)
-    } else {
-        i64::MIN
-    }
-}
-
-#[inline]
-#[must_use]
-pub fn op_neg_long_nn(v1: i64) -> i64 {
-    checked_long!(v1.checked_neg(), "-", v1, 0)
 }
 
 #[inline]

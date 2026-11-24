@@ -38,7 +38,12 @@ pub fn value_fits(e: el::El, vars: el_vars::Vars, code: ir::Node, dst: ir::TypeT
       NdBlock { block } => {
         bl = block[0];
         n = len(bl.operators);
-        bl.name != "ncc" && n > 0 && value_fits(e, vars, bl.operators[-1], dst)
+        if bl.name == "ncc" {
+          // (A `??` block is asked of `int_range`, which reads its two sides.)
+          r = int_range(e, vars, code);
+          return r != null && r!.lo >= d.min && r!.hi <= d.max;
+        }
+        n > 0 && value_fits(e, vars, bl.operators[-1], dst)
       },
       NdCall { def_nr, args } => {
         if len(args) == 0 && el::def(e, def_nr).name == "OpConvIntFromNull" {
@@ -129,7 +134,29 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
     NdBlock { block } => {
       bl = block[0];
       n = len(bl.operators);
-      if n == 0 || bl.name == "ncc" { null } else { int_range(e, vars, bl.operators[-1]) }
+      if n == 0 {
+        return null;
+      }
+      if bl.name != "ncc" {
+        return int_range(e, vars, bl.operators[-1]);
+      }
+      // `@FR-N-Coal` — `x ?? d` lowers to `{ tmp = x; if tmp { tmp } else { d } }`: it answers
+      // the subject's values or the default's, so its range is their union, read from the
+      // subject rather than from the temp, whose type is the join's.
+      if n != 2 {
+        return null;
+      }
+      subject = match bl.operators[0] { NdSet { var: _, inner } => inner, _ => ir::NdNull };
+      dflt = match el_ir::unspan(bl.operators[1]) { NdIf { cond: _, t: _, f } => f, _ => ir::NdNull };
+      if subject == ir::NdNull || dflt == ir::NdNull {
+        return null;
+      }
+      a = int_range(e, vars, subject);
+      b = int_range(e, vars, dflt);
+      if a == null || b == null {
+        return null;
+      }
+      Range { lo: if a!.lo < b!.lo { a!.lo } else { b!.lo }, hi: if a!.hi > b!.hi { a!.hi } else { b!.hi } }
     },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
@@ -174,6 +201,47 @@ pub fn int_range(e: el::El, vars: el_vars::Vars, code: ir::Node) -> Range? {
           }
         }
         return if hi < 0 { null } else { Range { lo: 0, hi: hi } };
+      }
+      // `a | b` and `a ^ b` of two non-negative operands set no bit above the wider one's
+      // highest: `[0, 2ᵏ-1]`, k that operand's bit length.
+      if nm == "OpLorInt" || nm == "OpEorInt" {
+        a = int_range(e, vars, args[0]);
+        b = int_range(e, vars, args[1] ?? ir::NdNull);
+        if a == null || b == null || a!.lo < 0 || b!.lo < 0 {
+          return null;
+        }
+        top = if a!.hi > b!.hi { a!.hi } else { b!.hi };
+        bits = 0;
+        while bits < 63 && (top >> bits) > 0 {
+          bits += 1;
+        }
+        return Range { lo: 0, hi: if bits >= 63 { 9223372036854775807 } else { (1 << bits) - 1 } };
+      }
+      // `a << c` and `a >> c` by a constant `c` in 0..63: the operand's range scaled by 2ᶜ — a
+      // range whose ends overflow proves nothing — or, for a non-negative operand, divided.
+      if nm == "OpSLeftInt" || nm == "OpSRightInt" {
+        c = const_int(e, args[1] ?? ir::NdNull);
+        a = int_range(e, vars, args[0]);
+        if c == null || a == null || c! < 0 || c! >= 63 {
+          return null;
+        }
+        if nm == "OpSLeftInt" {
+          if c! == 0 {
+            return a;
+          }
+          lim = 1 << (63 - c!);
+          if a!.hi >= lim || a!.lo < 0 - lim {
+            return null;
+          }
+          return Range { lo: a!.lo << c!, hi: a!.hi << c! };
+        }
+        return if a!.lo >= 0 { Range { lo: a!.lo >> c!, hi: a!.hi >> c! } } else { null };
+      }
+      // `@FR-W-Op` — a regime file's 32-bit operation reads null outside i32, so it keeps its
+      // operand's range only when that range is inside i32.
+      if nm == "OpNarrow32" {
+        a = int_range(e, vars, args[0]);
+        return if a != null && a!.lo > -2147483648 && a!.hi <= 2147483647 { a } else { null };
       }
       if nm == "OpRemInt" {
         k = const_int(e, args[1] ?? ir::NdNull);
@@ -374,6 +442,11 @@ pub fn guard_range(e: el::El, code: ir::Node, target: ir::TypeT, source: ir::Typ
   if !r.some || calls_op(e, code, "OpRangeDefault") {
     return code;
   }
+  // `@FR-W-Op`: a 32-bit operation's result is already inside the whole `i32` range, null its
+  // default — a guard for that range has nothing to check.
+  if calls_op(e, code, "OpNarrow32") && r.lo <= -2147483647 && r.hi >= 2147483647 && r.dflt == null {
+    return code;
+  }
   lo = r.lo;
   hi = r.hi;
   // A nullable slot's default is the integer null, which is `i64::MIN`: read as it is.
@@ -415,6 +488,11 @@ pub fn guard_compound(e: el::El, code: ir::Node, target: ir::TypeT, nullable: bo
       }
     },
     _ => {}
+  }
+  // `@FR-W-Op`: a 32-bit operation's result is already inside the whole `i32` range with null
+  // as its default, which is all a guard for that range would check.
+  if calls_op(e, code, "OpNarrow32") && r.lo <= -2147483647 && r.hi >= 2147483647 && dflt == null {
+    return code;
   }
   el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: r.lo }, ir::NdLong { n: r.hi }, ir::NdLong { n: dflt }])
 }
@@ -490,10 +568,19 @@ fn convert_value(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT,
     return null;
   }
   if narrowing_int(src, should) {
-    return if value_fits(e, vars, code, should) { code } else { null };
+    if value_fits(e, vars, code, should) {
+      return code;
+    }
+    return if !explicit { into_u32_with_default(e, code, should) } else { null };
   }
-  if !explicit && store_narrows(src, should) && !value_fits(e, vars, code, should) {
-    return null;
+  if !explicit && store_narrows(src, should) {
+    w = width32_store(e, code, src, should);
+    if w != null {
+      return w;
+    }
+    if !value_fits(e, vars, code, should) {
+      return null;
+    }
   }
   if el_types::is_equal(e, src, should) {
     return code;
@@ -522,6 +609,47 @@ fn convert_value(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT,
     }
   }
   null
+}
+
+// `Parser::width32_narrow_store` (`@FR-W-Store`): under the 32-bit regime a plain 64-bit integer
+// (not an `i64` or a `u32`) stored into a slot holding the whole `i32` range is narrowed there
+// (`OpNarrow32`, null when it does not fit) rather than refused — asked before the fit.  Null
+// when the store is not that one.  Pass 1 builds no wrap.
+pub fn width32_store(e: el::El, code: ir::Node, src: ir::TypeT, dst: ir::TypeT) -> ir::Node? {
+  if e.first_pass || !el_types::regime32(e) || !el_types::width32_int(dst) {
+    return null;
+  }
+  match el_types::base(src) {
+    TyInteger { spec: s } => match el_types::base(dst) {
+      TyInteger { spec: d } => {
+        if s.max > 2147483647 || d.min > -2147483647 || d.max < 2147483647 {
+          return null;
+        }
+      },
+      _ => return null
+    },
+    _ => return null
+  }
+  if calls_op(e, code, "OpNarrow32") {
+    return code;
+  }
+  el_ir::cl(e, "OpNarrow32", [code])
+}
+
+// `Parser::narrow_into_u32_with_default` (`@FR-I-Narrow-U32`): a value narrowed into a non-null
+// `u32` that does not provably fit is guarded, not refused — where it does not fit it takes 0,
+// the `u32`'s default (`OpRangeDefault(v, 0, u32::MAX, 0)`, which logs the miss).  A constant
+// that does not fit stays refused (null here), and a guard is never wrapped twice.  Pass 1
+// builds no guard.
+pub fn into_u32_with_default(e: el::El, code: ir::Node, should: ir::TypeT) -> ir::Node? {
+  is_u32 = match should { TyInteger { spec } => spec.min == 0 && spec.max == 4294967295 && spec.forced_size == 4, _ => false };
+  if !is_u32 || const_int(e, code) != null {
+    return null;
+  }
+  if e.first_pass || calls_op(e, code, "OpRangeDefault") {
+    return code;
+  }
+  el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: 0 }, ir::NdLong { n: 4294967295 }, ir::NdLong { n: 0 }])
 }
 
 // `Parser::is_narrowing_int_store`, the one test every implicit integer store asks (`@FR-I-Sub`).
@@ -586,8 +714,9 @@ pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
     },
     _ => {}
   }
-  // (A keyed collection's null is the reference sentinel too.)
-  if t is TyReference || el_types::keyed_elem(t) >= 0 {
+  // (A keyed collection's null is the reference sentinel too, and so is a vector's: Rust's
+  // `null` arm beside a vector arm of a `vector<T>?` result answers `OpNullRefSentinel`.)
+  if t is TyReference || el_types::keyed_elem(t) >= 0 || t is TyVector {
     d = el::def_nr(e, "OpNullRefSentinel");
     return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
   }

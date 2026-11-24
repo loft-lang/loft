@@ -136,15 +136,7 @@ PKG_DIR="$LOFT_CACHE/$PKG-$PKG_VER"
 [ -d "$PKG_DIR" ] || fail "install reported success but $PKG_DIR does not exist — resolved a different version?"
 note "validating $PKG_DIR (version $PKG_VER)"
 
-# 4. Build the native crate against current rustc, if the package ships one.
-#    (loft can rebuild these on demand, but an explicit build gives the
-#    failure its own step and a readable rustc error.)
-if [ -d "$PKG_DIR/native" ]; then
-    note "building native crate"
-    (cd "$PKG_DIR/native" && cargo build --release) || fail "native crate build failed"
-fi
-
-# 5. Run the package's own tests on both backends.  Functional gate only —
+# 4. Run the package's own tests on both backends.  Functional gate only —
 #    no LOFT_DENY_WARNINGS: a released artifact must WORK on the new
 #    toolchain; warning-cleanliness is the source repo CI's job.
 if [ -d "$PKG_DIR/tests" ]; then

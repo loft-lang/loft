@@ -1434,7 +1434,7 @@ fn n_source_dir(stores: &mut Stores) -> Str {
 fn n_exhausted(stores: &mut Stores, mut var_gen: DbRef) -> bool { //block_1: boolean
   cr_call_push("exhausted", "/home/lima.guest/loft/default/05_coroutine.loft", 17);
   let _call_guard = codegen_runtime::CallGuard;
-  return loft::codegen_runtime::coroutine_is_exhausted(var_gen)
+  return loft::coroutine_host::coroutine_is_exhausted(var_gen)
   } /*block_1: boolean*/
 
 fn n_json_parse(stores: &mut Stores, mut var_raw: &str) -> DbRef {

@@ -295,7 +295,7 @@ identical (103641 admissions).  Where the code differs from the table:
   loop being written (the hoisted scalars, the variants already asked for), so it is a B3.4
   family and not a whole-program plan.
 - **B3.5** is `scripts/runtime_surface.py` (`make runtime-surface`), committed as
-  [RUNTIME_SURFACE.md](../RUNTIME_SURFACE.md).  It finds four modules outside the runtime
+  `RUNTIME_SURFACE.md` (both removed with the rustc writer, @PLN225 R6).  It finds four modules outside the runtime
   set that emitted code names, and these are B7.3's work list:
   - `live_dispatch` (the live tier, in every default `--native` program);
   - `state::STRING_NULL`;

@@ -36,12 +36,10 @@
 //   text buffers -> 0 (the channel tests/text_buffer_ledger.rs asserts); native exit 1 -> 0
 //   (E0425 `var__ncr_1` in the generator cells -> compiles).
 // @falsified-by: tests/falsified/a-text-block-whose-tail-is-its-own-local-releases-it.patch — interpret exit 1 -> 0; native INERT
-//   (the rustc writer's E0425 no longer occurs on the cure-off tree, so only the leak can move)
+//   (the native half's E0425 was the rustc writer's, retired (`@C170`), so only the leak can move)
 //   ARMED: `LOFT_TEXT_TIMELINE=fail` for the interpret half — the cure-off tree orphans 31 text
 //   buffers (248 bytes), which this switch makes the exit status; every value is right on both.
 //   HOLDS: interpret assertions, store leaks and panic are clean on both trees.
-//   ARMED: `FALSIFY_NATIVE=rust` for the native half — the E0425 was the rustc writer's; it reads
-//   INERT on both writers now.
 
 fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
 

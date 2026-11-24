@@ -2507,12 +2507,12 @@ impl<'a> FnWriter<'a> {
         Ok(true)
     }
 
-    /// `@FR-R-PushFill`'s HASH CLAUSE, as native's `hash_reserve`: a counted loop inserting
+    /// `@FR-R-PushFill`'s HASH CLAUSE (@C150): a counted loop inserting
     /// records into one hash local (`hoist::hash_fill_loop`) reserves its table for
     /// `len(h) + inserts × trip count` before it runs, so the fill never rehashes on the way.
     /// A reservation is capacity only: length, entries and order are the plain fill's.  An
     /// absent hash, a count that does not fit and an empty range reserve nothing.
-    /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing, as on native.
+    /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing.
     fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
@@ -9792,9 +9792,8 @@ impl<'a> FnWriter<'a> {
 
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
     /// integer operator or a float compare — the processor's wrapping arithmetic, each wrap defined
-    /// (`loft_wrap_*` in `loft_rt.h`) — for exactly the operators and operand shapes
-    /// `generation::ops::int_arith::probe_form` gives the Rust generator, so the C and Rust
-    /// ship lanes measure the same tier.  The `Nullable` forms and the null test keep their
+    /// (`loft_wrap_*` in `loft_rt.h`) — for the operators that are fault sites
+    /// (`opt::ledger_sites::SiteOps`).  The `Nullable` forms and the null test keep their
     /// checks: they are the language's null semantics, not fault protection.  A MEASUREMENT
     /// instrument (@C129), never a build anyone ships.
     fn probe_operator(

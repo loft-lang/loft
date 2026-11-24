@@ -11,6 +11,7 @@ use syntax::*;
 use el;
 use el_vars;
 use el_types;
+use el_retpromo;
 use el_expressions;
 use el_ex_object;
 use el_ex_base;
@@ -46,6 +47,9 @@ pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
 }
 
 pub fn elab_file(e: el::El, file: integer) {
+  // (`Parser::lambda_counters` is cleared as each pass parses the file.)
+  e.lambda_roots = [];
+  e.lambda_next = [];
   // (Each pass reads a file's field defaults into a struct context table of its own, from 0.)
   e.dflt_vars = 0;
   match e.p.nodes[file] {
@@ -93,7 +97,7 @@ fn top_item(e: el::El, it: integer) {
       if name == "width" && arg == "32" && e.source != el::STD_SOURCE && !e.width32_files.contains(e.file) {
         e.width32_files += [e.file];
       }
-      if name == "width" && arg != "64" {
+      if name == "width" && arg != "64" && arg != "32" {
         el::refuse(e, "a `#width {arg}` file");
       }
     },
@@ -323,24 +327,78 @@ fn has_package_directive(p: syntax::Syntax, items: vector<integer>) -> boolean {
   false
 }
 
-// `Data::passes_on`'s third case, refused: a type of library `lib` that is not `pub` but that a
-// `pub` definition's signature names (`api_surface::name_only_defs`) — its importer may name it.
+// `api_surface::name_only_defs` for library `lib`: the closure of the types its `pub`
+// definitions' signatures name (a result, a visible parameter, a `pub` field of a record, a
+// variant's `pub` field), within the library's own source; those not `pub` are NAME-ONLY and
+// pass on to an importer (`Data::passes_on`, @C140).
 fn name_only_types(e: el::El, lib: integer) {
-  for d in e.b.data.definitions {
-    if d.source == lib && d.pub_visible {
-      for a in d.attributes {
-        if names_private_type(e, a.typedef[0] ?? ir::TyVoid, lib) {
-          el::refuse(e, "a library type named only by a `pub` signature");
-          return;
+  work: vector<integer> = [for d in e.b.data.definitions if d.source == lib && d.pub_visible && surface_kind(d) { d#index }];
+  seen = work;
+  while len(work) > 0 {
+    d = work[-1]!;
+    work = work[0..len(work) - 1];
+    for r in referenced_types(e, d) {
+      if r >= 0 && r < len(e.b.data.definitions) && el::def(e, r).source == lib && surface_kind(el::def(e, r)) && !seen.contains(r) {
+        seen += [r];
+        if !el::def(e, r).pub_visible && !e.name_only.contains(r) {
+          e.name_only += [r];
         }
+        work += [r];
       }
-      for t in d.returned {
-        if d.def_type == el::DT_FUNCTION && names_private_type(e, t, lib) {
-          el::refuse(e, "a library type named only by a `pub` signature");
-          return;
+    }
+  }
+}
+
+// `api_surface::classify` answers a kind: not a variant, a vector, a stub or an instance.
+fn surface_kind(d: ir::Definition) -> boolean {
+  d.instance_of < 0 && d.def_type != el::DT_ENUM_VALUE && d.def_type != el::DT_VECTOR && d.def_type != el::DT_UNKNOWN
+}
+
+// `referenced_defs_of(…, pub_fields_only)`.
+fn referenced_types(e: el::El, d: integer) -> vector<integer> {
+  def = el::def(e, d);
+  out: vector<integer> = [];
+  for t in def.returned {
+    type_defs(t, out);
+  }
+  record = def.def_type == el::DT_STRUCT || def.def_type == el::DT_ENUM_VALUE;
+  for a in def.attributes {
+    if !a.hidden && (!record || a.pub_field) {
+      type_defs(a.typedef[0] ?? ir::TyVoid, out);
+    }
+  }
+  if def.def_type == el::DT_ENUM {
+    for v in e.b.data.definitions {
+      if v.parent == d && v.def_type == el::DT_ENUM_VALUE {
+        for a in v.attributes {
+          if !a.hidden && a.pub_field {
+            type_defs(a.typedef[0] ?? ir::TyVoid, out);
+          }
         }
       }
     }
+  }
+  out
+}
+
+// `collect_type_defs`.
+fn type_defs(t: ir::TypeT, out: &vector<integer>) {
+  match t {
+    TyReference { n } => { out += [n]; },
+    TyEnum { n } => { out += [n]; },
+    TyOptional { inner } => type_defs(inner, out),
+    TyVector { inner } => type_defs(inner, out),
+    TyRefVar { inner } => type_defs(inner, out),
+    TyRewritten { inner } => type_defs(inner, out),
+    TyTuple { elems } => { for m in elems { type_defs(m, out); } },
+    TySorted { n } => { out += [n]; },
+    TyIndex { n } => { out += [n]; },
+    TyRadix { n } => { out += [n]; },
+    TyHash { n } => { out += [n]; },
+    TyTrie { n } => { out += [n]; },
+    TyIterator { step, inner } => { type_defs(step, out); type_defs(inner, out); },
+    TyFunction { args, result } => { for m in args { type_defs(m, out); } type_defs(result, out); },
+    _ => {}
   }
 }
 
@@ -526,6 +584,48 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   // (A `value struct` is a struct as any other in the parsed image: its register treatment is
   // a later pass's.)
   if len(tvars) > 0 {
+    // Refused, but the TEMPLATE is registered first, as Rust's `parse_struct` declares it —
+    // its header bound (`bind_type_header`), its fields read over the placeholders, at the
+    // token after the header — so every later definition keeps Rust's number.
+    if e.first_pass && !value && el::def_nr(e, name) < 0 {
+      tnt = el::name_tok(e, at, name);
+      hd = tnt + 1;
+      depth = 0;
+      while hd < len(e.p.src) {
+        if e.p.src[hd] is Lt {
+          depth += 1;
+        } else if e.p.src[hd] is Gt {
+          depth -= 1;
+          if depth == 0 {
+            break;
+          }
+        }
+        hd += 1;
+      }
+      tpos = el::pos_at(e, hd + 1);
+      td = el::add_def(e, name, tpos, el::DT_STRUCT);
+      el::set_returned(e, td, ir::TyReference { n: td, dep: [] });
+      saved_tv = e.type_vars;
+      bound = true;
+      for tv in tvars {
+        match e.p.nodes[tv] {
+          STVar { name: tvn, bounds: tvb } => {
+            th = header_var(e, tvn, tvb, tpos);
+            if th < 0 {
+              bound = false;
+            } else {
+              e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+            }
+          },
+          _ => {}
+        }
+      }
+      e.b.data.definitions[td].def_type = el::DT_TYPE_TEMPLATE;
+      if bound {
+        parse_fields(e, td, fields);
+      }
+      e.type_vars = saved_tv;
+    }
     el::refuse(e, "a value struct or a struct template");
     return;
   }
@@ -721,7 +821,8 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
   if e.p.nodes[init] is SStructLit {
     e.dflt_vars += 1;
   }
-  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, _ => el_ex_null::node_start(e, init) };
+  // (An `if` or a `match` default stands at its keyword.)
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => el_ex_null::node_start(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
   e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
@@ -946,17 +1047,65 @@ fn flat_expression(n: ir::Node) -> boolean {
 // value other than a plain scalar or a literal text — a vector, a record, a text assembled in a
 // buffer, anything that names a slot — are refused by name.
 fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integer?) {
-  if tp != null || value == null {
-    el::refuse(e, "a constant with a declared type or no value");
+  if value == null {
+    el::refuse(e, "a constant with no value");
     return;
+  }
+  // `@FR-N-Decl`: a declared type is the value's commitment (`constant_into_declared`).
+  declared: ir::TypeT? = null;
+  if tp != null {
+    declared = el_types::parse_type(e, tp!);
+    if declared == null {
+      return;
+    }
   }
   was = e.context;
   e.context = -1;
   vars = el_vars::new_vars("__const_{name}", e.file);
+  // The declared type is the initialiser's expected type, as a declared local's is: a literal
+  // is built at it (`[1, 2]` as `u8` elements).
+  if declared != null {
+    vars.expect_node = value!;
+    vars.expect = declared!;
+  }
   x = el_ex_assign::expression(e, vars, value!);
   e.context = was;
-  if el_types::is_unknown(x.tp) {
+  // Registered on the first pass whatever the value answers (Rust's `add_def` with the pass-1
+  // type as it stands, before any refusal: a refused constant still numbers as Rust's does).
+  d = constant_def(e, at, name);
+  if d < 0 {
     return;
+  }
+  if el_types::is_unknown(x.tp) {
+    // (`constant_into_declared` answers the declared type whatever the value is.)
+    if e.first_pass && declared != null {
+      el::set_returned(e, d, declared!);
+      e.b.data.definitions[d].code = [x.code];
+      return;
+    }
+    el::set_returned(e, d, x.tp);
+    if !e.first_pass {
+      el::refuse(e, "a constant whose value has no type");
+    }
+    return;
+  }
+  // A VECTOR constant is pre-built in the constant store and read through `OpConstRef` at each
+  // use (`parse_constant_value`'s constant arm): its definition holds the literal and its type.
+  // Undeclared, the literal's own type stands, deps and all (Rust's `set_returned(c_nr, tp)`).
+  ctp = if declared != null { declared! } else { x.tp };
+  if el_types::base(ctp) is TyVector && el_types::base(x.tp) is TyVector {
+    el::set_returned(e, d, ctp);
+    e.b.data.definitions[d].code = [x.code];
+    return;
+  }
+  el::set_returned(e, d, el_types::without_deps(ctp));
+  if declared != null && !el_types::is_equal(e, el_types::base(x.tp), el_types::base(declared!)) {
+    cx = el_convert::convert(e, vars, x.code, x.tp, declared!, false);
+    if cx == null {
+      el::refuse(e, "a constant whose value its declared type does not take");
+      return;
+    }
+    x = el_ex_base::Ex { code: cx!, tp: declared! };
   }
   plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
   // A value that names a slot of the scratch frame needs a temporary the use site does not have.
@@ -970,6 +1119,13 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
     el::refuse(e, "a constant of this kind: {el_ex_base::type_kind(x.tp)}");
     return;
   }
+  el::set_returned(e, d, el_types::without_deps(x.tp));
+  e.b.data.definitions[d].code = [x.code];
+}
+
+// The constant's definition (`DefType::Constant`), made on the first pass where the parser
+// stands on the `;`, found again on the second; -1 where the name is taken.
+fn constant_def(e: el::El, at: integer, name: text) -> integer {
   semi = at;
   while semi < len(e.p.src) && !(e.p.src[semi] is Semi) {
     semi += 1;
@@ -978,15 +1134,14 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
   if e.first_pass {
     if d >= 0 {
       el::refuse(e, "a constant over an existing name");
-      return;
+      return -1;
     }
     d = el::add_def(e, name, el::pos_at(e, semi), el::DT_CONSTANT);
   }
   if d < 0 || el::def(e, d).def_type != el::DT_CONSTANT {
-    return;
+    return -1;
   }
-  el::set_returned(e, d, el_types::without_deps(x.tp));
-  e.b.data.definitions[d].code = [x.code];
+  d
 }
 
 // `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
@@ -1305,7 +1460,19 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
   if !buffered || elem is TyVoid || el_types::is_collection(elem) {
     return false;
   }
+  // (`extract_literal_values` folds a scalar element written by `OpSetInt` but not the four-byte
+  // `OpSetInt4` an `i32` element is pushed with: `const_vector_blocker` declines the twin.)
+  if el_ex_pattern::push_op(el_types::base(elem)) == "OpPushInt4" {
+    return false;
+  }
   match el_types::base(elem) {
+    // (`const_elem_unsupported`: a struct enum's element — `[Ci { r: 3 }]` as a `vector<Sh>` —
+    // names records its variants' field writes do not describe.)
+    TyEnum { n: _, is_ref } => {
+      if is_ref {
+        return false;
+      }
+    },
     TyTuple { elems } => {
       for m in elems {
         b = el_types::base(m);
@@ -1418,6 +1585,18 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           } else {
             param_default(e, init!, t!)
           };
+          // A default refused for not being a constant is one Rust hoists
+          // (`default_replayable_in_place` fails): its `n___dflt_<fn>_<param>` is registered here
+          // all the same — on the first pass, the value discarded, the refusal standing — so
+          // every later definition keeps Rust's number.  (A method's carries its owner's name:
+          // not carried.)
+          method = len(arguments) > 0 && (arguments[0].name == "self" || arguments[0].name == "both");
+          // (A scalar, a text or a tuple default is replayed at each call, reading the earlier
+          // arguments in place: Rust hoists none of those.)
+          heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
+          if d == null && heap_default && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
+            _ = hoisted_default(e, "__dflt_{name}_{an}", tp!, init!);
+          }
           // (A default refused — the refusal stands — still leaves the function registered,
           // as Rust registers it: every definition after it keeps Rust's number.)
           if d != null {
@@ -1672,6 +1851,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    // (The return buffer the first pass held back from the result is named before the body.)
+    if !e.first_pass && e.owed_buffer.contains(e.context) {
+      oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
+      oret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+      if oba >= 0 && !el_types::deps(oret).contains(oba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(oret, el_types::deps(oret) + [oba])];
+      }
+    }
     // `tuple_carries_heap`: a tuple parameter holding a collection is read through its own
     // `__tp_<name>` from the first statement on (made at the start of the first pass, before the body,
     // as Rust's `parse_function` makes it: the body's mentions of the name read the shadow).
@@ -1753,6 +1940,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       }
     }
     e.b.data.definitions[e.context].code = [code];
+    // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
+    el_retpromo::report(e, vars, code, body!, match e.p.nodes[body!] { SBlock { end: rbe } => rbe, _ => -1 });
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
     }
@@ -1783,6 +1972,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       cd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
       e.b.data.definitions[cd].returned = el::def(e, e.context).returned;
       e.b.data.definitions[cd].synthetic = "literal_const";
+    }
+    // (The twin answers what the function answers once delivered: the second pass's result,
+    // its buffer named — the first names none for a literal tail.)
+    if !e.first_pass {
+      tw = el::def_nr(e, "__const_{el::def(e, e.context).name}");
+      if tw >= 0 && el::def(e, tw).synthetic == "literal_const" {
+        e.b.data.definitions[tw].returned = el::def(e, e.context).returned;
+      }
     }
     if !e.first_pass && len(e.type_vars) > 0 {
       e.bodies2 += [e.context];
@@ -1882,16 +2079,14 @@ fn apply_annotations(e: el::El, d: integer, annots: vector<integer>) -> boolean 
 // owner slot `<name>__own` of the same shared record type — what the scope pass hands the
 // local's owner witness to at the build.
 fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
-  outer = el::def(e, parent).name;
-  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
-  for k in 0..vars.lambdas {
-    rec = el::def_nr(e, "__closure_{bare}_{k}");
+  for rec_nm in vars.lambda_recs {
+    rec = el::def_nr(e, rec_nm);
     if rec < 0 {
       continue;
     }
     // A fn field's UNION record (loft#1874) is left alone: its captures keep the record's
     // static adoption, and the lambda's own record is no longer the one it builds.
-    lam = el::def_nr(e, "n___lambda_{bare}_{k}");
+    lam = el::def_nr(e, "n___lambda_{rec_nm[10..]}");
     if lam >= 0 && el::def(e, lam).closure_record >= 0 && el::def(e, lam).closure_record != el::NONE && starts_with(el::def(e, el::def(e, lam).closure_record).name, "__closure_u_") {
       continue;
     }

@@ -85,6 +85,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         // borrow of the holder, nor of the block typed as it.)
         lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
+        // (The second pass's holder is typed as that pass reads the subject: a capture's read
+        // borrows `__closure` there where the first pass's placeholder borrowed its name.)
+        if !e.first_pass {
+          el_vars::set_var_type(vars, held, lhs);
+        }
         el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
         h = ir::NdVar { n: held };
         test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [h]), h, d.code);
@@ -514,7 +519,7 @@ pub fn file_attr_set(e: el::El, vars: el_vars::Vars, fv: integer, attr: text, rh
     steps: vector<ir::Node> = [];
     pos = v;
     if !(el_ir::unspan(v) is NdInt || el_ir::unspan(v) is NdVar) {
-      tn = el_vars::create_unique(vars, "_next", ir::TyOptional { inner: ir::TyInteger { spec: i32_spec() } });
+      tn = el_vars::create_unique(vars, "_next", ir::TyOptional { inner: count_type(e) });
       el_vars::set_defined(vars, tn);
       steps += [el_ir::v_set(tn, v)];
       pos = ir::NdVar { n: tn };
@@ -679,7 +684,7 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index");
       if idx >= 0 {
         el_vars::in_use(vars, idx, true);
-        return ex(ir::NdVar { n: idx }, ir::TyInteger { spec: i32_spec() });
+        return ex(ir::NdVar { n: idx }, count_type(e));
       }
     }
   }
@@ -728,7 +733,7 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       if attr == "first" {
         return ex(el_ir::cl(e, "OpEqInt", [ir::NdVar { n: c }, ir::NdInt { n: 0 }]), ir::TyBoolean);
       }
-      return ex(ir::NdVar { n: c }, ir::TyInteger { spec: i32_spec() });
+      return ex(ir::NdVar { n: c }, count_type(e));
     }
   }
   // `d#lock` on a record or vector local reads its store's lock (`n_get_store_lock`).
@@ -1463,7 +1468,7 @@ fn mixed_vector_eq(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex, ea: i
   }
   res = el_vars::create_unique(vars, "veq_r", ir::TyBoolean);
   el_vars::set_defined(vars, res);
-  idx = el_vars::create_unique(vars, "veq_i", ir::TyInteger { spec: i32_spec() });
+  idx = el_vars::create_unique(vars, "veq_i", count_type(e));
   el_vars::set_defined(vars, idx);
   len_a = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }]);
   ops += [el_ir::v_set(res, el_ir::cl(e, "OpEqInt", [len_a, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: rhs }])]))];
@@ -1572,6 +1577,53 @@ pub fn has_operator_method(e: el::El, d: integer) -> boolean {
 // block expecting the then arm's type (`arm_expectation`); `else null` without one.  The `if` is
 // typed as its then arm.  A condition that is not a boolean, a then arm that never finishes or is
 // null, arms of different types and a value without an `else` are refused by name.
+// `Parser::integer_arm_union` (`@FR-I-Join`): two integer arms of different ranges join to the
+// union of their ranges, forced to four bytes under the 32-bit regime while both arms are 32-bit
+// and the union stays inside `i32`.  Null when either arm is no integer or the two are one type.
+pub fn int_arm_union(e: el::El, a: ir::TypeT, b: ir::TypeT) -> ir::TypeT? {
+  match el_types::base(a) {
+    TyInteger { spec: x } => match el_types::base(b) {
+      TyInteger { spec: y } => {
+        if x == y {
+          return null;
+        }
+        lo = if x.min < y.min { x.min } else { y.min };
+        hi = if x.max > y.max { x.max } else { y.max };
+        fs = if el_types::regime32(e) && el_types::width32_int(a) && el_types::width32_int(b) && hi <= 2147483647 { 4 } else { 0 };
+        u = ir::TyInteger { spec: ir::IntegerSpec { min: lo, max: hi, not_null: x.not_null, forced_size: fs } };
+        if a is TyOptional || b is TyOptional { ir::TyOptional { inner: u } } else { u }
+      },
+      _ => null
+    },
+    _ => null
+  }
+}
+
+// An arm whose tail is a literal of records, under an expected plain vector of records: the
+// literal is read against it (Rust's `parse_vector` handed the expected type as `var_tp`, its
+// element temp typed by its content).  The caller restores `expect_node` / `expect`.
+pub fn arm_expect(e: el::El, vars: el_vars::Vars, arm: integer, expected: ir::TypeT) {
+  // (A type variable's element is no record yet: Rust's temp keeps the bare reference.)
+  rec_elem = match el_types::base(expected) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
+  rec = !(expected is TyOptional) && rec_elem;
+  // (Under an expected `vector<T>?` the arm's literal of records keeps its element temp bare.)
+  if expected is TyOptional && rec_elem {
+    bt = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
+    if bt >= 0 && e.p.nodes[bt] is SVecLit {
+      vars.bare_literal = bt;
+    }
+  }
+  if !rec {
+    return;
+  }
+  // (A bare arm — a `match` arm's `[…]` — is the literal itself.)
+  at = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
+  if at >= 0 && match e.p.nodes[at] { SVecLit { items } => len(items) > 0, _ => false } {
+    vars.expect_node = at;
+    vars.expect = expected;
+  }
+}
+
 pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?, expected: ir::TypeT) -> Ex {
   vars.capture_ok = true;
   // (`fit_in_condition`: a `!local` here may take an armed fit temp; the body's may not.)
@@ -1603,7 +1655,12 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // `@FR-N-Guard`: the then-block reads with what the condition proves where it holds.
   facts = el_ex_call::assume_condition(e, vars, c.code, true);
   pp = el_ex_call::presence_proof(e, vars, c.code);
+  kn = vars.expect_node;
+  kt = vars.expect;
+  arm_expect(e, vars, then, expected);
   t = el_ex_assign::parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  vars.expect_node = kn;
+  vars.expect = kt;
   // The captures' bindings open the then-block; their names end with it.
   if len(bindings) > 0 {
     match t.code {
@@ -1657,8 +1714,33 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   f = if e.p.nodes[other!] is SIf {
     el_ex_assign::expression(e, vars, other!)
   } else {
-    el_ex_assign::parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever || open_tuple(t.tp) { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
+    arm_expect(e, vars, other!, expected);
+    fb = el_ex_assign::parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever || open_tuple(t.tp) { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) });
+    vars.expect_node = kn;
+    vars.expect = kt;
+    fb
   };
+  // `arm_expectation` taken (`parse_block`'s `result` at the tail): beside a plain `integer` then
+  // arm the else block is read as the full integer, so a narrower integer tail — a `u32`, a `u8`
+  // — is converted to it (a widening: no code) and the block typed so.
+  if !(e.p.nodes[other!] is SIf) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    match t.tp {
+      TyInteger { spec: ts } => {
+        if ts.forced_size == 0 && ts.min == -2147483647 && ts.max == 2147483647 {
+          match f.tp {
+            TyInteger { spec: fs } => {
+              if fs != ts && fs.max <= 4294967295 {
+                ae = arm_expectation(t.tp);
+                f = ex(block_typed(f.code, ae), ae);
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // loft#1682 (`tuple_join_open`): a then arm answering a tuple with a `null` member has no type
   // of its own either — the arms join member by member (`join_tuple_arms`) and each tail is
   // converted to that join (`convert_arm_tail`).  A pair that does not join is refused by name.
@@ -1722,7 +1804,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     }
     // Both arms are typed as the else (`true_type = false_type`), whose dep on a store the arm
     // itself mints is no borrow (`arm_join_type`, `outside_deps`).
-    et = el_types::with_deps(f.tp, outside_deps(e, f.code, el_types::deps(f.tp)));
+    // (A vector else keeps the store its literal mints: Rust types both arms `["__vdb_N"]`.)
+    et = if el_types::base(f.tp) is TyVector { f.tp } else { el_types::with_deps(f.tp, outside_deps(e, f.code, el_types::deps(f.tp))) };
     t = ex(block_typed(tc, et), et);
     f = ex(f.code, et);
     // DN1's literal arm (`null_arm_widens`): a keyed else beside the `{ null }` then arm joins
@@ -1900,7 +1983,21 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       // The else arm was read against the then arm's `τ?` (`arm_expectation`): its tail is
       // converted to it, so its block is typed `τ?`.
       fc = if t.tp is TyOptional && !(f.tp is TyOptional) { block_typed(f.code, t.tp) } else { f.code };
-      return ex(el_ir::v_if(c.code, t.code, fc), ir::TyOptional { inner: el_types::with_deps(el_types::base(t.tp), ds) });
+      jb = int_arm_union(e, t.tp, f.tp) ?? el_types::base(t.tp);
+      return ex(el_ir::v_if(c.code, t.code, fc), ir::TyOptional { inner: el_types::with_deps(el_types::base(jb), ds) });
+    }
+  }
+  // `@FR-I-Join` (`integer_arm_union`): two integer arms join to the union of their ranges —
+  // unless the else arm provably fits a NAMED-width then arm (`arm_fits_named_width`: a constant,
+  // a mask), which then answers in that width.
+  if !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    fits_named = match t.tp { TyInteger { spec: ts } => ts.forced_size > 0 && f.tp is TyInteger && !(t.tp == f.tp) && el_convert::value_fits(e, vars, f.code, t.tp), _ => false };
+    if fits_named {
+      return ex(el_ir::v_if(c.code, t.code, f.code), t.tp);
+    }
+    iu = int_arm_union(e, t.tp, f.tp);
+    if iu != null {
+      return ex(el_ir::v_if(c.code, t.code, f.code), iu!);
     }
   }
   // `(N-Join)` for a record: `S?` beside `S` joins to `S?`, borrowing what either arm does — a
@@ -2571,6 +2668,35 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // delivery (`vector_return`) copies it into the buffer, and refuses a `return` anywhere
     // else in the body.
     renamed = match el_ir::unspan(v.code) { NdVar { n } => hidden_param(e, vars, n), _ => false };
+    // (`return f(…)` of a call delivering into a buffer of its own, from a `vector<T>?` function:
+    // the call is handed the function's buffer, `chain_site_set_shape`'s `{ buf = call; buf }`
+    // typed as the declared result.)
+    if result is TyOptional && el_types::base(result) is TyVector && el_ex_call::buffered_loft_call(e, v.code) {
+      obuf = vector_buffer(e, vars);
+      oba = attr_nr(el::def(e, e.context), "__retbuf");
+      if obuf >= 0 && oba >= 0 {
+        oret = el::def(e, e.context).returned[0];
+        if !el_types::deps(oret).contains(oba) {
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(oret, el_types::deps(oret) + [oba])];
+        }
+        ocall = el_ir::unspan(v.code);
+        oref = match ocall { NdCall { args: oca } => match el_ir::unspan(oca[-1] ?? ir::NdNull) { NdVar { n: orv } => orv, _ => -1 }, _ => -1 };
+        if oref >= 0 && oref != obuf {
+          ocall = rename_var(ocall, oref, obuf);
+          el_vars::unregister_work_ref(vars, oref);
+        }
+        return ex(ir::NdReturn { inner: buffer_chain(ocall, obuf, el::def(e, e.context).returned[0] ?? result) }, ir::TyNever);
+      }
+    }
+    // (…and a vector local, the tail delivery deciding where its store goes.)
+    if result is TyOptional && el_types::base(result) is TyVector && match el_ir::unspan(v.code) { NdVar { n: olv } => !vars.vars[olv].argument && el_types::base(el_vars::tp(vars, olv)) is TyVector, _ => false } {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    // (A fresh literal from a `vector<T>?` function is returned as it is too: a trailing one is
+    // the tail the delivery renames the buffer onto, as the dense result's.)
+    if result is TyOptional && el_types::base(result) is TyVector && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: ob } => literal_backing_store(ob[0]) >= 0, _ => false }) {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
     if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0 || renamed) {
       // `return q ?? [literal]` over a nullable vector parameter (`parse_return`'s `clear +
       // append + Return(buf)` over the `??`'s whole branch): the first pass merges the parameter

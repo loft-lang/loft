@@ -119,7 +119,87 @@ static int loft_ffi_copy_changed(loft_cx *cx, loft_ref a, uint32_t pin, uint32_t
 #define loft_ffi_copy_changed(cx, a, pin, rec) 0
 #endif
 
-/* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
+/* `Stores::bridge_copy_in`: the library reads every heap argument through the ONE store it is
+ * handed, so an argument of ANOTHER store is deep-copied into that store for the call: a vector
+ * into a one-word root (its slot at +4), by its element type `tp` — or, for elements that own
+ * no heap (`tp` 0xFFFF), as `size`-byte elements in one block — and a record by its type `tp`.
+ * Two vectors of two stores otherwise read the first twice (`@FR-Slice-Value`). */
+static loft_ref loft_ffi_move_in(loft_cx *cx, const loft_tdesc *T, uint32_t pin, loft_ref a, int is_vec, uint16_t tp, uint32_t size) {
+    loft_store_t *d = &cx->stores[pin];
+    if (is_vec) {
+        uint32_t root = loft_st_claim(cx, d, 1);
+        loft_st_set_u32(cx, d, root, 4, 0);
+        loft_ref to = { (uint16_t) pin, root, 4, 0 };
+        if (tp != 0xFFFF) {
+            loft_vec_add(cx, T, tp, to, a);
+            return to;
+        }
+        loft_store_t *s = loft_store_of(cx, a);
+        uint32_t from = loft_collection_rec(cx, s, a.rec, a.pos);
+        uint32_t n = from ? loft_st_u32(cx, s, from, 4) : 0;
+        if (n == 0) return to;
+        loft_vec_reserve(cx, to, n, size);
+        uint32_t rec = loft_collection_rec(cx, d, to.rec, to.pos);
+        s = loft_store_of(cx, a); /* the reserve may have moved the buffers */
+        memcpy(d->buf + (size_t) rec * 8 + 8, s->buf + (size_t) from * 8 + 8, (size_t) n * size);
+        loft_st_set_u32(cx, d, rec, 4, n);
+        return to;
+    }
+    uint32_t rec = loft_st_claim(cx, d, 1 + (T[tp].size + 7) / 8);
+    memset(d->buf + (size_t) rec * 8 + 8, 0, T[tp].size);
+    loft_ref to = { (uint16_t) pin, rec, 8, 0 };
+    loft_copy_record(cx, T, tp, a, to, 4);
+    return to;
+}
+
+/* The ref the library is handed for a moved argument: a vector's data record, a record itself. */
+static loft_ffi_ref loft_ffi_moved_ref(loft_cx *cx, loft_ref mv, int is_vec) {
+    loft_ffi_ref r = { mv.store_nr, is_vec ? loft_collection_rec(cx, loft_store_of(cx, mv), mv.rec, mv.pos) : mv.rec,
+                       is_vec ? 0u : mv.pos };
+    return r;
+}
+
+/* `Stores::bridge_move_back`: a moved argument's copy is written back over the original when the
+ * parameter is not `const` — what the call did to it, as it would have done in place — and then
+ * released from the store the library was handed. */
+static void loft_ffi_move_back(loft_cx *cx, const loft_tdesc *T, uint32_t nt, loft_ref a, loft_ref mv, int is_vec,
+                               uint16_t tp, uint32_t size, int writable) {
+    if (writable && !loft_store_of(cx, a)->read_only) {
+        if (is_vec && tp != 0xFFFF) {
+            loft_vec_replace(cx, T, nt, tp, a, mv);
+        } else if (is_vec) {
+            loft_store_t *d = loft_store_of(cx, mv);
+            uint32_t from = loft_collection_rec(cx, d, mv.rec, mv.pos);
+            uint32_t n = from ? loft_st_u32(cx, d, from, 4) : 0;
+            loft_store_t *s = loft_store_of(cx, a);
+            uint32_t to = loft_collection_rec(cx, s, a.rec, a.pos);
+            if (to) loft_st_set_u32(cx, s, to, 4, 0);
+            if (n) {
+                loft_vec_reserve(cx, a, n, size);
+                s = loft_store_of(cx, a);
+                d = loft_store_of(cx, mv);
+                to = loft_collection_rec(cx, s, a.rec, a.pos);
+                memcpy(s->buf + (size_t) to * 8 + 8, d->buf + (size_t) from * 8 + 8, (size_t) n * size);
+                loft_st_set_u32(cx, s, to, 4, n);
+            }
+        } else {
+            loft_copy_record(cx, T, tp, mv, a, 0);
+        }
+    }
+    loft_store_t *d = loft_store_of(cx, mv);
+    if (is_vec) {
+        if (tp != 0xFFFF) loft_vec_clear_release(cx, T, nt, mv);
+        d = loft_store_of(cx, mv);
+        uint32_t rec = loft_collection_rec(cx, d, mv.rec, mv.pos);
+        if (rec) loft_st_delete(cx, d, rec);
+    } else {
+        loft_remove_claims(cx, T, tp, mv);
+        d = loft_store_of(cx, mv);
+    }
+    loft_st_delete(cx, d, mv.rec);
+}
+
+/* A heap answer as loft holds it: a
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
 static loft_ref loft_ffi_vector_answer(loft_cx *cx, loft_ffi_ref r) {
     if (r.rec == 0 && r.pos == 0) return loft_ref_null(cx);
@@ -260,7 +340,13 @@ static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const
 /* A component's context for this caller context (`@FR-C-Boundary`): made by the component's own
  * `loft_cx_make_v1` the first time this context calls into it, handed to each of its symbols
  * first, and ended by its `loft_cx_end_v1` with this context (`loft_cx_end`).  The component
- * keeps its connection tables and answers there, so a `par` worker's are its own. */
+ * keeps its connection tables and answers there, so a `par` worker's are its own.
+ *
+ * In a hosted unit the caller is the interpreter thread whose `Stores` called in, and a unit's
+ * context is that `Stores`' own: the unit takes the component context that `Stores` keeps,
+ * keyed by the component's `make` as the interpreter's own calls key it
+ * (`extensions::call_bridge`), so a connection the library accepted is the one the program's own
+ * call to the component sends on.  The `Stores` ends it; the entry here borrows it (no `end`). */
 static void *loft_component_cx(loft_cx *cx, const char *path, const char *file) {
     for (int i = 0; i < cx->ncomps; i++)
         if (strcmp(cx->comps[i].path, path) == 0) return cx->comps[i].cx;
@@ -275,6 +361,13 @@ static void *loft_component_cx(loft_cx *cx, const char *path, const char *file) 
     memcpy(&make, &m, sizeof make);
     memcpy(&end, &e, sizeof end);
     cx->comps[cx->ncomps].path = path;
+#if defined(LOFT_HOSTED)
+    if (cx->host_stores) {
+        cx->comps[cx->ncomps].end = 0;
+        cx->comps[cx->ncomps].cx = loft_hosted->cx_of(cx->host_stores, m, make, end);
+        return cx->comps[cx->ncomps++].cx;
+    }
+#endif
     cx->comps[cx->ncomps].end = end;
     cx->comps[cx->ncomps].cx = make();
     return cx->comps[cx->ncomps++].cx;

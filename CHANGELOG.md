@@ -22,7 +22,36 @@ only be cross-built and never run before it shipped, and loft ships only what it
 On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
 the last release with an Intel Mac bundle.
 
+**One compiled backend: C.**  `--native` builds through a C compiler, and so do `--html`,
+`--native-wasm`, `--native-android` and the libraries a program uses; the Rust code generator is
+gone, and compiling a loft program needs no Rust toolchain.  `--native-rust` and
+`LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`.  The second line of `loft --version`
+and the `loft test` summary name the C compiler a native build uses, or say there is none.  A page
+built with `--html` that runs `par` needs WASI's threads library to use more than one thread:
+`make wasi-threads-sysroot` installs it (see New).  `loft introspect --show-rust` and `--rust-out` and the REPL's `:rust`
+are gone: `--native-emit <file.c>` writes the C a program compiles to.  `loft cache warm` no longer
+takes `--runtime` or `--no-runtime`.
+
 ### May need a change in your code
+
+**A library's native part is C.**  A package whose `loft.toml` declares a native library of its
+own in Rust — `[library] native`, `[native] crate`, `[native.functions]` or `[native.wasm]` — is
+refused where it is used, at that line, with the cure: list the C sources under
+`[c] shim = "c/<file>.c"` and bind each function with a `#c` declaration.  loft no longer runs
+cargo to build such a library, nor fetches a prebuilt one at `loft install`.  No published
+release is affected: every library release with a Rust native part was already deprecated, and
+each library has a release with a C part.  `loft new --native <name>` now scaffolds the C part
+(`c/<name>.c`), and `loft generate`, which wrote Rust stubs, is refused.
+
+**A page that runs loft holds its game and its debugger.**  The browser bundle (`pkg/loft.js`)
+hands a page an object to keep and call, where it had loose functions that shared one hidden
+session: `const game = new Game(); game.start(files); game.resume_frame()` in place of
+`compile_and_start(files)` and `resume_frame()`, `game.stage_swap(snapshot)`,
+`game.swap_export()` and `game.swap_check(files)` in place of `swap_stage`, `swap_export` and
+`swap_check`, and `const dbg = new Debugger(); dbg.start(source); dbg.command(cmd)` in place of
+`debug_start` and `debug_command`.  Each call answers the same JSON as before, and two games on
+one page no longer share a session.  A page of your own that imports the old names needs these
+lines changed; the gallery and the documentation pages are.
 
 **A format hole with a spec checks its name like any other hole.**  `"{qx:.6}"` is read exactly as
 `"{qx}"` is: a name nobody declared is reported as unknown, and a name bound inside a block that
@@ -32,6 +61,13 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 (`qx = if … { … } else { … }`).
 
 ### New
+
+**A page runs `par` on Web Workers.**  A page built with `--html` whose program runs a `par` loop
+spreads it over a pool of Web Workers, started before the program runs, when the page is served
+cross-origin isolated (the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`
+headers).  Without them, or when the build finds no WASI threads library (`make
+wasi-threads-sysroot` installs one, and the build says when it is missing), every `par` runs on
+the page's own thread, with the same answers.  `--threads` and `--no-threads` force the choice.
 
 **Libraries run compiled, with no Rust toolchain.**  A library a program `use`s is compiled
 through C the first time it runs, and later runs pick the build up; the interpreter calls into

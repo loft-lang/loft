@@ -4,8 +4,8 @@
 
 //! The driver's one question about a library this run: adopt its compiled artifact, build
 //! one, or interpret it.  The interpreter answers the first half
-//! (`native_adopt::adopt_shared_cdylib`) and the Rust writer builds
-//! (`native_lib::build_shared_artifact`); neither names the other, so the two meet here.
+//! (`native_adopt::adopt_shared_cdylib`) and the C backend builds a hosted unit
+//! (`c::hosted::build_artifact`); neither names the other, so the two meet here.
 
 use std::fmt::Write as _;
 
@@ -42,7 +42,7 @@ use std::collections::HashSet;
 /// Step 4 option 3.)
 ///
 /// # Errors
-/// Propagates a build failure from [`build_shared_cdylib`](crate::native_lib::build_shared_cdylib).
+/// Propagates a build failure from [`build_artifact`](crate::c::hosted::build_artifact).
 pub fn cached_or_build_shared_cdylib(
     data: &Data,
     export_set: &HashSet<u32>,
@@ -76,7 +76,7 @@ pub fn cached_or_build_shared_cdylib(
             crate::cache::write_native_artifact_fingerprint(&key.out_dir, key.fp);
             // Bound the directory while the build lock is still held: a unit appears per key
             // (a loft, a switch), and nothing else collects the old ones.
-            crate::native_lib::prune_artifacts(
+            prune_artifacts(
                 &key.out_dir,
                 &crate::opt::native_key::auto_cdylib_stem(pkg_dir),
             );
@@ -122,7 +122,7 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
         {
             continue;
         }
-        let export = crate::native_lib::library_export_set(&parser.data, pkg_dir);
+        let export = crate::opt::native_key::library_export_set(&parser.data, pkg_dir);
         let export = crate::c::hosted::hosted_split(&parser.data, &parser.database, &export).0;
         if export.is_empty() {
             continue;
@@ -332,7 +332,7 @@ fn loaded_spelling(data: &crate::data::Data, pkg: &std::path::Path) -> Option<St
 /// and not the program's that happened to build it first.
 pub struct LibraryAlone {
     pub parser: crate::parser::Parser,
-    /// The package directory, canonical: what `native_lib::library_export_set` filters by.
+    /// The package directory, canonical: what `opt::native_key::library_export_set` filters by.
     pub pkg_dir: String,
     /// The library's public functions an artifact carries.
     pub export: HashSet<u32>,
@@ -414,7 +414,7 @@ pub fn parse_library_alone(
     // which may name the canonical directory another way (`/var` for `/private/var`), and the
     // export set is read by path prefix.
     let pkg_dir = loaded_spelling(&p.data, &pkg_path).unwrap_or(pkg_dir);
-    let export = crate::native_lib::library_export_set(&p.data, &pkg_dir);
+    let export = crate::opt::native_key::library_export_set(&p.data, &pkg_dir);
     let mut pending = std::mem::take(&mut p.pending_native_compile);
     if !pending.iter().any(|d| d == &pkg_dir) {
         pending.push(pkg_dir.clone());
@@ -429,4 +429,88 @@ pub fn parse_library_alone(
         export,
         pending,
     })
+}
+
+/// How many built artifacts a package's `native-auto/` keeps.
+///
+/// The name carries the caller's type-layout fingerprint (#715), so a NEW file
+/// appears whenever a consumer's type table differs — and nothing ever removed the
+/// old ones.  Measured in this repo: `tests/lib/typeshift/native-auto` held 532
+/// artifacts, 9.1 GB, at ~28 MB per suite run, because that fixture's whole job is
+/// to shift type layouts.  Across the tree it was 25 GB.
+///
+/// Generous on purpose.  A pruned artifact that is wanted again is REBUILT, so the
+/// cost of keeping too few is a rebuild and the cost of keeping too many is
+/// disk; 8 covers a package used from several consumer contexts in one session
+/// while still bounding the directory.
+const KEEP_ARTIFACTS: usize = 8;
+
+/// Drop all but the [`KEEP_ARTIFACTS`] most recent artifacts in `dir`, each with
+/// the generated `.rs` / `.args` it was built from.
+///
+/// Called after a successful build, while the build lock is still held.  Ordering
+/// is by mtime, so the survivors are the most recently BUILT — including the one
+/// that just finished.
+///
+/// `family` is the artifact-name prefix this sweep OWNS
+/// ([`auto_cdylib_stem`]) — and passing it is load-bearing, not tidiness.  The
+/// sweep used to take every `.so` in the directory, and `native-auto/` is not
+/// exclusively ours: a package with a `[c] shim` builds its shim cdylib
+/// (`<pkg>_shim_<key>.so`) right there.  That library is content-keyed and built
+/// ONCE, so it is always the OLDEST file in the directory — the first thing an
+/// age-ordered sweep deletes the moment the directory saturates.  Deleting it
+/// does not cost a rebuild, it removes the only definition of the package's `#c`
+/// symbols, and the next run dies with *"`#c` symbol 'x' not found — check the
+/// spelling"*, naming neither the library nor the sweep that ate it.  That is the
+/// residual half of loft#831: parallel runs are what saturate the directory,
+/// because each distinct type-layout context adds an artifact of its own.
+///
+/// A concurrent process can be adopting one of these without holding the lock (the
+/// fresh fast path takes none).  That is why [`artifact_layout_probe`] refuses to
+/// adopt an artifact it cannot OPEN: the loser of that race rebuilds instead of
+/// dlopening a file that just vanished.
+pub(crate) fn prune_artifacts(dir: &std::path::Path, family: &str) {
+    let ext = crate::platform::dll_extension();
+    let Ok(entries) = crate::file_access::read_dir(dir) else {
+        return;
+    };
+    let mut built: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .into_iter()
+        .filter(|e| crate::file_access::extension(e).is_some_and(|x| x == ext))
+        .filter(|e| artifact_stem(e).is_some_and(|s| s.starts_with(family)))
+        .filter_map(|e| {
+            let m = crate::file_access::symlink_metadata(&e)
+                .ok()?
+                .modified()
+                .ok()?;
+            Some((m, e.os_spelling()))
+        })
+        .collect();
+    if built.len() <= KEEP_ARTIFACTS {
+        return;
+    }
+    // Newest first; everything past the keep window goes.
+    built.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
+    for (_, so) in built.drain(KEEP_ARTIFACTS..) {
+        let Some(stem) = artifact_stem(&so) else {
+            continue;
+        };
+        let _ = crate::file_access::remove_file(&so);
+        // The unit's C goes with it; `.rs` and `.args` are what older builds left beside one.
+        for companion in ["c", "rs", "args"] {
+            let _ = crate::file_access::remove_file(dir.join(format!("{stem}.{companion}")));
+        }
+    }
+}
+
+/// `libfoo_<fp>.so` / `foo_<fp>.dll` → the `foo_<fp>` the generated sources are
+/// named after.  Only the platform prefix differs, and stripping it is what lets
+/// one loop delete a library and its generated companions together — and what
+/// lets the sweep tell one family of artifacts from another.
+fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
+    let name = crate::file_access::file_stem(so)?;
+    Some(
+        name.strip_prefix("lib")
+            .map_or_else(|| name.clone(), str::to_string),
+    )
 }

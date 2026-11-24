@@ -46,20 +46,11 @@ fn which(cmd: &str) -> Option<PathBuf> {
     }
 }
 
+/// Can this machine build a page: a clang that links a WASI program (the C's wasm route)?  A
+/// test that needs one skips rather than fails without it — a machine that cannot
+/// cross-compile says nothing about the code under test.
 fn wasm32_target_installed() -> bool {
-    rustup_target_installed("wasm32-unknown-unknown")
-}
-
-/// Is `triple` an installed rustup target on this machine?  A test that needs one
-/// skips rather than fails without it — a machine that cannot cross-compile says
-/// nothing about the code under test.
-fn rustup_target_installed(triple: &str) -> bool {
-    loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .is_some_and(|s| s.lines().any(|l| l == triple))
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 /// Can this machine build a C page (`--native-c --html`)?  Says why not, for the skip line.
@@ -1790,140 +1781,6 @@ fn the_asyncify_save_region_is_outside_the_shadow_stack() {
     );
 }
 
-/// loft#967 — a `loft::<module>` path the generator writes into generated Rust must be
-/// reachable in the feature set the wasm runtime rlib is built with.
-///
-/// `WasmRuntimeShape::features()` builds that rlib `--no-default-features --features
-/// random`, so anything gated behind `native-extensions` (which buys `dlopen`, and wasm
-/// has none) is configured out — and the program that references it dies in `rustc`, in
-/// generated code, naming loft's internals rather than anything the author wrote.
-///
-/// It has happened twice from two different producers. @PLN24 arc E fixed the `#c` half
-/// by refusing the CALL (`Output::no_c_abi`, the only site that knows a binding is
-/// reachable); the `#native` half went on emitting `loft::native_call::enter` +
-/// `build_store`, so every store-allocating native — a vector return, a struct
-/// `Reference` argument — could not be built for `--native-wasm` at all.
-///
-/// This is the always-on half of the guard.  Its end-to-end half — a `[native] crate`
-/// package cross-built to wasip2 and run under wasmtime — retired with the rustc writer
-/// (@PLN225 R4): the C refuses a library whose only native part is Rust.
-///
-/// A gate is read at TWO sites, because the two producers were gated differently: the
-/// declaration in `src/lib.rs` (how `native_call` was hidden) and a leading inner
-/// `#![cfg(…)]` in the module's own file (how `c_call` is).
-#[test]
-fn generated_loft_paths_survive_the_wasm_feature_set() {
-    let root = repo_root();
-    // `c_call` is the ONE exception, and it is exempt because a call to it cannot be
-    // emitted for wasm: `no_c_abi()` refuses the `#c` binding first.  Asserted below, so
-    // the exemption cannot outlive its enforcement.
-    const REFUSED_BEFORE_EMISSION: &[&str] = &["c_call"];
-
-    let mut sources = vec![root.join("src/codegen_runtime.rs")];
-    let gen_dir = root.join("src/generation");
-    let mut entries: Vec<PathBuf> = fa::read_dir(&gen_dir)
-        .expect("read src/generation")
-        .into_iter()
-        .map(|e| e.os_spelling())
-        .filter(|p| fa::has_extension(p, "rs"))
-        .collect();
-    entries.sort();
-    sources.extend(entries);
-
-    // Every `loft::<ident>` in the generator.  A leading `.` means a loft FILENAME in a
-    // comment (`prog.loft::main`), not a Rust path.
-    let mut referenced: Vec<String> = Vec::new();
-    for src in &sources {
-        let text = fa::read_to_string(src).expect("read generator source");
-        let bytes = text.as_bytes();
-        for (at, _) in text.match_indices("loft::") {
-            if at > 0 && (bytes[at - 1] == b'.' || bytes[at - 1].is_ascii_alphanumeric()) {
-                continue; // `prog.loft::x`, or a longer identifier ending in `loft`
-            }
-            let rest = &text[at + "loft::".len()..];
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
-                .collect();
-            if !name.is_empty() && !referenced.contains(&name) {
-                referenced.push(name);
-            }
-        }
-    }
-    assert!(
-        referenced.iter().any(|m| m == "native_call"),
-        "the scan found no `loft::native_call` at all — it is the path loft#967 was \
-         about, so an empty scan means this test stopped reading the generator"
-    );
-
-    let lib_rs = fa::read_to_string(root.join("src/lib.rs")).expect("read src/lib.rs");
-    let lines: Vec<&str> = lib_rs.lines().collect();
-    let mut gated: Vec<String> = Vec::new();
-    for name in &referenced {
-        if REFUSED_BEFORE_EMISSION.contains(&name.as_str()) {
-            continue;
-        }
-        let decl_mod = format!("pub mod {name};");
-        let decl_use = format!("::{name};");
-        let Some(at) = lines.iter().position(|l| {
-            let t = l.trim();
-            t == decl_mod || (t.starts_with("pub use ") && t.ends_with(&decl_use))
-        }) else {
-            continue; // not a crate-root item — an inherent path, nothing to gate
-        };
-        // Attributes sit directly above the declaration, interleaved with comments.
-        let mut j = at;
-        while j > 0 {
-            let t = lines[j - 1].trim();
-            if t.starts_with("#[") {
-                if t.contains("cfg(feature") {
-                    gated.push(format!("{name}: src/lib.rs:{} {t}", j));
-                }
-            } else if !t.starts_with("//") {
-                break;
-            }
-            j -= 1;
-        }
-        // …and the module's own file can gate itself with an inner attribute, which the
-        // declaration above says nothing about.
-        for cand in [format!("src/{name}.rs"), format!("src/{name}/mod.rs")] {
-            let Ok(body) = fa::read_to_string(root.join(&cand)) else {
-                continue;
-            };
-            if let Some(l) = body
-                .lines()
-                .take(40)
-                .find(|l| l.trim_start().starts_with("#![cfg(feature"))
-            {
-                gated.push(format!("{name}: {cand} {}", l.trim()));
-            }
-        }
-    }
-    assert!(
-        gated.is_empty(),
-        "generated code emits these `loft::` paths, but they are behind a cargo feature \
-         the wasm runtime rlib does not enable (it builds `--no-default-features \
-         --features random`), so `--native-wasm` / `--html` fails in rustc inside \
-         generated code (loft#967):\n  {}\n\nEither ungate the item, or refuse the \
-         construct that emits it before emission — the way `no_c_abi()` refuses a `#c` \
-         binding — and add it to REFUSED_BEFORE_EMISSION.",
-        gated.join("\n  ")
-    );
-
-    // The exemption's enforcement, pinned: `c_call` is safe to skip only while a
-    // reachable `#c` binding is REFUSED on a wasm target — except one whose package's
-    // `[c] shim` the wasm build linked into the module, which is called as a direct
-    // extern (`__c_<symbol>`) and never names `loft::c_call`.
-    let gen_mod =
-        fa::read_to_string(root.join("src/generation/mod.rs")).expect("read generation/mod.rs");
-    assert!(
-        gen_mod.contains("if self.no_c_abi() && !via_shim {"),
-        "`c_call` is exempt from the gate above because `no_c_abi()` refuses a reachable \
-         `#c` binding before any call can be emitted — that refusal is gone, so the \
-         exemption is now unbacked (loft#967, @PLN24 arc E)"
-    );
-}
-
 // ── loft#1059 — a page whose stack runs out must say so ──────────────────────────────
 
 /// A TRAP reaches the page, which a panic hook cannot do for it.
@@ -2236,8 +2093,9 @@ fn the_c_page_answers_what_the_rust_page_answers() {
         ),
         ("page_fs", PAGE_FS_SRC, PAGE_FS_WANT),
         ("cursor", CURSOR_SRC, CURSOR_WANT),
-        // `par` in a page runs its rows in order, as the Rust writer's page does when the
-        // browser is not cross-origin isolated: Σx² over 1..=10 = 385.
+        // `par` on a threaded page (@C3) whose host starts no pool, as node does and a browser
+        // without cross-origin isolation does: its rows run on the main thread.  Σx² over
+        // 1..=10 = 385.
         (
             "par",
             "fn sq(x: integer) -> integer { x * x }\nfn label(x: integer) -> text { \"<{x}>\" }\nfn main() {\n  s = 0;\n  for x in 1..11 par(r = sq(x), 4) { s += r; }\n  t = \"\";\n  for x in 1..4 par(r = label(x), 2) { t += r; }\n  println(\"sum={s} text={t}\");\n}\n",
@@ -2288,7 +2146,7 @@ fn issue623_routeless_native_answers_one_diagnostic_on_a_page() {
     fa::write(
         tmp.join("nobridge/loft.toml"),
         "[package]\nname = \"nobridge\"\nversion = \"0.1.0\"\n\n\
-         [library]\nentry = \"src/nobridge.loft\"\nnative = \"loft_nobridge\"\n",
+         [library]\nentry = \"src/nobridge.loft\"\n",
     )
     .expect("write fixture loft.toml");
     // A bare `#native` the library carries no C part for — the #623 shape.

@@ -125,7 +125,16 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // (So does a tail literal of numbers: each item is built AT the result's element — `fn f() ->
   // vector<u8> { [104, 101] }` pushes bytes.)
   scalar_elem = match el_types::base(result) { TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || match inner { TyEnum { is_ref } => !is_ref, _ => false }, _ => false };
-  lit_tail = ttail >= 0 && scalar_elem && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
+  // (…and a tail literal of records under a plain vector result: Rust's `parse_vector` is
+  // handed the result as its `var_tp`, its element temp typed by it — `_elm_1: ref(P)`.  A
+  // `vector<T>?` result's content is unknown there.)
+  rec_elem = !(result is TyOptional) && match el_types::base(result) { TyVector { inner } => match inner { TyReference { n: rn } => rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0, TyEnum { is_ref } => is_ref, _ => false }, _ => false };
+  lit_tail = ttail >= 0 && (scalar_elem || rec_elem) && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
+  // (A tail literal of records under a `vector<T>?` result: the content is unknown there, so its
+  // element temp stays bare — `vars.bare_literal`.)
+  if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
+    vars.bare_literal = ttail;
+  }
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
@@ -427,7 +436,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
-    code = el_ex_deliver::lambda_vector_copy(e, code, rb, result);
+    chained = el_ex_deliver::lambda_call_chain(e, vars, code, rb, result);
+    code = if chained != null { chained! } else { el_ex_deliver::lambda_vector_copy(e, code, rb, result) };
   }
   // A nullable vector a CALL answers at the tail (`fn(k) -> vector<integer>? { g(k) }`): Rust
   // renames the buffer onto the call's work ref (`__ref_N` the hidden parameter, the result
@@ -551,6 +561,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
     }
   }
+  // A lambda with no buffer yet whose vector tail is a buffered call grows one (`Grow`).  Not
+  // for a `vector<T>?` result: Rust's ladder answers `AwaitReservedBuffer` there, the call left
+  // building into its own `__ref_N`.
+  if rb < 0 && e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) {
+    el_ex_deliver::lambda_grow(e, vars, code, result);
+  } else if rb < 0 && !e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) && e.declared_lambdas.contains(el::def(e, e.context).name) {
+    code = el_ex_deliver::grown_tail(e, vars, code);
+  }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {
     code = el_ex_deliver::vector_return(e, vars, code, rb, result);
@@ -577,6 +595,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && el_trace::on() {
     el_trace::route(e, "classify_reference_delivery=MaterializeView");
   }
+  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
+  vars.ret_src = raw_tail(code);
   if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
@@ -1020,10 +1040,10 @@ pub fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
       if block[0].name != "block" || len(block[0].operators) == 0 {
         return -1;
       }
-      for op in block[0].operators {
-        if el_ir::unspan(op) is NdReturn {
-          return -1;
-        }
+      // (An early `return` among the statements leaves on its own: the join is the tail's,
+      // copied arm by arm, `materialize_return_into`'s `leaving_branch`.)
+      if el_ir::unspan(el_ir::last(block[0].operators)) is NdReturn {
+        return -1;
       }
       bind_leaves(e, vars, el_ir::last(block[0].operators))
     },
@@ -2048,7 +2068,17 @@ pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb:
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  // (A join that can leave — a `return` in an arm — is copied arm by arm, its exit building
+  // into the buffer itself: `materialize_return_into`'s `leaving_branch`.)
+  if el_ex_copy::returns_in([tail]) > 0 {
+    arms = el_ex_copy::copy_arms(e, vars, tail, rb, td, owned);
+    if arms == null {
+      return null;
+    }
+    bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), arms!);
+  } else {
+    bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  }
   bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   rba = attr_nr(el::def(e, e.context), "__retbuf");
   if rba >= 0 {
@@ -2139,6 +2169,13 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
           ab.result = [owned];
           return ir::NdBlock { block: [ab] };
         }
+      }
+      // (An arm that can leave — a `return` among its statements — is copied in at its tail
+      // value in Rust, its early exit building into the buffer itself (`leaving_branch`,
+      // `BuildIntoBuffer`): not carried, refused by name.)
+      if any_block && el_ex_copy::returns_in(ab.operators) > 0 {
+        el::refuse(e, "a record match arm that can leave, delivered into the return buffer");
+        return null;
       }
       // (A whole block copied in is typed without the store its own literal mints.)
       if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
@@ -2473,8 +2510,9 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
     return null;
   }
   // A branch that can leave the function from inside an arm is copied arm by arm, its
-  // sources bound first (`leaving_branch`, `bind_leaving_source`): not carried.
-  if el_ex_call::has_return(el_ir::last(bl.operators)) {
+  // sources bound first (`leaving_branch`, `bind_leaving_source`) — on the second pass, by
+  // `materialize_join_tail`; the first still takes `Bind`, the buffer named in the result.
+  if !e.first_pass && el_ex_call::has_return(el_ir::last(bl.operators)) {
     return null;
   }
   // Pass 2, the buffer already among the result's deps (`bound_already`): every named local

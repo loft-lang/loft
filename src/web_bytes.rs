@@ -12,10 +12,27 @@
 //! library reads them back with `byte_at` and never as characters — so [`bytes_text`] keeps a
 //! byte that is not UTF-8, as the library's protocol requires.
 
-use std::cell::RefCell;
+/// `@PLN226` — a program's web buffers (`Stores::web`, the C runtime's `cx->pk_*`): the bytes
+/// the `pack_*` natives build, and in the browser the last WebSocket message, its opcode and
+/// the last fetch's body and headers (`web_browser`).  The program's own (`@FR-C-Own`).
+#[derive(Default)]
+pub struct WebCx {
+    pack: Vec<u8>,
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+    pub(crate) last_msg: Vec<u8>,
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+    pub(crate) last_op: i64,
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+    pub(crate) last_body: Vec<u8>,
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+    pub(crate) last_headers: Vec<u8>,
+}
 
-thread_local! {
-    static PACK_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+impl Clone for WebCx {
+    /// A new context (a worker's `Stores`) starts empty.
+    fn clone(&self) -> Self {
+        WebCx::default()
+    }
 }
 
 /// Bytes as the `text` the library reads them from: unchanged, a non-UTF-8 byte included.
@@ -29,33 +46,32 @@ pub fn bytes_text(b: Vec<u8>) -> String {
     }
 }
 
-fn push(bytes: &[u8]) {
-    PACK_BUF.with(|b| b.borrow_mut().extend_from_slice(bytes));
-}
-
-pub fn pack_reset() {
-    PACK_BUF.with(|b| b.borrow_mut().clear());
+/// Empty the pack buffer.
+pub fn pack_reset(web: &mut WebCx) {
+    web.pack.clear();
 }
 
 /// One byte, the value masked to 8 bits.
-pub fn pack_u8(b: i64) {
-    push(&[(b & 0xff) as u8]);
+pub fn pack_u8(web: &mut WebCx, b: i64) {
+    web.pack.push((b & 0xff) as u8);
 }
 
 /// Two bytes, little-endian.
-pub fn pack_u16_le(v: i64) {
-    push(&((v & 0xffff) as u16).to_le_bytes());
+pub fn pack_u16_le(web: &mut WebCx, v: i64) {
+    web.pack
+        .extend_from_slice(&((v & 0xffff) as u16).to_le_bytes());
 }
 
 /// Four bytes, little-endian; a negative value packs its two's complement.
-pub fn pack_u32_le(v: i64) {
-    push(&((v & 0xffff_ffff) as u32).to_le_bytes());
+pub fn pack_u32_le(web: &mut WebCx, v: i64) {
+    web.pack
+        .extend_from_slice(&((v & 0xffff_ffff) as u32).to_le_bytes());
 }
 
 /// The buffer as a `text`, leaving it empty.
 #[must_use]
-pub fn pack_take() -> String {
-    bytes_text(PACK_BUF.with(|b| std::mem::take(&mut *b.borrow_mut())))
+pub fn pack_take(web: &mut WebCx) -> String {
+    bytes_text(std::mem::take(&mut web.pack))
 }
 
 /// The byte at `idx`, or -1 outside the text.
@@ -80,14 +96,15 @@ mod tests {
 
     #[test]
     fn a_packed_buffer_keeps_its_bytes() {
-        pack_reset();
-        pack_u8(0);
-        pack_u8(0x1ff);
-        pack_u16_le(0x0102);
-        pack_u32_le(-1);
-        let t = pack_take();
+        let mut web = WebCx::default();
+        pack_reset(&mut web);
+        pack_u8(&mut web, 0);
+        pack_u8(&mut web, 0x1ff);
+        pack_u16_le(&mut web, 0x0102);
+        pack_u32_le(&mut web, -1);
+        let t = pack_take(&mut web);
         assert_eq!(t.as_bytes(), &[0, 0xff, 2, 1, 0xff, 0xff, 0xff, 0xff]);
         assert_eq!(byte_at(1, &t), 255);
-        assert!(pack_take().is_empty(), "taking empties the buffer");
+        assert!(pack_take(&mut web).is_empty(), "taking empties the buffer");
     }
 }

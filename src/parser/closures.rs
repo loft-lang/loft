@@ -1037,15 +1037,10 @@ fn collection_return_views_whole_binds(ret: &Type) -> bool {
 /// whichever member was asked first.  The summary is one answer per function: the parser's
 /// bodies as the scope pass starts, and for a cycle every write any member makes through the
 /// cycle.  A program without recursion gets the same answer a fresh walk gave.
-#[must_use]
-pub(crate) struct ParamWritesSummary {
-    prev: Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>,
-}
+pub(crate) type ParamWritesSummary = crate::data::ScopedSpan;
 
-std::thread_local! {
-    static PARAM_WRITES: std::cell::RefCell<Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// Per function, which of its parameters it writes (`Data::param_writes`).
+pub(crate) type ParamWrites = crate::fxhash::FxHashMap<u32, Vec<bool>>;
 
 /// Compute the summary for `data` and answer [`callee_param_writes`] from it until dropped.
 pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
@@ -1105,23 +1100,11 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
             }
         }
     }
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = PARAM_WRITES.with(|m| m.replace(Some((key, cur))));
-    ParamWritesSummary { prev }
-}
-
-impl Drop for ParamWritesSummary {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        PARAM_WRITES.with(|m| *m.borrow_mut() = prev);
-    }
+    data.param_writes.open(cur)
 }
 
 /// The summary's answer for `fn_nr`, when one is open for this `Data` and holds it.
 fn summarised_param_writes(data: &Data, fn_nr: u32) -> Option<Vec<bool>> {
-    let key = std::ptr::from_ref(data) as usize;
-    PARAM_WRITES.with(|m| match &*m.borrow() {
-        Some((k, map)) if *k == key => map.get(&fn_nr).cloned(),
-        _ => None,
-    })
+    data.param_writes
+        .with(|m: Option<&mut ParamWrites>| m.as_ref()?.get(&fn_nr).cloned())
 }

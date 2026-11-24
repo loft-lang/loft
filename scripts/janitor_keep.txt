@@ -33,7 +33,6 @@ doc/pkg                              # the browser bundle's packaging files besi
 doc/pkg-mt                           # the threaded bundle `make serve` deploys
 tests/wasm/pkg                       # the bundles the wasm tests load
 tests/wasm/pkg-mt
-tools/ir_schema/generated.rs
 tests/fixtures/c_abi                 # the C fixture's built library and self-test
 
 # agent and editor configuration

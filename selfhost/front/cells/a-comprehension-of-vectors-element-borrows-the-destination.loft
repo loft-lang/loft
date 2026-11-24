@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a comprehension building vectors into a local: its element slot borrows the
+// destination's store (a fresh local's `__vdb_N`, or the local itself), not the body literal's.
+// Prints: 3 4 3
+
+fn main() {
+  xs = [1, 2, 3];
+  built = [for x in xs { [x, x + 1] }];
+  b2: vector<vector<integer>> = [[9]];
+  b2 = [for x in xs { [x] }];
+  println("{len(built)} {built[2][1]} {len(b2)}");
+}

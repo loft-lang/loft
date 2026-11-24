@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A program may ask a lazy collection's natives of a collection it never bound: the failure text is
+// empty, the fault count 0, a clear answers false, and a failure recorded by hand reads back.  The
+// C carries the lazy natives whenever a unit reaches any of them, not only when it binds one.
+// Axes this file MOVES:  which lazy native is reached without a bind (error, faults, clear, fail).
+// Axes it HOLDS FIXED:   one hash collection, never bound to a source.
+// Hand-computed: "" / 0 / false / "boom" with 1 fault.
+//
+// @falsified-at: 84c8db997 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+
+struct Pz { id: integer, n: text }
+
+fn test_the_error_of_an_unbound_collection_is_empty() {
+  ps: hash<Pz[id]> = [];
+  assert(store_lazy_error(ps) == "", "no fetch, no failure: {store_lazy_error(ps)}");
+}
+
+fn test_an_unbound_collection_has_no_faults() {
+  ps: hash<Pz[id]> = [];
+  assert(store_lazy_faults(ps) == 0, "faults {store_lazy_faults(ps)}");
+}
+
+fn test_clearing_an_unbound_collection_answers_false() {
+  ps: hash<Pz[id]> = [];
+  assert(!store_lazy_clear(ps), "nothing to clear");
+}
+
+fn test_a_failure_recorded_by_hand_reads_back() {
+  ps: hash<Pz[id]> = [];
+  store_lazy_fail(ps, "boom");
+  assert(store_lazy_error(ps) == "boom", "error {store_lazy_error(ps)}");
+  assert(store_lazy_faults(ps) == 1, "faults {store_lazy_faults(ps)}");
+}

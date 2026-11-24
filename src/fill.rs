@@ -11,16 +11,11 @@
 // Byte-for-byte equality of this file with that regeneration is enforced by
 // `tests/issues.rs::fill_rs_up_to_date` and `::n9_generated_fill_matches_src`,
 // so hand-edits fail CI — edit the `#rust` template in default/*.loft instead.
-//
-// The SAME templates feed native code generation (`src/generation/`): there the
-// `s.<method>` calls below are rewritten to their `stores.*` / `*_runtime`
-// equivalents by `src/generation/calls.rs::substitute_template_body`.
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
 use crate::btree;
-use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{DbRef, Str};
 use crate::ops;
@@ -5584,11 +5579,11 @@ fn print<const F: bool>(s: &mut State) {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
     crate::loft_host_print(v_v1.str().as_ptr(), v_v1.str().len());
     #[cfg(all(not(feature = "wasm"), not(target_arch = "wasm32")))]
-    crate::codegen_runtime::print_or_host(v_v1.str());
+    s.database.print_or_host(v_v1.str());
     #[cfg(all(not(feature = "wasm"), target_arch = "wasm32", target_os = "wasi"))]
-    crate::codegen_runtime::host_print(v_v1.str());
+    crate::host_print::host_print(v_v1.str());
     #[cfg(feature = "wasm")]
-    crate::wasm::output_push(v_v1.str());
+    s.database.print_or_host(v_v1.str());
 }
 
 fn print_r(s: &mut State, r: Regs) -> Regs {
@@ -5972,7 +5967,7 @@ fn set_keyed_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::radix_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5985,10 +5980,7 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_bytes(
-        &v_r,
-        &s.database.allocations,
-    ));
+    let new_value = i64::from(crate::radix_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6001,7 +5993,7 @@ fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6014,7 +6006,7 @@ fn length_trie_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 

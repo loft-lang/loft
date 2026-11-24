@@ -575,27 +575,6 @@ pub fn n_process_run(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, code);
 }
 
-/// The compiled backend's twin: `--native` resolves the runtime function by loft def name
-/// through `CODEGEN_RUNTIME_FNS`, a `&text` out-parameter arriving as `&mut String`.
-pub mod typed {
-    use crate::database::Stores;
-    use std::cell::UnsafeCell;
-
-    /// See [`super::n_process_run`].
-    pub fn n_process_run(
-        _cell: &UnsafeCell<Stores>,
-        argv: &str,
-        input: &str,
-        out: &mut String,
-        err: &mut String,
-    ) -> i64 {
-        let (code, o, e) = super::answer(argv, input);
-        *out = o;
-        *err = e;
-        code
-    }
-}
-
 #[cfg(test)]
 mod tests {
 

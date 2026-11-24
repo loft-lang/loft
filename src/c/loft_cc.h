@@ -59,11 +59,13 @@ LOFT_NORETURN void loft_android_exit(int code);
 #endif
 
 /* `par` and `parallel { }` on threads (@PLN203 C4, `@FR-C-Arms`): POSIX threads on a POSIX
- * host, the CRT's on Windows, none under `-DLOFT_NO_POSIX` or on WASI, where a `par` loop runs
- * its rows in order — the same answer (@FR-C-Det) — and a `parallel` block its arms in order.
- * What a thread keeps of its own is its store context (`loft_cx.h`, @PLN226), made by the
- * thread that starts it: no thread-local, so a strict build runs `par` on threads as C99 too. */
-#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
+ * host, the CRT's on Windows, the WASI libc's on a threaded page (`LOFT_PAGE_POOL`, @C3: built
+ * for `wasm32-wasip1-threads`), none under `-DLOFT_NO_POSIX` or elsewhere on WASI, where a
+ * `par` loop runs its rows in order — the same answer (@FR-C-Det) — and a `parallel` block its
+ * arms in order.  What a thread keeps of its own is its store context (`loft_cx.h`, @PLN226),
+ * made by the thread that starts it: no thread-local, so a strict build runs `par` on threads
+ * as C99 too. */
+#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32) || defined(LOFT_PAGE_POOL))
 #define LOFT_THREADS 1
 #endif
 

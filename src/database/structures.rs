@@ -58,9 +58,56 @@ pub struct BridgeArgs {
     pub minted: bool,
     pub handed: Vec<DbRef>,
     copies: Vec<(DbRef, DbRef)>,
+    /// The arguments of OTHER stores copied into the call's store, with their copies
+    /// (`bridge_args`): written back after the call when the parameter is not `const`.
+    moved: Vec<(BridgeArg, DbRef)>,
     /// The call works in a writable COPY of the read-only store it pinned (`bridge_args`):
     /// freed whole by `bridge_args_done`, after the answer is copied out of it.
     cloned: bool,
+}
+
+/// One heap-typed argument of a library call ([`Stores::bridge_args`]), in declaration order.
+#[derive(Clone, Copy, Debug)]
+pub struct BridgeArg {
+    pub db: DbRef,
+    /// A vector (`tp` is its ELEMENT type) or a record (`tp` is its own type).
+    pub is_vec: bool,
+    /// The type it is copied with when it lies in another store than the call's;
+    /// `u16::MAX` when it is not known, and it is then handed as it is.
+    pub tp: u16,
+    /// The parameter is not `const`: the call may write through it, so a copy is written back.
+    pub writable: bool,
+}
+
+impl BridgeArg {
+    /// Each argument with the type it is copied in with and whether it may be written; an
+    /// argument past `types` (a caller that knows none) is handed as it is.
+    #[must_use]
+    pub fn typed(args: &[(DbRef, bool)], types: &[(u16, bool)]) -> Vec<Self> {
+        args.iter()
+            .enumerate()
+            .map(|(i, &(db, is_vec))| match types.get(i) {
+                Some(&(tp, writable)) => Self {
+                    db,
+                    is_vec,
+                    tp,
+                    writable,
+                },
+                None => Self::untyped(db, is_vec),
+            })
+            .collect()
+    }
+
+    /// An argument whose type the caller does not know: handed as it is when it is not foreign.
+    #[must_use]
+    pub fn untyped(db: DbRef, is_vec: bool) -> Self {
+        Self {
+            db,
+            is_vec,
+            tp: u16::MAX,
+            writable: false,
+        }
+    }
 }
 
 /// Why a field is being given its absent value — which decides what that value may COST.
@@ -116,15 +163,6 @@ pub(super) struct ReadRefs {
     /// The records this read marked as named (`@FR-H-Removed`), so the marks no reference
     /// ends up needing are taken back when the read ends.
     pub marked: Vec<(u16, u32)>,
-}
-
-thread_local! {
-    pub(super) static READ_REFS: std::cell::RefCell<Option<ReadRefs>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-pub(super) fn with_read_refs<R>(f: impl FnOnce(&mut ReadRefs) -> R) -> Option<R> {
-    READ_REFS.with(|c| c.borrow_mut().as_mut().map(f))
 }
 
 /// The pointer of `path`, as the writer spells it (`format::json_pointer`).
@@ -501,7 +539,8 @@ impl Stores {
             // stack.  A type index that resolves to a non-structure is a program
             // error from loft code and an ABI/type-table mismatch from a shared
             // library, and the two read identically without this.
-            _ => match crate::call_frames::current_shared_bridge() {
+            _ => match crate::call_frames::shared_bridge_label(self.in_bridge, &self.bridge_labels)
+            {
                 Some(bridge) => panic!(
                     "Cannot add to none-structure '{}' — raised inside {bridge}. \
                      The library passed a type index this loft's table does not \
@@ -2364,7 +2403,7 @@ impl Stores {
         if v_rec == 0 {
             return false;
         }
-        if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
+        if store.is_foreign() || store.is_locked() || !crate::keys::keep_range_enabled() {
             let span = store.bytes_of(v_rec)[from..to].to_vec();
             self.clear_vector_release(db);
             if n > 0 {
@@ -2410,7 +2449,7 @@ impl Stores {
                 if store.is_foreign() {
                     store.release_foreign();
                 }
-                if !store.read_only {
+                if !store.is_locked() {
                     store.make_foreign(db.rec, db.pos, span);
                     return;
                 }
@@ -2448,7 +2487,7 @@ impl Stores {
                 if store.is_foreign() {
                     store.release_foreign();
                 }
-                if !store.read_only {
+                if !store.is_locked() {
                     store.make_foreign(db.rec, db.pos, span);
                     return;
                 }
@@ -2466,13 +2505,24 @@ impl Stores {
     /// sixteen gigabytes past the store), is COPIED into a record of THAT store for the
     /// call, in one block.  A foreign vector never pins: the next argument does, or a store
     /// is minted for the call — announced as the return store when the answer is a vector or
-    /// record, freed after the call when it is not.  `args` are the heap-typed arguments in
-    /// declaration order with whether each is a vector; `handed` is what the bridge is
+    /// record, freed after the call when it is not.  Every OTHER argument that lies in another
+    /// store than the pinned one is read through it just the same, so it is deep-copied into
+    /// that store for the call by its type (`@FR-Slice-Value`'s bridge clause), and written
+    /// back when its parameter is not `const` — two vectors from two stores otherwise read the
+    /// first twice.  `args` are the heap-typed arguments in
+    /// declaration order with whether each is a vector, `types` each one's copy type and whether
+    /// its parameter is not `const` (`BridgeArg::typed`); `handed` is what the bridge is
     /// given for each, and [`bridge_args_done`](Self::bridge_args_done) ends the call.  A
     /// `#rust` builtin and a `par` worker need none of this: they read through [`Store`]'s
     /// accessors, which serve the foreign record.
     #[must_use]
-    pub fn bridge_args(&mut self, args: &[(DbRef, bool)], returns_ref: bool) -> BridgeArgs {
+    pub fn bridge_args(
+        &mut self,
+        args: &[(DbRef, bool)],
+        types: &[(u16, bool)],
+        returns_ref: bool,
+    ) -> BridgeArgs {
+        let args = &BridgeArg::typed(args, types)[..];
         let foreign = |stores: &Self, db: &DbRef, is_vec: bool| {
             is_vec
                 && !db.is_null()
@@ -2481,9 +2531,18 @@ impl Stores {
         };
         let pin = args
             .iter()
-            .find(|(db, is_vec)| !foreign(self, db, *is_vec))
-            .map(|(db, _)| db.store_nr);
-        let any_foreign = args.iter().any(|(db, is_vec)| foreign(self, db, *is_vec));
+            .find(|a| !foreign(self, &a.db, a.is_vec))
+            .map(|a| a.db.store_nr);
+        let any_foreign = args.iter().any(|a| foreign(self, &a.db, a.is_vec));
+        // An argument the call reads through a store that is not its own: copied in below.
+        let elsewhere = |stores: &Self, a: &BridgeArg, nr: u16| {
+            a.tp != u16::MAX
+                && !a.db.is_null()
+                && a.db.rec != 0
+                && a.db.store_nr != nr
+                && !foreign(stores, &a.db, a.is_vec)
+        };
+        let copy_any = pin.is_some_and(|nr| args.iter().any(|a| elsewhere(self, a, nr)));
         let (mut store_nr, minted) = match pin {
             Some(nr) => (nr, false),
             None if returns_ref || any_foreign => (self.null().store_nr, true),
@@ -2495,9 +2554,9 @@ impl Stores {
         // call is handed a writable copy of the whole store instead, so every argument keeps
         // its record numbers; `own_bridge_answer` copies the answer out of it and
         // `bridge_args_done` frees it.
-        let cloned = returns_ref
+        let cloned = (returns_ref || copy_any)
             && pin.is_some()
-            && self.allocations[store_nr as usize].read_only
+            && self.allocations[store_nr as usize].is_locked()
             && !self.allocations[store_nr as usize].is_file_backed();
         if cloned {
             let from = store_nr;
@@ -2506,7 +2565,9 @@ impl Stores {
         let pinned_from = pin.unwrap_or(u16::MAX);
         let mut handed = Vec::with_capacity(args.len());
         let mut copies = Vec::new();
-        for (db, is_vec) in args {
+        let mut moved = Vec::new();
+        for arg in args {
+            let (db, is_vec) = (&arg.db, &arg.is_vec);
             let span = if foreign(self, db, *is_vec) {
                 keys::store(db, &self.allocations).foreign_span(0, u32::MAX)
             } else {
@@ -2516,6 +2577,10 @@ impl Stores {
                 let mut db = *db;
                 if cloned && db.store_nr == pinned_from {
                     db.store_nr = store_nr;
+                } else if pin.is_some() && elsewhere(self, arg, pinned_from) {
+                    let copy = self.bridge_copy_in(arg, store_nr);
+                    moved.push((*arg, copy));
+                    db = copy;
                 }
                 handed.push(db);
                 continue;
@@ -2553,7 +2618,88 @@ impl Stores {
             minted,
             handed,
             copies,
+            moved,
             cloned,
+        }
+    }
+
+    /// A deep copy of `arg` in store `nr`, for a library call that reads it through that store
+    /// ([`Self::bridge_args`]): a vector in the one-word root a bridge's vector answer has
+    /// (`extensions::bridge_push_ref`), a record as `own_bridge_answer` copies one.
+    fn bridge_copy_in(&mut self, arg: &BridgeArg, nr: u16) -> DbRef {
+        let base = DbRef {
+            store_nr: nr,
+            rec: 0,
+            pos: 0,
+        };
+        if arg.is_vec {
+            let root = self.claim(&base, 1);
+            self.store_mut(&base).set_u32_raw(root.rec, 4, 0);
+            let to = DbRef {
+                store_nr: nr,
+                rec: root.rec,
+                pos: 4,
+            };
+            self.vector_add(&to, &arg.db, arg.tp);
+            to
+        } else {
+            let size = self.enum_parent_size(arg.tp);
+            let r = self.claim(&base, 1 + u32::from(size).div_ceil(8));
+            self.store_mut(&r).zero_fill(r.rec);
+            let to = DbRef {
+                store_nr: nr,
+                rec: r.rec,
+                pos: 8,
+            };
+            self.copy_block_cross_store(
+                arg.db.store_nr,
+                arg.db.rec,
+                arg.db.pos as isize,
+                nr,
+                to.rec,
+                8,
+                size as isize,
+            );
+            self.copy_claims(&arg.db, &to, arg.tp);
+            to
+        }
+    }
+
+    /// The end of a moved argument's copy: written back over the original when the parameter is
+    /// not `const` (what the call did to it, as it would have done in place), then released.
+    fn bridge_move_back(&mut self, arg: &BridgeArg, copy: &DbRef, release: bool) {
+        if arg.writable && !self.store(&arg.db).is_locked() {
+            if arg.is_vec {
+                self.vector_replace(&arg.db, copy, arg.tp);
+            } else {
+                let size = self.enum_parent_size(arg.tp);
+                self.remove_claims(&arg.db, arg.tp);
+                self.copy_block_cross_store(
+                    copy.store_nr,
+                    copy.rec,
+                    copy.pos as isize,
+                    arg.db.store_nr,
+                    arg.db.rec,
+                    arg.db.pos as isize,
+                    size as isize,
+                );
+                self.copy_claims(copy, &arg.db, arg.tp);
+            }
+        }
+        if !release {
+            return;
+        }
+        if arg.is_vec {
+            self.clear_vector_release(copy);
+            let store = self.store_mut(copy);
+            let rec = store.collection_rec(copy.rec, copy.pos);
+            if rec != 0 {
+                store.delete(rec);
+            }
+            store.delete(copy.rec);
+        } else {
+            self.remove_claims(copy, arg.tp);
+            self.store_mut(copy).delete(copy.rec);
         }
     }
 
@@ -2600,7 +2746,7 @@ impl Stores {
             || answer.is_null()
             || answer.rec == 0
             || answer.store_nr != args.store_nr
-            || self.store(&answer).read_only
+            || self.store(&answer).is_locked()
         {
             return answer;
         }
@@ -2682,9 +2828,15 @@ impl Stores {
             rec: 0,
             pos: 0,
         };
-        if (args.minted && !returns_ref) || args.cloned {
+        // A moved argument's copy goes back first: the store it lives in may be freed below.
+        let whole = (args.minted && !returns_ref) || args.cloned;
+        let release = !whole && !self.store(&base).is_locked();
+        for (arg, copy) in &args.moved {
+            self.bridge_move_back(arg, copy, release);
+        }
+        if whole {
             self.free(&base);
-        } else if !args.copies.is_empty() && !self.store(&base).read_only {
+        } else if !args.copies.is_empty() && !self.store(&base).is_locked() {
             let store = self.store_mut(&base);
             for (_, copy) in &args.copies {
                 let rec = store.collection_rec(copy.rec, copy.pos);
@@ -2700,7 +2852,7 @@ impl Stores {
                 8,
                 Store::FOREIGN_ORIGIN,
             )
-            .report_and_exit();
+            .report_and_exit_on(&self.frames);
         }
     }
 
@@ -3171,9 +3323,11 @@ impl Stores {
             let res = self.record_new(to, rec_tp, field);
             let seen = failed.len();
             // `@FR-F-Read-Ref` — an element's position is its segment of the path.
-            with_read_refs(|r| r.path.push(idx.to_string()));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.path.push(idx.to_string())
+            }
             self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
-            with_read_refs(|r| r.path.pop());
+            self.read_refs.as_mut().map(|r| r.path.pop());
             // An element that did not fit keeps its slot, so the elements after it keep
             // their positions: a leaf holds null — what the `JsonValue` walk writes for
             // it — and a record keeps the fields that fit beside the defaults of those
@@ -3225,7 +3379,7 @@ impl Stores {
         let mut found_more: Vec<u16> = Vec::new();
         // `@FR-F-Read-Ref` — this record's pointer is the path it is read at.
         self.read_place(to.store_nr, rec, fld, tp);
-        let top_level = with_read_refs(|r| r.path.is_empty());
+        let top_level = self.read_refs.as_mut().map(|r| r.path.is_empty());
         while more {
             let (name, key_at, value_at) = rd.member(start)?;
             if top_level == Some(true) && name == "$refs" {
@@ -3233,7 +3387,9 @@ impl Stores {
                 more = rd.next_member(start)?;
                 continue;
             }
-            with_read_refs(|r| r.path.push(name.clone()));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.path.push(name.clone())
+            }
             if top_level.is_some()
                 && let Some(f_nr) = self.record_fields(tp).iter().position(|f| f.name == name)
                 && matches!(
@@ -3259,7 +3415,7 @@ impl Stores {
                 } else {
                     found_more.push(f_nr as u16);
                 }
-                with_read_refs(|r| r.path.pop());
+                self.read_refs.as_mut().map(|r| r.path.pop());
                 more = rd.next_member(start)?;
                 continue;
             }
@@ -3303,7 +3459,7 @@ impl Stores {
             } else {
                 rd.parse_value(value_at)?;
             }
-            with_read_refs(|r| r.path.pop());
+            self.read_refs.as_mut().map(|r| r.path.pop());
             more = rd.next_member(start)?;
         }
         let base = DbRef {
@@ -3334,19 +3490,20 @@ impl Stores {
         let mut idx = 0usize;
         while let Some(value_at) = next {
             let ptr = format!("#/$refs/{idx}");
-            let tp = with_read_refs(|r| {
+            let tp = self.read_refs.as_ref().and_then(|r| {
                 r.pending
                     .iter()
                     .find(|(_, p, _)| *p == ptr)
                     .map(|(_, _, t)| *t)
-            })
-            .flatten();
+            });
             match tp {
                 Some(tp) if (tp as usize) < self.types.len() => {
                     let words = 1 + u32::from(self.types[tp as usize].size).div_ceil(8);
                     let rec = self.claim(to, words);
                     self.set_default_value(tp, &rec);
-                    with_read_refs(|r| r.path = vec!["$refs".to_string(), idx.to_string()]);
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path = vec!["$refs".to_string(), idx.to_string()];
+                    }
                     self.read_into(rd, failed, value_at, tp, tp, u16::MAX, &rec, value_at)?;
                 }
                 _ => {
@@ -3356,7 +3513,9 @@ impl Stores {
             next = rd.next_item(start)?;
             idx += 1;
         }
-        with_read_refs(|r| r.path.clear());
+        if let Some(r) = self.read_refs.as_mut() {
+            r.path.clear()
+        }
         Ok(())
     }
 
@@ -3369,7 +3528,7 @@ impl Stores {
     /// as named now: a removal during the read then keeps its position, no later record takes
     /// it, and the pointer finds a removed record instead of a stranger.
     fn read_place(&mut self, store_nr: u16, rec: u32, pos: u32, tp: u16) {
-        let Some((path, old)) = with_read_refs(|r| {
+        let Some((path, old)) = self.read_refs.as_mut().map(|r| {
             let p = read_pointer(&r.path);
             let old = r.at.get(&p).map(|(d, _)| *d);
             (p, old)
@@ -3385,12 +3544,12 @@ impl Stores {
             .allocations
             .get_mut(store_nr as usize)
             .is_some_and(|s| s.note_referenced_new(rec));
-        with_read_refs(|r| {
+        if let Some(r) = self.read_refs.as_mut() {
             r.at.insert(path, (DbRef { store_nr, rec, pos }, tp));
             if fresh {
                 r.marked.push((store_nr, rec));
             }
-        });
+        }
     }
 
     /// `@FR-F-Read-Ref` — write every parked reference: the record its pointer names, or a
@@ -3398,7 +3557,7 @@ impl Stores {
     /// reference's, or one the document itself replaced.  A reference is stored through
     /// [`Self::set_db_ref`], as every other one is, so its record is marked as named.
     pub(super) fn resolve_read_refs(&mut self, failed: &mut Vec<WalkErr>) {
-        let Some(ctx) = READ_REFS.with(|c| c.borrow_mut().take()) else {
+        let Some(ctx) = self.read_refs.take() else {
             return;
         };
         let mut named: std::collections::HashSet<(u16, u32)> = std::collections::HashSet::new();
@@ -3476,7 +3635,9 @@ impl Stores {
             _ => None,
         };
         if let Some(p) = pointer {
-            with_read_refs(|r| r.pending.push((slot, p, target)));
+            if let Some(r) = self.read_refs.as_mut() {
+                r.pending.push((slot, p, target))
+            }
         } else {
             failed.push(WalkErr {
                 at: key_at,
@@ -3583,9 +3744,11 @@ impl Stores {
                     // The element's segment joins the error's path as it unwinds: pushed per
                     // element on the way in, it was a formatted `String` per array item that
                     // only a failing walk reads.
-                    with_read_refs(|r| r.path.push(idx.to_string()));
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path.push(idx.to_string())
+                    }
                     let walked = self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at);
-                    with_read_refs(|r| r.path.pop());
+                    self.read_refs.as_mut().map(|r| r.path.pop());
                     walked.map_err(|mut e| {
                         e.path.insert(0, format!("[{idx}]"));
                         e
@@ -3808,7 +3971,7 @@ impl Stores {
         // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
         // read) keeps the same path and parks the same references as `read_struct`.
         self.read_place(to.store_nr, rec, fld, tp);
-        let tracked = with_read_refs(|_| ()).is_some();
+        let tracked = self.read_refs.is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
@@ -3837,7 +4000,9 @@ impl Stores {
                             && key == "$ref"
                         {
                             let target = f.target;
-                            with_read_refs(|r| r.pending.push((slot, ptr.clone(), target)));
+                            if let Some(r) = self.read_refs.as_mut() {
+                                r.pending.push((slot, ptr.clone(), target))
+                            }
                             break;
                         }
                         return Err(WalkErr {
@@ -3845,7 +4010,9 @@ impl Stores {
                             path: vec![name.clone()],
                         });
                     }
-                    with_read_refs(|r| r.path.push(name.clone()));
+                    if let Some(r) = self.read_refs.as_mut() {
+                        r.path.push(name.clone())
+                    }
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -3864,7 +4031,7 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
-                    with_read_refs(|r| r.path.pop());
+                    self.read_refs.as_mut().map(|r| r.path.pop());
                     if f_nr < 64 {
                         found |= 1 << f_nr;
                     } else {
@@ -4812,9 +4979,13 @@ impl Stores {
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
-        #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(to.store_nr, u64::from(len));
+        {
+            let tap = self.store(to).tap.as_deref();
+            crate::op_census::moved(tap, crate::op_census::Moved::Copy, len as usize);
+            if let Some(tap) = tap {
+                tap.copied_into(to.store_nr, u64::from(len));
+            }
+        }
         let to_at = self
             .store(to)
             .block_in_bounds(to.rec, to.pos as isize, len as isize);

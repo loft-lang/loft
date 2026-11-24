@@ -46,7 +46,7 @@ program) or from the **environment / data** (not reproducible by reading it)?
 
 | # | Mechanic | Note |
 |---|---|---|
-| 7 | **The backend is chosen by the environment.** `loft p.loft` compiles via rustc *when available, otherwise interprets*. That changes speed by orders of magnitude, changes the `par` path, decides whether the profiler works, and occasionally changes semantics. | `--interpret` / `LOFT_REQUIRE_NATIVE=1` are process flags. **A program cannot declare "I require native"** in `loft.toml`. |
+| 7 | **The backend is chosen by the environment.** `loft p.loft` compiles through C *when a C compiler is available, otherwise interprets*. That changes speed by orders of magnitude, changes the `par` path, decides whether the profiler works, and occasionally changes semantics. | `--interpret` / `LOFT_REQUIRE_NATIVE=1` are process flags. **A program cannot declare "I require native"** in `loft.toml`. |
 | 8 | **Placement.** One manifest line turns a call into IPC or a network round trip, deliberately indistinguishable at the call site. | [PLACEMENT.md](PLACEMENT.md). The invariant is well defended; it is still the largest cost-per-call swing in the system, and the line belongs to the library author, not the consumer. |
 | 9 | **Lazy stores.** `persons[42]` performs a SELECT or an HTTP range read on a miss; only `store_lazy_faults()` reports it, as a whole-program counter. | [LAZY_STORES.md](LAZY_STORES.md). This is exactly the N+1 pattern [GOALS.md](GOALS.md) names as the generating failure — *correct at low scale, fatal at production* — with no site-level signal. |
 

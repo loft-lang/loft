@@ -5,7 +5,7 @@
 // @PLN149 step 8 — drive a documentation page's Run / REPL / Debug panel through the REAL
 // wasm exports, in node, with no browser.
 //
-// `tests/wasm_entry.rs` already drives `debug_start` / `debug_command` natively, which
+// `tests/wasm_entry.rs` already drives the `Debugger`'s `start` / `command` natively, which
 // checks the grammar and the values. It cannot check the one thing that only exists in a
 // wasm build: `output`. Print is captured by `crate::wasm::output_push`, which is compiled
 // in only under the `wasm` feature — so natively the field is present and always empty, and
@@ -33,8 +33,8 @@ try {
     + '--out-dir tests/wasm/pkg -- --no-default-features --features wasm`');
   process.exit(2);
 }
-if (typeof wasm.debug_start !== 'function' || typeof wasm.debug_command !== 'function') {
-  console.error('SKIP: tests/wasm/pkg predates debug_start/debug_command — rebuild it');
+if (typeof wasm.Debugger !== 'function') {
+  console.error('SKIP: tests/wasm/pkg predates the Debugger handle — rebuild it');
   process.exit(2);
 }
 
@@ -49,11 +49,12 @@ function check(label, got, want) {
   }
 }
 
-const cmd = (c) => JSON.parse(wasm.debug_command(c));
+const dbg = new wasm.Debugger();
+const cmd = (c) => JSON.parse(dbg.command(c));
 const source = readFileSync(PAGE, 'utf8');
 
 // ── The session the panel opens on load ─────────────────────────────────────
-check('the page compiles in wasm', wasm.debug_start(source), '{"ok":true}');
+check('the page compiles in wasm', dbg.start(source), '{"ok":true}');
 
 // ── What the panel offers to call ───────────────────────────────────────────
 const fns = cmd('fns').replies[0];
@@ -95,7 +96,7 @@ check('a text result answers its value',
 check('and the session survives it', cmd('eval fib(10)').replies[0], 'D:eval fib(10)=55');
 
 // ── A line breakpoint, which is what a gutter click sends ───────────────────
-check('a fresh session for the line breakpoint', wasm.debug_start(source), '{"ok":true}');
+check('a fresh session for the line breakpoint', dbg.start(source), '{"ok":true}');
 // `total = 0;` inside walk_to — the line after its `fn` header.
 const walkLine = source.split('\n').findIndex((l) => l.includes('total = 0;')) + 1;
 check('bp on a line is accepted', cmd(`bp ${walkLine}`).replies[0], `D:ok bp ${walkLine}`);

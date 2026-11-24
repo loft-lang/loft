@@ -316,16 +316,16 @@ does not depend on someone remembering which libraries use the old form.
 
 loft is a tree-walking interpreter **and** a native code generator for a
 statically-typed language.  Source flows: **text → parser → IR → codegen →
-{ bytecode interpreter | native Rust }**, over a **store-based heap**.
+{ bytecode interpreter | C, compiled by the C compiler }**, over a **store-based heap**.
 
 | Label | What it is | Bugs here look like | Orienting files |
 |---|---|---|---|
 | `area:parser` | turning source text into typed IR: lexer, two-pass parser, type resolution, scope/lifetime analysis | parse errors, a construct mis-resolved, wrong inferred type/scope, a bad diagnostic | `src/parser/`, `src/lexer.rs`, `src/typedef.rs`, `src/scopes.rs` |
-| `area:codegen` | turning correct IR into runnable code — the **bytecode** generator (interpreter) and the **native** Rust generator | the program parsed + type-checked fine, but the emitted code is wrong: wrong value, panic, slot/stack drift, a miscompile on one backend | `src/state/codegen.rs`, `src/state/fill.rs`, `src/generation/` |
+| `area:codegen` | turning correct IR into runnable code — the **bytecode** generator (interpreter) and the **C** writer (`--native`) | the program parsed + type-checked fine, but the emitted code is wrong: wrong value, panic, slot/stack drift, a miscompile on one backend | `src/state/codegen.rs`, `src/fill.rs`, `src/c/` |
 | `area:store-lifetime` | the heap: store alloc/free, dependency tracking, value-semantic vector/struct lifetime, the watermark | leaks, use-after-free, double-free, a store freed too early/late, high memory watermark | `src/database/`, `src/store.rs`, `src/scopes.rs` (the free analysis) |
 | `area:closures` | fn-refs, lambdas, captured cells, the closure-record layout | capture/ownership bugs, closures stored in containers, fn-ref dispatch/iteration | `src/parser/vectors.rs` (capture), closure-record handling in `src/database/` |
 | `area:runtime` | executing bytecode — the 233 opcodes + the runtime stack/store ops (interpreter only) | a specific opcode misbehaves, a runtime panic not in codegen | `src/state/`, `src/fill.rs` |
-| `area:native` | the `--native` backend specifically: Rust generation, the native runtime shim, `rustc`/`cc` linkage | a native-only divergence from the interpreter, an ABI/marshalling bug, a link/rlib failure | `src/generation/`, `src/codegen_runtime.rs` |
+| `area:native` | the `--native` backend specifically: the C backend, its C runtime headers, the C compiler and linker, a library's hosted C unit | a native-only divergence from the interpreter, an ABI/marshalling bug, a compile or link failure | `src/c/`, `src/c_driver.rs` |
 | `area:wasm` | the browser / WASM target: `wasm32`, the virtual FS, host bridges, threading | WASM-only failures, a missing host bridge, a feature gated off in the browser | `src/wasm.rs`, `wasm/` |
 | `area:stdlib` | the standard library (`default/*.loft`) + native stdlib functions | a stdlib function returns the wrong thing / is missing an edge | `default/*.loft`, the native-fn registry |
 | `area:packages` | the package format, registry, multi-file `use` resolution, library extraction | a cross-package resolution bug, a manifest/registry issue, a build-pipeline gap | `src/package.rs`, `src/manifest.rs`, `doc/claude/lib_plans/` |

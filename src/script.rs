@@ -645,7 +645,7 @@ mod tests {
     fn backtick_strings_and_braceless_bodies_are_not_scripts() {
         // graphics/render.loft: a const holding a backtick shader with GLSL braces.
         assert!(!is_script("SHADOW = `\nvoid main() {{ x = 1; }}\n`;\n"));
-        // native_crate_pkg.loft: a brace-less fn body.
+        // A brace-less fn body.
         assert!(!is_script("pub fn hi() -> text\n    return \"hi\"\n"));
     }
     #[test]

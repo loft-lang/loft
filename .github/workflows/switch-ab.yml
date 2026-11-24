@@ -139,7 +139,7 @@ jobs:
       - name: Build loft
         if: steps.sel.outputs.run == 'true'
         working-directory: loft-src
-        run: cargo build --release --lib --bin loft
+        run: cargo build --release --bin loft
 
       - name: A/B ${{ matrix.switch }}
         if: steps.sel.outputs.run == 'true'

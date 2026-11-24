@@ -288,6 +288,8 @@ pub(crate) struct Cx<'a> {
     /// `@FR-R-Inline`'s twin clause, its helper half: the small plain functions written with a
     /// `/*loft_hot:D*/` storage marker, resolved once every twin is written (`hot_helpers`).
     hot_candidates: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// `@FR-R-Inline`'s cycle clause: per function, whether its calls reach it again.
+    on_cycle: std::cell::RefCell<std::collections::HashMap<u32, bool>>,
     /// `@FR-R-RangedCall`'s gain test per callee (`opt::ranged_call::variant_gains`), memoised.
     pub(crate) rg_gains: std::cell::RefCell<std::collections::HashMap<u32, bool>>,
     /// The functions called in the body of a loop that calls an `__inv` twin: the twin is
@@ -355,8 +357,7 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
-    /// `@FR-R-GuardFree`'s verdicts, shared with the Rust generator: which frames need the
-    /// fn-ref buffer mark (`framed`).
+    /// `@FR-R-GuardFree`'s verdicts: which frames need the fn-ref buffer mark (`framed`).
     pub(crate) guard_free: std::cell::RefCell<crate::opt::frame_calls::GuardFree>,
     /// `vr_ptr_params`'s answers, per function.
     vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
@@ -490,6 +491,7 @@ impl<'a> Cx<'a> {
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            on_cycle: std::cell::RefCell::new(std::collections::HashMap::new()),
             rg_gains: std::cell::RefCell::new(std::collections::HashMap::new()),
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2196,8 +2198,7 @@ fn emit_unit_with(
     cx.open = hosted.is_some();
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
-    cx.lazy
-        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
+    cx.lazy.set(reachable_has(data, &all, is_lazy_native));
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
@@ -2702,19 +2703,6 @@ fn c_libraries(
     out
 }
 
-/// A package's name and version as its manifest states them — the directory's name and `0`
-/// where it states none, as the Rust writer's bind table spells them.
-/// What the host resolves about each of the program's C libraries for the loft-written C
-/// writer, one entry per `data.c_libraries` — the answers [`c_libraries`] and [`bound_by`] take
-/// from the file system and the toolchain while they write (a `[c] shim`'s archive is built
-/// here, as `c_libraries` builds it), carried in the program image (`ImageCLib`).
-/// What the Rust writer asks the interpreter and the toolchain while it writes a unit, answered
-/// for the loft-written C writer and carried in the program image (@PLN91 strand 12,
-/// `ir_store::bundle_facts`), each only for a program whose code calls what needs it: the
-/// reflection table (`reflect::table_of`), the TLS lines of a unit that fetches over a URL
-/// (`fetch_defines`, `tls::unit_lines`), and for a lazy binding every keyed collection's SQL plan
-/// (`FnWriter::sql_plan`'s `derive_select` answers) and the lazy drivers
-/// (`Data::lazy_fetch_drivers`).
 /// A constant's store as the unit writes it (`Cx::const_code`): its word count, trailing zero
 /// words left off, and the words as `Nu, Nu, …`.
 #[must_use]
@@ -2762,7 +2750,7 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
                 data.def(*c).name(),
                 "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
             );
-            lazy |= data.def(*c).name() == "n_store_bind_lazy";
+            lazy |= is_lazy_native(data.def(*c).name());
             fetches |= matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
                 || native_c(name) == Some("loft_pg_load_keys")
                 || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
@@ -2971,6 +2959,11 @@ fn unit_defines(
     let json_tree = reached.iter().any(|&d| {
         let n = data.def(d).name();
         n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
+    }) || cx.show_types.borrow().iter().any(|&t| {
+        stores
+            .types
+            .get(t as usize)
+            .is_some_and(|t| t.name == "JsonValue")
     });
     let parses = !cx.parse_types.borrow().is_empty()
         || reached
@@ -3072,6 +3065,22 @@ fn unit_defines(
 /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
 /// any of them or `http_fetch` the TLS client its `https://` requests run over
 /// (`tls::unit_lines`).
+/// A native of a lazily bound collection (`loft_lazy.h`).  A unit that reaches ANY of them carries
+/// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
+/// answer (no failure, `""`) is the header's as well as the interpreter's.
+fn is_lazy_native(name: &str) -> bool {
+    matches!(
+        name,
+        "n_store_bind_lazy"
+            | "n_store_lazy_query"
+            | "n_store_lazy_range"
+            | "n_store_lazy_error"
+            | "n_store_lazy_faults"
+            | "n_store_lazy_clear"
+            | "n_store_lazy_fail"
+    )
+}
+
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
@@ -3290,8 +3299,10 @@ fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String)
 /// [`emit_unit_for`] writes it for the browser, and the exported `loft_start` the page's script
 /// runs it by — under asyncify, which suspends it at each frame the program yields and resumes
 /// it from the same export.  The libc's constructors run first, once: a page never calls the
-/// WASI `_start` that would; and since the program ends by returning rather than by `exit`, the
-/// export flushes what it printed itself.
+/// WASI `_start` that would.  On a threaded page (`LOFT_PAGE_POOL`, @C3) they run in the exported
+/// `loft_pool_start`, which the page calls before `loft_start` to start the pool's workers.  And
+/// since the program ends by returning rather than by `exit`, the export flushes what it printed
+/// itself.
 ///
 /// # Errors
 /// A program without a `main` that takes nothing, or the first [`Refusal`].
@@ -3309,9 +3320,16 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     let _ = write!(
         out,
         "\nextern void __wasm_call_ctors(void);\n\
+         static int loft_page_ctors_run = 0;\n\
+         static void loft_page_ctors(void) {{\n    \
+         if (!loft_page_ctors_run) {{ loft_page_ctors_run = 1; __wasm_call_ctors(); }}\n}}\n\
+         #if defined(LOFT_PAGE_POOL)\n\
+         __attribute__((export_name(\"loft_pool_start\"))) int loft_pool_start(int n) {{\n    \
+         loft_page_ctors();\n    return loft_pool_start_threads(n);\n}}\n\
+         #endif\n\
          __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
          loft_cx *cx = &loft_main_cx;\n    \
-         static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
+         loft_page_ctors();\n    \
          loft_bind_tables();\n    loft_start(cx, 0, 0);\n    {}\n    {call}\n    loft_leak_report(cx);\n    \
          fflush(stdout);\n    fflush(stderr);\n}}\n\
          int main(void) {{ return 0; }}\n",
@@ -4292,13 +4310,7 @@ fn c_binding_result(
     }
 }
 
-/// The body of a `#native` function whose library is not loaded: the panic the interpreter's
-/// stub raises (`compile.rs`), then the result's null for a caller that is past it.
-/// The runtime function behind a native of an `in_binary` library — one whose natives live in
-/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
-/// each one the C programs reach.
-/// The page's C twin of a web-library native (`loft_web_page.h`), as `web_browser.rs` is the
-/// Rust writer's.
+/// The page's C twin of a web-library native (`loft_web_page.h`).
 fn page_web_native(native: &str) -> Option<&'static str> {
     Some(match native {
         "n_http_do" => "loft_wp_http_do",
@@ -4331,12 +4343,14 @@ fn page_web_native(native: &str) -> Option<&'static str> {
 /// that keeps the runtime's uncalled helpers quiet.
 const RUNTIME_END: &str = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
 
+/// The runtime function behind a native of an `in_binary` library — one whose natives live in
+/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
+/// each one the C programs reach.
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
-        // web's byte builder and reader (`src/web_bytes.rs`): a per-thread buffer in the
-        // binary, so a byte costs a store where the component call cost a crossing and a
-        // dynamic thread-local lookup.
+        // web's byte builder and reader (`src/web_bytes.rs`): the context's buffer in the
+        // binary, so a byte costs a store where the component call cost a crossing.
         "n_pack_reset" => Some("loft_pack_reset"),
         "n_pack_u8" => Some("loft_pack_u8"),
         "n_pack_u16_le" => Some("loft_pack_u16_le"),
@@ -4423,20 +4437,16 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     Ok(params)
 }
 
-/// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
-/// the loft-ffi C ABI): the file the interpreter loads for it too
-/// (`native_build::prebuilt_native_lib`), with the package's directory.  None for a package
-/// without one — never a build.
+/// The component loft ships that a `#native` symbol's package names (the loft-ffi C ABI): the
+/// file the interpreter loads for it too (`native_build::prebuilt_native_lib`), with the
+/// package's directory.  None for a package without one — never a build.
 fn prebuilt_library(data: &Data, native: &str) -> Option<(String, String)> {
     let krate = data.native_symbol_crates.get(native)?;
-    let (name, pkg_dir) = data
+    let (_, pkg_dir) = data
         .native_packages
         .iter()
         .find(|(c, _)| c.replace('-', "_") == *krate)?;
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| name.replace('-', "_"));
-    crate::native_build::prebuilt_native_lib(pkg_dir, &stem).map(|lib| (pkg_dir.clone(), lib))
+    crate::native_build::prebuilt_native_lib(pkg_dir).map(|lib| (pkg_dir.clone(), lib))
 }
 
 /// A library native's arguments as the loft-ffi ABI takes them: the typed parameters, the
@@ -4449,6 +4459,45 @@ struct FfiArgs {
     store_arg: Option<usize>,
     /// Every heap argument in declaration order, with whether it is a vector.
     heap: Vec<(usize, bool)>,
+    /// The heap arguments a call copies into the store it hands over when they lie in another
+    /// (`Stores::bridge_args`): `(argument, vector, copy type, element width, writable)` — the
+    /// type `0xFFFF` and the width set for a vector whose elements own no heap.
+    moved: Vec<(usize, bool, u16, u32, bool)>,
+}
+
+/// How a heap argument of type `tp` is copied into the store a library call hands over when it
+/// lies in another (`moved_args`): `(vector, copy type, element width)` — a vector whose
+/// elements own no heap as `width`-byte elements (type `0xFFFF`), any other by its element type,
+/// a record by its own; `None` for a kind no copy is written for (a keyed collection).
+fn moved_copy(cx: &Cx, tp: &Type) -> Option<(bool, u16, u32)> {
+    match tp {
+        Type::Vector(elm, _) => match elm.base() {
+            Type::Integer(_)
+            | Type::Float
+            | Type::Single
+            | Type::Boolean
+            | Type::Character
+            | Type::Enum(_, false, _) => Some((
+                true,
+                u16::MAX,
+                u32::try_from(crate::data::element_storage_size(elm)).unwrap_or(0),
+            )),
+            other => {
+                let d = cx.data.type_elm(other);
+                let k = if d == u32::MAX {
+                    u16::MAX
+                } else {
+                    cx.data.def(d).known_type()
+                };
+                (k != u16::MAX).then_some((true, k, 0))
+            }
+        },
+        Type::Reference(d, _) | Type::Enum(d, true, _) => {
+            let k = cx.data.def(*d).known_type();
+            (k != u16::MAX).then_some((false, k, 0))
+        }
+        _ => None,
+    }
 }
 
 fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
@@ -4458,11 +4507,15 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
     let mut prep = String::new();
     let mut store_arg: Option<usize> = None;
     let mut heap = Vec::new();
+    let mut moved = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let tp = a.typedef.base();
         if tp.heap_dep().is_some() {
             store_arg.get_or_insert(i);
             heap.push((i, matches!(tp, Type::Vector(_, _))));
+            if let Some((is_vec, k, size)) = moved_copy(cx, tp) {
+                moved.push((i, is_vec, k, size, !(a.constant || a.value_const)));
+            }
             ffi_params.push("loft_ffi_ref".into());
             if matches!(tp, Type::Vector(_, _)) {
                 let _ = writeln!(
@@ -4520,6 +4573,7 @@ fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
         prep,
         store_arg,
         heap,
+        moved,
     })
 }
 
@@ -4565,6 +4619,7 @@ fn library_native(
         prep,
         store_arg,
         heap,
+        moved,
     } = ffi_args(cx, d)?;
     let ffi_ret = ffi_return_ctype(def)?;
     let heap_answer = ffi_ret == "loft_ffi_ref";
@@ -4572,7 +4627,9 @@ fn library_native(
     // for the answer, as the interpreter's bridge mints it (`Stores::bridge_args`).
     let minted = store_arg.is_none() && heap_answer;
     let (mut select, mut copies) = (String::new(), String::new());
-    let post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
+    let mut post = foreign_vector_args(&heap, heap_answer, &mut select, &mut copies);
+    // Whether `foreign_vector_args` chose a `pin` at run time (`pin`, `pminted`).
+    let pin = !post.is_empty();
     // loft#2227 — a heap answer pinned to an argument's store is copied out of it after the
     // call, and only what the call claimed there is deleted (`loft_ffi_own_*`): log it.  A store
     // minted for the call (`pminted`) is never owned, as `Stores::own_bridge_answer` skips it.
@@ -4601,27 +4658,13 @@ fn library_native(
             };
             let _ = writeln!(log, "    {only}loft_ffi_log_begin(cx, {store});");
         }
+        moved_args(cx, &moved, heap.len(), &store, &mut copies, &mut post)?;
     } else if minted {
         log.push_str("    uint16_t ns = (uint16_t) loft_store_new(cx);\n");
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(cx, ns)".into());
     }
-    // `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps
-    // its state in a context of its own per caller context, handed to each of its symbols first
-    // (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
-    if crate::native_build::component_of(pkg_dir)
-        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
-    {
-        ffi_params.insert(0, "void *".into());
-        ffi_args.insert(
-            0,
-            format!(
-                "loft_component_cx(cx, {}, {})",
-                body::c_string(lib),
-                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
-            ),
-        );
-    }
+    component_cx_arg(pkg_dir, lib, &mut ffi_params, &mut ffi_args);
     cx.ffi_libs
         .borrow_mut()
         .insert((pkg_dir.to_string(), lib.to_string()));
@@ -4645,20 +4688,7 @@ fn library_native(
             ffi_params.join(", ")
         }
     );
-    // `@FR-C-Publish`: the symbol is published by the first thread that resolves it.
-    // The build's own path for a run in place; a shipped program finds the file by name among
-    // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
-    // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
-    // refuses the cast; every host's ABI makes the bytes the same).
-    let _ = writeln!(
-        body,
-        "    LOFT_PUB_GET(fp_sym, s_);\n    \
-         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
-         memcpy(&fp, &s_, sizeof fp);",
-        body::c_string(lib),
-        body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
-        body::c_string(def.native())
-    );
+    resolve_library_symbol(&mut body, lib, def.native());
     // The pin and its copy first, then the arguments read, the foreign copies, the log.
     body.push_str(&select);
     body.push_str(&prep);
@@ -4666,7 +4696,7 @@ fn library_native(
     body.push_str(&log);
     let call = format!("fp({})", ffi_args.join(", "));
     let answer_store = if owned_answer {
-        AnswerStore::Owned(def.native_answer_tp)
+        AnswerStore::Owned(def.native_answer_tp, pin)
     } else if minted {
         AnswerStore::Minted
     } else {
@@ -4674,6 +4704,82 @@ fn library_native(
     };
     library_answer(&mut body, def, ret, ffi_ret, &call, &post, answer_store);
     Ok((sig, body))
+}
+
+/// `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps its
+/// state in a context of its own per caller context, handed to each of its symbols first
+/// (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
+fn component_cx_arg(pkg_dir: &str, lib: &str, params: &mut Vec<String>, args: &mut Vec<String>) {
+    if crate::native_build::component_of(pkg_dir)
+        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
+    {
+        params.insert(0, "void *".into());
+        args.insert(
+            0,
+            format!(
+                "loft_component_cx(cx, {}, {})",
+                body::c_string(lib),
+                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
+            ),
+        );
+    }
+}
+
+/// The statements that put a library native's symbol in `fp`.  `@FR-C-Publish`: the symbol is
+/// published by the first thread that resolves it.  The build's own path for a run in place; a
+/// shipped program finds the file by name among the libraries it opened at start
+/// (`loft_c_bind_libraries`).  ISO C has no conversion from an object pointer to a function
+/// pointer, so the symbol is copied into `fp` (strict C99 refuses the cast; every host's ABI
+/// makes the bytes the same).
+fn resolve_library_symbol(body: &mut String, lib: &str, symbol: &str) {
+    let _ = writeln!(
+        body,
+        "    LOFT_PUB_GET(fp_sym, s_);\n    \
+         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
+         memcpy(&fp, &s_, sizeof fp);",
+        body::c_string(lib),
+        body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
+        body::c_string(symbol)
+    );
+}
+
+/// `Stores::bridge_args` for the arguments of OTHER stores: the library reads every heap argument
+/// through the one store it is handed (`store`, the expression [`library_native`] hands over), so
+/// one that lies in another store is deep-copied into it after the arguments are read
+/// (`loft_ffi_move_in`), and after the call written back when its parameter is not `const`
+/// and released (`loft_ffi_move_back`) — before the foreign copies' end in `post`.  Nothing with
+/// fewer than two heap arguments: the one there is pins the store.
+fn moved_args(
+    cx: &Cx,
+    moved: &[(usize, bool, u16, u32, bool)],
+    heap: usize,
+    store: &str,
+    copies: &mut String,
+    post: &mut String,
+) -> Result<(), String> {
+    if heap < 2 {
+        return Ok(());
+    }
+    let mut back = String::new();
+    for &(j, is_vec, tp, size, writable) in moved {
+        if tp != u16::MAX {
+            cx.copy_type(tp)?;
+        }
+        let (v, w) = (i32::from(is_vec), i32::from(writable));
+        let _ = writeln!(
+            copies,
+            "    loft_ref mv{j} = {{ 0, 0, 0, 0 }};\n    \
+             if (a{j}.rec && a{j}.store_nr != (uint16_t) ({store}) && !loft_ffi_is_foreign(cx, a{j})) {{ \
+             mv{j} = loft_ffi_move_in(cx, loft_types, (uint32_t) ({store}), a{j}, {v}, {tp}, {size}); \
+             r{j} = loft_ffi_moved_ref(cx, mv{j}, {v}); }}"
+        );
+        let _ = writeln!(
+            back,
+            "    if (mv{j}.rec) loft_ffi_move_back(cx, loft_types, loft_ntypes, a{j}, mv{j}, {v}, {tp}, {size}, {w});"
+        );
+    }
+    post.insert_str(0, &back);
+    Ok(())
 }
 
 /// loft#2239 — a store a running `par` shares is never grown: a library call that builds its
@@ -4708,14 +4814,15 @@ enum AnswerStore {
     Given,
     /// A store minted for the answer (`ns`); it goes when there is no answer.
     Minted,
-    /// An argument's store, the answer copied out of it with this type (loft#2227).
-    Owned(u16),
+    /// An argument's store, the answer copied out of it with this type (loft#2227); whether
+    /// `foreign_vector_args` chose that store at run time (`pin`, `pminted`).
+    Owned(u16, bool),
 }
 
 /// The statements after a library native's call (`call`): the answer read in its C shape,
 /// `post` run (the copies a foreign argument took going), and the loft value returned — a text
-/// owned, a heap answer behind its header (`codegen_runtime::from_loft_ref` /
-/// `from_loft_record`), a narrow integer widened with its null kept.
+/// owned, a heap answer behind its header (`loft_ffi_vector_answer` /
+/// `loft_ffi_record_answer`), a narrow integer widened with its null kept.
 fn library_answer(
     body: &mut String,
     def: &crate::data::Definition,
@@ -4739,7 +4846,7 @@ fn library_answer(
             );
         }
         // A vector answer behind its header, a record as it is: the conversion
-        // `codegen_runtime::from_loft_ref` / `from_loft_record` make.
+        // `loft_ffi_vector_answer` / `loft_ffi_record_answer` make.
         tp if ffi_ret == "loft_ffi_ref" => {
             let _ = writeln!(body, "    loft_ffi_ref r = {call};");
             let convert = if matches!(tp.base(), Type::Vector(_, _)) {
@@ -4747,7 +4854,7 @@ fn library_answer(
             } else {
                 "loft_ffi_record_answer"
             };
-            if let AnswerStore::Owned(answer_tp) = answer_store {
+            if let AnswerStore::Owned(answer_tp, pin) = answer_store {
                 let own = if matches!(tp.base(), Type::Vector(_, _)) {
                     "loft_ffi_own_vector"
                 } else {
@@ -4755,10 +4862,10 @@ fn library_answer(
                 };
                 // Copied out BEFORE `post`, which deletes the foreign copies an identity answer
                 // may name (`Stores::own_bridge_answer` before `bridge_args_done`).
-                let minted_pin = if post.is_empty() {
-                    String::new()
-                } else {
+                let minted_pin = if pin {
                     format!("pminted ? {convert}(cx, r) : ")
+                } else {
+                    String::new()
                 };
                 let _ = writeln!(
                     body,
@@ -5005,8 +5112,8 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             params.join(", ")
         }
     );
-    // A package whose native part needs no build — a component, a library shipped prebuilt per
-    // host (@PLN205) — is installed, never rebuilt: say what is missing.
+    // A package whose natives are a component (@PLN205) is installed, never rebuilt: say what
+    // is missing.
     let unbuildable = cx
         .data
         .native_symbol_crates
@@ -5017,7 +5124,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
         })
-        .and_then(|(name, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir, name));
+        .and_then(|(_, pkg_dir)| crate::native_build::unbuildable_native_reason(pkg_dir));
     // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
     // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
     // to a call the C makes by name, so the message says what does.
@@ -5158,6 +5265,43 @@ fn always_inline_body(storage: &str) -> String {
     }
 }
 
+/// Whether `d`'s calls reach `d` again — directly, or through other functions with a body.
+fn on_call_cycle(cx: &Cx, d: u32) -> bool {
+    if let Some(&known) = cx.on_cycle.borrow().get(&d) {
+        return known;
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut todo: Vec<u32> = direct_callees(cx, d);
+    let mut found = false;
+    while let Some(f) = todo.pop() {
+        if f == d {
+            found = true;
+            break;
+        }
+        if seen.insert(f) {
+            todo.extend(direct_callees(cx, f));
+        }
+    }
+    cx.on_cycle.borrow_mut().insert(d, found);
+    found
+}
+
+/// Every function `d`'s body calls by name.  A missed call could hide a cycle and leave a
+/// recursive body forced inline, so the walk visits every node.
+fn direct_callees(cx: &Cx, d: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    if d < cx.data.definitions() {
+        cx.data.def(d).code.walk(&mut |v| {
+            if let crate::data::Value::Call(c, _) = v
+                && !out.contains(c)
+            {
+                out.push(*c);
+            }
+        });
+    }
+    out
+}
+
 /// `body` without its hand-over points (`FnWriter::expand_safepoints`).
 fn strip_safepoints(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
@@ -5201,7 +5345,10 @@ fn framed(
     // body out of line, every argument handed over a second time (stage `pack_instances`
     // +25 % when a frame lost its fn-ref mark and the wrapper fell under gcc's budget).  A
     // split body keeps the hint: its parts are not one unit.
-    let body_storage = if parts.is_some() {
+    // A body whose calls reach it again keeps the hint and no more: forced, its own call
+    // through the wrapper is a cycle of forced inlining, which gcc 16 at -O3 compiled wrong on
+    // Windows (`fact(10)` answered 181440 where the wrapper pushes a frame, `LOFT_CALL_CHAIN`).
+    let body_storage = if parts.is_some() || on_call_cycle(cx, d) {
         storage.to_string()
     } else {
         always_inline_body(storage)

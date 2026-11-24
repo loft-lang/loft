@@ -1,7 +1,8 @@
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index ce3ec90..7b7beeb 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -6260,23 +6260,7 @@
+@@ -6342,24 +6342,7 @@ impl Parser {
                  } else {
                      self.reads_place(&value, xv, xoff)
                  }) {
@@ -20,6 +21,7 @@ diff --git a/src/parser/objects.rs b/src/parser/objects.rs
 -                    && self.data.def_type(td_nr) == DefType::EnumValue
 -                {
 -                    sinks.decline_place = true;
+-                    sinks.decline_reason = "variant_reads_place";
 -                    false
 -                } else if xoff == crate::use_analysis::ANY_FIELD {
 +                if xoff == crate::use_analysis::ANY_FIELD {

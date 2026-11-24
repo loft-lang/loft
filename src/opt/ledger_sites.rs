@@ -22,7 +22,7 @@ use crate::data::{Data, DefType, Value};
 use crate::ledger::{self, Site};
 
 /// The operators that are fault sites, by definition number — the set the release-pass
-/// probe drops (`generation::ops::int_arith::probe_form`), so the ledger licenses exactly
+/// probe drops (`c::body::probe_operator`), so the ledger licenses exactly
 /// what a shipped build may change.
 pub struct SiteOps {
     ops: [(u32, i64); 10],

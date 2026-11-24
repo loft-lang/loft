@@ -40,11 +40,6 @@ pub enum Origin {
     InterpReassignCall,
     /// Interpreter reassignment `v = src` between same-struct references (#306).
     InterpReassignVar,
-    /// Native whole-record bind (`generation::dispatch`, the `Value::Var(src)` arm).
-    NativeRecordBind,
-    /// Native call-return bind. Emits a runtime adopt-or-copy branch, so this is a *may
-    /// copy* site — still one the diagnostic must account for.
-    NativeCallReturn,
     /// A materialisation the PARSER writes into the IR: a projection copied into an owned
     /// store, a return materialised into the caller's buffer, or a `&` write-back that must
     /// publish an owned record rather than a view (loft#775).
@@ -78,17 +73,8 @@ impl Origin {
             | Self::InterpTupleBind
             | Self::InterpReassignCall
             | Self::InterpReassignVar => "interpret",
-            Self::NativeRecordBind | Self::NativeCallReturn => "native",
             Self::ParserMaterialise => "parser",
         }
-    }
-
-    /// Whether the emitted code copies unconditionally, or branches at runtime and copies
-    /// only on one arm. Reported so a MAY-copy is never read as a definite one — native's
-    /// call-return arm emits an adopt-or-copy guard on store identity.
-    #[must_use]
-    pub fn always_copies(self) -> bool {
-        !matches!(self, Self::NativeCallReturn)
     }
 }
 
@@ -865,11 +851,7 @@ pub fn report(data: &crate::data::Data) -> usize {
         // A `_`-prefixed binding is compiler-generated: the author never wrote it, so it is
         // OUR worklist, not theirs. Still reported — the guard's audience is the compiler —
         // but marked, so a stdlib internal is not mistaken for a user-visible copy.
-        let origin_note = if s.origin.always_copies() {
-            "copies"
-        } else {
-            "may copy"
-        };
+        let origin_note = "copies";
         let who = if def.variables.is_compiler_generated(s.var) {
             " (compiler-generated binding)"
         } else {

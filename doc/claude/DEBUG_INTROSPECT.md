@@ -10,7 +10,7 @@ The `--introspect` CLI and the pass-1 refusal audit.  Part of the debugging guid
 ## Introspection CLI (`--introspect`)
 
 **Is a refactor byte-identical?  `scripts/introspect_diff.sh <before-loft> <after-loft>
-[--env VAR=VALUE]…`** runs `introspect` (IR + bytecode + generated Rust, and stderr) with both
+[--env VAR=VALUE]…`** runs `introspect` (IR + bytecode, and stderr) with both
 compilers over every corpus file (`tests/scripts`, `tests/docs`, `examples`) and prints one
 line per DIFFERING file plus `IDENTICAL n/m` or `DIFFERENT k of m`; exit 0 / 1 / 2 (usage).
 A refactor that claims to change nothing is verified by this and by nothing weaker — the suite
@@ -41,8 +41,9 @@ every library at `main` and read-only snapshots of the consumer applications, an
 `index/eq_census.txt` — committed as the pre-flip census (guard: `tests/store_content_eq.rs`).
 
 `loft --introspect <file>` packages the dump primitives behind one
-flag, dumping bytecode + generated Rust + slot tables + per-fn type
-tables to stdout (or per-section files).  No env vars, no test
+flag, dumping bytecode + slot tables + per-fn type tables to stdout
+(or per-section files).  The generated C is `--native-emit <out.c>`; `--show-rust` is refused,
+as the rustc writer is retired (`@C170`).  No env vars, no test
 harness.  Use it when you want to inspect compile-time state without
 running the program.
 
@@ -51,17 +52,16 @@ running the program.
 | Flag | Output | When to use |
 |------|--------|-------------|
 | `--show-bytecode` | Bytecode disassembly per fn | Codegen bugs, "is the right opcode emitted?" |
-| `--show-rust` | Generated Rust (`--native-emit` shape) | Native-codegen bugs, rustc errors |
 | `--show-slots` | Stack-slot table per fn (name, type, scope, slot, live interval) | Slot conflicts, lifetime bugs |
 | `--show-types` | Per-fn variable type + dep table | **Dep-tracking bugs** — see below |
 | `--show-ownership` | Per-binding store ownership (@PLN103): `Owned` / `Borrowed(base=X)` (a live alias of X — the dangerous case) / `Owned (backing=…)` (owns via a delivery buffer) / `Join(base=X)` (a runtime owned-or-borrow split) / `Borrowed(caller-arg)` / `— (scalar)`, plus a per-return `delivery:` line (materialised / owned / borrows). **Also flags the loft#568 interpreter-orphan class STATICALLY** — `⚠ loft#568: owned text returned by value (…) — no &text retbuf` on a text return backed frame-locally with no delivery buffer (the interpreter orphans the `String`; native RAII drops it). Opt-in. | **Store-lifetime / owned-vs-borrowed bugs AND suspected text-return leaks** — reach for this before ASan: it names the leaker class without a sanitizer run. Verdict is backend-shared. |
 | `--show-resolution` | Which names each source can SEE: one row per source with its `defined` and `visible` counts, then every import alias, and the `context:` line (stdlib dir + `--lib` paths). Opt-in. | **"Unknown function" / "Library not found" on a name that should resolve** — see below |
 | `--why <name>` | The same section narrowed to one name: where it is defined, and every source it is reachable from. Implies `--show-resolution`. | The same, when you already know which name is missing |
 | `--bc-roundtrip` | Re-assemble each fn's bytecode from its own dump and compare (`ok`/`DIFFERS`) | Verify the dump is a faithful, editable bytecode representation — see [Bytecode round-trip](#bytecode-round-trip---bc-roundtrip) |
-| `--json` (INSP.J) | One machine-readable JSON object over the included sections — a string field per section (`bytecode`/`rust`/`slots`/`types`, plus `ownership` / `resolution` if requested), in canonical order | An editor / agent / the LSP that wants a section by key instead of splitting on `=== header ===` lines; takes precedence over `*-out` / `--diff` |
+| `--json` (INSP.J) | One machine-readable JSON object over the included sections — a string field per section (`bytecode`/`slots`/`types`, plus `ownership` / `resolution` if requested), in canonical order | An editor / agent / the LSP that wants a section by key instead of splitting on `=== header ===` lines; takes precedence over `*-out` / `--diff` |
 
-Combine the four dump flags freely; they emit in fixed order, and
-no flags = all four.  `--bc-roundtrip` is **opt-in only** (a
+Combine the three dump flags freely; they emit in fixed order, and
+no flags = all three.  `--bc-roundtrip` is **opt-in only** (a
 verification check, not a dump — it never runs in the no-flags
 default).  `--all-fns` includes the default/* stdlib.  `--fn
 <name>` filters to one function.  `--json` renders whichever
@@ -282,23 +282,12 @@ Implementation: `compile::reassemble_function` + `escape_text` /
 
 ### Native-codegen source map
 
-The `--show-rust` (and any `--native` compilation) emits
-`// loft:<file>:<line>` comments above each function header and
-each statement.  `rustc` errors on `/tmp/loft_native.rs:1450` map
-back to a .loft line by reading the nearest preceding comment.
-
-```rust
-// loft:/tmp/myprog.loft:7
-fn n_first(stores: &mut Stores, mut var_a: DbRef) -> Str {
-  ...
-  // loft:/tmp/myprog.loft:8
-  return Str::new(...)
-}
-```
-
-When rustc reports a borrow-check error or type mismatch, scroll
-upward in the generated file from the error line to the nearest
-`// loft:` comment — that's the source line under suspicion.
+The C a program compiles to (`--native-emit <out.c>`) names each loft function `n_<name>`, and
+its frame wrapper opens with `loft_frame_push(cx, "<name>", "<file.loft>", <line>)`, so a C
+compiler error on a line of the unit maps back to loft through the function it stands in.  A
+`--native-debug` build writes `#line <n> "<file.loft>"` before every statement
+(`c::emit_program_with_source_lines`), so the binary's debug information, and the C
+compiler's own diagnostics, name the loft line directly.
 
 ---
 

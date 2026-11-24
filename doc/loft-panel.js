@@ -4,10 +4,12 @@
 // @PLN149 step 8 — the Run / REPL / Debug panel on a documentation page.
 //
 // Every executed topic page IS a loft program, and until now the page could only show it.
-// This drives it, in the reader's own browser, through two wasm entries:
+// This drives it, in the reader's own browser, through the wasm module's debugger — a handle
+// the page holds and calls:
 //
-//   debug_start(source)  -> {"ok":true} | {"ok":false,"error":"…"}
-//   debug_command(cmd)   -> {"replies":[…],"output":"…"}
+//   const dbg = new Debugger();
+//   dbg.start(source)  -> {"ok":true} | {"ok":false,"error":"…"}
+//   dbg.command(cmd)   -> {"replies":[…],"output":"…"}
 //
 // The command grammar is the debugger's own (`src/wasm_debug.rs`), so this page and the
 // `--html --debug` relay drive one implementation.
@@ -21,13 +23,12 @@
 
 import { createHost } from './loft-rt.js';
 
-// The wasm module is imported DYNAMICALLY, not with a static `import { debug_start }`.
+// The wasm module is imported DYNAMICALLY, not with a static `import { Debugger }`.
 // A static named import of a missing export is a link-time error that stops the whole
 // module before a line of it runs — so a page served from a tree whose `doc/pkg` predates
-// these two exports would show a dead panel and nothing explaining it. Loaded this way,
-// the absence is a value the panel can report.
-let debug_start = null;
-let debug_command = null;
+// this export would show a dead panel and nothing explaining it. Loaded this way, the
+// absence is a value the panel can report.
+let dbg = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -62,7 +63,7 @@ function log(entry, value, kind) {
 }
 
 function send(cmd) {
-  const r = JSON.parse(debug_command(cmd));
+  const r = JSON.parse(dbg.command(cmd));
   if (r.output) {
     $('lp-output').textContent += r.output;
   }
@@ -138,7 +139,7 @@ function run() {
   $('lp-frame').hidden = true;
   setStatus('running…', 'info');
 
-  const started = JSON.parse(debug_start(SOURCE));
+  const started = JSON.parse(dbg.start(SOURCE));
   if (!started.ok) {
     setStatus('this program does not compile in the browser', 'err');
     $('lp-output').textContent = started.error || '';
@@ -243,14 +244,13 @@ async function boot() {
     const { host } = createHost();
     window.loftHost = host;
     const mod = await import('./pkg/loft.js');
-    if (typeof mod.debug_start !== 'function' || typeof mod.debug_command !== 'function') {
+    if (typeof mod.Debugger !== 'function') {
       setStatus('this site\u2019s loft bundle predates the panel \u2014 rebuild it with '
         + '`make wasm`', 'err');
       return;
     }
-    debug_start = mod.debug_start;
-    debug_command = mod.debug_command;
     await mod.default();
+    dbg = new mod.Debugger();
     ready = true;
     $('lp-run').disabled = false;
     setStatus('ready \u2014 press Run', 'ok');

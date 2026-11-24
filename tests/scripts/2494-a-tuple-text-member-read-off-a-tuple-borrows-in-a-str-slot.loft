@@ -14,7 +14,8 @@
 // Axes it HOLDS FIXED:   the tuple is built inside a `for` over a vector of tuples.
 //
 // @falsified-at: 5330b3690 — native exit 1 -> 0; interpret INERT (expected for a
-//   backend-divergence guard — only one side can move)  [FALSIFY_NATIVE=rust]
+//   backend-divergence guard — only one side can move), scored on the rustc writer, which is
+//   retired (`@C170`); the cell still runs on the interpreter and the C.
 
 fn has(v: vector<(integer, integer, text)>, t: (integer, integer, text)) -> boolean {
   v.contains(t)

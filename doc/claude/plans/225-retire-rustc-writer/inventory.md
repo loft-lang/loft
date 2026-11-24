@@ -32,12 +32,14 @@ minus the files above.  Heaviest: `src/main.rs` (159: the CLI, the target routin
 `loft_io.h`, `loft_keyed.h`, `loft_ffi_host.h` name `codegen_runtime` only in comments ("the twin
 of"): those comments are reworded, not the code.
 
-## The standard library — R7
+## The standard library — kept
 
-369 `#rust "…"` bodies: `default/01_code.loft` 259, `02_files.loft` 85, `03_text.loft` 24,
-`06_json.loft` 1 (`grep -c '^#rust' default/*.loft`).  The interpreter and the C backend never
-read them.  The parser's support for the annotation goes with them; an annotation left in a
-library's source becomes an error that names the cure.
+The `#rust "…"` bodies in `default/*.loft` (`grep -c '^#rust' default/*.loft`) are not the
+writer's: `create.rs` generates the interpreter's `src/fill.rs` from the operators' bodies, a
+non-operator body marks a primitive `src/native.rs` registers, and about twenty IR-pass sites read
+"has a body" as "a primitive the runtime implements" (`git grep -n "rust().is_empty()" -- src`).
+Deleting them would change the IR, not remove text.  The parser accepts the annotation only in the
+standard library.  Only the writer-only reader went: `create::generate_lib`.
 
 ## User-facing surface — R2
 

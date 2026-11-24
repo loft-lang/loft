@@ -717,19 +717,13 @@ tests/
 
 ## The compiled backend a test runs on
 
-The C backend is the compiled backend every change is tested on: `--native` compiles through
-the C by default, in `make`, `find_problems.sh` and CI's PR gate alike.  The rustc writer
-(`--native-rust`, `LOFT_NATIVE_BACKEND=rust`) runs in the daily schedule ([CI_BUDGET.md](CI_BUDGET.md) § What
-runs when — today).  The C's coverage is what makes it stable, so a test:
+The C backend is the one compiled backend (`@C170`): `--native` compiles through the C in
+`make`, `find_problems.sh` and CI alike, and `--native-rust` / `LOFT_NATIVE_BACKEND=rust` are
+refused.  The C's coverage is what makes it stable, so a test:
 
-- **compiles a program through the C** — `--native` under that variable, or `--native-c`.  A
-  browser page builds through the C too (`--native-c --html`, its wasm through clang —
-  [C_BACKEND.md](C_BACKEND.md)).
-- **names `--native-rust` only when its subject is the Rust writer** — what it emits, its
-  rewrites, its counts, its `--html` page — and then lives in a `mod rust_writer`, which
-  only the nightly runs (`scripts/ci_test_filter.py nightly`; the local curated run leaves it
-  out too, and so builds no wasm rlib).  A test that only needs *a* compiled program uses the C.
-- **is never skipped, or moved back to rustc, because the C fails it.**  A program the C
+- **compiles a program through the C** — `--native`, or `--native-c`.  A browser page builds
+  through the C too (`--native-c --html`, its wasm through clang — [C_BACKEND.md](C_BACKEND.md)).
+- **is never skipped because the C fails it.**  A program the C
   refuses or answers wrongly is a C backend defect: fix it (or file it, by the bug-filing
   policy), and keep the test on the C.
 
@@ -811,7 +805,7 @@ not as a convenience wrapper for loft code.  A cell runs on both backends by con
 
 **What grows the gate is binaries and compile-spawning tests, not tests** (@PLN159).  A corpus
 file costs ~5 ms to run and nothing to build; a new `tests/*.rs` binary is a compile plus a link in
-every build (dev/test, release, clippy `--all-targets`); and a test that spawns `rustc`, a cargo
+every build (dev/test, release, clippy `--all-targets`); and a test that spawns a C compile, a cargo
 build or a wasm build is 10–60 s of CPU that does not parallelise and starves every test beside
 it.  So a new Rust test joins an existing binary of its subject unless it needs its own
 process-level fixture, and a test that needs a compiled artifact shares ONE fixture per binary

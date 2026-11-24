@@ -679,10 +679,10 @@ fn an_older_hash_token_this_build_reads_hands_the_store_over_raw() {
 /// serves it unchanged, because the handle is still a `DbRef`.  What it may not do is add a
 /// second kind of object with its own identity and release (an `ArenaRef { arena, slot }`):
 /// that needs a second representation, and this is where one would first show.  A new heap
-/// type former joins the list below or fails `rust_type`'s arm here.
+/// type former joins the list below or fails the stack-size check here.
 #[test]
 fn every_heap_value_is_carried_as_a_dbref() {
-    use loft::data::{Context, Deps, Type};
+    use loft::data::{Deps, Type};
     let keys = vec![("k".to_string(), true)];
     let heap = [
         ("reference", Type::Reference(1, Deps::none())),
@@ -714,13 +714,6 @@ fn every_heap_value_is_carried_as_a_dbref() {
             dbref,
             "{name}: the interpreter carries a heap value as one DbRef (@FR-O-One-Kind)"
         );
-        for ctx in [Context::Variable, Context::Argument] {
-            assert_eq!(
-                loft::generation::rust_type(tp, &ctx),
-                "DbRef",
-                "{name}: native carries a heap value as one DbRef (@FR-O-One-Kind)"
-            );
-        }
     }
     // An optional heap value is the same handle holding the null sentinel, not a second shape.
     let opt = Type::Optional(Box::new(Type::Reference(1, Deps::none())));

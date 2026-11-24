@@ -481,7 +481,7 @@ several sessions on the strength of two facts (nothing numeric installed, no pas
   `boundary_refusals` (the float refusal, arc B), `MAX_C_ARITY` (arc C).
 - [`src/c_call.rs`](../../../src/c_call.rs) — the `0..=32` trampoline ladder and the
   interpreter's marshalling.
-- [`src/generation/mod.rs`](../../../src/generation/mod.rs) — `output_c_direct_call`, the
+- `src/generation/mod.rs` (retired with the rustc writer) — `output_c_direct_call`, the
   `--native` half of the same mapping.
 - [`tests/fixtures/c_abi/`](../../../tests/fixtures/c_abi/) — the `#c` fixture and its
   `cc`-only build.  Its README § *The FOREIGN half* is where arc D's lesson lives.

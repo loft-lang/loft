@@ -12,7 +12,7 @@ are, is [PERFORMANCE.md](PERFORMANCE.md); past measurements are in
 
 ## Why the interpreter is optimised at all
 
-`--native` is the optimisation TARGET: shipped programs run compiled, through LLVM.  The
+`--native` is the optimisation TARGET: shipped programs run compiled, through C.  The
 interpreter runs the same program while it is being DEVELOPED and DEBUGGED, and its job is that
 a program does not fall off a speed cliff there.  So it gains on the back of native: a rule
 native already proves (a record it never builds, a move it never makes) is moved into the IR
@@ -36,7 +36,7 @@ worse.
 A routine over the bar is closed by making its LOFT code fast, not by replacing it: a kernel
 (one Rust body standing in for a loop) is a stop-gap that fixes one name, while a faster
 interpreter fixes every loop of that shape, a program's own included.  Loft compiles through
-rustc, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
+C, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
 exists, why, and when it goes: [KERNELS.md](KERNELS.md) (`make kernel-ratio`).
 
 Against Python the measure is the NUMBER of operations, not their cost.  A loft operation costs
@@ -54,7 +54,7 @@ been cut (below).  What decides how an ALGORITHM scales is the data that flows o
 caches: records claimed, grown and relocated, blocks copied, stores created.  So the first
 question for an interpreter routine is not *how many instructions* but **does the interpreter
 do more work on stores than the compiled code does for the same routine?**  `LOFT_STORE_CENSUS`
-answers it for both backends with the same counters ([§ Store work](#store-work-interpreter-against-native)),
+counts the interpreter's side ([§ Store work](#store-work-interpreter-against-native)),
 and a row where the interpreter does more is where a native rule avoids an object or a move —
 the candidate to move into the IR phase, where both backends get it.
 
@@ -142,29 +142,12 @@ next work is in the section below, not in more fusion.
 
 ## Store work: interpreter against native
 
-`LOFT_STORE_CENSUS=<file>` (PROFILING.md) counts, at the chokepoints both backends share,
-stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
-copies and text writes move — one line per `ticks()` call, so a bench routine's work is the
-difference between the two lines around its timed loop.  Build the interpreter and the native
-program against the `op-census` feature (the counters are compiled only there):
-
-```bash
-cargo build --release --lib --bin loft --features op-census --target-dir target/op-census
-LOFT_STORE_CENSUS=i.tsv target/op-census/release/loft --interpret bench.loft --n 2
-target/op-census/release/loft --native-emit n.rs --lean bench.loft
-rustc -C opt-level=3 --edition=2024 --extern loft=target/op-census/release/libloft.rlib \
-      -L target/op-census/release/deps -o n n.rs && LOFT_STORE_CENSUS=n.tsv ./n --n 2
-```
-
-Measured on `14_stdlib_vector`, per op (interpreter / native):
-
-| routine | claims | grows | relocations | bytes relocated |
-|---|--:|--:|--:|--:|
-| `push` | 4 / 1 | 4 / 0 | 4 / 0 | 81,526 / 0 |
-| `record_append` | 3 / 2 | 6 / 0 | 1 / 0 | 233,380 / 0 |
-| `grid` | 392 / 137 | 260 / 4 | 4 / 4 | 1,210 / 824 |
-| `copy`, `remove_front` | equal | equal | equal | equal — shared runtime work |
-| element reads and writes | none | none | none | none on either side |
+`LOFT_STORE_CENSUS=<file>` (PROFILING.md) counts the interpreter's store work: stores created
+and freed, records claimed, deleted, grown and relocated, and the bytes block copies and text
+writes move — one line per `ticks()` call, so a bench routine's work is the difference between
+the two lines around its timed loop.  The C backend's store carries no counters; the
+interpreter-against-native table, measured on the rustc writer, is in
+[INTERPRETER_PERFORMANCE-history.md](INTERPRETER_PERFORMANCE-history.md).
 
 The interpreter's extra store work is **vector growth**: native sizes a vector it fills once
 (`(R-Push)`, `(R-PushFill)`, `(R-PushRec)`) where the interpreter grows it step by step and

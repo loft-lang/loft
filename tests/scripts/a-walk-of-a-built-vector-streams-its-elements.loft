@@ -1,13 +1,7 @@
-// `@FR-R-StreamWalk` — a vector a function BUILDS and its caller WALKS ONCE is never built on
-// native: the builder's stream twin runs its own body and hands each element it would have
-// appended to the walk's body, which runs as a closure at that append.  The values the body
-// sees are the values the vector would have held, in the same order, and a walk the rule
-// declines (it writes what the builder reads, it leaves the walk, it uses the vector or the
-// index otherwise, a call in it or in the builder writes what the program can see) keeps
-// the built vector.  The interpreter never takes the rewrite, so agreement between the
-// backends is the evidence here — and every cell's value is hand-computed besides, with
-// `LOFT_NO_STREAM_WALK=1` answering identically.  Which cells stream is pinned by
-// `tests/stream_walk.rs`.
+// A vector a function BUILDS and its caller WALKS ONCE: the walk's body sees the values the
+// vector holds, in order — beside a body that writes what the builder reads, a walk that
+// leaves early, a use of the vector or the index after the walk, and a call in the body or
+// in the builder that writes what the program can see.  Every cell's value is hand-computed.
 //
 // @falsify-tier: ship
 // @falsified-at: hand-measured (sabotage, 2026-10-20) — three gates broken one at a time on

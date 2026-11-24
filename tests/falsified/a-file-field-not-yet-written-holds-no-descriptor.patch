@@ -1,8 +1,9 @@
-diff --git b/src/c/loft_io.h a/src/c/loft_io.h
---- b/src/c/loft_io.h
-+++ a/src/c/loft_io.h
+diff --git a/src/c/loft_io.h b/src/c/loft_io.h
+index 77f5030ae..7ea14503f 100644
+--- a/src/c/loft_io.h
++++ b/src/c/loft_io.h
 @@ -1,7 +1,7 @@
- /* ── Files (src/state/io.rs, src/database/io.rs, codegen_runtime.rs's fs_*) ────────────────
+ /* ── Files (src/state/io.rs, src/database/io.rs, src/fs_ops.rs) ────────────────────────────
   * A `File` record: its size at byte 0, the position of the last read or write at 8, the next one
 - * at 16 (null: not set), its path at 24, its handle at 28 (an OS descriptor plus one; 0 or
 - * INT32_MIN for none: `loft_file_get`) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
@@ -11,7 +12,7 @@ diff --git b/src/c/loft_io.h a/src/c/loft_io.h
   * 5 NotExists).
   *
   * What a file needs beyond C99 — a path's kind and size, a directory listing, mkdir, rmdir,
-@@ -500,11 +500,8 @@
+@@ -658,11 +658,8 @@ static char *loft_file_path(loft_cx *cx, loft_ref f) {
      return loft_resolve(cx, loft_get_text(cx, f, 24));
  }
  
@@ -25,7 +26,7 @@ diff --git b/src/c/loft_io.h a/src/c/loft_io.h
   * record's own position (`#next`, byte 16, which the record always holds) and closed when the
   * record goes.  No record shares it — a copy of a record opens its own (`loft_file_lease`) —
   * and nothing else holds it, so a `par` worker or a `parallel` arm opens and reads files as
-@@ -634,7 +631,7 @@
+@@ -794,7 +791,7 @@ static void loft_fh_close(loft_cx *cx, loft_fh fd) {
  static int32_t loft_file_fd(loft_cx *cx, loft_ref f) {
      int32_t h;
      memcpy(&h, loft_at(cx, loft_store_of(cx, f), f.rec, f.pos + 28), 4);
@@ -34,7 +35,7 @@ diff --git b/src/c/loft_io.h a/src/c/loft_io.h
  }
  #else
  typedef FILE *loft_fh;
-@@ -681,8 +678,7 @@
+@@ -841,8 +838,7 @@ static int loft_file_get(loft_cx *cx, loft_ref f, int how, loft_fh *h, char **pa
      *h = loft_fh_open(cx, *path, how);
  #if defined(LOFT_FD)
      if (*h < 0) return 0;

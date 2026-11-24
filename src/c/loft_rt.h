@@ -734,7 +734,7 @@ LOFT_HOT_INLINE int32_t loft_rem32(loft_cx *cx, int32_t a, int32_t b) {
 }
 
 /* The release-pass probe's forms (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201): the processor's
- * wrapping arithmetic, as `generation::ops::int_arith::probe_form` emits it for Rust — a
+ * wrapping arithmetic, as `probe_operator` (`src/c/body.rs`) emits it — a
  * MEASUREMENT of the ship tier's ceiling, never a build anyone ships (@C129).  Each wrap is
  * DEFINED here: the sum, difference, product and negation are taken in unsigned arithmetic,
  * and `INT64_MIN / -1` answers what Rust's `wrapping_div` answers; a zero divisor still
@@ -854,7 +854,9 @@ static int (*loft_locked_logger)(loft_cx *cx, const char *advice) = 0;
 
 /* What locked a store (`Store::lock_origin`), kept in its `read_only` byte: the author's
  * `#lock = true`, a constant (`Store::lock_constant`), or bytes the program does not own
- * (`Store::FOREIGN_ORIGIN`).  Any of them is non-zero, which is all a write test asks. */
+ * (`Store::FOREIGN_ORIGIN`).  Any of them is non-zero, which is all a write test asks.  The
+ * interpreter's `Store` holds the same byte with the same values (`Store::RO_LOCK`, `RO_CONST`,
+ * `RO_FOREIGN`): a hosted unit writes the interpreter's own struct. */
 #define LOFT_RO_LOCK 1
 #define LOFT_RO_CONST 2
 #define LOFT_RO_FOREIGN 3
@@ -5756,7 +5758,7 @@ static void loft_vec_push_single(loft_cx *cx, loft_ref v, float x) {
  * candidate is the answer whenever it reads back.  When it does not, its neighbour on `v`'s
  * other side may (just below a power of two the half-gap towards zero is the narrower): `buf`
  * becomes that neighbour and 1 is answered when it reads back. */
-static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double v, double near, int single) {
+static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double v, double nearest, int single) {
     const char *q = buf;
     int neg = *q == '-';
     if (neg) q++;
@@ -5765,8 +5767,8 @@ static int loft_shortest_other(loft_cx *cx, char *buf, size_t cap, int p, double
     for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9') d[nd++] = *q;
     if (nd != p || !*q) return 0;
     int e = atoi(q + 1);
-    /* Away from `near` towards `v`: up in magnitude when `v` lies beyond it. */
-    int up = (fabs(v) > fabs(near));
+    /* Away from `nearest` towards `v`: up in magnitude when `v` lies beyond it. */
+    int up = (fabs(v) > fabs(nearest));
     int i = nd - 1;
     if (up) {
         while (i >= 0 && d[i] == '9') d[i--] = '0';
@@ -6637,7 +6639,7 @@ static loft_ref loft_arguments(loft_cx *cx) {
     return r;
 }
 
-/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: a per-thread
+/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: the context's
  * buffer the appends grow and `pack_take` hands over as a text, bytes verbatim, emptying it. */
 static void loft_pk_push(loft_cx *cx, const uint8_t *b, size_t n) {
     if (cx->pk_n + n > cx->pk_cap) {
@@ -7097,13 +7099,21 @@ static unsigned __stdcall loft_timeout_watch(void *arg) {
 
 /* A rename that replaces the file `to` names, as Rust's `fs::rename` — and so the interpreter —
  * does on every host.  POSIX `rename` does; the Windows CRT's refuses an existing target, so
- * there it is `MoveFileExA` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`. */
+ * there it is `MoveFileExW` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`.  The
+ * paths go over in their wide form, as every path does (`loft_wpath`, loft_io.h). */
 #if defined(_WIN32)
-__declspec(dllimport) int __stdcall MoveFileExA(const char *from, const char *to, unsigned long flags);
+#include <wchar.h>
+__declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *from, const wchar_t *to, unsigned long flags);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
+static wchar_t *loft_wpath(const char *s);
 static int loft_rename(loft_cx *cx, const char *from, const char *to) {
-    if (MoveFileExA(from, to, 1ul /* MOVEFILE_REPLACE_EXISTING */)) return 0;
-    switch (GetLastError()) {
+    wchar_t *wf = loft_wpath(from), *wt = loft_wpath(to);
+    int ok = MoveFileExW(wf, wt, 1ul /* MOVEFILE_REPLACE_EXISTING */);
+    unsigned long e = ok ? 0 : GetLastError();
+    free(wf);
+    free(wt);
+    if (ok) return 0;
+    switch (e) {
     case 2: case 3: errno = ENOENT; break; /* ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND */
     case 5: case 32: errno = EACCES; break; /* ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION */
     default: errno = EIO; break;

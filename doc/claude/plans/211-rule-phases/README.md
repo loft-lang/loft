@@ -9,6 +9,11 @@ Tracker: [@PLN211](https://github.com/loft-lang/plans/issues/211).
 
 ## Status
 
+**Reconciled with @PLN225 (2026-11-24):** the rustc writer is retired, so the census reads the C
+writer and the interpreter's generator only, `rule_phases.py` has no native column, and the clauses
+only the rustc writer applied are gone (`formal/rewrites-history.md` § Retired with the rustc
+writer).  "Both writers" below reads as the C writer from here on.
+
 Open, `status:next` — the inventory below is measured and the plan is DESIGNED
 ([design.md](design.md): every arc's files and checks, the first verdict for each rule, and the
 removal of the facts routine's three deviations); arc A is built (the census reads both

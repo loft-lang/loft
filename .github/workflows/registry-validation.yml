@@ -257,12 +257,9 @@ jobs:
             registry-validation-
 
       - name: Build loft from main
-        # `--lib --bin loft` builds BOTH: without `--lib`, libloft.rlib lands
-        # only in target/release/deps/ and `loft --native` fails to resolve
-        # transitive crates (E0463) — same recipe as the chunk repos'
-        # library-ci.yml.
+        # The binary alone: `--native` compiles through C, so no runtime library is linked.
         run: |
-          cargo build --release --lib --bin loft
+          cargo build --release --bin loft
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       - name: Build loft's components

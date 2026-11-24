@@ -188,3 +188,67 @@ fn loops_at_once_race_on_nothing_under_thread_sanitizer() {
     }
     let _ = fa::remove_dir_all(&dir);
 }
+
+/// The spellings of thread-local state in the runtime's source: Rust's, and the C the runtime is
+/// written in or emits (`LOFT_TLS` was the C runtime's macro for it; `LOFT_TLS_…` names are
+/// other things).
+const THREAD_LOCAL_SPELLINGS: [&str; 5] = [
+    "thread_local!",
+    "_Thread_local",
+    "__thread ",
+    "__declspec(thread)",
+    "LOFT_TLS",
+];
+
+fn thread_local_sites(dir: &Path, out: &mut Vec<String>) {
+    for entry in fa::read_dir(dir).expect("read a source directory") {
+        let path = entry.os_spelling();
+        if fa::is_dir(&path) {
+            thread_local_sites(&path, out);
+            continue;
+        }
+        if !["rs", "h", "c"].iter().any(|e| fa::has_extension(&path, e)) {
+            continue;
+        }
+        let Ok(text) = fa::read_to_string(&path) else {
+            continue;
+        };
+        for (nr, line) in text.lines().enumerate() {
+            for spelling in THREAD_LOCAL_SPELLINGS {
+                let mut from = 0;
+                while let Some(at) = line[from..].find(spelling) {
+                    let end = from + at + spelling.len();
+                    let word_goes_on = line[end..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                    if !(spelling == "LOFT_TLS" && word_goes_on) {
+                        out.push(format!("{}:{}: {}", path.display(), nr + 1, line.trim()));
+                    }
+                    from = end;
+                }
+            }
+        }
+    }
+}
+
+/// `@FR-C-Own` — a thread's state is a value it is handed, never a thread-local: no Rust
+/// `thread_local!`, and no C thread storage in the runtime or in the C it emits (@PLN226).  A
+/// per-thread value belongs to the context it describes — `Stores`, `State`, `Data`, the C's
+/// `loft_cx` — and anything threads share takes one of `@FR-C-Publish`'s forms
+/// (THREADING.md § Each thread's own state).
+///
+/// @falsified-at: 9d5c47675 — 9 lines name `thread_local!` there (`call_frames.rs` 2,
+/// `codegen_runtime.rs` 6, `live_dispatch.rs` 1: the rustc writer's runtime) -> none at fc31b0cb6.
+#[test]
+fn no_state_is_a_thread_local() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sites = Vec::new();
+    thread_local_sites(&src, &mut sites);
+    assert!(
+        sites.is_empty(),
+        "thread-local state in the runtime — make it a field of the context it describes \
+         (THREADING.md § Each thread's own state):\n{}",
+        sites.join("\n")
+    );
+}

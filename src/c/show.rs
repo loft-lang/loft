@@ -23,7 +23,6 @@ impl Cx<'_> {
             .ok_or("a format of an unknown type")?;
         self.show_types.borrow_mut().insert(tp);
         let r = match &t.parts {
-            Parts::Enum(_) if t.name == "JsonValue" => Err("a format of a JsonValue".into()),
             Parts::Enum(values) => values
                 .iter()
                 .filter(|(v, _)| *v != u16::MAX)
@@ -355,6 +354,11 @@ impl Cx<'_> {
         complex: i32,
         brace: &str,
     ) {
+        // A `JsonValue` in a JSON format is the JSON it holds (`ShowDb::write_jsonvalue`), at the
+        // indent of the value around it; plainly it renders as any other enum.
+        if name == "JsonValue" {
+            out.push_str("    if (fmt & 2) { loft_jv_render(cx, s, r, fmt & 1, ind); return; }\n");
+        }
         if name.starts_with("__nullable<") {
             // A present element renders as the dense value its `Some` variant carries.
             out.push_str("    switch (*loft_at(cx, loft_store_of(cx, r), r.rec, r.pos)) {\n");

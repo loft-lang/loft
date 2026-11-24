@@ -51,8 +51,7 @@ fn run(lib: &std::path::Path, hosted: bool) -> (bool, String, String) {
         .arg(root.join(SCRIPT))
         .env("LOFT_NO_CACHE", "1");
     if hosted {
-        cmd.env("LOFT_NO_RUSTC", "1")
-            .env("LOFT_REQUIRE_NATIVE", "1")
+        cmd.env("LOFT_REQUIRE_NATIVE", "1")
             .env("LOFT_POISON", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_PROFILE", "1");
@@ -159,7 +158,6 @@ fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
             .arg(&lib)
             .arg(root.join(SCRIPT))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_POISON_CLAIM", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_HOSTED_VERIFY", "1");
@@ -224,7 +222,6 @@ fn a_hosted_unit_built_by_one_program_runs_in_another() {
             .arg(&lib)
             .arg(root.join(script))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_POISON_CLAIM", "1")
             .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_HOSTED_VERIFY", "1")
@@ -344,7 +341,6 @@ fn a_hosted_unit_shares_its_shim_with_the_interpreter() {
         .arg(&lib)
         .arg(root.join("tests/lib/hostedshim_main.loft"))
         .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_NO_RUSTC", "1")
         .output()
         .expect("run loft");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -417,7 +413,6 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
         .arg(&lib)
         .arg(root.join("tests/lib/hostedmods_main.loft"))
         .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_NO_RUSTC", "1")
         .env("LOFT_POISON_CLAIM", "1")
         .env("LOFT_HOSTED_VERIFY", "1")
         .output()
@@ -464,8 +459,7 @@ fn a_call_back_into_the_interpreter_keeps_its_callers_frames() {
             .arg("--lib")
             .arg(&lib)
             .arg(root.join("tests/lib/hostedcallback_main.loft"))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1");
+            .env("LOFT_NO_CACHE", "1");
         if hosted {
             cmd.env("LOFT_REQUIRE_NATIVE", "1");
         } else {
@@ -518,10 +512,13 @@ fn a_library_built_once_is_adopted_with_no_c_compiler() {
             .arg(&lib)
             .arg(root.join("tests/lib/hostedshim_main.loft"))
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_REQUIRE_NATIVE", "1");
+        // No compiler: none on PATH, and `LOFT_CC` naming one that does not exist.  An emptied
+        // PATH alone hides none that `LOFT_CC` names by its whole path: the Windows runners name
+        // MSYS2's gcc, which then still ran and failed without its tools, a refusal rather than
+        // no compiler; and unset, Windows looks for MSVC's `cl` past PATH.
         if let Some(p) = path {
-            cmd.env("PATH", p);
+            cmd.env("PATH", p).env("LOFT_CC", "loft-no-such-c-compiler");
         }
         let out = cmd.output().expect("run loft");
         (
@@ -574,7 +571,6 @@ fn a_hosted_unit_is_the_same_text_wherever_it_is_built() {
             .arg("build-native")
             .arg(&pkg)
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_NO_RUSTC", "1")
             .output()
             .expect("run loft build-native");
         assert!(
@@ -647,7 +643,6 @@ fn a_library_function_named_like_a_stdlib_native_builds_as_a_hosted_unit() {
             .env("LOFT_NO_CACHE", "1");
         if hosted {
             cmd.env("LOFT_LIB_BACKEND", "c")
-                .env("LOFT_NO_RUSTC", "1")
                 .env("LOFT_REQUIRE_NATIVE", "1");
         } else {
             cmd.env("LOFT_NO_NATIVE_LIBS", "1");
@@ -666,4 +661,28 @@ fn a_library_function_named_like_a_stdlib_native_builds_as_a_hosted_unit() {
     assert!(ok, "hosted: {err}");
     assert_eq!(got, want, "the hosted unit answers as the interpreter does");
     let _ = fa::remove_dir_all(&lib);
+}
+
+/// A hosted unit works on the interpreter's own `Store` structs, so the byte that says a store
+/// is locked must mean the same on both sides: the C writes the lock's KIND there
+/// (`LOFT_RO_*`, read back for its locked-write advice), and the interpreter reads the same
+/// values (`Store::RO_*`).  Held as a `bool` on the Rust side, a constant's kind 2 was
+/// undefined behaviour that a release build read as "not locked", so the strict-store check
+/// reported the unit's constant store as never freed.
+#[test]
+fn the_lock_byte_names_the_same_kinds_in_the_interpreter_and_the_c() {
+    let header = fa::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c/loft_rt.h"),
+    )
+    .expect("loft_rt.h");
+    let define = |name: &str| -> u8 {
+        header
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("#define {name} ")))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} is defined in loft_rt.h"))
+    };
+    assert_eq!(define("LOFT_RO_LOCK"), loft::store::Store::RO_LOCK);
+    assert_eq!(define("LOFT_RO_CONST"), loft::store::Store::RO_CONST);
+    assert_eq!(define("LOFT_RO_FOREIGN"), loft::store::Store::RO_FOREIGN);
 }

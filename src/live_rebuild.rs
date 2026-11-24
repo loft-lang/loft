@@ -7,7 +7,7 @@
 //! process orchestration, so it sits in the runtime a compiled program links (@PLN191);
 //! `live_dispatch` re-exports it.
 
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 
 use crate::database::Stores;
 use crate::keys::DbRef;
@@ -34,7 +34,9 @@ const REBUILD_READY: i64 = 2;
 const REBUILD_FAILED: i64 = 3;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
 enum Rebuild {
+    #[default]
     Idle,
     Building {
         child: crate::platform::process::Running,
@@ -50,12 +52,18 @@ enum Rebuild {
     Failed,
 }
 
+/// `@PLN226` — a program's background rebuild: the build in flight or its outcome, the builds
+/// numbered so far, and why the last one failed (for the editor that asked, `D!:rebuild?`).
+/// The program's own, in its engine context (`engine_host::EngineCtl::rebuild`).
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static REBUILD: RefCell<Rebuild> = const { RefCell::new(Rebuild::Idle) };
-    static REBUILD_SEQ: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Why the last rebuild failed, for the editor that asked (`D!:rebuild?`).
-    static FAILURE: RefCell<String> = const { RefCell::new(String::new()) };
+#[derive(Default)]
+pub(crate) struct RebuildCx {
+    state: Rebuild,
+    seq: u32,
+    failure: String,
+    /// The tier of the rebuild in flight or ready: the shipped one (`--ship`) for `rebuild
+    /// fast` and in a build swapped in at full speed (`LOFT_LIVE_SHIP=1`).
+    ship: bool,
 }
 
 /// What an interpreted run tells the rebuild about itself: the driver to build with, the
@@ -98,6 +106,23 @@ fn live_var(name: &str) -> Option<String> {
     Some(v.clone())
 }
 
+/// The successor a swap of an INTERPRETED host starts: the same program, interpreted again —
+/// its driver, `--interpret`, its library directories and its source — so a development
+/// session keeps its debugger, its flips and Apply across a rebuild (`@C170`: those live in the
+/// interpreter).  The rebuild's C build stays the check that the edit compiles.  `None` for a
+/// host the driver did not interpret, which swaps into the rebuilt binary.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn interpreted_successor() -> Option<Vec<String>> {
+    let host = LIVE_HOST.get()?;
+    let mut argv = vec![host.driver.clone(), "--interpret".to_string()];
+    for d in host.libs.split(':').filter(|d| !d.is_empty()) {
+        argv.push("--lib".to_string());
+        argv.push(d.to_string());
+    }
+    argv.push(host.src.clone());
+    Some(argv)
+}
+
 /// The live variables a swapped-in build is started with, so it can rebuild in turn: those
 /// the environment it inherits does not hold already.
 #[cfg(not(target_arch = "wasm32"))]
@@ -111,13 +136,17 @@ pub(crate) fn live_env_for_successor() -> Vec<(&'static str, String)> {
 
 /// Spawn one background `--check --native` build of `src` via the driver.
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
+fn spawn_build(
+    seq: &mut u32,
+    ship: bool,
+    layout: Option<&str>,
+    driver: &str,
+    src: &str,
+) -> Result<Rebuild, String> {
     // The error starts with the path: "cannot read <src>: <why>".
     let snapshot = crate::file_access::read(src).map_err(|e| format!("cannot read {e}"))?;
-    let seq = REBUILD_SEQ.with(|c| {
-        c.set(c.get() + 1);
-        c.get()
-    });
+    *seq += 1;
+    let seq = *seq;
     let base = std::env::temp_dir().join(format!("loft_rebuild_{}_{seq}", std::process::id()));
     let out_path = crate::file_access::with_extension(&base, "out");
     let err_path = crate::file_access::with_extension(&base, "err");
@@ -128,6 +157,9 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
         .arg("--no-warnings")
         .arg("--check")
         .arg("--native");
+    if ship {
+        cmd.push_arg("--ship");
+    }
     if let Some(libs) = live_var("LOFT_LIVE_LIBS") {
         for d in libs.split(':').filter(|s| !s.is_empty()) {
             cmd.push_arg("--lib").push_arg(d);
@@ -135,7 +167,7 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
     }
     // @PLN196 step 8 — the build of the next instance is checked against the running world:
     // a world it cannot take over fails the build here, never the swap.
-    if let Some(layout) = crate::engine_host::world_layout() {
+    if let Some(layout) = layout {
         let world = crate::file_access::with_extension(&base, "world.dschema");
         crate::file_access::write(&world, layout).map_err(|e| e.to_string())?;
         cmd = cmd.env("LOFT_CHECK_WORLD", &world);
@@ -165,7 +197,18 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
 /// env (run through the loft driver) or the spawn failed — warned, never
 /// a halt.
 #[cfg(not(target_arch = "wasm32"))]
-fn rebuild_start() -> bool {
+fn rebuild_start(rc: &mut RebuildCx, layout: Option<&str>) -> bool {
+    rebuild_start_tier(
+        rc,
+        layout,
+        std::env::var("LOFT_LIVE_SHIP").is_ok_and(|v| v == "1"),
+    )
+}
+
+/// Start a rebuild, of the shipped tier (`--ship`, the speed the game ships at) when `ship`,
+/// else of the semantics tier the check reads.
+#[cfg(not(target_arch = "wasm32"))]
+fn rebuild_start_tier(rc: &mut RebuildCx, layout: Option<&str>, ship: bool) -> bool {
     let (Some(driver), Some(src)) = (live_var("LOFT_LIVE_DRIVER"), live_var("LOFT_LIVE_SRC"))
     else {
         eprintln!(
@@ -173,12 +216,13 @@ fn rebuild_start() -> bool {
         );
         return false;
     };
-    REBUILD.with(|r| {
-        let mut r = r.borrow_mut();
-        if matches!(*r, Rebuild::Building { .. }) {
+    {
+        let r = &mut rc.state;
+        if matches!(*r, Rebuild::Building { .. }) && rc.ship == ship {
             return true; // idempotent: one build at a time
         }
-        match spawn_build(&driver, &src) {
+        rc.ship = ship;
+        match spawn_build(&mut rc.seq, ship, layout, &driver, &src) {
             Ok(b) => {
                 eprintln!("loft-live: rebuild started ({src})");
                 *r = b;
@@ -190,16 +234,16 @@ fn rebuild_start() -> bool {
                 false
             }
         }
-    })
+    }
 }
 
 /// Poll the rebuild: 0 idle, 1 building, 2 ready, 3 failed.  Completion
 /// with a source that changed mid-build REQUEUES automatically (status
 /// stays 1) — the artifact must correspond to the source as of the check.
 #[cfg(not(target_arch = "wasm32"))]
-fn rebuild_status() -> i64 {
-    REBUILD.with(|r| {
-        let mut r = r.borrow_mut();
+fn rebuild_status(rc: &mut RebuildCx, layout: Option<&str>) -> i64 {
+    {
+        let r = &mut rc.state;
         let Rebuild::Building {
             child,
             snapshot,
@@ -236,7 +280,7 @@ fn rebuild_status() -> i64 {
             // instant, so this converges as soon as the source settles.
             eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
             let driver = live_var("LOFT_LIVE_DRIVER").unwrap_or_default();
-            *r = match spawn_build(&driver, &src) {
+            *r = match spawn_build(&mut rc.seq, rc.ship, layout, &driver, &src) {
                 Ok(b) => b,
                 Err(msg) => {
                     eprintln!("loft-live: requeue failed — {msg}");
@@ -269,7 +313,7 @@ fn rebuild_status() -> i64 {
                 .unwrap_or("the build failed")
                 .trim()
                 .to_string();
-            FAILURE.with(|f| *f.borrow_mut() = why);
+            rc.failure = why;
             *r = Rebuild::Failed;
             return REBUILD_FAILED;
         }
@@ -289,76 +333,104 @@ fn rebuild_status() -> i64 {
         eprintln!("loft-live: rebuild ready — {artifact}");
         *r = Rebuild::Ready { artifact };
         REBUILD_READY
-    })
+    }
 }
 
 /// Control-channel shims (@PLN18 08-S7) — the kernel's debug handler drives
 /// the rebuild machinery without reaching the private internals.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn n_rebuild_start_ctl() -> bool {
-    rebuild_start()
+pub(crate) fn n_rebuild_start_ctl(rc: &mut RebuildCx, layout: Option<&str>, ship: bool) -> bool {
+    if ship {
+        rebuild_start_tier(rc, layout, true)
+    } else {
+        rebuild_start(rc, layout)
+    }
+}
+
+/// Is the ready build of the shipped tier (`rebuild fast`)?  Only that one is full speed.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn rebuild_is_ship(rc: &mut RebuildCx, layout: Option<&str>) -> bool {
+    rc.ship && rebuild_status(rc, layout) == REBUILD_READY
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn rebuild_status_ctl() -> i64 {
-    rebuild_status()
+pub(crate) fn rebuild_status_ctl(rc: &mut RebuildCx, layout: Option<&str>) -> i64 {
+    rebuild_status(rc, layout)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn rebuild_artifact_ctl() -> String {
-    rebuild_artifact()
+pub(crate) fn rebuild_artifact_ctl(rc: &RebuildCx) -> String {
+    rebuild_artifact(rc)
 }
 
 /// Why the last rebuild failed, in one line; "" when none has.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn rebuild_failure_ctl() -> String {
-    FAILURE.with(|f| f.borrow().clone())
+pub(crate) fn rebuild_failure_ctl(rc: &RebuildCx) -> String {
+    rc.failure.clone()
 }
 
 /// The READY build's artifact path; "" unless `rebuild_status() == 2`.
 #[cfg(not(target_arch = "wasm32"))]
-fn rebuild_artifact() -> String {
-    REBUILD.with(|r| match &*r.borrow() {
+fn rebuild_artifact(rc: &RebuildCx) -> String {
+    match &rc.state {
         Rebuild::Ready { artifact } => artifact.clone(),
         _ => String::new(),
-    })
+    }
+}
+
+/// The calling program's rebuild and the world layout it checks against.
+#[cfg(not(target_arch = "wasm32"))]
+#[expect(
+    clippy::mut_from_ref,
+    reason = "the stores sit in an `UnsafeCell`, the writer's calling convention"
+)]
+fn parts(cell: &UnsafeCell<Stores>) -> (&mut RebuildCx, Option<&str>) {
+    // SAFETY: the cell is the calling program's stores, which no other reference reaches
+    // while one of its natives runs.
+    crate::engine_host::rebuild_parts(unsafe { &mut *cell.get() })
 }
 
 /// Typed twin: `rebuild_start() -> boolean`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn n_rebuild_start(_cell: &UnsafeCell<Stores>) -> u8 {
-    u8::from(rebuild_start())
+pub fn n_rebuild_start(cell: &UnsafeCell<Stores>) -> u8 {
+    let (rc, layout) = parts(cell);
+    u8::from(rebuild_start(rc, layout))
 }
 
 /// Typed twin: `rebuild_status() -> integer`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn n_rebuild_status(_cell: &UnsafeCell<Stores>) -> i64 {
-    rebuild_status()
+pub fn n_rebuild_status(cell: &UnsafeCell<Stores>) -> i64 {
+    let (rc, layout) = parts(cell);
+    rebuild_status(rc, layout)
 }
 
 /// Typed twin: `kernel_rebuild_artifact() -> text` (owned String).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn n_kernel_rebuild_artifact(_cell: &UnsafeCell<Stores>) -> String {
-    rebuild_artifact()
+pub fn n_kernel_rebuild_artifact(cell: &UnsafeCell<Stores>) -> String {
+    rebuild_artifact(parts(cell).0)
 }
 
 /// Interp stack natives.  An interpreted serve host rebuilds too: the driver names the
 /// program to the rebuild before it runs it ([`set_interp_host`]).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_rebuild_start_stack(stores: &mut Stores, stack: &mut DbRef) {
-    stores.put(stack, rebuild_start());
+    let (rc, layout) = crate::engine_host::rebuild_parts(stores);
+    let ok = rebuild_start(rc, layout);
+    stores.put(stack, ok);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_rebuild_status_stack(stores: &mut Stores, stack: &mut DbRef) {
-    stores.put(stack, rebuild_status());
+    let (rc, layout) = crate::engine_host::rebuild_parts(stores);
+    let status = rebuild_status(rc, layout);
+    stores.put(stack, status);
 }
 
 /// Destination-passing text return (the `is_text_dest_native` route).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn n_kernel_rebuild_artifact_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = rebuild_artifact();
+    let v = rebuild_artifact(crate::engine_host::rebuild_parts(stores).0);
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)

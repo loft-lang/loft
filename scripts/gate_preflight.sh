@@ -8,8 +8,7 @@
 #   CI_PREFLIGHT=full scripts/gate_preflight.sh   # + doc_hygiene via nextest
 #
 # `scripts/ci-run.sh start` runs this first and refuses to queue a gate that would fail on one
-# of these.  Why it exists: `make ci` rebuilds the native fixtures and both wasm rlibs BEFORE
-# `cargo fmt --check`, so an unformatted file was reported after ~4 minutes, and a derived row
+# of these.  Why it exists: `make ci` ran its builds BEFORE `cargo fmt --check`, so an unformatted file was reported after ~4 minutes, and a derived row
 # (QUALITY.md's audit tables) after ~17 — each one a full restart of a ~20-minute gate.  Measured
 # 2026-09-28: three consecutive gates on one change, ended by rustfmt, then clippy's
 # `too_many_lines`, then a derived row and a fixture — none of them needing a gate to find.

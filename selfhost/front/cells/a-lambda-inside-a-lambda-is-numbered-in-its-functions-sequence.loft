@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lambda made inside a lambda is numbered in its enclosing FUNCTION's sequence,
+// a sibling of the outer one (`__lambda_f3_1` beside `__lambda_f3_0`), three levels deep included.
+// Prints: 6 3 11
+
+fn f1() -> integer {
+  a = fn(x: integer) -> integer { x + 1 };
+  b = fn(x: integer) -> integer { x * 2 };
+  a(1) + b(2)
+}
+fn f2() -> integer {
+  xs = [1, 2];
+  ys = xs.map(|x| { [x].map(|y| { y + 1 })[0] });
+  ys[1]
+}
+fn f3() -> integer {
+  g = fn(x: integer) -> integer { h = fn(y: integer) -> integer { k = fn(z: integer) -> integer { z * 3 }; k(y) + 1 }; h(x) };
+  q = fn(x: integer) -> integer { x - 1 };
+  g(2) + q(5)
+}
+fn main() { println("{f1()} {f2()} {f3()}"); }

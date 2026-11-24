@@ -225,18 +225,6 @@ pub(crate) fn contributing_fingerprint(contributing: &[String]) -> u64 {
     h.finish()
 }
 
-pub(crate) fn type_layout_fingerprint(stores: &Stores) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    stores.types.len().hash(&mut h);
-    for t in &stores.types {
-        t.name.hash(&mut h);
-        t.size_bytes().hash(&mut h);
-        t.align_bytes().hash(&mut h);
-    }
-    h.finish()
-}
-
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source
 /// under `pkg_dirs` (build/artifact dirs skipped, files visited in sorted order for a
 /// stable digest).  Used to detect "did this library's source change since the last
@@ -385,8 +373,7 @@ pub(crate) fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(St
 }
 
 /// The `[library] native` stem of the package at `pkg_dir` and its resolved cdylib — the file
-/// a library artifact that calls the package links (`native_lib::native_pkg_cabi_link_args`) and needs
-/// loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
+/// a library artifact that calls the package links and needs loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
 /// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
 /// falling back to the crate name.  `None` when the cdylib cannot be resolved
 /// ([`crate::extensions::resolve_native_lib`] already printed why).

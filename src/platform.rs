@@ -774,34 +774,6 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
     freed
 }
 
-/// Preflight check for a single native compile writing into `scratch`.
-/// Returns `true` when there is enough headroom to proceed.  Every call first sweeps the
-/// artefacts of dead processes ([`reclaim_dead_native_scratch`], silent), so the scratch
-/// directory stays bounded whatever killed the runs before this one.  When space is still
-/// below [`tmpfs_min_free_bytes`], the aged artefacts go too (the test runner's per-file
-/// binary cache included) and the space is re-checked; only if it is *still* low does it
-/// return `false` (callers skip that compile with a warning rather than risk overflowing RAM).
-pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
-    let _ = reclaim_dead_native_scratch(scratch);
-    let floor = tmpfs_min_free_bytes();
-    match fs_avail_bytes(scratch) {
-        // df unavailable → unknown → don't block (preserve old behaviour).
-        None => true,
-        Some(avail) if avail >= floor => true,
-        Some(_) => {
-            let freed = reclaim_native_scratch(scratch);
-            if freed > 0 {
-                eprintln!(
-                    "loft: low space in {} — reclaimed {} MB of stale native artefacts",
-                    scratch.display(),
-                    freed / (1024 * 1024)
-                );
-            }
-            fs_avail_bytes(scratch).is_none_or(|a| a >= floor)
-        }
-    }
-}
-
 /// Should native-compile binaries be stripped of symbols?  Stripping cuts
 /// each binary from ~36MB to ~1MB (the bulk is debug info pulled in from
 /// `libloft.rlib` + std, useless to a run-and-check test).  Set
@@ -813,17 +785,10 @@ pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
 }
 
-/// Whether a native binary's symbols live in the executable itself, so keeping them makes it
-/// larger.  The MSVC linker writes them to a `<binary>.pdb` beside it instead.
-#[must_use]
-pub fn native_symbols_in_the_binary() -> bool {
-    !cfg!(windows)
-}
-
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
-/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
-/// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
-/// library's loft functions beside its native crate only on the C-ABI link.
+/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by
+/// `opt::native_key` and by the parser, which compiles a library's loft functions beside its
+/// native crate only on the C-ABI link.
 #[must_use]
 pub fn native_cabi_link() -> bool {
     !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
@@ -1262,14 +1227,11 @@ pub fn existing_lib_beside(dir: &std::path::Path, name: &str, os: LibOs) -> Opti
 /// built binary working if the package moves. ELF has no equivalent problem —
 /// its `SONAME` is only set when asked — so this is empty off macOS.
 ///
-/// **Every artifact loft publishes by rename needs this**, not only the `cc`-built
-/// shim: `native_lib` compiles a package cdylib to `<stem>.building` and renames
-/// it the same way. That one went years recording
-/// `/Users/…/native-auto/loft_auto_<hash>.building` — the temp stem with an
-/// absolute build directory in it — which stayed invisible because those cdylibs
-/// are `dlopen`ed BY PATH, and a path load ignores the install name. It would have
-/// surfaced the first time one was resolved through `@rpath` or simply moved. The
-/// flag is cheap and the failure is silent, so it goes on both.
+/// **Every artifact loft publishes by rename needs this** — the `cc`-built shim and a
+/// compiled component (`c::component`) alike.  An artifact `dlopen`ed BY PATH ignores
+/// the install name, so a wrong one stays invisible until the artifact is resolved
+/// through `@rpath` or moved.  The flag is cheap and the failure is silent, so it goes
+/// on every one.
 #[must_use]
 pub fn install_name_args(final_file_name: &str, os: LibOs) -> Vec<String> {
     if os == LibOs::Macos {
@@ -2014,6 +1976,55 @@ pub fn wasm_c_toolchain() -> &'static WasmC {
     })
 }
 
+/// The WASI sysroot a threaded page's module links against (`wasm32-wasip1-threads`, @C3): the
+/// first that holds that target's libc and links a small pthread program with the
+/// [`wasm_c_toolchain`] clang.  Looked for in `LOFT_WASI_THREADS_SYSROOT`, the sysroot the WASI
+/// build uses, `$WASI_SDK_PATH/share/wasi-sysroot`, `/opt/wasi-sdk/share/wasi-sysroot` and
+/// `~/.loft/toolchains/wasi-sysroot` (where `make wasi-threads-sysroot` puts wasi-sdk's).
+/// Distribution packages of the WASI libc carry no threads variant; wasi-sdk's sysroot does.
+/// `None` when none links: the page is then built unthreaded.  Asked once per process.
+#[must_use]
+pub fn wasm_threads_sysroot() -> Option<&'static str> {
+    static ROOT: OnceLock<Option<String>> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        use process::{Program, Spawn};
+        let tc = wasm_c_toolchain();
+        let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.extend(env("LOFT_WASI_THREADS_SYSROOT"));
+        candidates.extend(tc.sysroot.clone());
+        candidates.extend(env("WASI_SDK_PATH").map(|p| format!("{p}/share/wasi-sysroot")));
+        candidates.push("/opt/wasi-sdk/share/wasi-sysroot".to_string());
+        candidates.extend(env("HOME").map(|h| format!("{h}/.loft/toolchains/wasi-sysroot")));
+        let probe_out =
+            scratch_dir().join(format!("loft_wasm_mt_probe_{}.wasm", std::process::id()));
+        candidates.into_iter().find(|root| {
+            if !crate::file_access::exists(format!("{root}/lib/wasm32-wasip1-threads/libc.a")) {
+                return false;
+            }
+            let mut probe = Spawn::new(Program::os(&tc.cc));
+            probe.push_args(["--target=wasm32-wasip1-threads", "-pthread"]);
+            probe.push_arg(format!("--sysroot={root}"));
+            if let Some(ld) = &tc.ld {
+                probe.push_arg(format!("--ld-path={ld}"));
+            }
+            probe
+                .push_args(["-Wl,--import-memory,--export-memory,--max-memory=67108864"])
+                .push_args(["-x", "c", "-", "-o"])
+                .push_arg(&probe_out);
+            let linked = probe
+                .run(
+                    b"#include <pthread.h>\nstatic void *f(void *a) { return a; }\n\
+                      int main(void) { pthread_t t; return pthread_create(&t, 0, f, 0); }\n",
+                )
+                .is_ok_and(|r| r.status.success());
+            let _ = crate::file_access::remove_file(&probe_out);
+            linked
+        })
+    })
+    .as_deref()
+}
+
 /// [`wasm_c_toolchain`]'s answer.
 pub struct WasmC {
     pub cc: String,
@@ -2457,32 +2468,6 @@ pub fn main_stack_link_args() -> Vec<String> {
     }
 }
 
-/// The `rustc` argument that lets two native packages each define the same runtime symbol
-/// (the linker keeps the first), or `None` where the host linker has no such option: macOS
-/// `ld64` rejects `--allow-multiple-definition` and MSVC `link.exe` ignores it with one
-/// `LNK4044` warning per occurrence.
-#[must_use]
-pub fn allow_multiple_definition_arg() -> Option<&'static str> {
-    if cfg!(any(target_os = "macos", windows)) {
-        None
-    } else {
-        Some("-Clink-arg=-Wl,--allow-multiple-definition")
-    }
-}
-
-/// The `link-arg=` value that records `dir` as a run-time library search path (RPATH) in the
-/// binary, for `rustc -C`.  `None` on Windows, which has no RPATH: `link.exe` rejects
-/// `-Wl,-rpath`, and the loader finds a DLL beside the `.exe` or on `PATH` — so loft stages
-/// the DLLs beside the binary instead ([`stages_dlls_beside_binary`]).
-#[must_use]
-pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
-    if cfg!(windows) {
-        None
-    } else {
-        Some(format!("link-arg=-Wl,-rpath,{}", dir.display()))
-    }
-}
-
 /// @PLN197 — the file name of the STATIC archive a package may ship beside a prebuilt C
 /// library, which a static native link puts into the binary: `lib<stem>.a`.  `None` on
 /// Windows, where the `.lib` beside a DLL is its import library and says nothing of the
@@ -2528,7 +2513,7 @@ pub fn stages_dlls_beside_binary() -> bool {
 /// DLL names its imports by module name, with no RPATH to say where they live, and the loader
 /// takes an import from the modules already loaded or from its search path (the `.exe`'s
 /// directory, the system directories, `PATH`).  A host that loads a library artifact loads
-/// the native packages it links first (`native_lib::load_linked_packages`).  Elsewhere the
+/// the native packages it links first (`opt::native_key::load_linked_packages`).  Elsewhere the
 /// artifact carries an RPATH to the package's library.
 #[must_use]
 pub fn loads_library_dependencies_first() -> bool {
@@ -3132,7 +3117,7 @@ pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
 
 #[cfg(all(test, unix))]
 mod handover_tests {
-    use crate::file_access::{Flavor, with_program_host};
+    use crate::file_access::on_emulated_windows;
 
     /// @PLN184 W1.3 — a second bind to a port that is listening: shared on Unix (the hot
     /// swap's overlap), refused on Windows — and under the emulated Windows host.
@@ -3140,21 +3125,31 @@ mod handover_tests {
     fn a_second_bind_is_shared_on_unix_and_refused_on_windows() {
         let first = super::bind_tcp_handover(0).expect("first bind");
         let port = first.local_addr().unwrap().port();
+        let udp = super::bind_udp_handover(0).expect("first udp bind");
+        let uport = udp.local_addr().unwrap().port();
+        if on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::a_second_bind_is_shared_on_unix_and_refused_on_windows"
+            ),
+            || {
+                assert!(
+                    super::bind_tcp_handover(port).is_none(),
+                    "the emulated Windows host refuses the second bind"
+                );
+                assert!(super::bind_udp_handover(uport).is_err());
+            },
+        ) {
+            return;
+        }
         assert!(
             super::bind_tcp_handover(port).is_some(),
             "Unix shares the port"
         );
         assert!(
-            with_program_host(Flavor::Windows, || super::bind_tcp_handover(port)).is_none(),
-            "the emulated Windows host refuses the second bind"
-        );
-        let udp = super::bind_udp_handover(0).expect("first udp bind");
-        let uport = udp.local_addr().unwrap().port();
-        assert!(
             super::bind_udp_handover(uport).is_ok(),
             "Unix shares the UDP port"
         );
-        assert!(with_program_host(Flavor::Windows, || super::bind_udp_handover(uport)).is_err());
     }
 }
 
@@ -3563,7 +3558,7 @@ mod darwin_wait {
 
 /// Write `s` to standard error, ignoring a write that cannot land.
 ///
-/// The counterpart of `codegen_runtime::host_print`, and it does NOT exit: stderr being closed
+/// The counterpart of `host_print::host_print`, and it does NOT exit: stderr being closed
 /// says nothing about the program's own output, so `prog 2>/dev/full` or a reader that stopped
 /// reading the diagnostics stream must not end the run.  What it must never do is panic — a
 /// panic whose message cannot be printed is what turns a broken pipe into a SIGABRT and a crash
@@ -3581,105 +3576,4 @@ pub fn wasm_host_log(msg: &str) {
     crate::loft_host_print(msg.as_ptr(), msg.len());
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
     let _ = msg;
-}
-
-thread_local! {
-    /// While `Some`, the loft `print` builtin appends here instead of writing stdout —
-    /// so the program's output can be drained into `output` events.  `None` (the default)
-    /// is one branch on the print path.
-    static OUTPUT_SINK: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Called by the `print` builtin (`codegen_runtime::print_or_host`): route the program's output to the capture
-/// sink when one is active (returns `true`), else let the caller write stdout (`false`).
-#[must_use]
-pub fn print_or_capture(text: &str) -> bool {
-    OUTPUT_SINK.with(|s| {
-        let mut b = s.borrow_mut();
-        if let Some(buf) = b.as_mut() {
-            buf.push_str(text);
-            true
-        } else {
-            false
-        }
-    })
-}
-
-/// Start capturing this thread's program output (`rpc`, `serve`).
-pub fn capture_begin() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = Some(String::new()));
-}
-/// Stop capturing; what was captured and not taken is dropped.
-pub fn capture_end() {
-    OUTPUT_SINK.with(|s| *s.borrow_mut() = None);
-}
-/// Take the captured program output since the last drain (empty if none / not capturing).
-pub fn capture_take() -> String {
-    OUTPUT_SINK.with(|s| {
-        s.borrow_mut()
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
-    })
-}
-
-/// macOS's native `main`: the program runs on its
-/// [`NATIVE_MAIN_STACK`](crate::codegen_runtime::NATIVE_MAIN_STACK) thread, as everywhere,
-/// and the MAIN thread runs its run loop — AppKit makes and drives a window on the main thread
-/// only, so a library's window code is sent to the main queue (`dispatch_sync_f`, as graphics' C
-/// shim does), which that run loop drains on the main thread.  (`dispatch_main` would not do: it
-/// exits the main thread and lets worker threads drain the queue.)  A far-off timer keeps the
-/// loop waiting rather than returning with nothing to wait on.  The process ends when the program
-/// does: 0 when it returns, 1 when it panics (the hook has printed the message) — what joining
-/// the thread answered.
-///
-/// # Panics
-/// When the program's thread cannot be spawned.
-#[cfg(target_os = "macos")]
-pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
-    use std::ffi::c_void;
-    #[link(name = "CoreFoundation", kind = "framework")]
-    unsafe extern "C" {
-        static kCFRunLoopCommonModes: *const c_void;
-        fn CFRunLoopGetMain() -> *mut c_void;
-        fn CFAbsoluteTimeGetCurrent() -> f64;
-        fn CFRunLoopTimerCreate(
-            allocator: *const c_void,
-            fire_date: f64,
-            interval: f64,
-            flags: usize,
-            order: isize,
-            callout: extern "C" fn(*mut c_void, *mut c_void),
-            context: *mut c_void,
-        ) -> *mut c_void;
-        fn CFRunLoopAddTimer(rl: *mut c_void, timer: *mut c_void, mode: *const c_void);
-        fn CFRunLoopRun();
-    }
-    extern "C" fn never(_timer: *mut c_void, _info: *mut c_void) {}
-    std::thread::Builder::new()
-        .stack_size(crate::codegen_runtime::NATIVE_MAIN_STACK)
-        .spawn(move || {
-            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok();
-            std::process::exit(i32::from(!ok));
-        })
-        .expect("failed to spawn main-stack thread");
-    const FAR: f64 = 1.0e9; // seconds: the timer is there to be waited on, not to fire
-    // SAFETY: CoreFoundation's run-loop calls, on the main thread, with a timer it owns from here
-    // on; `CFRunLoopRun` returns only when the loop is stopped, which nothing does — the process
-    // exits from the program's thread above.
-    unsafe {
-        let timer = CFRunLoopTimerCreate(
-            std::ptr::null(),
-            CFAbsoluteTimeGetCurrent() + FAR,
-            FAR,
-            0,
-            0,
-            never,
-            std::ptr::null_mut(),
-        );
-        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
-        loop {
-            CFRunLoopRun();
-        }
-    }
 }

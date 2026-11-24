@@ -52,7 +52,7 @@ const SRC: &str = "fn main() {\n  println(\"before\");\n  panic(\"halt-marker\")
 /// `rustc` is needed for the `--native` leg; skip cleanly where it is absent, like the
 /// other native suites.
 fn have_rustc() -> bool {
-    loft::platform::process::harness_command("rustc")
+    loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())

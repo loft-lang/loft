@@ -211,7 +211,7 @@ silently corrupt their data — the AS/400 "software that does not fail for soft
 reasons" appeal.
 
 **The turn-off.** **Latent UB**: a bug that passes every test today and surfaces as
-silent corruption after a rustc/LLVM bump or on macOS-ARM's aligned reads. The
+silent corruption after a compiler upgrade or on macOS-ARM's aligned reads. The
 person who chose loft *for* this guarantee is exactly the one a single
 corrupted-after-upgrade record loses forever — "passes today" is not the promise
 they bought.
@@ -227,8 +227,8 @@ nightly Miri green) hold **and keep holding** as code lands.
 ## 6. One source, three backends — and a one-command share
 
 **Strength.** The same `.loft` source runs on three backends — interpreter
-(instant startup), **native** via rustc (the shipping default, for speed), and
-**wasm** for the browser — and `loft --html` turns a program into a single
+(instant startup), **native** through C (the shipping default, for speed), and
+**wasm** for the browser, built through the same C — and `loft --html` turns a program into a single
 shareable HTML+WebGL file. "Write once, runs in the browser and on your desktop"
 is demonstrated (Brick Buster; the 24-demo gallery). See
 [HTML_EXPORT.md](HTML_EXPORT.md), [NATIVE.md](NATIVE.md).

@@ -10,7 +10,6 @@
 //!
 //! See `EXTERNAL_LIBS.md` for the full design.
 
-use crate::platform::process::{Program, Spawn};
 // The opened-library table and symbol lookup live in `c_libs` (core); these are the paths
 // callers name here, and what the wiring below reads.
 use crate::c_libs::adopt_foreign_block;
@@ -22,18 +21,12 @@ pub use crate::c_libs::{load_c_library, try_dlsym_pub};
 // Finding or building a package's native library lives in `native_build` (core),
 // because the parser resolves it on `use`; these are the paths callers name here.
 pub use crate::native_build::{
-    auto_build_native, browser_target, c_target, host_native_lib, native_target_root,
-    platform_lib_name, resolve_native_lib, set_browser_target, set_c_target,
+    browser_target, c_target, host_native_lib, native_target_root, platform_lib_name,
+    resolve_native_lib, set_browser_target, set_c_target,
 };
-use crate::native_build::{build_deps_hint, native_crate_newer_than};
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
 use std::collections::HashMap;
-// Every registry this guards is itself `native-extensions`-only, so the import follows the
-// same gate — without it a `--no-default-features` build warns on an unused import, which is
-// noise in the one gate whose whole job is to be read.
-#[cfg(feature = "native-extensions")]
-use std::sync::Mutex;
 
 #[cfg(feature = "native-extensions")]
 pub fn load_all(_state: &mut crate::state::State, paths: Vec<String>) {
@@ -196,70 +189,73 @@ struct NativeSig {
     answer_tp: u16,
     /// `@PLN226` — the component the bridge belongs to, whose context it takes first.
     cx: Option<crate::c_libs::CxFns>,
+    /// Per heap-typed parameter, in order: the type an argument in another store is copied
+    /// into the call's store with (a vector's element type, a record's own; `u16::MAX` when
+    /// none), and whether the parameter is not `const` (`Stores::bridge_args`).
+    heap: Vec<(u16, bool)>,
 }
 
-/// Side table: library index → (the generated bridge, signature), resolved ONCE by
-/// `wire_native_fns`.  The dispatcher reads it through [`cached_sig`], never per call.
+/// Library index → (the generated bridge, signature), resolved ONCE by `wire_native_fns`.
 #[cfg(feature = "native-extensions")]
 type NativeSlot = (FnPtr, std::sync::Arc<NativeSig>);
-#[cfg(feature = "native-extensions")]
-static NATIVE_SIGS: Mutex<Option<HashMap<u16, NativeSlot>>> = Mutex::new(None);
 
-/// Bumped by every wiring pass that writes `NATIVE_SIGS` or `SHARED_SIGS`, so a thread's
-/// copy of a slot ([`cached_sig`]) is refetched after a rewire.
-#[cfg(feature = "native-extensions")]
-static SIGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A thread's copy of a wired-native table, indexed by library index: the generation it was
-/// filled under, and the slots it has met.
-#[cfg(feature = "native-extensions")]
-struct SigCache<V> {
-    generation: u64,
-    slots: Vec<Option<V>>,
+/// `@PLN226` — the natives ONE program wired, by its library index (`State::library`): what
+/// its dispatchers read, one index per call — no lock, no per-thread copy.  Kept in the
+/// program's `Stores` (`Stores::wired`) and shared read-only with its `par` workers; a library
+/// index is a number in one program's table, so another program's wiring never reaches it.
+#[derive(Default, Clone)]
+pub struct WiredNatives {
+    #[cfg(feature = "native-extensions")]
+    native: Vec<Option<NativeSlot>>,
+    #[cfg(feature = "native-extensions")]
+    shared: Vec<Option<SharedSlot>>,
+    /// loft#1189 — the `#native` symbol each panicking stub stands for (`compile.rs`), so the
+    /// panic of a missing native names it.
+    pub(crate) stubs: Vec<Option<String>>,
+    /// The `#c` binding each `#c` declaration's index calls (`c_call::register`).
+    #[cfg(feature = "native-extensions")]
+    pub(crate) c_bindings: Vec<Option<std::sync::Arc<crate::c_call::CBinding>>>,
 }
 
-#[cfg(feature = "native-extensions")]
-thread_local! {
-    static NATIVE_SIG_CACHE: std::cell::RefCell<SigCache<NativeSlot>> =
-        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
-    static SHARED_SIG_CACHE: std::cell::RefCell<SigCache<SharedSlot>> =
-        const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
+impl WiredNatives {
+    /// The table of a program that wired nothing yet.
+    const EMPTY: WiredNatives = WiredNatives {
+        #[cfg(feature = "native-extensions")]
+        native: Vec::new(),
+        #[cfg(feature = "native-extensions")]
+        shared: Vec::new(),
+        stubs: Vec::new(),
+        #[cfg(feature = "native-extensions")]
+        c_bindings: Vec::new(),
+    };
 }
 
-/// The wired slot for `lib_idx`: from this thread's copy, or — on a thread's first call to
-/// it, or after a rewire — from the shared table under its lock.  A native call reads its
-/// slot here once per call, so the per-call cost is an index, not a lock, a hash of the
-/// symbol and a clone of its signature (the lock is never held across the call itself,
-/// P245: a blocking native would serialise every `par` worker behind it).
-#[cfg(feature = "native-extensions")]
-fn cached_sig<V: Clone>(
-    cache: &'static std::thread::LocalKey<std::cell::RefCell<SigCache<V>>>,
-    table: &Mutex<Option<HashMap<u16, V>>>,
-    lib_idx: u16,
-) -> Option<V> {
-    let generation = SIGS_GENERATION.load(std::sync::atomic::Ordering::Acquire);
-    cache.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.generation != generation {
-            c.slots.clear();
-            c.generation = generation;
-        }
-        let at = usize::from(lib_idx);
-        if let Some(Some(v)) = c.slots.get(at) {
-            return Some(v.clone());
-        }
-        let v = table
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()?
-            .get(&lib_idx)?
-            .clone();
-        if c.slots.len() <= at {
-            c.slots.resize(at + 1, None);
-        }
-        c.slots[at] = Some(v.clone());
-        Some(v)
-    })
+/// The natives `stores`' program wired (`Stores::wired`, held there without its type).
+pub(crate) fn wired(stores: &crate::database::Stores) -> &WiredNatives {
+    static EMPTY: WiredNatives = WiredNatives::EMPTY;
+    stores.wired.downcast_ref().unwrap_or(&EMPTY)
+}
+
+/// The program's wired natives to change: its own copy, made when the table is shared (a
+/// `par` worker still reads the one it was handed) or not made yet.
+pub(crate) fn wired_mut(stores: &mut crate::database::Stores) -> &mut WiredNatives {
+    let own = std::sync::Arc::get_mut(&mut stores.wired).is_some_and(|w| w.is::<WiredNatives>());
+    if !own {
+        let copy = wired(stores).clone();
+        stores.wired = std::sync::Arc::new(copy);
+    }
+    std::sync::Arc::get_mut(&mut stores.wired)
+        .and_then(|w| w.downcast_mut::<WiredNatives>())
+        .expect("the program's own wired-natives table")
+}
+
+/// Put `v` at `lib_idx`, growing the table to it.
+pub(crate) fn put_slot<V>(slots: &mut Vec<Option<V>>, lib_idx: u16, v: V) {
+    let at = usize::from(lib_idx);
+    if slots.len() <= at {
+        slots.resize_with(at + 1, || None);
+    }
+    slots[at] = Some(v);
 }
 
 /// #303 — wire-time signature of a shared-store bridge function, derived from
@@ -289,25 +285,34 @@ struct SharedSig {
     ret_leaves: Vec<ArgT>,
 }
 
-/// @PLN11 Arc N — side table for the **shared-store** bridge
-/// (`native_lib::generate_shared_cdylib_lib_rs`): library index → (bridge fn ptr,
-/// signature).  Populated by `wire_shared_native_fns`, read by
-/// `shared_store_dispatch`.  Separate from `NATIVE_SIGS` because the ABI differs
-/// (a `*mut Stores` + `LibArg` bridge, not the `LoftStore`/raw-ptr marshalling).
+/// @PLN11 Arc N — the **shared-store** bridge's slot
+/// (a hosted unit's `loft_shared_<name>`, `c::hosted`): library index → (bridge fn ptr,
+/// signature).  Written by `wire_shared_native_fns`, read by `shared_store_dispatch`.
+/// Apart from [`NativeSlot`] because the ABI differs (a `*mut Stores` + `LibArg` bridge, not
+/// the `LoftStore`/raw-ptr marshalling).
 #[cfg(feature = "native-extensions")]
 type SharedSlot = (FnPtr, std::sync::Arc<SharedSig>);
-#[cfg(feature = "native-extensions")]
-static SHARED_SIGS: Mutex<Option<HashMap<u16, SharedSlot>>> = Mutex::new(None);
 
 /// Compute the argument type list and return type from a definition's signature.
 /// Returns `None` if the signature contains types that can't be auto-marshalled
 /// (e.g. struct references, vectors).
 #[cfg(feature = "native-extensions")]
-fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
+fn compute_sig(
+    data: &crate::data::Data,
+    stores: &mut crate::database::Stores,
+    d_nr: u32,
+) -> Option<NativeSig> {
     use crate::data::Type;
     let def = data.def(d_nr);
     let mut params = Vec::new();
+    let mut heap = Vec::new();
     for attr in &def.attributes {
+        // What an argument of another store is copied in with (`Stores::bridge_args`).
+        let copy_tp = match attr.typedef.base() {
+            Type::Vector(elm, _) => data.vector_element_type(elm, stores).unwrap_or(u16::MAX),
+            Type::Reference(d, _) | Type::Enum(d, true, _) => data.def(*d).known_type(),
+            _ => u16::MAX,
+        };
         // Marshal classification is layout-based, and `Optional(τ)` shares τ's
         // sentinel layout (@PLN25) — classify the peeled type, here and for the
         // return below.  Without the peel, a `#native` fn declaring `integer?`
@@ -337,6 +342,9 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
             Type::Vector(_, _) => ArgT::Vec,
             _ => return None,
         };
+        if matches!(t, ArgT::Ref | ArgT::Vec) {
+            heap.push((copy_tp, !(attr.constant || attr.value_const)));
+        }
         params.push(t);
     }
     let ret = match def.returned.base() {
@@ -365,6 +373,7 @@ fn compute_sig(data: &crate::data::Data, d_nr: u32) -> Option<NativeSig> {
         ret,
         answer_tp: def.native_answer_tp,
         cx: crate::c_libs::get_bridge_cx(def.native()),
+        heap,
     })
 }
 
@@ -585,11 +594,6 @@ pub fn wire_native_fns_for(
     let empty_registry = HashMap::new();
     let registry = guard.as_ref().unwrap_or(&empty_registry);
 
-    let mut sigs = NATIVE_SIGS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let sig_table = sigs.get_or_insert_with(HashMap::new);
-
     // Stub symbols whose cdylib never provided them — collected so the failure is
     // reported LOUDLY at load (below), not left to surface as a generic panic at
     // first call deep in execution.
@@ -656,7 +660,7 @@ pub fn wire_native_fns_for(
         };
 
         // Only wire if we can auto-marshal the signature.
-        let sig = match compute_sig(data, d_nr) {
+        let sig = match compute_sig(data, &mut state.database, d_nr) {
             Some(s) => s,
             None => continue,
         };
@@ -668,12 +672,15 @@ pub fn wire_native_fns_for(
         };
 
         // Store the bridge and signature for runtime dispatch.
-        sig_table.insert(lib_idx, (FnPtr(bridge), std::sync::Arc::new(sig)));
+        put_slot(
+            &mut wired_mut(&mut state.database).native,
+            lib_idx,
+            (FnPtr(bridge), std::sync::Arc::new(sig)),
+        );
 
         // Replace the stub with the generic auto-marshal dispatcher.
         state.replace_static_fn(sym, native_auto_dispatch);
     }
-    SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
 
     if report_unresolved && !unresolved.is_empty() {
         report_unresolved_natives(data, &unresolved);
@@ -811,14 +818,14 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
-    // A package whose native part needs no build — a component loft ships, a library shipped
-    // prebuilt per host (@PLN205) — has nothing to rebuild: say what is missing instead.
+    // A package whose natives are a component loft ships (@PLN205) has nothing to rebuild:
+    // say what is missing instead.
     let unbuildable = |krate: &str| -> Option<String> {
-        let (name, pkg_dir) = data
+        let (_, pkg_dir) = data
             .native_packages
             .iter()
             .find(|(c, _)| c.replace('-', "_") == krate.replace('-', "_"))?;
-        crate::native_build::unbuildable_native_reason(pkg_dir, name)
+        crate::native_build::unbuildable_native_reason(pkg_dir)
     };
     for (krate, mut syms) in by_crate {
         syms.sort_unstable();
@@ -838,11 +845,9 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
             continue;
         }
         eprintln!(
-            "loft: native library '{krate}' did not load — {n} of its #native function(s) are \
-             unavailable ({shown}{more_txt}), and a program that calls one does not start. Its cdylib is missing or \
-             stale (commonly built against a different libloft.rlib / loft-ffi). Rebuild it with \
-             `make rebuild-native-cdylibs` (in the loft tree) or `cargo build --release` in the \
-             library's native/ dir, then re-run.",
+            "loft: no native library provides {n} #native function(s) of '{krate}' \
+             ({shown}{more_txt}), and a program that calls one does not start.  A library's \
+             native part is C: its `[c] shim` sources, bound by `#c` declarations.",
             n = syms.len(),
         );
     }
@@ -1131,23 +1136,21 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
 
     // Phase 2: record signatures, then replace the stub dispatch targets.
     {
-        let mut guard = SHARED_SIGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let table = guard.get_or_insert_with(HashMap::new);
+        // loft#715 — with each slot, the symbol it dispatches to, so a fault raised while
+        // the bridge is on the stack can NAME it.
+        let table = wired_mut(&mut state.database);
         for (_, lib_idx, ptr, sig) in &wired {
-            table.insert(*lib_idx, (FnPtr(*ptr), std::sync::Arc::new(sig.clone())));
+            put_slot(
+                &mut table.shared,
+                *lib_idx,
+                (FnPtr(*ptr), std::sync::Arc::new(sig.clone())),
+            );
         }
-        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        let labels = std::sync::Arc::make_mut(&mut state.database.bridge_labels);
+        for (sym, lib_idx, ..) in &wired {
+            put_slot(labels, *lib_idx, sym.clone());
+        }
     }
-    // loft#715 — remember which symbol each slot dispatches to, so a fault raised
-    // while the bridge is on the stack can NAME it.  Written once at wiring, read
-    // only on the panic path.
-    crate::call_frames::label_shared_bridges(
-        wired
-            .iter()
-            .map(|(sym, lib_idx, ..)| (*lib_idx, sym.clone())),
-    );
     for (sym, ..) in &wired {
         state.replace_static_fn(sym, shared_store_dispatch);
     }
@@ -1163,18 +1166,15 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
         .collect();
     if !dests.is_empty() {
         {
-            let mut guard = SHARED_SIGS
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let table = guard.get_or_insert_with(HashMap::new);
+            let table = wired_mut(&mut state.database);
             for (idx, _, ptr, sig) in &dests {
-                table.insert(*idx, (*ptr, std::sync::Arc::clone(sig)));
+                put_slot(&mut table.shared, *idx, (*ptr, std::sync::Arc::clone(sig)));
             }
-            SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+            let labels = std::sync::Arc::make_mut(&mut state.database.bridge_labels);
+            for (idx, dest, ..) in &dests {
+                put_slot(labels, *idx, dest.clone());
+            }
         }
-        crate::call_frames::label_shared_bridges(
-            dests.iter().map(|(idx, dest, ..)| (*idx, dest.clone())),
-        );
         for (_, dest, ..) in &dests {
             state.replace_static_fn(dest, shared_store_dispatch_dest);
         }
@@ -1249,30 +1249,6 @@ fn shared_store_dispatch_dest_raw(
     shared_store_dispatch_raw(stores_raw, stack);
 }
 
-std::thread_local! {
-    /// @PLN199 C2 — the interpreter running the shared-bridge call on this thread, for a
-    /// compiled library's call back into it (`HostTable::call_ref`).  Null outside one.
-    static HOST_STATE: std::cell::Cell<*mut crate::state::State> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-/// Record `state` as the interpreter a bridge call on this thread may call back into, and
-/// answer the one it replaces, which [`leave_host_state`] restores — so a nested bridge call
-/// (a callback that calls the library again) leaves the outer one reachable.
-pub fn enter_host_state(state: *mut crate::state::State) -> *mut crate::state::State {
-    HOST_STATE.with(|c| c.replace(state))
-}
-
-/// Restore the interpreter [`enter_host_state`] replaced.
-pub fn leave_host_state(prev: *mut crate::state::State) {
-    HOST_STATE.with(|c| c.set(prev));
-}
-
-/// The interpreter running the current bridge call on this thread, or null.
-pub(crate) fn host_state() -> *mut crate::state::State {
-    HOST_STATE.with(std::cell::Cell::get)
-}
-
 /// [`shared_store_dispatch`] through a raw store pointer, the entry `State::invoke_native`
 /// takes (@PLN199 C2).  No `&mut Stores` stays alive across the bridge call: the bridge may
 /// call back into the interpreter, which reaches the same `Stores` through its `State`.  The
@@ -1288,14 +1264,18 @@ fn shared_store_dispatch_raw(
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let lib_idx = crate::call_frames::current_lib_idx();
+    let lib_idx = stores.lib_idx;
     // loft#715 — mark that a bridge call is on the stack.  A fault raised from
     // here is a BRIDGE fault, and it used to read exactly like a program fault:
     // `Cannot add to none-structure '<type>'` names a type, never the library
     // that supplied the index, and the abort takes the whole process with it.
     // One `Cell` write per call, cleared on the way out.
-    let outer_bridge = crate::call_frames::enter_shared_bridge(lib_idx);
-    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&SHARED_SIG_CACHE, &SHARED_SIGS, lib_idx)
+    let outer_bridge = std::mem::replace(&mut stores.in_bridge, lib_idx.wrapping_add(1));
+    let Some((FnPtr(bridge_ptr), sig)) = wired(stores)
+        .shared
+        .get(usize::from(lib_idx))
+        .cloned()
+        .flatten()
     else {
         panic!("no shared signature for lib_idx {lib_idx}")
     };
@@ -1431,7 +1411,7 @@ fn shared_store_dispatch_raw(
     };
     // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
     let host = if crate::state::hosted_verify_enabled() {
-        host_state()
+        unsafe { (*stores_ptr).host_state.cast::<crate::state::State>() }
     } else {
         std::ptr::null_mut()
     };
@@ -1449,9 +1429,9 @@ fn shared_store_dispatch_raw(
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
     // `@PLN206 P7` — the routine handed itself over to the interpreter (`State::accept_handover`):
     // it answers nothing, and the static call continues as the interpreter's frame.
-    let state = host_state();
+    let state = unsafe { (*stores_raw).host_state.cast::<crate::state::State>() };
     if !state.is_null() && unsafe { (*state).pending_handover.is_some() } {
-        crate::call_frames::leave_shared_bridge(outer_bridge);
+        unsafe { (*stores_raw).in_bridge = outer_bridge };
         return;
     }
     // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
@@ -1558,7 +1538,7 @@ fn shared_store_dispatch_raw(
             }
         }
     }
-    crate::call_frames::leave_shared_bridge(outer_bridge);
+    unsafe { (*stores_raw).in_bridge = outer_bridge };
 }
 
 /// The attribute count a shared-bridge call marshals without allocating
@@ -1593,25 +1573,22 @@ fn write_fn_ref(d_nr: i64, closure: crate::keys::DbRef) -> [u8; FN_REF_SIZE] {
 }
 
 /// Generic auto-marshal dispatcher. Called via `OpStaticCall` for all
-/// auto-wired native functions. Reads signature from `NATIVE_SIGS` using
-/// the library index stored in the bytecode (passed via the stack frame).
-///
-/// Since `Call = fn(&mut Stores, &mut DbRef)` doesn't receive the library
-/// index, we use CURRENT_LIB_IDX (set by a patched static_call).
-///
-/// Actually — `State::static_call()` doesn't pass the library index to
-/// the Call function. We need a different mechanism.
-///
-/// Solution: use a thread-local that `static_call` sets before invoking.
+/// auto-wired native functions. Reads signature from `Stores::wired` using
+/// the library index of the call: `Call = fn(&mut Stores, &mut DbRef)` does not
+/// receive it, so `State::invoke_native` records it in `Stores::lib_idx` first.
 #[cfg(feature = "native-extensions")]
 fn native_auto_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
-    // Read the current library index from the thread-local.
-    let lib_idx = crate::call_frames::current_lib_idx();
+    // The library index `State::invoke_native` set for this call.
+    let lib_idx = stores.lib_idx;
 
     // Plan-74: dispatch goes through the generated `#[loft_native]` bridge the owning
     // cdylib registered, resolved at wiring — a symbol without one is reported there
     // (loft#886) and never wired, so its stub stays in place.
-    let Some((FnPtr(bridge_ptr), sig)) = cached_sig(&NATIVE_SIG_CACHE, &NATIVE_SIGS, lib_idx)
+    let Some((FnPtr(bridge_ptr), sig)) = wired(stores)
+        .native
+        .get(usize::from(lib_idx))
+        .cloned()
+        .flatten()
     else {
         panic!("no signature for lib_idx {lib_idx}")
     };
@@ -1648,36 +1625,26 @@ impl<T: Copy> ArgBuf<T> {
 
 #[cfg(all(test, feature = "native-extensions"))]
 mod dispatch_cache_tests {
-    use super::{ArgBuf, SIGS_GENERATION, SigCache, cached_sig};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use super::{ArgBuf, WiredNatives, put_slot};
 
-    static TABLE: Mutex<Option<HashMap<u16, u32>>> = Mutex::new(None);
-    thread_local! {
-        static CACHE: std::cell::RefCell<SigCache<u32>> =
-            const { std::cell::RefCell::new(SigCache { generation: u64::MAX, slots: Vec::new() }) };
-    }
-
-    fn wire(lib_idx: u16, v: u32) {
-        TABLE
-            .lock()
-            .unwrap()
-            .get_or_insert_with(HashMap::new)
-            .insert(lib_idx, v);
-        SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
-    }
-
-    /// A rewire of a slot this thread already called through must be seen on the next call:
-    /// two programs run one after another in one thread can give the same library index to
-    /// different natives, and a stale copy would call the first program's bridge.
+    /// Two programs in one process give the same library index to different natives: each
+    /// program's table answers its own, and a `par` worker's copy answers its program's.
     #[test]
-    fn a_rewired_slot_is_never_served_from_the_stale_copy() {
-        wire(300, 11);
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(11));
-        wire(300, 22);
-        assert_eq!(cached_sig(&CACHE, &TABLE, 300), Some(22));
-        assert_eq!(cached_sig(&CACHE, &TABLE, 301), None);
+    fn a_library_index_names_its_own_programs_native() {
+        let mut first = WiredNatives::default();
+        let mut second = WiredNatives::default();
+        put_slot(&mut first.stubs, 300, "first_bridge".to_string());
+        put_slot(&mut second.stubs, 300, "second_bridge".to_string());
+        let worker = std::sync::Arc::new(first.clone());
+        assert_eq!(first.stubs[300].as_deref(), Some("first_bridge"));
+        assert_eq!(second.stubs[300].as_deref(), Some("second_bridge"));
+        assert_eq!(worker.stubs[300].as_deref(), Some("first_bridge"));
+        assert_eq!(first.stubs.get(301).cloned().flatten(), None);
+        assert_eq!(
+            first.stubs.len(),
+            301,
+            "one slot past the highest index, no more"
+        );
     }
 
     /// Past the inline slots the buffer moves to the heap and keeps every argument.
@@ -1704,26 +1671,19 @@ mod dispatch_cache_tests {
 /// ref arg's store (or store 0), calls the bridge, and writes the tagged
 /// return back to the stack.  Replaces the ~98-arm `dispatch_call` for any
 /// symbol whose cdylib was built with `#[loft_native]`.
-/// Call a `loft_ffi::LoftBridgeFn` with `args`, `stores` installed as `CURRENT_STORES` for the
-/// call's `ffi_claim` / resize callbacks and cleared again however the call ends.
+/// Call a `loft_ffi::LoftBridgeFn` with `args`; the handle `ls` is given `stores` above its
+/// store number ([`ffi_handle_stores`]) for the call's `ffi_claim` / resize callbacks.
 #[cfg(feature = "native-extensions")]
 fn call_bridge(
     stores: &mut crate::database::Stores,
     bridge_ptr: *const (),
     cx: Option<crate::c_libs::CxFns>,
-    ls: LoftStore,
+    mut ls: LoftStore,
     args: &[loft_ffi::LoftValue],
 ) -> loft_ffi::LoftValue {
     use loft_ffi::LoftValue;
-    struct StoresGuard;
-    impl Drop for StoresGuard {
-        fn drop(&mut self) {
-            CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
-        }
-    }
     let stores_ptr: *mut crate::database::Stores = stores;
-    CURRENT_STORES.with(|c| c.set(stores_ptr));
-    let _guard = StoresGuard;
+    ls.ctx._opaque = (ls.ctx._opaque as usize | (stores_ptr as usize) << 16) as *mut ();
 
     let mut ret = LoftValue::VOID;
     // `@PLN226` — a component's bridge takes this `Stores`' context of that component first.
@@ -1806,7 +1766,8 @@ fn dispatch_via_bridge(
         .collect();
     // A call with no store argument and no store answer — every scalar/text native — has
     // nothing for `bridge_args` to pin, copy or mint, nor for `bridge_args_done` to undo.
-    let call = (!heap.is_empty() || returns_ref).then(|| stores.bridge_args(&heap, returns_ref));
+    let call = (!heap.is_empty() || returns_ref)
+        .then(|| stores.bridge_args(&heap, &sig.heap, returns_ref));
     let (store_nr, minted) = call.as_ref().map_or((0, false), |c| (c.store_nr, c.minted));
     let mut handed = call.as_ref().map_or([].iter(), |c| c.handed.iter());
     let mut args = ArgBuf::new(sig.params.len(), LoftValue::VOID);
@@ -1852,11 +1813,11 @@ fn dispatch_via_bridge(
     // only what this call claimed there is deleted: log it.
     let pinned_answer = returns_ref && call.as_ref().is_some_and(|c| !c.minted);
     if pinned_answer {
-        claim_log_begin(store_nr);
+        claim_log_begin(stores, store_nr);
     }
     let ret = call_bridge(stores, bridge_ptr, sig.cx, ls, args);
     let claimed = if pinned_answer {
-        claim_log_end()
+        claim_log_end(stores)
     } else {
         Vec::new()
     };
@@ -1959,7 +1920,16 @@ fn bridge_heap_answer(
     use loft_ffi::LoftTag;
     let db = match ret.tag {
         LoftTag::Ref if sig.ret == Some(ArgT::Ref) => {
-            crate::codegen_runtime::from_loft_record(ret.as_ref())
+            let r = ret.as_ref();
+            if r.is_null() {
+                crate::keys::DbRef::NULL
+            } else {
+                crate::keys::DbRef {
+                    store_nr: r.store_nr,
+                    rec: r.rec,
+                    pos: r.pos,
+                }
+            }
         }
         LoftTag::Ref => bridge_ref_handle(stores, ret.as_ref()),
         _ => return None,
@@ -1974,7 +1944,7 @@ fn bridge_heap_answer(
 
 /// Wrap a returned `loft_ffi::LoftRef` (direct vector record) in the indirect header layout
 /// the interpreter expects (mirror of `dispatch_call`'s nested `push_loft_ref`, for the bridge
-/// path).  A record's handle is the answer itself (`codegen_runtime::from_loft_record`).
+/// path).  A record's handle is the answer itself (the C's `loft_ffi_record_answer`).
 #[cfg(feature = "native-extensions")]
 fn bridge_ref_handle(
     stores: &mut crate::database::Stores,
@@ -1982,7 +1952,7 @@ fn bridge_ref_handle(
 ) -> crate::keys::DbRef {
     // A null answer is loft's null, whatever store it names: claiming a header there wrapped
     // it as an empty vector in a store the call never handed over (STORE_MODEL.md D19i — the C
-    // answers `loft_ref_null()`, the Rust writer `codegen_runtime::from_loft_ref`'s null).
+    // answers `loft_ref_null()`).
     if r.is_null() {
         return crate::keys::DbRef::NULL;
     }
@@ -2013,47 +1983,30 @@ fn bridge_ref_handle(
 
 // ── Store callback infrastructure for FFI allocation ─────────────────────
 
-// Thread-local raw pointer to the interpreter's Stores during a native call.
-// Set before calling a native function, cleared after it returns.
-//
-// Ungated on purpose, unlike the `ffi_*` callbacks below that read it: it is also
-// the backing store for [`native_call`], which generated code links on a target
-// that has no `dlopen` and therefore no `native-extensions` (loft#967).
-std::thread_local! {
-    pub(crate) static CURRENT_STORES: std::cell::Cell<*mut crate::database::Stores> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
-// answer and its scratch, never anything an argument held before the call.  Armed by the
-// call's set-up only when its answer is a heap value built in that store; read back by
-// `Stores::own_bridge_answer`, which deletes exactly these after copying the answer out.
-// Ungated like `CURRENT_STORES`: compiled code's callbacks (`native_call`) write it too.
-std::thread_local! {
-    static CLAIM_LOG: std::cell::RefCell<Option<(u16, Vec<u32>)>> =
-        const { std::cell::RefCell::new(None) };
-}
-
 /// Start logging the claims made in store `store_nr` until [`claim_log_end`].
-pub(crate) fn claim_log_begin(store_nr: u16) {
-    CLAIM_LOG.with(|l| *l.borrow_mut() = Some((store_nr, Vec::new())));
+///
+/// loft#2227 — the records ONE bridge call pinned to an argument's store claims there: the
+/// answer and its scratch, never anything an argument held before the call.  Armed by the
+/// call's set-up only when its answer is a heap value built in that store; read back by
+/// `Stores::own_bridge_answer`, which deletes exactly these after copying the answer out.
+pub(crate) fn claim_log_begin(stores: &mut crate::database::Stores, store_nr: u16) {
+    stores.claim_log = Some((store_nr, Vec::new()));
 }
 
 /// Stop logging and hand back what was claimed (empty when nothing was armed).
-pub(crate) fn claim_log_end() -> Vec<u32> {
-    CLAIM_LOG.with(|l| {
-        l.borrow_mut()
-            .take()
-            .map(|(_, recs)| recs)
-            .unwrap_or_default()
-    })
+pub(crate) fn claim_log_end(stores: &mut crate::database::Stores) -> Vec<u32> {
+    stores
+        .claim_log
+        .take()
+        .map(|(_, recs)| recs)
+        .unwrap_or_default()
 }
 
 /// A claim of `rec` in `store_nr`, or the resize of `old` into `rec`: a resize moves a record
 /// the call claimed to its new number, and one it did not claim (an argument's) stays out.
-fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
-    CLAIM_LOG.with(|l| {
-        if let Some((nr, recs)) = l.borrow_mut().as_mut()
+fn claim_log_note(stores: &mut crate::database::Stores, store_nr: u16, old: Option<u32>, rec: u32) {
+    {
+        if let Some((nr, recs)) = stores.claim_log.as_mut()
             && *nr == store_nr
         {
             match old {
@@ -2067,7 +2020,20 @@ fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
                 }
             }
         }
-    });
+    }
+}
+
+/// `@PLN226` — the `Stores` a bridge call's handle carries above its store number
+/// (`call_bridge`), as the C host carries its context (`loft_ffi_handle`).  Bit 16 is
+/// [`CTX_RETURN_STORE`]: the pointer's lowest bit, zero in an aligned `Stores`.
+#[cfg(feature = "native-extensions")]
+fn ffi_handle_stores<'a>(ctx: LoftStoreCtx) -> &'a mut crate::database::Stores {
+    const _: () = assert!(
+        usize::BITS == 64,
+        "the store handle carries a 48-bit pointer"
+    );
+    // SAFETY: `call_bridge` set it from the live `&mut Stores` for the call's length.
+    unsafe { &mut *((ctx._opaque as usize >> 16 & !1) as *mut crate::database::Stores) }
 }
 
 /// C-ABI callback: allocate `words` 8-byte words in the store identified by ctx.
@@ -2077,13 +2043,10 @@ fn claim_log_note(store_nr: u16, old: Option<u32>, rec: u32) {
 unsafe extern "C" fn ffi_claim(ctx: LoftStoreCtx, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            let store = &mut stores.allocations[store_nr as usize];
-            let rec = store.claim(words);
-            claim_log_note(store_nr, None, rec);
-            rec
-        })
+        let stores = ffi_handle_stores(ctx);
+        let rec = stores.allocations[store_nr as usize].claim(words);
+        claim_log_note(stores, store_nr, None, rec);
+        rec
     }))
     .unwrap_or(0)
 }
@@ -2095,13 +2058,10 @@ unsafe extern "C" fn ffi_claim(ctx: LoftStoreCtx, words: u32) -> u32 {
 unsafe extern "C" fn ffi_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 {
     let store_nr = ctx._opaque as usize as u16;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            let store = &mut stores.allocations[store_nr as usize];
-            let to = store.resize(rec, words);
-            claim_log_note(store_nr, Some(rec), to);
-            to
-        })
+        let stores = ffi_handle_stores(ctx);
+        let to = stores.allocations[store_nr as usize].resize(rec, words);
+        claim_log_note(stores, store_nr, Some(rec), to);
+        to
     }))
     .unwrap_or(rec)
 }
@@ -2112,20 +2072,13 @@ unsafe extern "C" fn ffi_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 
 unsafe extern "C" fn ffi_reload(ctx: LoftStoreCtx, out_ptr: *mut *mut u8, out_size: *mut u32) {
     let store_nr = ctx._opaque as usize as u16;
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &*c.get() };
-            let store = &stores.allocations[store_nr as usize];
-            unsafe {
-                *out_ptr = store.base_ptr();
-                *out_size = store.capacity_words();
-            }
-        });
+        let store = &ffi_handle_stores(ctx).allocations[store_nr as usize];
+        unsafe {
+            *out_ptr = store.base_ptr();
+            *out_size = store.capacity_words();
+        }
     }));
 }
-
-pub use crate::call_frames::{current_lib_idx, set_current_lib_idx};
-
-pub use crate::call_frames::current_shared_bridge;
 
 /// C-ABI callback: adopt a cdylib's byte block as a read-only `vector<u8>` (@PLN174 F5,
 /// [`adopt_foreign_block`]).  The null ref if the adoption panics: the block stays the
@@ -2140,18 +2093,15 @@ unsafe extern "C" fn ffi_foreign(
     release: unsafe extern "C" fn(*mut u8, usize, usize),
 ) -> loft_ffi::LoftRef {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        CURRENT_STORES.with(|c| {
-            let stores = unsafe { &mut *c.get() };
-            adopt_foreign_block(
-                stores,
-                ctx._opaque as usize,
-                ptr,
-                len,
-                cap,
-                elem_size,
-                release,
-            )
-        })
+        adopt_foreign_block(
+            ffi_handle_stores(ctx),
+            ctx._opaque as usize,
+            ptr,
+            len,
+            cap,
+            elem_size,
+            release,
+        )
     }))
     .unwrap_or(loft_ffi::LoftRef {
         store_nr: 0,
@@ -2187,157 +2137,13 @@ fn make_loft_store(stores: &crate::database::Stores, store_nr: u16, minted: bool
 
 // ── Auto-build ──────────────────────────────────────────────────────────
 
-/// Build the native cdylib of every INSTALLED registry package, one at a time.
-///
-/// @P229 G3, restored at the new location.  A test that `use`s a native-backed package
-/// calls [`auto_build_native`], which takes ONE global exclusive lock
-/// (`loft-native-build.lock`) around its `cargo build`.  Under a parallel test runner many
-/// of those fire at once: each blocked process still occupies a runner slot, so the suite
-/// loses concurrency it is being charged for, and the builds churn the shared cargo dir
-/// while they are at it.
-///
-/// CI used to prevent that by pre-building `lib/<pkg>/native/` sequentially before the
-/// suite.  Those libraries moved to their own repos (@PLAN12 5b) and the step became a
-/// stub, so the rebuilds went back to happening DURING the suite — measured on
-/// `tuxedo-work-2026-08-28`: 7 lock waits totalling 62.5s, worst 26.9s, with five cdylibs
-/// rebuilding mid-run because a fresh loft binary stamps them all stale.
-///
-/// This is that step at the new location.  It calls the same [`resolve_native_lib`] the
-/// tests reach, so there is no second spelling of where a cdylib lands or when it is
-/// stale — the reason a shell loop cannot do this job: `native_target_root`'s redirect and
-/// the `[library] native` stem would both have to be re-derived.
-///
-/// Best-effort by design. A package that fails to build here is not fatal: the test that
-/// needs it will try again and report properly. Returns `(attempted, built)`.
-#[cfg(feature = "registry")]
-pub fn prebuild_installed_natives() -> (usize, usize) {
-    let Ok(entries) = crate::file_access::read_dir(crate::registry_index::cache_dir()) else {
-        return (0, 0);
-    };
-    let mut dirs: Vec<std::path::PathBuf> = entries
-        .iter()
-        .map(crate::file_access::PathText::os_spelling)
-        .filter(|p| crate::file_access::exists(p.join("native").join("Cargo.toml")))
-        .collect();
-    // Deterministic order, so two runs of the same tree do the same work in the same
-    // sequence and a slow package is identifiable from the log rather than from timing.
-    dirs.sort();
-    let (mut attempted, mut built) = (0, 0);
-    for dir in dirs {
-        // The stem comes from the package's own `[library] native = "…"`, read through
-        // the one manifest reader — the same value the parser resolves at `use` time.
-        let Some(stem) = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy())
-            .and_then(|m| m.native)
-        else {
-            continue;
-        };
-        attempted += 1;
-        let pkg = dir.to_string_lossy().into_owned();
-        // Name each package as it is reached.  A warm cache makes `resolve_native_lib` an
-        // early return, so this is nearly silent; a run that takes minutes is one where the
-        // loft binary changed and every stamp went stale, and then this log is the only
-        // thing that says which package is being waited on.
-        let name = crate::file_access::file_name(&dir).unwrap_or_default();
-        let t = std::time::Instant::now();
-        if resolve_native_lib(&pkg, &stem).is_some() {
-            built += 1;
-            let secs = t.elapsed().as_secs_f64();
-            if secs > 1.0 {
-                println!("  prebuilt {name} ({secs:.1}s)");
-            }
-        } else {
-            println!("  warn: {name} did not resolve — the test that needs it will retry");
-        }
-    }
-    (attempted, built)
-}
-
-pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool {
-    use std::path::PathBuf;
-    let pkg = PathBuf::from(pkg_dir);
-    let cargo_toml = pkg.join("native").join("Cargo.toml");
-    if !crate::file_access::exists(&cargo_toml) {
-        return false;
-    }
-    let rlib_name = format!("lib{stem}.rlib");
-    // A `cargo build --target <t>` writes under `<dir>/<t>/release/`; the wasm consume
-    // path reads the IN-TREE `native/target` (not the redirected host root), so build
-    // there to keep the produced rlib and the linked rlib the same file.
-    let out_dir = pkg
-        .join("native")
-        .join("target")
-        .join(target)
-        .join("release");
-    let rlib = out_dir.join(&rlib_name);
-    let fp = crate::cache::native_artifact_cache_key();
-    let fresh = |out: &std::path::Path| {
-        crate::file_access::exists(out.join(&rlib_name))
-            && crate::cache::native_artifact_fingerprint_matches(out, fp)
-            // loft#965 — same hole, same cure, on the cross-target path.
-            && !native_crate_newer_than(pkg_dir, &out.join(&rlib_name))
-    };
-    if fresh(&out_dir) {
-        return true;
-    }
-    // Serialise cross-process builds on the SAME global lock the host path uses, so
-    // parallel `loft` invocations don't race cargo's shared registry index/cache.
-    let _build_lock = crate::file_access::open_with(
-        std::env::temp_dir().join("loft-native-build.lock"),
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false),
-    )
-    .ok();
-    if let Some(f) = &_build_lock {
-        let _ = f.lock();
-    }
-    if fresh(&out_dir) {
-        // A process we waited on just produced it.
-        return true;
-    }
-    let mut cmd = Spawn::new(Program::search("cargo"))
-        .args(["build", "--release", "--target", target, "--manifest-path"])
-        .arg(&cargo_toml)
-        // Build with CLEAN flags: the host `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` loft was
-        // built with are host-target-specific and would either break the wasm build or
-        // mis-key it.  A `#native` crate links loft-ffi (the source-stable C-ABI), not
-        // loft's rlib, so no shared-SVH flag matching is needed for the wasm leg.
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
-    match cmd.status() {
-        Ok(s) if s.success() => {
-            // Stamp the same loft-ffi ABI key so a later loft-ffi change re-builds it.
-            crate::cache::write_native_artifact_fingerprint(&out_dir, fp);
-            crate::file_access::exists(&rlib)
-        }
-        Ok(_) => {
-            eprintln!(
-                "loft: cross-building native library '{stem}' for {target} failed (cargo error \
-                 above) — its native crate is likely not wasm-clean.{}",
-                build_deps_hint(pkg_dir)
-            );
-            false
-        }
-        Err(e) => {
-            eprintln!(
-                "loft: cannot cross-build native library '{stem}' for {target}: {e} — needs a \
-                 Rust toolchain with the {target} target (`rustup target add {target}`)."
-            );
-            false
-        }
-    }
-}
-
 /// Public API for generated native code that needs to call a cdylib
 /// function with a `LoftStore` handle.
 ///
 /// @PLAN12 phase 3.5a (2026-05-24) — added so the `--native` codegen
 /// can drive store-allocating cdylib calls (e.g. `n_rand_indices`,
 /// `n_load_png`).  The interpreter's `dispatch_via_bridge` does the same
-/// thing inline (`make_loft_store` + `CURRENT_STORES` setup); this module
+/// thing inline (`make_loft_store`, the `Stores` in the handle); this module
 /// exposes the same machinery as a `pub` API constructing
 /// `loft_ffi::LoftStore` directly (the interpreter still uses the local
 /// `#[repr(C)]` `LoftStore` mirror for its internal dispatch).
@@ -2347,7 +2153,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
 /// let _guard = loft::native_call::enter(stores);
 /// let ls = loft::native_call::build_store(stores, store_nr);
 /// let r = unsafe { external_crate::n_some_fn(ls, arg1, arg2) };
-/// // _guard's Drop clears CURRENT_STORES.
+/// // the handle carries `stores` to the library's callbacks.
 /// ```
 ///
 /// Not gated on `native-extensions`, though it sits among the loader's private
@@ -2361,6 +2167,43 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
 pub mod native_call {
     use crate::database::Stores;
 
+    /// `@PLN226` — a 32-bit target's program stores for its handles ([`handle_word`]): such a
+    /// target runs one program per instance, whose stores [`enter`] publishes in one atomic
+    /// word (`@FR-C-Publish`).
+    #[cfg(not(target_pointer_width = "64"))]
+    static PROGRAM_STORES: std::sync::atomic::AtomicPtr<Stores> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+    /// `@PLN226` — the handle word for store `ctx` of `stores`.  On a 64-bit target the
+    /// `Stores` pointer rides above the store number (bit 16 is `CTX_RETURN_STORE`, the
+    /// pointer's lowest bit, zero in an aligned `Stores`), as the interpreter's bridge calls
+    /// carry theirs (`ffi_handle_stores`); a 32-bit target has no room there
+    /// ([`PROGRAM_STORES`]).
+    fn handle_word(stores: &mut Stores, ctx: usize) -> usize {
+        #[cfg(target_pointer_width = "64")]
+        {
+            ctx | (std::ptr::from_mut::<Stores>(stores) as usize) << 16
+        }
+        #[cfg(not(target_pointer_width = "64"))]
+        {
+            let _ = stores;
+            ctx
+        }
+    }
+
+    /// The `Stores` the handle `ctx` belongs to ([`handle_word`]).
+    fn handle_stores<'a>(ctx: loft_ffi::LoftStoreCtx) -> &'a mut Stores {
+        #[cfg(target_pointer_width = "64")]
+        let ptr = (ctx._opaque as usize >> 16 & !1) as *mut Stores;
+        #[cfg(not(target_pointer_width = "64"))]
+        let ptr = {
+            let _ = ctx;
+            PROGRAM_STORES.load(std::sync::atomic::Ordering::Relaxed)
+        };
+        // SAFETY: the handle was built from the live `&mut Stores` of the call it serves.
+        unsafe { &mut *ptr }
+    }
+
     /// C-ABI callback equivalent to `super::ffi_claim` but typed
     /// against `loft_ffi::LoftStoreCtx` so the resulting
     /// `loft_ffi::LoftStore` can be passed to a generated-code
@@ -2368,13 +2211,11 @@ pub mod native_call {
     unsafe extern "C" fn ffi_claim_pub(ctx: loft_ffi::LoftStoreCtx, words: u32) -> u32 {
         let store_nr = ctx._opaque as usize as u16;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                let store = &mut stores.allocations[store_nr as usize];
-                let rec = store.claim(words);
-                super::claim_log_note(store_nr, None, rec);
-                rec
-            })
+            let stores = handle_stores(ctx);
+            let store = &mut stores.allocations[store_nr as usize];
+            let rec = store.claim(words);
+            super::claim_log_note(stores, store_nr, None, rec);
+            rec
         }))
         .unwrap_or(0)
     }
@@ -2382,13 +2223,11 @@ pub mod native_call {
     unsafe extern "C" fn ffi_resize_pub(ctx: loft_ffi::LoftStoreCtx, rec: u32, words: u32) -> u32 {
         let store_nr = ctx._opaque as usize as u16;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                let store = &mut stores.allocations[store_nr as usize];
-                let to = store.resize(rec, words);
-                super::claim_log_note(store_nr, Some(rec), to);
-                to
-            })
+            let stores = handle_stores(ctx);
+            let store = &mut stores.allocations[store_nr as usize];
+            let to = store.resize(rec, words);
+            super::claim_log_note(stores, store_nr, Some(rec), to);
+            to
         }))
         .unwrap_or(rec)
     }
@@ -2400,19 +2239,17 @@ pub mod native_call {
     ) {
         let store_nr = ctx._opaque as usize as u16;
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &*c.get() };
-                let store = &stores.allocations[store_nr as usize];
-                unsafe {
-                    *out_ptr = store.base_ptr();
-                    *out_size = store.capacity_words();
-                }
-            });
+            let stores = handle_stores(ctx);
+            let store = &stores.allocations[store_nr as usize];
+            unsafe {
+                *out_ptr = store.base_ptr();
+                *out_size = store.capacity_words();
+            }
         }));
     }
 
     /// The foreign-vector callback for generated code (@PLN174 F5): the same body as
-    /// the interpreter's `ffi_foreign`, over the `CURRENT_STORES` cell `enter` set.
+    /// the interpreter's `ffi_foreign`, over the `Stores` its handle names.
     unsafe extern "C" fn ffi_foreign_pub(
         ctx: loft_ffi::LoftStoreCtx,
         ptr: *mut u8,
@@ -2422,18 +2259,17 @@ pub mod native_call {
         release: unsafe extern "C" fn(*mut u8, usize, usize),
     ) -> loft_ffi::LoftRef {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::CURRENT_STORES.with(|c| {
-                let stores = unsafe { &mut *c.get() };
-                super::adopt_foreign_block(
-                    stores,
-                    ctx._opaque as usize,
-                    ptr,
-                    len,
-                    cap,
-                    elem_size,
-                    release,
-                )
-            })
+            let stores = handle_stores(ctx);
+            // The block's store number and return flag, without the pointer above them.
+            super::adopt_foreign_block(
+                stores,
+                ctx._opaque as usize & 0x1_ffff,
+                ptr,
+                len,
+                cap,
+                elem_size,
+                release,
+            )
         }))
         .unwrap_or(loft_ffi::LoftRef {
             store_nr: 0,
@@ -2443,11 +2279,10 @@ pub mod native_call {
     }
 
     /// Construct a `loft_ffi::LoftStore` handle pointing at the
-    /// store identified by `store_nr`.  Callbacks read from the
-    /// `CURRENT_STORES` thread-local — call `enter()` before this
-    /// to set it up.
+    /// store identified by `store_nr`; its callbacks reach `stores` through the handle
+    /// (`handle_stores`).  Call [`enter`] first: a 32-bit target publishes the stores there.
     #[must_use]
-    pub fn build_store(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+    pub fn build_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStore {
         build_store_ctx(stores, store_nr, store_nr as usize)
     }
 
@@ -2455,7 +2290,7 @@ pub mod native_call {
     /// return (@PLN174 F5): the context word carries [`super::CTX_RETURN_STORE`], so a
     /// foreign answer is adopted into that store rather than into a second one.
     #[must_use]
-    pub fn build_store_for_return(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+    pub fn build_store_for_return(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStore {
         build_store_ctx(
             stores,
             store_nr,
@@ -2484,11 +2319,11 @@ pub mod native_call {
             args: &[(crate::keys::DbRef, bool)],
             returns_ref: bool,
         ) -> Self {
-            let args = stores.bridge_args(args, returns_ref);
+            let args = stores.bridge_args(args, &[], returns_ref);
             // loft#2227 — a heap answer pinned to an argument's store: log what the call
             // claims there, for [`Self::answer`].
             if returns_ref && !args.minted {
-                super::claim_log_begin(args.store_nr);
+                super::claim_log_begin(stores, args.store_nr);
             }
             Self {
                 cell,
@@ -2508,7 +2343,7 @@ pub mod native_call {
             is_vec: bool,
             tp: u16,
         ) -> crate::keys::DbRef {
-            let claimed = super::claim_log_end();
+            let claimed = super::claim_log_end(stores);
             if db.is_null() {
                 self.returns_ref.set(false);
             }
@@ -2532,7 +2367,7 @@ pub mod native_call {
         /// The store handle for the call: the pinned store, or the one minted for it,
         /// announced as the return store ([`super::CTX_RETURN_STORE`]).
         #[must_use]
-        pub fn store(&self, stores: &Stores) -> loft_ffi::LoftStore {
+        pub fn store(&self, stores: &mut Stores) -> loft_ffi::LoftStore {
             let (nr, minted) = self
                 .args
                 .as_ref()
@@ -2548,27 +2383,30 @@ pub mod native_call {
     impl Drop for BridgeGuard<'_> {
         fn drop(&mut self) {
             if let Some(args) = self.args.take() {
-                // An answer never asked for (`Self::answer`) leaves no log armed behind.
-                let _ = super::claim_log_end();
                 // SAFETY: generated code holds no other live borrow of the stores across a
                 // local's drop (the same cell discipline `FnRefBufGuard` relies on).
                 let stores = unsafe { &mut *self.cell.get() };
+                // An answer never asked for (`Self::answer`) leaves no log armed behind.
+                let _ = super::claim_log_end(stores);
                 stores.bridge_args_done(&args, self.returns_ref.get());
             }
         }
     }
 
-    fn build_store_ctx(stores: &Stores, store_nr: u16, ctx: usize) -> loft_ffi::LoftStore {
-        let store = stores.store(&crate::keys::DbRef {
-            store_nr,
-            rec: 0,
-            pos: 0,
-        });
+    fn build_store_ctx(stores: &mut Stores, store_nr: u16, ctx: usize) -> loft_ffi::LoftStore {
+        let (ptr, size) = {
+            let store = stores.store(&crate::keys::DbRef {
+                store_nr,
+                rec: 0,
+                pos: 0,
+            });
+            (store.base_ptr(), store.capacity_words())
+        };
         loft_ffi::LoftStore {
-            ptr: store.base_ptr(),
-            size: store.capacity_words(),
+            ptr,
+            size,
             ctx: loft_ffi::LoftStoreCtx {
-                _opaque: ctx as *mut (),
+                _opaque: handle_word(stores, ctx) as *mut (),
             },
             claim_fn: Some(ffi_claim_pub),
             reload_fn: Some(ffi_reload_pub),
@@ -2577,27 +2415,33 @@ pub mod native_call {
         }
     }
 
-    /// RAII guard: sets `CURRENT_STORES` on entry, clears on drop.
-    /// One per cdylib call; nested calls are NOT supported (would
-    /// stomp the thread-local).  Native codegen emits one per
-    /// call-site, scoped via `let _guard = native_call::enter(stores);`.
+    /// RAII guard around one cdylib call: on a 32-bit target it publishes the program's
+    /// stores for the call's handles (`PROGRAM_STORES`) and clears them on drop; on a 64-bit
+    /// target the handle carries them and the guard does nothing.  Native codegen emits one
+    /// per call site, scoped via `let _guard = native_call::enter(stores);`.
     pub struct StoresGuard {
         _priv: (),
     }
 
-    /// Set the thread-local current stores pointer for the
-    /// duration of the returned guard.  Generated code:
-    /// `let _guard = native_call::enter(stores);` immediately
-    /// before a cdylib call.
+    /// Name the program's stores for the duration of the returned guard, where the store
+    /// handle cannot carry them: on a 32-bit host the callbacks read [`PROGRAM_STORES`];
+    /// on a 64-bit one the handle holds them and this does nothing.  Generated code:
+    /// `let _guard = native_call::enter(stores);` immediately before a cdylib call.
     pub fn enter(stores: &mut Stores) -> StoresGuard {
-        let ptr = std::ptr::from_mut::<Stores>(stores);
-        super::CURRENT_STORES.with(|c| c.set(ptr));
+        #[cfg(not(target_pointer_width = "64"))]
+        PROGRAM_STORES.store(
+            std::ptr::from_mut::<Stores>(stores),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        #[cfg(target_pointer_width = "64")]
+        let _ = stores;
         StoresGuard { _priv: () }
     }
 
     impl Drop for StoresGuard {
         fn drop(&mut self) {
-            super::CURRENT_STORES.with(|c| c.set(std::ptr::null_mut()));
+            #[cfg(not(target_pointer_width = "64"))]
+            PROGRAM_STORES.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -2606,7 +2450,6 @@ pub mod native_call {
 // actionable guidance.  Pure string-in/string-out, so unit-testable.
 #[cfg(all(test, feature = "native-extensions"))]
 mod dlopen_diag_tests {
-    use super::build_deps_hint;
     use crate::c_libs::dlopen_diagnostic;
     use crate::native_build::{first_missing_runtime_lib, runtime_lib_missing_diagnostic};
 
@@ -2634,14 +2477,14 @@ mod dlopen_diag_tests {
         let (host_missing, _) = host_and_foreign_lib_names();
         let dir = temp_pkg(
             "rtlib",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{host_missing}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{host_missing}\"\n"),
         );
         assert_eq!(
             first_missing_runtime_lib(dir.to_str().unwrap()).as_deref(),
             Some(host_missing)
         );
         // none declared → no check, no false positive.
-        let dir2 = temp_pkg("nort", "[native]\ncrate = \"x\"\n");
+        let dir2 = temp_pkg("nort", "[native]\ncomponent = \"x\"\n");
         assert!(first_missing_runtime_lib(dir2.to_str().unwrap()).is_none());
     }
 
@@ -2653,14 +2496,14 @@ mod dlopen_diag_tests {
         let (host_missing, foreign) = host_and_foreign_lib_names();
         let f = temp_pkg(
             "foreignrt",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{foreign}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{foreign}\"\n"),
         );
         assert!(first_missing_runtime_lib(f.to_str().unwrap()).is_none());
         // foreign (skipped) + a missing host name (probed) → the host one is still
         // detected.
         let mixed = temp_pkg(
             "mixrt",
-            &format!("[native]\ncrate = \"x\"\nruntime-libs = \"{foreign}, {host_missing}\"\n"),
+            &format!("[native]\ncomponent = \"x\"\nruntime-libs = \"{foreign}, {host_missing}\"\n"),
         );
         assert_eq!(
             first_missing_runtime_lib(mixed.to_str().unwrap()).as_deref(),
@@ -2677,21 +2520,6 @@ mod dlopen_diag_tests {
             "{m}"
         );
         assert!(m.contains("install it with your OS package manager"), "{m}");
-    }
-
-    #[test]
-    fn build_deps_hint_names_declared_deps() {
-        let dir = temp_pkg(
-            "bdeps",
-            "[native]\ncrate = \"x\"\nbuild-deps = \"libgl-dev, libasound2-dev\"\n",
-        );
-        let h = build_deps_hint(dir.to_str().unwrap());
-        assert!(
-            h.contains("libgl-dev") && h.contains("libasound2-dev"),
-            "{h}"
-        );
-        let unexpected = build_deps_hint(temp_pkg("nobd", "[native]\n").to_str().unwrap());
-        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]
@@ -2763,90 +2591,5 @@ mod c_lib_beside_tests {
             );
         }
         let _ = crate::file_access::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod native_freshness_tests {
-    use super::native_crate_newer_than;
-    use std::io::Write;
-
-    /// Build `<root>/native/src/lib.rs` plus an artifact, and return both paths.
-    fn fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!("loft_965_{tag}_{}", std::process::id()));
-        let _ = crate::file_access::remove_dir_all(&root);
-        crate::file_access::create_dir_all(root.join("native/src")).expect("mkdir");
-        crate::file_access::create_dir_all(root.join("native/target/release"))
-            .expect("mkdir target");
-        let src = root.join("native/src/lib.rs");
-        crate::file_access::create(&src)
-            .and_then(|mut f| f.write_all(b"// crate source\n"))
-            .expect("write source");
-        (root, src)
-    }
-
-    /// Write the artifact AFTER the sources, which is what a real build leaves behind.
-    fn artifact_after(root: &std::path::Path, name: &str) -> std::path::PathBuf {
-        // A coarse filesystem timestamp would make "written after" indistinguishable
-        // from "written at the same moment", and the comparison is `>`.  Sleep past the
-        // granularity rather than assert on a tie whose direction is the platform's
-        // choice.
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let art = root.join(name);
-        crate::file_access::write(&art, b"artifact").expect("write artifact");
-        art
-    }
-
-    /// The reuse case: sources older than the artifact, so the cached cdylib stands.
-    #[test]
-    fn an_untouched_crate_is_not_newer() {
-        let (root, _src) = fixture("fresh");
-        let art = artifact_after(&root, "libx.so");
-        assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// loft#965 itself: the crate's own Rust edited after the artifact was built.  This
-    /// is what `loft test` used to answer "reuse" to, running the previous build against
-    /// code no longer in the tree.
-    #[test]
-    fn an_edited_crate_source_is_newer() {
-        let (root, src) = fixture("edited");
-        let art = artifact_after(&root, "libx.so");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        crate::file_access::create(&src)
-            .and_then(|mut f| f.write_all(b"// edited\n"))
-            .expect("re-write source");
-        assert!(native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// ⚠ `native/target/` is the build's OWN output and is always newer than the
-    /// artifact's siblings.  Counting it would report every crate as stale forever —
-    /// a rebuild on every run, which is the failure mode a careless fix has.
-    #[test]
-    fn the_crates_own_target_dir_does_not_count() {
-        let (root, _src) = fixture("target");
-        let art = artifact_after(&root, "libx.so");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        crate::file_access::write(root.join("native/target/release/stamp"), b"x")
-            .expect("write stamp");
-        assert!(
-            !native_crate_newer_than(&root.to_string_lossy(), &art),
-            "output under native/target must not make the crate look stale"
-        );
-        let _ = crate::file_access::remove_dir_all(&root);
-    }
-
-    /// A package with no native crate at all answers "not newer" rather than walking
-    /// nothing and defaulting to a rebuild.
-    #[test]
-    fn a_package_without_a_native_crate_is_not_newer() {
-        let root = std::env::temp_dir().join(format!("loft_965_none_{}", std::process::id()));
-        let _ = crate::file_access::remove_dir_all(&root);
-        crate::file_access::create_dir_all(&root).expect("mkdir");
-        let art = artifact_after(&root, "libx.so");
-        assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = crate::file_access::remove_dir_all(&root);
     }
 }

@@ -274,33 +274,6 @@ fn answer(kind: i64, a: &str, b: &str, n: i64, dir: &str) -> (i64, String) {
     }
 }
 
-/// The compiled backend's twin.
-///
-/// `--native` resolves a runtime function by loft DEF NAME through
-/// `CODEGEN_RUNTIME_FNS`, and a `&text` out-parameter arrives as `&mut String`
-/// (the shape `OpGetFileText` already uses). Without this, `lib/git` is
-/// **interpreter-only** — which `make index` found at once, because it compiles
-/// its scanner.
-pub mod typed {
-    use crate::database::Stores;
-    use std::cell::UnsafeCell;
-
-    /// See [`super::n_git_query`].
-    pub fn n_git_query(
-        _cell: &UnsafeCell<Stores>,
-        kind: i64,
-        a: &str,
-        b: &str,
-        n: i64,
-        dir: &str,
-        out: &mut String,
-    ) -> i64 {
-        let (code, text) = super::answer(kind, a, b, n, dir);
-        *out = text;
-        code
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -130,8 +130,7 @@ def sections(lines: list[str], kind: str, path: str) -> list[tuple[str, int]]:
     to their enclosing item.
 
     Known limit: an anchor spelling that appears at an item's indent inside a STRING
-    LITERAL is counted as a section — the code generator's emission templates do this,
-    which is why `src/generation/mod.rs` names `fn loft_ckpt_report() {{` as its biggest.
+    LITERAL is counted as a section — a code generator's emission templates do this.
     The report is a reading aid, so a handful of misread anchors cost a line of judgement,
     not a wrong answer; parsing Rust properly to fix it would cost far more than it returns.
     """

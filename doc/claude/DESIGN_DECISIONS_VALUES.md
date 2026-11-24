@@ -223,15 +223,15 @@ target, silently; a value-range proof is portable by construction.
 each member is what a field of its type is, and a `&` link names a member as it names a field.
 It may live on the stack.  Stored, it packs like any record, largest alignment first, which
 changes neither a member's name (`t.0` stays the written first member) nor the text a tuple
-prints as.  A native representation — a Rust tuple of native types in rustc's
+prints as.  A native representation — a struct of native types in the compiled target's own
 order — is an optimisation derived from the record layout, kept only where no program can tell
 it apart.  FOREIGN data — any structure whose bytes loft does not own: a native library's text,
 record, tuple or vector, a mapped file — presents as an ordinary loft type that is value-const
 (`const T`, declared by its producer).  It is read in place, whole or in parts, without a copy;
 a `&` link to a part is a read-only view; every write is a compile-time error whose cure is a
 copy (`c = t.0 + "!"`).  **Why.** One layout for a tuple wherever it lives leaves nothing to
-special-case in a link, a copy or a release, and rustc still gets its own representation where
-it is unobservable.  A library's string read without being copied into loft's structure is the
+special-case in a link, a copy or a release, and a compiled target still gets its own
+representation where it is unobservable.  A library's string read without being copied into loft's structure is the
 point of foreign data, and making it value-const reuses a check loft already has, at compile
 time, instead of a runtime refusal (@C80).
 

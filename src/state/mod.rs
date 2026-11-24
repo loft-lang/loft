@@ -491,6 +491,16 @@ pub struct State {
     /// `LOFT_TRACE_BIND` — the notes of each bind being lowered: a frame per `generate_set`,
     /// since a value's own lowering can contain binds of its own (`codegen.rs`).
     pub(crate) bind_notes: Vec<Vec<String>>,
+    /// `@PLN226` — how deep the interpreted twins `LOFT_HOSTED_VERIFY` runs on this
+    /// interpreter are nested (`hosted_verify::twin_call`).
+    pub(crate) twin_depth: u32,
+    /// `@PLN226` — `LOFT_STACK_CENSUS`'s tallies for this interpreter (`stack_census`).
+    pub stack_census: Box<crate::stack_census::Census>,
+    /// `@PLN226` — `LOFT_OP_CENSUS`'s tallies for this interpreter (`op_census`).
+    pub op_census: Box<crate::op_census::Census>,
+    /// `@PLN226` — this run's live-reload host (`LOFT_LIVE_RELOAD`, `live_reload::install`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub reload: Option<Box<crate::live_reload::ReloadHost>>,
     /// Where the function being generated starts, so a bind row's line is a line of that
     /// function: a bind before its first line marker (a hoisted null init) names line 0.
     pub(crate) bind_fn_start: u32,
@@ -987,7 +997,8 @@ impl State {
     pub fn new(mut db: Stores) -> State {
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
-        crate::store_census::set_stack_store(stack_cur.store_nr);
+        #[cfg(feature = "op-census")]
+        db.tap.set_stack_store(stack_cur.store_nr);
         db.stack_store_at_zero = true; // #306 — protect slot 0 from whole-store frees
         // @PLN154 — arm the stack shadow.  Here and only here: the shadow is what makes a
         // store the one whose slots are checked, so a heap store never carries one.
@@ -1007,7 +1018,7 @@ impl State {
         // as the interpreter's own and a comparison leaves them out.
         #[cfg(feature = "op-census")]
         for r in [&stack_cur, &_const_store] {
-            crate::store_census::alloc_event(format_args!("S {}", db.store(r).trace_name()));
+            crate::store_census::alloc_event(None, format_args!("S {}", db.store(r).trace_name()));
         }
         debug_assert_eq!(
             _const_store.store_nr,
@@ -1019,6 +1030,11 @@ impl State {
             call_back_text: String::new(),
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
+            twin_depth: 0,
+            stack_census: Box::default(),
+            op_census: Box::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            reload: None,
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
@@ -1740,7 +1756,7 @@ impl State {
         let mut stack = self.stack_cur;
         stack.pos = 8 + self.stack_pos;
         // PKG.5: set library index for auto-marshal dispatch.
-        crate::extensions::set_current_lib_idx(call);
+        self.database.lib_idx = call;
         let f = self.library[call as usize];
         if let Some(raw) = crate::extensions::shared_dispatch_raw(f) {
             // @PLN199 C2 — a compiled library may call back into this interpreter (a function
@@ -1748,9 +1764,10 @@ impl State {
             // pointer derived from the same `State` the call-back uses, never through a
             // `&mut Stores` held across it.
             let state: *mut State = self;
-            let outer = crate::extensions::enter_host_state(state);
+            let outer =
+                unsafe { std::mem::replace(&mut (*state).database.host_state, state.cast()) };
             raw(unsafe { &raw mut (*state).database }, &mut stack);
-            crate::extensions::leave_host_state(outer);
+            unsafe { (*state).database.host_state = outer };
         } else {
             f(&mut self.database, &mut stack);
         }
@@ -2610,12 +2627,12 @@ impl State {
 
     /// @PLN199 D1 — advance a generator a compiled library made: its handle names a slot of
     /// the host's native coroutine table (`HostTable::coroutine_adopt`), and the advance runs
-    /// the generator's compiled body.  The yield is read on the channel `--native`'s consumer
-    /// reads for the same operand (`generation/ops/coroutine.rs`) and pushed as the
+    /// the generator's compiled body.  The yield is read on the unified channel
+    /// (`coroutine_layout`) and pushed as the
     /// interpreter's own advance pushes it; exhaustion answers the same typed null.  The
     /// gate admits only the yields read here (`native_gate::generator_crosses`).
     fn native_coroutine_next(&mut self, gen_ref: DbRef, packed_size: u32) {
-        use crate::codegen_runtime as cr;
+        use crate::coroutine_host as cr;
         let size = packed_size & 0xFF;
         let tag = packed_size >> 8;
         match (tag, size) {
@@ -2652,7 +2669,7 @@ impl State {
     #[must_use]
     pub fn coroutine_exhausted(&self, gen_ref: &DbRef) -> bool {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref);
+            return crate::coroutine_host::coroutine_is_exhausted(*gen_ref, &self.database);
         }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return true; // null iterator is exhausted
@@ -2677,7 +2694,7 @@ impl State {
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
         if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            return crate::codegen_runtime::coroutine_retain(gen_ref);
+            return crate::coroutine_host::coroutine_retain(gen_ref, &mut self.database);
         }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
@@ -2914,7 +2931,7 @@ impl State {
                 .allocations
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| s.live && !s.read_only)
+                .filter(|(_, s)| s.live && s.read_only == 0)
                 .map(|(i, s)| (i as u16, s.generation))
                 .collect();
             self.coroutine_frame_mut(idx).saved_store_generations = gens;
@@ -3512,7 +3529,7 @@ impl State {
                 if !(db.store_nr == u16::MAX
                     || (db.store_nr as usize) < self.database.allocations.len())
                 {
-                    let (op_pc, op_code, fn_d_nr) = crate::crash_report::last_context();
+                    let (op_pc, op_code, fn_d_nr) = self.database.crash.last_context();
                     panic!(
                         "get_stack<DbRef>: OOB store_nr={} (allocations.len()={}) \
                          rec={} pos={} code_pos={} — corrupt DbRef on interpreter stack \
@@ -3596,7 +3613,7 @@ impl State {
                 });
                 // @PLN118 arc E — the READING op is the one currently dispatching (this
                 // pop happens inside its handler); `last_context` holds its opcode byte.
-                let (_rpc, read_op, _fd) = crate::crash_report::last_context();
+                let (_rpc, read_op, _fd) = self.database.crash.last_context();
                 let read_op_str = op_name(read_op);
                 // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
                 // copy reading a stale SUB-reference: the copy is incomplete and the source
@@ -3809,7 +3826,7 @@ impl State {
             .range(..=self.code_pos)
             .next_back()
             .map_or(0, |(_, &v)| v);
-        let (pc, op, _fn_d_nr) = crate::crash_report::last_context();
+        let (pc, op, _fn_d_nr) = self.database.crash.last_context();
         let ty = std::any::type_name::<T>();
         match state {
             SlotState::Unwritten => {
@@ -3850,7 +3867,7 @@ impl State {
     #[cold]
     #[inline(never)]
     fn mark_stale_handles(&mut self) {
-        let moved = crate::stack_verify::take_relocations();
+        let moved = self.database.take_relocations();
         if moved.is_empty() {
             return;
         }
@@ -4070,7 +4087,7 @@ impl State {
                 if !(db.store_nr == u16::MAX
                     || (db.store_nr as usize) < self.database.allocations.len())
                 {
-                    let (op_pc, op_code, fn_d_nr) = crate::crash_report::last_context();
+                    let (op_pc, op_code, fn_d_nr) = self.database.crash.last_context();
                     panic!(
                         "put_stack<DbRef>: OOB store_nr={} (allocations.len()={}) \
                          rec={} pos={} code_pos={} — corrupt DbRef being pushed \
@@ -4095,6 +4112,7 @@ impl State {
         // the claim and the byte diff cannot be in different coordinate systems.
         if crate::stack_census::enabled() {
             crate::stack_census::claim(
+                &mut self.stack_census,
                 self.stack_cur.rec * 8 + self.stack_cur.pos + self.stack_pos,
                 size_of::<T>() as u32,
             );
@@ -4189,8 +4207,8 @@ impl State {
         if self.published_spans.is_none() {
             self.published_spans = Some(Arc::new(self.source_spans.clone()));
         }
-        crate::crash_report::set_source_spans(self.published_spans.clone());
-        crate::store_trace::publish(self.pc_names.clone());
+        self.database.crash.set_spans(self.published_spans.clone());
+        self.database.crash.pc_names.clone_from(&self.pc_names);
     }
 
     // ── @PLN16 debugger ──────────────────────────────────────────────────────
@@ -5489,7 +5507,7 @@ impl State {
     /// @PLN16 — live edit of a scalar vector **element** (`v[i] = x`).  The cheapest
     /// heap edit: the element lives in the vector's backing record, so this is one
     /// in-place scalar write — no materialisation.  Mirrors the interpreter's own
-    /// element access (`codegen_runtime.rs`): the element type is `content(vec_tp)`,
+    /// element access: the element type is `content(vec_tp)`,
     /// the stride is `size(elem_tp)`, and the slot is `8 + i * stride` within the
     /// backing record.  Returns `false` (no write) on a non-vector base, a null / empty
     /// vector, an out-of-range index, or a non-scalar element type — never writes past
@@ -6167,11 +6185,16 @@ impl State {
     /// function does) and by its function.  The call site is resolved from a byte INSIDE the
     /// call instruction, not from `CallFrame.line`, which names the next line after a
     /// statement-final call (loft#1753).
-    fn op_census_step(&self, pc: u32) {
+    fn op_census_step(&mut self, pc: u32) {
         let line = match self.call_stack.get(1) {
-            Some(f) => crate::op_census::site_line(f.call_pos, || {
-                self.line_at(f.call_pos.saturating_sub(1))
-            }),
+            Some(f) => {
+                let call_pos = f.call_pos;
+                crate::op_census::site_line(&self.op_census, call_pos).unwrap_or_else(|| {
+                    let line = self.line_at(call_pos.saturating_sub(1));
+                    crate::op_census::set_site_line(&mut self.op_census, call_pos, line);
+                    line
+                })
+            }
             None => self.line_at(pc),
         };
         let function = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
@@ -6181,7 +6204,8 @@ impl State {
             Some(&op) => u16::from(op),
             None => return,
         };
-        crate::op_census::step(line, function, opcode);
+        let moved = crate::op_census::moved_so_far(&self.database);
+        crate::op_census::step(&mut self.op_census, moved, line, function, opcode);
     }
 
     /// @PLN140 arc C — the op at `pc` allocated `stores` stores; hand the path that
@@ -6783,7 +6807,7 @@ impl State {
         let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
             #[cfg(feature = "op-census")]
-            crate::store_census::at_pc(self.code_pos);
+            self.database.tap.at_pc(self.code_pos);
             let op = self.code::<u8>();
             if op == 255 {
                 let ext = self.code::<u8>();
@@ -7393,8 +7417,6 @@ impl State {
     /// `Stores::const_ref_at_runtime`.  The template
     /// `#rust"s.const_ref_at(@d_nr as usize)"` resolves to this method
     /// in the bytecode interpreter context (where `s: &mut State`).
-    /// Native codegen rewrites the call to `stores.const_ref_at_runtime`
-    /// (see `src/generation/calls.rs`).  @P275.
     #[must_use]
     pub fn const_ref_at(&self, d_nr: usize) -> crate::keys::DbRef {
         self.const_refs[d_nr]
@@ -7563,8 +7585,8 @@ impl State {
         // `LOFT_ALLOC_TRACE` — the program starts: what came before was the run's own setup.
         #[cfg(feature = "op-census")]
         {
-            crate::store_census::set_lines(self.line_numbers.clone());
-            crate::store_census::alloc_event(format_args!("M"));
+            self.database.tap.set_lines(self.line_numbers.clone());
+            crate::store_census::alloc_event(None, format_args!("M"));
         }
         // loft#952 — and the vocabulary its per-call breadcrumb reports in.  `"<entry>"`
         // above is a placeholder that names nothing; from here on a hard-kill names the
@@ -7577,10 +7599,6 @@ impl State {
                 def.position().line,
             )
         }));
-        // loft#665 piece 3 — compilation is over, so drop the compile position: a
-        // RUNTIME panic must not be attributed to whatever line was compiled last.
-        // The runtime has its own, better attribution (pc -> source span).
-        crate::crash_report::clear_compile_pos();
         // Same rule for a `par` worker's halt: this run starts owing nothing to the last
         // one.  A halt recorded by a worker whose parent never reached the dispatch-loop
         // check below (a panic unwound past it) would otherwise be raised here, against a
@@ -7765,6 +7783,34 @@ impl State {
         }
     }
 
+    /// Run the program's dispatch loop ([`Self::dispatch_ops`]) as a running interpreter: in
+    /// the table the fatal-signal report reads (`crash_report::register`), and, when the CLI
+    /// asked for it (`crash_report::tell_panic_positions`), naming the source position of the
+    /// op a panic left from, after the panic's own message.  The position is this
+    /// interpreter's own (`@FR-C-Boundary`): a nested loop of the same interpreter leaves both
+    /// to the outer one.
+    fn dispatch(&mut self, data: &Data) -> Dispatch {
+        let Some(running) = crate::crash_report::register(&self.database.crash) else {
+            return self.dispatch_ops(data);
+        };
+        let ran =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch_ops(data)));
+        drop(running);
+        ran.unwrap_or_else(|payload| {
+            if crate::crash_report::panic_positions() {
+                let crash = &self.database.crash;
+                let (pc, _, _) = crash.last_context();
+                // Only a span that COVERS the pc is a position (loft#1262).
+                if pc != u32::MAX
+                    && let Some(pos) = crash.source_loc_for_pc(pc)
+                {
+                    eprintln!("  at {}:{}:{}", pos.file, pos.line, pos.pos);
+                }
+            }
+            std::panic::resume_unwind(payload)
+        })
+    }
+
     /// Run the bytecode from `code_pos` until the entry function returns or the run is
     /// suspended — a frame yield, a debugger pause, a halt the lean loop hands back — on the
     /// loop the run needs: the lean register loop, the lean loop with the CPU profiler's hook
@@ -7776,7 +7822,7 @@ impl State {
         clippy::too_many_lines,
         reason = "the dispatch loops, moved as they were"
     )]
-    fn dispatch(&mut self, data: &Data) -> Dispatch {
+    fn dispatch_ops(&mut self, data: &Data) -> Dispatch {
         #[cfg(debug_assertions)]
         let mut step: u64 = 0;
         // loft#919 — read the ceiling once, outside the loop: the guard runs on every
@@ -7800,7 +7846,7 @@ impl State {
         // predictable branch per op; only ever true under LOFT_LIVE_RELOAD=1.
         const RELOAD_POLL_OPS: u32 = 32_768;
         #[cfg(not(target_arch = "wasm32"))]
-        let reload_on = crate::live_reload::active();
+        let reload_on = crate::live_reload::active(self);
         #[cfg(target_arch = "wasm32")]
         let reload_on = false;
         let mut reload_tick: u32 = RELOAD_POLL_OPS;
@@ -7842,7 +7888,6 @@ impl State {
             || uaf_gen_on
             || cfg!(debug_assertions)
             || cfg!(feature = "stack_align_guard"));
-        crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
         // `@FR-R-DispatchStop` — after each op the lean loop tests ONE flag, which every rare
         // event that ends or diverts it sets where it happens; the cold path below does what
         // the per-op tests did.  The end of the run needs no test of its own: a halt and the
@@ -7865,6 +7910,7 @@ impl State {
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let _published = crate::crash_report::LeanSource::register(
+                &self.database.crash,
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
                 std::ptr::addr_of!(self.code_len),
@@ -7925,7 +7971,7 @@ impl State {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if control_on && crate::live_dispatch::interp_bp_pending() {
+            if control_on && crate::live_dispatch::interp_bp_pending(&mut self.database) {
                 crate::live_dispatch::interp_take_bps(self, data);
             }
             let op_pos_rt = self.code_pos;
@@ -7940,7 +7986,7 @@ impl State {
             // write per op, alongside the existing crash-report context publish below).
             self.database.alloc_pc = op_pos_rt;
             #[cfg(feature = "op-census")]
-            crate::store_census::at_pc(op_pos_rt);
+            self.database.tap.at_pc(op_pos_rt);
             // @PLN16 debugger — at a registered breakpoint, capture the frame (and
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
@@ -7957,7 +8003,7 @@ impl State {
             let op = self.code::<u8>();
             // Publish the current bytecode position + op byte so that a
             // subsequent SIGSEGV/SIGABRT prints the crash location.
-            // Cheap: one thread-local store per op.
+            // Cheap: one store into this interpreter's crash slot per op.
             {
                 // The full opcode: a two-byte one's second byte is next in the stream, and is
                 // read for real below.
@@ -7967,7 +8013,7 @@ impl State {
                     u16::from(op)
                 };
                 let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
+                self.database.crash.set_dispatch(op_pos_rt, opcode, fn_d_nr);
             }
             #[cfg(debug_assertions)]
             {
@@ -7992,7 +8038,7 @@ impl State {
                 let end = (origin + self.stack_high as usize + MARGIN)
                     .min(self.database.store(&self.stack_cur).raw_bytes().len());
                 let bytes = self.database.store(&self.stack_cur).raw_bytes();
-                crate::stack_census::before_op(bytes, origin, end);
+                crate::stack_census::before_op(&mut self.stack_census, bytes, origin, end);
                 (origin, end)
             } else {
                 (0, 0)
@@ -8008,17 +8054,23 @@ impl State {
             };
             if census_on {
                 let bytes = self.database.store(&self.stack_cur).raw_bytes();
-                crate::stack_census::after_op(ran_opcode, bytes, census_span.0, census_span.1);
-                if crate::stack_census::budget_spent() {
+                crate::stack_census::after_op(
+                    &mut self.stack_census,
+                    ran_opcode,
+                    bytes,
+                    census_span.0,
+                    census_span.1,
+                );
+                if crate::stack_census::budget_spent(&self.stack_census) {
                     // The budget is a corpus-sweep instrument: report on what ran and
                     // leave, so a program with tens of millions of ops still contributes
                     // its routes instead of being killed by a timeout with nothing said.
-                    crate::stack_census::report(Some(data));
+                    crate::stack_census::report(&self.stack_census, Some(data));
                     crate::loft_eprintln!("stack census: op budget spent — stopping here");
                     std::process::exit(0);
                 }
             }
-            if verify_on && crate::stack_verify::any_relocation() {
+            if verify_on && self.database.any_relocation() {
                 self.mark_stale_handles();
             }
             if verify_on && self.stack_pos < verify_sp {
@@ -8708,7 +8760,7 @@ impl State {
     /// `args` (its visible parameters, in order) and `closure`, through [`Self::reenter_ret`]
     /// — above every live frame, restoring the PC and the stack after — and answers the
     /// result in a [`LibArg`].  The gate admits only the signatures marshalled here
-    /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
+    /// (`fnref::upcall_carries`): scalar, text and reference parameters, and a
     /// scalar or void return, so the callee has no hidden buffer.
     ///
     /// [`LibArg`]: crate::host_abi::LibArg
@@ -9350,13 +9402,17 @@ impl State {
     ) -> State {
         let mut db = worker.stores;
         #[cfg(feature = "op-census")]
-        crate::store_census::enter_worker();
+        crate::store_census::enter_worker(&db.tap);
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
-        crate::store_census::set_stack_store(stack_cur.store_nr);
+        #[cfg(feature = "op-census")]
+        db.tap.set_stack_store(stack_cur.store_nr);
         // `LOFT_ALLOC_TRACE` — the worker's value stack is the interpreter's own (`State::new`).
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).trace_name()));
+        crate::store_census::alloc_event(
+            None,
+            format_args!("S {}", db.store(&stack_cur).trace_name()),
+        );
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
@@ -9370,6 +9426,11 @@ impl State {
             call_back_text: String::new(),
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
+            twin_depth: 0,
+            stack_census: Box::default(),
+            op_census: Box::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            reload: None,
             bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,

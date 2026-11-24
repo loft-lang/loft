@@ -99,6 +99,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  el_ex_pattern::name_fields(e, d, fields);
   vt = el_vars::tp(vars, v);
   // (A LINK to a record local — `pd = &d`, `d: S?` — is written through: the literal is built
   // in a fresh buffer of its own and the link set to it, `pd = {#Object __ref_p2_N …}`, loft#1372.)

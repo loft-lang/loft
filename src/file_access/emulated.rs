@@ -145,8 +145,8 @@ pub(super) fn stream_base(path: &PathText, real: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        create_dir_all, exists, read_dir, read_to_string, remove_dir_all, remove_file,
-        with_program_host, write,
+        create_dir_all, exists, on_emulated_windows, read_dir, read_to_string, remove_dir_all,
+        remove_file, write,
     };
     use super::*;
 
@@ -169,102 +169,123 @@ mod tests {
 
     #[test]
     fn a_reserved_character_is_refused() {
-        with_program_host(Flavor::Windows, || {
-            let d = scratch("chars");
-            for bad in ["q?.txt", "a<b", "p|q", "x*", "say\"hi\""] {
-                let e = write(d.join(bad), "x").unwrap_err();
-                assert_eq!(e.kind(), io::ErrorKind::InvalidFilename, "{bad}: {e}");
-            }
-            assert_eq!(names(&d), Vec::<String>::new());
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::a_reserved_character_is_refused"),
+            || {
+                let d = scratch("chars");
+                for bad in ["q?.txt", "a<b", "p|q", "x*", "say\"hi\""] {
+                    let e = write(d.join(bad), "x").unwrap_err();
+                    assert_eq!(e.kind(), io::ErrorKind::InvalidFilename, "{bad}: {e}");
+                }
+                assert_eq!(names(&d), Vec::<String>::new());
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     #[test]
     fn a_trailing_dot_or_space_is_stripped() {
-        with_program_host(Flavor::Windows, || {
-            let d = scratch("trail");
-            write(d.join("trail."), "t").unwrap();
-            write(d.join("space "), "s").unwrap();
-            assert_eq!(names(&d), ["space", "trail"]);
-            assert_eq!(read_to_string(d.join("trail")).unwrap(), "t");
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::a_trailing_dot_or_space_is_stripped"),
+            || {
+                let d = scratch("trail");
+                write(d.join("trail."), "t").unwrap();
+                write(d.join("space "), "s").unwrap();
+                assert_eq!(names(&d), ["space", "trail"]);
+                assert_eq!(read_to_string(d.join("trail")).unwrap(), "t");
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     #[test]
     fn a_device_name_is_refused() {
-        with_program_host(Flavor::Windows, || {
-            if !Flavor::emulating() {
-                return; // real Windows opens the device: measured by W2, not here
-            }
-            let d = scratch("device");
-            for bad in ["aux.txt", "CON", "nul.tar.gz", "com1", "LPT9.log", "prn .x"] {
-                assert!(write(d.join(bad), "x").is_err(), "{bad}");
-            }
-            for good in ["com0", "console.txt", "auxiliary"] {
-                write(d.join(good), "x").unwrap();
-            }
-            assert_eq!(names(&d), ["auxiliary", "com0", "console.txt"]);
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::a_device_name_is_refused"),
+            || {
+                if !Flavor::emulating() {
+                    return; // real Windows opens the device: measured by W2, not here
+                }
+                let d = scratch("device");
+                for bad in ["aux.txt", "CON", "nul.tar.gz", "com1", "LPT9.log", "prn .x"] {
+                    assert!(write(d.join(bad), "x").is_err(), "{bad}");
+                }
+                for good in ["com0", "console.txt", "auxiliary"] {
+                    write(d.join(good), "x").unwrap();
+                }
+                assert_eq!(names(&d), ["auxiliary", "com0", "console.txt"]);
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     #[test]
     fn a_colon_writes_a_silent_stream() {
-        with_program_host(Flavor::Windows, || {
-            let d = scratch("stream");
-            // Spelled inside the path, as a program writes it: a LEADING `a:` is a drive, to
-            // `join` here as to `std` on Windows.
-            let inside =
-                |rel: &str| PathText::parse(&format!("{}/{rel}", d.native()), Flavor::Windows);
-            write(inside("a:b.txt"), "data").unwrap();
-            assert_eq!(names(&d), ["a"], "the stream is not listed");
-            assert_eq!(
-                read_to_string(d.join("a")).unwrap(),
-                "",
-                "the file is empty"
-            );
-            assert_eq!(read_to_string(inside("a:b.txt")).unwrap(), "data");
-            assert!(
-                write(inside("x:y/z"), "x").is_err(),
-                "a stream is a last name"
-            );
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::a_colon_writes_a_silent_stream"),
+            || {
+                let d = scratch("stream");
+                // Spelled inside the path, as a program writes it: a LEADING `a:` is a drive, to
+                // `join` here as to `std` on Windows.
+                let inside =
+                    |rel: &str| PathText::parse(&format!("{}/{rel}", d.native()), Flavor::Windows);
+                write(inside("a:b.txt"), "data").unwrap();
+                assert_eq!(names(&d), ["a"], "the stream is not listed");
+                assert_eq!(
+                    read_to_string(d.join("a")).unwrap(),
+                    "",
+                    "the file is empty"
+                );
+                assert_eq!(read_to_string(inside("a:b.txt")).unwrap(), "data");
+                assert!(
+                    write(inside("x:y/z"), "x").is_err(),
+                    "a stream is a last name"
+                );
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     #[test]
     fn a_name_matches_ignoring_case() {
-        with_program_host(Flavor::Windows, || {
-            let d = scratch("case");
-            write(d.join("b.txt"), "lower").unwrap();
-            assert!(exists(d.join("B.TXT")));
-            write(d.join("B.txt"), "upper").unwrap();
-            assert_eq!(names(&d), ["b.txt"], "one file");
-            assert_eq!(read_to_string(d.join("b.txt")).unwrap(), "upper");
-            create_dir_all(d.join("Sub")).unwrap();
-            write(d.join("SUB/x.txt"), "x").unwrap();
-            assert_eq!(names(&d.join("Sub")), ["x.txt"], "a directory matches too");
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::a_name_matches_ignoring_case"),
+            || {
+                let d = scratch("case");
+                write(d.join("b.txt"), "lower").unwrap();
+                assert!(exists(d.join("B.TXT")));
+                write(d.join("B.txt"), "upper").unwrap();
+                assert_eq!(names(&d), ["b.txt"], "one file");
+                assert_eq!(read_to_string(d.join("b.txt")).unwrap(), "upper");
+                create_dir_all(d.join("Sub")).unwrap();
+                write(d.join("SUB/x.txt"), "x").unwrap();
+                assert_eq!(names(&d.join("Sub")), ["x.txt"], "a directory matches too");
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     /// W1.4 — a modification time read under the emulated host has NTFS's 100 ns resolution.
     #[test]
     fn a_modification_time_has_windows_resolution() {
-        with_program_host(Flavor::Windows, || {
-            let d = scratch("mtime");
-            let f = d.join("t.txt");
-            write(&f, "x").unwrap();
-            let at = super::super::modified(&f).unwrap();
-            let nanos = at
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos();
-            assert_eq!(nanos % 100, 0, "{nanos}");
-            remove_dir_all(&d).unwrap();
-        });
+        let _ = on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::a_modification_time_has_windows_resolution"
+            ),
+            || {
+                let d = scratch("mtime");
+                let f = d.join("t.txt");
+                write(&f, "x").unwrap();
+                let at = super::super::modified(&f).unwrap();
+                let nanos = at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .subsec_nanos();
+                assert_eq!(nanos % 100, 0, "{nanos}");
+                remove_dir_all(&d).unwrap();
+            },
+        );
     }
 
     /// The control: without the switch a Unix host keeps every one of those names apart.

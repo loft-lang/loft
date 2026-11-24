@@ -35,7 +35,6 @@
 //! mechanism is one length load and a not-taken branch per store write, and a runtime built
 //! without the `stack-verify` feature (the installed one) carries not even that.
 
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
@@ -149,18 +148,7 @@ pub fn kind_name(kind: u16) -> &'static str {
 }
 
 /// A record that moved: `(store, the number it had, the number it has)`.
-type Relocation = (u16, u32, u32);
-
-thread_local! {
-    /// Records that relocated during the current operator.
-    ///
-    /// A list rather than an immediate scan, because [`Store::resize`](crate::store::Store)
-    /// has the two record numbers and no view of the interpreter's frame: it is a `Store`
-    /// method, and the frame lives in another store entirely.  The dispatch loop drains this
-    /// after each operator, which is also the first moment the mutation that caused the move
-    /// has finished updating the containers that legitimately track it.
-    static MOVED: RefCell<Vec<Relocation>> = const { RefCell::new(Vec::new()) };
-}
+pub type Relocation = (u16, u32, u32);
 
 /// Has a stack shadow actually been armed on some store?
 ///
@@ -181,30 +169,26 @@ pub fn armed() -> bool {
     ARMED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Record that `(store, old)` became `(store, new)`.
-pub fn note_relocation(store: u16, old: u32, new: u32) {
+/// Record that record `old` of a store became `new`, in that store's own list (`relocated`,
+/// `Store::relocated`).
+///
+/// A list rather than an immediate scan, because [`Store::resize`](crate::store::Store) has the
+/// two record numbers and no view of the interpreter's frame: it is a `Store` method, and the
+/// frame lives in another store entirely.  The dispatch loop drains the lists of its stores
+/// after each operator (`Stores::take_relocations`), which is also the first moment the
+/// mutation that caused the move has finished updating the containers that legitimately track
+/// it.
+pub fn note_relocation(relocated: &mut Vec<(u32, u32)>, old: u32, new: u32) {
     if !armed() {
         return;
     }
-    MOVED.with_borrow_mut(|m| m.push((store, old, new)));
+    relocated.push((old, new));
     with_verify(|v| v.moves += 1);
 }
 
 /// Note that `n` frame slots were marked stale by the scan.
 pub fn note_marked(n: u64) {
     with_verify(|v| v.marked += n);
-}
-
-/// Take the relocations recorded since the last drain.
-#[must_use]
-pub fn take_relocations() -> Vec<Relocation> {
-    MOVED.with_borrow_mut(std::mem::take)
-}
-
-/// Is anything waiting?  Cheaper than draining, and the answer is `false` on almost every op.
-#[must_use]
-pub fn any_relocation() -> bool {
-    MOVED.with_borrow(|m| !m.is_empty())
 }
 
 /// Report a read through a handle whose record has moved.

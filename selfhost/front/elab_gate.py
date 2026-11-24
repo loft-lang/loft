@@ -101,6 +101,9 @@ HANDED = re.compile(r"^state \d \d+:\d+ (stmt|arg)( |$)")
 # `var` lines say which STATEMENT changed a function's variable table (port-debug-output.md
 # § 1): they locate a difference `fn-end` reports and are not part of the verdict.
 VAR = re.compile(r"^state \d \d+:\d+ var ")
+# path -> [(function, subject, item, side)] of the not-yet-agreeing definitions of a refused
+# program (`STATE_PENDING`, unscored).
+STATE_PENDING = {}
 ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 
 # The `route` lines of both sides and the port's `refuse` lines by program
@@ -119,6 +122,7 @@ PORT_STATE_KINDS = set()
 REFUSED_FN_LAYERS = {}
 REFUSED_LAYERS = {}  # refused program -> (the port reported a layer, Rust did)
 AGREE_SILENT = set()  # agreeing programs one side reported no contract and no state for
+ONE_SIDED = {}  # refused program -> (definitions only Rust registers, only the port does)
 CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
 
 
@@ -463,6 +467,15 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         return "differ", f"elab exited {m.returncode}: {m.stderr.strip()[-300:]}", {}
     want = o.stdout.splitlines()
     fns, w, mn = by_function(want, mine, refused_in, bool(refused))
+    # The definitions only one side registers (`ONE_SIDED`): a refusal must not drop a definition
+    # Rust registers — one that does shifts the number of every definition after it, so they all
+    # differ in numbers only.  Counted per program, the schema and the head left out.
+    if refused:
+        only_r = sorted(n for n in w if n not in mn and n not in ("(head)", "(schema)"))
+        only_m = sorted(n for n in mn if n not in w and n not in ("(head)", "(schema)"))
+        if only_r or only_m:
+            with STATE_LOCK:
+                ONE_SIDED[path] = (only_r, only_m)
     # A `beside` function's shape, for the worklist: whether it differs in numbers only, and
     # whether the port's section is (nearly) empty — a function a refusal elsewhere emptied.
     shapes = {}
@@ -525,6 +538,21 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                 if cd or sd or rd:
                     layers[k] = (cd, sd, rd)
             REFUSED_FN_LAYERS[path] = layers
+        # UNSCORED: the state of the definitions whose IR does not agree yet (`beside`).  A rule
+        # that over-marks shows here a cycle before the function's IR agrees and the row is
+        # scored; it moves no verdict.
+        pending = {k for k, (v, _) in fns.items() if v == "beside"}
+        if pending:
+            ps_r, ps_m = state_table(o.stderr), state_table(m.stderr)
+            rows = []
+            for key in set(ps_r) | set(ps_m):
+                if key[0] not in pending:
+                    continue
+                a, b2 = ps_r.get(key, set()), ps_m.get(key, set())
+                for item in sorted(a ^ b2):
+                    rows.append((key[0], key[1], item, "rust" if item in a else "loft"))
+            with STATE_LOCK:
+                STATE_PENDING[path] = rows
         return "refused", refused, fns
     if mine == want:
         # The program's functions, and its records and field-carrying variants (their layout and
@@ -770,6 +798,18 @@ def main():
         print(f"layers of refused programs: compared in {len(REFUSED_LAYERS) - silent} of "
               f"{len(REFUSED_LAYERS)} with agreeing definitions"
               + (f"; the port reports none for {silent}" if silent else ""))
+    if ONE_SIDED:
+        # A refusal that drops a definition Rust registers shifts every later definition's
+        # number (`beside numbers`): the rule is register-then-refuse.  A rise here is a new one.
+        nr = sum(len(a) for a, _ in ONE_SIDED.values()); np_ = sum(len(b) for _, b in ONE_SIDED.values())
+        print(f"definitions one side registers: {nr} Rust only, {np_} port only, in {len(ONE_SIDED)} refused programs")
+        if os.environ.get("LOFT_ELAB_ONE_SIDED_FILE"):
+            with open(os.environ["LOFT_ELAB_ONE_SIDED_FILE"], "w", encoding="utf-8") as fh:
+                for f, (a, b) in sorted(ONE_SIDED.items()):
+                    for n in a:
+                        fh.write(f"{baseline.name_of(f, root, suite)}\t{n}\trust\n")
+                    for n in b:
+                        fh.write(f"{baseline.name_of(f, root, suite)}\t{n}\tport\n")
     if fv["unaligned"]:
         # Which layers and tiers hold the refused programs' unaligned definitions back.
         print(f"definitions of refused programs unaligned: {fv['unaligned']} (their IR agrees; "
@@ -911,6 +951,54 @@ def main():
         for h in ranked[:12]:
             c = taken[h]
             print(f"    {h:30} {c['programs']:5} / {c['carried']:5} / {c['refusing']:5} / {c['missing']:5}")
+        # The unscored state of not-yet-agreeing definitions (`STATE_PENDING`): one line, and each
+        # row to `LOFT_ELAB_STATE_PENDING_FILE`.
+        if STATE_PENDING:
+            n_rows = sum(len(v) for v in STATE_PENDING.values())
+            n_progs = sum(1 for v in STATE_PENDING.values() if v)
+            by = collections.Counter(item.split("=")[0] + " " + side for rows_ in STATE_PENDING.values() for _, _, item, side in rows_)
+            print(f"state of not-yet-agreeing definitions (unscored): {n_rows} row(s) in {n_progs} program(s); "
+                  + ", ".join(f"{k} {n}" for k, n in by.most_common(8)))
+            if os.environ.get("LOFT_ELAB_STATE_PENDING_FILE"):
+                with open(os.environ["LOFT_ELAB_STATE_PENDING_FILE"], "w", encoding="utf-8") as fh:
+                    for path_, rows_ in sorted(STATE_PENDING.items()):
+                        for fn_, subj, item, side in rows_:
+                            fh.write(f"{path_}\t{fn_}\t{subj}\t{item}\t{side}\n")
+        # The route GATE: for the return-delivery classifiers Rust logs as `handler=verdict`, the
+        # verdict the port reports at the same site — not only whether it took the handler.  A site
+        # is a pass and a line (the n-th verdict of a handler on that line pairs with the n-th);
+        # `agree` = the same verdict, `kind` = the same variant with other fields, `differ`,
+        # `missing` (the port names no verdict there) and `port only`.
+        VALUE_HANDLERS = ("classify_ret_promotion", "classify_reference_delivery", "materialize_return_into")
+        vals = {h: collections.Counter() for h in VALUE_HANDLERS}
+        rows = []
+        kind_of = lambda v: re.split(r"[ {(]", v, maxsplit=1)[0]
+        for path, rs in ROUTES.items():
+            for h in VALUE_HANDLERS:
+                at = {"rust": collections.defaultdict(list), "port": collections.defaultdict(list)}
+                for side, ps, ln, col, text in rs:
+                    if side in at and text.startswith(h + "="):
+                        at[side][(ps, ln)].append((col, text[len(h) + 1:]))
+                for site in sorted(set(at["rust"]) | set(at["port"])):
+                    ra, pa = at["rust"].get(site, []), at["port"].get(site, [])
+                    for i in range(max(len(ra), len(pa))):
+                        rv = ra[i][1] if i < len(ra) else None
+                        pv = pa[i][1] if i < len(pa) else None
+                        verdict = ("agree" if rv == pv else "port only" if rv is None else "missing" if pv is None
+                                   else "kind" if kind_of(rv) == kind_of(pv) else "differ")
+                        vals[h][verdict] += 1
+                        if verdict != "agree":
+                            rows.append((path, h, site[0], site[1], rv or "", pv or "", verdict))
+        for h in VALUE_HANDLERS:
+            c = vals[h]
+            sites = sum(c[k] for k in ("agree", "kind", "differ", "missing"))
+            print(f"route values: {h} {c['agree']} of {sites} sites agree; {c['kind']} same kind, "
+                  f"{c['differ']} differ, {c['missing']} missing, {c['port only']} port only")
+        # `LOFT_ELAB_ROUTE_VALUES=<file>`: each site that does not agree, with both verdicts.
+        if os.environ.get("LOFT_ELAB_ROUTE_VALUES"):
+            with open(os.environ["LOFT_ELAB_ROUTE_VALUES"], "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write("\t".join(str(x) for x in r) + "\n")
         # `LOFT_ELAB_ROUTE_COVERAGE=<file>`: the whole table, one row per handler.
         if os.environ.get("LOFT_ELAB_ROUTE_COVERAGE"):
             cols = ["programs", "carried", "refusing", "missing", "sites", "both", "refused", "neither", "port only"]
