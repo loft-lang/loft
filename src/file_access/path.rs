@@ -31,22 +31,37 @@ pub enum Flavor {
     Windows,
 }
 
-thread_local! {
-    /// A test's [`with_program_host`]; `None` defers to the switch.
-    static PROGRAM_HOST: std::cell::Cell<Option<Flavor>> = const { std::cell::Cell::new(None) };
-}
-
-/// Run `body` with this thread's programs on `flavor`, as `LOFT_POISON_HOST` would put them —
-/// how a test asks the emulated host on any host without a process of its own.
-pub fn with_program_host<T>(flavor: Flavor, body: impl FnOnce() -> T) -> T {
-    struct Restore(Option<Flavor>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            PROGRAM_HOST.with(|h| h.set(self.0));
-        }
+/// Run `body` with this process's programs on the Windows host, as `LOFT_POISON_HOST=windows`
+/// puts them — how a test asks the emulated host on any host.  The host a program's paths are
+/// read under is the PROCESS's, never a thread's (`@FR-C-Boundary`), so a test in a process
+/// that is not already on it re-runs itself in one: this test binary on `test` alone (its
+/// `module_path!()`-qualified name), with the switch set.  Answers whether `body` ran HERE; a
+/// test that also checks its own host returns when it did.
+///
+/// # Panics
+/// When the re-run cannot start or does not pass.
+#[cfg(test)]
+pub(crate) fn on_emulated_windows(test: &str, body: impl FnOnce()) -> bool {
+    use crate::platform::process::{Program, Spawn};
+    if Flavor::program_host() == Flavor::Windows {
+        body();
+        return true;
     }
-    let _restore = Restore(PROGRAM_HOST.with(|h| h.replace(Some(flavor))));
-    body()
+    // libtest names a test by its path inside the crate.
+    let name = test.split_once("::").map_or(test, |(_, rest)| rest);
+    let exe = std::env::current_exe().expect("the test binary");
+    let ran = Spawn::new(Program::os(&exe))
+        .args([name, "--exact", "--test-threads=1"])
+        .env("LOFT_POISON_HOST", "windows")
+        .run(b"")
+        .expect("the test binary runs");
+    let stdout = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        ran.status.success() && stdout.contains("1 passed"),
+        "{name} under the emulated Windows host:\n{stdout}\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    false
 }
 
 /// The drive the emulated Windows host mounts the real file system on: `/a/b` is `L:\a\b`.
@@ -66,10 +81,7 @@ impl Flavor {
     /// through `file_access`, and a Windows spelling there names nothing on Linux.
     #[must_use]
     pub fn program_host() -> Flavor {
-        PROGRAM_HOST
-            .with(std::cell::Cell::get)
-            .or_else(crate::keys::poison_host)
-            .unwrap_or(Flavor::HOST)
+        crate::keys::poison_host().unwrap_or(Flavor::HOST)
     }
 
     /// Does a program run on an emulated platform — Windows' rules over a Unix file system?

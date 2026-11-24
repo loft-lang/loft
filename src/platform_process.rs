@@ -824,19 +824,31 @@ mod exit_code_tests {
 #[cfg(all(test, unix))]
 mod path_tests {
     use super::{Program, Spawn, host_spelling};
-    use crate::file_access::{self as fa, Flavor, PathText, with_program_host};
+    use crate::file_access::{self as fa, Flavor, PathText, on_emulated_windows};
 
     /// W1.1's red line: under the emulated Windows host, a `/`-spelled program path, working
     /// directory and path argument each reach their file — and a drive-spelled one too —
     /// while a text argument holding `a/b` arrives as it is written.
     #[test]
     fn a_program_path_reaches_its_file_under_the_emulated_host() {
+        let _ = on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::a_program_path_reaches_its_file_under_the_emulated_host"
+            ),
+            reach_a_program_path,
+        );
+    }
+
+    /// The body of [`a_program_path_reaches_its_file_under_the_emulated_host`], under the
+    /// emulated host.
+    fn reach_a_program_path() {
         let dir = std::env::temp_dir().join(format!("loft_spawn_paths_{}", std::process::id()));
         let _ = fa::remove_dir_all(&dir);
         fa::create_dir_all(&dir).expect("scratch");
         fa::write(dir.join("in.txt"), "found").expect("write");
         let real = dir.to_str().expect("a text temp dir").to_string();
-        let ran = with_program_host(Flavor::Windows, || {
+        let ran = {
             let sh = PathText::program("/bin/sh").expect("program path");
             let cwd = PathText::program(&real).expect("working directory");
             let arg = PathText::program(&format!("L:{real}/in.txt")).expect("argument");
@@ -852,7 +864,7 @@ mod path_tests {
                 .cwd(&cwd)
                 .run(b"")
                 .expect("run")
-        });
+        };
         let _ = fa::remove_dir_all(&dir);
         assert_eq!(String::from_utf8_lossy(&ran.stdout), "foundfound|a/b");
     }

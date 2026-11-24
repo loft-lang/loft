@@ -22,7 +22,9 @@
 mod emulated;
 pub mod path;
 
-pub use path::{EMULATED_DRIVE, Flavor, PathText, with_program_host};
+#[cfg(test)]
+pub(crate) use path::on_emulated_windows;
+pub use path::{EMULATED_DRIVE, Flavor, PathText};
 /// The handle and the facts this module's operations answer (`open`, `metadata`), named
 /// here so a caller that only passes them on need not reach into `std::fs` (@PLN184 B2).
 pub use std::fs::{File, Metadata};
@@ -1196,10 +1198,15 @@ mod tests {
     #[test]
     fn the_program_host_follows_the_switch() {
         let parts = |f: Flavor| PathText::parse(r"a\b", f).parts().len();
-        assert_eq!(
-            with_program_host(Flavor::Windows, || parts(Flavor::program_host())),
-            2
-        );
+        if on_emulated_windows(
+            concat!(module_path!(), "::the_program_host_follows_the_switch"),
+            || {
+                assert_eq!(parts(Flavor::program_host()), 2);
+                assert_eq!(Flavor::emulating(), Flavor::HOST == Flavor::Unix);
+            },
+        ) {
+            return;
+        }
         assert_eq!(
             parts(Flavor::program_host()),
             if Flavor::HOST == Flavor::Windows {
@@ -1207,10 +1214,6 @@ mod tests {
             } else {
                 1
             }
-        );
-        assert_eq!(
-            with_program_host(Flavor::Windows, Flavor::emulating),
-            Flavor::HOST == Flavor::Unix
         );
     }
 
@@ -1224,38 +1227,53 @@ mod tests {
             (seed >> 33) % n
         };
         let names = ["a", "B.txt", "src", "Ünï", "x y", ".hidden", "d.e.f", "tmp"];
-        with_program_host(Flavor::Windows, || {
-            for _ in 0..200 {
-                let rooted = next(2) == 0;
-                let depth = next(5);
-                let mut text = String::from(if rooted { "/" } else { "" });
-                for i in 0..depth {
-                    if i > 0 {
-                        text.push('/');
+        let _ = on_emulated_windows(
+            concat!(module_path!(), "::the_emulated_spelling_round_trips"),
+            || {
+                for _ in 0..200 {
+                    let rooted = next(2) == 0;
+                    let depth = next(5);
+                    let mut text = String::from(if rooted { "/" } else { "" });
+                    for i in 0..depth {
+                        if i > 0 {
+                            text.push('/');
+                        }
+                        text.push_str(names[usize::try_from(next(names.len() as u64)).unwrap()]);
                     }
-                    text.push_str(names[usize::try_from(next(names.len() as u64)).unwrap()]);
+                    let real = PathText::host(&text);
+                    let program = real.for_program();
+                    assert_eq!(program.flavor(), Flavor::program_host(), "{text}");
+                    // The empty text names nothing on either side (`os` refuses both).
+                    assert_eq!(program.os().ok(), real.os().ok(), "{text}");
                 }
-                let real = PathText::host(&text);
-                let program = real.for_program();
-                assert_eq!(program.flavor(), Flavor::program_host(), "{text}");
-                // The empty text names nothing on either side (`os` refuses both).
-                assert_eq!(program.os().ok(), real.os().ok(), "{text}");
-            }
-            if Flavor::emulating() {
-                assert_eq!(given("/tmp/x/"), "L:/tmp/x");
-                assert_eq!(PathText::host("/a/b").for_program().native(), r"L:\a\b");
-                let other = PathText::parse(r"C:\a", Flavor::Windows);
-                assert_eq!(read(&other).unwrap_err().kind(), io::ErrorKind::NotFound);
-            }
-        });
+                if Flavor::emulating() {
+                    assert_eq!(given("/tmp/x/"), "L:/tmp/x");
+                    assert_eq!(PathText::host("/a/b").for_program().native(), r"L:\a\b");
+                    let other = PathText::parse(r"C:\a", Flavor::Windows);
+                    assert_eq!(read(&other).unwrap_err().kind(), io::ErrorKind::NotFound);
+                }
+            },
+        );
     }
 
     /// @PLN184 W0.2 — the emulated host's operations, verbatim twin included: a listing and a
     /// resolution answer in the program's spelling, and reach the real files.
     #[test]
     fn operations_reach_the_disk_through_the_emulated_spelling() {
+        let _ = on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::operations_reach_the_disk_through_the_emulated_spelling"
+            ),
+            reach_the_disk_through_the_emulated_spelling,
+        );
+    }
+
+    /// The body of [`operations_reach_the_disk_through_the_emulated_spelling`], under the
+    /// emulated host.
+    fn reach_the_disk_through_the_emulated_spelling() {
         let dir = scratch("emul");
-        with_program_host(Flavor::Windows, || {
+        {
             let d = dir.for_program();
             let f = d.join("a.txt");
             write(&f, "x").unwrap();
@@ -1270,7 +1288,7 @@ mod tests {
                 let verbatim = PathText::parse(&format!(r"\\?\{}", f.native()), Flavor::Windows);
                 assert!(same_file(&verbatim, &f), "{}", verbatim.native());
             }
-        });
+        }
         assert_eq!(read_to_string(dir.join("a.txt")).unwrap(), "x");
         remove_dir_all(&dir).unwrap();
     }
@@ -1328,6 +1346,12 @@ mod tests {
         if Flavor::HOST == Flavor::Windows {
             return; // the plain route is a Unix host's
         }
+        if on_emulated_windows(
+            concat!(module_path!(), "::a_plain_host_path_is_its_own_rendering"),
+            || assert!(plain_host(Path::new("/a")).is_none()),
+        ) {
+            return;
+        }
         for plain in ["/a/b", "a/b.loft", "/", "x"] {
             assert!(plain_host(Path::new(plain)).is_some(), "{plain}");
             assert_eq!(
@@ -1338,10 +1362,6 @@ mod tests {
         for parsed in ["", "a/", "a//b", "./a", "a/../b", "a/./b", ".."] {
             assert!(plain_host(Path::new(parsed)).is_none(), "{parsed}");
         }
-        assert!(with_program_host(Flavor::Windows, || plain_host(
-            Path::new("/a")
-        )
-        .is_none()));
         // The name operations answer on the plain route exactly what the parsed route does.
         for t in [
             "/a/b.tar.gz",

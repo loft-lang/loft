@@ -3128,7 +3128,7 @@ pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
 
 #[cfg(all(test, unix))]
 mod handover_tests {
-    use crate::file_access::{Flavor, with_program_host};
+    use crate::file_access::on_emulated_windows;
 
     /// @PLN184 W1.3 — a second bind to a port that is listening: shared on Unix (the hot
     /// swap's overlap), refused on Windows — and under the emulated Windows host.
@@ -3136,21 +3136,31 @@ mod handover_tests {
     fn a_second_bind_is_shared_on_unix_and_refused_on_windows() {
         let first = super::bind_tcp_handover(0).expect("first bind");
         let port = first.local_addr().unwrap().port();
+        let udp = super::bind_udp_handover(0).expect("first udp bind");
+        let uport = udp.local_addr().unwrap().port();
+        if on_emulated_windows(
+            concat!(
+                module_path!(),
+                "::a_second_bind_is_shared_on_unix_and_refused_on_windows"
+            ),
+            || {
+                assert!(
+                    super::bind_tcp_handover(port).is_none(),
+                    "the emulated Windows host refuses the second bind"
+                );
+                assert!(super::bind_udp_handover(uport).is_err());
+            },
+        ) {
+            return;
+        }
         assert!(
             super::bind_tcp_handover(port).is_some(),
             "Unix shares the port"
         );
         assert!(
-            with_program_host(Flavor::Windows, || super::bind_tcp_handover(port)).is_none(),
-            "the emulated Windows host refuses the second bind"
-        );
-        let udp = super::bind_udp_handover(0).expect("first udp bind");
-        let uport = udp.local_addr().unwrap().port();
-        assert!(
             super::bind_udp_handover(uport).is_ok(),
             "Unix shares the UDP port"
         );
-        assert!(with_program_host(Flavor::Windows, || super::bind_udp_handover(uport)).is_err());
     }
 }
 
