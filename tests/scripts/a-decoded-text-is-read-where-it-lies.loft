@@ -15,8 +15,6 @@
 // decoded value returned) and `mixed_alone` (a span variant minted alone) decline.
 //
 // @falsify-tier: ship
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 enum Val {
   VNull,

@@ -12,8 +12,6 @@
 // a 10 x 3 canvas of zeros, hand-computed.  `LOFT_NO_GUARDED_FILL=1`, `LOFT_NO_FILL_HOIST=1`,
 // `LOFT_HOIST_VERIFY=1` and `LOFT_POISON_CLAIM=1` answer the same.
 //
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 // The span floor (eight) moves time only; struck, every cell answers the same.
 
 struct Cv { w: integer, h: integer, data: vector<integer> }

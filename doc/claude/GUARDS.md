@@ -277,9 +277,9 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   that is gone (the generated compiled stdlib, the rustc writer); all three readers leave those
   hunks out (`falsify.sh --patch`, `receipts_ci.py`,
   `doc_hygiene::every_patch_receipt_still_applies`).  A receipt whose EVERY hunk is retired would
-  apply as nothing and score nothing, so it is not kept: the patch is deleted and its guard's
-  `@falsified-by:` line says `none` and why, beside the `@falsified-at:` control that stays as
-  the record.  The guard itself still runs on the backends it names.
+  apply as nothing and score nothing, so it is not kept: the patch and its guard's
+  `@falsified-by:` block are deleted, and the `@falsified-at:` control stays as the record.  The
+  guard itself still runs on the backends it names.
 - **Its channels must agree with the ref control's.**  A reverted commit that fixed two things
   reintroduces two, and a receipt moving the WRONG channel looks like proof.  So each patch
   receipt is re-scored, and recorded only when its channel signature matches; otherwise the

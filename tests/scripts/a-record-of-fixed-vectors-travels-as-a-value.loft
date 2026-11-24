@@ -15,8 +15,6 @@
 // (handed to `show`, which is no twin).
 //
 // @falsify-tier: ship
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 struct M2 { m: vector<float> }
 struct Pair { a: vector<float>, b: vector<float> }

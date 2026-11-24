@@ -6,8 +6,6 @@
 //
 // Expected values are hand-computed.  P is 24 bytes (three integers); N carries a narrow field.
 //
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 struct P { a: integer, b: integer, c: integer }
 struct N { x: integer, k: u8, y: integer }
 

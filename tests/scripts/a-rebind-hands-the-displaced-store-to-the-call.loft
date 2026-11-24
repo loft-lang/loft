@@ -14,8 +14,6 @@
 // values hand-computed.  `tests/rebind_buffer.rs` pins which rebinds take the form and runs
 // every cell under the native leak check.
 //
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 struct M { m: vector<float> }
 

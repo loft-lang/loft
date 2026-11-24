@@ -9,8 +9,6 @@
 // v1's xs, v3's big, v4's q, v5's w, v6's ws, v10's c, v12's e and main's ys; none for v7 (handed to a
 // call), v8 (returned), v9 (iterated) or v11's parameter, which carries the caller's elements.
 //
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 fn v1(n: integer) -> float {
   xs: vector<float> = [];

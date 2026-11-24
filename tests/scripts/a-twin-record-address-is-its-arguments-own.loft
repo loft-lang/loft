@@ -17,8 +17,6 @@
 // `LOFT_NO_TWIN_RECORD`, `LOFT_NO_PLAIN_CHAIN_PTR` and `LOFT_NO_PARAM_TWIN_PTR`, and under
 // `LOFT_HOIST_VERIFY=1`.
 //
-// @falsified-by: none — the defect this receipt's patch reintroduced lived only in the rustc
-//   writer, which is retired (`@C170`); the @falsified-at control above stays as the record.
 
 struct Tm { spent: integer, total: integer }
 
