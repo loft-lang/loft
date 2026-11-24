@@ -3286,11 +3286,30 @@ pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
 pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true) -> Ex {
   vt = el_types::without_deps(el_types::base(like));
   if e.first_pass {
+    // (`parse_vector` with the element known mints the literal's `_vec_N` and `elm` on this
+    // pass too, the temp typed by the vector's content.)
+    fv = el_vars::create_unique(vars, "vec", vt);
+    if elm {
+      el_vars::create_unique(vars, "elm", empty_elm_type(e, vt, fv));
+    }
     return ex(arm.code, vt);
   }
   lit = empty_literal_to(e, vars, vt, elm: elm);
   lt = if as_tp is TyVoid { match el_ir::unspan(lit) { NdBlock { block } => block[0].result[0] ?? vt, _ => vt } } else { as_tp };
   ex(el_ex_null::retail(arm.code, lit, lt) ?? lit, lt)
+}
+
+// `unique_elm_var`'s temp for a literal of vector type `t` built in `v`: a struct element's
+// record (`ref(P)`), a struct enum's enum, otherwise the bare reference.
+fn empty_elm_type(e: el::El, t: ir::TypeT, v: integer) -> ir::TypeT {
+  match el_types::base(t) {
+    TyVector { inner } => match inner {
+      TyReference { n: rn } => if rn > 0 && el::def(e, rn).def_type == el::DT_STRUCT && el_types::type_var(e, inner) < 0 { ir::TyReference { n: rn, dep: [v] } } else { ir::TyReference { n: 0, dep: [v] } },
+      TyEnum { n: en, is_ref } => if is_ref { ir::TyEnum { n: en, is_ref: true, dep: [v] } } else { ir::TyReference { n: 0, dep: [v] } },
+      _ => ir::TyReference { n: 0, dep: [v] }
+    },
+    _ => ir::TyReference { n: 0, dep: [v] }
+  }
 }
 
 // `parse_vector`'s marker for `[]` read with no element type.
@@ -3319,7 +3338,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`);
   // `empty_vector_value`, the `[]` then arm built from its `else`, mints none.
   if elm {
-    el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    el_vars::create_unique(vars, "elm", empty_elm_type(e, t, v));
   }
   // The first pass makes the buffer only; its store is minted on the second, in that pass's
   // order.
