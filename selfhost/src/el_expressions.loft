@@ -431,7 +431,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
-    code = el_ex_deliver::lambda_vector_copy(e, code, rb, result);
+    chained = el_ex_deliver::lambda_call_chain(e, vars, code, rb, result);
+    code = if chained != null { chained! } else { el_ex_deliver::lambda_vector_copy(e, code, rb, result) };
   }
   // A nullable vector a CALL answers at the tail (`fn(k) -> vector<integer>? { g(k) }`): Rust
   // renames the buffer onto the call's work ref (`__ref_N` the hidden parameter, the result
@@ -554,6 +555,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         _ => {}
       }
     }
+  }
+  // A lambda with no buffer yet whose vector tail is a buffered call grows one (`Grow`).
+  if rb < 0 && e.first_pass && el_types::base(result) is TyVector {
+    el_ex_deliver::lambda_grow(e, vars, code, result);
+  } else if rb < 0 && !e.first_pass && el_types::base(result) is TyVector && e.declared_lambdas.contains(el::def(e, e.context).name) {
+    code = el_ex_deliver::grown_tail(e, vars, code);
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {

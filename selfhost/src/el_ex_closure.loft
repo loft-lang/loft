@@ -220,6 +220,9 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       rec_nm = "__closure_{root}_{lk}";
       vars.lambdas += 1;
       vars.lambda_recs += [rec_nm];
+      if ret != null && !e.declared_lambdas.contains("n_{nm}") {
+        e.declared_lambdas += ["n_{nm}"];
+      }
       ctx = e.context;
       tvs = e.type_vars;
       e.type_vars = [];

@@ -593,6 +593,41 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   ir::NdBlock { block: [bl] }
 }
 
+// A lambda's tail call of a function that builds into the buffer it is handed, with the
+// lambda's late buffer `rb` (`__retbuf`): the call is handed `rb` in place of its own work ref
+// (`one_buffer_chain`, `rb = call; rb`), the work ref retired (`unregister_work_ref`: no init,
+// no free), the body opening by clearing `rb`, the result borrowing it.  Null for any other tail.
+pub fn lambda_call_chain(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  match el_ir::unspan(bl.operators[-1]) {
+    NdCall { def_nr: rcd, args: rca } => {
+      rw = match el_ir::unspan(rca[-1] ?? ir::NdNull) { NdVar { n: rwn } => if starts_with(el_vars::name_of(vars, rwn), "__ref_") && !vars.vars[rwn].argument { rwn } else { -1 }, _ => -1 };
+      rheap = len([for ra in el::def(e, rcd).attributes if !ra.hidden && !is_scalar(el_types::base(ra.typedef[0] ?? ir::TyVoid)) { 1 }]) > 0;
+      if rw < 0 || rheap || ((el::def(e, rcd).code[0] ?? ir::NdNull) is NdNull) || el_expressions::forwards_foreign_store(e, rcd, 0) {
+        return null;
+      }
+      nargs = rca;
+      nargs[-1] = ir::NdVar { n: rb };
+      el_vars::unregister_work_ref(vars, rw);
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], el_ex_null::buffer_chain(ir::NdCall { def_nr: rcd, args: nargs }, rb, result));
+      bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rb }]), bl.operators[0]] };
+      bl.result = [el_types::without_deps(el_types::base(result))];
+      d = e.context;
+      ba = attr_nr(el::def(e, d), "__retbuf");
+      ret = el::def(e, d).returned[0];
+      if ba >= 0 && !el_types::deps(ret).contains(ba) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+      }
+      return ir::NdBlock { block: [bl] };
+    },
+    _ => {}
+  }
+  null
+}
+
 // A lambda's literal (or comprehension) tail copied into its buffer `rb`, the body clearing it
 // first and answering it; the result borrows the buffer.  Any other tail is left as it is.
 pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
@@ -1754,6 +1789,65 @@ pub fn tail_syntax(e: el::El, body: integer) -> integer {
     },
     _ => -1
   }
+}
+
+// `RetPromotion::Grow` (pass 1): a lambda that declares a vector result and has no buffer yet
+// (a lambda's is reserved between the passes) answering a tail call of a function that builds
+// into the buffer it is handed makes the call's own `__ref_N` its hidden parameter, the result
+// borrowing it; the second pass reads it as a renamed buffer (`MergeAttr`).
+pub fn lambda_grow(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) {
+  d = e.context;
+  if !e.first_pass || !e.declared_lambdas.contains(el::def(e, d).name) || hidden_buffer_held(e, d) || attr_nr(el::def(e, d), "__retbuf") >= 0 {
+    return;
+  }
+  bl = match code { NdBlock { block } => block[0], _ => return };
+  if len(bl.operators) == 0 {
+    return;
+  }
+  match el_ir::unspan(bl.operators[-1]) {
+    NdCall { def_nr: rcd, args: rca } => {
+      rw = match el_ir::unspan(rca[-1] ?? ir::NdNull) { NdVar { n: rwn } => if starts_with(el_vars::name_of(vars, rwn), "__ref_") && !vars.vars[rwn].argument { rwn } else { -1 }, _ => -1 };
+      rheap = len([for ra in el::def(e, rcd).attributes if !ra.hidden && !is_scalar(el_types::base(ra.typedef[0] ?? ir::TyVoid)) { 1 }]) > 0;
+      if rw < 0 || rheap || ((el::def(e, rcd).code[0] ?? ir::NdNull) is NdNull) || el_expressions::forwards_foreign_store(e, rcd, 0) {
+        return;
+      }
+      ga = el::attribute(el_vars::name_of(vars, rw), el_types::without_deps(el_types::base(result)));
+      ga.hidden = true;
+      e.b.data.definitions[d].attributes += [ga];
+      el_vars::become_argument(vars, rw);
+      gi = len(el::def(e, d).attributes) - 1;
+      gret = el::def(e, d).returned[0];
+      if !el_types::deps(gret).contains(gi) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(gret, el_types::deps(gret) + [gi])];
+      }
+    },
+    _ => {}
+  }
+}
+
+// The second pass of a lambda that grew its buffer (`lambda_grow`): its tail call is handed the
+// grown hidden parameter (`MergeAttr`), and the body opens by clearing it, as a renamed buffer's.
+pub fn grown_tail(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node {
+  bl = match code { NdBlock { block } => block[0], _ => return code };
+  if len(bl.operators) == 0 {
+    return code;
+  }
+  gv = match el_ir::unspan(bl.operators[-1]) { NdCall { args: ga } => match el_ir::unspan(ga[-1] ?? ir::NdNull) { NdVar { n: gn } => if vars.vars[gn].argument && hidden_param(e, vars, gn) { gn } else { -1 }, _ => -1 }, _ => -1 };
+  if gv < 0 {
+    return code;
+  }
+  bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: gv }]), bl.operators[0]] };
+  ir::NdBlock { block: [bl] }
+}
+
+// Does `d` hold a hidden collection or record parameter already — a buffer it grew or reserved?
+fn hidden_buffer_held(e: el::El, d: integer) -> boolean {
+  for a in el::def(e, d).attributes {
+    if a.hidden && (a.typedef[0] is TyReference || a.typedef[0] is TyVector || a.typedef[0] is TyEnum) {
+      return true;
+    }
+  }
+  false
 }
 
 // Does the syntax under `i` hold a `return` of a call (`return items(…)`, `return v.keys()`)?

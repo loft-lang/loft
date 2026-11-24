@@ -129,6 +129,9 @@ pub struct El {
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,
+  // The lambdas (`n___lambda_<root>_<k>`) that declare their result (`fn(x) -> T { … }`): their
+  // first pass knows the result, so a tail call's buffer can GROW into their parameters.
+  pub declared_lambdas: vector<text>,
   pub lambda_next: vector<integer>,
   // The program's functions whose first pass renamed a local or a call's answer onto the return
   // buffer (`classify_ret_promotion`'s `Bind` or `Rename`): a caller's first pass reads their answer as a
@@ -259,6 +262,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     unbacked: [],
     owed_buffer: [],
     lambda_roots: [],
+    declared_lambdas: [],
     lambda_next: [],
     p1_bind: [],
     cast_decls: [],
