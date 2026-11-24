@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `match` over a call answering `T?` holds the answer as a `ref(T)`, with a `null` arm or without.
+// Prints: 3 3
+
+enum T { TInt { lo: integer }, TVec { inner: T } }
+fn mk(k: integer) -> T? { if k < 0 { null } else { TInt { lo: k } } }
+fn a1() -> integer { match mk(3) { TInt { lo } => lo, _ => -1 } }
+fn a2() -> integer { match mk(3) { null => -2, TInt { lo } => lo, _ => -1 } }
+fn main() { println("{a1()} {a2()}"); }
