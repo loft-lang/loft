@@ -2196,8 +2196,7 @@ fn emit_unit_with(
     cx.open = hosted.is_some();
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
-    cx.lazy
-        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
+    cx.lazy.set(reachable_has(data, &all, is_lazy_native));
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
@@ -2762,7 +2761,7 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
                 data.def(*c).name(),
                 "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
             );
-            lazy |= data.def(*c).name() == "n_store_bind_lazy";
+            lazy |= is_lazy_native(data.def(*c).name());
             fetches |= matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
                 || native_c(name) == Some("loft_pg_load_keys")
                 || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
@@ -3072,6 +3071,22 @@ fn unit_defines(
 /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
 /// any of them or `http_fetch` the TLS client its `https://` requests run over
 /// (`tls::unit_lines`).
+/// A native of a lazily bound collection (`loft_lazy.h`).  A unit that reaches ANY of them carries
+/// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
+/// answer (no failure, `""`) is the header's as well as the interpreter's.
+fn is_lazy_native(name: &str) -> bool {
+    matches!(
+        name,
+        "n_store_bind_lazy"
+            | "n_store_lazy_query"
+            | "n_store_lazy_range"
+            | "n_store_lazy_error"
+            | "n_store_lazy_faults"
+            | "n_store_lazy_clear"
+            | "n_store_lazy_fail"
+    )
+}
+
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
