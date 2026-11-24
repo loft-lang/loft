@@ -293,28 +293,13 @@ the defect shipped.  Both were true of loft#899's `OpDatabase(db_tp = u16::MAX)`
 exactly one producer, zero corpus coverage.  Remove the probe once the invariant
 is enforced at its chokepoint.
 
-**Never set `RUSTFLAGS` against the MAIN target dir.**  Cargo keeps BOTH
-flag-generations of every dep in `target/release/deps/` — including two
-`libloft_ffi-*.rlib` — and anything that sweeps `deps/` (the cdylib
-auto-builds pass `--extern` for every rlib there) then dies on
-`colliding StableCrateId values`, while `loft-ffi`'s fingerprint change
-invalidates every cached cdylib.  Recovery, in order: `cargo clean --release`
-→ full `cargo build --release` → `make rebuild-native-cdylibs` → rebuild the
-registry graphics cdylib (`cd ~/.loft/registry/graphics-*/native && cargo
-build --release`) → `loft cache prune --all` (the whole-cache sweep; plain
-`loft cache prune` keeps the live generation and drops only what this loft
-cannot select — see loft#861) → rebuild the wasm rlib (the `html_wasm`
-staleness guard checks it against source mtimes).
-
-**Prevent + auto-heal it.**  Run sanitizer/nightly builds through
-**`scripts/asan.sh`**, which sets `CARGO_TARGET_DIR=target/asan` so nightly
-artifacts never land in the shared `target/` — the pollution simply cannot
-happen.  If a stray nightly build already polluted it (E0514 "incompatible
-version of rustc" on the native tests), **`find_problems.sh` self-heals**: its
-`ffi_toolchain_guard` reads the rustc version embedded in each
-`libloft_ffi-*.rlib`, and when it differs from the active `rustc` it deletes the
-stale rlib so the next build recompiles it — turning the silent, mtime-immune
-E0514 into an automatic rebuild.
+**Never set `RUSTFLAGS` against the MAIN target dir.**  A changed `RUSTFLAGS`
+rebuilds every crate there, and the next ordinary build rebuilds them all again.
+Run sanitizer/nightly builds through **`scripts/asan.sh`**, which sets
+`CARGO_TARGET_DIR=target/asan` so nightly artifacts never land in the shared
+`target/`.  Compiled libraries a stray build left behind go with
+`loft cache prune --all` (the whole-cache sweep; plain `loft cache prune` keeps
+the live generation and drops only what this loft cannot select — see loft#861).
 
 Reading the results: CLI-spawning tests fail en masse if the stdlib symlink
 is missing (lens artifact, not a finding); confirm any surprising cell

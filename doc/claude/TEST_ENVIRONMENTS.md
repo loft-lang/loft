@@ -199,18 +199,10 @@ is the worked example; the defect it guards read as a flake in `manifest_less_re
 
 Cargo 1.100 builds into a per-unit layout: one `target/<profile>/build/<crate>/<hash>/` per
 unit, the build script's output under `run/`, and no `target/<profile>/deps/`; older cargo and
-an existing tree still have `deps/`.  Every reader of the build directory takes both:
-`src/cargo_layout.rs` for the native toolchain, the cache and the tests
-(`dependency_dirs`, `build_units`, `runtime_profile_dir`, `rlib_meta_header`), and
-`scripts/cargo_dep_files.sh` for `make install` and `find_problems.sh`.
-A new reader goes through one of the two; a path spelled `deps/` by hand breaks on the default
-layout (`E0463: can't find crate for loft`, or `E0514` where a stale `deps/` from another
-rustc is still there).  The history of the switch is in
-[TEST_ENVIRONMENTS-history.md](TEST_ENVIRONMENTS-history.md).
-
-A `--native` run whose runtime rlib was built by another rustc rebuilds the runtime with
-`cargo build --release` from the CURRENT tree, replacing `target/release/loft` underneath any
-gate that runs it; a gate sets `LOFT_NO_AUTO_REBUILD=1`.
+an existing tree still have `deps/`.  Every reader of the build directory takes both, through
+`src/cargo_layout.rs` (`dependency_dirs`, `build_units`, `runtime_profile_dir`).  A new reader
+goes through it; a path spelled `deps/` by hand finds nothing on the default layout.  The
+history of the switch is in [TEST_ENVIRONMENTS-history.md](TEST_ENVIRONMENTS-history.md).
 
 ## macOS: what makes the suite slow, and the setup that removes it
 
