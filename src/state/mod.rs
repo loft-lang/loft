@@ -494,6 +494,8 @@ pub struct State {
     /// `@PLN226` — how deep the interpreted twins `LOFT_HOSTED_VERIFY` runs on this
     /// interpreter are nested (`hosted_verify::twin_call`).
     pub(crate) twin_depth: u32,
+    /// `@PLN226` — `LOFT_STACK_CENSUS`'s tallies for this interpreter (`stack_census`).
+    pub stack_census: Box<crate::stack_census::Census>,
     /// Where the function being generated starts, so a bind row's line is a line of that
     /// function: a bind before its first line marker (a hoisted null init) names line 0.
     pub(crate) bind_fn_start: u32,
@@ -1016,6 +1018,7 @@ impl State {
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
             twin_depth: 0,
+            stack_census: Box::default(),
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
@@ -4093,6 +4096,7 @@ impl State {
         // the claim and the byte diff cannot be in different coordinate systems.
         if crate::stack_census::enabled() {
             crate::stack_census::claim(
+                &mut self.stack_census,
                 self.stack_cur.rec * 8 + self.stack_cur.pos + self.stack_pos,
                 size_of::<T>() as u32,
             );
@@ -7957,7 +7961,7 @@ impl State {
                 let end = (origin + self.stack_high as usize + MARGIN)
                     .min(self.database.store(&self.stack_cur).raw_bytes().len());
                 let bytes = self.database.store(&self.stack_cur).raw_bytes();
-                crate::stack_census::before_op(bytes, origin, end);
+                crate::stack_census::before_op(&mut self.stack_census, bytes, origin, end);
                 (origin, end)
             } else {
                 (0, 0)
@@ -7973,12 +7977,18 @@ impl State {
             };
             if census_on {
                 let bytes = self.database.store(&self.stack_cur).raw_bytes();
-                crate::stack_census::after_op(ran_opcode, bytes, census_span.0, census_span.1);
-                if crate::stack_census::budget_spent() {
+                crate::stack_census::after_op(
+                    &mut self.stack_census,
+                    ran_opcode,
+                    bytes,
+                    census_span.0,
+                    census_span.1,
+                );
+                if crate::stack_census::budget_spent(&self.stack_census) {
                     // The budget is a corpus-sweep instrument: report on what ran and
                     // leave, so a program with tens of millions of ops still contributes
                     // its routes instead of being killed by a timeout with nothing said.
-                    crate::stack_census::report(Some(data));
+                    crate::stack_census::report(&self.stack_census, Some(data));
                     crate::loft_eprintln!("stack census: op budget spent — stopping here");
                     std::process::exit(0);
                 }
@@ -9310,6 +9320,7 @@ impl State {
             native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
             twin_depth: 0,
+            stack_census: Box::default(),
             bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,

@@ -13959,7 +13959,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {
-        loft::stack_census::report(Some(&data));
+        loft::stack_census::report(&state.stack_census, Some(&data));
     }
     // @PLN154 phase 1 — the stack shadow's verdict.  It prints on a CLEAN run too: silence
     // is the result this instrument exists to make trustworthy, and a detector that says
