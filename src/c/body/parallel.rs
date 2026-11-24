@@ -39,14 +39,14 @@ pub(crate) struct ArmFn {
 }
 
 /// Every C identifier `text` names.
-fn identifiers(text: &str) -> HashSet<&str> {
+pub(super) fn identifiers(text: &str) -> HashSet<&str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
         .collect()
 }
 
 /// The name a declaration line declares: the last identifier before its initialiser.
-fn declared_name(decl: &str) -> Option<&str> {
+pub(super) fn declared_name(decl: &str) -> Option<&str> {
     let head = decl.split(['=', ';']).next()?;
     head.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .rfind(|w| !w.is_empty())

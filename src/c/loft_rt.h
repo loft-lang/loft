@@ -7683,6 +7683,9 @@ static loft_text loft_text_from_byte_range(loft_cx *cx, loft_ref v, int64_t lo, 
  * nothing, so a release frees nothing for it, and a copy of the record's bytes carries the
  * word.  The frame is `cx->dv_frame`, named by the region's root for the length of its call. */
 typedef struct { uint32_t n, at; } loft_dvs;
+/* A walk's closure (`@FR-R-DecodeView`'s structure clause): the site's locals, the element, the
+ * answer; 1 when the closure answered and the walk stops. */
+typedef int (*loft_ps_fn)(loft_cx *, void *const *, const void *, void *);
 
 /* The bytes of byte vector `b` and their number, read as loft_vec_slice reads its source. */
 static const unsigned char *loft_dv_bytes(loft_cx *cx, loft_ref b, uint32_t *n) {
@@ -7753,6 +7756,20 @@ static int loft_dv_span_text(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t s
     if (w.at == 0 || !loft_utf8_valid(cx, p + lo, (size_t) (hi - lo))) return 0;
     loft_dv_put(cx, rec, off, spare, w);
     return 1;
+}
+
+/* `@FR-R-DecodeView`'s structure clause — a text leaf read at its position: the frame's bytes
+ * `b[lo..hi]` under loft_text_from_byte_range's bounds, and the empty text where they are not
+ * UTF-8, as that function answers.  Nothing is copied. */
+static loft_str loft_ps_text(loft_cx *cx, loft_ref b, int64_t lo, int64_t hi) {
+    uint32_t n32;
+    const unsigned char *p = loft_dv_bytes(cx, b, &n32);
+    int64_t n = n32;
+    if (p == 0 || n == 0) return loft_lit(cx, "", 0);
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo || !loft_utf8_valid(cx, p + lo, (size_t) (hi - lo))) return loft_lit(cx, "", 0);
+    return loft_lit(cx, (const char *) p + lo, (size_t) (hi - lo));
 }
 
 /* A text field of a decoded record: the frame's bytes when it holds a span, else its own. */

@@ -2262,10 +2262,27 @@ fn emit_unit_with(
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy.set(reachable_has(data, &all, is_lazy_native));
     // `@FR-R-DecodeView`: both clauses' plans before the first body, so every body reads the
-    // same decisions (and their traces print once, in order).
-    let _ = cx.ps_plan();
+    // same decisions (and their traces print once, in order), and the structure clause's
+    // positional twins.  A twin this writer cannot write takes the clause away from the unit,
+    // and everything it wrote with it.
     let mut protos = String::new();
     let mut bodies = String::new();
+    if !cx.ps_plan().roots.is_empty() {
+        let marks = (cx.gen_decls.borrow().len(), cx.gen_bodies.borrow().len());
+        match body::decode_structure::ps_functions(&cx) {
+            Ok((p, b)) => {
+                protos.push_str(&p);
+                bodies.push_str(&b);
+            }
+            Err(why) => {
+                body::decode_structure::declined(&cx, u32::MAX, &why);
+                cx.gen_decls.borrow_mut().truncate(marks.0);
+                cx.gen_bodies.borrow_mut().truncate(marks.1);
+                cx.ps.take();
+                let _ = cx.ps.set(std::rc::Rc::default());
+            }
+        }
+    }
     for &d in &fns {
         let (sig, body) = function(&cx, d, 0).map_err(|why| Refusal {
             function: data.def(d).original_name().clone(),
@@ -4011,6 +4028,29 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .decode_view(mask & DV_BIT != 0)
             .write()
     };
+    // `@FR-R-DecodeView`'s structure clause: a root whose chain holds every decoded value as a
+    // position is written in its positional form, under its own name; one this writer cannot
+    // write keeps the form it had.
+    let tried = match tried {
+        None if mask == 0 && cx.ps_plan().roots.contains(&d) => {
+            let mut s = shapes.clone();
+            body::decode_structure::consumer_shapes(cx, d, &mut s);
+            match body::FnWriter::new(cx, d, s, ret)
+                .param_decls(param_decls.clone())
+                .places(places)
+                .structure(Some(body::decode_structure::PsMode::Consumer(d)))
+                .decode_view(false)
+                .write()
+            {
+                Ok(b) => Some(b),
+                Err(why) => {
+                    body::decode_structure::declined(cx, d, &why);
+                    None
+                }
+            }
+        }
+        t => t,
+    };
     let body = match tried {
         Some(b) => b,
         // `@FR-R-Cold`'s loft clause refused its own plan: the function as written.
@@ -5404,6 +5444,19 @@ fn strip_safepoints(body: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// [`framed`] for a function of no other variant: a positional twin of
+/// `@FR-R-DecodeView`'s structure clause.
+pub(crate) fn framed_plain(
+    cx: &Cx,
+    d: u32,
+    name: &str,
+    params: &str,
+    ret: CType,
+    body: &str,
+) -> String {
+    framed(cx, d, name, params, ret, body, "static", None)
 }
 
 fn framed(
