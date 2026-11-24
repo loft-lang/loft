@@ -7414,7 +7414,10 @@ impl Parser {
         {
             if self.state_trace_on() {
                 self.state_route(&if sinks.build_apart {
-                    format!("literal_into_place=apart(build_apart:{})", sinks.apart_reason)
+                    format!(
+                        "literal_into_place=apart(build_apart:{})",
+                        sinks.apart_reason
+                    )
                 } else {
                     "literal_into_place=apart(postfix)".to_string()
                 });
@@ -7450,7 +7453,11 @@ impl Parser {
         if self.state_trace_on()
             && (place_hint.is_some() || (in_place_var.is_some() && !self.inplace_hint_declined))
         {
-            let at = if place_hint.is_some() { "place" } else { "local" };
+            let at = if place_hint.is_some() {
+                "place"
+            } else {
+                "local"
+            };
             let notes = if sinks.place_notes.is_empty() {
                 String::new()
             } else {
