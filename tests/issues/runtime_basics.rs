@@ -1014,11 +1014,14 @@ fn n9a_generated_fill_has_ops_import() {
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
-    let tmp = format!(
-        "tests/generated/fill_n9a_{:?}.rs",
-        std::thread::current().id()
-    );
-    let _ = fa::create_dir_all("tests/generated");
+    let tmp = std::env::temp_dir()
+        .join(format!(
+            "loft_fill_n9a_{}_{:?}.rs",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+        .to_string_lossy()
+        .into_owned();
     let src = loft::create::generate_code_to(&p.data, &tmp).expect("generate_code_to failed");
     let _ = fa::remove_file(&tmp);
     assert!(
@@ -1037,10 +1040,14 @@ fn n9_generated_fill_matches_src() {
     p.parse_dir("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
     // Use a unique path so parallel test runs do not race on the same file.
-    let tmp = format!(
-        "tests/generated/fill_n9_{:?}.rs",
-        std::thread::current().id()
-    );
+    let tmp = std::env::temp_dir()
+        .join(format!(
+            "loft_fill_n9_{}_{:?}.rs",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+        .to_string_lossy()
+        .into_owned();
     let generated = loft::create::generate_code_to(&p.data, &tmp).expect("generate_code_to failed");
     let _ = fa::remove_file(&tmp);
     let src = fa::read_to_string("src/fill.rs").expect("src/fill.rs not found");
