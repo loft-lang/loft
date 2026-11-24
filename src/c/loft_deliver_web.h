@@ -21,11 +21,11 @@ typedef void (*loft_dlk_fn)(loft_cx *cx, loft_dlv_flat *f, loft_ref at);
 
 #if defined(LOFT_BROWSER)
 __attribute__((import_module("loft_io"), import_name("loft_host_deliver"))) void
-loft_io_deliver(int64_t tag, size_t base, uint32_t rec, uint32_t pos, uint32_t tp, const char *d, size_t n);
+loft_io_deliver(loft_word tag, size_t base, uint32_t rec, uint32_t pos, uint32_t tp, const char *d, size_t n);
 __attribute__((import_module("loft_io"), import_name("loft_host_expose"))) void
-loft_io_expose(int64_t tag, size_t base, uint32_t rec, uint32_t pos, uint32_t tp, const char *d, size_t n);
+loft_io_expose(loft_word tag, size_t base, uint32_t rec, uint32_t pos, uint32_t tp, const char *d, size_t n);
 __attribute__((import_module("loft_io"), import_name("loft_host_release"))) void
-loft_io_release(int64_t tag);
+loft_io_release(loft_word tag);
 
 /* `collect_keyed`'s one entry: the collection at `at` materialised as `x`, named by its data
  * record. */
@@ -54,7 +54,7 @@ static loft_ref loft_dlv_index(loft_cx *cx, loft_ref c) {
 }
 
 /* The arrays each exposed tag holds until its release. */
-typedef struct { int64_t tag; loft_ref *x; uint32_t n; } loft_dlv_held;
+typedef struct { loft_word tag; loft_ref *x; uint32_t n; } loft_dlv_held;
 static loft_dlv_held *loft_dlv_holds;
 static uint32_t loft_dlv_nholds, loft_dlv_holds_cap;
 
@@ -63,7 +63,7 @@ static void loft_dlv_free(loft_cx *cx, loft_ref *x, uint32_t n) {
     free(x);
 }
 
-static void loft_deliver_page(loft_cx *cx, int64_t tag, uint16_t tp, const char *desc, loft_dlk_fn k, loft_ref r, int expose) {
+static void loft_deliver_page(loft_cx *cx, loft_word tag, uint16_t tp, const char *desc, loft_dlk_fn k, loft_ref r, int expose) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     loft_dlv_flat f;
     memset(&f, 0, sizeof f);
@@ -93,7 +93,7 @@ static void loft_deliver_page(loft_cx *cx, int64_t tag, uint16_t tp, const char 
 }
 #endif
 
-static void loft_deliver(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn f, loft_ref r, uint16_t tp,
+static void loft_deliver(loft_cx *cx, loft_word tag, const char *name, loft_dlv_fn f, loft_ref r, uint16_t tp,
                          const char *desc, loft_dlk_fn k) {
 #if defined(LOFT_BROWSER)
     (void) name;
@@ -107,7 +107,7 @@ static void loft_deliver(loft_cx *cx, int64_t tag, const char *name, loft_dlv_fn
 #endif
 }
 
-static void loft_expose(loft_cx *cx, int64_t tag, loft_ref r, uint16_t tp, const char *desc, loft_dlk_fn k) {
+static void loft_expose(loft_cx *cx, loft_word tag, loft_ref r, uint16_t tp, const char *desc, loft_dlk_fn k) {
 #if defined(LOFT_BROWSER)
     loft_deliver_page(cx, tag, tp, desc, k, r, 1);
 #else
@@ -119,7 +119,7 @@ static void loft_expose(loft_cx *cx, int64_t tag, loft_ref r, uint16_t tp, const
 #endif
 }
 
-static void loft_release(loft_cx *cx, int64_t tag, loft_ref r) {
+static void loft_release(loft_cx *cx, loft_word tag, loft_ref r) {
 #if defined(LOFT_BROWSER)
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     loft_set_store_lock(cx, r, 0);

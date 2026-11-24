@@ -279,13 +279,13 @@ the checklist:
    against a `REF`), the drop gate (every core for an hour); beside one another they slow every
    one of them.  While a build runs, read the next unit's code, and wait on its pid or output
    file (CLAUDE.md § Never wait on a process by NAME).
-4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites it
-   touches; `cargo test --release --test ownership_drop_gate` on both backends for anything
-   that changes what a value is held in or when it is released; the poison and stack sweeps
-   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`); the corpus census when the change is meant to
-   move emission — the emission diff first, the native run bounded by what it names; both
-   clippy legs.  A gate first run on GitHub after the push costs the gate, a fix build and a
-   red tip a sibling may already have joined.
+4. **A gate the PR's CI runs is proven there, not locally first** (owner): the pin tests of the
+   rewrites it touches, the ownership drop gate (part of the full suite), the rewrite census
+   and both clippy legs are steps of every PR run — none is re-run here just to prove what
+   that run proves.  Run one locally only while a fix is aimed at it (a change to what a value
+   is held in or when it is released iterates against the drop gate's cells; a change meant to
+   move emission reads the emission diff first), and run the sweeps the PR does not
+   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`) when the change is in what they watch.
 5. **Receipts last** — `scripts/falsify.sh` builds the working tree, so it runs after the fix
    is committed and while no edit is pending.  Score against the installed main
    (`make install-main`, then `make falsify GUARD=…` without `REF`) before the branch is

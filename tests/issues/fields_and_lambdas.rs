@@ -770,22 +770,14 @@ fn test() {
 
 // N7: OpFormatFloat must generate ops::format_float(...), not OpFormatFloat(stores, ...).
 // OpFormatStackLong must generate ops::format_long(var_, ...) without stores or &mut.
+// It guards the value the program answers; the half that read the rustc writer's emitted
+// Rust went with the writer (@PLN225 R4).
 #[test]
 fn n7_format_ops_generate_correct_rust() {
     // Float formatting
     code!("struct Flt { v: float }")
         .expr("f = Flt { v: 3.14 }; \"{f.v}\"")
         .result(Value::str("3.14"));
-    let src = fa::read_to_string("tests/generated/issues_n7_format_ops_generate_correct_rust.rs")
-        .expect("generated file not found");
-    assert!(
-        !src.contains("OpFormatFloat("),
-        "generated code still contains bare OpFormatFloat call"
-    );
-    assert!(
-        src.contains("ops::format_float("),
-        "generated code missing ops::format_float call"
-    );
 }
 
 // ── Issue 85 ─────────────────────────────────────────────────────────────────

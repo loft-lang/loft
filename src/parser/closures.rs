@@ -1054,19 +1054,21 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
     // Monotone: a walk only adds writes, so it stops; each walk reads the facts so far.  The
     // first pass walks every body; after it only the CALLERS of a function whose facts grew are
     // walked again (a worklist), since a body's answer reads its callees' facts and nothing else.
-    let mut callers: crate::fxhash::FxHashMap<u32, Vec<u32>> = crate::fxhash::FxHashMap::default();
+    let mut callers: Vec<(u32, u32)> = Vec::new();
+    let mut seen = crate::fxhash::FxHashSet::default();
     for &d in &fns {
-        let mut seen = crate::fxhash::FxHashSet::default();
+        seen.clear();
         data.def(d).code().any_node(&mut |n| {
             if let Value::Call(c, _) = n
                 && *c != d
                 && seen.insert(*c)
             {
-                callers.entry(*c).or_default().push(d);
+                callers.push((*c, d));
             }
             false
         });
     }
+    callers.sort_unstable();
     let mut queue: std::collections::VecDeque<u32> = fns.iter().copied().collect();
     let mut queued: crate::fxhash::FxHashSet<u32> = fns.iter().copied().collect();
     while let Some(d) = queue.pop_front() {
@@ -1087,7 +1089,11 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
             if queued.insert(d) {
                 queue.push_back(d);
             }
-            for &c in callers.get(&d).map_or(&[][..], Vec::as_slice) {
+            let from = callers.partition_point(|&(callee, _)| callee < d);
+            for &(_, c) in callers[from..]
+                .iter()
+                .take_while(|&&(callee, _)| callee == d)
+            {
                 if queued.insert(c) {
                     queue.push_back(c);
                 }

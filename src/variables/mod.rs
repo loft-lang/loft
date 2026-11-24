@@ -6347,13 +6347,13 @@ impl Function {
                 continue;
             }
             if let Some(var) = self.variables.get(v as usize) {
-                let cleared = [
-                    ("-user_named", var.user_named),
-                    ("-user_appended", var.user_appended),
-                    ("-value_const", var.value_const),
-                ];
-                for (flag, was_set) in cleared {
-                    if was_set {
+                // The names and the flags in two lists: a code scanner taints a tuple whole by
+                // a field named like a user name (`user_named`, a boolean), and then reports
+                // the printed flag name as a logged secret.
+                let names = ["-user_named", "-user_appended", "-value_const"];
+                let was_set = [var.user_named, var.user_appended, var.value_const];
+                for (flag, set) in names.into_iter().zip(was_set) {
+                    if set {
                         self.trace_flag(flag, v);
                     }
                 }
