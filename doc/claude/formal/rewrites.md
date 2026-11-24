@@ -787,7 +787,14 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
                  derives it once before the loop, and every element read, element
-                 write and len(P) in the body uses it (R-State).  A rebind of P's root
+                 write and len(P) in the body uses it (R-State).  THE ROOM: the header
+                 also holds the bytes P's record holds, and every element access through
+                 it — the checked ones, a proven index's, a fill's — is held to that room:
+                 a length word that claims more (a store loaded with store_load, never
+                 walked) reads as past the end there, and a write there lands nowhere,
+                 while len(P) still answers the word.  A vector the runtime wrote has the
+                 room for its length, so this changes no answer of a sound store
+                 (`tests/store_image_sound.rs`).  A rebind of P's root
                  inside the body removes P; a nested loop's prelude skips a path an
                  outer one already holds.  The FUNCTION clause: a body that reads a
                  vector PARAMETER twice or more through an element address, and
