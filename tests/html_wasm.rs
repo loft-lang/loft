@@ -1825,10 +1825,9 @@ fn the_asyncify_save_region_is_outside_the_shadow_stack() {
 /// `build_store`, so every store-allocating native — a vector return, a struct
 /// `Reference` argument — could not be built for `--native-wasm` at all.
 ///
-/// This is the always-on half of the guard. `pln26_phase3_native_package_runs_on_wasm`
-/// proves the real thing end to end, but it self-skips without wasmtime and the wasip2
-/// target, which the per-PR CI leg does not install — so on the path where a regression
-/// is cheapest to catch, it reports nothing.
+/// This is the always-on half of the guard.  Its end-to-end half — a `[native] crate`
+/// package cross-built to wasip2 and run under wasmtime — retired with the rustc writer
+/// (@PLN225 R4): the C refuses a library whose only native part is Rust.
 ///
 /// A gate is read at TWO sites, because the two producers were gated differently: the
 /// declaration in `src/lib.rs` (how `native_call` was hidden) and a leading inner
