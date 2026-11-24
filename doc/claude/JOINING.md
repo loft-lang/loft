@@ -68,7 +68,7 @@ it.
 
 The suite-backed checks of `verify` and `after.py` read the suite the tree PINS:
 `scripts/suite_pin.py` keeps an explicit `LOFT_SUITE_DIR`, else takes `../loft-suite` when it is
-at the pin, else a cached worktree at the pin (`.git/loft-suite-pin`) — so a sibling checkout on
+at the pin, else a cached worktree at the pin (`loft-suite-pin` in the checkout's git directory) — so a sibling checkout on
 another commit cannot hide a guard (index hygiene's "decision has no guard").
 
 `HERE` is measured on this tree as it stands, so a commit that reads as here is picked all the

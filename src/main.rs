@@ -369,7 +369,6 @@ fn print_help() {
     println!(
         "  --threads | --no-threads      with --html: force the browser thread pool on or off"
     );
-    println!("                                (default: on exactly when the program uses `par`)");
     println!("  targets [<target>]            which stdlib builtins are NOT available on a target");
     println!("                                (ask before designing, not after the build fails)");
     println!(
@@ -7870,9 +7869,7 @@ fn main() {
             } else {
                 String::new()
             });
-        // @PLN117 — override the automatic choice of whether the page carries
-        // loft's browser thread pool.  By default a program that uses `par` gets
-        // it and one that doesn't stays single-threaded.
+        // @C3 — a page that runs `par` gets the threaded build; these force it on or off.
         } else if a == "--threads" {
             html_threads = Some(true);
         } else if a == "--no-threads" {

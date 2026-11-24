@@ -8,14 +8,14 @@
 //! record's format, handle and `#next` and writes `#index` and `#next` back, per value.  A
 //! loop that reads `f` and in which NOTHING ELSE can see that record needs neither: the
 //! cursor rides in locals and the record gets it back when the loop is left
-//! (`codegen_runtime::FileCursor`).
+//! (the C's `@FR-R-FileHold` guard, `loft_io.h`).
 //!
 //! "Nothing else can see the record" is decided on types.  A `File` record is reached
 //! through a value whose type holds a `File` — the variable itself, a second name for it, a
 //! structure or collection with a `File` in it, a function value (which may have captured
 //! one) — and a call reaches only what its arguments reach.  So the loop is admitted when
 //! `f` is the ONE variable in it whose type can hold a `File`, and every mention of `f` is
-//! the file operand of a read `generation::ops::file_ops` types as a fixed-width integer.
+//! the file operand of a read the C types as a fixed-width integer (`held_read_shape`).
 
 use crate::data::{Block, Data, Type, Value};
 use std::collections::HashMap;

@@ -8,9 +8,8 @@
 //! The unit is an ordinary one (`emit_unit`) built with `LOFT_HOSTED`: its `cx->stores` is the
 //! interpreter's table, a store's birth and death are the interpreter's (`HostedTable`), and
 //! everything inside a store it does itself on the shared `loft_store_t` prefix.  It exports the
-//! interface a rustc artifact exports, so the interpreter's dispatch is the same: one
-//! `loft_shared_<name>` bridge per function over `LibArg` slots, `loft_shared_init`, and the type
-//! layout the unit was written for.  A function whose slots the C bridge does not carry yet is
+//! interface the interpreter's dispatch reads: one `loft_shared_<name>` bridge per function over
+//! `LibArg` slots, `loft_shared_init`, and the type layout the unit was written for.  A function whose slots the C bridge does not carry yet is
 //! not exported, and stays interpreted.
 
 use super::{CType, Cx, c_name};

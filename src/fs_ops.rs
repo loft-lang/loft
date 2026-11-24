@@ -10,8 +10,7 @@ use crate::database::Stores;
 use std::io::Read as _;
 
 /// Read `path` as UTF-8 text into `buf` — the single home for the read behind
-/// `file(p).content()`, called by the interpreter (`State::get_file_text`) and
-/// by native codegen (`OpGetFileText`) alike, so the two cannot drift.
+/// `file(p).content()`, called by the interpreter (`State::get_file_text`).
 ///
 /// Leaves `buf` EMPTY when the file cannot be opened or its bytes are not valid
 /// UTF-8, and warns on the latter.  Emptiness alone does not tell the caller
@@ -52,9 +51,6 @@ pub fn read_file_text_into(path: &str, buf: &mut String) {
 }
 
 // ── FS-B  File-system dispatch helpers ───────────────────────────────────────
-// Called from fill.rs (interpreter) and generated native code alike.
-// Paths: interpreter uses `crate::codegen_runtime::*`; native uses
-// `use loft::codegen_runtime::*` so these names resolve in both contexts.
 // Under `host_fs` (the wasm-bindgen bundle, and `--html`) each function calls
 // the host bridge; otherwise it calls the real filesystem.
 

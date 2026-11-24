@@ -54,6 +54,13 @@ walk found it and the entry now states the current rule.
 
 **Moved from the register entry (2026-09-29).**  Reopened and changed by @PLN117 (owner, finished).  The original reasons for running `par` sequentially — bundle size, worker start-up, COOP/COEP — became costs paid only by a page that uses `par`.
 
+**Changed by @PLN225 (2026-11-24).**  The rule @PLN117 set — a `--html` page that uses `par` gets
+the threaded runtime (Web Workers over a `SharedArrayBuffer`), `--threads` / `--no-threads`
+override the choice, and a build without the nightly toolchain falls back to `par` in sequence —
+was the rustc writer's, which rebuilt std with atomics.  With the writer gone a page is built by
+the C backend, whose wasm build is unthreaded: `par` runs in sequence on the page's thread and
+`--threads` is refused.  Threaded `par` stays in loft's own wasm-bindgen bundle.
+
 **Carried to the C backend by @PLN227 (2026-11-24).**  With the rustc writer retiring (@PLN225), the
 page is the C backend's, which ran every `par` on the main thread.  Its threaded runtime is the
 WASI libc's threads on wasi-sdk's `wasm32-wasip1-threads` sysroot, so the nightly toolchain is no

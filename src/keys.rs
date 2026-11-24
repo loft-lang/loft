@@ -599,19 +599,6 @@ pub fn copy_dump_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_COPY_DUMP"))
 }
 
-/// `LOFT_NO_BRIDGE_ORPHAN_FREE=1` — @PLN118 arc F opt-out / differential switch. The shared-store
-/// bridge (`native_lib::shared_bridge_wrapper`) frees a FALLBACK destination record it allocated
-/// itself when the inner fn ignored the retbuf and returned a fresh store (a struct-literal return
-/// does) — otherwise that record is orphaned across the interp↔cdylib boundary, one leaked store
-/// per call. Setting this reproduces the pre-fix leak (the arc-D "second implementation to flip
-/// to" + the differential leak oracle's positive control). Default OFF (the fix is active). One
-/// cached env read; the free itself only fires when the fallback was allocated.
-#[must_use]
-pub fn bridge_orphan_free_disabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NO_BRIDGE_ORPHAN_FREE"))
-}
-
 /// `LOFT_REPORT_COPIES=1` (or the `--report-copies` CLI flag) — @PLN90 Step 5. The USER-FACING
 /// copy report: the *unbound* structure copies (Avoidable + Forced) with a source location, the
 /// copied type, and a fix hint, plus a rollup + the ranked Avoidable worklist. Enables the
@@ -1500,7 +1487,7 @@ pub fn retbuf_witness_gate_disabled() -> bool {
 /// with `LOFT_NO_RETBUF_HOIST` (read at GENERATION time: the before-half of the A/B on one
 /// binary — `lock` 18.6M → 15.7M ns/op — and the first bisect step for a native-only wrong
 /// answer in a loop that calls a struct-returning fn).  See
-/// `generation::hoist::retbuf_only_writer` and `hoist::frees_a_record` for the arguments;
+/// `opt::writes::retbuf_only_writer` and `opt::writes::frees_a_record` for the arguments;
 /// `LOFT_HOIST_VERIFY=1` is the falsifier for both.
 #[must_use]
 pub fn retbuf_hoist_enabled() -> bool {
@@ -1543,7 +1530,7 @@ pub fn loop_rotate_enabled() -> bool {
 }
 
 /// A struct rebind from a fresh call result exchanges stores WITHOUT resetting the
-/// destination first on `--native` (`@FR-H-SwapRebind`, `codegen_runtime::OpRebindRecord`):
+/// destination first on `--native` (`@FR-H-SwapRebind`, the C's `loft_swap_rebind`):
 /// the old value leaves with the released store — **DEFAULT ON**.  Opt OUT with
 /// `LOFT_NO_SWAP_REBIND` (read at run time): every such rebind resets the destination and
 /// copies or exchanges as before, the before-half of the A/B and the first bisect step for a
@@ -1659,7 +1646,7 @@ pub fn fused_append_enabled() -> bool {
 /// GENERATION time: the before-half of the A/B on one binary, and the first bisect step
 /// for a native-only wrong element in a loop that calls a setter).  A callee whose store
 /// writes are all `IN_PLACE_SET_OPS` moves no record and changes no length, so no header
-/// the caller derived can go stale across the call (`generation::hoist::in_place_only_writer`
+/// the caller derived can go stale across the call (`opt::writes::in_place_only_writer`
 /// carries the argument; `LOFT_HOIST_VERIFY=1` is the falsifier).
 #[must_use]
 pub fn inplace_callee_hoist_enabled() -> bool {

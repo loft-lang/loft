@@ -1589,8 +1589,8 @@ pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -
 
 /// `@FR-R-TypedKeyed` — [`find`] for a key of ONE integer field, handed over as the value
 /// itself: the entry point of a caller that already knows the collection's kind and its key's
-/// (`codegen_runtime::OpGetHashLong`, which `--native` emits for a `hash<T[k]>` whose one
-/// key is an integer).  Nothing is built to be taken apart again — no `Content`, no
+/// (`OpGetHashLong`, for a `hash<T[k]>` whose one key is an integer; the C's twin is
+/// `loft_h_find_i64`).  Nothing is built to be taken apart again — no `Content`, no
 /// `FastKey` chosen and then re-dispatched — so it is the table's three header reads, the
 /// hash, and the walk.  `None` when `key` is not one of the integer widths
 /// [`keys::fast_key`] lists; the caller then takes [`find`].

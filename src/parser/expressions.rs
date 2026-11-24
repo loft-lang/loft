@@ -12981,8 +12981,7 @@ use a separate collection or add after the loop"
         } else if op == "+=" && matches!(f_type.base(), Type::Text(_)) {
             // The temp holds what the field holds, NULL INCLUDED, so it is typed the way
             // the field is.  `--native` decides whether an append propagates a null from
-            // the DESTINATION VARIABLE's static type (`generation/text.rs::append_text`),
-            // while the interpreter tests the value it finds at run time; typed dense, the
+            // the DESTINATION VARIABLE's static type, while the interpreter tests the value it finds at run time; typed dense, the
             // temp told native there was nothing to propagate and `n.t += "cd"` on a null
             // `text?` field appended onto the null sentinel — `"\0cd"`, reported non-null,
             // where the interpreter left the field null.  One notion, two spellings, and a

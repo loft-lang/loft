@@ -278,7 +278,7 @@ struct Registry {
 /// The functions of the library at `pkg_dir` that arc A can route, marked with
 /// their dispatch symbol.
 ///
-/// Mirrors `native_lib::library_export_set` — a top-level, user-named, `pub`
+/// Mirrors `opt::native_key::library_export_set` — a top-level, user-named, `pub`
 /// function whose source file sits under the package — and applies the wire's
 /// own type gate instead of the shared-store one. **Call before `byte_code`.**
 ///

@@ -926,10 +926,9 @@ impl State {
                 db.store_nr, db.rec, db.pos,
             );
         }
-        // @PLAN51 Cluster II Step 2 — handle u16::MAX sentinel inputs.
-        // Mirrors the native runtime (`codegen_runtime.rs::OpDatabase`
-        // line 214) so the bytecode VM's `database` opcode accepts the
-        // same sentinel a caller-side `OpInitRefSentinel` reset
+        // @PLAN51 Cluster II Step 2 — handle u16::MAX sentinel inputs,
+        // so the bytecode VM's `database` opcode accepts the
+        // sentinel a caller-side `OpInitRefSentinel` reset
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
         let mut fresh = db.store_nr == u16::MAX;
@@ -1096,7 +1095,6 @@ impl State {
 
     /// `OpGetRecord` — the keyed lookup `c[k]`.  Its one exit answers the record as a VALUE:
     /// `nullref` for a miss, whichever arm below missed (`DbRef::or_null`, @FR-L-Null).
-    /// `codegen_runtime::OpGetRecord` is the native twin, normalised at its exit the same way.
     pub fn get_record(&mut self) {
         let (db_tp, key) = self.read_key(false);
         let data = self.get_stack::<DbRef>();
@@ -1299,8 +1297,7 @@ impl State {
         let data = self.get_stack::<DbRef>();
         // A holder with no record — a field reached through `nullref` — holds no
         // collection, and the cursor says so before any store is resolved: `finish ==
-        // u32::MAX` is what `step` reads as "done", and the same test opens
-        // `codegen_runtime::OpIterate`.  Resolving the store first indexed
+        // u32::MAX` is what `step` reads as "done".  Resolving the store first indexed
         // `allocations[u16::MAX]`.
         if data.rec == 0 {
             self.put_stack((u64::from(u32::MAX) << 32) | u64::from(u32::MAX));
@@ -1450,9 +1447,8 @@ impl State {
                 // The five narrow STORAGE widths (`Parts::Int` / `Short` / `Byte` /
                 // `ShortRaw` / `IntRaw`).  Narrowing happens at the field boundary, so the bound a
                 // caller pushes for a ranged scan is an ordinary 8-byte integer whatever
-                // the field's width — the same rule `generation/text.rs::emit_content`
-                // states for the native side, where every integer width answers a
-                // `Content::Long(i64)` and the WIDTH lives in the stored record.
+                // the field's width: every integer width answers a `Content::Long(i64)`
+                // and the WIDTH lives in the stored record.
                 //
                 // Without these arms the interpreter panicked "Unknown key type" on any
                 // iteration of a collection keyed on `u8` / `i16` / `i32` / a limited
@@ -1479,8 +1475,7 @@ impl State {
         let reverse = on & 64 != 0;
         let data = self.get_stack::<DbRef>();
         // The holder's record is tested BEFORE its store is resolved: a holder reached
-        // through `nullref` has no store to resolve (`codegen_runtime::OpStep` asks in the
-        // same order).
+        // through `nullref` has no store to resolve.
         let cur = if data.rec == 0 || finish == u32::MAX {
             new_ref(&data, 0, 0)
         } else {
@@ -1710,7 +1705,7 @@ impl State {
         // vector at all, so it clamps to zero and yields no elements. A bare `as u32`
         // instead turns `[7; -1]` into 4 294 967 295 `copy_block`s that walk off the store
         // until glibc aborts the process.
-        // Twin of `OpAppendCopy` (`src/codegen_runtime.rs`) — keep the two in step, or
+        // Twin of the C's `loft_vec_append_copy` — keep the two in step, or
         // they disagree on a heap-corrupting input.
         let multiply = count.clamp(0, i64::from(u32::MAX)) as u32;
         let data = self.get_stack::<DbRef>();
@@ -1784,8 +1779,8 @@ impl State {
         // like extended-S1 inner Sets).  Short-circuit before any
         // destructive op so callers that pass aliased src/dst (e.g.
         // ref_return-promoted callees whose return aliases their
-        // hidden buffer arg) get safe semantics.  Mirrors the safety
-        // gate the native runtime needs at codegen_runtime.rs:OpCopyRecord.
+        // hidden buffer arg) get safe semantics.  The C's `loft_copy_record`
+        // has the same gate.
         if data == to {
             // free_source is suppressed (data.store_nr == to.store_nr
             // is already the existing skip-free condition at line 1225);

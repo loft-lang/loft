@@ -69,7 +69,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     // @PLN10 Phase 1 — always-non-null `#rust`-template producers.
     ("n_ymd_days_ago_dest", n_ymd_days_ago_dest),
     ("n_store_memory_dest", n_store_memory_dest),
-    // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
+    // @PLN10 Phase 1 batch 2 — always-non-null runtime producers.
     ("n_struct_to_json_dest", n_struct_to_json_dest),
     ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
     ("t_9character_is_lowercase", t_9character_is_lowercase),
@@ -2672,7 +2672,7 @@ fn n_parse_errors_of(stores: &mut Stores, stack: &mut DbRef) {
 // ── Crypto built-ins moved to lib/crypto/native (plan-12 phase 1a) ──────
 
 /// `vector_sum_int(v, acc)` — the loop kernel (`loop_kernels::vector_sum_int`), one
-/// `OpStaticCall` for the whole sum.  Its native twin is `codegen_runtime::n_vector_sum_int`.
+/// `OpStaticCall` for the whole sum.  Its C twin is `loft_vector_sum_int`.
 fn n_vector_sum_int(stores: &mut Stores, stack: &mut DbRef) {
     let acc = stores.get::<i64>(stack);
     let v = stores.get::<DbRef>(stack);
@@ -2794,9 +2794,8 @@ fn n_trie_prefix(stores: &mut Stores, stack: &mut DbRef) {
 //   OpFreeRef on it frees the entire store — single ownership, no
 //   ref-count puzzles.
 
-// JsonValue variant discriminants — exposed `pub(crate)` so the
-// `--native` runtime wrappers in `src/codegen_runtime.rs` can match
-// against the same byte values the interp uses.
+// JsonValue variant discriminants — `pub(crate)` so the store's other
+// JsonValue writers (`database::structures`) use the same byte values.
 pub(crate) const JV_DISCR_NULL: i32 = 1;
 pub(crate) const JV_DISCR_BOOL: i32 = 2;
 pub(crate) const JV_DISCR_NUMBER: i32 = 3;
@@ -2831,8 +2830,7 @@ pub(crate) fn jv_alloc(stores: &mut Stores) -> DbRef {
 /// Lazily allocated on first call; its store is `lock()`ed so future writes
 /// panic (guaranteeing the sentinel stays JNull) and `check_store_leaks`
 /// ignores it for the process lifetime.
-/// `pub(crate)` so the `--native` JSON runtime wrappers in
-/// `src/codegen_runtime.rs` can return the same sentinel.
+/// `pub(crate)` so every JSON reader in the crate returns the same sentinel.
 pub(crate) fn jv_null_sentinel(stores: &mut Stores) -> DbRef {
     if let Some(r) = stores.jnull_sentinel {
         return r;
@@ -3070,11 +3068,9 @@ fn n_json_parse(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, result);
 }
 
-/// P268: shared materialisation helper extracted from the interp
-/// `n_json_parse` body so the native `--native` runtime stub
-/// (`codegen_runtime::n_json_parse`) can call the same logic without
-/// going through the bytecode VM's `(stores, stack)` calling
-/// convention.  Returns the allocated `JsonValue` `DbRef`; updates
+/// P268: the materialisation behind `n_json_parse`, callable without
+/// the bytecode VM's `(stores, stack)` calling convention (the engine
+/// host's natives use it).  Returns the allocated `JsonValue` `DbRef`; updates
 /// `stores.last_json_errors` exactly as the interp path does.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn json_parse_into_stores(stores: &mut Stores, raw: &str) -> DbRef {

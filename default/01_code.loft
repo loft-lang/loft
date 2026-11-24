@@ -2210,14 +2210,14 @@ fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds
 // null into the slot; otherwise deep-copies like OpCopyRecord.  Interpreter-only —
-// the native backend handles the same case inline in `generation::dispatch`.
+// the C backend emits its own bind inline.
 fn OpCopyRefOrNull(src: reference, pos: const u16, tp: const u16);
 // @PLN85 — bind a `??`-join call return into an owned slot with a runtime
 // arg-aliasing guard.  `witness` is the argument the return may borrow (the
 // ownership oracle's resolved base); `src` is the call result.  Adopts `src` when
 // it is fresh (the owned arm); deep-copies into a fresh store at `pos` when `src`
 // aliases `witness` (the borrow arm) so the append's source-free hits the copy.
-// Interpreter-only — the native backend does the same inline in `generation::dispatch`.
+// Interpreter-only — the C backend does the same inline (`c::body`).
 fn OpBindOrCopy(witness: reference, src: reference, pos: const u16, tp: const u16);
 fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
 #cold

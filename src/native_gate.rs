@@ -11,7 +11,7 @@
 //! (compiled, dispatched via `OpStaticCall`) and the rest (run by the
 //! interpreter).  This module computes that partition.
 //!
-//! **The denylist is small.**  The native backend (`generation/`) emits everything —
+//! **The denylist is small.**  The native backend (`c/`) emits everything —
 //! structs, enums, vectors, generics, closures, `par` loops and `parallel { }` blocks
 //! (`n_parallel_block_native`, loft#1054) and generators.  What a compiled LIBRARY still
 //! cannot carry is a call through a function value, whose callee the cdylib cannot name,
@@ -196,7 +196,7 @@ pub enum BridgeAttrKind {
 
 /// #303 — the ONE marshallability judgment for the shared-store bridge.
 /// Every consumer — this gate, the bridge generator
-/// (`native_lib::shared_bridge_wrapper`), and the wire-time signature builder
+/// (`c::hosted::bridge`), and the wire-time signature builder
 /// (`extensions::compute_shared_sig`) — classifies an attribute through this
 /// function.  `None` means the function is not shared-dispatchable.  Keeping
 /// the judgment here is what guarantees a marked function always wires: the

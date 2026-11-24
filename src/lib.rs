@@ -437,7 +437,6 @@ mod png_store;
 pub mod profiler;
 pub mod radix_db;
 mod radix_tree;
-pub mod runtime_abi;
 pub mod rust_spelling;
 mod spatial;
 pub mod store;

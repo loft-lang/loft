@@ -4780,11 +4780,8 @@ impl Stores {
     /// operand carries.
     ///
     /// The bit is set by the parser, which is the only layer that can ask the
-    /// schema whether the field being cleared is a secondary view. Both backends
-    /// call THIS — the interpreter through the `#rust` template in
-    /// `default/01_code.loft`, the native generator through
-    /// `codegen_runtime::OpClearKeyed` — so the decode exists once and the two
-    /// cannot drift.
+    /// schema whether the field being cleared is a secondary view. The interpreter
+    /// calls THIS through the `#rust` template in `default/01_code.loft`.
     pub fn remove_claims_keyed(&mut self, rec: &DbRef, raw_tp: u16) {
         self.remove_claims_mode(
             rec,

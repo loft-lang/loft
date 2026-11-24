@@ -1,4 +1,4 @@
-/* ── Files (src/state/io.rs, src/database/io.rs, codegen_runtime.rs's fs_*) ────────────────
+/* ── Files (src/state/io.rs, src/database/io.rs, src/fs_ops.rs) ────────────────────────────
  * A `File` record: its size at byte 0, the position of the last read or write at 8, the next one
  * at 16 (null: not set), its path at 24, its handle at 28 (an OS descriptor plus one; 0 or
  * INT32_MIN for none: `loft_file_get`) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
@@ -691,7 +691,7 @@ __declspec(dllimport) unsigned long __stdcall GetLastError(void);
 #define O_CLOEXEC 0
 #endif
 
-/* `file open error: {e}` (state/io.rs, codegen_runtime): the error as Rust's `io::Error` shows
+/* `file open error: {e}` (state/io.rs): the error as Rust's `io::Error` shows
  * a path's — `<path>: <strerror> (os error <n>)` — on stderr. */
 static void loft_file_open_error(loft_cx *cx, const char *path) {
     int e = errno;
@@ -1507,7 +1507,7 @@ static uint64_t loft_take(loft_cx *cx, const uint8_t *d, int n, int le) {
     return v;
 }
 
-/* `@FR-R-FileHold` (codegen_runtime::FileCursor): a loop that reads one File and nothing else
+/* `@FR-R-FileHold` (lower/file_hold.rs): a loop that reads one File and nothing else
  * that can see its record keeps the record's cursor in this guard — `#index` and `#next`,
  * the handle and the byte order, read once when the hold begins — and gives them back when
  * the loop is left.  Nothing held (no open handle yet, no position, a format that is not

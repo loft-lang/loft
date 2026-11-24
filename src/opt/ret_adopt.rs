@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C
 
-//! Two per-function analyses both compiled writers read, moved here from
-//! `generation::hoist` unchanged so the C backend can name them without reaching up into the
-//! Rust writer: `@FR-R-RetAdopt`'s return-buffer adoption ([`ret_adopt`]) and @PLN157 § V-y's
+//! Two per-function analyses the C backend reads: `@FR-R-RetAdopt`'s return-buffer adoption ([`ret_adopt`]) and @PLN157 § V-y's
 //! literal-group coverage ([`complete_writes`]).
 
 use crate::data::{Data, Type, Value};

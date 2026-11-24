@@ -246,13 +246,41 @@ pub fn alloc_coroutine(stores: &mut Stores, coro: Box<dyn LoftCoroutine>) -> DbR
     }
 }
 
+/// @PLN199 D2 — the native coroutine table's entry points as a value: the host's own
+/// (`HERE`), a field of the table the host hands every library unit
+/// (`host_abi::HostTable::coroutines`), whose layout the C side mirrors.
+#[derive(Clone, Copy)]
+pub struct CoroutineHost {
+    pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
+    pub alloc: fn(&mut Stores, Box<dyn LoftCoroutine>) -> DbRef,
+    pub retain: fn(DbRef, &mut Stores) -> DbRef,
+    pub free: fn(DbRef, &mut Stores),
+    pub next_i64: fn(DbRef, &mut Stores) -> i64,
+    pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
+    pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
+    pub next_text: fn(DbRef, &mut Stores) -> String,
+    pub exhausted: fn(DbRef, &Stores) -> bool,
+}
+
+impl CoroutineHost {
+    /// This copy's own table.
+    pub const HERE: CoroutineHost = CoroutineHost {
+        alloc_held: alloc_coroutine_held,
+        alloc: alloc_coroutine,
+        retain: coroutine_retain,
+        free: free_native_coroutine,
+        next_i64: coroutine_next_i64,
+        next_into: coroutine_next_into,
+        next_dbref: coroutine_next_dbref,
+        next_text: coroutine_next_text,
+        exhausted: coroutine_is_exhausted,
+    };
+}
+
 /// Free a native coroutine handle: release the heap locals the generator still owns, then
 /// its slot.  A handle whose generator already exhausted names a frame that is gone, and
 /// the generation check keeps this off whatever inherited the slot (loft#835).
 pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
-    if let Some(h) = forwarded() {
-        return forward_cold(|| (h.free)(gen_ref, stores));
-    }
     // Take the generator OUT of the table before running its cleanup: `drop_stores` frees
     // stores, and a nested generator handle among them re-enters this table.
     let run = &mut stores.native;
@@ -383,78 +411,4 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
 #[must_use]
 pub fn coroutine_is_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
     !native_coroutine_live(&stores.native.coroutines, gen_ref)
-}
-
-/// @PLN199 D2 — the native coroutine table's entry points as a value: the host's own
-/// (`HERE`), which a library cdylib's copy of this module forwards to once its host
-/// installed them (`forward_coroutines`).  Every `static` here
-/// exists once per copy of libloft, so without the forward a library's generator handle and
-/// the host's named two different tables.  Rust fn pointers, as `Box<dyn LoftCoroutine>`
-/// crosses: one rlib builds both sides.
-#[derive(Clone, Copy)]
-pub struct CoroutineHost {
-    pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
-    pub alloc: fn(&mut Stores, Box<dyn LoftCoroutine>) -> DbRef,
-    pub retain: fn(DbRef, &mut Stores) -> DbRef,
-    pub free: fn(DbRef, &mut Stores),
-    pub next_i64: fn(DbRef, &mut Stores) -> i64,
-    pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
-    pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
-    pub next_text: fn(DbRef, &mut Stores) -> String,
-    pub exhausted: fn(DbRef, &Stores) -> bool,
-}
-
-impl CoroutineHost {
-    /// This copy's own table.
-    pub const HERE: CoroutineHost = CoroutineHost {
-        alloc_held: alloc_coroutine_held,
-        alloc: alloc_coroutine,
-        retain: coroutine_retain,
-        free: free_native_coroutine,
-        next_i64: coroutine_next_i64,
-        next_into: coroutine_next_into,
-        next_dbref: coroutine_next_dbref,
-        next_text: coroutine_next_text,
-        exhausted: coroutine_is_exhausted,
-    };
-}
-
-/// The table a library cdylib's copy forwards to: its host's (`forward_coroutines`), or null.
-/// Read only by [`free_native_coroutine`], which the runtime itself reaches from inside a
-/// cdylib (`OpFreeRef`, a generator's `drop_stores`).  Every other entry point is reached
-/// from generated code, which in a library cdylib calls the host's table directly
-/// (`native_lib::HOST_INIT_SRC`'s `__coro`): a test here, even a relaxed load out of line,
-/// cost a whole-program generator loop 8 % (measured; the emitted program was identical).
-/// A relaxed load: the slot is written once, by the library's `loft_shared_init`, before any
-/// of its code runs — an acquire load per advance (`OnceLock::get`) cost a whole-program
-/// generator loop 6 %.
-static FORWARD: std::sync::atomic::AtomicPtr<CoroutineHost> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-
-/// Forward this copy's coroutine table to `host`'s.  Called from a library cdylib's
-/// `loft_shared_init` only; never in the host, whose own table this is.
-pub fn forward_coroutines(host: CoroutineHost) {
-    if FORWARD.load(std::sync::atomic::Ordering::Acquire).is_null() {
-        FORWARD.store(
-            Box::into_raw(Box::new(host)),
-            std::sync::atomic::Ordering::Release,
-        );
-    }
-}
-
-/// The forwarded call, kept out of line: the entry points run in a generator's every
-/// advance, and the call through the host's table — taken only inside a library cdylib —
-/// must not shape their hot body.
-#[cold]
-#[inline(never)]
-fn forward_cold<R>(call: impl FnOnce() -> R) -> R {
-    call()
-}
-
-/// The host's table this copy forwards to, if any.
-#[inline]
-fn forwarded() -> Option<&'static CoroutineHost> {
-    let p = FORWARD.load(std::sync::atomic::Ordering::Relaxed);
-    // SAFETY: set once to a leaked `Box`, never freed or changed after.
-    unsafe { p.as_ref() }
 }

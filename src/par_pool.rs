@@ -3,10 +3,8 @@
 // @I72 — Parallel execution runtime: the worker pool a compiled program's `par` runs on
 
 //! The worker pool: split a row range over N workers, each borrowing the parent stores
-//! read-only with its own scratch, and collect their results in worker order.  A compiled
-//! program's `par` runs on it directly (`codegen_runtime`), and the interpreter's worker
-//! programs (`parallel`) run on it too — so it sits in the runtime a compiled program links,
-//! and the interpreter's half does not (@PLN191).
+//! read-only with its own scratch, and collect their results in worker order.  The
+//! interpreter's worker programs (`parallel`) run on it.
 
 #![allow(unused_imports)]
 use crate::database::{Stores, WorkerStores};
@@ -37,11 +35,8 @@ use std::thread;
 /// `clone_for_light_worker` borrow of the parent.  Returns `Vec<R>` in
 /// worker-id order.
 ///
-/// Used by both the interpreter dispatchers in this file and the native
-/// codegen dispatchers in `src/codegen_runtime.rs`.  The interpreter
-/// path needs an `Arc<WorkerProgram>`; it constructs its own and the
-/// closure captures it.  The native path constructs no extra context;
-/// it just runs a Rust closure per row.
+/// Used by the interpreter dispatchers in this file, which construct
+/// their own `Arc<WorkerProgram>` for the closure to capture.
 ///
 /// Implementation notes:
 /// - `f` is captured by reference inside the spawn closures.  The

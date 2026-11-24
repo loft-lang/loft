@@ -14,7 +14,7 @@
 //!   and a copy carries the word with the record's bytes;
 //! - a ROOT is a function with a byte-vector parameter `B` that it hands, with nothing but
 //!   reads of it, to a call answering a value of a view type.  For the length of its call it
-//!   names `B` as the frame (`codegen_runtime::DvFrame`);
+//!   names `B` as the frame (`Stores::dv_frame`);
 //! - the REGION is every loft function a value of a view type — or a record, collection or
 //!   variant holding one — reaches from the root: each is re-emitted as `<f>__dv`, with the
 //!   writes of a span field and the reads of a text one rewritten (`decode_view_emit`).  The

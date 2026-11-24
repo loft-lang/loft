@@ -103,7 +103,10 @@ nothing to fetch.  The library repositories' `origin/main` agree: `loft-libs-cor
 and `-graphics` declare `[c]` parts, `-net`'s `server`, `ssh` and `web` declare `[native]
 component = "net"`, and `-world` declares no native part.
 
-## Not yet measured
+## Measured at the close
 
-The language suite, `revalidate-libs` and the corpus under `LOFT_NO_RUSTC=1`; each is added
-here when it is run.
+- **`revalidate-libs`** (run 45421714280, on `tuxedo-pln225` @ a57577a4e): every live library
+  release passes its own tests on the interpreter and the C — 56 releases, no failure.
+- **The test suite** at the closing tip: 6262 tests, all passing against the pinned language suite.
+- **The corpus** runs through the C with no `rustc` on the path: the writer and its build route
+  are deleted, so there is no rustc leg left to switch off (`tests/native.rs`).

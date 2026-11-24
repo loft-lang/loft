@@ -188,7 +188,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
 | [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from any one writer: the base the C backend stands on ([plan](plans/200-backend-structure.md)) |
 | [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that makes it the default ([plan](plans/203-c99-default-backend.md)) |
-| [@PLN225](plans/225-retire-rustc-writer/README.md) | active | The rustc writer retired: the interpreter and the C are the two backends (`@C170`), and the writer's sources, switches, rewrites and docs leave the tree |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
 ### N — Niche / opportunistic

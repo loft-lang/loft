@@ -3088,9 +3088,8 @@ impl Stores {
         // that invariant, checked where the record is actually born.
         //
         // It is here because this is the one call every record allocation makes with
-        // the type row still in hand — both `OpDatabase` twins (`state/io.rs`,
-        // `codegen_runtime.rs`) and the placement arena — so a single site covers
-        // both backends without the interp/native mirror being written twice.
+        // the type row still in hand — `OpDatabase` (`state/io.rs`) and the placement
+        // arena — so a single site covers them.
         //
         // ⚠ It is checked at RUNTIME, and unconditionally, because the failure it
         // replaces has no other signal.  A record built to the placeholder's layout

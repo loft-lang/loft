@@ -786,9 +786,9 @@ pub fn native_strip_symbols() -> bool {
 }
 
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
-/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
-/// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
-/// library's loft functions beside its native crate only on the C-ABI link.
+/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by
+/// `opt::native_key` and by the parser, which compiles a library's loft functions beside its
+/// native crate only on the C-ABI link.
 #[must_use]
 pub fn native_cabi_link() -> bool {
     !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
@@ -1227,14 +1227,11 @@ pub fn existing_lib_beside(dir: &std::path::Path, name: &str, os: LibOs) -> Opti
 /// built binary working if the package moves. ELF has no equivalent problem —
 /// its `SONAME` is only set when asked — so this is empty off macOS.
 ///
-/// **Every artifact loft publishes by rename needs this**, not only the `cc`-built
-/// shim: `native_lib` compiles a package cdylib to `<stem>.building` and renames
-/// it the same way. That one went years recording
-/// `/Users/…/native-auto/loft_auto_<hash>.building` — the temp stem with an
-/// absolute build directory in it — which stayed invisible because those cdylibs
-/// are `dlopen`ed BY PATH, and a path load ignores the install name. It would have
-/// surfaced the first time one was resolved through `@rpath` or simply moved. The
-/// flag is cheap and the failure is silent, so it goes on both.
+/// **Every artifact loft publishes by rename needs this** — the `cc`-built shim and a
+/// compiled component (`c::component`) alike.  An artifact `dlopen`ed BY PATH ignores
+/// the install name, so a wrong one stays invisible until the artifact is resolved
+/// through `@rpath` or moved.  The flag is cheap and the failure is silent, so it goes
+/// on every one.
 #[must_use]
 pub fn install_name_args(final_file_name: &str, os: LibOs) -> Vec<String> {
     if os == LibOs::Macos {
@@ -2516,7 +2513,7 @@ pub fn stages_dlls_beside_binary() -> bool {
 /// DLL names its imports by module name, with no RPATH to say where they live, and the loader
 /// takes an import from the modules already loaded or from its search path (the `.exe`'s
 /// directory, the system directories, `PATH`).  A host that loads a library artifact loads
-/// the native packages it links first (`native_lib::load_linked_packages`).  Elsewhere the
+/// the native packages it links first (`opt::native_key::load_linked_packages`).  Elsewhere the
 /// artifact carries an RPATH to the package's library.
 #[must_use]
 pub fn loads_library_dependencies_first() -> bool {
@@ -3579,69 +3576,4 @@ pub fn wasm_host_log(msg: &str) {
     crate::loft_host_print(msg.as_ptr(), msg.len());
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))))]
     let _ = msg;
-}
-
-/// macOS's native `main`: the program runs on its
-/// [`NATIVE_MAIN_STACK`](crate::codegen_runtime::NATIVE_MAIN_STACK) thread, as everywhere,
-/// and the MAIN thread runs its run loop — AppKit makes and drives a window on the main thread
-/// only, so a library's window code is sent to the main queue (`dispatch_sync_f`, as graphics' C
-/// shim does), which that run loop drains on the main thread.  (`dispatch_main` would not do: it
-/// exits the main thread and lets worker threads drain the queue.)  A far-off timer keeps the
-/// loop waiting rather than returning with nothing to wait on.  The process ends when the program
-/// does: 0 when it returns, 1 when it panics (the hook has printed the message) — what joining
-/// the thread answered.
-///
-/// # Panics
-/// When the program's thread cannot be spawned.
-#[cfg(target_os = "macos")]
-pub fn run_beside_main_queue<F: FnOnce() + Send + 'static>(run: F) -> ! {
-    use std::ffi::c_void;
-    #[link(name = "CoreFoundation", kind = "framework")]
-    unsafe extern "C" {
-        static kCFRunLoopCommonModes: *const c_void;
-        fn CFRunLoopGetMain() -> *mut c_void;
-        fn CFAbsoluteTimeGetCurrent() -> f64;
-        fn CFRunLoopTimerCreate(
-            allocator: *const c_void,
-            fire_date: f64,
-            interval: f64,
-            flags: usize,
-            order: isize,
-            callout: extern "C" fn(*mut c_void, *mut c_void),
-            context: *mut c_void,
-        ) -> *mut c_void;
-        fn CFRunLoopAddTimer(rl: *mut c_void, timer: *mut c_void, mode: *const c_void);
-        fn CFRunLoopRun();
-    }
-    extern "C" fn never(_timer: *mut c_void, _info: *mut c_void) {}
-    /// The main thread's stack: the OS main-thread stack (~8 MiB) overflows at a few thousand
-    /// recursive loft calls, below the `MAX_CALL_DEPTH` (10 000) guard; a virtual,
-    /// lazily-committed 512 MiB holds 10 000 frames, so the depth guard fires first.
-    const MAIN_STACK: usize = 512 * 1024 * 1024;
-    std::thread::Builder::new()
-        .stack_size(MAIN_STACK)
-        .spawn(move || {
-            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok();
-            std::process::exit(i32::from(!ok));
-        })
-        .expect("failed to spawn main-stack thread");
-    const FAR: f64 = 1.0e9; // seconds: the timer is there to be waited on, not to fire
-    // SAFETY: CoreFoundation's run-loop calls, on the main thread, with a timer it owns from here
-    // on; `CFRunLoopRun` returns only when the loop is stopped, which nothing does — the process
-    // exits from the program's thread above.
-    unsafe {
-        let timer = CFRunLoopTimerCreate(
-            std::ptr::null(),
-            CFAbsoluteTimeGetCurrent() + FAR,
-            FAR,
-            0,
-            0,
-            never,
-            std::ptr::null_mut(),
-        );
-        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
-        loop {
-            CFRunLoopRun();
-        }
-    }
 }

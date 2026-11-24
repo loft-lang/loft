@@ -734,7 +734,7 @@ LOFT_HOT_INLINE int32_t loft_rem32(loft_cx *cx, int32_t a, int32_t b) {
 }
 
 /* The release-pass probe's forms (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201): the processor's
- * wrapping arithmetic, as `generation::ops::int_arith::probe_form` emits it for Rust — a
+ * wrapping arithmetic, as `probe_operator` (`src/c/body.rs`) emits it — a
  * MEASUREMENT of the ship tier's ceiling, never a build anyone ships (@C129).  Each wrap is
  * DEFINED here: the sum, difference, product and negation are taken in unsigned arithmetic,
  * and `INT64_MIN / -1` answers what Rust's `wrapping_div` answers; a zero divisor still

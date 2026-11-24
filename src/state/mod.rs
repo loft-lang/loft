@@ -2627,8 +2627,8 @@ impl State {
 
     /// @PLN199 D1 — advance a generator a compiled library made: its handle names a slot of
     /// the host's native coroutine table (`HostTable::coroutine_adopt`), and the advance runs
-    /// the generator's compiled body.  The yield is read on the channel `--native`'s consumer
-    /// reads for the same operand (`generation/ops/coroutine.rs`) and pushed as the
+    /// the generator's compiled body.  The yield is read on the unified channel
+    /// (`coroutine_layout`) and pushed as the
     /// interpreter's own advance pushes it; exhaustion answers the same typed null.  The
     /// gate admits only the yields read here (`native_gate::generator_crosses`).
     fn native_coroutine_next(&mut self, gen_ref: DbRef, packed_size: u32) {
@@ -5507,7 +5507,7 @@ impl State {
     /// @PLN16 — live edit of a scalar vector **element** (`v[i] = x`).  The cheapest
     /// heap edit: the element lives in the vector's backing record, so this is one
     /// in-place scalar write — no materialisation.  Mirrors the interpreter's own
-    /// element access (`codegen_runtime.rs`): the element type is `content(vec_tp)`,
+    /// element access: the element type is `content(vec_tp)`,
     /// the stride is `size(elem_tp)`, and the slot is `8 + i * stride` within the
     /// backing record.  Returns `false` (no write) on a non-vector base, a null / empty
     /// vector, an out-of-range index, or a non-scalar element type — never writes past
@@ -7416,9 +7416,7 @@ impl State {
     /// Interpreter-side accessor mirrored by
     /// `Stores::const_ref_at_runtime`.  The template
     /// `#rust"s.const_ref_at(@d_nr as usize)"` resolves to this method
-    /// in the bytecode interpreter context (where `s: &mut State`).
-    /// Native codegen rewrites the call to `stores.const_ref_at_runtime`
-    /// (see `src/generation/calls.rs`).  @P275.
+    /// in the bytecode interpreter context (where `s: &mut State`).  @P275.
     #[must_use]
     pub fn const_ref_at(&self, d_nr: usize) -> crate::keys::DbRef {
         self.const_refs[d_nr]
@@ -8762,7 +8760,7 @@ impl State {
     /// `args` (its visible parameters, in order) and `closure`, through [`Self::reenter_ret`]
     /// — above every live frame, restoring the PC and the stack after — and answers the
     /// result in a [`LibArg`].  The gate admits only the signatures marshalled here
-    /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
+    /// (`fnref::upcall_carries`): scalar, text and reference parameters, and a
     /// scalar or void return, so the callee has no hidden buffer.
     ///
     /// [`LibArg`]: crate::host_abi::LibArg

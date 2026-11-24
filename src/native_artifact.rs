@@ -4,8 +4,8 @@
 
 //! The driver's one question about a library this run: adopt its compiled artifact, build
 //! one, or interpret it.  The interpreter answers the first half
-//! (`native_adopt::adopt_shared_cdylib`) and the Rust writer builds
-//! (`native_lib::build_shared_artifact`); neither names the other, so the two meet here.
+//! (`native_adopt::adopt_shared_cdylib`) and the C backend builds a hosted unit
+//! (`c::hosted::build_artifact`); neither names the other, so the two meet here.
 
 use std::fmt::Write as _;
 
@@ -42,7 +42,7 @@ use std::collections::HashSet;
 /// Step 4 option 3.)
 ///
 /// # Errors
-/// Propagates a build failure from [`build_shared_cdylib`](crate::native_lib::build_shared_cdylib).
+/// Propagates a build failure from [`build_artifact`](crate::c::hosted::build_artifact).
 pub fn cached_or_build_shared_cdylib(
     data: &Data,
     export_set: &HashSet<u32>,
@@ -332,7 +332,7 @@ fn loaded_spelling(data: &crate::data::Data, pkg: &std::path::Path) -> Option<St
 /// and not the program's that happened to build it first.
 pub struct LibraryAlone {
     pub parser: crate::parser::Parser,
-    /// The package directory, canonical: what `native_lib::library_export_set` filters by.
+    /// The package directory, canonical: what `opt::native_key::library_export_set` filters by.
     pub pkg_dir: String,
     /// The library's public functions an artifact carries.
     pub export: HashSet<u32>,

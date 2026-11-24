@@ -214,9 +214,8 @@ pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
     // @PLN10 — render the text null sentinel ("\0") as `null`, mirroring
     // `format_long`'s `i64::MIN → null`.  A loft text equal to `STRING_NULL`
     // IS null (the content-based null model — `conv_bool_from_text`), so the
-    // substitution is consistent with `?? ` / `!`.  Both backends route text
-    // interpolation through this fn (interp `OpFormatText` + the native
-    // `generation/text.rs` emitter), so this one site fixes both.
+    // substitution is consistent with `?? ` / `!`.  The interpreter's
+    // `OpFormatText` routes text interpolation through this fn.
     let val = if val == crate::store::STRING_NULL {
         "null"
     } else {

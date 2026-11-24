@@ -907,7 +907,7 @@ pub struct FillSpan {
 /// before a loop whose body provably cannot write a store, and each element read inside
 /// becomes bounds check + address arithmetic ([`get_vector_hoisted`]).
 ///
-/// A header is only meaningful for as long as that promise holds. `loft::generation::hoist`
+/// A header is only meaningful for as long as that promise holds. `loft::opt::hoist`
 /// is the one place that decides it, and `LOFT_HOIST_VERIFY=1` at GENERATION time emits
 /// the checking form of every hoisted read, which re-derives the triple and asserts it
 /// still matches — so a gate that lets a mutation through fails loudly under one suite run
@@ -2254,8 +2254,8 @@ pub fn is_scratch_header(store: &Store, scratch: &DbRef) -> bool {
 
 /// One step of the Ordered iteration path over a `hash`/`index`/`radix`/`spatial`
 /// collection: advance the u32-stride rec-nr cursor and yield the record it points at.
-/// Shared by the interpreter (`State::step`) and the native runtime
-/// (`codegen_runtime::step`) so the two cannot drift.  `cur` is the current cursor;
+/// The interpreter's (`State::step`); the C's twin is `loft_scratch_step`.  `cur` is the
+/// current cursor;
 /// returns `(yielded element, new cursor)`.
 ///
 /// The mode picks where the yielded RECORD lives:

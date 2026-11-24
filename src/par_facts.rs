@@ -184,7 +184,7 @@ pub(crate) fn tuple_row_plan(
 
 /// Is `t` a `text_return` work buffer — a `&mut String` the inner fn appends the
 /// result into (loft IR type `RefVar(Text)`)?  The bridge owns a local `String`
-/// for each and passes `&mut`.  Shared with `native_lib` (the gate admits exactly
+/// for each and passes `&mut`.  Shared with `native_gate` (the gate admits exactly
 /// these as the one allowed `__`-prefixed param, and only for a text-returning fn).
 pub(crate) fn is_text_work_buffer(t: &crate::data::Type) -> bool {
     matches!(t, crate::data::Type::RefVar(inner) if matches!(**inner, crate::data::Type::Text(_)))
