@@ -265,9 +265,6 @@ fn every_stdlib_native_has_a_c_arm_or_a_named_refusal() {
     let p = parsed("fn main() {}\n");
     let unported = loft::c::unported_natives(&p.data);
     let refused: &[&str] = &[
-        // The test ledger's builtins (@PLN201 step 2): the C records no ledger yet.
-        "n___ledger",
-        "n___ledger_div",
         // A retired panic stub: the parser lowers a `par` loop to the queue natives.
         "n_parallel_for",
     ];
