@@ -2494,8 +2494,9 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
     return null;
   }
   // A branch that can leave the function from inside an arm is copied arm by arm, its
-  // sources bound first (`leaving_branch`, `bind_leaving_source`): not carried.
-  if el_ex_call::has_return(el_ir::last(bl.operators)) {
+  // sources bound first (`leaving_branch`, `bind_leaving_source`) — on the second pass, by
+  // `materialize_join_tail`; the first still takes `Bind`, the buffer named in the result.
+  if !e.first_pass && el_ex_call::has_return(el_ir::last(bl.operators)) {
     return null;
   }
   // Pass 2, the buffer already among the result's deps (`bound_already`): every named local
