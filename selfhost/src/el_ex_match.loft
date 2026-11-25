@@ -528,6 +528,9 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if par != null && x.tp is TyText && !(x.code is NdIter) {
     return par_text(e, vars, h, x, par!, loop_nr);
   }
+  if par != null && (el_types::base(x.tp) is TySorted || el_types::base(x.tp) is TyIndex) && !(x.code is NdIter) && el_ir::unspan(x.code) is NdVar {
+    return par_keyed(e, vars, h, x, par!, loop_nr);
+  }
   if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
     el::refuse(e, "a `par` loop over this source: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1205,6 +1208,91 @@ fn par_text(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, loo
     mx = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
   }
   el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: mx, vec: mat, elem: ct, var_tp: ct, loop_nr: loop_nr }, par, h.body)
+}
+
+// `materialise_keyed_for_par` for a sorted or index local: its records copied into
+// `___par_mat_N` (a `vector<ref(T)>` borrowing the collection) by its own walk — the store,
+// `___par_mat_idx_N`, the element `___par_mat_e_N` and the walk's `#iter_state`, then each
+// record appended through `___par_mat_t_N` — and the vector `par` loop run over it.  Pass 1
+// mints the vector.  (A hash, radix or trie walk takes a snapshot: not carried.)
+fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, loop_nr: integer) -> Ex {
+  ct = el_types::base(x.tp);
+  el_d = el_types::keyed_elem(ct);
+  src_var = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, [src_var]);
+  nm = el::def(e, el_d).name;
+  // (`vector_def` of the element, early and on both passes, where `par` was read.)
+  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+    ptok = match e.p.nodes[par] { SPar { at: pat } => pat, _ => 0 };
+    el_schema::make_vector_def(e, ir::TyReference { n: el_d, dep: [] }, nm, el::pos_at(e, ptok + 1), true);
+  }
+  // (The wrapper's field is the element as the walk types it, borrowing the collection — set
+  // after the layout, which reads a borrowing reference as a pointer field.)
+  pmd = el::def_nr(e, "main_vector<{nm}>");
+  if !e.first_pass && pmd >= 0 && el::def(e, pmd).source == 0 && len(el::def(e, pmd).attributes) > 0 && len(el_types::deps(match el_types::base(el::def(e, pmd).attributes[0]!.typedef[0] ?? ir::TyVoid) { TyVector { inner: pi } => pi, _ => ir::TyVoid })) == 0 && el::def(e, pmd).position.file == e.file {
+    e.b.data.definitions[pmd].attributes[0].typedef = [ir::TyVector { inner: elem, dep: [] }];
+    pvd = el::def_nr(e, "vector<{nm}>");
+    if pvd >= 0 {
+      e.b.data.definitions[pvd].returned = [ir::TyVector { inner: elem, dep: [] }];
+    }
+  }
+  mat = el_vars::create_unique(vars, "__par_mat", ir::TyVector { inner: elem, dep: [] });
+  el_vars::set_defined(vars, mat);
+  mx = ex(ir::NdNull, ir::TyVector { inner: elem, dep: [] });
+  if !e.first_pass {
+    r = el_ex_base::vector_rows(e, ir::TyReference { n: el_d, dep: [] }, 0, true);
+    if r == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r!.main_def, dep: [] });
+    el_vars::set_var_type(vars, mat, ir::TyVector { inner: elem, dep: [db] });
+    idx = el_vars::create_unique(vars, "__par_mat_idx", el_ex_base::count_type(e));
+    el_vars::set_defined(vars, idx);
+    me = el_vars::create_unique(vars, "__par_mat_e", elem);
+    el_vars::set_defined(vars, me);
+    state = el_vars::add_variable(vars, "{el_vars::name_of(vars, idx)}#iter_state", el_ex_base::count_type(e));
+    el_vars::set_defined(vars, state);
+    known = el_schema::keyed_type(e, ct);
+    on = 128;
+    arg = 4;
+    match ct {
+      TyIndex { n: _ } => { on += 1; arg = known; },
+      TySorted { n: _ } => {
+        if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered { on += 3; } else { on += 2; arg = e.b.types[el::def(e, el_d).known_type]!.size; }
+      },
+      _ => { on += 4; }
+    }
+    tmp = el_vars::create_unique(vars, "__par_mat_t", elem);
+    el_vars::set_defined(vars, tmp);
+    src = x.code;
+    i = ir::NdVar { n: idx };
+    w = ir::NdVar { n: mat };
+    ck = el::def(e, el_d).known_type;
+    esz = if ck == el_schema::NO_TYPE { 8 } else { e.b.types[ck]!.size };
+    vk = ir::NdInt { n: r!.vec_known };
+    next = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, src, ir::NdInt { n: on }, ir::NdInt { n: arg }])], elem, "sorted iter next");
+    brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    steps = [
+      el_ir::v_set(me, next),
+      el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: me }])]), brk, ir::NdNull),
+      ir::NdInsert { items: [
+        el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: 1 }, ir::NdInt { n: esz }]),
+        el_ir::v_set(tmp, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }])),
+        el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: me }, ir::NdVar { n: tmp }, ir::NdInt { n: ck }]),
+        el_ir::cl(e, "OpFinishRecord", [w, ir::NdVar { n: tmp }, vk, ir::NdInt { n: 65535 }])
+      ] }
+    ];
+    start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+    items = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r!.main_known }]),
+      el_ir::v_set(mat, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: el_ex_base::wrapper_row(e, r!) }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+      ir::NdInsert { items: [el_ir::v_set(state, start), el_ir::v_set(idx, ir::NdInt { n: -1 })] },
+      el_ir::v_loop(steps, "Materialise par input")
+    ];
+    mx = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
+  }
+  el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: mx, vec: mat, elem: elem, var_tp: elem, loop_nr: loop_nr }, par, h.body)
 }
 
 pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
