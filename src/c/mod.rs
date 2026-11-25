@@ -318,10 +318,11 @@ pub(crate) struct Cx<'a> {
     /// an OPEN unit, which takes no whole-program rewrite that changes a signature, as an
     /// `open_world` program takes none (NATIVE.md § Optimisation tiers).
     pub(crate) open: bool,
-    /// `@PLN206 P5` — where a hosted unit names its library's sources from: the package's
-    /// parent directory, so a fault site reads `<library>/src/<file>.loft` on every machine the
-    /// unit is adopted on, not the path of the one that built it (`Self::source_name`).
-    pub(crate) source_root: Option<String>,
+    /// The roots the unit names its source files from (`Self::source_name`): a program's main
+    /// directory, or — `@PLN206 P5` — a hosted unit's package parent, so a fault site reads
+    /// `<library>/src/<file>.loft` on every machine the unit is adopted on; and the standard
+    /// library's directory.
+    pub(crate) source_roots: crate::source_name::Roots,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -447,7 +448,10 @@ impl<'a> Cx<'a> {
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_root: SOURCE_ROOT.with(|r| r.borrow().clone()),
+            source_roots: crate::source_name::roots_of(
+                data,
+                SOURCE_ROOT.with(|r| r.borrow().clone()),
+            ),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -548,22 +552,11 @@ impl<'a> Cx<'a> {
             .map(|l| format!("loft_ap_{}", l.rust))
     }
 
-    /// The name a fault site, a frame and a line mark give source `file`: in a hosted unit, a
-    /// library file from the package's parent directory and a standard-library file from
-    /// `default/` (as the compiled standard library names it, `bodies.rs`), so the unit is the
-    /// same text wherever it is built; in a program, the file as it was found.
+    /// The name a fault site, a frame and a line mark give source `file`: from its root, never
+    /// from where the unit was built ([`crate::source_name::name`]), so the unit is the same
+    /// text wherever it is built (@PLN229, reproducible builds).
     pub(crate) fn source_name(&self, file: &str) -> String {
-        let Some(root) = &self.source_root else {
-            return file.to_string();
-        };
-        let root = root.trim_end_matches('/');
-        if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
-            return rest.to_string();
-        }
-        match file.rfind("/default/") {
-            Some(at) => file[at + 1..].to_string(),
-            None => file.to_string(),
-        }
+        crate::source_name::name(file, &self.source_roots)
     }
 
     pub(crate) fn value_records(

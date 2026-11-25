@@ -13850,6 +13850,9 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // definition — to start each run, then dropped the copy: ~0.7 ms of a warm `hello`
     // (@PLN179 finding 001).
     let mut data = std::sync::Arc::new(p.data);
+    // A fault this run renders names its file from the program's roots, as the generated
+    // binary's does (`source_name`, @PLN229).
+    loft::source_name::set_program_roots(loft::source_name::roots_of(&data, None));
     let mut failed_tests = 0_usize;
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
