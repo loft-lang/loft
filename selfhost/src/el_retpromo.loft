@@ -143,6 +143,14 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
   if tail == null {
     return;
   }
+  // `classify_vector_delivery`'s `CopyBorrow` as the lowering delivered it: a tail the copy
+  // already wrote into the buffer (`copy_borrow_tail_into_retbuf`, its `borrow_tail_copy_104`
+  // block) is not asked about — Rust reaches `ref_return` there only when the copy FAILS, and a
+  // copy block exists only where it did not.  (A body whose pre-delivery tail is known reads
+  // that instead, above; a lambda's is not recorded.)
+  if !e.first_pass && copy_borrow_delivered(tail!) {
+    return;
+  }
   tls = tail_candidates(e, vars, tail!);
   if len(tls) == 0 {
     return;
@@ -578,6 +586,16 @@ fn tail_candidates(e: el::El, vars: el_vars::Vars, tail: ir::Node) -> vector<int
       if len(ds) == 0 { hidden_ref_args(e, t) } else { ds }
     },
     _ => []
+  }
+}
+
+// `n` is the copy `copy_borrow_tail_into_retbuf` writes for a tail borrowing a parameter: its
+// `borrow_tail_copy_104` block (a nullable answer's outer test is one too), or a `return` of one.
+fn copy_borrow_delivered(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => len(block) > 0 && block[0].name == "borrow_tail_copy_104",
+    NdReturn { inner } => copy_borrow_delivered(inner),
+    _ => false
   }
 }
 
