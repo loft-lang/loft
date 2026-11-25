@@ -4991,7 +4991,10 @@ mod text_view_owned {
     /// multi-byte, empty and null texts, and for a view that points nowhere.
     #[test]
     fn a_text_view_owned_is_what_display_writes() {
-        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"] {
+        // Owned copies: the null text is an ADDRESS (`text_null::is_null`), and a `"\0"`
+        // literal in this crate may be merged with that very static.
+        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"].map(String::from) {
+            let text = text.as_str();
             let view = super::Str::new(text);
             assert_eq!(view.to_string(), format!("{view}"), "{text:?}");
             assert_eq!(view.to_string(), text, "{text:?}");
