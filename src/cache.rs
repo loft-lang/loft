@@ -171,7 +171,7 @@ pub fn build_signature() -> String {
 /// test binary of every rebuild wrote its own.  A rebuild from edited sources still moves
 /// it, which is what the executable's mtime was there for.
 #[must_use]
-fn build_identity_tag() -> String {
+pub(crate) fn build_identity_tag() -> String {
     format!(
         "{}/{}/{}",
         env!("LOFT_BUILD_STAMP"),
