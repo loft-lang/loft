@@ -1487,6 +1487,12 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
         if el_types::is_collection(b) || b is TyReference || b is TyEnum {
           return false;
         }
+        // (`const_literal` folds a field for the setters it knows, the 1- and 2-byte narrow
+        // ones among them; a four-byte narrow field — `OpSetInt4` / `OpSetInt4Raw`, an `i32` or
+        // `u32` — blocks the constant.)
+        if match b { TyInteger { spec: fs } => el_types::int4(fs) || el_types::uint4(fs), _ => false } {
+          return false;
+        }
       }
     },
     _ => {}
