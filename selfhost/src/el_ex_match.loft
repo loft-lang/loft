@@ -1215,7 +1215,7 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
       if rec_enum { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: xv }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sen).known_type }]), ir::NdInt { n: el::def(e, sen).known_type + 32768 }]) } else { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdVar { n: xv }]) },
       el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: buf }, ir::NdVar { n: elm }, vk, ir::NdInt { n: 65535 }])
     ], ir::TyVoid, "stream append");
-    stop = el_ir::cl(e, "n_panic", [ir::NdText { s: "a `match` over an iterator read more than 1000000 elements (max_lookahead) — the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD" }, ir::NdText { s: pos.file }, ir::NdInt { n: pos.line }]);
+    stop = el_ir::cl(e, "n_panic", [ir::NdText { s: "a `match` over an iterator read more than 1000000 elements (max_lookahead) — the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD" }, ir::NdText { s: el::site_file(e, pos.file) }, ir::NdInt { n: pos.line }]);
     bounded = el_ir::v_block([
       el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }])),
       el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 1000000 }, ir::NdVar { n: cnt }]), stop, ir::NdNull),

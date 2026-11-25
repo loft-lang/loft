@@ -957,7 +957,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   pos = el::pos_at(e, at);
-  halt = el_ir::cl(e, "n_panic", [ir::NdText { s: "{shown} is null" }, ir::NdText { s: pos.file }, ir::NdInt { n: el_line(e, at) }]);
+  halt = el_ir::cl(e, "n_panic", [ir::NdText { s: "{shown} is null" }, ir::NdText { s: el::site_file(e, pos.file) }, ir::NdInt { n: el_line(e, at) }]);
   test = el_ir::v_if(el_ir::cl(e, "OpNot", [check!]), halt, ir::NdNull);
   ops: vector<ir::Node> = [];
   if held >= 0 {
