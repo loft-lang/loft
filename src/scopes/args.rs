@@ -1352,7 +1352,21 @@ impl Scopes<'_> {
         if matches!(arg.unspan(), Value::Var(_)) {
             return None;
         }
-        if crate::use_analysis::bracket_can_name(data, arg) {
+        // A value the bracket can name needs nothing — except a join one of whose arms BUILDS a
+        // store in a buffer the caller frees (`v[0].n ?? mk()`, `?? TU`: a view of `v`, or the
+        // default built in its buffer — a block of several statements ending in that buffer).  The bracket protects both roots, but the bind of the call's answer
+        // copies or adopts against ONE witness, the base the oracle names, so on the default's
+        // path it adopted the buffer's store, which the buffer's own free released again
+        // (loft#2638).  Bound to a temp, the witness holds whichever arm ran.  A choice of two
+        // named variables keeps its reading: both are protected and the answer is copied.
+        // `LOFT_NO_JOIN_ARG_LIFT=1` leaves the join unbound.
+        if crate::use_analysis::bracket_can_name(data, arg)
+            && (crate::env_once!(std::env::var_os("LOFT_NO_JOIN_ARG_LIFT").is_some())
+                || !arg.any_node(&mut |n| {
+                    matches!(n, Value::Block(b) if b.operators.len() > 1
+                        && matches!(b.operators.last().map(Value::unspan), Some(Value::Var(_))))
+                }))
+        {
             return None;
         }
         let tp = callee.attributes().get(arg_idx)?.typedef.clone();
