@@ -160,6 +160,9 @@ pub struct Vars {
   // The body's tail as it stood before the lowering delivered it (`MaterializeView`'s copy, a
   // join's `Bind` copy): what `materialize_return_into`'s verdicts are about (`el_retpromo`).
   pub ret_src: ir::Node = ir::NdNull,
+  // The function's attribute names as they stood before this pass lowered its body — what
+  // Rust's `ref_return` reads at its first site, before any rename of this pass (`el_retpromo`).
+  pub start_attr_names: vector<text> = [],
   // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
   // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
   pub loop_made: vector<integer>,

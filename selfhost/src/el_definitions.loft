@@ -1901,6 +1901,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         }
       }
     }
+    vars.start_attr_names = [for sa in el::def(e, e.context).attributes { sa.name }];
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
     if !e.first_pass && starts_with(name, "__lambda_") && len(e.captures) > 0 {
       el_vars::retire_capture_placeholders(vars, code, [for rc in e.captures { rc.name }]);
