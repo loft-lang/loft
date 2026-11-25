@@ -413,6 +413,17 @@ record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.
 literal rebinding an enum local or a return buffer on a work reference again, and so also
 turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
 
+Three switches turn off how a call's argument is named for the copy-or-adopt of its answer
+(`@FR-H-Free`, `@FR-H-FreeTwice`, scope pass, BOTH backends; the guards are
+`heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built` and
+`heap/H-FreeTwice/2638-…`).  **`LOFT_NO_RETBUF_ARG_LIFT=1`** leaves a call result delivered into
+the caller's buffer (`first(none())`) unnamed: the copy of the answer loses its source-free and
+the record the callee made leaks (loft#2637).  **`LOFT_NO_JOIN_ARG_LIFT=1`** leaves a `??`
+argument whose default the caller builds in a buffer unbound: an answer that is that default is
+adopted and freed again by the buffer (loft#2638).  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds a
+call whose literal arguments were hoisted through its preamble (`o = { INSERT …; f(…) }`) instead
+of as the call: the bind adopts, and a second argument the callee answers is freed twice.
+
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
 (`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
