@@ -412,21 +412,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             lam_param = lv;
           }
         },
-        // (A vector field of a parameter, `q.items`, is that parameter too: `arm_delivery`
-        // copies the field in.)
-        SMember { e: lme, call: lmc } => {
-          if !lmc && lme != null {
-            match e.p.nodes[lme!] {
-              SName { name: lmn, member: lmm } => {
-                lmv = el_vars::var(vars, lmn);
-                if lmm == "" && lmv >= 0 && vars.vars[lmv]!.argument && !hidden_param(e, vars, lmv) {
-                  lam_param = lmv;
-                }
-              },
-              _ => {}
-            }
-          }
-        },
+        // (A place inside a parameter — a field, an element, `q.items`, `w[0]` — is that
+        // parameter too: `arm_delivery` copies the place in.)
+        SMember { e: _ } => { lam_param = place_param(e, vars, lts); },
+        SIndex { e: _ } => { lam_param = place_param(e, vars, lts); },
         _ => {}
       }
     }
@@ -1491,6 +1480,24 @@ fn under_ncr(n: ir::Node) -> boolean {
     NdBlock { block } => block[0].name == "ncr",
     _ => false
   }
+}
+
+// The visible parameter a place's syntax is rooted at — through fields and plain element
+// reads (`q.items`, `w[0]`, `w[0].items`) — or -1.
+fn place_param(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  at = n;
+  while at >= 0 {
+    match e.p.nodes[at] {
+      SMember { e: me, call } => { at = if call { -1 } else { me ?? -1 }; },
+      SIndex { e: ie, range, limit, spatial } => { at = if range || limit != null || spatial { -1 } else { ie ?? -1 }; },
+      SName { name, member } => {
+        v = el_vars::var(vars, name);
+        return if member == "" && v >= 0 && vars.vars[v]!.argument && !hidden_param(e, vars, v) { v } else { -1 };
+      },
+      _ => { at = -1; }
+    }
+  }
+  -1
 }
 
 // The table test of `Parser::work_buffer_candidate` with the definition declines a body can

@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lambda answering a vector read from a place inside its parameter — a field
+// (`q.items`) or an element (`w[0]`) — borrows that parameter on the first pass, and on the
+// second copies the place into its late return buffer (`borrow_tail_copy_104`); a call's result
+// borrows the argument (`t: vector<integer>["bag"]`).
+// Prints: [41,42] / [1,2]
+struct Bag { items: vector<integer> }
+fn main() {
+  h = fn(q: Bag) -> vector<integer> { q.items };
+  bag = Bag { items: [41, 42] };
+  t = h(bag);
+  println("{t}");
+  idx = fn(w: vector<vector<integer>>) -> vector<integer> { w[0] };
+  ww = [[1, 2], [3]];
+  println("{idx(ww)}");
+}

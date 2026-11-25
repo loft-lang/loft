@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `return fn() -> integer { 100 + e.a }` returns the closure it builds
+// (`fn_ref_with_closure`) as it is; a lambda capturing nothing returns its number.
+// Prints: 102 204
+
+struct E { a: integer }
+fn if_arm(p: boolean) -> fn() -> integer {
+  e: E = E { a: 2 };
+  if p { return fn() -> integer { 100 + e.a }; }
+  return fn() -> integer { 204 };
+}
+fn main() { f = if_arm(true); g = if_arm(false); println("{f()} {g()}"); }
