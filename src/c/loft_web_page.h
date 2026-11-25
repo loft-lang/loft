@@ -34,7 +34,7 @@ LOFT_WB_IMPORT(http_free) void loft_wbi_http_free(int32_t h);
 
 /* The last answer of each kind, as the Rust twin keeps them. */
 static loft_text loft_wp_body, loft_wp_heads, loft_wp_msg, loft_wp_pack;
-static int64_t loft_wp_op = 0;
+LOFT_STATE int64_t loft_wp_op LOFT_INIT(0);
 
 static int32_t loft_wp_handle(loft_cx *cx, int64_t h) { return h < INT32_MIN || h > INT32_MAX ? -1 : (int32_t) h; }
 

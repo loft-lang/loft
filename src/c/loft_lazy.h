@@ -56,7 +56,7 @@ typedef struct { loft_ref coll; int64_t count; loft_text reason; } loft_lazy_err
 typedef int64_t (*loft_lazy_driver_fn)(loft_cx *cx, loft_ref coll, loft_str source, int64_t key_int, loft_str key_text);
 typedef struct { const char *element; loft_lazy_driver_fn fn; } loft_lazy_driver;
 static const loft_lazy_driver *loft_lazy_drivers = 0;
-static uint32_t loft_nlazy_drivers = 0;
+LOFT_STATE uint32_t loft_nlazy_drivers LOFT_INIT(0);
 static const char *loft_lazy_driver_refusal = 0;
 
 static loft_lazy_driver_fn loft_lazy_driver_for(loft_cx *cx, const char *element) {
@@ -65,10 +65,12 @@ static loft_lazy_driver_fn loft_lazy_driver_for(loft_cx *cx, const char *element
     return 0;
 }
 
-static loft_lazy_bind *loft_lazy_binds = 0;
-static size_t loft_nlazy = 0, loft_lazy_cap = 0;
-static loft_lazy_err *loft_lazy_errs = 0;
-static size_t loft_nlazy_errs = 0, loft_lazy_errs_cap = 0;
+LOFT_STATE loft_lazy_bind *loft_lazy_binds LOFT_INIT(0);
+LOFT_STATE size_t loft_nlazy LOFT_INIT(0);
+LOFT_STATE size_t loft_lazy_cap LOFT_INIT(0);
+LOFT_STATE loft_lazy_err *loft_lazy_errs LOFT_INIT(0);
+LOFT_STATE size_t loft_nlazy_errs LOFT_INIT(0);
+LOFT_STATE size_t loft_lazy_errs_cap LOFT_INIT(0);
 
 static int loft_lazy_same(loft_cx *cx, loft_ref a, loft_ref b) {
     return a.store_nr == b.store_nr && a.rec == b.rec && a.pos == b.pos;
@@ -269,8 +271,8 @@ static int loft_sq_resolve(loft_cx *cx, char *why, size_t cap) {
 }
 
 typedef struct { char *target; void *db; } loft_sq_conn;
-static loft_sq_conn *loft_sq_conns = 0;
-static size_t loft_sq_nconns = 0;
+LOFT_STATE loft_sq_conn *loft_sq_conns LOFT_INIT(0);
+LOFT_STATE size_t loft_sq_nconns LOFT_INIT(0);
 
 static void *loft_sq_open(loft_cx *cx, const char *target, char *why, size_t cap) {
     void *db = 0;

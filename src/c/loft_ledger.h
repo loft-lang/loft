@@ -24,9 +24,9 @@ typedef struct {
 
 /* The armed program's table and counters: set once by `main` before anything runs. */
 static const loft_lg_site *loft_lg_sites;
-static size_t loft_lg_count;
-static uint64_t *loft_lg_runs;
-static uint64_t *loft_lg_faults;
+LOFT_STATE size_t loft_lg_count;
+LOFT_STATE uint64_t *loft_lg_runs;
+LOFT_STATE uint64_t *loft_lg_faults;
 static const char *loft_lg_path;
 
 /* The name each kind is written under (`ledger::kind_name`). */

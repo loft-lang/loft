@@ -2396,9 +2396,10 @@ fn emit_unit_with(
     // is no defect of it, and neither is a helper that takes the store context first without
     // reading it (every runtime function does, `@PLN226`), so gcc and clang are told not to
     // report those there — and only there, the program's own functions after it are reported.
-    // `LOFT_C_LINT=all` lifts it.
+    // `LOFT_C_LINT=all` lifts it.  A piece of the runtime's state (`LOFT_STATE`, @PLN229 B1a)
+    // whose only reader is a function the unit does not call is unused the same way.
     out.push_str(
-        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#endif\n",
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#pragma GCC diagnostic ignored \"-Wunused-variable\"\n#endif\n",
     );
     if let Some(define) = split::above_define() {
         out.push_str(&define);

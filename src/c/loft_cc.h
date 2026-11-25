@@ -386,7 +386,7 @@ static inline void loft_pub_lock(void) {}
 static inline void loft_pub_unlock(void) {}
 #elif defined(LOFT_GNU) || defined(LOFT_MSVC)
 #if defined(LOFT_GNU)
-static volatile int loft_pub_spin = 0;
+LOFT_STATE volatile int loft_pub_spin LOFT_INIT(0);
 static inline void loft_pub_lock(void) {
     while (__atomic_exchange_n(&loft_pub_spin, 1, __ATOMIC_ACQUIRE)) {
     }
@@ -394,7 +394,7 @@ static inline void loft_pub_lock(void) {
 static inline void loft_pub_unlock(void) { __atomic_store_n(&loft_pub_spin, 0, __ATOMIC_RELEASE); }
 #else
 #include <intrin.h>
-static volatile long loft_pub_spin = 0;
+LOFT_STATE volatile long loft_pub_spin LOFT_INIT(0);
 static inline void loft_pub_lock(void) {
     while (_InterlockedExchange(&loft_pub_spin, 1)) {
     }
@@ -412,12 +412,12 @@ static inline void loft_pub_unlock(void) { _InterlockedExchange(&loft_pub_spin, 
 #define NOMINMAX 1
 #endif
 #include <windows.h>
-static SRWLOCK loft_pub_srw = SRWLOCK_INIT;
+LOFT_STATE SRWLOCK loft_pub_srw LOFT_INIT(SRWLOCK_INIT);
 static inline void loft_pub_lock(void) { AcquireSRWLockExclusive(&loft_pub_srw); }
 static inline void loft_pub_unlock(void) { ReleaseSRWLockExclusive(&loft_pub_srw); }
 #else
 #include <pthread.h>
-static pthread_mutex_t loft_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
+LOFT_STATE pthread_mutex_t loft_pub_mutex LOFT_INIT(PTHREAD_MUTEX_INITIALIZER);
 static inline void loft_pub_lock(void) { pthread_mutex_lock(&loft_pub_mutex); }
 static inline void loft_pub_unlock(void) { pthread_mutex_unlock(&loft_pub_mutex); }
 #endif

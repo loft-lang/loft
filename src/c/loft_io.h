@@ -139,7 +139,7 @@ static void loft_wfind_close(loft_wfind *f) {
  * writer's standalone binary does.  No unit bakes a directory of the machine that built it.
  * `#cwd` turns the anchoring off. */
 static const char *loft_anchor = "";
-static int loft_program_relative = 1;
+LOFT_STATE int loft_program_relative LOFT_INIT(1);
 
 static loft_text loft_program_directory(loft_cx *cx, loft_str sub);
 static void loft_set_anchor(loft_cx *cx, int program_relative) {
@@ -232,19 +232,19 @@ static char *loft_name_refusal(loft_cx *cx, const char *p, size_t n, size_t *len
 
 /* `log_refusal_once`: one line per refused path per process, written byte for byte — a path
  * and the reason quoting it may hold a NUL, which the interpreter writes as it is. */
+LOFT_STATE loft_text * loft_fs_loft_log_refusal_once_said LOFT_INIT(0);
+LOFT_STATE size_t loft_fs_loft_log_refusal_once_nsaid LOFT_INIT(0);
 static void loft_log_refusal_once(loft_cx *cx, loft_str raw, const char *why, size_t why_len) {
-    static loft_text *said = 0;
-    static size_t nsaid = 0;
-    /* `@FR-C-Publish`: the paths said are the program's, under the lock. */
+    /* `@FR-C-Publish`: the paths loft_fs_loft_log_refusal_once_said are the program's, under the lock. */
     loft_pub_lock();
-    for (size_t i = 0; i < nsaid; i++)
-        if (said[i].len == raw.len && memcmp(said[i].p, raw.p, raw.len) == 0) {
+    for (size_t i = 0; i < loft_fs_loft_log_refusal_once_nsaid; i++)
+        if (loft_fs_loft_log_refusal_once_said[i].len == raw.len && memcmp(loft_fs_loft_log_refusal_once_said[i].p, raw.p, raw.len) == 0) {
             loft_pub_unlock();
             return;
         }
-    said = (loft_text *) realloc(said, (nsaid + 1) * sizeof *said);
-    if (!said) { fputs("loft: out of memory\n", stderr); abort(); }
-    said[nsaid++] = loft_text_own(cx, raw);
+    loft_fs_loft_log_refusal_once_said = (loft_text *) realloc(loft_fs_loft_log_refusal_once_said, (loft_fs_loft_log_refusal_once_nsaid + 1) * sizeof *loft_fs_loft_log_refusal_once_said);
+    if (!loft_fs_loft_log_refusal_once_said) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_fs_loft_log_refusal_once_said[loft_fs_loft_log_refusal_once_nsaid++] = loft_text_own(cx, raw);
     loft_pub_unlock();
     fputs("loft: the path `", stderr);
     fwrite(raw.p, 1, raw.len, stderr);
@@ -1358,7 +1358,7 @@ static void loft_dir_name_push(loft_cx *cx, char ***names, size_t *n, size_t *ca
  * text (`file_access::log_once`): FNV-1a hashes of their paths, each slot claimed once and
  * lock-free.  Past the 64 slots a directory is reported again — a repeated line, never a
  * missing one. */
-static uint64_t loft_unspellable_said[64];
+LOFT_STATE uint64_t loft_unspellable_said[64];
 
 static int loft_unspellable_first(loft_cx *cx, const char *dir) {
     (void) cx;

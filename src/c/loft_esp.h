@@ -230,9 +230,9 @@ static const esp_vfs_fs_ops_t loft_asset_fs = {
 /* The start-up's `@boot` lines are held until the program starts: they are written within a
  * second of the reset, while the PC is still connecting the USB port again, and a line the
  * port takes before a reader has it open is lost.  `loft_esp_release` prints them. */
-static char loft_esp_held[2048];
-static size_t loft_esp_held_len = 0;
-static int loft_esp_holding = 1;
+LOFT_STATE char loft_esp_held[2048];
+LOFT_STATE size_t loft_esp_held_len LOFT_INIT(0);
+LOFT_STATE int loft_esp_holding LOFT_INIT(1);
 
 static void loft_esp_note(loft_cx *cx, const char *step, long long value) {
     char line[128];

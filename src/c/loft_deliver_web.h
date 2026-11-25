@@ -55,7 +55,7 @@ static loft_ref loft_dlv_index(loft_cx *cx, loft_ref c) {
 
 /* The arrays each exposed tag holds until its release. */
 typedef struct { loft_word tag; loft_ref *x; uint32_t n; } loft_dlv_held;
-static loft_dlv_held *loft_dlv_holds;
+LOFT_STATE loft_dlv_held *loft_dlv_holds;
 static uint32_t loft_dlv_nholds, loft_dlv_holds_cap;
 
 static void loft_dlv_free(loft_cx *cx, loft_ref *x, uint32_t n) {

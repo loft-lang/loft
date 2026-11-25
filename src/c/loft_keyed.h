@@ -1931,6 +1931,7 @@ static void *loft_par_thread(void *arg) {
 
 /* A worker's job over rows `lo..hi`: its table a copy of the caller's, made here, before any
  * thread runs — the caller's own slice may grow its table. */
+LOFT_STATE uint32_t loft_fs_loft_par_job_init_trace_ids LOFT_INIT(0);
 static void loft_par_job_init(loft_cx *cx, loft_par_job *j, loft_par_body body, void *ctx, int64_t lo, int64_t hi, int keep) {
     uint32_t i, room = cx->nstores + 16;
     j->body = body;
@@ -1940,8 +1941,7 @@ static void loft_par_job_init(loft_cx *cx, loft_par_job *j, loft_par_body body, 
 #ifdef LOFT_ALLOC_TRACE
     {
         /* `@FR-C-Publish`: counted by every starting thread. */
-        static uint32_t trace_ids = 0;
-        LOFT_PUB_ADD(trace_ids, 1u, j->trace_id);
+        LOFT_PUB_ADD(loft_fs_loft_par_job_init_trace_ids, 1u, j->trace_id);
     }
 #endif
     j->table = (loft_store_t *) calloc(room, sizeof *j->table);
@@ -2019,11 +2019,11 @@ typedef struct {
     int done;            /* the `seq` of the last job this worker finished */
     loft_par_job *job;   /* the job, written before `seq` is raised */
 } loft_pool_slot;
-static loft_pool_slot loft_pool[LOFT_POOL_MAX];
-static int loft_pool_n = 0;
-static pthread_t loft_pool_main;
+LOFT_STATE loft_pool_slot loft_pool[LOFT_POOL_MAX];
+LOFT_STATE int loft_pool_n LOFT_INIT(0);
+LOFT_STATE pthread_t loft_pool_main;
 /* `?loftTrace=1` on a page (`loft_set_par_trace`): each `par` says how many workers it ran on. */
-static int loft_pool_trace = 0;
+LOFT_STATE int loft_pool_trace LOFT_INIT(0);
 /* The page's script, called while the main thread waits: it shows what the workers printed. */
 __attribute__((import_module("loft_page"), import_name("pool_idle"))) extern void loft_page_pool_idle(void);
 

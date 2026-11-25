@@ -325,10 +325,10 @@ typedef struct loft_store_t {
  * other build is the identity.  A raw `known` outside these macros is marked `LOFT_RAW_KNOWN`
  * (`tests/hosted_unit.rs` holds the rule). */
 #ifdef LOFT_HOSTED
-static uint16_t *loft_tp_host;   /* the unit's type number -> the interpreter's */
-static uint32_t loft_tp_host_n;
-static uint16_t *loft_tp_unit;   /* the interpreter's -> the unit's */
-static uint32_t loft_tp_unit_n;
+LOFT_STATE uint16_t *loft_tp_host;   /* the unit's type number -> the interpreter's */
+LOFT_STATE uint32_t loft_tp_host_n;
+LOFT_STATE uint16_t *loft_tp_unit;   /* the interpreter's -> the unit's */
+LOFT_STATE uint32_t loft_tp_unit_n;
 static inline uint16_t loft_tp_out(loft_cx *cx, uint16_t t) {
     if (!loft_tp_host || t == 0xFFFF) return t;
     return t < loft_tp_host_n ? loft_tp_host[t] : 0xFFFF;
@@ -366,9 +366,9 @@ static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++c
  * growth that was refused.  The names are the unit's type table, which a generated `main` binds
  * (`loft_bind_tables`); a runtime built without a unit names no type. */
 static const char *const *loft_tn = 0;
-static uint32_t loft_ntn = 0;
+LOFT_STATE uint32_t loft_ntn LOFT_INIT(0);
 /* Each thread counts its own stores' bytes; the limit is the program's. */
-static uint64_t loft_heap_limit = 0;
+LOFT_STATE uint64_t loft_heap_limit LOFT_INIT(0);
 
 static void loft_heap_human(loft_cx *cx, char *out, uint64_t b) {
     if (b >= ((uint64_t) 1 << 30)) sprintf(out, "%.1f GiB", (double) b / (double) ((uint64_t) 1 << 30));
@@ -446,17 +446,17 @@ static void loft_heap_moved(loft_cx *cx, const loft_store_t *s, uint32_t old_wor
 #ifndef LOFT_ALLOC_TRACE_ENV
 #define LOFT_ALLOC_TRACE_ENV "LOFT_ALLOC_TRACE"
 #endif
+LOFT_STATE FILE * loft_fs_loft_trace_file_f LOFT_INIT(0);
+LOFT_STATE int loft_fs_loft_trace_file_once LOFT_INIT(0);
 static FILE *loft_trace_file(loft_cx *cx) {
-    static FILE *f = 0;
-    static int once = 0;
-    /* `@FR-C-Publish`: opened once, by the first thread that traces (`loft_once_begin`). */
-    if (loft_once_begin(&once)) {
+    /* `@FR-C-Publish`: opened loft_fs_loft_trace_file_once, by the first thread that traces (`loft_once_begin`). */
+    if (loft_once_begin(&loft_fs_loft_trace_file_once)) {
         const char *p = getenv(LOFT_ALLOC_TRACE_ENV);
-        if (p && *p) f = fopen(p, "w");
-        if (f) setvbuf(f, 0, _IONBF, 0);
-        loft_once_end(&once);
+        if (p && *p) loft_fs_loft_trace_file_f = fopen(p, "w");
+        if (loft_fs_loft_trace_file_f) setvbuf(loft_fs_loft_trace_file_f, 0, _IONBF, 0);
+        loft_once_end(&loft_fs_loft_trace_file_once);
     }
-    return f;
+    return loft_fs_loft_trace_file_f;
 }
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
 static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);
