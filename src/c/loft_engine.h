@@ -306,6 +306,87 @@ static int loft_eh_read_head(loft_cx *cx, int fd, loft_text *head) {
     return 1;
 }
 
+#if defined(_WIN32)
+/* `RtlGenRandom`, as `ntsecapi.h` declares it (that header wants types `windows.h` lacks). */
+BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
+#if defined(_MSC_VER)
+#pragma comment(lib, "advapi32.lib")
+#endif
+#endif
+
+/* `n` bytes of the operating system's random source: 1 when `out` holds them, 0 when the host
+ * gave none — a caller that needs a secret then has none, never a guessable one. */
+static int loft_eh_os_random(uint8_t *out, size_t n) {
+#if defined(_WIN32)
+    return SystemFunction036(out, (ULONG) n) ? 1 : 0;
+#else
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) return 0;
+    size_t got = 0;
+    while (got < n) {
+        long r = (long) read(fd, out + got, n - got);
+        if (r <= 0) break;
+        got += (size_t) r;
+    }
+    close(fd);
+    return got == n;
+#endif
+}
+
+/* `debug_token::token` (`@C172`): this run's debug token — `LOFT_DEBUG_TOKEN` when it holds 32 to
+ * 128 hexadecimal digits and nothing else, else 128 bits of the OS's random source as 32 digits —
+ * or NULL when none can be had, and then no debug connection is answered. */
+static char loft_eh_tok[129];
+static int loft_eh_tok_state = -1;
+static const char *loft_eh_debug_token(loft_cx *cx) {
+    int st;
+    LOFT_PUB_GET(loft_eh_tok_state, st);
+    if (st < 0) {
+        const char *given = getenv("LOFT_DEBUG_TOKEN");
+        size_t gn = given ? strlen(given) : 0;
+        int ok = gn >= 32 && gn <= 128;
+        for (size_t i = 0; ok && i < gn; i++) ok = isxdigit((unsigned char) given[i]) != 0;
+        if (ok) {
+            for (size_t i = 0; i < gn; i++) loft_eh_tok[i] = (char) tolower((unsigned char) given[i]);
+            loft_eh_tok[gn] = 0;
+            st = 1;
+        } else {
+            uint8_t b[16];
+            st = loft_eh_os_random(b, sizeof b);
+            for (size_t i = 0; st && i < sizeof b; i++) snprintf(loft_eh_tok + 2 * i, 3, "%02x", b[i]);
+        }
+        LOFT_PUB_SET(loft_eh_tok_state, st);
+    }
+    return st ? loft_eh_tok : 0;
+}
+
+/* `debug_token::admits`: whether the request target on the head's first line (`GET /ws?t=… …`)
+ * names this run's token, compared in a time that does not depend on how much of it matches. */
+static int loft_eh_admits(loft_cx *cx, const char *head, size_t n) {
+    const char *want = loft_eh_debug_token(cx);
+    if (!want) return 0;
+    size_t wn = strlen(want);
+    const char *sp = (const char *) memchr(head, ' ', n);
+    if (!sp) return 0;
+    const char *t = sp + 1, *end = head + n;
+    const char *te = t;
+    while (te < end && *te != ' ' && *te != '\r' && *te != '\n') te++;
+    const char *q = (const char *) memchr(t, '?', (size_t) (te - t));
+    if (!q) return 0;
+    int found = 0;
+    for (const char *kv = q + 1; kv < te;) {
+        const char *amp = (const char *) memchr(kv, '&', (size_t) (te - kv));
+        const char *kve = amp ? amp : te;
+        if (kve - kv >= 2 && kv[0] == 't' && kv[1] == '=' && (size_t) (kve - kv - 2) == wn) {
+            unsigned char d = 0;
+            for (size_t i = 0; i < wn; i++) d |= (unsigned char) (kv[2 + i] ^ want[i]);
+            found |= d == 0;
+        }
+        kv = amp ? amp + 1 : te;
+    }
+    return found;
+}
+
 /* `ws_handshake::foreign_origin`: an `Origin` that is anything but `http://` on a loopback name,
  * at any port.  Any site a browser on this machine has open connects from loopback, and names
  * itself here. */
@@ -328,8 +409,9 @@ static int loft_eh_foreign_origin(loft_cx *cx, const char *v, size_t n) {
 /* Upgrade a freshly accepted stream: read the request head (bounded), answer the handshake, the
  * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection;
  * `*foreign_page` says whether the request came from a page of another site, which a game takes
- * as a peer and the debug control channel does not: `control_only` drops it unanswered. */
-static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int control_only, int *foreign_page) {
+ * as a peer and the debug control channel does not: `control_only` drops it unanswered, and a
+ * request that does not name this run's debug token (`*agent`, `@C172`) too. */
+static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int control_only, int *foreign_page, int *agent) {
     loft_sock_blocking(cx, fd, 1);
     loft_sock_timeout(cx, fd, 500);
     loft_text head = { 0, 0, 0 };
@@ -344,8 +426,10 @@ static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int contr
         upgrade = 0;
     }
     *foreign_page = ok && loft_http_header(cx, &head, "origin", &v, &vn) && loft_eh_foreign_origin(cx, v, vn);
+    /* `@C172` — a debug agent names this run's token in its request (`/ws?t=…`). */
+    *agent = ok && loft_eh_admits(cx, head.p, head.len);
     free(head.p);
-    if (!upgrade || (control_only && *foreign_page)) return 0;
+    if (!upgrade || (control_only && (*foreign_page || !*agent))) return 0;
     char resp[512];
     int n = snprintf(resp, sizeof resp,
                      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -497,26 +581,12 @@ static int loft_eh_same_addr(loft_cx *cx, const struct sockaddr_storage *a, sock
 
 /* 16 hex characters from the OS's random source, the clock and `cid`: spoof-resistant on a LAN,
  * not cryptographic (the cookie the Rust kernel mints from a seeded hasher). */
-#if defined(_WIN32)
-/* `RtlGenRandom`, as `ntsecapi.h` declares it (that header wants types `windows.h` lacks). */
-BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
-#if defined(_MSC_VER)
-#pragma comment(lib, "advapi32.lib")
-#endif
-#endif
-
 static void loft_eh_cookie(loft_cx *cx, size_t cid, char out[17]) {
     uint64_t x = 0;
+    if (!loft_eh_os_random((uint8_t *) &x, sizeof x)) x = 0;
 #if defined(_WIN32)
-    if (!SystemFunction036(&x, (ULONG) sizeof x)) x = 0;
     uint64_t pid = (uint64_t) GetCurrentProcessId();
 #else
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd >= 0) {
-        long r = (long) read(fd, &x, sizeof x);
-        (void) r;
-        close(fd);
-    }
     uint64_t pid = (uint64_t) getpid();
 #endif
     x ^= (uint64_t) loft_now_us(cx) * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ pid;
@@ -538,6 +608,7 @@ typedef struct {
     char *debug_name;  /* a debug client's registered name */
     int64_t relay_to;  /* the agent a forwarded command's reply goes to; -1 none */
     int foreign_page;  /* the upgrade came from a page of another site */
+    int debug_agent;   /* the upgrade named this run's debug token (`@C172`) */
 } loft_eh_conn;
 
 static struct {
@@ -817,7 +888,9 @@ static void loft_ehk_debug(loft_cx *cx, size_t cid, const char *cmd, size_t n) {
         if (c->relay_to >= 0) loft_ehk_deliver(cx, (size_t) c->relay_to, msg, mn, 0);
         return;
     }
-    if (c->fd < 0 || !loft_eh_loopback(cx, c->fd) || c->foreign_page) return;
+    /* `@C172` — and one whose opening request named this run's token: another account on this
+     * machine connects from loopback too. */
+    if (c->fd < 0 || !loft_eh_loopback(cx, c->fd) || c->foreign_page || !c->debug_agent) return;
     if (n > 1 && cmd[0] == '@' && memchr(cmd, ':', n)) {
         const char *colon = (const char *) memchr(cmd, ':', n);
         const char *name = cmd + 1;
@@ -944,6 +1017,13 @@ static uint8_t loft_kernel_listen(loft_cx *cx, int64_t port, int64_t tick_us) {
     loft_ehk.start = loft_now_us(cx);
     loft_ehk.tick = tick_us > 1 ? tick_us : 1;
     loft_ehk.last_tick = 0;
+    /* `@C172` — an agent names this token when it opens its socket on the game port. */
+    if (loft_eh_debug_on(cx)) {
+        const char *t = loft_eh_debug_token(cx);
+        if (t) printf("engine_host: debug token %s\n", t);
+        else fputs("engine_host: no debug control: no random source for its token\n", stderr);
+        fflush(stdout);
+    }
     const char *ready = getenv("LOFT_SWAP_READY");
     if (ready) {
         FILE *f = fopen(ready, "wb");
@@ -971,8 +1051,8 @@ static int64_t loft_kernel_pump(loft_cx *cx) {
         while (cid < loft_ehk.nconns && loft_ehk.conns[cid].fd >= 0) cid++;
         char cookie[17] = { 0 };
         if (loft_ehk.udp >= 0) loft_eh_cookie(cx, cid, cookie);
-        int foreign_page = 0;
-        if (!loft_eh_ws_upgrade(cx, fd, cookie, 0, &foreign_page)) {
+        int foreign_page = 0, agent = 0;
+        if (!loft_eh_ws_upgrade(cx, fd, cookie, 0, &foreign_page, &agent)) {
             loft_sock_close(cx, fd);
             continue;
         }
@@ -986,6 +1066,7 @@ static int64_t loft_kernel_pump(loft_cx *cx) {
         loft_eh_conn_reset(cx, &loft_ehk.conns[cid]);
         loft_ehk.conns[cid].fd = fd;
         loft_ehk.conns[cid].foreign_page = foreign_page;
+        loft_ehk.conns[cid].debug_agent = agent;
         memcpy(loft_ehk.conns[cid].cookie, cookie, sizeof cookie);
         loft_eh_push(cx, &loft_ehk.events, (int64_t) cid, 0, 0, "", 0);
         added++;
@@ -1199,6 +1280,11 @@ static loft_text loft_kernel_sync_payload(loft_cx *cx) {
  * LOFT_DEBUG_CONTROL=1. */
 static int loft_ehc_ctl_listener(loft_cx *cx) {
     if (!loft_eh_debug_on(cx)) return -1;
+    /* `@C172` — no token, no channel: a host whose random source fails opens none. */
+    if (!loft_eh_debug_token(cx)) {
+        fputs("engine_host: no debug control: no random source for its token\n", stderr);
+        return -1;
+    }
     int fd = loft_sock_open(cx, AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     loft_sock_cloexec(cx, fd);
@@ -1213,7 +1299,7 @@ static int loft_ehc_ctl_listener(loft_cx *cx) {
         return -1;
     }
     loft_sock_blocking(cx, fd, 0);
-    printf("engine_host: debug control on 127.0.0.1:%u\n", (unsigned) ntohs(a.sin_port));
+    printf("engine_host: debug control on 127.0.0.1:%u token %s\n", (unsigned) ntohs(a.sin_port), loft_eh_debug_token(cx));
     fflush(stdout);
     return fd;
 }
@@ -1226,8 +1312,8 @@ static void loft_ehc_pump_ctl(loft_cx *cx) {
         if (fd < 0) break;
         loft_sock_cloexec(cx, fd);
         /* This endpoint is the control channel alone: another site's page is not served. */
-        int foreign_page = 0;
-        if (!loft_eh_ws_upgrade(cx, fd, "", 1, &foreign_page)) {
+        int foreign_page = 0, agent = 0;
+        if (!loft_eh_ws_upgrade(cx, fd, "", 1, &foreign_page, &agent)) {
             loft_sock_close(cx, fd);
             continue;
         }
@@ -1933,7 +2019,13 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
             argv[k++] = (char *) getenv("LOFT_LIVE_SRC");
         }
         argv[k] = 0;
-        const char *set[] = { "LOFT_RESUME", loft_sw.snap, "LOFT_SWAP_READY", loft_sw.ready, 0 };
+        /* `@C172` — the next build answers the token this one's agents hold. */
+#if defined(LOFT_SOCKETS)
+        const char *tok = loft_eh_debug_token(cx);
+#else
+        const char *tok = 0;
+#endif
+        const char *set[] = { "LOFT_RESUME", loft_sw.snap, "LOFT_SWAP_READY", loft_sw.ready, tok ? "LOFT_DEBUG_TOKEN" : 0, tok, 0 };
         /* Dispatch reset: the new process runs the edited program; one interpreted again is
          * back on the development tier. */
         const char *unset[] = { "LOFT_FLIP_FNS", loft_sw_dev_next ? "LOFT_LIVE_SHIP" : 0, 0 };

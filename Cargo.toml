@@ -188,6 +188,10 @@ find-msvc-tools    = "0.1"
 # output.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustyline          = "14"
+# The operating system's random source on every host, for a debug session's token
+# (src/debug_token.rs).  The version `ring` already brings in, so no crate is added; wasm has
+# no debug listener to guard.
+getrandom          = "0.2"
 
 [dev-dependencies]
 stdext = "0.3"

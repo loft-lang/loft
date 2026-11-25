@@ -444,6 +444,9 @@ struct Kernel {
     debug_names: std::collections::HashMap<usize, String>,
     /// The connections whose upgrade came from a page of another site.
     foreign_pages: std::collections::HashSet<usize>,
+    /// `@C172` — the connections whose opening request named this run's debug token: only
+    /// they may send agent commands.
+    debug_agents: std::collections::HashSet<usize>,
     /// @PLN98 P3.4 — while a forwarded debug command is outstanding: the client
     /// conn slot → the agent conn slot that sent it, so the client's `D!:reply`
     /// routes back to the requesting agent.
@@ -532,7 +535,7 @@ fn ws_upgrade(
     mut stream: TcpStream,
     udp_cookie: &str,
     control_only: bool,
-) -> Option<(TcpStream, bool)> {
+) -> Option<(TcpStream, bool, bool)> {
     // BSD/macOS accepted sockets INHERIT the listener's non-blocking flag
     // (Linux ones don't): force blocking before the bounded head read, or
     // the first byte EAGAINs instantly and every upgrade drops.
@@ -562,6 +565,8 @@ fn ws_upgrade(
         }
     }
     let head = String::from_utf8_lossy(&buf);
+    // `@C172` — a debug agent names this run's token in its request (`/ws?t=…`).
+    let agent = crate::debug_token::admits(crate::debug_token::request_target(&head));
     let mut key = None;
     let mut is_upgrade = false;
     let mut foreign_page = false;
@@ -576,7 +581,7 @@ fn ws_upgrade(
         }
     }
     let key = key?;
-    if !is_upgrade || (control_only && foreign_page) {
+    if !is_upgrade || (control_only && (foreign_page || !agent)) {
         return None;
     }
     let accept = crate::ws_handshake::ws_accept_key(&key);
@@ -594,7 +599,7 @@ fn ws_upgrade(
     stream
         .set_read_timeout(Some(Duration::from_millis(20)))
         .ok()?;
-    Some((stream, foreign_page))
+    Some((stream, foreign_page, agent))
 }
 
 /// How long one message may take to arrive once its first bytes are here: the upgrade
@@ -769,8 +774,18 @@ fn listen_impl(e: &mut EngineCx, port: i64, tick_us: i64) -> bool {
                     alive: true,
                     debug_names: std::collections::HashMap::new(),
                     foreign_pages: std::collections::HashSet::new(),
+                    debug_agents: std::collections::HashSet::new(),
                     debug_relay: std::collections::HashMap::new(),
                 });
+            }
+            // `@C172` — an agent names this token when it opens its socket on the game port.
+            if debug_control_enabled() {
+                match crate::debug_token::token() {
+                    Some(t) => println!("engine_host: debug token {t}"),
+                    None => {
+                        eprintln!("engine_host: no debug control: no random source for its token")
+                    }
+                }
             }
             // @PLN18 08-S5 — the swap-resume handshake: when this process was
             // booted as a swap target, the parent polls this file; touching
@@ -881,12 +896,17 @@ fn pump_kernel(k: &mut Kernel, ctl: &mut EngineCtl) -> i64 {
                     // carries the same value `ClientNet` stores — the whole
                     // negotiation stays kernel-internal.
                     let cookie = k.fresh_cookie(cid);
-                    if let Some((s, foreign_page)) = ws_upgrade(stream, &cookie, false) {
+                    if let Some((s, foreign_page, agent)) = ws_upgrade(stream, &cookie, false) {
                         // A reused cid starts fresh here too.
                         if foreign_page {
                             k.foreign_pages.insert(cid);
                         } else {
                             k.foreign_pages.remove(&cid);
+                        }
+                        if agent {
+                            k.debug_agents.insert(cid);
+                        } else {
+                            k.debug_agents.remove(&cid);
                         }
                         let net = ClientNet::new(cookie);
                         if cid == k.conns.len() {
@@ -1592,10 +1612,18 @@ fn bind_ctl_listener() -> Option<TcpListener> {
     if !debug_control_enabled() {
         return None;
     }
+    // `@C172` — no token, no channel: a host whose random source fails opens none.
+    let Some(token) = crate::debug_token::token() else {
+        eprintln!("engine_host: no debug control: no random source for its token");
+        return None;
+    };
     let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
     let _ = listener.set_nonblocking(true);
     if let Ok(addr) = listener.local_addr() {
-        println!("engine_host: debug control on 127.0.0.1:{}", addr.port());
+        println!(
+            "engine_host: debug control on 127.0.0.1:{} token {token}",
+            addr.port()
+        );
     }
     Some(listener)
 }
@@ -1610,7 +1638,8 @@ fn pump_ctl(c: &mut ClientKernel, ctl: &mut EngineCtl) {
     };
     while let Ok((stream, _)) = listener.accept() {
         // This endpoint is the control channel alone: another site's page is not served.
-        if let Some((upgraded, _)) = ws_upgrade(stream, "", true) {
+        // `ws_upgrade` refuses a request that does not name this run's token (`@C172`).
+        if let Some((upgraded, _, _)) = ws_upgrade(stream, "", true) {
             let slot = c.ctl_conns.iter().position(Option::is_none);
             match slot {
                 Some(i) => c.ctl_conns[i] = Some(upgraded),
@@ -2046,7 +2075,9 @@ fn handle_debug_control(k: &mut Kernel, ctl: &mut EngineCtl, cid: usize, cmd: &s
         .as_ref()
         .and_then(|c| c.peer_addr().ok())
         .is_some_and(|a| a.ip().is_loopback());
-    if !loopback || k.foreign_pages.contains(&cid) {
+    // `@C172` — and one whose opening request named this run's token: another account on
+    // this machine connects from loopback too.
+    if !loopback || k.foreign_pages.contains(&cid) || !k.debug_agents.contains(&cid) {
         return;
     }
 
@@ -2453,6 +2484,10 @@ fn swap_successor(artifact: &str, fast: bool) -> (crate::platform::process::Spaw
         };
     for (name, value) in crate::live_rebuild::live_env_for_successor() {
         successor.push_env(name, value);
+    }
+    // `@C172` — the next build answers the token this one's agents hold.
+    if let Some(t) = crate::debug_token::token() {
+        successor.push_env("LOFT_DEBUG_TOKEN", t);
     }
     let successor = if fast {
         successor.env("LOFT_LIVE_SHIP", "1")

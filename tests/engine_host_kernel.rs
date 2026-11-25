@@ -68,6 +68,10 @@ impl Drop for Guard {
     }
 }
 
+/// `@C172` — the debug token every child a test debugs is handed (`LOFT_DEBUG_TOKEN`), and that
+/// every request below names (`/ws?t=…`), as a launcher hands on its own.
+const TEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
 /// Whether an upgrade sent as a browser page of `origin` would send it is answered with
 /// anything but `101` — the endpoint must be listening, so a refusal is a refusal.
 fn ws_refused_as(port: u16, origin: &str) -> bool {
@@ -76,7 +80,27 @@ fn ws_refused_as(port: u16, origin: &str) -> bool {
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     let req = format!(
-        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nOrigin: {origin}\r\n\
+        "GET /ws?t=0123456789abcdef0123456789abcdef HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nOrigin: {origin}\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let _ = stream.read_to_end(&mut head);
+    !String::from_utf8_lossy(&head).contains("101")
+}
+
+/// A request target naming a token that is not this run's.
+const OTHER_TOKEN: &str = "/ws?t=00000000000000000000000000000000";
+
+/// Whether an upgrade to `target` is answered with anything but `101` (the endpoint listens).
+fn ws_refused_target(port: u16, target: &str) -> bool {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("the endpoint listens");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let req = format!(
+        "GET {target} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
          Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
          Sec-WebSocket-Version: 13\r\n\r\n"
     );
@@ -87,6 +111,11 @@ fn ws_refused_as(port: u16, origin: &str) -> bool {
 }
 
 fn ws_connect(port: u16) -> TcpStream {
+    ws_connect_target(port, &format!("/ws?t={TEST_TOKEN}"))
+}
+
+/// [`ws_connect`] with the request target given: `/ws` names no debug token, a game peer's.
+fn ws_connect_target(port: u16, target: &str) -> TcpStream {
     let deadline = vm_deadline(15);
     let stream = loop {
         if let Ok(s) = TcpStream::connect(("127.0.0.1", port)) {
@@ -98,9 +127,11 @@ fn ws_connect(port: u16) -> TcpStream {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
-               Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-               Sec-WebSocket-Version: 13\r\n\r\n";
+    let req = format!(
+        "GET {target} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
     (&stream).write_all(req.as_bytes()).unwrap();
     // Read the 101 head to its blank line (unbuffered).
     let mut head = Vec::new();
@@ -354,7 +385,7 @@ fn ws_try_connect(port: u16) -> Option<TcpStream> {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .ok()?;
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+    let req = "GET /ws?t=0123456789abcdef0123456789abcdef HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
                Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
                Sec-WebSocket-Version: 13\r\n\r\n";
     (&stream).write_all(req.as_bytes()).ok()?;
@@ -830,7 +861,8 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s5c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
     ccmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_DEBUG_CONTROL", "1");
+        .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
         .arg("--no-warnings")
@@ -865,6 +897,12 @@ fn main() {{
     assert!(
         ws_refused_as(ctl_port, "https://attacker.example"),
         "the control endpoint took another site's page"
+    );
+    // `@C172` — nor for a peer that does not name this run's token: another account on this
+    // machine connects from loopback too.
+    assert!(
+        ws_refused_target(ctl_port, "/ws") && ws_refused_target(ctl_port, OTHER_TOKEN),
+        "the control endpoint took a peer without the run's token"
     );
     // Drive the self-swap over the channel.
     let ctl = ws_connect(ctl_port);
@@ -1018,7 +1056,8 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s5cc_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5cc_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_DEBUG_CONTROL", "1");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
         .arg("--no-warnings")
@@ -1053,6 +1092,10 @@ fn main() {{
     assert!(
         ws_refused_as(ctl_port, "https://attacker.example"),
         "the C build's control endpoint took another site's page"
+    );
+    assert!(
+        ws_refused_target(ctl_port, "/ws") && ws_refused_target(ctl_port, OTHER_TOKEN),
+        "the C build's control endpoint took a peer without the run's token"
     );
     let ctl = ws_connect(ctl_port);
     std::thread::sleep(Duration::from_millis(300)); // let some ticks land
@@ -1215,7 +1258,8 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s7c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s7c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_DEBUG_CONTROL", "1");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
         .arg("--interpret")
@@ -1372,10 +1416,13 @@ fn main() {{
         }
         "compiled" => {}
         "interpreted-swap" => {
-            cmd.arg("--interpret").env("LOFT_DEBUG_CONTROL", "1");
+            cmd.arg("--interpret")
+                .env("LOFT_DEBUG_CONTROL", "1")
+                .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
         }
         "post-swap" => {
-            cmd.env("LOFT_DEBUG_CONTROL", "1");
+            cmd.env("LOFT_DEBUG_CONTROL", "1")
+                .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
         }
         _ => unreachable!(),
     }
@@ -1531,7 +1578,8 @@ fn main() {{
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1")
-        .env("LOFT_DEBUG_CONTROL", "1");
+        .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     cmd.process_group(0);
     let child = cmd
         .arg("--interpret")
@@ -1895,7 +1943,8 @@ fn main() {{
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_RELOAD", "1")
-        .env("LOFT_DEBUG_CONTROL", "1");
+        .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     cmd.process_group(0);
     let child = cmd
         .arg("--interpret")
@@ -2579,6 +2628,7 @@ fn main() {{
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN)
         .process_group(0)
         .arg("--interpret")
         .arg("--no-warnings")
@@ -2668,6 +2718,7 @@ fn main() {{
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN)
         .process_group(0)
         .arg("--no-warnings")
         .arg("--lib")
@@ -2870,4 +2921,77 @@ fn the_shared_client_loop_calls_only_natives_the_browser_kernel_has() {
          first turn (loft#1189).  Implement each in `engine_host::browser` and register it in \
          `KERNEL_FUNCTIONS_WASM`."
     );
+}
+
+/// `@C172` — on the game port, a debug command acts only for a peer whose opening request named
+/// this run's token: one without it, and one naming another token, play the game and get no
+/// answer to the same command an agent with it is answered.  Both backends: the interpreter's
+/// kernel and the C build's.
+#[test]
+fn an_agent_command_on_the_game_port_needs_the_runs_token() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    for (base, interpret) in [(18170, true), (18172, false)] {
+        let port = common::bind_port(base);
+        let prog = test_tmp().join(format!("eh_token_{port}_{}.loft", std::process::id()));
+        fa::write(
+            &prog,
+            format!(
+                r#"
+use engine_host;
+fn main() {{
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind != 1 {{ return; }}
+      engine_host::send(ev.cid, "got:{{ev.payload}}");
+    }},
+    fn() {{ }});
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.env("LOFT_OFFLINE", "1")
+            .env("LOFT_DEBUG_CONTROL", "1")
+            .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
+        if interpret {
+            cmd.arg("--interpret");
+        }
+        cmd.process_group(0);
+        let child = cmd
+            .arg("--no-warnings")
+            .arg("--lib")
+            .arg(root.join("lib"))
+            .arg(&prog)
+            .current_dir(&root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn kernel");
+        let _guard = Guard(Some(child));
+        let leg = if interpret { "interpreter" } else { "C" };
+        let agent = ws_connect(port);
+        for target in ["/ws", OTHER_TOKEN] {
+            let peer = ws_connect_target(port, target);
+            ws_send(&peer, "D!:bp nothing_here");
+            ws_send(&peer, "hello");
+            // The game's answer to `hello` comes after whatever the command drew.
+            assert_eq!(
+                ws_recv(&peer),
+                "got:hello",
+                "{leg}: a peer at {target} is answered by the game, not the debugger"
+            );
+        }
+        ws_send(&agent, "D!:bp nothing_here");
+        let reply = ws_recv(&agent);
+        assert!(
+            reply.starts_with("D:"),
+            "{leg}: the agent with the run's token is answered: {reply}"
+        );
+        let _ = fa::remove_file(&prog);
+    }
 }

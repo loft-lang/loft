@@ -2670,6 +2670,11 @@ impl ReplSession {
         if std::env::var_os("LOFT_LIVE_FLIP").is_none() {
             spawn = spawn.env("LOFT_LIVE_FLIP", "1");
         }
+        // `@C172` — the game answers the token this session's page holds, so the page drives
+        // its debug channel with the token it was opened with.
+        if let Some(t) = crate::debug_token::token() {
+            spawn = spawn.env("LOFT_DEBUG_TOKEN", t);
+        }
         // A `--native` game serves from a GRANDCHILD of this child (the S1
         // process-model finding): the tree is owned, so stop_game reaches it all.
         let mut child = spawn

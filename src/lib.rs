@@ -463,6 +463,7 @@ pub mod platform;
 pub mod state;
 
 pub mod compile;
+pub mod debug_token;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
