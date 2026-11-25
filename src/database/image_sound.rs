@@ -279,8 +279,9 @@ impl Stores {
                 }
             }
             Parts::Hash(v, _) => {
-                // Mirrors hash.rs: the root word holds the table record; its header word is
-                // `room`, buckets from `BUCKET0`, `elms = (room - RESERVED_WORDS) * 8 / sb`.
+                // The table's layout is checked whole before an entry of it is believed
+                // (`hash::sound`): every entry it names then lies inside a record, and an
+                // insert after the load writes only where the layout says.
                 let cur = store.read::<u32>(rec.rec, rec.pos);
                 if cur == 0 {
                     return;
@@ -289,63 +290,21 @@ impl Stores {
                     bad(problems, format!("hash table record {cur} is not a record"));
                     return;
                 };
-                if room < crate::hash::RESERVED_WORDS {
-                    bad(
-                        problems,
-                        format!("hash table record {cur} is {room} words, too small"),
-                    );
-                    return;
-                }
-                // `(Col-Inline)` — an inline table's entries are positions in the table
-                // record itself, listed by the hash's own walk.
-                if crate::hash::is_inline(store, cur) {
-                    for entry in crate::hash::records(rec, &self.allocations) {
-                        step(Seg::Inline, &entry, *v, problems);
-                    }
-                    return;
-                }
-                let sb = crate::hash::slot_bytes(store, cur);
-                let elms = (room - crate::hash::RESERVED_WORDS) * 8 / sb;
-                // @PLN135 arc H — a slot holds an arena INDEX for a hash that owns its
-                // entries, and a record number for one that borrows them.  The stride the
-                // table records is the discriminator, and the chunk directory has to be
-                // reached before any slot can be decoded.
-                let stride = crate::hash::stride(store, cur);
-                let dir = store.read::<u32>(cur, crate::arena::DIR_FLD);
-                if stride != 0 && block(store, dir).is_none() {
-                    bad(
-                        problems,
-                        format!("hash arena directory {dir} is not a record"),
-                    );
-                    return;
-                }
-                for i in 0..elms {
-                    let slot = store.read::<u32>(cur, crate::hash::BUCKET0 + i * sb);
-                    if slot == 0 {
-                        continue;
-                    }
-                    // The slot's high bit says it names a RECORD rather than an arena
-                    // index (`hash::SLOT_RECORD`) — decided per slot.
-                    let (entry, pos) = if stride == 0 || slot & crate::hash::SLOT_RECORD != 0 {
-                        let entry = slot & !crate::hash::SLOT_RECORD;
-                        if block(store, entry).is_none() {
-                            bad(
-                                problems,
-                                format!("hash entry record {entry} is not a record"),
-                            );
+                match crate::hash::sound(store, cur, room, u32::from(self.size(*v))) {
+                    Ok(entries) => {
+                        for (entry, pos) in entries {
+                            let seg = if entry == cur {
+                                Seg::Inline
+                            } else {
+                                Seg::Entry(entry)
+                            };
+                            step(seg, &at(entry, pos), *v, problems);
                             if *problems > 8 {
                                 return;
                             }
-                            continue;
                         }
-                        (entry, crate::store::RECORD_PAYLOAD)
-                    } else {
-                        match crate::arena::slot(store, cur, slot, stride) {
-                            Some(found) => found,
-                            None => continue,
-                        }
-                    };
-                    step(Seg::Entry(entry), &at(entry, pos), *v, problems);
+                    }
+                    Err(why) => bad(problems, why),
                 }
             }
             // An ARRAY / ORDERED holds a record of element REFERENCES.

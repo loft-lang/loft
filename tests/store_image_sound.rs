@@ -538,3 +538,173 @@ fn a_hoisted_loop_reads_no_further_than_the_record_holds() {
     );
     let _ = fa::remove_dir_all(&dir);
 }
+
+const HASH_WRITER: &str = r#"struct E { k: integer, label: text }
+struct W { name: text, h: hash<E[k]> }
+
+fn main() {
+  w = W { name: "seven77" };
+  for i in 0..40 { w.h += [E { k: 100 + i, label: "e{i}" }]; }
+  for i in 0..40 { if i % 4 == 1 { w.h[100 + i] = null; } }
+  println("wrote {store_persist_copy(w, env_variable("IMG") ?? "")}");
+}
+"#;
+
+/// After the load, thirty inserts: what an insert believes of the table — its stride, its
+/// counts, its arena's cursor, free list and chunks — is what decides where they are written.
+const HASH_READER: &str = r#"struct E { k: integer, label: text }
+struct W { name: text, h: hash<E[k]> }
+
+fn main() {
+  l = W { name: "" };
+  ok = store_load_untrusted(l, env_variable("IMG") ?? "");
+  if !ok { println("loaded false name [{l.name}]"); return; }
+  n = 0; s = 0;
+  for e in l.h { n += 1; s += e.k; }
+  for i in 0..30 { l.h += [E { k: 500 + i, label: "n{i}" }]; }
+  m = 0; t = 0;
+  for e in l.h { m += 1; t += e.k; }
+  println("loaded true walked {n} sum {s} has {l.h[102].label} then {m} sum {t} has {l.h[517].label}");
+}
+"#;
+
+/// `@FR-S-Sound` — a hash's table is walked for its layout, not only for its entries.
+///
+/// Two images of one hash that had 40 entries and lost 10: one written with its entries in the
+/// table's own record (`(S-Inline)`), one with them in an arena (`LOFT_NO_HASH_INLINE=1`,
+/// `(S-Arena)`).  The table's fields are `(S-Hash)`'s: at byte 4 the length (an inline table:
+/// its owner), 16 the directory (inline: the length), 20 the cursor, 24 the free list (inline:
+/// the tombstones), 28 the flags — the stride in bits 0..16, an inline table's log2 bucket count
+/// in bits 16..21 — and the tagged 8-byte buckets from 32.  Each cell changes ONE number.
+///
+/// Expected, fixed in advance: both sound images load on both backends and take thirty inserts —
+/// `walked 30 sum 3590 has e2 then 60 sum 19025 has n17` (100..139 is 4780, less the ten keys
+/// 100 + 4j + 1, 1190; then 500..529, 15435 more) — and every changed copy is refused with a
+/// line saying which number.  Before the walk read the layout, every one of them loaded: an
+/// inline table's count or stride, an arena's chunk, cursor or free list sent the inserts past
+/// the record they believed in, or onto an entry still in use.
+#[test]
+fn a_hash_table_whose_layout_does_not_hold_refuses_the_load() {
+    let dir = std::env::temp_dir().join(format!("loft_image_hash_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch");
+    fa::write(dir.join("write.loft"), HASH_WRITER).expect("writer");
+    fa::write(dir.join("read.loft"), HASH_READER).expect("reader");
+    for (image, inline) in [("inline.store", true), ("arena.store", false)] {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.args(["--interpret", "--no-warnings", "write.loft"])
+            .current_dir(&dir)
+            .env("IMG", image)
+            .env("LOFT_TIMEOUT", "300");
+        if !inline {
+            cmd.env("LOFT_NO_HASH_INLINE", "1");
+        }
+        let out = cmd.output().expect("loft runs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            "wrote true",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let read = |name: &str| fa::read(dir.join(name)).expect("an image");
+    let (inline, arena) = (read("inline.store"), read("arena.store"));
+    let (inline_side, arena_side) = (read("inline.store.dschema"), read("arena.store.dschema"));
+
+    // The root's payload at byte 16: the name's text record, then the hash's table record.
+    let name = u32_at(&inline, 16);
+    let it = u32_at(&inline, 20) as usize * 8;
+    let iflags = u32_at(&inline, it + 28);
+    assert_eq!(iflags & 0x4000_0000, 0x4000_0000, "an inline table");
+    assert_eq!(iflags & 0xFFFF, 16, "entries of 16 bytes");
+    assert_eq!(u32_at(&inline, it + 16), 30, "thirty entries");
+    let exp = |flags: u32, e: u32| (flags & !(31 << 16)) | (e << 16);
+    let stride = |flags: u32, s: u32| (flags & !0xFFFF) | s;
+
+    let table = u32_at(&arena, 20);
+    let at = table as usize * 8;
+    let aflags = u32_at(&arena, at + 28);
+    assert_eq!(aflags & 0xC000_0000, 0x8000_0000, "a tagged arena table");
+    assert_eq!(u32_at(&arena, at + 4), 30, "thirty entries");
+    assert_eq!(u32_at(&arena, at + 20), 31, "thirty handed out");
+    let dir_rec = u32_at(&arena, at + 16) as usize;
+    let chunk0 = dir_rec * 8 + 8;
+    let buckets = u32_at(&arena, at) as usize - 4;
+    let bucket = |i: usize| at + 32 + 8 * i;
+    let full = (0..buckets)
+        .find(|&i| u32_at(&arena, bucket(i)) != 0)
+        .expect("a bucket in use");
+    let empty = (0..buckets)
+        .find(|&i| u32_at(&arena, bucket(i)) == 0)
+        .expect("an empty bucket");
+    let live = u32_at(&arena, bucket(full));
+    let far = 0x00F0_0000u32;
+
+    let inline_cells: [(&str, usize, u32); 6] = [
+        ("inline_count_past_its_record", it + 28, exp(iflags, 20)),
+        ("inline_stride_narrower", it + 28, stride(iflags, 8)),
+        ("inline_stride_wider", it + 28, exp(stride(iflags, 24), 5)),
+        ("inline_stride_zero", it + 28, stride(iflags, 0)),
+        ("inline_length_short", it + 16, 0),
+        ("inline_length_past_its_buckets", it + 16, 1000),
+    ];
+    let arena_cells: [(&str, usize, u32); 12] = [
+        ("arena_stride_narrower", at + 28, stride(aflags, 8)),
+        ("arena_directory_past_the_image", at + 16, far),
+        ("arena_directory_missing", at + 16, 0),
+        ("arena_chunk_too_small", chunk0, name),
+        ("arena_chunk_missing", chunk0, 0),
+        ("arena_cursor_behind_its_entries", at + 20, 5),
+        ("arena_cursor_past_its_chunks", at + 20, 100_000),
+        ("arena_free_list_in_use", at + 24, live),
+        ("arena_free_list_past_the_cursor", at + 24, 5000),
+        ("arena_bucket_past_the_cursor", bucket(full), 9999),
+        ("arena_bucket_named_twice", bucket(empty), live),
+        ("arena_record_too_small", bucket(full), 0x8000_0000 | name),
+    ];
+    let write = |tag: &str, base: &[u8], side: &[u8], byte: usize, value: u32| {
+        let mut changed = base.to_vec();
+        changed[byte..byte + 4].copy_from_slice(&value.to_le_bytes());
+        fa::write(dir.join(format!("{tag}.store")), &changed).expect("an image");
+        fa::write(dir.join(format!("{tag}.store.dschema")), side).expect("a sidecar");
+    };
+    for (tag, byte, value) in inline_cells {
+        write(tag, &inline, &inline_side, byte, value);
+    }
+    for (tag, byte, value) in arena_cells {
+        write(tag, &arena, &arena_side, byte, value);
+    }
+    // The length, short by the ten removed, is counted with the tombstones it no longer has.
+    write("arena_length_short", &arena, &arena_side, at + 4, 3);
+
+    let mut backends = vec!["--interpret"];
+    if loft::platform::c_runtime_posix_host() {
+        backends.push("--native-c");
+    }
+    let refused = inline_cells
+        .iter()
+        .chain(arena_cells.iter())
+        .map(|c| c.0)
+        .chain(["arena_length_short"]);
+    for backend in backends {
+        for image in ["inline.store", "arena.store"] {
+            let (out, err) = loft(&dir, backend, "read.loft", image, "");
+            assert_eq!(
+                out, "loaded true walked 30 sum 3590 has e2 then 60 sum 19025 has n17",
+                "{backend} {image}: a sound table loads and takes inserts\n{err}"
+            );
+        }
+        for tag in refused.clone() {
+            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"), "");
+            assert_eq!(
+                out, "loaded false name []",
+                "{backend} {tag}: the image is refused\n{err}"
+            );
+            assert!(
+                err.contains("[cr-check]") && err.contains("store_load_untrusted: refusing"),
+                "{backend} {tag}: and the refusal says which number\n{err}"
+            );
+        }
+    }
+    let _ = fa::remove_dir_all(&dir);
+}

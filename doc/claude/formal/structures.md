@@ -213,6 +213,15 @@ it may place blocks differently, but it must write each kind of block the same w
                   records and nodes are as many as the header says, the free nodes form a
                   list, and each record a leaf names — and a trie's tagged null-key record —
                   holds an element.  The keys are not compared;
+                - a hash's table (S-Hash) has the LAYOUT every insert follows: its stride is
+                  the element's (0 only on an arena table that borrows); an inline table's
+                  slots and entries lie inside its record (S-Inline); no more slots are in use
+                  than its counts say (an inline table's tombstones included), and the counts
+                  are no more than its slots; an arena (S-Arena) has a chunk record of at
+                  least its chunk's size for every index below its cursor and names no record
+                  twice; each slot names an index below the cursor, once, or a record that
+                  holds an element; the free list runs through indices below the cursor that
+                  no slot names, each once.  The digests are not checked;
                 - a stored reference into its own store names a record of it and a byte
                   inside that record.  An image not yet adopted still carries the slot it was
                   written from, which the walk reads as "this store"; a reference into any
