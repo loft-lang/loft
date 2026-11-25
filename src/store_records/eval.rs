@@ -396,12 +396,12 @@ impl Run<'_> {
     /// copies the compiler meant to be moves is its own decision, not read here.  A copy whose
     /// source's drop a hand-off flag guards is read as the move it is; a copy out of a local is
     /// judged where its source's store ends — bare, a move; under a hook, the second drop.
-    /// Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    /// `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
     pub(super) fn lease_copy(&mut self, st: &mut State, node: &Value) {
         let Value::Set(x, val) = node.unspan() else {
             return;
         };
-        if crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none()) {
+        if !super::lease_on() {
             return;
         }
         let data = self.data;
@@ -476,9 +476,10 @@ impl Run<'_> {
 
     /// `@FR-H-DropOnce`: a return that hands the caller a store this path already ran a drop hook
     /// on — the caller's release of the answer runs it again (loft#2552: a `return` path whose
-    /// guard against dropping the answer was lost).  Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    /// guard against dropping the answer was lost).  `LOFT_RECORDS_NO_LEASE=1` turns it off
+    /// (`@PLN228` P9).
     pub(super) fn returned_after_drop(&mut self, st: &State, value: &Val, val_var: Option<u16>) {
-        if crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none()) {
+        if !super::lease_on() {
             return;
         }
         let x = val_var.unwrap_or(u16::MAX);

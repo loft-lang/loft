@@ -195,15 +195,20 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
-**The drop lease (`LOFT_RECORDS_LEASE=1`, a ratchet, `@PLN228` P9).**  A type that owns a
+**The drop lease (`@PLN228` P9; `LOFT_RECORDS_NO_LEASE=1` turns it off).**  A type that owns a
 droppable has a LEASE per value: its hook runs once.  The records follow, per path, the stores a
 hook ran on (may and must), a hook guarded by `OpDistinctStore(v, w)` (settled except where `v` is
-`w`), a displacement or move copy (the source's lease goes to the copy), and a re-mint or copy
-into a store (fresh content, a fresh lease).  Reported as `copied-lease`: a copy the code
-generator makes of a type owning a droppable with no `OpCopy` (`@FR-H-Lease`); a hook on a value
-its hand-off flag says moved; a return of a store every path ran the hook on
-(`@FR-H-DropOnce`); an `OpFreeRef` of such a store no path ran the hook on (`@FR-H-Drop`).  Off
-by default: it still reports what it does not model, pinned in the plan.
+`w`), and where a lease moves: a record copy or an append hands its source's lease to the
+destination (a displacement before a rebind, a tuple member's move — a member of a nested tuple
+held whole reads what its holder names), and a re-mint gives fresh content a fresh lease.  A type
+with no release function (a closure record that only borrows its captures) holds no lease, and a
+free the code generator does not emit releases nothing.  A copy the code generator makes out of a
+local takes its source's lease per STORE: a move while the source's store is freed bare, the
+second drop where a hook still runs on it.  Reported as `copied-lease`: that hook, and a copy
+out of an argument or an element, of a type owning a droppable with no `OpCopy`
+(`@FR-H-Lease`); a hook on a value its hand-off flag says moved; a return of a store every path
+ran the hook on (`@FR-H-DropOnce`); an `OpFreeRef` of such a store no path ran the hook on
+(`@FR-H-Drop`).
 A stored reference's holder is rooted through field AND element reads (`b.hs[i].r = …`): an
 element of a parameter's collection is the caller's record, so a reference written there naming
 a record this frame releases is read by the caller after its end

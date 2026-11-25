@@ -370,11 +370,9 @@ impl Run<'_> {
     /// handed on (its hand-off flag `__hoff_<v>` written true: the value moved into another
     /// structure, which drops it) runs the hook a second time for one value (loft#2552: a
     /// `return` path's release that lost the flag's guard).  The path's hooks are recorded here
-    /// too, for the other lease checks.  Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    /// too, for the other lease checks.  `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
     pub(super) fn handed_off_drop(&mut self, d: u32, args: &[Value], st: &mut State) {
-        if !self.data.is_drop_function(d)
-            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
-        {
+        if !self.data.is_drop_function(d) || !super::lease_on() {
             return;
         }
         let Some(v) = Self::first_var(args, 0) else {
@@ -437,12 +435,12 @@ impl Run<'_> {
     /// no path here ran the hook on releases the resource's record without running it
     /// (loft#2552: a fallback literal freed beside a chain arm, its hook dropped with the guard
     /// around it).  Not inside a drop function: its own frees are the cascade.
-    /// Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    /// `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
     pub(super) fn hook_skipped(&mut self, d: u32, args: &[Value], st: &State) {
         if self.data.def(d).name() != "OpFreeRef"
             || !self.data.any_drop_hook()
             || self.data.is_drop_function(self.d_nr)
-            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
+            || !super::lease_on()
         {
             return;
         }

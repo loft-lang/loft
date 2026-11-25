@@ -443,6 +443,12 @@ fn identity_test_no_use() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE").is_none())
 }
 
+/// `LOFT_RECORDS_NO_LEASE=1`: the records follow no drop lease (`@PLN228` P9) — no
+/// `copied-lease` finding.  The lease checks' bisect switch.
+pub(super) fn lease_on() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LEASE").is_some())
+}
+
 /// `LOFT_RECORDS_NO_COVER=1`: no key keeps a cover, so a free never finds its last holder gone.
 fn cover_on() -> bool {
     !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_COVER").is_some())
