@@ -303,6 +303,56 @@ impl Run<'_> {
         (s, Val { pts, corr })
     }
 
+    /// `OpDatabase(x)` on a store `x` still names re-initialises it in place, so a record built
+    /// inside it (`r = OpPlaceRecord(x, …)`, [`State::placed`]) is gone: `r` names an ended
+    /// generation of the store from here, and a use of it is a use after its end
+    /// (`@FR-H-RefHome`, loft#2621: a holder re-minted in a loop cleared the record its field
+    /// was about to name).  `LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live.
+    pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
+        let placed: Vec<u16> = st
+            .placed
+            .iter()
+            .filter(|(_, h)| *h == x)
+            .map(|(r, _)| *r)
+            .collect();
+        for k in Self::stores_of(kept) {
+            let gone: Vec<u16> = placed
+                .iter()
+                .copied()
+                .filter(|r| Self::pts(st, *r).contains(&Pt::Store(k)))
+                .collect();
+            if gone.is_empty() {
+                continue;
+            }
+            let old = SKey {
+                site: k.site,
+                older: true,
+            };
+            let part = SInfo {
+                status: ENDED,
+                ended: gone.iter().copied().collect(),
+                stale: Some(gone.iter().copied().collect()),
+                ..Default::default()
+            };
+            let merged = match st.stores.get(&old) {
+                Some(o) => join_info(o, &part),
+                None => part,
+            };
+            st.stores.insert(old, merged);
+            self.reminted.insert(old);
+            let by = format!("the re-mint OpDatabase({})", self.var_name(x));
+            let line = self.line;
+            self.end_lines.entry(old).or_insert((line, by));
+            for r in gone {
+                if let Some(p) = st.vars.get_mut(&r) {
+                    p.remove(&Pt::Store(k));
+                    p.insert(Pt::Store(old));
+                }
+                st.placed.retain(|(v, _)| *v != r);
+            }
+        }
+    }
+
     /// What the slot at `off` of the record `w` holds names, as this frame's records know it:
     /// a capture slot's store, or a reference this frame wrote into the holder (`a.next = b`).
     pub(super) fn slot_names_at(st: &State, w: u16, off: Option<i32>) -> Pts {
@@ -511,6 +561,7 @@ impl Run<'_> {
                 })
                 .collect();
             let mut st = st;
+            self.remint_ends_placed(&mut st, x, &kept);
             // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
             // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in
             // place on the first paths and minted on the others, `x` names a live store from
@@ -897,6 +948,37 @@ impl Run<'_> {
                     }
                 }
             }
+        }
+        // A reference to a record a re-mint wiped, written into a field: every read of that
+        // field from here finds the store re-initialised under it (loft#2621).
+        if d == ops.set_dbref
+            && let Some(value) = vals.get(2)
+            && !value.pts.is_empty()
+            && value.pts.iter().all(|p| match p {
+                Pt::Store(k) => self.reminted.contains(k) && !info_of(&s, *k).has(LIVE),
+                _ => false,
+            })
+        {
+            let what = Self::first_var(args, 2).map_or_else(
+                || "a record".to_string(),
+                |w| format!("`{}`", self.var_name(w)),
+            );
+            let host = Self::first_var(args, 0).map_or_else(
+                || "a record".to_string(),
+                |h| format!("`{}`", self.var_name(h)),
+            );
+            let ended_at = Self::stores_of(&value.pts)
+                .first()
+                .map(|k| self.ended_note(*k))
+                .unwrap_or_default();
+            self.find(
+                "use-after-end",
+                u32::MAX,
+                format!(
+                    "{what} is written into a field of {host} after the store it was built in \
+                     was re-initialised: the field names a wiped record{ended_at}"
+                ),
+            );
         }
         if d == ops.set_dbref
             && let Some(value) = vals.get(2)

@@ -195,6 +195,11 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@FR-H-RefHome`) is
+gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
+`r` names an ended generation from there, and writing it into a field is a use after its end —
+every later read of that field finds the wiped record (loft#2621;
+`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
 A bind that joins at run time, first or a reassignment, copies what lies in its witness's
 store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second

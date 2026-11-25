@@ -21,6 +21,10 @@ All notable changes to the loft language and interpreter.
 - `LOFT_LIFETIME_CHECK=<file>` is the one report of both: on any compile, `--emit-image` (no
   run) included, one sorted tab-separated line per problem (program, function, rule, kind, line,
   reason) and a summary line, so a gate that only compiles can diff it against its base.
+- The store records see two more lifetime shapes: a stored reference a callee returns beside a
+  fresh store (loft#2511: the caller's join adopts the holder's record), and a record built in a
+  holder's store that the holder's re-mint wipes (loft#2621).  Each is reported with its cure
+  reversed and reads clean on the language suite.
 - `scripts/own_sweep.py --wrong` counts a failed test as a run-time fault (`wrong`), which the
   new kind answers, so the sweep scores the check: CAUGHT on the reversed build, CLEAN at HEAD.
 - Three passes recorded a scope that did not enclose a variable's uses, and now record the one

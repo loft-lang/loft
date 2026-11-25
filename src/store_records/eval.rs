@@ -114,6 +114,17 @@ impl Run<'_> {
                 if child_rec {
                     st.nonnull.insert(*x);
                 }
+                st.placed.retain(|(r, _)| r != x);
+                if let Value::Call(op, a) = val.unspan()
+                    && *op == self.ops.place
+                    && let Some(h) = Self::first_var(a, 0)
+                    && h != *x
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_REMINT_ENDS_PLACED").is_some()
+                    )
+                {
+                    st.placed.insert((*x, h));
+                }
                 if let Value::Var(src) = val.unspan()
                     && src != x
                     && copy_alias()

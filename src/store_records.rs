@@ -168,6 +168,10 @@ struct State {
     /// The function's closure-record variables (`___clos_N`), the same on every path: the
     /// `live_some` candidates of a store no record captures (`live_some_candidates`).
     records: BTreeSet<u16>,
+    /// `(r, h)`: `r` was bound from `OpPlaceRecord(h, …)`, a record built INSIDE the store `h`
+    /// names (`@FR-H-RefHome`), until `r` is bound again.  A re-mint of that store
+    /// (`OpDatabase(h)` on a live store re-initialises it in place) ends such a record.
+    placed: BTreeSet<(u16, u16)>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -727,6 +731,7 @@ fn join_state(a: &State, b: &State) -> State {
         copies: join_copies(a, b),
         views: join_views(a, b),
         records: a.records.union(&b.records).copied().collect(),
+        placed: a.placed.union(&b.placed).copied().collect(),
         mints: a.mints.clone(),
     }
 }
@@ -1029,6 +1034,9 @@ struct Run<'a> {
     /// Where each store first ended: its line and the free that ended it, for the re-free and
     /// use-after-end findings to name.  Beside the state, not in it: a fact about the walk.
     end_lines: BTreeMap<SKey, (u32, String)>,
+    /// The ended generations a re-mint made of a store records were placed in
+    /// (`remint_ends_placed`): a reference to one written into a field is a use after its end.
+    reminted: BTreeSet<SKey>,
     /// The function's answer, joined over every return.
     answer: Summary,
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
@@ -1326,6 +1334,15 @@ impl Run<'_> {
         }
     }
 }
+/// Does `LOFT_STORE_TRACE` ask for the walk of function `name`?
+fn traced(name: &str) -> bool {
+    static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TRACE
+        .get_or_init(|| std::env::var("LOFT_STORE_TRACE").ok())
+        .as_deref()
+        .is_some_and(|f| name.contains(f))
+}
+
 /// Run one function's body; its answer, findings and records.
 fn run_fn<'a>(
     data: &'a Data,
@@ -1352,16 +1369,11 @@ fn run_fn<'a>(
         findings: BTreeMap::new(),
         line: 0,
         end_lines: BTreeMap::new(),
+        reminted: BTreeSet::new(),
         answer: Summary::Bottom,
         imprecise: false,
         in_field_reset: 0,
-        traced: {
-            static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-            TRACE
-                .get_or_init(|| std::env::var("LOFT_STORE_TRACE").ok())
-                .as_deref()
-                .is_some_and(|f| def.name().contains(f))
-        },
+        traced: traced(def.name()),
         steps: 0,
         loops: Vec::new(),
         params,
