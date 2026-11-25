@@ -10402,6 +10402,10 @@ fn main() {
     // what `byte_code` registered — and only where marking happened, since a
     // worker with nothing routed to it is a process that idles for the run.
     // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // A fault this run renders names its file from the program's roots, as the generated
+    // binary's does (`source_name`, @PLN229) — named before a placed library's worker starts,
+    // which is handed them (`lib_placement::wire::serve`).
+    loft::source_name::set_program_roots(loft::source_name::roots_of(&p.data, None));
     #[cfg(unix)]
     if !placed_libs.is_empty() && !native_requested {
         let stdlib = std::path::PathBuf::from(&default_str);
@@ -11837,9 +11841,6 @@ loftInstantiate(wasmBytes,imports,0,(i,m)=>{{mem=m||i.exports.memory;}}).then(as
     // definition — to start each run, then dropped the copy: ~0.7 ms of a warm `hello`
     // (@PLN179 finding 001).
     let mut data = std::sync::Arc::new(p.data);
-    // A fault this run renders names its file from the program's roots, as the generated
-    // binary's does (`source_name`, @PLN229).
-    loft::source_name::set_program_roots(loft::source_name::roots_of(&data, None));
     let mut failed_tests = 0_usize;
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
