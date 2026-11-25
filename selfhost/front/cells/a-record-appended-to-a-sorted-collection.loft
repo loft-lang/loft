@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `s += [Rec { … }]` into a sorted collection types its element temp as the
+// collection's record from the first pass on (`_elm_N: ref(Rec)["s"]`).
+// Prints: 2
+
+struct Rec { k: integer, v: integer }
+fn main() {
+  s: sorted<Rec[k]> = [];
+  s += [Rec { k: 3, v: 30 }, Rec { k: 1, v: 10 }];
+  println("{len(s)}");
+}
