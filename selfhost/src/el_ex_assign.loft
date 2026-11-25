@@ -922,6 +922,20 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   // (`set_closure_var_of`: a local assigned while a capturing lambda's record is pending holds
   // that record — what a void call through it writes its by-value captures back from.)
+  if op == "=" && vars.closure_made {
+    cbv = match e.p.nodes[target] { SName { name: cbn, member: cbm } => if cbm == "" { el_vars::var(vars, cbn) } else { -1 }, _ => -1 };
+    if cbv >= 0 && !vars.closure_bound.contains(cbv) {
+      vars.closure_bound += [cbv];
+      vars.closure_bound_d += [vars.closure_made_d];
+    } else if cbv >= 0 {
+      for cb in vars.closure_bound {
+        if cb == cbv && (vars.closure_bound_d[cb#index] ?? -1) != vars.closure_made_d {
+          vars.closure_bound_d[cb#index] = -1;
+        }
+      }
+    }
+    vars.closure_made = false;
+  }
   if op == "=" && vars.last_closure_w >= 0 {
     av = match e.p.nodes[target] { SName { name: an, member: am } => if am == "" { el_vars::var(vars, an) } else { -1 }, _ => -1 };
     if av >= 0 {
@@ -1077,6 +1091,13 @@ fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   el_ex_name::capture_target_placeholder(e, vars, target);
+  // (A shared record capture written whole by a literal: built into the record it points at.)
+  if rhs != null {
+    rcl = el_ex_closure::record_capture_literal(e, vars, op, target, rhs!);
+    if rcl != null {
+      return rcl!;
+    }
+  }
   // (`parse_var_inner`: Rust parses the target as an expression, so the target's variable —
   // a bare name or the root of a projected place, `t.0`, `g.by_k`, `v[i].f` — is a user's
   // mention of it, parameters included: marked on every route, whichever lowering the place

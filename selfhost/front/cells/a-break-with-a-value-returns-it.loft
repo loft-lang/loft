@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `break i` in a `while` returns `i` from the enclosing function (loft's loops are
+// void-typed: Rust desugars it to `return i`).
+// Prints: 6
+
+fn c11_first_square_above(limit: integer) -> integer {
+  i = 0;
+  while i < 1000 {
+    i += 1;
+    if i * i > limit { break i; }
+  }
+  -1
+}
+
+fn main() { println("{c11_first_square_above(30)}"); }

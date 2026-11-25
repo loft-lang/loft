@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `r.hs += [f]` on a `vector<fn(integer)>` field pushes the function value's
+// four-byte definition number, `OpPushInt4(OpGetField(r, …), FnRefDnr(f))`.
+// Prints: say 2
+
+struct Reg { hs: vector<fn(integer)> }
+fn keep(r: Reg, f: fn(integer)) { r.hs += [f]; }
+fn say(x: integer) { println("say {x}"); }
+fn main() {
+  r = Reg { hs: [] };
+  keep(r, say);
+  for h in r.hs { h(2); }
+}

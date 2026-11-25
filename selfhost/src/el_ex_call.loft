@@ -27,6 +27,7 @@ use el_ex_place;
 use el_ex_object;
 use el_ex_null;
 use el_ex_match;
+use el_ex_loop;
 use el_ex_link;
 use el_ex_pattern;
 use el_ex_vector;
@@ -2274,6 +2275,24 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
         if he == null {
           el::refuse(e, "a hole with no value");
           return ex(ir::NdNull, ir::TyText { dep: [] });
+        }
+        // (A `for` in a hole renders each body value: `iter_for` + `append_iter`.)
+        if e.p.nodes[he!] is SFor && el_ex_loop::format_for_carried(e, vars, he!) {
+          ff = hole_spec(e, vars, spec, spec_end);
+          if ff == null {
+            return ex(ir::NdNull, ir::TyText { dep: [] });
+          }
+          fl = el_ex_loop::format_for(e, vars, he!, var, el_vars::tp(vars, var) is TyRefVar, ff!);
+          if fl == null {
+            return ex(ir::NdNull, ir::TyText { dep: [] });
+          }
+          list += fl!;
+          fafter = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+          fs = text_part(e, fafter);
+          if fs != "" {
+            list += [el_ir::cl(e, if el_vars::tp(vars, var) is TyRefVar { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: fs }])];
+          }
+          continue;
         }
         x = un_ref(e, vars, el_ex_assign::expression(e, vars, he!));
         f = hole_spec(e, vars, spec, spec_end);

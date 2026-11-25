@@ -512,11 +512,47 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
   // `push_closure_releases`: last, a closure record releases each store it shares.
   if !h.forward {
     for a in cascade_captures(e, t) {
-      slot = el_ir::cl(e, "OpGetDbRef", [me, ir::NdInt { n: el_schema::field_position(e, el::def(e, t).known_type, el::def(e, t).attributes[a]!.name) }]);
-      ops += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [slot]), el_ir::v_block([el_ir::cl(e, "OpFreeRef", [slot])], ir::TyVoid, "release"), ir::NdNull)];
+      an = el::def(e, t).attributes[a]!.name;
+      slot = el_ir::cl(e, "OpGetDbRef", [me, ir::NdInt { n: el_schema::field_position(e, el::def(e, t).known_type, an) }]);
+      release: vector<ir::Node> = [];
+      // (loft#1869: a captured function value's closure record whose lambda is a run-time fact,
+      // `__fn_record`, releases what it adopted first, through the number beside it — as a
+      // function-value local's release does.  `__held_fn` only names the slot's record.)
+      held = match el_types::base(el::def(e, t).attributes[a]!.typedef[0] ?? ir::TyVoid) { TyReference { n: hn } => hn, _ => -1 };
+      // (An adopted closure RECORD — a captured function value's whose lambda is known —
+      // releases what it adopted through its own cascade first.)
+      if held >= 0 && starts_with(el::def(e, held).name, "__closure_") {
+        hc = target(e, held, h);
+        if hc >= 0 {
+          release += [ir::NdCall { def_nr: hc, args: [slot] }];
+        }
+      } else if held >= 0 && el::def(e, held).name == "__fn_record" && len(an) > 6 && an[len(an) - 6..] == "__clos" {
+        fbase = an[..len(an) - 6];
+        fba = el_ex_base::attr_nr(el::def(e, t), fbase);
+        doff = el_schema::field_position(e, el::def(e, t).known_type, fbase);
+        if fba >= 0 && doff != el::NO_TYPE && any_closure_drop(e, h) {
+          ftp = el::def(e, t).attributes[fba]!.typedef[0] ?? ir::TyVoid;
+          hv = el_vars::add_variable(vars, "__held_fn", ftp);
+          el_vars::set_skip_free(vars, hv, "push_closure_releases");
+          release += [el_ir::v_set(hv, el_ir::v_block([el_ir::cl(e, "OpGetInt4", [me, ir::NdInt { n: doff }]), slot], ftp, "fn_ref_field_read")), el_ir::cl(e, "OpDropFnRef", [ir::NdVar { n: hv }])];
+        }
+      }
+      release += [el_ir::cl(e, "OpFreeRef", [slot])];
+      ops += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [slot]), el_ir::v_block(release, ir::TyVoid, "release"), ir::NdNull)];
     }
   }
   finish(e, c, vars, ops, "drop_cascade");
+}
+
+// `Data::any_closure_drop`: does some lambda's closure record have a cascade?
+fn any_closure_drop(e: el::El, h: Hook) -> boolean {
+  for d in e.b.data.definitions {
+    cr = d.closure_record;
+    if cr >= 0 && cr != el::NONE && target(e, cr, h) >= 0 {
+      return true;
+    }
+  }
+  false
 }
 
 // `cascade_fn_fields` (`Data::fn_field_record`): a struct's function fields whose closure record

@@ -1390,7 +1390,9 @@ fn built_arm(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     NdBlock { block } => block[0].name != "Vector" && len(block[0].operators) > 0 && built_arm(e, vars, block[0].operators[-1]!),
     NdInsert { items } => len(items) > 0 && built_arm(e, vars, items[-1]!),
     NdVar { n: v } => arm_vector_local(e, vars, v),
-    NdCall { def_nr } => projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0,
+    // (…and a call the buffer was renamed onto: it builds there already — the first leaf
+    // `Rename` took, `n_deps(inner, __ref_1)`.)
+    NdCall { def_nr, args } => projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0 || calls_into_buffer(e, vars, args),
     _ => false
   }
 }
