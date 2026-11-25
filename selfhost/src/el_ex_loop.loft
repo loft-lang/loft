@@ -1433,7 +1433,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     }
   }
   // A `_` binding is carried where the comprehension fills; any other walk names its element.
-  if ranged && fill_count < 0 && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
+  // (A FILTERED comprehension never unrolls: its step is `if c { null } else { continue }`, which
+  // `const_eval_with_var` does not fold to a boolean — it is walked as any other.)
+  if ranged && fill_count < 0 && constant_body(e, b.code) {
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
     return ex(ir::NdNull, ir::TyVoid);
   }
