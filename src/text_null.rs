@@ -33,10 +33,6 @@ pub fn null_str() -> &'static str {
 /// `String` of capacity 0 owns no allocation — and a push gives it a buffer of its own.
 #[inline]
 #[must_use]
-#[expect(
-    clippy::same_length_and_capacity,
-    reason = "the null text is the empty String AT `NULL_TEXT`: its address is its identity, which a copy would lose"
-)]
 pub fn null_string() -> String {
     // SAFETY: with capacity 0 the pointer needs only be non-null and aligned
     // (`Vec::from_raw_parts`), and nothing is ever written through it.

@@ -110,7 +110,14 @@ impl Run<'_> {
                 };
                 let child_rec = matches!(val.unspan(), Value::Call(n, _)
                     if self.data.def(*n).name() == "OpChildRec");
-                let (mut st, out) = self.assign(v, *x, val, st)?;
+                // `(G-Hold)`: a local bound to a retained handle holds a hold of its own
+                // (`bind_retained`); every other bind is `assign`'s.
+                let (mut st, out) = match val.unspan() {
+                    Value::Call(d, args) if self.data.def(*d).name() == "OpCoroutineRetain" => {
+                        self.bind_retained(v, *x, *d, args, st)?
+                    }
+                    _ => self.assign(v, *x, val, st)?,
+                };
                 if child_rec {
                     st.nonnull.insert(*x);
                 }
@@ -510,6 +517,29 @@ impl Run<'_> {
         }
     }
 
+    /// `(G-Hold)`: a local bound to a retained handle (`x = OpCoroutineRetain(g)`) holds the
+    /// frame on a hold of its own, which its free gives back — not the store `g` names (a
+    /// `match` over an iterator parameter, `scopes::handles`).  A retain handed straight to a
+    /// call is the callee's hold, read as its argument.
+    fn bind_retained(
+        &mut self,
+        node: &Value,
+        x: u16,
+        d: u32,
+        args: &[Value],
+        st: State,
+    ) -> Option<(State, Val)> {
+        let (mut s, _) = self.args(args, st)?;
+        let site = self.site(node, Origin::Call(d));
+        let k = Self::fresh(&mut s, site);
+        let value = Val {
+            pts: [Pt::Store(k)].into(),
+            corr: [k].into(),
+        };
+        self.bind(&mut s, x, &value);
+        Some((s, Val::null()))
+    }
+
     /// `x = val`, as the code generator lowers it: the arm `bind_lowering` decides, with its
     /// store meaning — a bind, a copy into a store of `x`'s own, a copy-or-adopt, a move —
     /// and, for a reassignment, the free of the store `x` displaces.
@@ -568,23 +598,6 @@ impl Run<'_> {
                 let k = member_key(x, i as u16).expect("checked above");
                 self.bind(&mut s, k, value);
             }
-            return Some((s, Val::null()));
-        }
-        // `(G-Hold)`: a local bound to a retained handle (`x = OpCoroutineRetain(g)`) holds the
-        // frame on a hold of its own, which its free gives back — not the store `g` names (a
-        // `match` over an iterator parameter, `scopes::handles`).  A retain handed straight to
-        // a call is the callee's hold, read as its argument.
-        if let Value::Call(d, args) = val.unspan()
-            && data.def(*d).name() == "OpCoroutineRetain"
-        {
-            let (mut s, _) = self.args(args, st)?;
-            let site = self.site(node, Origin::Call(*d));
-            let k = Self::fresh(&mut s, site);
-            let value = Val {
-                pts: [Pt::Store(k)].into(),
-                corr: [k].into(),
-            };
-            self.bind(&mut s, x, &value);
             return Some((s, Val::null()));
         }
         if self
