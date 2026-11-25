@@ -48,6 +48,10 @@ enum Pt {
     Store(SKey),
     /// The store a parameter brought in: the caller's, never this function's to end.
     Param(u16),
+    /// The record a parameter's slot at this offset names (`h.link`, a stored reference read
+    /// off a holder the caller brought in): the caller's, as `Param` is, and a store of its own,
+    /// not the holder's (loft#2511).
+    Slot(u16, i32),
     /// Something the analysis does not follow (a native's answer, a closure call): no finding
     /// is ever drawn from it.
     Unknown,
@@ -870,13 +874,18 @@ enum Summary {
     /// The i-th argument's store where the argument names one, a fresh store where it is null:
     /// a function filling the buffer it is handed (`OpDatabase` mints only on null).
     Buf(u16),
+    /// The record the i-th argument's slot at this offset names: the caller's, borrowed.
+    Slot(u16, i32),
+    /// Fresh on some paths, the record the i-th argument's slot names on others
+    /// (`h.link ?? S { … }`).
+    JoinSlot(u16, i32),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, Unknown};
+        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, JoinSlot, Slot, Unknown};
         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
         // Every rule naming an argument index names ONE index on both sides (or collects them
         // in `Args`): the answer does not depend on the order the returns are met in.
@@ -892,6 +901,12 @@ impl Summary {
             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
             (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
+            (Fresh, Slot(i, o) | JoinSlot(i, o)) | (Slot(i, o) | JoinSlot(i, o), Fresh) => {
+                JoinSlot(i, o)
+            }
+            (JoinSlot(i, o), Slot(j, p)) | (Slot(j, p), JoinSlot(i, o)) if (i, o) == (j, p) => {
+                JoinSlot(i, o)
+            }
             _ => Unknown,
         }
     }
@@ -1906,6 +1921,20 @@ fn sets_var(v: &Value, w: u16) -> bool {
 mod tests {
     use super::*;
     use crate::data::{Type, v_block, v_if};
+
+    /// A callee answering a stored reference's referent on one path and a fresh store on the
+    /// other answers `JoinSlot` (loft#2511), whichever order the returns are met in; the same
+    /// slot of another argument, or a plain argument beside it, is not followed.
+    #[test]
+    fn a_referent_beside_a_fresh_store_is_a_slot_join() {
+        use Summary::{Arg, Fresh, JoinSlot, Slot, Unknown};
+        assert_eq!(Fresh.join(Slot(0, 0)), JoinSlot(0, 0));
+        assert_eq!(Slot(0, 0).join(Fresh), JoinSlot(0, 0));
+        assert_eq!(JoinSlot(0, 0).join(Slot(0, 0)), JoinSlot(0, 0));
+        assert_eq!(Slot(0, 0).join(Slot(0, 0)), Slot(0, 0));
+        assert_eq!(JoinSlot(0, 0).join(Slot(1, 0)), Unknown);
+        assert_eq!(Slot(0, 0).join(Arg(0)), Unknown);
+    }
 
     /// Parse `source` beside the stdlib, run the scope pass, replace `fn_name`'s body by what
     /// `body` builds from (the data, the function's number), and answer the records' findings

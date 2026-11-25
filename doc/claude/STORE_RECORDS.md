@@ -169,7 +169,15 @@ local then names a record it does not own, and its release frees it
 (`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
 that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
 record having adopted a capture it only relays (`@FR-L-CapOwn`;
-`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A fn-ref a callee hands
+`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A stored reference read
+off any other parameter (`h.link`) names the record that slot holds, a store of its own, not
+the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
+reads the answer as what its records know that slot of the argument holds — so a join whose
+witness is the holder adopts the record, and the two holders' frees are one store's
+(`@FR-F-Ret`, loft#2511; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+the callee such a record is judged only where it is answered: who owns a field's value is not
+one fact here (a record a stored reference names, a generator a hand-off flag guards).
+A fn-ref a callee hands
 back holds the closure record its caller built, though a function type names no store: a call
 whose summary answers a view of its arguments (`fn pass(f) -> fn(…) { f }`) is read through
 that summary, so the holder and the record's own local are two names for one store
@@ -187,8 +195,8 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
-A first bind that joins at run time copies what lies in its witness's store and adopts the
-rest, so a store the value names while another variable holds it (a branch arm's call that
+A bind that joins at run time, first or a reassignment, copies what lies in its witness's
+store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
 free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
 A value whose tail projects a variable `w`, or is `w` itself (a branch arm answering its

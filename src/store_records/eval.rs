@@ -516,6 +516,13 @@ impl Run<'_> {
         else {
             return Vec::new();
         };
+        Self::join_adopts_held_on(s, base, x, value)
+    }
+
+    /// [`Self::join_adopts_held`] for a join on `base`, at a first bind or a reassignment: the
+    /// analysis's placeholder names (the displaced value a reassignment parks, `OLD_NAME`) are no
+    /// other holder.
+    pub(super) fn join_adopts_held_on(s: &State, base: u16, x: u16, value: &Val) -> Vec<SKey> {
         if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_ADOPT_HELD").is_some()) {
             return Vec::new();
         }
@@ -528,9 +535,9 @@ impl Run<'_> {
             .into_iter()
             .filter(|k| {
                 !witness.contains(&Pt::Store(*k))
-                    && s.vars
-                        .iter()
-                        .any(|(&w, p)| w != x && w != base && p.contains(&Pt::Store(*k)))
+                    && s.vars.iter().any(|(&w, p)| {
+                        w != x && w != base && w < OLD_NAME && p.contains(&Pt::Store(*k))
+                    })
             })
             .collect()
     }
@@ -984,7 +991,22 @@ impl Run<'_> {
         s.vars.insert(OLD_NAME, old.clone());
         let bound = match rb.arm {
             ReArm::KeyedNull => Self::read(&s, x),
-            ReArm::Join { .. } | ReArm::OpaqueCallRef { .. } => {
+            // `OpBindOrCopy` copies what lies in the witness's store and adopts the rest, as at
+            // a first bind (`join_bound`): a store another variable holds, adopted here, has two
+            // owners (loft#2511: a lift bound from a stored reference's referent).
+            ReArm::Join { base, .. } => {
+                let held = Self::join_adopts_held_on(&s, base, x, &value);
+                let mut owned = value.clone();
+                owned.corr.retain(|k| !held.contains(k));
+                Self::consume(&mut s, &owned);
+                let mut bound = self.copied(&mut s, node);
+                bound
+                    .corr
+                    .extend(held.iter().copied().filter(|k| value.corr.contains(k)));
+                bound.pts.extend(held.into_iter().map(Pt::Store));
+                bound
+            }
+            ReArm::OpaqueCallRef { .. } => {
                 Self::consume(&mut s, &value);
                 self.copied(&mut s, node)
             }
@@ -1529,6 +1551,11 @@ impl Run<'_> {
                     .iter()
                     .position(|x| x == v)
                     .map_or(Summary::Unknown, |i| Summary::Arg(i as u16)),
+                Pt::Slot(v, off) => self
+                    .params
+                    .iter()
+                    .position(|x| x == v)
+                    .map_or(Summary::Unknown, |i| Summary::Slot(i as u16, *off)),
                 Pt::Unknown => Summary::Unknown,
             };
             out = out.join(one);

@@ -223,7 +223,7 @@ impl Run<'_> {
                     && xp
                         .iter()
                         .all(|p| *p == Pt::Null || (!matches!(p, Pt::Unknown) && wp.contains(p)))
-                    && xp.iter().any(|p| matches!(p, Pt::Param(_)));
+                    && xp.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)));
                 if declines {
                     // Nothing ends: the caller's store stays the caller's.
                 } else if shared.is_empty() {
@@ -303,6 +303,19 @@ impl Run<'_> {
         (s, Val { pts, corr })
     }
 
+    /// What the slot at `off` of the record `w` holds names, as this frame's records know it:
+    /// a capture slot's store, or a reference this frame wrote into the holder (`a.next = b`).
+    pub(super) fn slot_names_at(st: &State, w: u16, off: Option<i32>) -> Pts {
+        let mut h = Self::held_by_record(st, w, off);
+        h.extend(st.points.get(&w).into_iter().flatten().copied());
+        h
+    }
+
+    /// [`Self::slot_names_at`] at a known offset: what a callee's `Slot` answer names here.
+    pub(super) fn slot_names(st: &State, w: u16, off: i32) -> Pts {
+        Self::slot_names_at(st, w, Some(off))
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one branch per op family the records give a meaning to"
@@ -361,7 +374,9 @@ impl Run<'_> {
                 let wp = Self::pts(&st, w);
                 let kept: Pts = Self::pts(&st, x)
                     .into_iter()
-                    .filter(|p| matches!(p, Pt::Store(_) | Pt::Param(_)) && wp.contains(p))
+                    .filter(|p| {
+                        matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..)) && wp.contains(p)
+                    })
                     .chain(std::iter::once(Pt::Null))
                     .collect();
                 for (k, info) in &mut st.stores {
@@ -485,7 +500,7 @@ impl Run<'_> {
                 .iter()
                 .copied()
                 .filter(|p| match p {
-                    Pt::Param(_) => true,
+                    Pt::Param(_) | Pt::Slot(..) => true,
                     // A store this frame handed on (written back through a `&` parameter,
                     // into a field) still exists: the slot naming it is re-initialised in place.
                     Pt::Store(k) => {
@@ -708,7 +723,10 @@ impl Run<'_> {
                 .map(|v| v.pts.clone())
                 .into_iter()
                 .chain(self.protected.iter().map(|p| Self::pts(&s, *p)))
-                .flat_map(|pts| pts.into_iter().filter(|p| matches!(p, Pt::Param(_))))
+                .flat_map(|pts| {
+                    pts.into_iter()
+                        .filter(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)))
+                })
                 .collect();
             let src_pts = x.map_or_else(
                 || vals.get(src).map(|v| v.pts.clone()).unwrap_or_default(),
@@ -716,7 +734,7 @@ impl Run<'_> {
             );
             if src_pts
                 .iter()
-                .any(|p| matches!(p, Pt::Param(_)) && !kept_params.contains(p))
+                .any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)) && !kept_params.contains(p))
                 && !crate::env_once!(
                     std::env::var_os("LOFT_RECORDS_NO_PARAM_SOURCE_FREE").is_some()
                 )
@@ -863,7 +881,7 @@ impl Run<'_> {
             && !value
                 .pts
                 .iter()
-                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Unknown))
+                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..) | Pt::Unknown))
             && let Some(w) = Self::first_var(args, 0)
             && let Some(off) = Self::const_offset(args.get(1))
         {
@@ -1016,32 +1034,44 @@ impl Run<'_> {
                 // than the record holding it (`cur = cur.next`): what the records know that
                 // slot holds, or nothing they follow.
                 let held = match Self::first_var(args, 0) {
-                    Some(w) => {
-                        let mut h = Self::held_by_record(&s, w, Self::const_offset(args.get(1)));
-                        // A reference this frame wrote into the holder (`a.next = b`).
-                        h.extend(s.points.get(&w).into_iter().flatten().copied());
-                        h
-                    }
+                    Some(w) => Self::slot_names_at(&s, w, Self::const_offset(args.get(1))),
                     None => Pts::new(),
                 };
-                // loft#2504 — a slot of the lambda's own closure record (its hidden
-                // `__closure` parameter) holds a store its caller's record owns: a capture
-                // read out of it, and relayed into a record this frame builds, is the
-                // caller's store, never this function's to end.  Asked of `__closure` alone:
-                // a drop cascade's `self` is a parameter too, and ending what it holds is its
-                // job.  `LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` leaves the read unknown.
+                // A slot of a record the CALLER brought in names a store the caller reaches
+                // through it: never this function's to end or to hand back as fresh.  loft#2504
+                // — the lambda's own closure record (its hidden `__closure` parameter): a capture
+                // read out of it and relayed into a record this frame builds;
+                // `LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` leaves that read unknown.  loft#2511 —
+                // any other parameter (`h.link ?? S { … }` answered to the caller, who then
+                // released the holder's record): `LOFT_RECORDS_NO_STORED_REF_PARAM=1` leaves it
+                // unknown.  Not in a drop function: a cascade's `self` is a parameter too, and
+                // ending what it holds is its job.
                 let relayed = Self::first_var(args, 0).filter(|&w| {
                     let frame = &self.data.def(self.d_nr).variables;
-                    frame.is_argument(w) && frame.name(w) == "__closure"
+                    frame.is_argument(w)
+                        && (if frame.name(w) == "__closure" {
+                            !crate::env_once!(
+                                std::env::var_os("LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM").is_some()
+                            )
+                        } else {
+                            !self.data.is_drop_function(self.d_nr)
+                                && !crate::env_once!(
+                                    std::env::var_os("LOFT_RECORDS_NO_STORED_REF_PARAM").is_some()
+                                )
+                        })
                 });
                 if held.is_empty()
                     && let Some(w) = relayed
-                    && !crate::env_once!(
-                        std::env::var_os("LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM").is_some()
-                    )
                 {
+                    // The closure's slot is followed as the closure record itself, the way its
+                    // captures are relayed; another holder's slot names a record of its own.
+                    let frame = &self.data.def(self.d_nr).variables;
+                    let pt = match Self::const_offset(args.get(1)) {
+                        Some(off) if frame.name(w) != "__closure" => Pt::Slot(w, off),
+                        _ => Pt::Param(w),
+                    };
                     Val {
-                        pts: [Pt::Param(w)].into(),
+                        pts: [pt].into(),
                         corr: BTreeSet::new(),
                     }
                 } else if held.is_empty() {
@@ -1191,7 +1221,7 @@ impl Run<'_> {
                     !v.pts.is_empty()
                         && v.pts
                             .iter()
-                            .all(|p| matches!(p, Pt::Store(_) | Pt::Param(_)))
+                            .all(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..)))
                 }) =>
             {
                 let v = &vals[i as usize];
@@ -1219,6 +1249,45 @@ impl Run<'_> {
                     corr.insert(minted);
                 }
                 Val { pts, corr }
+            }
+            // The record the argument's slot names, as this frame's records know that slot: the
+            // caller's, borrowed — or nothing followed where the slot is not known here.
+            Summary::Slot(i, off) => {
+                let held = Self::first_var(args, i as usize)
+                    .map(|w| Self::slot_names(&s, w, off))
+                    .unwrap_or_default();
+                if held.is_empty() {
+                    Val::unknown()
+                } else {
+                    Val {
+                        pts: held,
+                        corr: BTreeSet::new(),
+                    }
+                }
+            }
+            // Fresh on some paths, that record on others: a runtime join's witness is the
+            // HOLDER, whose store the record is not in, so the join adopts it (`join_adopts_held`).
+            Summary::JoinSlot(i, off) => {
+                let mut pts = Self::first_var(args, i as usize)
+                    .map(|w| Self::slot_names(&s, w, off))
+                    .unwrap_or_default();
+                if pts.is_empty() {
+                    pts.insert(Pt::Unknown);
+                }
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                if let Some(info) = s.stores.get_mut(&k) {
+                    info.status = LIVE | ABSENT;
+                }
+                pts.remove(&Pt::Null);
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
+                pts.insert(Pt::Store(k));
+                Val {
+                    pts,
+                    corr: [k].into(),
+                }
             }
             Summary::Join(i) | Summary::Buf(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
