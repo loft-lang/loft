@@ -2277,7 +2277,7 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           return ex(ir::NdNull, ir::TyText { dep: [] });
         }
         // (A `for` in a hole renders each body value: `iter_for` + `append_iter`.)
-        if e.p.nodes[he!] is SFor {
+        if e.p.nodes[he!] is SFor && el_ex_loop::format_for_carried(e, vars, he!) {
           ff = hole_spec(e, vars, spec, spec_end);
           if ff == null {
             return ex(ir::NdNull, ir::TyText { dep: [] });
