@@ -1026,7 +1026,14 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
         return;
       }
       ws = [v];
-    } else if (t is NdIf) && syn >= 0 && (e.p.nodes[syn] is SIf || e.p.nodes[syn] is SMatch) {
+    } else if syn >= 0 && match e.p.nodes[peel_postfix(e, syn)] { SBin { op } => op == "??", _ => false } {
+      // `a ?? b`, read off the syntax as on the first pass: both sides' deps.
+      sb = peel_postfix(e, syn);
+      ws = match e.p.nodes[sb] { SBin { l, r } => { lw = syn_read_roots(e, vars, peel_postfix(e, l)); lw + [for x in syn_read_roots(e, vars, peel_postfix(e, r)) if !lw.contains(x) { x }] }, _ => [] };
+      if len(ws) == 0 || any_views_a_local(vars, ws) {
+        return;
+      }
+    } else if (t is NdIf || t is NdBlock || t is NdInsert) && syn >= 0 && (e.p.nodes[syn] is SIf || e.p.nodes[syn] is SMatch) {
       // A branch of locals and their field reads, held as a branch: its deps, read off the
       // syntax as on the first pass.
       ws = syn_branch_locals(e, vars, syn);
@@ -1636,7 +1643,7 @@ fn peel_postfix(e: el::El, n: integer) -> integer {
 fn syn_read_roots(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integer> {
   match e.p.nodes[n] {
     SName { name, member } => {
-      v1 = if member == "" && !is_capture_name(e, n) { el_vars::var(vars, name) } else { -1 };
+      v1 = if member == "" && !(e.first_pass && is_capture_name(e, n)) { el_vars::var(vars, name) } else { -1 };
       if v1 < 0 || el_ex_copy::views_a_local(vars, v1) { [] } else { [v1] }
     },
     SIndex { at: _ } => { r1 = syn_root_local(e, vars, n); if r1 >= 0 && vars.vars[r1].argument { [r1] } else { [] } },
