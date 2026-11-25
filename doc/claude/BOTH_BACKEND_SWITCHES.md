@@ -444,6 +444,11 @@ nothing (`heap/H-Free/2643-…`).
 of a local vector (`vv[k]`) at the tail of a `vector<T>?` function raw again: a view into a store
 the frame frees before the caller reads it (`calls/F-Ret/2644-…`).
 
+**`LOFT_NO_REBOUND_ARG_TEXT_COPY=1`** (`@FR-F-Ret`, the text-return oracle, BOTH backends) reads a
+text taken from a parameter the body rebound (`v = o; v[0]`) as the argument's again: the
+function gets no text buffer and answers a view into the copy it frees
+(`calls/F-Ret/2645-…`).
+
 **`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
 literal's argument-block locals to the enclosing scope only for a vector literal: a struct
 literal's vector field then leaves its element records at a scope no emitted code opens, which

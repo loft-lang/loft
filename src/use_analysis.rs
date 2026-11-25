@@ -5288,7 +5288,21 @@ pub fn text_return_orphan_risk(data: &Data, d_nr: u32) -> Option<&'static str> {
     if def.text_work_buffers() > 0 {
         return None;
     }
-    let borrows_arg = |base: u16| base != u16::MAX && def.variables.is_argument(base);
+    // An argument REBOUND in the body to a value of this frame (`v = o` copies `o` into a store
+    // the frame owns and frees: `v: vector<text>["__vdb_1"]`) no longer holds the caller's
+    // store, so a text read out of it is frame-local text, not a borrow of the argument
+    // (loft#2645).  `LOFT_NO_REBOUND_ARG_TEXT_COPY=1` reads it as the argument again.
+    let rebound_to_frame = |base: u16| {
+        !crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ARG_TEXT_COPY").is_some())
+            && def
+                .variables
+                .tp(base)
+                .depend()
+                .iter()
+                .any(|&w| w != base && !def.variables.is_argument(w))
+    };
+    let borrows_arg =
+        |base: u16| base != u16::MAX && def.variables.is_argument(base) && !rebound_to_frame(base);
     // A returned TEXT LOCAL is a view of this frame whatever bound it: a text `Set` copies
     // bytes into the local's own `String` (`OpAppendText`), so `t = text_src(i, s); return t`
     // hands up `t`'s buffer, not the argument `text_src` borrowed.  The ownership oracle
