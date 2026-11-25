@@ -772,7 +772,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       }
       // (…nor does a vector of narrow vectors — `vector<vector<i32>>` over
       // `vector<vector<int<…>>>` — which takes that row all the same.)
-      narrow_inner = match inner { TyVector { inner: ni } => match ni { TyInteger { spec: nis } => el_types::narrow_width(nis) > 0 || el_types::int4(nis) || el_types::uint4(nis), _ => false }, _ => false };
+      narrow_inner = el_types::narrow_vector(inner);
       if vd >= 0 && (e.b.types[vt].name == "vector<{nm}>" || narrow_inner) {
         e.b.data.definitions[vd].known_type = vt;
       }
