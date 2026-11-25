@@ -1550,6 +1550,20 @@ fn fold_postfix(p: Syntax, e: integer, ps: vector<integer>) -> integer {
       SIndex { at, keys, range, inclusive, hi, limit, spatial } => {
         acc = add(p, SIndex { at: at, e: acc, keys: keys, range: range, inclusive: inclusive, hi: hi, limit: limit, spatial: spatial });
       },
+      // `v[rev(lo..hi)]` is `rev(v[lo..hi])`: `parse_in_range` reads the `rev(` either way.
+      SIterWrap { at, kind, e: wr } => {
+        if kind == "rev" && wr != null {
+          match p.nodes[wr ?? 0] {
+            SRange { lo: rlo, hi: rhi, inclusive: rinc } => {
+              rlk: vector<integer> = if rlo == null { [] } else { [rlo ?? 0] };
+              rhk: vector<integer> = if rhi == null { [] } else { [rhi ?? 0] };
+              sl = add(p, SIndex { at: at, e: acc, keys: rlk, range: true, inclusive: rinc, hi: rhk, limit: null, spatial: false });
+              acc = add(p, SIterWrap { at: at, kind: kind, e: sl });
+            },
+            _ => {}
+          }
+        }
+      },
       SCall { at, args } => {
         acc = add(p, SCall { at: at, f: acc, args: args });
       },
