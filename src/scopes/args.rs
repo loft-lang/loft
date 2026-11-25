@@ -1473,9 +1473,13 @@ impl Scopes<'_> {
         if self.scope_encloses(*w) {
             // The block disappears whatever its tail: a vector literal whose view is declared
             // outside still declares its element records (`_elm_N`) at its own scope, which no
-            // emitted code opens once it is hoisted (`@FR-B-Scope`).  A struct literal's block
-            // keeps its scope's entries: its tail is the owner itself.
-            let absorb = matches!(bl.result.base(), Type::Vector(_, _)).then_some(bl.scope);
+            // emitted code opens once it is hoisted (`@FR-B-Scope`).  So does a struct literal
+            // with a vector field: its element records sit at the struct block's scope, while its
+            // tail, the owner, is declared outside and keeps its entry.
+            // `LOFT_NO_STRUCT_LITERAL_ABSORB=1` keeps a struct literal's block scope as before.
+            let absorb = (matches!(bl.result.base(), Type::Vector(_, _))
+                || !crate::env_once!(std::env::var_os("LOFT_NO_STRUCT_LITERAL_ABSORB").is_some()))
+            .then_some(bl.scope);
             Some((*w, absorb))
         } else if self.var_scope.get(w) == Some(&bl.scope) {
             Some((*w, Some(bl.scope)))
