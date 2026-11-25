@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native generators: the name a source file is given in what a build writes
 
 //! The name a source file is given in what a build writes and in what a program prints when
 //! it faults: relative to the file's ROOT, never to where the checkout happens to be, so the
