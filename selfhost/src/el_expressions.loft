@@ -2585,7 +2585,10 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
       return null;
     }
     bl.operators[-1] = el_ir::respan(bl.operators[-1], arms!);
-    e.b.data.definitions[d].returned = [el_types::with_deps(el_types::without_deps(bret), [el_types::MARKER])];
+    // (`Bind` pushes the buffer's own attribute: `-> N["__retbuf"]`, which the image spells
+    // `["??"]` — a hidden buffer, neither a borrowed view nor an adopted store.)
+    rba = attr_nr(el::def(e, d), "__retbuf");
+    e.b.data.definitions[d].returned = [el_types::with_deps(el_types::without_deps(bret), if rba >= 0 { [rba] } else { [el_types::MARKER] })];
     return ir::NdBlock { block: [bl] };
   }
   ret = el::def(e, d).returned[0];
