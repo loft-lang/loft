@@ -889,9 +889,16 @@ fn redirect_calls(n: &mut Value, to: &HashMap<u32, u32>) {
 /// Does `d` answer a value struct (`Data::is_value_struct`) whose deps name one of its visible
 /// parameters?  See the decline in [`rewrite_program`] (loft#2641).
 fn value_param_answer(data: &Data, d: u32) -> bool {
+    matches!(data.def(d).returned().peel_link().base(), Type::Reference(record, _) if data.is_value_struct(*record))
+        && answers_a_parameter(data, d)
+}
+
+/// Does `d` answer a record whose deps name one of its visible parameters (`o ?? s`, `p`)?  A
+/// tuple twin of it leaks the copy its body binds (loft#2641, loft#2646).
+/// `LOFT_NO_VALUE_PARAM_DECLINE=1` answers no.
+pub(crate) fn answers_a_parameter(data: &Data, d: u32) -> bool {
     let def = data.def(d);
-    matches!(def.returned().peel_link().base(), Type::Reference(record, _) if data.is_value_struct(*record))
-        && !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
+    !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
         && def.returned().depend().iter().any(|&a| {
             def.attributes
                 .get(a as usize)

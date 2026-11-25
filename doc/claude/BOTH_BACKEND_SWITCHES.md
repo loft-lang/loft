@@ -429,10 +429,11 @@ closure record that takes a mutated parameter's cell (`__bx_<name>`, whose recor
 the parameter's name): a run that builds no closure releases the cell nowhere
 (`closures/L-CapBox/2639-…`).
 
-**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, the value-record pass, BOTH backends)
-admits a function whose value-struct answer names a parameter into the tuple rewrite again: its
-body's copy of that parameter then has no owner and leaks once per call
-(`rewrites/R-ValueRecord/2641-…`).
+**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, both value-record passes, BOTH backends)
+admits a function whose record answer names a parameter into the tuple rewrite again (a value
+struct in the IR pass, any plain record in `opt::value_records`, `o ?? s` included): its body's
+copy of that parameter then has no owner and leaks once per call
+(`rewrites/R-ValueRecord/2641-…`, `…/2646-…`).
 
 **`LOFT_NO_NCC_LOCAL_ARM_WITNESS=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the
 lift of an inline keyed `??` whose borrowed arm is one variable or a projection of it
