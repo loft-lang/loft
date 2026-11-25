@@ -1772,15 +1772,15 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     }
   }
   if e.first_pass {
-    // (Pass 1 answers the first operand's vector as it is read — a local, or the root of a
-    // place, naming itself as `depending` does: `q = a + [3]` borrows `a`, `b[0] + [3]` `b`.)
-    fpr = place_root(e, first);
-    pvt = if fpr >= 0 { el_types::with_deps(vt, [fpr]) } else { vt };
+    // (Pass 1 binds a local to the first operand's vector as it is read — a local, or the root
+    // of a place, naming itself as `depending` does: `q = a + [3]` borrows `a`, `b[0] + [3]`
+    // `b`.  A concatenation that is no bind — a `for` loop's source — borrows nothing.)
     if dest >= 0 {
-      return ex(ir::NdNull, ir::TyRewritten { inner: pvt });
+      fpr = place_root(e, first);
+      return ex(ir::NdNull, ir::TyRewritten { inner: if fpr >= 0 { el_types::with_deps(vt, [fpr]) } else { vt } });
     }
     el_vars::create_unique(vars, "vec", vt);
-    return ex(ir::NdNull, pvt);
+    return ex(ir::NdNull, vt);
   }
   rows = vector_rows(e, elm, 0, true);
   nm = el_types::elem_name(e, elm);
