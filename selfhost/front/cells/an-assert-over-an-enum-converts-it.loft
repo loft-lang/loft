@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `assert(delete(p), …)` over a `FileResult` converts the condition to a boolean,
+// a plain enum's truth its ordinal's (`OpConvBoolFromEnum`, `convert`'s `conv_bool_call`).
+// Prints:
+
+fn main() {
+  p = "zz_probe_assert_enum.txt";
+  f = file(p); f.write("x");
+  assert(delete(p), "cleanup");
+}

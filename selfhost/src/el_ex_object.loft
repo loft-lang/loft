@@ -3245,12 +3245,26 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
       // Already refused where its type was lost.
       return ex(ir::NdNull, ir::TyVoid);
     }
-    if len(list) == 0 || !(el_types::base(types[0]) is TyBoolean) {
+    // (A condition of another kind is converted to a boolean, `convert`'s `conv_bool_call`: a
+    // plain enum's truth is its ordinal's — `assert(delete(p), …)` over a `FileResult`.)
+    cb = if len(list) == 0 { ir::TyVoid } else { el_types::base(types[0]) };
+    conv = match cb {
+      TyInteger { spec: _ } => "OpConvBoolFromInt",
+      TyText { dep: _ } => "OpConvBoolFromText",
+      TyFloat => "OpConvBoolFromFloat",
+      TySingle => "OpConvBoolFromSingle",
+      TyCharacter => "OpConvBoolFromCharacter",
+      _ => if el_convert::plain_enum(cb) { "OpConvBoolFromEnum" } else { "" }
+    };
+    if len(list) == 0 || (!(cb is TyBoolean) && conv == "") {
       el::refuse(e, "an assert whose condition is not a boolean");
       return ex(ir::NdNull, ir::TyVoid);
     }
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
+    }
+    if conv != "" {
+      list[0] = el_ir::cl(e, conv, [list[0]!]);
     }
     if len(list) >= 4 {
       file_arg = list[2];
