@@ -7,7 +7,7 @@
 
 use super::{
     ABSENT, BTreeSet, Data, ENDED, HANDED, LIVE, Origin, Pt, Pts, Run, SKey, State, Summary, Value,
-    field_record_holds, info_of, join_opt_arms, rule_out_everywhere, rule_out_holder,
+    field_record_holds, info_of, join_opt_arms, member_key, rule_out_everywhere, rule_out_holder,
     slot_corr_narrow, slot_dead_arm, slot_holders_off, slot_null, views_enabled,
 };
 
@@ -153,12 +153,33 @@ impl Run<'_> {
                         (null, present)
                     };
                 }
-                let Value::Var(x) = a[0].unspan() else {
-                    return both(st);
+                // A collection member of a tuple is tested as the variable its key follows
+                // (`member_key`).  Only the collection test: a record member's test
+                // (`OpConvBoolFromRef(u.0)`) read that way loses the copies a tuple copy
+                // (`u = t`) makes of it, and suite N-Shape's tuple-member cell then reads three
+                // false `copied-lease` findings.
+                let x = match a[0].unspan() {
+                    Value::Var(x) => *x,
+                    Value::TupleGet(t, i)
+                        if exact_null_test() && *op == self.ops.vector_is_null =>
+                    {
+                        match member_key(*t, *i) {
+                            Some(k) => k,
+                            None => return both(st),
+                        }
+                    }
+                    _ => return both(st),
                 };
+                let x = &x;
+                // A value that can name nothing but null is null, whoever holds it: a local's
+                // null is undecided only because it may be an absent-marked STORE.
+                let only_null =
+                    exact_null_test() && Self::pts(&st, *x).iter().all(|p| matches!(p, Pt::Null));
                 if *op == self.ops.ref_is_null {
                     Self::null_test(*x, st)
-                } else if *op == self.ops.vector_is_null && self.only_call_answers(&st, *x) {
+                } else if *op == self.ops.vector_is_null
+                    && (only_null || self.only_call_answers(&st, *x))
+                {
                     // A collection a call answered is null only as the null sentinel: a
                     // `-> hash<…>?` hands back no absent-marked store (loft#1150).  A local's
                     // null may be such a store, so for it the test decides nothing.
@@ -1004,4 +1025,10 @@ impl Run<'_> {
 /// copies (see the tag test in `decide`).
 fn copies_never_absent() -> bool {
     crate::env_once!(std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some())
+}
+
+/// `LOFT_RECORDS_NO_EXACT_NULL_TEST=1`: a null test of a tuple member, or of a collection local
+/// that can name only null, decides nothing (see `decide`).
+fn exact_null_test() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_EXACT_NULL_TEST").is_some())
 }

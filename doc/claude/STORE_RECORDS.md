@@ -340,7 +340,10 @@ read an operator answering a heap value from a text (`OpCastVectorFromText`) as 
 struct-enum's null test (`OpRefIsNull(x) || tag(x) == 0`) rules out, on its absent side, every
 store whose tag the path wrote a present variant into (a variant literal's `OpSetEnum`), so a
 rebind under `if cond == null` loses no record an earlier pass built;
-`LOFT_RECORDS_NO_TAGGED_NULL_TEST=1` keeps them.  A literal
+`LOFT_RECORDS_NO_TAGGED_NULL_TEST=1` keeps them.  A collection null test decides where the tested
+value can name only null, a tuple's collection member included (`OpVectorIsNull(t.0)`), so a
+lazily built keyed member is followed to the member it is handed to; `LOFT_RECORDS_NO_EXACT_NULL_TEST=1`
+decides nothing there.  A literal
 buffer adopted by a renamed return buffer that is assigned again takes no free, its guard against
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
 A
