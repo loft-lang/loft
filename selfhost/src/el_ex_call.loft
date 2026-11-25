@@ -1577,7 +1577,28 @@ pub fn materialize_collection(e: el::El, vars: el_vars::Vars, code: ir::Node, t:
   }
 }
 
+// `Parser::call` (loft#2146): an argument linked through a slot is stored back once the call
+// returns — the call held in `_amp_ret_N` (none for a void call), the stores after it, in an
+// "amp slot write-back" block.
 pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+  outer_posts = vars.arg_posts;
+  vars.arg_posts = [];
+  r = call_args_at(e, vars, d, given, types);
+  posts = vars.arg_posts;
+  vars.arg_posts = outer_posts;
+  if r == null || len(posts) == 0 {
+    return r;
+  }
+  rx = r!;
+  if el_types::base(rx.tp) is TyVoid {
+    return ex(el_ir::v_block([rx.code] + posts, ir::TyVoid, "amp slot write-back"), ir::TyVoid);
+  }
+  ar = el_vars::create_unique(vars, "amp_ret", rx.tp);
+  el_vars::set_defined(vars, ar);
+  ex(el_ir::v_block([el_ir::v_set(ar, rx.code)] + posts + [ir::NdVar { n: ar }], rx.tp, "amp slot write-back"), rx.tp)
+}
+
+fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
   // pass types the call by the template's predicted result and leaves it `null`; the second
