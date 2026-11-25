@@ -27,6 +27,7 @@ use el_ex_place;
 use el_ex_object;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_name;
@@ -1652,7 +1653,7 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
     // buffers: a text value's work text is numbered ahead of them.)
     for a in def.attributes {
       if a#index < len(given) && !(a.hidden) {
-        tvl = el_ex_match::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
+        tvl = el_ex_link::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
         if tvl != null {
           g2[a#index] = tvl!;
         }
@@ -1756,7 +1757,7 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
         },
         _ => {}
       }
-      l = el_ex_match::link_argument(e, vars, arg, at, pt);
+      l = el_ex_link::link_argument(e, vars, arg, at, pt);
       if l == null {
         return null;
       }

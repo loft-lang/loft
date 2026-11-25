@@ -27,6 +27,7 @@ use own;
 use el_ex_assign;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
 use el_ex_vector;
 use el_ex_copy;
 use el_ex_deliver;
@@ -840,7 +841,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     match code {
       NdBlock { block } => {
         bl = block[0];
-        cb = el_ex_match::chain_buffer(e, vars, bl.operators);
+        cb = el_ex_link::chain_buffer(e, vars, bl.operators);
         if cb >= 0 {
           built = el_ex_deliver::object_into_buffer(e, vars, bl.operators[-1], cb, result);
           if built != null {

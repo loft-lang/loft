@@ -28,6 +28,8 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_vector;
 use el_ex_deliver;
 use el_ex_into;
@@ -2337,7 +2339,7 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
           // A field's comprehension is read as the field form on this pass too: it names no
           // vector type of its own.
           vars.comp_place = [ir::NdNull];
-          el_ex_match::comprehension_into(e, vars, -1, fe!, declared: match at { TyVector { inner: fi0 } => fi0, _ => ir::TyUnknown { n: 0 } });
+          el_ex_loop::comprehension_into(e, vars, -1, fe!, declared: match at { TyVector { inner: fi0 } => fi0, _ => ir::TyUnknown { n: 0 } });
           vars.comp_place = [];
         } else {
           el_ex_assign::expression(e, vars, fe!);
@@ -3072,7 +3074,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
           continue;
         }
-        copy = el_ex_match::record_item_copy(e, vars, elm, rd, xs[it#index]!);
+        copy = el_ex_link::record_item_copy(e, vars, elm, rd, xs[it#index]!);
         if copy == null {
           return refused_build();
         }
@@ -3267,7 +3269,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     kt = el::def(e, senum).known_type;
     for x in xs {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
-      ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])];
+      ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if el_ex_link::gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])];
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
     xs = [];
@@ -3280,7 +3282,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     at = ir::NdVar { n: elm };
     for x in xs {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
-      copy = el_ex_match::record_item_copy(e, vars, elm, rd, x);
+      copy = el_ex_link::record_item_copy(e, vars, elm, rd, x);
       if copy == null {
         return refused_build();
       }

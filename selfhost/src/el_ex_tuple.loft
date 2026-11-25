@@ -29,6 +29,7 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
 use el_ex_pattern;
 use el_ex_vector;
 use el_cell;
@@ -77,7 +78,7 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // A call of a loft function answering a fresh record (its hidden buffer) is the member as it
     // is, typed as the bare record: the tuple owns what the call made.
-    if el_types::base(x.tp) is TyReference && !(x.tp is TyOptional) && el_ex_match::gives_away_its_store(e, x.code) && el_ir::unspan(x.code) is NdCall {
+    if el_types::base(x.tp) is TyReference && !(x.tp is TyOptional) && el_ex_link::gives_away_its_store(e, x.code) && el_ir::unspan(x.code) is NdCall {
       items += [x.code];
       tps += [el_types::without_deps(x.tp)];
       continue;

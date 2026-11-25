@@ -28,6 +28,8 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
@@ -791,7 +793,7 @@ pub fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
       if starts_with(el::def(e, cd).name, "Op") {
         return -1;
       }
-      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
+      if el_ex_link::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
     },
     _ => -1
   }
@@ -1684,7 +1686,7 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
       return el_ir::cl(e, "OpMoveChildRec", [field, src!, k]);
     }
     if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
-      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_link::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
     }
     // A child read from another slot (`t.right = t.left`) is set as it is read: the copy is
     // the set's own.
@@ -2000,7 +2002,7 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
       return null;
     }
     vars.comp_place = [fp!];
-    c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
+    c = el_ex_loop::comprehension_into(e, vars, -1, n, declared: inner);
     vars.comp_place = [];
     // (The build is one inserted group, as the comprehension answers it.)
     return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };

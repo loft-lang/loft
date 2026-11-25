@@ -25,6 +25,7 @@ use own;
 use el_ex_assign;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
 use el_ex_vector;
 use el_expressions;
 use el_ex_copy;
@@ -1994,7 +1995,7 @@ pub fn ends_in_return(code: ir::Node) -> boolean {
 // literal built in its own `__ref_p2_N` builds it into the hidden `__retbuf` instead.  The body is
 // typed as the declared result.  Null for any other tail.
 pub fn build_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
-  if !el_ex_match::fully_written_by_literal(e, heap_def(el_vars::tp(vars, rb))) {
+  if !el_ex_link::fully_written_by_literal(e, heap_def(el_vars::tp(vars, rb))) {
     return null;
   }
   match code {
@@ -2394,7 +2395,7 @@ pub fn literal_exits_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node,
     return code;
   }
   td = heap_def(el_vars::tp(vars, rb));
-  if td < 0 || td != heap_def(el::def(e, e.context).returned[0] ?? ir::TyVoid) || !el_ex_match::fully_written_by_literal(e, td) {
+  if td < 0 || td != heap_def(el::def(e, e.context).returned[0] ?? ir::TyVoid) || !el_ex_link::fully_written_by_literal(e, td) {
     return code;
   }
   params: vector<integer> = [];
