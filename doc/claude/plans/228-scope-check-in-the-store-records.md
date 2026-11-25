@@ -7,14 +7,16 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Built on `tuxedo-pr2634-next3`: the scope check (P0–P3), the one lifetime report (P5), the
-tester's gate (P6), one checker (P7: the `check` oracle is gone), the drop lease on by default
-(P9), and P8's shapes so far.  Open: P8's last records gaps and the defects the report found,
-pinned by `records_lifetime_ratchet` (0 lines over `tests/scripts` and the suite; each line is
-a records gap to close in the records, or a compiler defect fixed under the three-place rule
-or filed).  P4 stays closed unless the checks find what the suite did not.
-[loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is canonical.  This plan
-was first written as a separate IR verifier with five rules, its own switch and a Lean model;
+**Finished 2026-11-25**; the first half reached `main` through loft#2640, the rest rides the next
+loft PR from `tuxedo-pr2640-next`, and
+[loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is closed.  Built: the scope
+check (P0–P3), the one lifetime report (P5), the tester's gate with a seeded control (P6), one
+checker (P7: the `check` oracle is gone), every missed shape closed (P8: `records_lifetime_ratchet`
+asserts that every program over `tests/scripts` and the suite reads clean), and the drop lease on
+by default (P9).  P4 stays closed unless the checks find what the suite did not.  The defects the
+report found are fixed under the three-place rule (loft#2637–#2639, #2641, #2643, #2644, #2646);
+loft#2645 is open.  The design is [STORE_RECORDS.md](../STORE_RECORDS.md); this file is the
+record.  This plan was first written as a separate IR verifier with five rules, its own switch and a Lean model;
 the owner narrowed it to the one rule no instrument checked, built into the checker that
 already existed.  The reasons are under [§ Why this shape](#why-this-shape).
 
