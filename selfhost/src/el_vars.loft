@@ -163,6 +163,12 @@ pub struct Vars {
   // The function's attribute names as they stood before this pass lowered its body — what
   // Rust's `ref_return` reads at its first site, before any rename of this pass (`el_retpromo`).
   pub start_attr_names: vector<text> = [],
+  // The result's deps as the second pass starts from them, before the buffer the first pass held
+  // back is named (`owed_buffer`): Rust adds that dep only where its own verdict does (`el_retpromo`).
+  pub start_ret_deps: vector<integer> = [],
+  // The vector matches whose arms were delivered into the return buffer (`buffer_arms`), by their
+  // first arm's syntax node: Rust's `vec_arm_handled`, a tail its ladder is never asked about.
+  pub buffer_arms_at: vector<integer> = [],
   // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
   // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
   pub loop_made: vector<integer>,
@@ -262,6 +268,8 @@ pub struct Vars {
   // field writes — the place's old record snapshot where a field reads it.
   pub lit_place: vector<ir::Node> = [],
   pub lit_stage: vector<ir::Node> = [],
+  // `literal_into_place`'s field notes of the literal being built into `lit_place` (`{field}:staged`).
+  pub lit_notes: vector<text> = [],
   pub self_read: integer = -1,
   pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.

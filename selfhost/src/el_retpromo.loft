@@ -50,7 +50,22 @@ pub struct Ctx {
 
 // The post-pass entry: report the verdicts of the body `code`, whose closing `}` is token
 // `end_tok`, when the state trace is on (the gate's run).  Asked on both passes, as Rust asks.
-pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end_tok: integer) {
+// The last token of a body: a block's closing `}`; for a hoisted default's literal (`= [4, 5, 6]`,
+// `= S { … }`) the bracket closing it, where Rust's lexer stands past the value.  -1 otherwise.
+pub fn body_end(e: el::El, body: integer) -> integer {
+  match e.p.nodes[body] {
+    SBlock { end: rbe } => { return rbe; },
+    _ => {}
+  }
+  el_trace::literal_end(e, el_ex_null::node_start(e, body), e.p.nodes[body] is SStructLit)
+}
+
+// `inferred`: a short lambda's first pass, whose result is read off its body — Rust's `ref_return`
+// meets it while that result is still unknown, and asks nothing.
+pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end_tok: integer, inferred: boolean = false) {
+  if inferred {
+    return;
+  }
   // (Rust traces the program's files only: a library function's body is never reported, also
   // where this port elaborates it under the program's source.)
   // (A generic TEMPLATE is no function the ladder places: Rust asks on its instances only.)
@@ -74,7 +89,9 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
   // The return deps as the ladder starts from them: on the first pass without the buffer, which
   // the port's own lowering already added where Rust's `Rename` / `Bind` will add it.
   ba = buffer_attr(e);
-  dep: vector<integer> = [for d0 in el_types::deps(ret) if !(e.first_pass && d0 == ba) { d0 }];
+  // On the second pass, the deps before the port named the buffer the first pass held back:
+  // Rust's result carries no such dep until a verdict of this pass adds it.
+  dep: vector<integer> = if e.first_pass { [for d0 in el_types::deps(ret) if d0 != ba { d0 }] } else if e.p1_bound.contains(e.context) && ba >= 0 && !vars.start_ret_deps.contains(ba) { vars.start_ret_deps + [ba] } else { vars.start_ret_deps };
   pass = if e.first_pass { 1 } else { 2 };
   // Step 3 — each mid-body `return`, in source order (Rust asks while it parses them, so their
   // renames and deps reach the sites after them).
@@ -87,6 +104,10 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
     inner: ir::Node? = if !e.first_pass && rn#index < len(ir_returns) { ir_returns[rn#index] } else { null };
     ls = return_candidates(e, vars, ctx, rv, inner);
     if len(ls) == 0 {
+      // (Through a local of its own: `dep = copied_return_deps(…, dep)` handed the callee a
+      // null `dep` — the destination reset before the argument was read.)
+      nd = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
+      dep = nd;
       continue;
     }
     at = match e.p.nodes[rn] { SJump { at: ja } => ja, _ => 0 };
@@ -99,6 +120,8 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
     }
     ctx.names = so.names;
     dep = so.dep;
+    nd2 = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
+    dep = nd2;
   }
   if ends_in_return_statement(e, body) {
     return;
@@ -133,6 +156,23 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
     holds_buffer = cbuf >= 0 && tls.contains(cbuf);
     for c in tls {
       if !holds_buffer && vars.vars[c].argument && !starts_with(el_vars::name_of(vars, c), "__") {
+        return;
+      }
+    }
+  }
+  // `vec_match_candidate`: on the second pass a vector `match` tail whose arms were delivered into
+  // the buffer one by one (`Delivery::Materialize`, `vec_arm_handled`) is not asked about.
+  // Read off the lowered tail, an arm answering the buffer it was appended into, or off the
+  // vector match whose arms this port delivers (`buffer_arms`, also where it refuses them).
+  if !e.first_pass && el_types::base(ret) is TyVector {
+    ts = last_statement(e, body);
+    branch = ts >= 0 && match e.p.nodes[ts] { SMatch { arms: ma } => len(ma) >= 2, SIf { other: io } => io != null, _ => false };
+    if branch {
+      mba = buffer_attr(e);
+      mbuf = if mba >= 0 { el_vars::var(vars, el::def(e, e.context).attributes[mba]!.name) } else { -1 };
+      delivered_match = match e.p.nodes[ts] { SMatch { arms: ma } => vars.buffer_arms_at.contains(ma[0]!), _ => false };
+      lt = last_operator(code);
+      if delivered_match || (mbuf >= 0 && lt != null && arms_appended_into(e, lt!, mbuf)) {
         return;
       }
     }
@@ -223,19 +263,30 @@ fn return_candidates(e: el::El, vars: el_vars::Vars, ctx: Ctx, rv: integer, inne
   // buffer (`one_buffer_chain`: `{ __ref_1 = f(__ref_1); __ref_1 }`) — offers what its type
   // borrows, as Rust's value at that site does.  (A literal — a record's `Object` block, a
   // vector's `Vector` block, `return []`, a unit variant's `EnumUnitLit` — takes no verdict.)
-  if inner != null {
+  // (A record's `return r` of a plain local that owns its value — no deps — is that local,
+  // however the lowering copied it; a local VIEWING one is copied into a work ref first.)
+  plain = match e.p.nodes[rv] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+  owned_plain = plain >= 0 && plain < len(vars.vars) && len(el_types::deps(el_vars::tp(vars, plain))) == 0;
+  if inner != null && !(owned_plain && !(el_types::base(ctx.ret) is TyVector)) {
     ib = el_ir::unspan(inner!);
     bdeps = match ib { NdBlock { block } => if block[0].name != "Object" && block[0].name != "Vector" && block[0].name != "EnumUnitLit" { [for d in el_types::deps(block[0].result[0] ?? ir::TyVoid) if d >= 0 && d < len(vars.vars) { d }] } else { [] }, _ => [] };
     if len(bdeps) > 0 {
       return bdeps;
     }
   }
+  // (A vector's field or element of a parameter — `return s.vals` — borrows that parameter.)
+  if el_types::base(ctx.ret) is TyVector && (e.p.nodes[rv] is SMember || e.p.nodes[rv] is SIndex) {
+    pr = syn_root_local(e, vars, rv);
+    return if pr >= 0 && pr < len(vars.vars) && vars.vars[pr].argument && !starts_with(el_vars::name_of(vars, pr), "__") { [pr] } else { [] };
+  }
   v = match e.p.nodes[rv] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
   if v < 0 || v >= len(vars.vars) {
     return [];
   }
+  // (A parameter as Rust sees it at this site: an attribute under its current name — a local the
+  // port's lowering already renamed onto the buffer is still `__retbuf` to the ladder.)
   if el_types::base(ctx.ret) is TyVector {
-    return if vars.vars[v].argument && !starts_with(el_vars::name_of(vars, v), "__") { [v] } else { [] };
+    return if vars.vars[v].argument && !starts_with(el_vars::name_of(vars, v), "__") && name_index(ctx.names, el_vars::name_of(vars, v)) >= 0 { [v] } else { [] };
   }
   if el_ex_copy::views_a_local(vars, v) {
     return [];
@@ -311,6 +362,9 @@ fn classify_site(e: el::El, vars: el_vars::Vars, code: ir::Node, ls: vector<inte
     if verdict.dep >= 0 && !dep.contains(verdict.dep) {
       dep += [verdict.dep];
     }
+    if e.first_pass && verdict.dep >= 0 && verdict.dep == buffer_attr(e) && !e.p1_bound.contains(e.context) {
+      e.p1_bound += [e.context];
+    }
     // A `Rename` gives the buffer attribute the local's name for every later candidate.
     if starts_with(verdict.shown, "Rename ") && verdict.dep >= 0 {
       ctx.names[verdict.dep] = el_vars::name_of(vars, v);
@@ -368,7 +422,7 @@ pub fn classify(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer, tran
   // (`work_ref_of_another_record` — `SkipInnerRef` for a record of another type — not carried.)
   // A constant's anchor is copied into the buffer, never renamed onto it.
   if starts_with(n, "_const_view_") && buf_attr >= 0 {
-    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: false }}", -1);
+    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: false }}", buf_attr);
   }
   is_work_ref = starts_with(n, "__ref_") || starts_with(n, "__rref_");
   // An attribute has nothing left to place: the return borrows it.
@@ -436,7 +490,7 @@ pub fn classify(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer, tran
     }
   }
   if (ctx.is_plain_fn || lambda_reserved) && heap_return(el_types::base(ctx.ret)) && buf_attr >= 0 && buf_var != v {
-    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: {b(is_work_ref)} }}", -1);
+    return says("Bind {{ buf_attr: {buf_attr}, buf_var: {buf_var}, substitute: {b(is_work_ref)} }}", buf_attr);
   }
   if nullable_vector_local && !ctx.is_plain_fn && buf_attr < 0 {
     return says("AwaitReservedBuffer", -1);
@@ -518,6 +572,72 @@ fn tail_candidates(e: el::El, vars: el_vars::Vars, tail: ir::Node) -> vector<int
     },
     _ => []
   }
+}
+
+// Some arm of the branch `n` answers the buffer `buf` after appending its value into it
+// (`{ OpClearVector(buf); OpAppendVector(buf, value, row); buf }`): `materialize_vector_arms_into`.
+fn arms_appended_into(e: el::El, n: ir::Node, buf: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdReturn { inner } => arms_appended_into(e, inner, buf),
+    NdIf { t, f } => arms_appended_into(e, t, buf) || arms_appended_into(e, f, buf),
+    NdBlock { block } => appended_items(e, block[0].operators, buf),
+    NdInsert { items } => appended_items(e, items, buf),
+    _ => false
+  }
+}
+
+// `n` answers the variable `v`: it is `v`, or a block, insert or `return` whose last item does
+// (`parse_return`'s copy: `{ OpClearVector(buf); OpAppendVector(buf, value, row); return buf }`).
+fn answers_var(n: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdVar { n: x } => x == v,
+    NdReturn { inner } => answers_var(inner, v),
+    NdInsert { items } => len(items) > 0 && answers_var(items[-1]!, v),
+    NdBlock { block } => len(block[0].operators) > 0 && answers_var(block[0].operators[-1]!, v),
+    _ => false
+  }
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(n) { NdVar { n: x } => x == v, _ => false }
+}
+
+fn appended_items(e: el::El, items: vector<ir::Node>, buf: integer) -> boolean {
+  if len(items) == 0 {
+    return false;
+  }
+  last = el_ir::unspan(items[-1]!);
+  if is_var(last, buf) {
+    for it in items {
+      match el_ir::unspan(it) {
+        NdCall { def_nr, args } => {
+          if def_nr >= 0 && el::def(e, def_nr).name == "OpAppendVector" && len(args) > 0 && is_var(args[0]!, buf) {
+            return true;
+          }
+        },
+        _ => {}
+      }
+    }
+    return false;
+  }
+  arms_appended_into(e, last, buf)
+}
+
+// `parse_return`'s copy of a vector borrowing a parameter into the buffer (the lowered return
+// answers the buffer, not what the syntax names): `set_delivered_vector_return` — the result's
+// deps are the buffer alone for every site after it.  Otherwise `dep` as it was.
+fn copied_return_deps(e: el::El, vars: el_vars::Vars, ret: ir::TypeT, ba: integer, rv: integer, inner: ir::Node?, dep: vector<integer>) -> vector<integer> {
+  if e.first_pass || !(el_types::base(ret) is TyVector) || ba < 0 || inner == null {
+    return dep;
+  }
+  rbv = el_vars::var(vars, el::def(e, e.context).attributes[ba]!.name);
+  if rbv < 0 || !answers_var(inner!, rbv) {
+    return dep;
+  }
+  if match e.p.nodes[rv] { SName { name, member } => member == "" && el_vars::var(vars, name) == rbv, _ => false } {
+    return dep;
+  }
+  [ba]
 }
 
 // Does the body block's last statement read `return …`?
@@ -923,10 +1043,15 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
       // (Only a PARAMETER root: a local of another type than the result cannot be the buffer
       // — `ls_can_be_record_buffer` — and takes `MaterializeView`, which the lowering reports.)
       SIndex { at: _ } => { r1 = syn_root_local(e, vars, syn); if r1 < 0 || !vars.vars[r1].argument { return; } ws = [r1]; },
-      SMember { call } => { if call { return; } r2 = syn_root_local(e, vars, syn); if r2 < 0 || !vars.vars[r2].argument { return; } ws = [r2]; },
+      // (A field of a record declared further down the file is unknown to the first pass — the
+      // root is typed `unknown(<record>)` until its fields are read: the read has no type, and
+      // no delivery is asked.)
+      SMember { call } => { if call { return; } r2 = syn_root_local(e, vars, syn); if r2 < 0 || !vars.vars[r2].argument || el_types::is_unknown(el_vars::tp(vars, r2)) { return; } ws = [r2]; },
       // A branch whose every arm answers a local or a field of one: its deps are those locals.
-      SIf { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
-      SMatch { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
+      // (A branch whose arms borrow nothing — literals, `null`, a lambda's captures — joins no
+      // deps: `AsIs`, where an arm reads a capture.)
+      SIf { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 && branch_reads_capture(e, syn) { shown = "AsIs"; } else if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
+      SMatch { at: _ } => { ws = syn_branch_locals(e, vars, syn); if len(ws) == 0 && branch_reads_capture(e, syn) { shown = "AsIs"; } else if len(ws) == 0 || any_views_a_local(vars, ws) { return; } },
       // (A literal tail asks no delivery on the first pass.)
       _ => { return; }
     }
@@ -1410,6 +1535,10 @@ fn syn_branch_locals(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integ
     if e.p.nodes[a] is SStructLit || e.p.nodes[a] is SNull {
       continue;
     }
+    // (Nor does a lambda's capture on the first pass: its read carries no deps yet.)
+    if e.first_pass && is_capture_name(e, a) {
+      continue;
+    }
     sub = if e.p.nodes[a] is SIf || e.p.nodes[a] is SMatch { syn_branch_locals(e, vars, a) } else { [syn_root_local(e, vars, a)] };
     if len(sub) == 0 {
       return [];
@@ -1424,6 +1553,30 @@ fn syn_branch_locals(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integ
     }
   }
   r
+}
+
+// The syntax node is a plain name of one of the lambda's captures.
+fn is_capture_name(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SName { name, member } => member == "" && len([for c in e.captures if c.name == name { 1 }]) > 0,
+    _ => false
+  }
+}
+
+// Some arm of the branch `n` (nested branches included) is a lambda's capture.
+fn branch_reads_capture(e: el::El, n: integer) -> boolean {
+  arms: vector<integer> = [];
+  match e.p.nodes[n] {
+    SIf { then: it, other: io } => { arms += [block_value(e, it)]; if io != null { arms += [block_value(e, io!)]; } },
+    SMatch { arms: ma } => { for ar in ma { match e.p.nodes[ar] { SArm { body: ab } => { if ab != null { arms += [block_value(e, ab!)]; } }, _ => {} } } },
+    _ => {}
+  }
+  for a in arms {
+    if is_capture_name(e, a) || ((e.p.nodes[a] is SIf || e.p.nodes[a] is SMatch) && branch_reads_capture(e, a)) {
+      return true;
+    }
+  }
+  false
 }
 
 fn syn_root_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
