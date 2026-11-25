@@ -633,3 +633,9 @@ program on every PR and proves the check can fail.
 4. **Gate.**  The suite runner and CI fail on a checker finding, as they do on a runtime one.
 5. **Frees from the records.**  The code generator places frees from the records, and the
    `deps`-derived facts become one input to them rather than a second answer.
+6. **The port's own decisions.**  The checks read only `Data` (`lifetime_check::observe`), and
+   `ir_read::read_data` rebuilds a `Data` from a store image, so the self-hosted front end's IR
+   can be checked directly once it carries the port's own scope pass: today gate E compares the
+   PARSED stage, before any scope pass, and the records judge the frees that pass inserts.  First
+   step then: compile, `ir_store::materialize_data`, `read_data`, and the findings equal the
+   original's on every suite cell; then a `--lifetime-check-image` entry for the gate.
