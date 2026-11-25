@@ -1880,15 +1880,22 @@ pub fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
   tail = body_tail(code);
   // The first pass keeps a record match's arms in a `scalar_match` block around the chain.
   was_match = false;
+  match_deps: vector<integer> = [];
   if e.first_pass {
     match tail {
-      NdBlock { block: mb } => if mb[0].name == "scalar_match" && len(mb[0].operators) == 1 { tail = el_ir::unspan(mb[0].operators[0]!); was_match = true; },
+      NdBlock { block: mb } => if mb[0].name == "scalar_match" && len(mb[0].operators) == 1 { tail = el_ir::unspan(mb[0].operators[0]!); was_match = true; match_deps = el_types::deps(mb[0].result[0] ?? ir::TyVoid); },
       _ => {}
     }
   }
   vars.match_tail = was_match;
   v = if tail is NdIf { arms_rename_candidate(e, vars, code, tail) } else { rename_candidate(e, vars, code, tail) };
   vars.match_tail = false;
+  // (`ref_return`'s `ls` for a match tail is the match's own type deps: a literal arm's minted
+  // store and a call's fresh answer add none to the join, so a block arm ending in a local of
+  // the result's record is renamed whatever literal or call arms stand beside it.)
+  if was_match && v == -1 && len(match_deps) == 1 && match_deps[0]! < len(vars.vars) {
+    v = rename_candidate(e, vars, code, ir::NdVar { n: match_deps[0]! });
+  }
   // (Renamed only where the local's store type is the result's: a VARIANT local under its
   // enum's result — `o = Box { … }; o` answering `Shape` — is built in its own store and copied
   // into the buffer at the tail.)

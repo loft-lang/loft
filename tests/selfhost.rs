@@ -158,13 +158,15 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
     );
 }
 
-/// The default images in an emitted C program (`static const uint8_t loft_dflt{tp}[n] = { … };`),
-/// one line per type: `tp`, then its bytes — the form `selfhost/tests/types.loft` compares with
+/// The default images in an emitted C program
+/// (`static const uint8_t loft_dflt_<ident>[n] = { … };`), one line per type: the type's C ident
+/// (its name made an identifier, `Cx::type_ident`), then its bytes — the form
+/// `selfhost/tests/types.loft` maps back to a type number and compares with
 /// `types::default_image`.
 fn c_default_images(c: &str) -> String {
     let mut rows = Vec::new();
     for line in c.lines() {
-        let Some(rest) = line.strip_prefix("static const uint8_t loft_dflt") else {
+        let Some(rest) = line.strip_prefix("static const uint8_t loft_dflt_") else {
             continue;
         };
         let Some((tp, rest)) = rest.split_once('[') else {
