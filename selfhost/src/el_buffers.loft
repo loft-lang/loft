@@ -1502,7 +1502,7 @@ fn promote_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node
   mint = ir::NdInsert { items: [
     el_ir::cl(e, "OpFreeRefIfDistinct", [b, ir::NdVar { n: w }]),
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: rw.main_known }]),
-    el_ir::v_set(buf, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: rw.vec_known }])),
+    el_ir::v_set(buf, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: el_ex_base::wrapper_row(e, rw) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ] };
   bl = match el_ir::unspan(code) { NdBlock { block } => block[0], _ => return code };

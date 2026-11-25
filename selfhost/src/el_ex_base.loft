@@ -2258,6 +2258,15 @@ pub fn int4_rows(e: el::El, t: ir::TypeT) {
 // What `Data::vector_def` answers for element type `t`, looked up where the standard library
 // registered it: the `main_vector<T>` wrapper (its definition and store type) and the `vector<T>`
 // store type.  An element type the library has no rows for yet is refused by name.
+// `OpGetField(db, 0, …)`'s row for the vector a `main_vector<T>` wrapper holds: its `vector`
+// field as the wrapper was laid out.  The vector's own row (`vec_known`, what its elements are
+// pushed through) unless a vector of the same name laid the wrapper out first — a full-width
+// `vector<vector<integer>>` before a narrow `vector<vector<i32>>` shares the wrapper and its row.
+pub fn wrapper_row(e: el::El, r: VecRows) -> integer {
+  fk = if r.main_def < 0 { -1 } else { el_schema::field_content(e, r.main_known, "vector") };
+  if fk >= 0 { fk } else { r.vec_known }
+}
+
 pub struct VecRows {
   pub main_def: integer,
   pub main_known: integer,

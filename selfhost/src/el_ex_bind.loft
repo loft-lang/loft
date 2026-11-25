@@ -373,7 +373,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: 
   el_vars::depend(vars, v, db);
   ex(ir::NdInsert { items: [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     el_ir::cl(e, if opt_param { "OpReplaceVector" } else { "OpAppendVector" }, [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])
   ] }, ir::TyVoid)
@@ -417,7 +417,7 @@ pub fn jo_arm_copy(e: el::El, vars: el_vars::Vars, b: Ex) -> Ex? {
     el_vars::depend(vars, o, db);
     ops += [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(o, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::v_set(o, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
       el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
     ];
   }
