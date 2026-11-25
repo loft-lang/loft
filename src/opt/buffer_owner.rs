@@ -14,8 +14,7 @@
 //!    declarations as invariant).
 //! 3. `@FR-R-ElemFirst` — a temp built inside its appended element (the pairs the writers
 //!    still apply; the IR's own pairs show no buffer).
-//! 4. `@FR-R-MoveAppend` — a move host.
-//! 5. `@FR-R-RetAdopt` — the adopted result's witness.
+//! 4. `@FR-R-RetAdopt` — the adopted result's witness.
 //!
 //! A buffer or record local none of them owns is free for `@FR-R-LoopBuffer` and
 //! `@FR-R-LoopRecord`, the rules that ask.  The apart-record plan is the whole program's
@@ -33,7 +32,6 @@ pub enum Owner {
     ApartRecord,
     LitHoist,
     ElemFirst,
-    MoveHost,
     RetAdopt,
 }
 
@@ -46,7 +44,6 @@ impl Owner {
             Owner::ApartRecord => "an apart record",
             Owner::LitHoist => "an invariant literal's",
             Owner::ElemFirst => "an element-first pair's",
-            Owner::MoveHost => "a move host",
             Owner::RetAdopt => "the adopted result's witness",
         }
     }
@@ -97,9 +94,6 @@ pub fn owners(
     }
     for v in hoist::element_first(data, stores, d, None).by_vdb.keys() {
         claim(*v, Owner::ElemFirst);
-    }
-    for p in hoist::move_appends(data, d).values() {
-        claim(p.host_vdb, Owner::MoveHost);
     }
     if let Some(a) = hoist::ret_adopt(data, d) {
         claim(a.vdb, Owner::RetAdopt);

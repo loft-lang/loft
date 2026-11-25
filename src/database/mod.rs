@@ -34,9 +34,8 @@ mod spans;
 pub mod sql_query;
 pub mod sql_source;
 mod structures;
-pub use structures::BridgeArgs;
+pub use structures::{BridgeArg, BridgeArgs};
 mod types;
-pub(crate) use types::DBREF_BORROW;
 
 pub use allocation::{CLEAR_KEYED_VIEW, FILL_KEYED_SOURCE, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
@@ -365,6 +364,40 @@ pub enum SchemaCheck {
 /// them would leave the guard silently matching nothing.
 pub const TYPEVAR_ROW_PREFIX: &str = "__typevar_";
 
+/// The reports a run makes once ([`RunDiagnostics::first_report`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RunReport {
+    /// `refuse_owned_edge`: an owned edge pointing outside its store (#796).
+    OwnedEdge,
+    /// `remove_claims`: a text field holding a pointer past its store's end.
+    StaleTextClaim,
+    /// `LOFT_WATCH_STORE`: an out-of-bounds text pointer arriving in the watched store.
+    WatchedOob,
+    /// `LOFT_UAF`: a record copy read from a freed source store, named once per store.
+    LeakNamed,
+    /// `LOFT_UAF`: a record copy read from a live but reused source store, once per store.
+    ReuseNamed,
+    /// `LOFT_UAF_GEN`: a stale reference popped, once per code position.
+    StaleGenerator,
+}
+
+/// `@PLN226` — what one run reports once, and its store timeline (`LOFT_STORES=timeline`): kept
+/// in the run's `Stores` rather than in thread-locals.  `RefCell`s, not locks: the reports are
+/// made from `&self` reads, and a `Stores` is used by one thread at a time (`@FR-C-Own`) — a `par`
+/// worker's `Stores` is its own, as each thread's sets were.
+#[derive(Default)]
+pub(crate) struct RunDiagnostics {
+    reported: std::cell::RefCell<std::collections::HashSet<(RunReport, u16, u32, u32)>>,
+    pub(crate) timeline: std::cell::RefCell<allocation::TimelineState>,
+}
+
+impl RunDiagnostics {
+    /// Whether `(what, a, b, c)` is reported for the first time this run (and mark it so).
+    pub(crate) fn first_report(&self, what: RunReport, a: u16, b: u32, c: u32) -> bool {
+        self.reported.borrow_mut().insert((what, a, b, c))
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct Stores {
     pub types: Vec<Type>,
@@ -521,16 +554,81 @@ pub struct Stores {
     pub bridge_text_dest: Option<crate::keys::DbRef>,
     /// `@PLN206 P4` — the table as a hosted C unit reads it (`host_abi::TableView`).
     pub hosted_view: crate::host_abi::TableView,
+    /// `@PLN226` — the store contexts hosted C units keep for this `Stores`
+    /// (`host_abi::HostedContexts`).
+    pub hosted_cx: crate::host_abi::HostedContexts,
+    /// `@PLN226` — the store-lifetime detectors' records of this run (`keys::StoreChecks`).
+    pub(crate) checks: crate::keys::StoreChecks,
+    /// `@PLN226` — the library index of the native call in flight, set by
+    /// `State::invoke_native`: the only way a `fn(&mut Stores, &mut DbRef)` handler learns
+    /// WHICH binding it serves (the `#c` and native auto-dispatchers, a missing native's stub).
+    pub lib_idx: u16,
+    /// `@PLN226` (loft#715) — `lib_idx + 1` while a shared-library bridge call is on this
+    /// `Stores`' stack, 0 otherwise: a fault raised inside one names the bridge
+    /// ([`crate::call_frames::shared_bridge_label`]).
+    pub in_bridge: u16,
+    /// `@PLN226` (@PLN199 C2) — the interpreter running the bridge call on this `Stores`, for
+    /// a compiled library's call back into it (`HostTable::call_ref`); null outside one.  Set
+    /// and restored around the call by `State::invoke_native`, so a nested bridge call leaves
+    /// the outer one reachable.
+    /// Untyped, as the core layer names no interpreter type: the readers cast it back.
+    pub host_state: *mut std::ffi::c_void,
+    /// `@PLN226` (loft#2227) — the records ONE bridge call claims in its pinned argument
+    /// store: armed by `extensions::claim_log_begin`, noted by the claim and resize callbacks.
+    pub(crate) claim_log: Option<(u16, Vec<u32>)>,
+    /// `@PLN226` — the natives this program wired, by library index (`extensions::wire_*`):
+    /// shared by `Arc` with the `par` workers, which read it and never write it.  Held without
+    /// naming its type (the core layer names no higher one): `extensions::wired` reads it.
+    pub(crate) wired: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    /// loft#715 — the bridge symbol each shared-library slot dispatches to, so a fault raised
+    /// while the bridge is on the stack can NAME it (`call_frames::shared_bridge_label`).
+    pub(crate) bridge_labels: std::sync::Arc<Vec<Option<String>>>,
+    /// `@PLN226` — this context's index-walk hints (`btree::WalkHints`).
+    pub(crate) bt_hints: crate::btree::WalkHints,
+    /// `@PLN226` — a generated program's shadow call stack and lazy-driver window
+    /// (`call_frames::NativeFrames`); empty for an interpreted one.
+    pub frames: crate::call_frames::NativeFrames,
+    /// `@PLN226` — a generated program's generator frames and fn-ref return buffers
+    /// (`coroutine_host::NativeRun`), the twins of the interpreter's `State` tables.
+    pub(crate) native: crate::coroutine_host::NativeRun,
+    /// `@PLN226` — the crash context of the interpreter that runs on these stores
+    /// (`crash_report::CrashCx`): its last op, spans and store-trace names.
+    pub crash: crate::crash_report::CrashCx,
+    /// `@PLN226` — a debug session's capture of the program's output (`--rpc`, `serve`): while
+    /// `Some`, the `print` builtin appends here instead of writing stdout
+    /// ([`Stores::print_or_host`]).  The session sets it on every state it builds
+    /// (`ReplSession::new_state`); a copy of the stores, a `par` worker's included, prints.
+    pub output: Option<String>,
+    /// `@PLN226` — the program's engine host (`engine_host::EngineCx`): its kernel, client,
+    /// build swap and sync classes.
+    pub(crate) engine: crate::engine_host::EngineCx,
+    /// `@PLN226` — the program's web buffers (`web_bytes::WebCx`).
+    pub(crate) web: crate::web_bytes::WebCx,
+    /// The files a page handed the module (`wasm_entry`), for the program's own reads while
+    /// the page's run lasts; `None` outside one.
+    #[cfg(host_fs)]
+    pub(crate) page_files: Option<std::sync::Arc<std::collections::HashMap<String, String>>>,
+    /// The `par` worker tracer's lines (`LOFT_TRACE_PAR_WORKERS`), read with the program's
+    /// output by the page that runs it (`par_pool::WorkerTrace::report`).
+    #[cfg(feature = "wasm")]
+    pub(crate) par_trace: std::cell::RefCell<String>,
+    /// `@PLN226` — this context's store instruments (`LOFT_ALLOC_TRACE`, `LOFT_OP_CENSUS`),
+    /// shared with every store it makes live (`Store::tap`).
+    #[cfg(feature = "op-census")]
+    pub tap: std::sync::Arc<crate::store_census::Tap>,
+    /// `@PLN226` (`@FR-F-Read-Ref`) — what the top-level text read in progress knows about
+    /// places and references; `None` outside one.
+    read_refs: Option<structures::ReadRefs>,
+    /// `@PLN226` — what this run has reported once and its store timeline ([`RunDiagnostics`]).
+    pub(crate) run: RunDiagnostics,
+    /// `@PLN226` — the render in progress (`format::RenderState`).
+    pub(crate) render: std::cell::RefCell<format::RenderState>,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
     /// that definition isn't a constant.  Populated by
-    /// `compile::build_const_vectors` (interpreter path) or by the
-    /// `init()` function emitted by `src/generation/` (native path).
-    /// Mirrors `State.const_refs` so native code's
-    /// `stores.const_ref_at_runtime(d_nr)` accessor (called via the
-    /// substituted `OpConstRef` template — see
-    /// `src/generation/calls.rs`) resolves from any function context
+    /// `compile::build_const_vectors`.  Mirrors `State.const_refs` so
+    /// [`Self::const_ref_at_runtime`] resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
     /// The records of the constant store that hold a long text (`gen_text`, a text of 256
@@ -665,7 +763,7 @@ pub struct Stores {
     /// `resolve_path`, the single home every file-op site routes through.
     pub program_relative: bool,
     /// FY.1: When true, the interpreter loop yields back to the caller.
-    /// Set by `gl_swap_buffers` in WASM mode; cleared by `resume_frame`.
+    /// Set by `gl_swap_buffers` in WASM mode; cleared by `Game::resume_frame`.
     pub frame_yield: bool,
     /// `@FR-R-DispatchStop` — the interpreter's lean dispatch loop tests THIS after every op
     /// instead of each rare event that ends it: a runtime error ([`Stores::raise_runtime_error`]),
@@ -678,11 +776,6 @@ pub struct Stores {
     /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
     /// change once a program runs, so the answer is computed once per type.
     pub(crate) swap_safe_types: Vec<u8>,
-    /// `@FR-R-RefillBuffer` — a store an exchange released, kept instead of freed: it holds
-    /// the previous value of the rebound variable, a root of its own `known_type` at `1@8`,
-    /// and nothing references it.  The next buffer of that type minted for a refilling callee
-    /// takes it (`take_spare`); a second release frees the one kept before.
-    pub(crate) spare_store: Option<u16>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -745,7 +838,7 @@ pub struct Stores {
     /// When non-empty, `os_arguments()` returns these instead of raw `std::env::args`.
     pub user_args: Vec<String>,
     /// `@FR-R-DecodeView` — the byte frame the running decode region's spans read: set by a
-    /// region's root for the length of its call (`codegen_runtime::DvFrame`), null outside one.
+    /// region's root for the length of its call, null outside one.
     pub dv_frame: DbRef,
     /// Monotonic timestamp captured at `Stores::new()`.  Used by `ticks()` to return
     /// microseconds elapsed since program start; cloned into worker Stores unchanged so
@@ -817,6 +910,30 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: self.wired.clone(),
+            bridge_labels: self.bridge_labels.clone(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::coroutine_host::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::new(self.tap.child()),
+            run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -838,7 +955,6 @@ impl Clone for Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
-            spare_store: None,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1242,6 +1358,34 @@ impl Stores {
     /// Install an externally-allocated `Store` into this `Stores`'
     /// allocations table.  Returns the parent-side `store_nr`.
     ///
+    /// The `print` builtin: into the debug session's capture when it captures
+    /// ([`Self::output`]), else the host's stdout.  The stdlib's `print` template calls this, so
+    /// neither the interpreter nor a generated program names the debug server that captures.
+    pub fn print_or_host(&mut self, text: &str) {
+        match self.output.as_mut() {
+            Some(out) => out.push_str(text),
+            None => crate::host_print::host_print(text),
+        }
+    }
+
+    /// `LOFT_VERIFY_STACK`: did a record of a live store move since the last drain?  Asked
+    /// after every op, so it is a scan of flags with no allocation.
+    #[must_use]
+    pub fn any_relocation(&self) -> bool {
+        self.allocations.iter().any(|s| !s.relocated.is_empty())
+    }
+
+    /// `LOFT_VERIFY_STACK`: take the records that moved since the last drain, from every store.
+    #[must_use]
+    pub fn take_relocations(&mut self) -> Vec<crate::stack_verify::Relocation> {
+        let mut moved = Vec::new();
+        for s in &mut self.allocations {
+            let nr = s.store_nr;
+            moved.extend(s.relocated.drain(..).map(|(old, new)| (nr, old, new)));
+        }
+        moved
+    }
+
     /// Used by the parent thread after `WorkerStores::take_slot`
     /// extracts a worker's output slot.  The `Store` keeps its bytes
     /// — no memcpy, no claim translation.  Phase 2's rebase walk
@@ -1261,6 +1405,11 @@ impl Stores {
         // first push) died on "Using a freed store" (the @P317
         // bitmap-vs-flag dual invariant, F3 in the sweep catalog).
         store.live = true;
+        // The adopter's instruments from here on (`@FR-C-Boundary`).
+        #[cfg(feature = "op-census")]
+        {
+            store.tap = Some(self.tap.clone());
+        }
         // Inline the free-slot scan rather than calling allocation.rs's
         // private `find_free_slot` — keeping mod.rs from depending on
         // that private helper avoids cross-file plumbing for one
@@ -1611,6 +1760,7 @@ pub const BASE_TYPES: u16 = 7;
 
 impl Stores {
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per field of the stores")]
     pub fn new() -> Stores {
         let mut result = Stores {
             types: Vec::new(),
@@ -1638,6 +1788,30 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             hosted_view: crate::host_abi::TableView::default(),
+            hosted_cx: crate::host_abi::HostedContexts::default(),
+            checks: crate::keys::StoreChecks::default(),
+            lib_idx: 0,
+            in_bridge: 0,
+            host_state: std::ptr::null_mut(),
+            claim_log: None,
+            read_refs: None,
+            wired: std::sync::Arc::new(()),
+            bridge_labels: std::sync::Arc::default(),
+            bt_hints: crate::btree::WalkHints::default(),
+            frames: crate::call_frames::NativeFrames::default(),
+            native: crate::coroutine_host::NativeRun::default(),
+            crash: crate::crash_report::CrashCx::default(),
+            output: None,
+            engine: crate::engine_host::EngineCx::default(),
+            web: crate::web_bytes::WebCx::default(),
+            #[cfg(host_fs)]
+            page_files: None,
+            #[cfg(feature = "wasm")]
+            par_trace: std::cell::RefCell::default(),
+            #[cfg(feature = "op-census")]
+            tap: std::sync::Arc::default(),
+            run: RunDiagnostics::default(),
+            render: std::cell::RefCell::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1659,7 +1833,6 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
-            spare_store: None,
             source_dir: String::new(),
             release: std::sync::OnceLock::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
@@ -1769,26 +1942,11 @@ impl Stores {
         Some(full)
     }
 
-    /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`.
-    /// Used by native codegen, which has `&mut Stores` (via
-    /// `unsafe { &mut *cell.get() }`) but no `&mut State`.  The
-    /// native template rewriter in `src/generation/calls.rs`
-    /// translates `s.raise(...)` → `stores.raise_runtime(...)` so
-    /// the same `default/01_code.loft` annotations work in both
-    /// contexts.  The `_runtime` suffix is mandatory: a plain
-    /// `stores.raise(` would let a second pass of the substring-
-    /// based substitution match `s.raise(` inside the just-
-    /// produced output and accumulate `stor` prefixes
-    /// (observed: `storestorestores.raise(`).  Sibling helpers
-    /// follow the same convention (`*_runtime` rename).
+    /// The Stores-side counterpart of `State::raise`, for code that has
+    /// `&mut Stores` but no `&mut State` (the `*_runtime` helpers, store allocation).
     ///
-    /// **Position is `None` for the native path today** — native
-    /// doesn't have a bytecode pc → Position lookup table.  Phase 4g
-    /// (backtrace + polish) will thread codegen-time positions
-    /// through.  For now native diagnostics omit `--> file:line:col`
-    /// (rendered as just `error: <kind detail>` without the
-    /// location header).  Better than today's `cannot find value 's'`
-    /// rustc compile error from the s.raise call.
+    /// **Position is `None`**: there is no bytecode pc to look one up by, so the diagnostic
+    /// omits `--> file:line:col` (rendered as just `error: <kind detail>`).
     ///
     /// Production-vs-development split mirrors `State::raise` per
     /// @C66`:
@@ -1878,9 +2036,9 @@ impl Stores {
     ) -> Option<u32> {
         let keys = self.keys(tp).to_vec();
         let n_after = if reverse {
-            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         } else {
-            crate::btree::next_record(data, &self.allocations, &keys, cur)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, cur)
         };
         // Read before the removal: `cur` is about to stop being in the tree.
         let removed_the_last = cur == finish;
@@ -1894,9 +2052,9 @@ impl Stores {
             return None;
         }
         Some(if reverse {
-            crate::btree::next_record(data, &self.allocations, &keys, n_after)
+            crate::btree::next_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         } else {
-            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
+            crate::btree::previous_record(&self.bt_hints, data, &self.allocations, &keys, n_after)
         })
     }
 
@@ -1929,7 +2087,7 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            let position = crate::call_frames::running_frame_position().map(|mut p| {
+            let position = self.frames.running_position().map(|mut p| {
                 if line != 0 {
                     p.line = line;
                 }
@@ -2073,11 +2231,7 @@ impl Stores {
 
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_get_or_raise`.  Same body, calls
-    /// `self.raise_runtime(...)` on OOB.  Native template rewriter
-    /// translates `s.vec_get_or_raise(...)` →
-    /// `stores.vec_get_or_raise_runtime(...)`.  The `_runtime`
-    /// suffix avoids substring-collision with the substitutor —
-    /// see `raise_runtime` for the explanation.
+    /// `self.raise_runtime(...)` on OOB.
     #[must_use]
     #[inline]
     pub fn vec_get_or_raise_runtime(
@@ -2114,8 +2268,7 @@ impl Stores {
     /// elements: negative counts from the end, and only a STILL-out-of-range index is out
     /// of bounds, which raises `NegativeIndex` or `IndexOutOfBounds` and answers `None`.
     /// Kept byte-for-byte with `State::vec_get_or_raise` because a divergence here is a
-    /// different program, not a different speed; `vec_get_or_raise_runtime` and the
-    /// `@FR-R-Apart` element helpers (`codegen_runtime::ap_get_f64`) share it.
+    /// different program, not a different speed; `vec_get_or_raise_runtime` shares it.
     pub fn index_or_raise_runtime(&mut self, index: i64, len: u32) -> Option<u32> {
         let normalized = if index < 0 {
             index + i64::from(len)
@@ -2468,36 +2621,6 @@ impl Stores {
         true
     }
 
-    /// `@FR-R-RefillBuffer`'s in-place clause — make the vector at `db` hold exactly `count`
-    /// copies of `val` by overwriting it where it stands, when it ALREADY holds `count`
-    /// elements of width `size`: the answer `clear_vector` + [`Stores::push_fill`] gives,
-    /// without the reset, the reserve and the two header derivations.  `false` (nothing
-    /// written) for any other length, a null, foreign or locked vector, or a width that is
-    /// not `T`'s — the caller then empties and fills as before.  Scalars only, so the
-    /// elements it overwrites own nothing.
-    #[inline]
-    pub fn fill_exact<T: crate::vector::HoistScalar>(
-        &mut self,
-        db: &crate::keys::DbRef,
-        size: u32,
-        count: i64,
-        val: T,
-    ) -> bool {
-        if size != std::mem::size_of::<T>() as u32 {
-            return false;
-        }
-        let h = crate::vector::vec_header(db, &self.allocations);
-        if h.rec == 0 || h.locked || i64::from(h.len) != count {
-            return false;
-        }
-        let store = &mut self.allocations[h.store_nr as usize];
-        if store.is_foreign() {
-            return false;
-        }
-        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
-        true
-    }
-
     #[cold]
     #[inline(never)]
     fn push_hoisted_grow<T: crate::vector::HoistScalar>(
@@ -2792,52 +2915,6 @@ impl Stores {
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — place a call's return buffer as a RECORD inside
-    /// `host`'s store, so what the callee builds into it is claimed where the consuming
-    /// append wants the elements to live.  The record is shaped exactly as `OpDatabase`
-    /// shapes a fresh-store buffer (type tag at word 1, content defaulted, `pos` 8); only
-    /// the store differs.  The store's `known_type` is the HOST's and stays untouched.
-    #[must_use]
-    pub fn place_record_in(&mut self, host: &crate::keys::DbRef, db_tp: u16) -> crate::keys::DbRef {
-        let size = self.enum_parent_size(db_tp);
-        let r = self.claim(host, 1 + u32::from(size).div_ceil(8));
-        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
-        // @PLN157 § V-y (`@FR-R-CompleteWrite`) — the placed buffer is a vector record
-        // whose only field the CALLEE's entry clear rewrites (the shape-A clear, or the
-        // adopted init's len reset — the ABI every admitted callee has); the prefill's
-        // whole effect is this one u32 zero, written directly instead of dispatching
-        // through `set_default_value`.
-        self.store_mut(&r).set_u32_raw(r.rec, 8, 0);
-        r
-    }
-
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the move-append: relocate `size` bytes of the
-    /// dying temporary's element into the fresh destination element and ZERO the source,
-    /// both in ONE store — the element's heap handles stay valid because they never change
-    /// store, and the zeroed source is what keeps the temporary's own clear and free from
-    /// releasing what it no longer owns.  The caller dispatches on store identity and takes
-    /// the deep copy when they differ; this is only the same-store arm.
-    ///
-    /// # Panics
-    ///
-    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the two elements do NOT share a store —
-    /// the caller's dispatch failed.  Never in the emitted default.
-    pub fn move_record_shallow<const VERIFY: bool>(
-        &mut self,
-        src: &crate::keys::DbRef,
-        dst: &crate::keys::DbRef,
-        size: u32,
-    ) {
-        if VERIFY {
-            assert_eq!(
-                src.store_nr, dst.store_nr,
-                "move-append across stores — the same-store dispatch let a cross-store pair through"
-            );
-        }
-        self.copy_block(src, dst, size);
-        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
-    }
-
     /// [`Self::clear_vector_release`] for a vector whose element owns no heap, which the
     /// emitter knows from the type (`@FR-H-ClearRelease`): a foreign view dropped as there,
     /// otherwise the length reset that clear arrives at after asking the type table.
@@ -3075,8 +3152,7 @@ impl Stores {
         crate::vector::clear_vector(db, &mut self.allocations);
     }
 
-    /// @PLN157 § V-j (`@FR-R-MoveAppend`) — free a PLACED buffer record inside a store that
-    /// lives on: the deep release of what the record still owns (elements the loop did not
+    /// Free a PLACED buffer record inside a store that lives on: the deep release of what the record still owns (elements the loop did not
     /// move — a `break` leaves them), then the record's own block.  The free `OpFreeRef`
     /// performed for a fresh-store buffer released the whole STORE; a placed buffer's store
     /// is the destination's and must survive.
@@ -3435,7 +3511,7 @@ impl Stores {
     }
 
     /// `(R-MoveLast)` — the last-use store of an owned record local into a field: a
-    /// relocation within one store, the deep copy across two (see `move_record_shallow`).
+    /// relocation within one store, the deep copy across two.
     ///
     /// # Panics
     ///
@@ -3543,15 +3619,8 @@ impl Stores {
         self.string_from_const_store(rec, pos)
     }
 
-    /// Native-side accessor for `const_refs[d_nr]` used via the
-    /// `#rust"s.const_ref_at(@d_nr as usize)"` template substitution
-    /// (see `src/generation/calls.rs` — pattern `s.const_ref_at(`
-    /// rewrites to `stores.const_ref_at_runtime(`).  The `_runtime`
-    /// suffix breaks the substring chain that would otherwise let the
-    /// substitution accumulate `stor` prefixes when `OpConstRef` is
-    /// nested inside another opcode template (e.g. `OpGetVector` →
-    /// `OpConstRef`).  Same trick used for `raise_runtime`,
-    /// `vec_get_or_raise_runtime`, etc.  @P275 fix.
+    /// `const_refs[d_nr]` for code that only has `&mut Stores` — the counterpart of
+    /// `State::const_ref_at`.
     #[must_use]
     pub fn const_ref_at_runtime(&self, d_nr: usize) -> DbRef {
         self.const_refs[d_nr]

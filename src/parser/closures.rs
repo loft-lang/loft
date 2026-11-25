@@ -1037,15 +1037,10 @@ fn collection_return_views_whole_binds(ret: &Type) -> bool {
 /// whichever member was asked first.  The summary is one answer per function: the parser's
 /// bodies as the scope pass starts, and for a cycle every write any member makes through the
 /// cycle.  A program without recursion gets the same answer a fresh walk gave.
-#[must_use]
-pub(crate) struct ParamWritesSummary {
-    prev: Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>,
-}
+pub(crate) type ParamWritesSummary = crate::data::ScopedSpan;
 
-std::thread_local! {
-    static PARAM_WRITES: std::cell::RefCell<Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// Per function, which of its parameters it writes (`Data::param_writes`).
+pub(crate) type ParamWrites = crate::fxhash::FxHashMap<u32, Vec<bool>>;
 
 /// Compute the summary for `data` and answer [`callee_param_writes`] from it until dropped.
 pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
@@ -1059,19 +1054,21 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
     // Monotone: a walk only adds writes, so it stops; each walk reads the facts so far.  The
     // first pass walks every body; after it only the CALLERS of a function whose facts grew are
     // walked again (a worklist), since a body's answer reads its callees' facts and nothing else.
-    let mut callers: crate::fxhash::FxHashMap<u32, Vec<u32>> = crate::fxhash::FxHashMap::default();
+    let mut callers: Vec<(u32, u32)> = Vec::new();
+    let mut seen = crate::fxhash::FxHashSet::default();
     for &d in &fns {
-        let mut seen = crate::fxhash::FxHashSet::default();
+        seen.clear();
         data.def(d).code().any_node(&mut |n| {
             if let Value::Call(c, _) = n
                 && *c != d
                 && seen.insert(*c)
             {
-                callers.entry(*c).or_default().push(d);
+                callers.push((*c, d));
             }
             false
         });
     }
+    callers.sort_unstable();
     let mut queue: std::collections::VecDeque<u32> = fns.iter().copied().collect();
     let mut queued: crate::fxhash::FxHashSet<u32> = fns.iter().copied().collect();
     while let Some(d) = queue.pop_front() {
@@ -1092,30 +1089,22 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
             if queued.insert(d) {
                 queue.push_back(d);
             }
-            for &c in callers.get(&d).map_or(&[][..], Vec::as_slice) {
+            let from = callers.partition_point(|&(callee, _)| callee < d);
+            for &(_, c) in callers[from..]
+                .iter()
+                .take_while(|&&(callee, _)| callee == d)
+            {
                 if queued.insert(c) {
                     queue.push_back(c);
                 }
             }
         }
     }
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = PARAM_WRITES.with(|m| m.replace(Some((key, cur))));
-    ParamWritesSummary { prev }
-}
-
-impl Drop for ParamWritesSummary {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        PARAM_WRITES.with(|m| *m.borrow_mut() = prev);
-    }
+    data.param_writes.open(cur)
 }
 
 /// The summary's answer for `fn_nr`, when one is open for this `Data` and holds it.
 fn summarised_param_writes(data: &Data, fn_nr: u32) -> Option<Vec<bool>> {
-    let key = std::ptr::from_ref(data) as usize;
-    PARAM_WRITES.with(|m| match &*m.borrow() {
-        Some((k, map)) if *k == key => map.get(&fn_nr).cloned(),
-        _ => None,
-    })
+    data.param_writes
+        .with(|m: Option<&mut ParamWrites>| m.as_ref()?.get(&fn_nr).cloned())
 }

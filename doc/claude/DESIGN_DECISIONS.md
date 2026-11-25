@@ -41,6 +41,7 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C156](DESIGN_DECISIONS_VALUES.md#c156--every-float-text-conversion-rounds-correctly-an-exact-tie-to-the-even-digit) — Every float-text conversion rounds correctly, an exact tie to the even digit
 - [C159](DESIGN_DECISIONS_VALUES.md#c159--a-field-that-would-contain-its-host-is-laid-out-out-of-line-with-an-inline-fields-values) — A field that would contain its host is laid out out of line, with an inline field's values
 - [C160](DESIGN_DECISIONS_VALUES.md#c160--e-discharges-a-τ-with-no-default-the-value-or-a-halt-that-names-it) — `e!` discharges a `τ?` with no default: the value, or a halt that names it
+- [C171](DESIGN_DECISIONS_VALUES.md#c171--a-null-text-is-an-identity-never-a-content) — A null text is an identity, never a content
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 
@@ -149,3 +150,5 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C167](DESIGN_DECISIONS_PLATFORM.md#c167--a-security_critical-advisory-refuses-the-package-release-it-names) — A `security_critical` advisory refuses the package release it names
 - [C169](DESIGN_DECISIONS_PLATFORM.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart) — A C unit carries its whole runtime; no build compiles the runtime apart
 - [C170](DESIGN_DECISIONS_PLATFORM.md#c170--a-backend-stays-only-while-it-is-semantically-equal-to-the-others) — A backend stays only while it is semantically equal to the others
+- [C172](DESIGN_DECISIONS_PLATFORM.md#c172--a-debug-session-answers-only-whoever-holds-its-runs-token) — A debug session answers only whoever holds its run's token
+- [C173](DESIGN_DECISIONS_PLATFORM.md#c173--a-library-loads-from-what-the-run-says-then-what-the-project-declares-then-what-lies-in-a-directory) — A library loads from what the run says, then what the project declares, then what lies in a directory

@@ -22,8 +22,8 @@ impl FnWriter<'_> {
                 let f = self.cx.unicode_case(name == "t_4text_to_uppercase");
                 let t = self.expr(t, ind)?;
                 let r = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_free(&{r});"));
-                self.line(ind, &format!("{r} = {f}({});", as_view(t)?));
+                self.line(ind, &format!("loft_text_free(cx, &{r});"));
+                self.line(ind, &format!("{r} = {f}(cx, {});", as_view(t)?));
                 Ok(Some(self.held(r, CType::Text)))
             }
             (n, [c]) if n.starts_with("t_9character_is_") => {
@@ -32,7 +32,7 @@ impl FnWriter<'_> {
                 };
                 let c = self.expr(c, ind)?;
                 Ok(Some(E::new(
-                    format!("{f}({})", super::as_char(c)?),
+                    format!("{f}(cx, {})", super::as_char(c)?),
                     K::Bool,
                 )))
             }
@@ -51,14 +51,14 @@ impl FnWriter<'_> {
             ("OpCastFloatFromText", [t]) => {
                 let t = self.expr(t, ind)?;
                 Ok(E::new(
-                    format!("loft_float_of_text({})", as_view(t)?),
+                    format!("loft_float_of_text(cx, {})", as_view(t)?),
                     K::Float,
                 ))
             }
             ("OpCastSingleFromText", [t]) => {
                 let t = self.expr(t, ind)?;
                 Ok(E::new(
-                    format!("loft_single_of_text({})", as_view(t)?),
+                    format!("loft_single_of_text(cx, {})", as_view(t)?),
                     K::Single,
                 ))
             }
@@ -68,12 +68,12 @@ impl FnWriter<'_> {
             }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_abs({})", as_int(v)?), K::Int))
+                Ok(E::new(format!("loft_abs(cx, {})", as_int(v)?), K::Int))
             }
             ("OpPowInt", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_pow({}, {})", as_int(a)?, as_int(b)?),
+                    format!("loft_pow(cx, {}, {})", as_int(a)?, as_int(b)?),
                     K::Int,
                 ))
             }
@@ -81,7 +81,7 @@ impl FnWriter<'_> {
                 let size = Self::literal(size, "element size")?;
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
-                    format!("loft_vec_reverse({}, {size})", as_ref(v)?),
+                    format!("loft_vec_reverse(cx, {}, {size})", as_ref(v)?),
                     K::Void,
                 ))
             }
@@ -95,7 +95,7 @@ impl FnWriter<'_> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_sort({}, {size}, {float}, {}, {unsigned})",
+                        "loft_vec_sort(cx, {}, {size}, {float}, {}, {unsigned})",
                         as_ref(v)?,
                         i32::from(text)
                     ),
@@ -108,7 +108,7 @@ impl FnWriter<'_> {
                     .map_err(|_| "a byte append without four operands".to_string())?;
                 Ok(E::new(
                     format!(
-                        "loft_append_text_bytes({}, {}, {}, {})",
+                        "loft_append_text_bytes(cx, {}, {}, {}, {})",
                         as_ref(v)?,
                         as_view(t)?,
                         as_int(lo)?,
@@ -117,9 +117,9 @@ impl FnWriter<'_> {
                     K::Void,
                 ))
             }
-            ("OpConvRefFromNull", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            ("OpConvRefFromNull", []) => Ok(E::new("loft_ref_null(cx)", K::Ref)),
             // `DbRef::NULL_REPORTED`: a null whose absence is accounted for, `pos`'s top bit set.
-            ("OpNullReported", []) => Ok(E::new("loft_ref_null_reported()", K::Ref)),
+            ("OpNullReported", []) => Ok(E::new("loft_ref_null_reported(cx)", K::Ref)),
             // The operand runs for its effect; the answer is the type's constant size.
             ("OpSizeScalar", [v, sz]) => {
                 let sz = Self::literal(sz, "size")?;
@@ -138,7 +138,7 @@ impl FnWriter<'_> {
                 let (o, n) = (self.var(*old), self.var(*new));
                 Ok(E::new(
                     format!(
-                        "{{ if ({o}.clos.rec == 0 || {o}.clos.store_nr == {n}.clos.store_nr) {o}.clos = loft_ref_null(); }}"
+                        "{{ if ({o}.clos.rec == 0 || {o}.clos.store_nr == {n}.clos.store_nr) {o}.clos = loft_ref_null(cx); }}"
                     ),
                     K::Void,
                 ))
@@ -170,7 +170,7 @@ impl FnWriter<'_> {
             ("OpSizeHash", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_hash_table_bytes({})", as_ref(r)?),
+                    format!("loft_hash_table_bytes(cx, {})", as_ref(r)?),
                     K::Int,
                 ))
             }
@@ -179,7 +179,7 @@ impl FnWriter<'_> {
                 let (v, count) = self.two(name, &[v, count], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_reserve({}, {}, {size})",
+                        "loft_vec_reserve(cx, {}, {}, {size})",
                         as_ref(v)?,
                         as_int(count)?
                     ),
@@ -196,20 +196,20 @@ impl FnWriter<'_> {
                 // A linked element is a record of its own, its slot the record's id.
                 let insert = if self.cx.stores.is_linked(tp) {
                     format!(
-                        "loft_vec_insert_linked({}, {}, {})",
+                        "loft_vec_insert_linked(cx, {}, {}, {})",
                         as_ref(v)?,
                         self.cx.stores.size(tp),
                         as_int(index)?
                     )
                 } else {
                     format!(
-                        "loft_vec_insert({}, {size}, {})",
+                        "loft_vec_insert(cx, {}, {size}, {})",
                         as_ref(v)?,
                         as_int(index)?
                     )
                 };
                 self.line(ind, &format!("{t} = {insert};"));
-                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                self.line(ind, &format!("loft_fill(cx, {t}, {image}, {n});"));
                 Ok(E::new(t, K::Ref))
             }
             ("OpKeepRange", [v, lo, hi, tp]) => {
@@ -238,13 +238,16 @@ impl FnWriter<'_> {
                                 .is_ok_and(|x| x != "0") =>
                         {
                             crate::rewrite_census::fired("R-Refresh/keep-header", 1);
-                            format!("loft_ph_keep(&{h}, {lo}, {hi}, {hs})")
+                            format!("loft_ph_keep(cx, &{h}, {lo}, {hi}, {hs})")
                         }
                         Some((h, hs)) => format!(
-                            "((void) (loft_vec_keep_range({}, {lo}, {hi}, {size}), {h} = loft_ph_of({h}.v, {hs})))",
+                            "((void) (loft_vec_keep_range(cx, {}, {lo}, {hi}, {size}), {h} = loft_ph_of(cx, {h}.v, {hs})))",
                             as_ref(v)?
                         ),
-                        None => format!("loft_vec_keep_range({}, {lo}, {hi}, {size})", as_ref(v)?),
+                        None => format!(
+                            "loft_vec_keep_range(cx, {}, {lo}, {hi}, {size})",
+                            as_ref(v)?
+                        ),
                     },
                     K::Void,
                 ))
@@ -265,7 +268,7 @@ impl FnWriter<'_> {
             ("OpRefFromChildRec", [f]) => {
                 let f = self.expr(f, ind)?;
                 Ok(E::new(
-                    format!("loft_ref_from_child_rec({})", as_ref(f)?),
+                    format!("loft_ref_from_child_rec(cx, {})", as_ref(f)?),
                     K::Ref,
                 ))
             }
@@ -280,7 +283,7 @@ impl FnWriter<'_> {
                 self.line(
                     ind,
                     &format!(
-                        "{t} = loft_new_child_rec(loft_types, {tp}, {}, {image}, {n});",
+                        "{t} = loft_new_child_rec(cx, loft_types, {tp}, {}, {image}, {n});",
                         as_ref(f)?
                     ),
                 );
@@ -303,7 +306,7 @@ impl FnWriter<'_> {
                 self.line(
                     ind,
                     &format!(
-                        "{t} = loft_copy_closure(loft_types, {tp}, {}, {list}, {});",
+                        "{t} = loft_copy_closure(cx, loft_types, {tp}, {}, {list}, {});",
                         as_ref(src)?,
                         owned.len()
                     ),
@@ -319,7 +322,7 @@ impl FnWriter<'_> {
                 let (f, src) = self.two(name, &[f, src], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_set_child_rec(loft_types, {tp}, {}, {}, {free})",
+                        "loft_set_child_rec(cx, loft_types, {tp}, {}, {}, {free})",
                         as_ref(f)?,
                         as_ref(src)?
                     ),
@@ -341,7 +344,10 @@ impl FnWriter<'_> {
         match (name, args) {
             ("OpStoreBuf", [h]) => {
                 let h = self.expr(h, ind)?;
-                Ok(E::new(format!("loft_store_buf({})", as_ref(h)?), K::Ref))
+                Ok(E::new(
+                    format!("loft_store_buf(cx, {})", as_ref(h)?),
+                    K::Ref,
+                ))
             }
             ("OpAdoptChildRec", [f, v, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "type")?)
@@ -350,7 +356,7 @@ impl FnWriter<'_> {
                 let (f, v) = self.two(name, &[f, v], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_adopt_child_rec(loft_types, {tp}, {}, {})",
+                        "loft_adopt_child_rec(cx, loft_types, {tp}, {}, {})",
                         as_ref(f)?,
                         as_ref(v)?
                     ),
@@ -360,7 +366,7 @@ impl FnWriter<'_> {
             ("OpStoreBufOnly", [b]) => {
                 let b = self.expr(b, ind)?;
                 Ok(E::new(
-                    format!("loft_store_buf_only({})", as_ref(b)?),
+                    format!("loft_store_buf_only(cx, {})", as_ref(b)?),
                     K::Ref,
                 ))
             }
@@ -371,7 +377,7 @@ impl FnWriter<'_> {
                 let (r, a) = self.two(name, &[r, a], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_release_rec_if_distinct(loft_types, {tp}, {}, {})",
+                        "loft_release_rec_if_distinct(cx, loft_types, {tp}, {}, {})",
                         as_ref(r)?,
                         as_ref(a)?
                     ),
@@ -385,7 +391,7 @@ impl FnWriter<'_> {
                 let (f, src) = self.two(name, &[f, src], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_move_child_rec(loft_types, {tp}, {}, {})",
+                        "loft_move_child_rec(cx, loft_types, {tp}, {}, {})",
                         as_ref(f)?,
                         as_ref(src)?
                     ),
@@ -403,7 +409,7 @@ impl FnWriter<'_> {
                 self.line(
                     ind,
                     &format!(
-                        "{t} = loft_child_rec_in_place(loft_types, {tp}, {}, {image}, {n});",
+                        "{t} = loft_child_rec_in_place(cx, loft_types, {tp}, {}, {image}, {n});",
                         as_ref(f)?
                     ),
                 );
@@ -416,13 +422,16 @@ impl FnWriter<'_> {
                 let tp = self.copyable(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_demote_rec(loft_types, {tp}, {}, {fld})", as_ref(r)?),
+                    format!(
+                        "loft_demote_rec(cx, loft_types, {tp}, {}, {fld})",
+                        as_ref(r)?
+                    ),
                     K::Void,
                 ))
             }
             ("OpSlotTag", [f]) => {
                 let f = self.expr(f, ind)?;
-                Ok(E::new(format!("loft_slot_tag({})", as_ref(f)?), K::Ref))
+                Ok(E::new(format!("loft_slot_tag(cx, {})", as_ref(f)?), K::Ref))
             }
             _ => Err(format!("operator {name}")),
         }

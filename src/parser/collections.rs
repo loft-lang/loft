@@ -193,13 +193,6 @@ fn narrow_route_for_declared(declared: &Type) -> Option<NarrowRoute> {
     narrow_route_for(shape)
 }
 
-/// Does a worker declared to return `declared` ride the narrow-Queue lane?  The ONE
-/// answer, read by this parser's lowering and by the native emitter's helper choice —
-/// two copies of the type list disagreed the moment one of them learnt about `?`.
-pub(crate) fn par_rides_narrow_lane(declared: &Type) -> bool {
-    narrow_route_for_declared(declared).is_some()
-}
-
 fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
     match ret_type {
         Type::Integer(spec) => match spec.byte_width(true) {
@@ -383,9 +376,8 @@ impl Parser {
     ///
     /// Two facts end the walk, and they are genuinely different:
     ///
-    /// * the text is null — loft's null text IS the one-byte NUL string
-    ///   (`STRING_NULL`), for which `size` still answers 1.  A null text holds
-    ///   no characters, so it must yield none.
+    /// * the text is null — a null text holds no characters, so it must yield
+    ///   none (`@FR-L-Null-Text`).
     /// * the saved position (`index_var`, where the character just read
     ///   started) has reached the byte length.
     ///

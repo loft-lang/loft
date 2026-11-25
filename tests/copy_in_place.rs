@@ -6,42 +6,10 @@
 //! `LOFT_NO_COPY_IN_PLACE=1` makes the copy a store writer again.  The cell corpus
 //! (`tests/scripts/158-copy-in-place.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted.
-use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-copy-in-place.loft";
-
-/// Per function, with the clause ON and OFF: `(hoist blocks opened, record addresses
-/// bound, record scalars hoisted)`.
-const EXPECTED: &[(&str, Row, Row)] = &[
-    ("n_c1_tick", (1, 1, 0), (0, 0, 0)),
-    ("n_c2", (1, 1, 0), (0, 0, 0)),
-    ("n_c3", (1, 1, 0), (0, 0, 0)),
-    // The copy is the loop's only whole-type write, and it evicts `first`'s scalars: the
-    // header hoists, no scalar does.
-    ("n_c3b", (1, 0, 0), (0, 0, 0)),
-    // A heap-owning record and a call's freed result: still store writers.  c4's hoists are
-    // its READ walk (`len(n.nm)` is a text-value op, no writer since `@FR-R-TextBorrow`) and
-    // its BUILD loop (a text-field mint, `@FR-R-Mint`'s text clause), not the copy loop, so
-    // the clause does not move them.
-    ("n_c4", (2, 1, 0), (2, 1, 0)),
-    ("n_c5", (0, 0, 0), (0, 0, 0)),
-    // Two vectors: both headers held across the copy (the read walk hoisted before too).
-    // One copy of the loop body: `b[9 - i]`'s offset is no chain the guard pays back
-    // (R-GuardedChain), so `e`'s record is addressed once.
-    ("n_c6", (2, 2, 0), (1, 1, 0)),
-    ("n_c7", (1, 1, 0), (0, 0, 0)),
-    // c8's write-back loop discharges a NESTED-record element (`Vtx { pos: V3, … }`), which
-    // the hidden-buffer allowance took only for an all-scalar record until @PLN158 P1
-    // (2026-09-22): with the clause ON the loop now holds its header too — three blocks.
-    ("n_c8", (3, 3, 0), (2, 2, 0)),
-    // A record holding a vector, and a struct-enum value: unchanged by THIS clause (the
-    // enum cell's addresses are `@FR-R-RecPtr`'s enum clause at work).
-    ("n_c9", (1, 1, 0), (1, 1, 0)),
-    ("n_c11", (2, 3, 0), (2, 3, 0)),
-];
 
 const SWITCHES: [&str; 4] = [
     "LOFT_NO_COPY_IN_PLACE",
@@ -53,9 +21,6 @@ const SWITCHES: [&str; 4] = [
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.args(args).env("LOFT_TIMEOUT", "300");
     for s in SWITCHES {
         cmd.env_remove(s);
@@ -68,52 +33,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    // One file per TEST: the tests run on threads of one process.
-    let out = std::env::temp_dir().join(format!(
-        "loft_copy_in_place_{}_{tag}.rs",
-        std::process::id()
-    ));
-    let status = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells().to_str().unwrap(),
-        ],
-        env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-type Row = (usize, usize, usize);
-
-fn counts(rust: &str) -> HashMap<String, Row> {
-    let mut map: HashMap<String, Row> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        let row = map.entry(current.clone()).or_default();
-        row.0 += usize::from(line.contains("loft#885 loop-invariant vector headers"));
-        row.1 += line.matches("let __pa_").count();
-        row.2 += line.matches("let __vs_").count();
-    }
-    map
 }
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
@@ -157,23 +76,5 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
                 "native under {env:?} must print what the interpreter printed"
             );
         }
-    }
-}
-
-#[test]
-fn each_cell_emits_exactly_the_forms_predicted_with_the_clause_on_and_off() {
-    let on = counts(&emit("on", &[]));
-    let off = counts(&emit("off", &[("LOFT_NO_COPY_IN_PLACE", "1")]));
-    for (name, want_on, want_off) in EXPECTED {
-        assert_eq!(
-            on.get(*name).copied().unwrap_or_default(),
-            *want_on,
-            "{name} ON: (hoist blocks, record addresses, hoisted scalars)"
-        );
-        assert_eq!(
-            off.get(*name).copied().unwrap_or_default(),
-            *want_off,
-            "{name} OFF: (hoist blocks, record addresses, hoisted scalars)"
-        );
     }
 }

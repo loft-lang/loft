@@ -10,6 +10,62 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A variable read outside its scope is reported (@PLN228)
+
+- The store-records checker reports a use of a variable outside its scope (`@FR-B-Scope`) as
+  `store-out-of-scope`, on the closed program's IR, under `LOFT_OWN_ORACLE=check-records`
+  (`src/scope_check.rs`).  The value of a store-holding local ends with its
+  scope, so such a read answers a released value with nothing at run time to say so: loft#2636's
+  vector read back empty.  With that fix reversed the check reports the local in every function
+  of its cell; over the language suite and the gate corpus at HEAD it reports nothing.
+- `LOFT_LIFETIME_CHECK=<file>` is the one report of both: on any compile, `--emit-image` (no
+  run) included, one sorted tab-separated line per problem (program, function, rule, kind, line,
+  reason) and a summary line, so a gate that only compiles can diff it against its base.
+- The store records see two more lifetime shapes: a stored reference a callee returns beside a
+  fresh store (loft#2511: the caller's join adopts the holder's record), and a record built in a
+  holder's store that the holder's re-mint wipes (loft#2621).  Each is reported with its cure
+  reversed and reads clean on the language suite.
+- `scripts/own_sweep.py --wrong` counts a failed test as a run-time fault (`wrong`), which the
+  new kind answers, so the sweep scores the check: CAUGHT on the reversed build, CLEAN at HEAD.
+- Three passes recorded a scope that did not enclose a variable's uses, and now record the one
+  that does: `(R-ForwardWalk)`'s counted index takes the loop's scope, not its `Iter range`
+  block's; `(R-LiftReuse)`'s shared lift takes the body's; a vector literal hoisted out of a
+  call argument gives its element records the enclosing scope, as its view already had.
+- The store records follow a droppable value's drop LEASE (its hook runs once) per store:
+  reported as `copied-lease` are a hook run on a value already handed on or on a store whose
+  lease a code-generator copy took, a return of a store every path ran the hook on, and a
+  release of such a store with no hook on any path (`@FR-H-Lease`, `@FR-H-DropOnce`,
+  `@FR-H-Drop`; loft#2552's three cure switches each read caught).  On by default;
+  `LOFT_RECORDS_NO_LEASE=1` turns it off.
+- The value-record pass (@PLN180) no longer makes a tuple twin of a function whose record owns
+  a droppable: a tuple holds no record for the hook to run on, and the twin was never served.
+- `LOFT_OWN_ORACLE=check`, `check-dev` and `check-leak` are gone: the store records caught
+  everything they did, and their gates moved to the lifetime report — `tests/ownership_oracle.rs`
+  (clean corpus, fuzz cells, five injected defects, observer), `tests/placement_parity.rs`, and
+  CI's advisory `leak-scan`, now a ratchet of every problem line over `tests/scripts` and the
+  language suite.  The `cfg`, `rd`, `own` dumps and the `census` report stay.
+
+### No state is a thread-local (@PLN226)
+
+- The C runtime and the C it emits keep no `LOFT_TLS` state: what a thread keeps of its own is
+  its store context, `struct loft_cx`, the first argument of every runtime and emitted
+  function.  A worker's context is made by the thread that starts it (`loft_par_job_init`); a
+  hosted unit keeps one per calling `Stores`, a component one per caller context.  A strict
+  C99 unit runs `par` on threads.
+- The Rust runtime and interpreter keep no `thread_local!`: each value is a field of the
+  context it describes — a compile pass's memos in `Data`, a run's checks, reports, crash
+  context, engine host, output capture and web buffers in `Stores`, censuses and the live
+  reload in `State`.  The rustc writer's runtime too: its call frames (`Stores::frames`),
+  generator table and fn-ref buffers (`Stores::native`), and the live tier's parked
+  interpreter (`EngineCtl::live`).  A contained lazy-driver fault unwinds with its own payload
+  (`call_frames::ContainedFault`), so the panic hook asks no thread.
+- A library's callback finds its caller's `Stores` in the store handle, above the store number,
+  as the C runtime's does.  Six locks are gone; the rest are listed in `doc/claude/LOCKS.md`.
+- A page that runs loft holds its game and its debugger as handles (`wasm_entry::Game`,
+  `wasm_debug::Debugger`) and passes them to every call.
+- Guard: `tests/par_contexts.rs::no_state_is_a_thread_local`.  The design and where each kind
+  of state lives: THREADING.md § Each thread's own state.
+
 ### One lowering decision, held by a gate (@PLN220)
 
 - `make bind-census` fails when the C writer lowers an assignment with a store effect other

@@ -3280,6 +3280,7 @@ impl Parser {
                             // @PLN130 — parser-emitted materialisation of a projection into a
                             // store `w` owns; see `ParserMaterialise`.
                             crate::copy_manifest::record(
+                                &self.data,
                                 self.context,
                                 w,
                                 kt,
@@ -4927,11 +4928,7 @@ impl Parser {
             // and mark `skip_free` for text.  The skip_free flag suppresses
             // `OpFreeText(_ncc_N)` at block-scope exit (interpret side, see
             // `src/scopes.rs::get_free_vars`), so the present-path Str's
-            // backing String outlives the block.  Native emit recognises
-            // the `__ncc_*` prefix at `src/generation/emit.rs::output_block`
-            // and wraps the tail with `.to_string()` INSIDE the block,
-            // producing an owned String that the outer consumer can copy
-            // safely.
+            // backing String outlives the block.
             let tmp = self.create_unique("_ncc", lhs_type);
             // @PLAN52 cluster IV interpret (2026-05-30, iteration 3): extend
             // skip_free from Text to ALL heap-DbRef LHS types.  Same
@@ -5371,7 +5368,7 @@ impl Parser {
             self.data.def_nr("n_panic"),
             vec![
                 Value::str(&format!("{shown} is null")),
-                Value::str(at.file.as_str()),
+                self.site_file(at.file.as_str()),
                 Value::Int(at.line as i32),
             ],
         );
@@ -6874,7 +6871,7 @@ impl Parser {
             // `Value::Call(...)` either calls `unspan()` first or
             // carries a `Value::Span(b)` arm (scopes.rs, intervals.rs,
             // slots.rs, slots_v2.rs, validate.rs, codegen.rs,
-            // parser/mod.rs::substitute_type_in_value, generation/*).
+            // parser/mod.rs::substitute_type_in_value).
             // @PLN102 arc-E E2 (B) — a shift by a STATICALLY-KNOWN amount
             // outside [0,63] is a compile error.  A runtime null is the
             // FALLBACK for a *dynamic* out-of-range shift (@C80); it is not a

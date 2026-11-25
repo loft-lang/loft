@@ -1925,7 +1925,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       list += [ir::NdText { s: "" }];
       types += [ir::TyText { dep: [] }];
     }
-    list += [ir::NdText { s: apos.file }];
+    list += [ir::NdText { s: el::site_file(e, apos.file) }];
     types += [ir::TyText { dep: [] }];
     list += [ir::NdInt { n: apos.line }];
     types += [ir::TyInteger { spec: wide_spec() }];
@@ -1940,7 +1940,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       }
       cp = el::pos_at(e, after_paren(e, at));
       message = if len(list) == 0 { ir::NdText { s: "" } } else { list[0] };
-      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
+      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: el::site_file(e, cp.file) }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
     }
   }
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
@@ -3234,7 +3234,7 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
       _ => {}
     }
   }
-  file_arg = ir::NdText { s: call_pos.file };
+  file_arg = ir::NdText { s: el::site_file(e, call_pos.file) };
   line_arg = ir::NdInt { n: call_pos.line };
   code = ir::NdNull;
   if kind == "panic" {

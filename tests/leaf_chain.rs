@@ -1,15 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @PLN203 rust-writer: a frameless helper is the Rust writer's leaf inlining — its `--native` runs as `--native-rust`.
-//! `@FR-R-LeafChain` — in the lean tier (`--ship`) a function whose whole call
-//! tree is frameless carries no prelude: no depth entry and no fn-ref buffer guard.  Every
-//! user function it reaches has a loft body, none is on a cycle, and none calls a fn-ref.
-//!
-//! The cells (`plans/157-native-4x-drawing/bytecode-comparisons/N4b-leaf-chain-cells.loft`)
-//! carry one shape per case.  These tests pin which functions keep a frame, that the switch
-//! (`LOFT_NO_LEAF_CHAIN=1`) and the named tier keep every non-leaf frame, that the lean
-//! build answers what the interpreter answers, and that runaway recursion through a
-//! frameless helper still ends in the depth cap's report rather than a native stack crash.
+//! Chains of helper calls on the compiled tiers: the cells
+//! (`plans/157-native-4x-drawing/bytecode-comparisons/N4b-leaf-chain-cells.loft`) carry one
+//! call-tree shape per case.  These tests pin that the lean build (`--ship`) answers what the
+//! interpreter answers without a leak, and that runaway recursion — through a helper that calls
+//! no further, an overload member, a generic instance or a method — ends in the depth cap's
+//! report rather than a native stack crash.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -22,7 +19,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // The cells pin which FRAMES survive; `@FR-R-InlineLeaf` would replace the scalar leaves
     // (`lower_byte`) by their bodies, and then there is no function left to read a frame of.
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.args(args)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_INLINE_LEAF", "1");
@@ -37,143 +33,6 @@ fn cells() -> String {
         .join(CELLS)
         .to_string_lossy()
         .into_owned()
-}
-
-fn emit(out: &Path, tier: &[&str], env: &[(&str, &str)]) -> String {
-    let src = cells();
-    let out_s = out.to_string_lossy();
-    let mut args: Vec<&str> = tier.to_vec();
-    args.extend(["--native-rust", "--native-emit", &out_s, &src]);
-    let res = loft(&args, env);
-    assert!(
-        fa::exists(out),
-        "no Rust emitted (exit {:?}): {}",
-        res.status,
-        String::from_utf8_lossy(&res.stderr)
-    );
-    fa::read_to_string(out).expect("read the emitted Rust")
-}
-
-/// The body of one emitted function.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("fn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start..];
-    let end = rest[1..].find("\nfn ").map_or(rest.len(), |i| i + 1);
-    &rest[..end]
-}
-
-/// The depth entry — this rule's half of the prelude.
-fn has_frame(rust: &str, name: &str) -> bool {
-    body(rust, name).contains("cr_call_push")
-}
-
-/// The fn-ref buffer guard — `@FR-R-GuardFree`'s half: a framed function carries it only
-/// where a registrant is reachable, and `LOFT_NO_GUARD_FREE=1` puts it back on every frame.
-fn has_guard(rust: &str, name: &str) -> bool {
-    body(rust, name).contains("FnRefBufGuard")
-}
-
-/// Frameless in the lean tier by the chain rule; framed without it.
-const CHAIN: [&str; 4] = ["n_at", "n_matches_at", "n_count_word", "n_bytes_of"];
-/// Leaves: frameless in every tier (N4).
-const LEAVES: [&str; 2] = ["n_lower_byte", "n_dbl"];
-/// On a cycle, calling one, calling a fn-ref, or calling a native: framed in every tier.
-const FRAMED: [&str; 9] = [
-    "n_fact",
-    "n_is_odd",
-    "n_is_even",
-    "n_fact_plus",
-    "n_apply",
-    "n_twice",
-    "n_checked",
-    "n_depth_sum",
-    "n_use_down",
-];
-/// The framed functions a fn-ref dispatch is reachable from: the only ones that keep the
-/// buffer guard (`apply` dispatches, `twice` calls it).  `checked`'s `assert` is a
-/// `#rust`-bodied standard function — the body's own work, not a registrant.
-const GUARDED: [&str; 2] = ["n_apply", "n_twice"];
-
-/// Every framed function carries the guard exactly where `@FR-R-GuardFree` says, and no
-/// frameless one carries it at all.
-fn check_guards(label: &str, rust: &str, framed: &[&str], frameless: &[&str]) {
-    for name in framed {
-        assert_eq!(
-            has_guard(rust, name),
-            GUARDED.contains(name),
-            "{label}: {name} keeps its buffer guard iff a registrant is reachable"
-        );
-    }
-    for name in frameless {
-        assert!(
-            !has_guard(rust, name),
-            "{label}: the frameless {name} carries no guard"
-        );
-    }
-}
-
-#[test]
-fn the_lean_tier_elides_a_frameless_tree() {
-    let out = std::env::temp_dir().join("loft_leaf_chain_on.rs");
-    let rust = emit(&out, &["--ship"], &[]);
-    for name in CHAIN.iter().chain(LEAVES.iter()) {
-        assert!(
-            !has_frame(&rust, name),
-            "{name} must carry no frame in the lean tier"
-        );
-    }
-    for name in FRAMED {
-        assert!(has_frame(&rust, name), "{name} must keep its frame");
-    }
-    let frameless: Vec<&str> = CHAIN.iter().chain(LEAVES.iter()).copied().collect();
-    check_guards("the lean tier", &rust, &FRAMED, &frameless);
-    let _ = fa::remove_file(&out);
-}
-
-#[test]
-fn the_switch_and_the_named_tier_keep_every_non_leaf_frame() {
-    for (label, tier, env) in [
-        (
-            "LOFT_NO_LEAF_CHAIN=1",
-            &["--ship"][..],
-            &[("LOFT_NO_LEAF_CHAIN", "1")][..],
-        ),
-        ("the named tier", &[][..], &[][..]),
-    ] {
-        let out = std::env::temp_dir().join(format!(
-            "loft_leaf_chain_{}.rs",
-            if tier.is_empty() { "named" } else { "off" }
-        ));
-        let rust = emit(&out, tier, env);
-        for name in CHAIN.iter().chain(FRAMED.iter()) {
-            assert!(
-                has_frame(&rust, name),
-                "{label}: {name} must keep its frame"
-            );
-        }
-        for name in LEAVES {
-            assert!(
-                !has_frame(&rust, name),
-                "{label}: the leaf {name} stays frameless"
-            );
-        }
-        let framed: Vec<&str> = CHAIN.iter().chain(FRAMED.iter()).copied().collect();
-        check_guards(label, &rust, &framed, &LEAVES);
-        let _ = fa::remove_file(&out);
-    }
-    // With `@FR-R-GuardFree` switched off the two halves of the prelude go together again:
-    // every framed function constructs its guard.
-    let out = std::env::temp_dir().join("loft_leaf_chain_guard_off.rs");
-    let rust = emit(&out, &[], &[("LOFT_NO_GUARD_FREE", "1")]);
-    for name in CHAIN.iter().chain(FRAMED.iter()) {
-        assert!(
-            has_frame(&rust, name) && has_guard(&rust, name),
-            "LOFT_NO_GUARD_FREE=1: {name} keeps both the depth entry and the guard"
-        );
-    }
-    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -258,7 +117,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native-rust", "--ship"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -307,7 +166,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native-rust", "--ship"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -333,7 +192,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     )
     .expect("write the probe");
     let expected = "frame main\nframe t_1P_show\nframe t_1P_show\nframe t_1P_show\n9\n";
-    for mode in ["--interpret", "--native-rust"] {
+    for mode in ["--interpret", "--native"] {
         let res = loft(&[mode, &prog.to_string_lossy()], &[]);
         assert_eq!(
             String::from_utf8_lossy(&res.stdout),

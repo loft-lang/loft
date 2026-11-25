@@ -78,8 +78,10 @@ fn ws_connect_as(port: u16, origin: &str) -> BufReader<TcpStream> {
     } else {
         format!("Origin: {origin}\r\n")
     };
+    // `@C172` — the session's own token, as the page it serves names it.
+    let q = loft::debug_token::query();
     let req = format!(
-        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n{origin}\
+        "GET /ws{q} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n{origin}\
          Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
          Sec-WebSocket-Version: 13\r\n\r\n"
     );
@@ -175,7 +177,8 @@ fn serve_http_shell_has_game_debug_strip() {
     use std::io::Write as _;
     write!(
         stream,
-        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        "GET /{} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        loft::debug_token::query()
     )
     .unwrap();
     let mut body = String::new();
@@ -206,7 +209,13 @@ fn serve_http_shell_embeds_file_and_run_button() {
     start_server(port, path.to_string_lossy().into_owned());
     let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     (&stream)
-        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .write_all(
+            format!(
+                "GET /{} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                loft::debug_token::query()
+            )
+            .as_bytes(),
+        )
         .unwrap();
     let mut body = String::new();
     let mut s = stream;
@@ -383,7 +392,13 @@ fn serve_http_shell_has_editable_source() {
     start_server(port, path.to_string_lossy().into_owned());
     let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     (&stream)
-        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .write_all(
+            format!(
+                "GET /{} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                loft::debug_token::query()
+            )
+            .as_bytes(),
+        )
         .unwrap();
     let mut body = String::new();
     let mut s = stream;
@@ -694,10 +709,6 @@ fn start_server_libs(port: u16, file: String, libs: Vec<String>) {
 
 #[test]
 fn serve_game_debug_control_end_to_end() {
-    // @PLN203 rust-writer: the live tier the game's flip and apply drive runs the interpreter
-    // inside a Rust-writer build.  SAFETY: a process-global env write, as `LOFT_BIN`'s below;
-    // the test process is its own under nextest, and the value only picks the native writer.
-    unsafe { std::env::set_var("LOFT_NATIVE_BACKEND", "rust") };
     // @PLN18 08-S7 editor support — the EXACT flow the editor shell drives:
     // launch a kernel game through the serve RPC (launch_game now defaults
     // LOFT_DEBUG_CONTROL=1 + LOFT_LIVE_FLIP=1), scrape the game port from the
@@ -1061,10 +1072,6 @@ fn rebuild(ctl: &mut BufReader<TcpStream>) -> String {
 /// field, and the old build keeps serving.
 #[test]
 fn serve_apply_holds_saved_edits_and_carries_the_world() {
-    // @PLN203 rust-writer: the live tier the game's flip and apply drive runs the interpreter
-    // inside a Rust-writer build.  SAFETY: a process-global env write, as `LOFT_BIN`'s below;
-    // the test process is its own under nextest, and the value only picks the native writer.
-    unsafe { std::env::set_var("LOFT_NATIVE_BACKEND", "rust") };
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
@@ -1268,27 +1275,47 @@ fn serve_refuses_another_sites_page() {
         let _ = BufReader::new(stream).read_line(&mut line);
         line.split_whitespace().nth(1).unwrap_or("").to_string()
     };
+    let q = loft::debug_token::query();
     let upgrade = |origin: &str| {
         format!(
-            "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+            "GET /ws{q} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
              Connection: Upgrade\r\n{origin}Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
              Sec-WebSocket-Version: 13\r\n\r\n"
         )
     };
     let own_page = status(&format!(
-        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        "GET /{q} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     ));
-    let rebound = status("GET / HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n");
+    let rebound = status(&format!(
+        "GET /{q} HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n"
+    ));
     // A tunnel that lands on another local port names that port: refused too, which is
     // why DEBUG.md says to forward the same number.
     let other_port = status(&format!(
-        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        "GET /{q} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
         port + 1
+    ));
+    // `@C172` — the page and its socket under their own name, without this run's token or
+    // with another one: another account on this machine reaches the port as well.
+    let other = "?t=00000000000000000000000000000000";
+    let page_no_token = status(&format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    ));
+    let page_other_token = status(&format!(
+        "GET /{other} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    ));
+    let socket_no_token = status(&format!(
+        "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
     ));
     let foreign = status(&upgrade("Origin: https://attacker.example\r\n"));
     let tool = status(&upgrade(""));
     let _ = fa::remove_file(&path);
     assert_eq!(own_page, "200", "the page under its own name");
+    assert_eq!(page_no_token, "403", "the page without the run's token");
+    assert_eq!(page_other_token, "403", "the page with another token");
+    assert_eq!(socket_no_token, "403", "the socket without the run's token");
     assert_eq!(rebound, "403", "the page under a rebound name");
     assert_eq!(other_port, "403", "the page under another port");
     assert_eq!(foreign, "403", "an upgrade from another site's page");

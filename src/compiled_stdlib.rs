@@ -1,100 +1,205 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I86 — Startup cache & embedded stdlib: the standard library's compiled bodies inside the binary
+// @I86 — Startup cache & embedded stdlib: the standard library's compiled bodies as a C unit
 
-//! @PLN181 — the standard library compiled like any other library.
+//! @PLN181 / @PLN225 R1 — the standard library compiled like any other library.
 //!
-//! A `use`d library is compiled for an interpreted program (@C71, "libraries compile, scripts
-//! interpret") and called over the shared-store bridge: `native_gate::shared_store_dispatchable`
-//! picks the functions, `native_lib::generate_shared_cdylib_lib_rs` emits their compiled loft
-//! bodies with one `loft_shared_<fn>` bridge each, `native_adopt::mark_exports` routes the calls
-//! through `OpStaticCall`, and `extensions::wire_shared_native_fns` hands them to
-//! `shared_store_dispatch`.  The standard library takes that same path, with two differences:
+//! A `use`d library runs as a hosted C unit under an interpreted program (@C71, "libraries
+//! compile, scripts interpret"; @PLN206): its functions are built into a shared object by the C
+//! backend, and the interpreter calls them over the shared store.  The standard library takes
+//! that same route, for the functions [`crate::native_gate::export_set`] picks (a loft body
+//! that loops, the bridge carries its slots) and the hosted bridge carries:
 //!
-//! 1. **No rustc at run time.**  The compiled source is generated with loft itself
-//!    (`stdlib_codegen::generate`, `make compiled-stdlib`) into `src/compiled_stdlib_gen.rs`
-//!    and built INTO the binary; [`bridge`] answers the lookup a library answers with `dlsym`.
-//! 2. **One artifact for every program.**  A library artifact hard-codes type indices, so it is
-//!    keyed on the caller's whole type table.  The standard library's types register before any
-//!    program's, so the generated code is valid for every program whose table STARTS with the
-//!    same types — checked at start-up ([`mark`]), and a program where it does not runs the loft
-//!    bodies interpreted: slower, never wrong.
+//! 1. **One unit for every program.**  The unit is generated from the standard library parsed
+//!    alone, so it is the same whatever program asks first.  A unit names its types and
+//!    functions by key and is mapped to the program's own numbers when it is loaded
+//!    (`loft_shared_init`), so it holds for every program, whatever types follow the
+//!    standard library's.
+//! 2. **Built once, in the user cache.**  The unit is keyed on this loft build, the standard
+//!    library's source and the switches a hosted unit is built under; the first interpreted
+//!    run after any of them changes builds it with the machine's C compiler (`stdlib-units/`),
+//!    and every later run adopts it.  Without a C compiler the standard library interprets:
+//!    slower, never wrong, and nothing is said — there is nothing the user must do.
 //!
 //! `LOFT_NO_COMPILED_STDLIB=1` interprets the standard library's loft bodies (the A/B).
 
-use crate::data::{Data, Value};
+use crate::data::Data;
 use crate::database::Stores;
+use std::collections::HashSet;
+use std::sync::OnceLock;
 
-#[path = "compiled_stdlib_gen.rs"]
-#[rustfmt::skip]
-#[allow(warnings, clippy::all, clippy::pedantic)]
-mod generated;
+/// The unit this process adopts: its shared object and the functions it carries, by stored
+/// name.  `None` when switched off, when no unit could be built here, or when the binary has no
+/// bridge dispatcher.
+struct Unit {
+    so: std::path::PathBuf,
+    names: HashSet<String>,
+}
 
-
-pub(crate) use crate::opt::native_key::prefix_fingerprint;
-
-/// A shared-store bridge's signature, as `native_lib::shared_bridge_wrapper` emits it.
-pub(crate) type Bridge =
-    extern "C" fn(*mut Stores, *const crate::host_abi::LibArg, usize, *mut crate::host_abi::LibArg);
+static UNIT: OnceLock<Option<Unit>> = OnceLock::new();
 
 /// Is the compiled standard library switched off (`LOFT_NO_COMPILED_STDLIB=1`)?
 fn disabled() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_COMPILED_STDLIB").is_some())
 }
 
-/// Route the compiled standard-library functions of an INTERPRETED program through their
-/// bridges, before `byte_code`: sets `def.native` as `native_adopt::mark_exports` does for a
-/// library.  Declines — and returns 0 — when switched off, when the bridge dispatcher is not
-/// built in, when `stores` does not start with the standard library's types exactly as the
-/// generated code expects them, or when the standard library in `default_dir` is not the source
-/// the bodies were compiled from.  The last one is the edit loop: loft reads `default/*.loft` at
-/// run time, so an edited stdlib function would otherwise run its OLD compiled body — it runs
-/// its current loft body interpreted instead, until `make compiled-stdlib`.  Returns how many functions dispatch to their compiled bodies,
-/// counting the marks a warm start replays from the program cache.
-pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
-    if disabled()
-        || !cfg!(feature = "native-extensions")
-        || generated::BRIDGES.is_empty()
-        || prefix_fingerprint(stores, generated::PREFIX_TYPES)
-            != Some(generated::PREFIX_FINGERPRINT)
-        || crate::cache::stdlib_fingerprint(default_dir)
-            .is_none_or(|(_, h)| h != generated::SOURCE_HASH)
-    {
-        return 0;
-    }
-    let mut marked = 0;
-    for (name, sym, _) in generated::BRIDGES {
-        let d = data.def_nr(name);
-        if d == u32::MAX || data.def(d).code == Value::Null {
-            continue;
-        }
-        // A warm start replays the marks the program cache saved with the bundle.
-        if data.def(d).native() == *sym {
-            marked += 1;
-        } else if data.def(d).native().is_empty() {
-            data.def_mut(d).native = (*sym).to_string();
-            marked += 1;
-        }
-    }
-    marked
+/// The key of the standard library's unit: this loft build, the standard library's source as
+/// it is in `default_dir`, and the switches a hosted unit is built under.
+fn unit_key(default_dir: &str) -> Option<u64> {
+    let source = if default_dir.is_empty() || !crate::file_access::is_dir(default_dir) {
+        0
+    } else {
+        crate::cache::stdlib_fingerprint(default_dir)?.1
+    };
+    let parts: [&[u8]; 4] = [
+        &crate::cache::loft_build_fingerprint().to_le_bytes(),
+        &crate::cache::loft_exe_identity().to_le_bytes(),
+        &source.to_le_bytes(),
+        &[
+            u8::from(crate::keys::no_handover()),
+            u8::from(crate::keys::poison_claim()),
+            u8::from(crate::keys::hosted_planted()),
+            u8::from(!crate::keys::exp_pow_enabled()),
+        ],
+    ];
+    Some(crate::cache::stable_hash(&parts))
 }
 
-/// The functions the standard library carries a compiled body for, by stored name.
-/// [`mark`] points their calls at those bodies after the program is parsed, so the driver
-/// hands this set to the parser first (`Parser::compiled_bridges`).
+/// Adopt the standard library's unit, building it first when this machine has none for the
+/// key.  Answers the functions it carries, by stored name: the driver names them to the parser
+/// (`Parser::compiled_bridges`) before it reads a call to one, and [`mark`] routes those calls
+/// after the parse.  Empty when switched off or when no unit could be had here.
 #[must_use]
-pub fn names() -> std::collections::HashSet<String> {
-    generated::BRIDGES
-        .iter()
-        .map(|(n, _, _)| (*n).to_string())
-        .collect()
+pub fn prepare(default_dir: &str) -> HashSet<String> {
+    UNIT.get_or_init(|| unit(default_dir))
+        .as_ref()
+        .map(|u| u.names.clone())
+        .unwrap_or_default()
 }
 
-/// The compiled bridge for a `loft_shared_…` symbol, when the standard library carries it.
+/// The functions the adopted unit carries, by stored name (empty before [`prepare`]).
 #[must_use]
-pub fn bridge(sym: &str) -> Option<*const ()> {
-    generated::BRIDGES
+pub fn names() -> HashSet<String> {
+    UNIT.get()
+        .and_then(Option::as_ref)
+        .map(|u| u.names.clone())
+        .unwrap_or_default()
+}
+
+fn unit(default_dir: &str) -> Option<Unit> {
+    use crate::file_access as fa;
+    if disabled() || !cfg!(feature = "native-extensions") {
+        return None;
+    }
+    let fp = unit_key(default_dir)?;
+    let out_dir = crate::cache::cache_base_dir().join("stdlib-units");
+    let stem = format!("loft_stdlib_{fp:016x}");
+    let so = out_dir.join(crate::opt::native_key::platform_cdylib_name(&stem));
+    let names_file = out_dir.join(format!("{stem}.names"));
+    let read_names = || -> Option<HashSet<String>> {
+        if !fa::exists(&so) {
+            return None;
+        }
+        let text = fa::read_to_string(&names_file).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect(),
+        )
+    };
+    if let Some(names) = read_names() {
+        return Some(Unit { so, names });
+    }
+    // A failed build is remembered under the key, so a machine without a C compiler asks once.
+    let failed = out_dir.join(format!("{stem}.failed"));
+    if fa::exists(&failed) {
+        return None;
+    }
+    fa::create_dir_all(&out_dir).ok()?;
+    let lock_path = out_dir.join(format!("{stem}.lock"));
+    let lock = fa::create(&lock_path).ok()?;
+    lock.lock().ok()?;
+    if let Some(names) = read_names() {
+        return Some(Unit { so, names });
+    }
+    match build(default_dir, &out_dir, &stem, fp) {
+        Ok(names) => {
+            let mut sorted: Vec<&String> = names.iter().collect();
+            sorted.sort_unstable();
+            let text: String = sorted.iter().fold(String::new(), |mut t, n| {
+                t.push_str(n);
+                t.push('\n');
+                t
+            });
+            let tmp = out_dir.join(format!("{stem}.names.{}.part", std::process::id()));
+            fa::write(&tmp, text).ok()?;
+            fa::rename(&tmp, &names_file).ok()?;
+            Some(Unit { so, names })
+        }
+        Err(why) => {
+            if crate::keys::hosted_verify() {
+                eprintln!("loft: the standard library runs interpreted this run — {why}");
+            }
+            let _ = fa::write(&failed, why);
+            None
+        }
+    }
+}
+
+/// Build the unit from the standard library parsed alone (then its scope pass, as a program's
+/// compile runs it), and answer the functions it carries.
+fn build(
+    default_dir: &str,
+    out_dir: &std::path::Path,
+    stem: &str,
+    fp: u64,
+) -> Result<HashSet<String>, String> {
+    let mut p = crate::parser::Parser::new();
+    p.parse_stdlib(default_dir)
+        .map_err(|e| format!("the standard library: {e}"))?;
+    crate::scopes::check(&mut p.data, &mut p.database);
+    let export = crate::native_gate::export_set(&p.data);
+    let carried = crate::c::hosted::hosted_split(&p.data, &p.database, &export).0;
+    if carried.is_empty() {
+        return Err("no standard library function crosses the C bridge".into());
+    }
+    let names = carried
         .iter()
-        .find(|(_, s, _)| *s == sym)
-        .map(|(_, _, f)| *f as *const ())
+        .map(|&d| p.data.def(d).name().to_string())
+        .collect();
+    crate::c::hosted::build_artifact(
+        &mut p.data,
+        &mut p.database,
+        &carried,
+        default_dir,
+        out_dir,
+        stem,
+        fp,
+    )?;
+    Ok(names)
+}
+
+/// Route the compiled standard-library functions of an INTERPRETED program through the unit's
+/// bridges, before `byte_code`, as a library's are (`native_adopt::probe_and_mark_exports`),
+/// and answer how many it marked, with the unit's path for the loader.  Marks nothing when
+/// no unit was adopted ([`prepare`]), or when the unit does not load or names a type this
+/// program lacks — those functions run their loft bodies interpreted.
+pub fn mark(data: &mut Data, stores: &Stores) -> (usize, Option<std::path::PathBuf>) {
+    let Some(Some(unit)) = UNIT.get() else {
+        return (0, None);
+    };
+    let export: HashSet<u32> = unit
+        .names
+        .iter()
+        .map(|n| data.def_nr(n))
+        .filter(|&d| d != u32::MAX && data.def(d).code != crate::data::Value::Null)
+        .collect();
+    if export.len() != unit.names.len() {
+        // The program's standard library is not the one the unit was built from.
+        return (0, None);
+    }
+    let probe =
+        crate::interp::native_adopt::probe_and_mark_exports(data, stores, &export, &unit.so);
+    (probe.marked, (probe.marked > 0).then(|| unit.so.clone()))
 }

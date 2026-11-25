@@ -44,13 +44,15 @@ pub struct CLibrary {
     pub shim: Vec<String>,
 }
 
-/// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
-/// valid for the process lifetime (the Library handle is leaked).
+/// Wrapper for `*const ()` that is Send and Sync — function pointers from cdylibs are
+/// valid for the process lifetime (the Library handle is leaked), and code is only read.
 #[cfg(feature = "native-extensions")]
 #[derive(Clone, Copy)]
 pub(crate) struct FnPtr(pub(crate) *const ());
 #[cfg(feature = "native-extensions")]
 unsafe impl Send for FnPtr {}
+#[cfg(feature = "native-extensions")]
+unsafe impl Sync for FnPtr {}
 
 /// Global registry of native function pointers loaded from cdylibs.
 #[cfg(feature = "native-extensions")]
@@ -64,6 +66,32 @@ pub(crate) static NATIVE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex
 /// to, because every native library ships bridges.
 #[cfg(feature = "native-extensions")]
 pub(crate) static BRIDGE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex::new(None);
+
+/// `@FR-C-Boundary` — a component's own context: what its `loft_cx_make_v1` makes and its
+/// `loft_cx_end_v1` ends.  Each caller context keeps one per component
+/// (`host_abi::HostedContexts`, keyed by `make`) and hands it to the component's bridges first.
+#[cfg(feature = "native-extensions")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CxFns {
+    pub(crate) make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+    pub(crate) end: unsafe extern "C" fn(*mut std::ffi::c_void),
+}
+
+/// The bridges of a component, by loft symbol, with the component's context functions:
+/// populated from its `loft_register_bridges_cx_v1`.  Each such bridge is also in
+/// [`BRIDGE_REGISTRY`]; this says it takes the caller's component context first.
+#[cfg(feature = "native-extensions")]
+pub(crate) static CX_BRIDGES: Mutex<Option<HashMap<String, CxFns>>> = Mutex::new(None);
+
+/// The context functions of the component whose bridge `sym` is, if it is one.
+#[cfg(feature = "native-extensions")]
+pub(crate) fn get_bridge_cx(sym: &str) -> Option<CxFns> {
+    CX_BRIDGES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(|m| m.get(sym).copied())
+}
 
 /// Look up a generated bridge for `sym`, if the owning cdylib registered one.
 #[cfg(feature = "native-extensions")]
@@ -269,6 +297,36 @@ pub(crate) fn load_one(path: &str) -> bool {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let registry = bridge_guard.get_or_insert_with(HashMap::new);
         for (name, ptr) in collected {
+            registry.insert(name, FnPtr(ptr));
+        }
+    }
+    // `@PLN226` — a component's bridges take the caller's component context first.
+    if let (Ok(reg_sym), Ok(make), Ok(end)) = unsafe {
+        (
+            lib.get::<RegisterFn>(b"loft_register_bridges_cx_v1\0"),
+            lib.get::<unsafe extern "C" fn() -> *mut std::ffi::c_void>(b"loft_cx_make_v1\0"),
+            lib.get::<unsafe extern "C" fn(*mut std::ffi::c_void)>(b"loft_cx_end_v1\0"),
+        )
+    } {
+        let fns = CxFns {
+            make: *make,
+            end: *end,
+        };
+        let reg_sym = *reg_sym;
+        let mut collected: Vec<(String, *const ())> = Vec::new();
+        unsafe {
+            reg_sym(collect, std::ptr::addr_of_mut!(collected).cast::<()>());
+        }
+        let mut cx_guard = CX_BRIDGES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cx_registry = cx_guard.get_or_insert_with(HashMap::new);
+        let mut bridge_guard = BRIDGE_REGISTRY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let registry = bridge_guard.get_or_insert_with(HashMap::new);
+        for (name, ptr) in collected {
+            cx_registry.insert(name.clone(), fns);
             registry.insert(name, FnPtr(ptr));
         }
     }
@@ -745,8 +803,8 @@ fn resolve_in_loaded(symbol: &str) -> Option<*const ()> {
 /// and passes the word back untouched, so the bit is the host's to use.
 pub const CTX_RETURN_STORE: usize = 1 << 16;
 
-/// The foreign-vector callback's body, shared by the interpreter's dispatcher
-/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
+/// The foreign-vector callback's body, shared by the interpreter's dispatcher (the `Stores`
+/// its handle carries) and the generated `--native` call (`native_call`'s cell):
 /// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
 /// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
 /// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the

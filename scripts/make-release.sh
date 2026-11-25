@@ -23,15 +23,29 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The bundle archive: Info-ZIP's `zip`, or 7-Zip where only it is installed (a Windows runner
-# whose package feed is down).  Nothing reads the archive's own bytes — `repro-verify.sh`
-# unpacks it and compares the contents' SHA256SUMS — so either writer serves.
+# The bundle archive: Info-ZIP's `zip`, 7-Zip where only it is installed (a Windows runner
+# whose package feed is down), or Python's `zipfile` (a Linux image whose package mirror did
+# not answer).  Nothing reads the archive's own bytes — `repro-verify.sh` unpacks it and
+# compares the contents' SHA256SUMS — so any writer serves; each keeps the files' modes.
 if command -v zip >/dev/null; then
   zip_dir() { zip -qr "$1" "$2"; }
 elif command -v 7z >/dev/null; then
   zip_dir() { 7z a -tzip -bso0 -bsp0 "$1" "$2"; }
+elif command -v python3 >/dev/null; then
+  zip_dir() {
+    python3 - "$1" "$2" <<'PY'
+import os, sys, zipfile
+out, top = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk(top):
+        dirs.sort()
+        z.write(root)
+        for f in sorted(files):
+            z.write(os.path.join(root, f))
+PY
+  }
 else
-  echo "make-release: 'zip' (or 7-Zip's '7z') is required" >&2; exit 1
+  echo "make-release: 'zip', 7-Zip's '7z' or python3 is required" >&2; exit 1
 fi
 
 # Hashing command — the per-OS runners that call this each ship a different one:
@@ -171,11 +185,9 @@ The standard library lives in \`default/\` next to \`bin/\` — keep them togeth
 libraries call (web, server, ssh) — keep it beside \`bin/\` too.
 
 > \`--interpret\` is the standalone runtime — it needs nothing but this bundle.
-> The faster \`--native\` mode (loft's default) compiles via \`rustc\` against loft's
-> runtime library, which a bundle deliberately does not carry: with a toolchain
-> installed a default run still interprets, and an explicit \`--native\` reports a
-> missing \`loft\` crate.  A source install (\`make install\` from a checkout) is what
-> provides it.
+> The faster \`--native\` mode (loft's default) compiles the program to C and builds it
+> with the machine's C compiler (\`cc\`, \`clang\` or \`gcc\`); without one a run
+> interprets.
 
 - CLI help:    \`bin/$exe --help\`
 - Reference:   \`loft-reference.pdf\`
@@ -187,8 +199,8 @@ QS
 
   # What it takes to rebuild this bundle, as a FILE rather than only a stamp inside
   # the binary.  A verifier reproducing a macOS bundle from Linux cannot run its
-  # `bin/loft` to ask, and rustc's exact version is not optional here: an rlib and a
-  # binary are only byte-identical when the compiler is.  Written before SHA256SUMS, so
+  # `bin/loft` to ask, and rustc's exact version is not optional here: a binary is only
+  # byte-identical when the compiler is.  Written before SHA256SUMS, so
   # the manifest covers it like every other file.
   {
     echo "version = $VERSION"

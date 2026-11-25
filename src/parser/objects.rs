@@ -2699,7 +2699,7 @@ impl Parser {
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
-                    Value::Text(pos.file.to_string()),
+                    self.site_file(pos.file.as_str()),
                     Value::Int(pos.line as i32),
                 ],
                 ret.clone(),
@@ -6369,10 +6369,12 @@ impl Parser {
                         && let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists)
                     {
                         value = Value::Var(o);
-                        sinks.place_notes.push(format!("{field}:copied_first"));
+                        if self.state_trace_on() {
+                            sinks.place_notes.push(format!("{field}:copied_first"));
+                        }
                         false
                     } else {
-                        if primed {
+                        if primed && self.state_trace_on() {
                             sinks.place_notes.push(format!("{field}:element_primed"));
                         }
                         !primed
@@ -6383,7 +6385,9 @@ impl Parser {
                     false
                 } else if let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists) {
                     value = Value::Var(o);
-                    sinks.place_notes.push(format!("{field}:copy_staged"));
+                    if self.state_trace_on() {
+                        sinks.place_notes.push(format!("{field}:copy_staged"));
+                    }
                     false
                 } else {
                     true
@@ -6392,7 +6396,9 @@ impl Parser {
                 false
             };
             if staged {
-                sinks.place_notes.push(format!("{field}:staged"));
+                if self.state_trace_on() {
+                    sinks.place_notes.push(format!("{field}:staged"));
+                }
                 let tmp = self.vars.work_refs(&exp_tp, &mut self.lexer);
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);
@@ -6709,7 +6715,7 @@ impl Parser {
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
         let pos = *self.lexer.pos();
-        fields.insert(1, Value::Text(pos.file.to_string()));
+        fields.insert(1, self.site_file(pos.file.as_str()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
@@ -7089,14 +7095,14 @@ impl Parser {
             // whose container is a field DbRef (a vector inside an enum payload) has
             // no container VARIABLE to depend on, so a dep-only test read it as
             // owning.  `owns_store` is the one predicate that answers it, shared with
-            // `generation::dispatch` so parser and codegen cannot drift (loft#664).
+            // the C backend so parser and codegen cannot drift (loft#664).
             // @FR-L-CapHeap (loft#1447) — in-place reuse of the slot's store is licensed
             // only while this local is the store's SOLE holder.  A closure record built
             // over it is a second holder, and `(L-CapHeap)` says that record answers the
             // value it was BUILT with — so re-minting the same store here would make it
             // answer the rebind.  Asked as its own predicate rather than by widening
             // `owns_store`, which answers the FREE question and is shared with
-            // `generation::dispatch`.  The `else if` below carries the same term, so a
+            // the C backend.  The `else if` below carries the same term, so a
             // captured local ROUTES to the fresh-buffer arm instead of falling between the
             // two — without it the field initialisers write into uninitialised storage,
             // which is the failure that branch's own comment describes.
@@ -7524,7 +7530,7 @@ impl Parser {
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.to_string()),
+                            self.site_file(pos.file.as_str()),
                             Value::Int(pos.line as i32),
                         ],
                     ));
@@ -7834,6 +7840,7 @@ impl Parser {
             ops.push(self.copy_ref(&Value::Var(dest), &base, &ret));
             if !self.first_pass {
                 crate::copy_manifest::record(
+                    &self.data,
                     self.context,
                     dest,
                     kt,

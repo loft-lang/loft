@@ -5,12 +5,11 @@
 //! `@PLN206 P4` — a HOSTED unit: a library's functions as C that the interpreter adopts, working
 //! on the interpreter's own stores (`doc/claude/plans/206-one-store-model/p3-p4-design.md`).
 //!
-//! The unit is an ordinary one (`emit_unit`) built with `LOFT_HOSTED`: its `loft_stores` is the
+//! The unit is an ordinary one (`emit_unit`) built with `LOFT_HOSTED`: its `cx->stores` is the
 //! interpreter's table, a store's birth and death are the interpreter's (`HostedTable`), and
 //! everything inside a store it does itself on the shared `loft_store_t` prefix.  It exports the
-//! interface a rustc artifact exports, so the interpreter's dispatch is the same: one
-//! `loft_shared_<name>` bridge per function over `LibArg` slots, `loft_shared_init`, and the type
-//! layout the unit was written for.  A function whose slots the C bridge does not carry yet is
+//! interface the interpreter's dispatch reads: one `loft_shared_<name>` bridge per function over
+//! `LibArg` slots, `loft_shared_init`, and the type layout the unit was written for.  A function whose slots the C bridge does not carry yet is
 //! not exported, and stays interpreted.
 
 use super::{CType, Cx, c_name};
@@ -63,7 +62,7 @@ pub(crate) fn defines() -> String {
 /// The `LibArg` accessors and the bridge's entry and exit, written once per unit.
 const SLOTS: &str = r#"
 /* ── The bridge's slots (`host_abi::LibArg`, by the offsets above) ── */
-static int64_t loft_la_bits(const unsigned char *a, size_t i) {
+static int64_t loft_la_bits(loft_cx *cx, const unsigned char *a, size_t i) {
     int64_t v;
     memcpy(&v, a + i * LOFT_LA_SIZE + LOFT_LA_SCALAR, 8);
     return v;
@@ -73,7 +72,7 @@ typedef void (*loft_call_ref_fn)(void *, uint32_t, const unsigned char *, const 
                                  size_t, unsigned char *);
 static loft_call_ref_fn loft_host_call_ref = 0;
 /* A `DbRef` as the interpreter holds one in memory — in a slot, or on its stack. */
-static loft_ref loft_db_read(const unsigned char *d) {
+static loft_ref loft_db_read(loft_cx *cx, const unsigned char *d) {
     uint16_t nr;
     loft_ref r = { 0, 0, 0, 0 };
     memcpy(&nr, d + LOFT_DB_STORE, 2);
@@ -82,64 +81,67 @@ static loft_ref loft_db_read(const unsigned char *d) {
     r.store_nr = nr;
     return r;
 }
-static void loft_db_write(unsigned char *d, loft_ref r) {
+static void loft_db_write(loft_cx *cx, unsigned char *d, loft_ref r) {
     uint16_t nr = r.store_nr;
     memcpy(d + LOFT_DB_STORE, &nr, 2);
     memcpy(d + LOFT_DB_REC, &r.rec, 4);
     memcpy(d + LOFT_DB_POS, &r.pos, 4);
 }
-static loft_ref loft_la_ref(const unsigned char *a, size_t i) {
-    return loft_db_read(a + i * LOFT_LA_SIZE + LOFT_LA_DBREF);
+static loft_ref loft_la_ref(loft_cx *cx, const unsigned char *a, size_t i) {
+    return loft_db_read(cx, a + i * LOFT_LA_SIZE + LOFT_LA_DBREF);
 }
 /* The reference a `&` argument's slot holds: the caller's variable, on the interpreter's
  * stack, in its own layout — not a record field's. */
-static loft_ref loft_slot_ref(loft_ref at, uint32_t fld) {
-    return loft_db_read(loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld);
+static loft_ref loft_slot_ref(loft_cx *cx, loft_ref at, uint32_t fld) {
+    return loft_db_read(cx, cx->stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld);
 }
-static void loft_slot_set_ref(loft_ref at, uint32_t fld, loft_ref r) {
-    loft_db_write(loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
+static void loft_slot_set_ref(loft_cx *cx, loft_ref at, uint32_t fld, loft_ref r) {
+    loft_db_write(cx, cx->stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
 }
 /* A function value the interpreter hands in, numbered as the unit's values are: by the
  * interpreter (`loft_fhost`). */
-static loft_fn loft_la_fn(const unsigned char *a, size_t i) {
+static loft_fn loft_la_fn(loft_cx *cx, const unsigned char *a, size_t i) {
     loft_fn f;
-    f.d = loft_la_bits(a, i);
-    f.clos = loft_la_ref(a, i);
+    f.d = loft_la_bits(cx, a, i);
+    f.clos = loft_la_ref(cx, a, i);
     return f;
 }
-static loft_str loft_la_text(const unsigned char *a, size_t i) {
+static loft_str loft_la_text(loft_cx *cx, const unsigned char *a, size_t i) {
     loft_str s;
     memcpy(&s.p, a + i * LOFT_LA_SIZE + LOFT_LA_TPTR, sizeof s.p);
     memcpy(&s.len, a + i * LOFT_LA_SIZE + LOFT_LA_TLEN, sizeof s.len);
     return s;
 }
-static void loft_la_set_bits(unsigned char *a, int64_t v) {
+static void loft_la_set_bits(loft_cx *cx, unsigned char *a, int64_t v) {
     memcpy(a + LOFT_LA_SCALAR, &v, 8);
 }
 /* A text answer: its bytes, valid until the unit's next call — the dispatcher copies them at
- * once.  The text a function answers, owned: held until the unit's next text answer. */
-static LOFT_TLS loft_text loft_br_answer;
+ * once.  The text a function answers is owned by the calling thread's context (`cx->br_answer`),
+ * held until its next text answer. */
 static const char loft_br_empty[1] = { 0 };
-static void loft_la_set_text(unsigned char *a, loft_str s) {
-    const char *p = s.len ? s.p : loft_br_empty;
+static void loft_la_set_text(loft_cx *cx, unsigned char *a, loft_str s) {
+    /* The null text crosses as no bytes and the length no text has (`host_abi::TEXT_NULL_LEN`):
+     * a null pointer here already says the call answered no text. */
+    const char *p = s.len && s.p ? s.p : loft_br_empty;
+    size_t len = s.p ? s.len : (size_t) -1;
     memcpy(a + LOFT_LA_TPTR, &p, sizeof p);
-    memcpy(a + LOFT_LA_TLEN, &s.len, sizeof s.len);
+    memcpy(a + LOFT_LA_TLEN, &len, sizeof len);
 }
-static void loft_la_set_ref(unsigned char *a, loft_ref r) {
-    loft_db_write(a + LOFT_LA_DBREF, r);
+static void loft_la_set_ref(loft_cx *cx, unsigned char *a, loft_ref r) {
+    loft_db_write(cx, a + LOFT_LA_DBREF, r);
 }
 
 /* A bridge call works on the `Stores` it is handed: the table is read from it, and the unit's
  * constants are made in it at the first call.  A nested call (a callback that calls the
  * library again) restores the outer one's on the way out. */
 static int loft_hosted_ready = 0;
-static void *loft_host_enter(void *stores) {
-    void *prev = loft_host_stores;
+static void *loft_host_enter(loft_cx *cx, void *stores) {
+    void *prev = cx->host_stores;
     /* A store parked for a function's next call would outlive the bridge call in a slot the
      * interpreter never sees, and no program end drains it: a unit frees what it would park. */
-    loft_no_park = 1;
-    loft_host_stores = stores;
-    loft_host_sync();
+    cx->no_park = 1;
+    cx->host_stores = stores;
+    loft_host_sync(cx);
     if (!loft_hosted_ready) {
         loft_hosted_ready = 1;
         /* The program's directory is the interpreter's: what `source_dir()` answers, and what a
@@ -154,7 +156,7 @@ static void *loft_host_enter(void *stores) {
             anchor[n] = 0;
             loft_anchor = anchor;
         }
-        loft_init();
+        loft_init(cx);
     }
     return prev;
 }
@@ -162,78 +164,100 @@ static void *loft_host_enter(void *stores) {
 /* The positive control of `LOFT_HOSTED_VERIFY` (`LOFT_HOSTED_PLANT`): the first bridge call that
  * takes a record writes one byte of it the function's body never writes — a defect the verify
  * must report. */
-static void loft_hosted_plant(loft_ref r) {
+static void loft_hosted_plant(loft_cx *cx, loft_ref r) {
     static int planted = 0;
-    if (planted || r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return;
-    if (r.rec >= loft_stores[r.store_nr].size) return;
+    if (planted || r.store_nr >= cx->nstores || r.rec == 0 || !cx->stores[r.store_nr].live) return;
+    if (r.rec >= cx->stores[r.store_nr].size) return;
     planted = 1;
-    loft_stores[r.store_nr].buf[(size_t) r.rec * 8 + r.pos] ^= 0x5A;
+    cx->stores[r.store_nr].buf[(size_t) r.rec * 8 + r.pos] ^= 0x5A;
 }
 #endif
-static void loft_host_leave(void *prev) {
-    loft_host_stores = prev;
-    if (prev) loft_host_sync();
+static void loft_host_leave(loft_cx *cx, void *prev) {
+    cx->host_stores = prev;
+    if (prev) loft_host_sync(cx);
+}
+
+/* `@FR-C-Boundary` — the context a bridge call works in: the calling interpreter thread's, kept in the
+ * `Stores` it hands (`HostedTable::cx_of`), made the first time that `Stores` calls in and ended
+ * when it drops.  A `par` worker's `Stores` is its own, and so is its context here. */
+static const char loft_host_unit = 0;
+static void *loft_host_cx_make(void) {
+    loft_cx *cx = (loft_cx *) malloc(sizeof *cx);
+    if (!cx) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_cx_fresh(cx);
+    return cx;
+}
+static void loft_host_cx_end(void *p) {
+    loft_cx *cx = (loft_cx *) p;
+    loft_text_free(cx, &cx->br_answer);
+    loft_text_free(cx, &cx->gen_text);
+    loft_cx_end(cx);
+    free(p);
+}
+static loft_cx *loft_host_cx(void *stores) {
+    return (loft_cx *) loft_hosted->cx_of(stores, &loft_host_unit, loft_host_cx_make, loft_host_cx_end);
 }
 
 /* `@PLN206` — a generator the unit made, driven by the interpreter (`HostedTable::gen_adopt`):
  * one step of the frame in `slot`, its value of `kind` (0 integer, 1 float, 2 text, 3
  * reference, 4 boolean) in `out`; 1 when it yielded, 0 when it ran to its end. */
-static LOFT_TLS loft_text loft_gen_text;
 __attribute__((visibility("default"))) uint32_t loft_shared_gen_next(void *loft_st, uint32_t slot, uint32_t kind, unsigned char *out) {
-    void *prev = loft_host_enter(loft_st);
+    loft_cx *cx = loft_host_cx(loft_st);
+    void *prev = loft_host_enter(cx, loft_st);
     loft_ref g = { 0xFFFE, slot, 0, 0 };
-    loft_gen_slot *s = loft_gen_of(g);
+    loft_gen_slot *s = loft_gen_of(cx, g);
     uint32_t got = 0;
     if (s && !((loft_gen_head *) s->frame)->done) {
         if (kind == 2) {
-            loft_text_set(&loft_gen_text, loft_null_text());
-            s->resume(s->frame, &loft_gen_text);
-            loft_la_set_text(out, loft_view(&loft_gen_text));
+            loft_text_set(cx, &cx->gen_text, loft_null_text(cx));
+            s->resume(cx, s->frame, &cx->gen_text);
+            loft_la_set_text(cx, out, loft_view(cx, &cx->gen_text));
         } else if (kind == 3) {
-            loft_ref v = loft_ref_null();
-            s->resume(s->frame, &v);
-            loft_la_set_ref(out, v);
+            loft_ref v = loft_ref_null(cx);
+            s->resume(cx, s->frame, &v);
+            loft_la_set_ref(cx, out, v);
         } else if (kind == 1) {
-            double v = loft_f64(LOFT_NULL);
+            double v = loft_f64(cx, LOFT_NULL);
             int64_t b;
-            s->resume(s->frame, &v);
+            s->resume(cx, s->frame, &v);
             memcpy(&b, &v, 8);
-            loft_la_set_bits(out, b);
+            loft_la_set_bits(cx, out, b);
         } else if (kind == 4) {
             uint8_t v = 255;
-            s->resume(s->frame, &v);
-            loft_la_set_bits(out, (int64_t) v);
+            s->resume(cx, s->frame, &v);
+            loft_la_set_bits(cx, out, (int64_t) v);
         } else {
             int64_t v = LOFT_NULL;
-            s->resume(s->frame, &v);
-            loft_la_set_bits(out, v);
+            s->resume(cx, s->frame, &v);
+            loft_la_set_bits(cx, out, v);
         }
         got = !((loft_gen_head *) s->frame)->done;
     }
-    loft_host_leave(prev);
+    loft_host_leave(cx, prev);
     return got;
 }
 __attribute__((visibility("default"))) void loft_shared_gen_free(void *loft_st, uint32_t slot) {
-    void *prev = loft_host_enter(loft_st);
+    loft_cx *cx = loft_host_cx(loft_st);
+    void *prev = loft_host_enter(cx, loft_st);
     loft_ref g = { 0xFFFE, slot, 0, 0 };
-    loft_gen_free(g);
-    loft_host_leave(prev);
+    loft_gen_free(cx, g);
+    loft_host_leave(cx, prev);
 }
 "#;
 
 /// The C value of argument slot `slot` read as shape `c`, when one slot carries it.
 fn slot_arg(c: CType, slot: usize) -> Option<String> {
-    let bits = format!("loft_la_bits(loft_a, {slot})");
+    let bits = format!("loft_la_bits(cx, loft_a, {slot})");
     Some(match c {
         CType::Int => bits,
         CType::Int32 => format!("(int32_t) {bits}"),
-        CType::Float => format!("loft_f64({bits})"),
-        CType::Single => format!("loft_f32((uint32_t) {bits})"),
+        CType::Float => format!("loft_f64(cx, {bits})"),
+        CType::Single => format!("loft_f32(cx, (uint32_t) {bits})"),
         CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
         CType::Char => format!("(uint32_t) {bits}"),
-        CType::Ref => format!("loft_la_ref(loft_a, {slot})"),
-        CType::Text => format!("loft_la_text(loft_a, {slot})"),
-        CType::Fn => format!("loft_la_fn(loft_a, {slot})"),
+        CType::Ref => format!("loft_la_ref(cx, loft_a, {slot})"),
+        CType::Text => format!("loft_la_text(cx, loft_a, {slot})"),
+        CType::Fn => format!("loft_la_fn(cx, loft_a, {slot})"),
         _ => return None,
     })
 }
@@ -298,7 +322,7 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                     return Err("an answer of a shape the bridge does not carry".into());
                 }
                 args.push(format!(
-                    "(loft_n > {slot} && loft_la_ref(loft_a, {slot}).rec != 0 ? loft_la_ref(loft_a, {slot}) : loft_ref_null())"
+                    "(loft_n > {slot} && loft_la_ref(cx, loft_a, {slot}).rec != 0 ? loft_la_ref(cx, loft_a, {slot}) : loft_ref_null(cx))"
                 ));
                 slot += 1;
             }
@@ -320,9 +344,9 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                         ));
                     }
                 };
-                let at = format!("loft_la_ref(loft_a, {slot})");
-                let _ = writeln!(places, "    {held} loft_p{slot} = {get}({at}, 0);");
-                let _ = writeln!(back, "    {set}({at}, 0, loft_p{slot});");
+                let at = format!("loft_la_ref(cx, loft_a, {slot})");
+                let _ = writeln!(places, "    {held} loft_p{slot} = {get}(cx, {at}, 0);");
+                let _ = writeln!(back, "    {set}(cx, {at}, 0, loft_p{slot});");
                 args.push(format!("&loft_p{slot}"));
                 slot += 1;
             }
@@ -358,10 +382,10 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
             }
         }
     }
-    let call = format!("{}({})", c_name(data, d), args.join(", "));
+    let call = format!("{}({})", c_name(data, d), super::cx_args(&args));
     let plant = match def.attributes().iter().position(|a| !a.hidden) {
         Some(0) if cx.ctype(&def.attributes()[0].typedef) == Some(CType::Ref) => {
-            "#ifdef LOFT_HOSTED_PLANT\n    loft_hosted_plant(loft_la_ref(loft_a, 0));\n#endif\n"
+            "#ifdef LOFT_HOSTED_PLANT\n    loft_hosted_plant(cx, loft_la_ref(cx, loft_a, 0));\n#endif\n"
         }
         _ => "",
     };
@@ -371,25 +395,27 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let store = match ret {
         // A generator: its frame handed to the interpreter's coroutine table.
         CType::Ref if gen_kind.is_some() => format!(
-            "    {{ loft_ref loft_g = {call};\n      if (loft_g.store_nr == 0xFFFE) loft_hosted->gen_adopt(loft_st, loft_g.rec, {}u, loft_shared_gen_next, loft_shared_gen_free, loft_r);\n      else loft_la_set_ref(loft_r, loft_ref_null()); }}\n",
+            "    {{ loft_ref loft_g = {call};\n      if (loft_g.store_nr == 0xFFFE) loft_hosted->gen_adopt(loft_st, loft_g.rec, {}u, loft_shared_gen_next, loft_shared_gen_free, loft_r);\n      else loft_la_set_ref(cx, loft_r, loft_ref_null(cx)); }}\n",
             gen_kind.unwrap_or(0)
         ),
         CType::Void => format!("    {call};\n"),
-        CType::Int | CType::Int32 => format!("    loft_la_set_bits(loft_r, (int64_t) {call});\n"),
+        CType::Int | CType::Int32 => {
+            format!("    loft_la_set_bits(cx, loft_r, (int64_t) {call});\n")
+        }
         CType::Bool | CType::Enum | CType::Char => {
-            format!("    loft_la_set_bits(loft_r, (int64_t) {call});\n")
+            format!("    loft_la_set_bits(cx, loft_r, (int64_t) {call});\n")
         }
         CType::Float => {
             format!(
-                "    {{ double loft_v = {call}; int64_t loft_b; memcpy(&loft_b, &loft_v, 8); loft_la_set_bits(loft_r, loft_b); }}\n"
+                "    {{ double loft_v = {call}; int64_t loft_b; memcpy(&loft_b, &loft_v, 8); loft_la_set_bits(cx, loft_r, loft_b); }}\n"
             )
         }
         CType::Single => {
             format!(
-                "    {{ float loft_v = {call}; uint32_t loft_b; memcpy(&loft_b, &loft_v, 4); loft_la_set_bits(loft_r, (int64_t) loft_b); }}\n"
+                "    {{ float loft_v = {call}; uint32_t loft_b; memcpy(&loft_b, &loft_v, 4); loft_la_set_bits(cx, loft_r, (int64_t) loft_b); }}\n"
             )
         }
-        CType::Ref => format!("    loft_la_set_ref(loft_r, {call});\n"),
+        CType::Ref => format!("    loft_la_set_ref(cx, loft_r, {call});\n"),
         // A tuple of scalars crosses as its leaves, one slot each, as the dispatcher reads them
         // (`SharedSig::ret_leaves`): a float as its bits, the rest as an integer.  A tuple with
         // a text, a record or a tuple inside is not carried.
@@ -403,13 +429,13 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                     "{}",
                     match c {
                         CType::Int | CType::Int32 | CType::Bool | CType::Enum | CType::Char => {
-                            format!("      loft_la_set_bits({slot}, (int64_t) loft_v.f{i});")
+                            format!("      loft_la_set_bits(cx, {slot}, (int64_t) loft_v.f{i});")
                         }
                         CType::Float => format!(
-                            "      {{ int64_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 8); loft_la_set_bits({slot}, loft_b); }}"
+                            "      {{ int64_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 8); loft_la_set_bits(cx, {slot}, loft_b); }}"
                         ),
                         CType::Single => format!(
-                            "      {{ uint32_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 4); loft_la_set_bits({slot}, (int64_t) loft_b); }}"
+                            "      {{ uint32_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 4); loft_la_set_bits(cx, {slot}, (int64_t) loft_b); }}"
                         ),
                         _ => return Err("a tuple with a text, a record or a tuple inside".into()),
                     }
@@ -421,8 +447,8 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         // A text answer crosses as its bytes, which the dispatcher copies into the caller's
         // destination at once (`extensions::shared_store_dispatch_raw`).
         CType::Text => format!(
-            "    loft_text_free(&loft_br_answer);\n    loft_br_answer = {call};\n    \
-             loft_la_set_text(loft_r, loft_view(&loft_br_answer));\n"
+            "    loft_text_free(cx, &cx->br_answer);\n    cx->br_answer = {call};\n    \
+             loft_la_set_text(cx, loft_r, loft_view(cx, &cx->br_answer));\n"
         ),
         _ => return Err("a result of a shape the bridge does not carry".into()),
     };
@@ -430,14 +456,14 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let mut freed = String::new();
     for k in 0..work {
         let _ = writeln!(held, "    loft_text loft_w{k} = {{ 0 }};");
-        let _ = writeln!(freed, "    loft_text_free(&loft_w{k});");
+        let _ = writeln!(freed, "    loft_text_free(cx, &loft_w{k});");
     }
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n    \
-         uint32_t loft_bhd = loft_br_hdepth;\n    int loft_bho = loft_ho_off;\n    \
-         loft_br_hdepth = LOFT_HDEPTH;\n    loft_ho_off = 0;\n\
-         {held}{places}{store}{back}{freed}{plant}    loft_br_hdepth = loft_bhd;\n    loft_ho_off = loft_bho;\n    loft_host_leave(loft_prev);\n}}\n"
+         loft_cx *cx = loft_host_cx(loft_st);\n    void *loft_prev = loft_host_enter(cx, loft_st);\n    (void) loft_n;\n    \
+         uint32_t loft_bhd = cx->br_hdepth;\n    int loft_bho = cx->ho_off;\n    \
+         cx->br_hdepth = LOFT_HDEPTH;\n    cx->ho_off = 0;\n\
+         {held}{places}{store}{back}{freed}{plant}    cx->br_hdepth = loft_bhd;\n    cx->ho_off = loft_bho;\n    loft_host_leave(cx, loft_prev);\n}}\n"
     ))
 }
 
@@ -494,11 +520,12 @@ pub(crate) fn exports(
         "\n/* The interpreter's `loft_shared_init`: the table it hands every artifact, whose hosted\n \
          * half this unit keeps; refused when the table or the store layout is another's. */\n\
          __attribute__((visibility(\"default\"))) uint32_t loft_shared_init(const unsigned char *loft_t, const void *loft_ids) {{\n    \
+         loft_cx *cx = &loft_main_cx;\n    \
          uint32_t abi;\n    const loft_hosted_table *h;\n    (void) loft_ids;\n    \
          memcpy(&abi, loft_t, 4);\n    if (abi != LOFT_HOST_ABI) return 0;\n    \
          memcpy(&h, loft_t + LOFT_HT_HOSTED, sizeof h);\n    \
          if (h->store_tail != LOFT_HOST_STORE_TAIL) return 0;\n    \
-         loft_hosted = h;\n    memcpy(&loft_host_call_ref, loft_t + LOFT_HT_CALL_REF, sizeof loft_host_call_ref);\n    loft_map_types(loft_t, loft_ids);\n    loft_map_fns(loft_t, loft_ids);\n    loft_bind_tables();\n#ifdef LOFT_DL\n    loft_host_bind_libraries();\n#endif\n    return 1;\n}}\n\
+         loft_hosted = h;\n    memcpy(&loft_host_call_ref, loft_t + LOFT_HT_CALL_REF, sizeof loft_host_call_ref);\n    loft_map_types(cx, loft_t, loft_ids);\n    loft_map_fns(cx, loft_t, loft_ids);\n    loft_bind_tables();\n#ifdef LOFT_DL\n    loft_host_bind_libraries(cx);\n#endif\n    return 1;\n}}\n\
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)
@@ -541,7 +568,7 @@ fn type_keys(cx: &Cx<'_>) -> String {
     let _ = writeln!(out, "}};\nstatic const uint32_t loft_ntkeys = {n};");
     out.push_str(
         "typedef uint16_t (*loft_type_id_fn)(const void *ids, const uint8_t *key, size_t len);
-static void loft_map_types(const unsigned char *loft_t, const void *loft_ids) {
+static void loft_map_types(loft_cx *cx, const unsigned char *loft_t, const void *loft_ids) {
     loft_type_id_fn id;
     uint32_t i, top = 0;
     memcpy(&id, loft_t + LOFT_HT_TYPE_ID, sizeof id);
@@ -591,6 +618,11 @@ pub fn build_artifact(
     // code, whichever built it first.  Its constants are built here, as a program's compile
     // builds its own.
     crate::const_literal::build_const_vectors(stores, data, None);
+    // `@FR-R-ExpPow` — the one rewrite that defines an ANSWER, not only its speed: the program
+    // that calls the unit has its library functions folded when it closes, so the unit folds
+    // them too, or a library's `pow(E, x)` answers apart in its last bit.  Folding is
+    // idempotent: a unit built from a closed program finds nothing left to fold.
+    crate::exp_pow::rewrite_program(data);
     let (data, stores) = (&*data, &*stores);
     let export = hosted_exports(data, stores, library);
     let mut carried: Vec<u32> = export.iter().copied().collect();

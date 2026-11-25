@@ -10,7 +10,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > **Rules then deviations** (see [README](README.md)). This is a small-step evaluation
 > relation for loft's **stable scalar core**, written for one purpose: to be the **shared
 > contract both backends must satisfy**. Today the interpreter (`src/state/`) *is* the
-> de-facto spec and the native generator (`src/generation/`) is a separate implementation
+> de-facto spec and the C backend (`src/c/`) is a separate implementation
 > kept in agreement only by tests — so a disagreement is a test gap, not a definitional
 > error. These rules turn that around: a program where the two backends step differently
 > is **by definition** a bug in whichever one disobeys.
@@ -453,8 +453,7 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                access that found it (`index_out_of_bounds`, naming the index and the length),
                an absent key or a null view by the write (`write_dropped`).  A store with an
                `else` reports nothing (the arm owns the failure).  The line names the
-               statement on the interpreter and the C backend, and may name the running
-               function's declaration on the Rust backend (`--native-rust`).
+               statement on both backends.
 
   (E-Uncomp-Seen)  `place = v else { B }` (H-Write-Else) is the form that observes it; the
                older `if !place` on the next statement stays accepted, with this meaning.
@@ -590,15 +589,6 @@ drift apart; verified both backends —
 ## Deviations
 
 **OPEN: 2.**
-- **D-op-23** (loft#2578) — violates `(E-Asgn)`: a write to an element whose index may write
-  the vector (`v[f(0)] = x` with `f` a function value, `v[push(v)] = x`) lands in a copy of
-  the vector, and the vector is unchanged.
-- **D-op-24** (loft#2580) — violates `(E-Once)`: a collection literal assigned to a field
-  through an element path (`h.ws[e].items = […]`) reduces the path's index once per item.
-- **D-op-25** (loft#2581) — violates `(E-Asgn-Compound)`: a block of one statement and a value
-  as the index of a compound write is reduced twice.
-- **D-op-26** (loft#2582) — violates `(E-Asgn)`: a right side that reads a field of a call's
-  record is reduced before the place's index.
 - **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
   resolvable in a release: two implementations, and nothing links them into one executable
   semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each

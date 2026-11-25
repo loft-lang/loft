@@ -536,13 +536,6 @@ pub(super) fn lastuse_reclaim(
         return 0;
     }
     let Value::Block(bl) = code else { return 0 };
-    // #260 Fix B replaced Fix A here: native codegen now declares every
-    // `__vdb` local up front (sentinel-bound prologue, `generation/mod.rs::
-    // output_function`), so relocating a null-init below an early-return
-    // scope-exit free can no longer strand the free's `var_…` reference out
-    // of scope (rustc E0425) — the `has_free_before_alloc` exclusion guard
-    // is gone and those stores get their watermark reclaim back (46/46
-    // owning stores were forfeited in brick-buster's generator pre-B).
     // Early-free groups: before[trigger] = dead stores to free right before
     // `trigger` allocates.  Their scope-exit `OpFreeRef` is REMOVED, not kept as an
     // "idempotent double-free": under reclaim the freed slot is reused by a later

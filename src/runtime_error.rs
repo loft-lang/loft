@@ -330,6 +330,13 @@ impl RuntimeError {
     /// a plain `Stores` with no logger, so the log-and-continue mode is not reachable on
     /// this path.
     pub fn report_and_exit(&self) -> ! {
+        self.report_and_exit_on(&crate::call_frames::NativeFrames::default())
+    }
+
+    /// [`Self::report_and_exit`] for a fault raised by a generated program, which reports
+    /// the loft frames of the stores that faulted (`Stores::frames`) and is contained when
+    /// those stores are inside a lazy driver.
+    pub fn report_and_exit_on(&self, frames: &crate::call_frames::NativeFrames) -> ! {
         // @PLN133 S8 — a fault inside a lazy DRIVER is the driver's, not the program's.
         // The generated driver call runs under `catch_unwind` and turns the payload into
         // `store_lazy_error`, so this UNWINDS into it instead of exiting: a buggy driver
@@ -341,12 +348,14 @@ impl RuntimeError {
         // that is never released and then unwinding past it would deadlock the next
         // genuine halt.
         //
-        // `cr_stack_overflow` and the crash-report panic hook already carry this test;
-        // this is the third site, and the one `assert` reached when loft#1056 moved it
-        // onto this path — `panic` had been exiting the process from inside a driver
-        // since it started using `report_and_exit`.
-        if crate::call_frames::in_lazy_driver() {
-            std::panic::panic_any(format!("{}: {}", self.kind.label(), self.message));
+        // `cr_stack_overflow`, `assert` and `panic` all reach this one test; the payload
+        // type tells the CLI's panic hook to stay silent (`call_frames::ContainedFault`).
+        if frames.in_lazy_driver() {
+            std::panic::panic_any(crate::call_frames::ContainedFault(format!(
+                "{}: {}",
+                self.kind.label(),
+                self.message
+            )));
         }
         // loft#1056 — a halting fault is the PROGRAM's halt, so it is reported ONCE
         // however many `par` workers reach it in the same instant.  Before this, six
@@ -358,7 +367,7 @@ impl RuntimeError {
         let _guard = REPORTING
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let rendered = self.with_native_frames().render();
+        let rendered = self.with_native_frames(frames).render();
         eprint!("{rendered}");
         // loft#950 — and to the PAGE on the browser target, where `eprint!` is a sink.
         // A `--html` build that faulted printed nothing at all and the trap reached the
@@ -377,11 +386,14 @@ impl RuntimeError {
     /// the frames are picked up here, at the one point on the native path that reports.
     /// An error that already has a chain (the interpreter filled it) is left alone.
     #[must_use]
-    fn with_native_frames(&self) -> std::borrow::Cow<'_, Self> {
+    fn with_native_frames(
+        &self,
+        frames: &crate::call_frames::NativeFrames,
+    ) -> std::borrow::Cow<'_, Self> {
         if !self.call_chain.is_empty() {
             return std::borrow::Cow::Borrowed(self);
         }
-        let chain = crate::call_frames::native_call_chain();
+        let chain = frames.call_chain();
         if chain.is_empty() {
             return std::borrow::Cow::Borrowed(self);
         }
@@ -401,8 +413,17 @@ impl RuntimeError {
     /// frames at all (loft#1056).
     #[must_use]
     pub fn render(&self) -> String {
-        let entry = self.to_diag_entry();
-        let loader = crate::diagnostic_render::FileSourceLoader::new();
+        let mut entry = self.to_diag_entry();
+        // The file is printed under its name ([`crate::source_name`]: the generated binary
+        // carries only that name), and its source line read from wherever the name is found.
+        let roots = crate::source_name::program_roots();
+        if let Some(roots) = &roots {
+            entry.file = crate::source_name::name(&entry.file, roots);
+        }
+        let loader = NamedSourceLoader {
+            roots: roots.unwrap_or_default(),
+            files: crate::diagnostic_render::FileSourceLoader::new(),
+        };
         let mut out = crate::diagnostic_render::render_entry_pretty(
             &entry,
             &loader,
@@ -577,6 +598,19 @@ impl RuntimeError {
             suggestion: None,
             fixes: Vec::new(),
         }
+    }
+}
+
+/// Reads a source line by the NAME a fault prints ([`crate::source_name::locate`]).
+struct NamedSourceLoader {
+    roots: crate::source_name::Roots,
+    files: crate::diagnostic_render::FileSourceLoader,
+}
+
+impl crate::diagnostic_render::SourceLoader for NamedSourceLoader {
+    fn line(&self, file: &str, line_1based: u32) -> Option<String> {
+        let path = crate::source_name::locate(file, &self.roots)?;
+        self.files.line(&path.to_string_lossy(), line_1based)
     }
 }
 

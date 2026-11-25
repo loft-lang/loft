@@ -352,7 +352,7 @@ pub fn build_const_vectors(
         // Build the vector in its own store using the normal Stores API.
         // This mirrors what OpDatabase + OpNewRecord + OpFinishRecord do at runtime.
         // Look up the main_vector<T> struct that wraps the vector field.
-        let vec_struct_name = format!("main_vector<{}>", elem_tp.name(data));
+        let vec_struct_name = data.vector_wrapper_name(&elem_tp);
         let vec_struct_dnr = data.def_nr(&vec_struct_name);
         if vec_struct_dnr == u32::MAX {
             continue;

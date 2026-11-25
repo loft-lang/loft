@@ -64,19 +64,13 @@ jobs:
           restore-keys: ${{ runner.os }}-v2-cargo-
       - name: Build
         run: cargo build --all-targets
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
-      # Build the wasm rlib on ALL three OS — wasm32-unknown-unknown is
-      # host-independent, and Goal C validates the wasm backend across
-      # ubuntu/macOS/windows.  Gating to Linux left the --html tests
-      # uncovered on mac/win AND produced false reds there: GitHub's macOS
-      # image ships the wasm target pre-installed, so `loft --html` got past
-      # the "target not installed" self-skip and then failed E0463 because
-      # the rlib was never built.  Building it everywhere closes both gaps.
+      - name: Build (release loft binary for integration tests)
+        run: cargo build --release --bin loft
+      # The wasm target on ALL three OS: the html tests skip without it (their
+      # gate asks rustup), and Goal C validates the wasm backend across
+      # ubuntu/macOS/windows.
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
-      - name: Build wasm rlib
-        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
       # The graphics native cdylib stays Linux-only — it feeds the
       # graphics_gold GL-render goldens, which need headless libGL (Linux).
       - name: Build graphics native cdylib (Linux only)
@@ -127,19 +121,15 @@ jobs:
             target
           key: ubuntu-v2-guard-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-v2-guard-cargo-
-      # Build-prep mirrors the v2-suite job: native-compile tests shell out to
-      # build generated Rust against the release loft + mmap_storage rlibs, and
-      # binary-spawn tests exec target/release/loft — both absent without this,
-      # which otherwise fails the lane with E0463 (can't find mmap_storage) /
-      # "failed to spawn loft binary", masquerading as guard fires.
+      # Build-prep mirrors the v2-suite job: binary-spawn tests exec
+      # target/release/loft, absent without this, which otherwise fails the lane
+      # with "failed to spawn loft binary", masquerading as guard fires.
       - name: Build
         run: cargo build --all-targets
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
+      - name: Build (release loft binary for integration tests)
+        run: cargo build --release --bin loft
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
-      - name: Build wasm rlib
-        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
       - name: Build graphics native cdylib
         run: cargo build --release --manifest-path lib/graphics/native/Cargo.toml
       - name: Install cargo-nextest

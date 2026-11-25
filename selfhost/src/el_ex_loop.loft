@@ -1008,7 +1008,9 @@ pub struct KeyRange {
   pub idx: integer = -1,
   // A partial key (`s[k1]` of a `sorted<T[k1, k2]>`, `parse_key`'s partial-key match): the
   // range `k1..=k1`, its step block named "Partial key match".
-  pub partial: boolean = false
+  pub partial: boolean = false,
+  // What stands before the walk's start: a call source held in `_vector_N` (`hold_loop_source`).
+  pub pre: vector<ir::Node> = []
 }
 
 // `parse_key`'s partial-key test: fewer keys than an ordered collection of several keys has.
@@ -1019,6 +1021,19 @@ fn partial_key(ct: ir::TypeT, keys: vector<integer>) -> boolean {
 // A comprehension's source that is a local sorted or index, walked whole.
 pub fn key_whole(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   cv = match e.p.nodes[n] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+  pre: vector<ir::Node> = [];
+  // (A call of a program function answering a sorted or an index is evaluated once, its answer
+  // held in `_vector_N` — `hold_loop_source` — and walked there.)
+  if cv < 0 && keyed_call_source(e, n) {
+    cx = el_ex_assign::expression(e, vars, n);
+    cb = el_types::base(cx.tp);
+    if !(cb is TySorted || cb is TyIndex) {
+      return null;
+    }
+    cv = el_vars::create_unique(vars, "vector", cb);
+    el_vars::set_defined(vars, cv);
+    pre = [el_ir::v_set(cv, cx.code)];
+  }
   if cv < 0 {
     return null;
   }
@@ -1029,7 +1044,7 @@ pub fn key_whole(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   el_d = el_types::keyed_elem(ct);
   elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct) + [cv]);
   if e.first_pass {
-    return KeyRange { iter: -1, start: ir::NdNull, coll: ir::NdVar { n: cv }, on: 0, arg: 0, elem: elem, whole: true };
+    return KeyRange { iter: -1, start: ir::NdNull, coll: ir::NdVar { n: cv }, on: 0, arg: 0, elem: elem, whole: true, pre: pre };
   }
   known = el_schema::keyed_type(e, ct);
   on = 130;
@@ -1045,7 +1060,20 @@ pub fn key_whole(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
     }
   }
   start = el_ir::cl(e, "OpIterate", [ir::NdVar { n: cv }, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
-  KeyRange { iter: -1, start: start, coll: ir::NdVar { n: cv }, on: on, arg: arg, elem: elem, whole: true }
+  KeyRange { iter: -1, start: start, coll: ir::NdVar { n: cv }, on: on, arg: arg, elem: elem, whole: true, pre: pre }
+}
+
+// A call of a program function declared to answer a sorted or an index (`mk_sorted(a)`).
+fn keyed_call_source(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SCall { f: cf } => {
+      cn = match e.p.nodes[cf ?? 0] { SName { name: fnm, member: fm } => if fm == "" && cf != null { fnm } else { "" }, _ => "" };
+      d = if cn == "" { -1 } else { el::def_nr(e, "n_{cn}") };
+      rt = if d >= 0 { el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) } else { ir::TyVoid };
+      d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && (rt is TySorted || rt is TyIndex)
+    },
+    _ => false
+  }
 }
 
 // Is `n` a range index of a local that is a sorted or an index, by its syntax and the local's type?
@@ -1353,10 +1381,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
   idx = if ranged { rw!.idx } else if sliced { ss!.idx } else if keyed && !kr!.whole { -1 } else { el_ex_pattern::loop_index(e, vars, if src_id == "_" { "_" } else { id }) };
-  if keyed && kr!.whole {
+  // (A held call source's `x#iter_state` is a second-pass mint, as a keyed `for`'s is.)
+  if keyed && kr!.whole && (!e.first_pass || len(kr!.pre) == 0) {
     wst = el_vars::add_variable(vars, "{if src_id == "_" { el_vars::name_of(vars, idx) } else { id }}#iter_state", count_type(e));
     el_vars::set_defined(vars, wst);
-    kr = KeyRange { iter: wst, start: kr!.start, coll: kr!.coll, on: kr!.on, arg: kr!.arg, elem: kr!.elem, whole: true, idx: idx };
+    kr = KeyRange { iter: wst, start: kr!.start, coll: kr!.coll, on: kr!.on, arg: kr!.arg, elem: kr!.elem, whole: true, idx: idx, pre: kr!.pre };
   }
   // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
   // number is taken although the fill names no walk.)
@@ -1589,7 +1618,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
-  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else if texted { [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(ttv, x.code), el_ir::v_set(tpos, ir::NdInt { n: 0 })] } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
+  items += if keyed && kr!.whole { kr!.pre + [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else if texted { [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(ttv, x.code), el_ir::v_set(tpos, ir::NdInt { n: 0 })] } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }
@@ -2126,15 +2155,41 @@ pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
 // range, no `par`?  Any other keeps the road a hole's value takes.
 pub fn format_for_carried(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
   match e.p.nodes[n] {
-    SFor { binds: bs, source: sr, par: pc, body: bd } => {
+    SFor { binds: bs, source: sr0, par: pc, body: bd } => {
       if len(bs) != 1 || pc != null || bd == null {
         return false;
       }
-      if e.p.nodes[sr] is SRange {
+      sr = sr0;
+      // (`unordered(h)` over a hash local walks it unsorted.)
+      match e.p.nodes[sr0] {
+        SIterWrap { kind: wk, e: we } => {
+          if wk != "unordered" || we == null {
+            return false;
+          }
+          sr = we!;
+          uv = match e.p.nodes[sr] { SName { name: un, member: um } => if um == "" { el_vars::var(vars, un) } else { -1 }, _ => -1 };
+          return uv >= 0 && el_vars::tp(vars, uv) is TyHash;
+        },
+        _ => {}
+      }
+      if e.p.nodes[sr] is SRange || vector_call_source(e, sr) {
         return true;
       }
       sv = match e.p.nodes[sr] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
-      sv >= 0 && el_vars::tp(vars, sv) is TyVector
+      sv >= 0 && (el_vars::tp(vars, sv) is TyVector || el_vars::tp(vars, sv) is TyText || el_vars::tp(vars, sv) is TyHash || el_vars::tp(vars, sv) is TySorted || el_vars::tp(vars, sv) is TyIndex)
+    },
+    _ => false
+  }
+}
+
+// A call of a program function declared to answer a vector (`mk(3)`): a format walk holds its
+// answer in `_vector_N` (`hold_loop_source`).
+fn vector_call_source(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SCall { f: cf } => {
+      cn = match e.p.nodes[cf ?? 0] { SName { name: fnm, member: fm } => if fm == "" && cf != null { fnm } else { "" }, _ => "" };
+      d = if cn == "" { -1 } else { el::def_nr(e, "n_{cn}") };
+      d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector
     },
     _ => false
   }
@@ -2156,10 +2211,23 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     SFor { binds: bs, source: sr, par: pc, filter: fl, body: bd } => { binds = bs; source = sr; par = pc; filter = fl; body = bd; },
     _ => {}
   }
+  unordered = false;
+  match e.p.nodes[source] {
+    SIterWrap { kind: wk, e: we } => {
+      if wk == "unordered" && we != null {
+        unordered = true;
+        source = we!;
+      }
+    },
+    _ => {}
+  }
   sv = match e.p.nodes[source] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
   st = if sv >= 0 { el_vars::tp(vars, sv) } else { ir::TyVoid };
   range = e.p.nodes[source] is SRange;
-  if len(binds) != 1 || par != null || body == null || (!range && (sv < 0 || !(st is TyVector))) {
+  call_src = !range && sv < 0 && vector_call_source(e, source);
+  walks_text = !range && st is TyText;
+  keyed = !range && (st is TyHash || st is TySorted || st is TyIndex);
+  if len(binds) != 1 || par != null || body == null || (!range && !call_src && (sv < 0 || !(st is TyVector || walks_text || keyed))) {
     el::refuse(e, "a `for` in a format hole over a source other than a vector local or a range");
     return null;
   }
@@ -2170,7 +2238,53 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   lt: ir::TypeT = ir::TyVoid;
   idx = -1;
   rw: el_ex_pattern::RangeWalk? = null;
-  if range {
+  pos = -1;
+  extra: vector<ir::Node> = [];
+  scratch = -1;
+  el_d = -1;
+  if call_src {
+    // (`hold_loop_source`: `{id}#index`, the call — its own work refs — then `_vector_N`
+    // holding its answer, which the walk reads.)
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    el_ex_base::start_loop(e, vars);
+    cx = el_ex_assign::expression(e, vars, source);
+    if !(el_types::base(cx.tp) is TyVector) {
+      if !e.first_pass {
+        el::refuse(e, "a `for` in a format hole over a call answering this type: {type_kind(cx.tp)}");
+      }
+      return null;
+    }
+    sv = el_vars::create_unique(vars, "vector", el_types::base(cx.tp));
+    if !e.first_pass {
+      el_vars::set_var_type(vars, sv, cx.tp);
+    }
+    el_vars::set_defined(vars, sv);
+    st = el_types::base(cx.tp);
+    lt = match st { TyVector { inner } => el_types::with_deps(el_types::without_deps(inner), [sv]), _ => ir::TyVoid };
+    init = [ir::NdInsert { items: [el_ir::v_set(sv, cx.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] }];
+  } else if keyed {
+    // (`iter_for` over `keyed_snapshot`: `{id}#index`, then a hash's sorted scratch copy of
+    // its records, `_hash_scratch_N`; `{id}#iter_state` on the second pass, after the rest.)
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    el_ex_base::start_loop(e, vars);
+    el_d = el_types::keyed_elem(st);
+    if st is TyHash {
+      scratch = el_vars::create_unique(vars, "hash_scratch", ir::TyReference { n: el_d, dep: [sv] });
+    }
+    lt = ir::TyReference { n: el_d, dep: [sv] };
+  } else if walks_text {
+    // (`iter_text`: `{id}#index`, then the byte position `{id}#next`; the text held in
+    // `_for_text_N` and the character read into `_for_result_N` after the loop variable.)
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    pos = el_vars::add_variable(vars, "{id}#next", count_type(e));
+    el_vars::set_defined(vars, pos);
+    el_ex_base::start_loop(e, vars);
+    lt = ir::TyCharacter;
+    extra = [el_ir::v_set(idx, ir::NdInt { n: 0 })];
+  } else if range {
     el_ex_base::start_loop(e, vars);
     rw = el_ex_pattern::range_walk(e, vars, id, source);
     if rw == null {
@@ -2188,6 +2302,13 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   }
   val = el_vars::create_unique(vars, "val", ir::TyUnknown { n: 0 });
   lv = loop_var(vars, src_id, id, lt);
+  tv = -1;
+  res = -1;
+  if walks_text {
+    tv = el_vars::create_unique(vars, "for_text", ir::TyText { dep: [sv] });
+    res = el_vars::create_unique(vars, "for_result", ir::TyCharacter);
+    init = [el_ir::v_set(tv, ir::NdVar { n: sv }), el_ir::v_set(pos, ir::NdInt { n: 0 })];
+  }
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
@@ -2201,7 +2322,40 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     cnt = el_vars::add_variable(vars, "{id}#count", count_type(e));
   }
   el_vars::set_defined(vars, cnt);
-  if range {
+  if keyed && !e.first_pass {
+    state = el_vars::add_variable(vars, "{id}#iter_state", count_type(e));
+    el_vars::set_defined(vars, state);
+    known = el_schema::keyed_type(e, st);
+    on = 128;
+    arg = 4;
+    match st {
+      TyIndex { n: _ } => { on += 1; arg = known; },
+      TySorted { n: _ } => {
+        if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+          on += 3;
+        } else {
+          on += 2;
+          arg = e.b.types[el::def(e, el_d).known_type]!.size;
+        }
+      },
+      _ => { on += 4; }
+    }
+    ksrc: ir::Node = if scratch >= 0 { ir::NdVar { n: scratch } } else { ir::NdVar { n: sv } };
+    kstart = el_ir::cl(e, "OpIterate", [ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+    walk = ir::NdInsert { items: [el_ir::v_set(state, kstart), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+    init = if scratch >= 0 { [ir::NdInsert { items: [el_ir::v_set(scratch, el_ir::cl(e, if unordered { "n_hash_unsorted" } else { "n_hash_sorted" }, [ir::NdVar { n: sv }, ir::NdInt { n: known }])), walk] }] } else { [walk] };
+    knext = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }])], lt, "sorted iter next");
+    kbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    head = [el_ir::v_set(lv, knext), el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), kbrk, ir::NdNull)];
+  } else if keyed {
+    head = [];
+  } else if walks_text {
+    tt = ir::NdVar { n: tv };
+    tbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    head = [el_ir::v_set(lv, text_step(e, tv, pos, idx, res)),
+      el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [tt])]), tbrk, ir::NdNull),
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpSizeText", [tt]), ir::NdVar { n: idx }]), tbrk, ir::NdNull)];
+  } else if range {
     head = [el_ir::v_set(lv, el_ir::v_block(rw!.steps, lt, "Iter range"))];
   } else {
     elem = match st { TyVector { inner } => inner, _ => ir::TyVoid };
@@ -2221,7 +2375,7 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   it = el_ir::v_block(head + [b.code], vt, "Iter For");
   steps: vector<ir::Node> = [el_ir::v_set(val, it), el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "," }]), ir::NdNull), el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
   el_ex_call::append_spec(e, steps, w, ir::NdVar { n: val }, vt, stack, f);
-  [el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "[" }]), ir::NdInsert { items: init }, el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "]" }])]
+  [el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "[" }]), ir::NdInsert { items: init }] + extra + [el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "]" }])]
 }
 
 // `parse_any` / `parse_all` / `parse_count_if` over `predicate_loop_scaffold` (second pass only):

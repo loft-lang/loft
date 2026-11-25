@@ -199,7 +199,7 @@ footer a { color: var(--accent); text-decoration: none; }
 </footer>
 
 <script type="module">
-import { GALLERY_LIST } from './gallery-examples.js?v=997df6476118';
+import { GALLERY_LIST } from './gallery-examples.js?v=9c3b0cc3f00d';
 
 // Carve the demos into four readable sections by example number.
 // Numbers correspond to the leading digits of each filename (e.g. 01-…).
@@ -217,21 +217,24 @@ function exampleNumber(key) {
 }
 
 function renderCard(ex) {
+  // A game built into a page of its own runs there; every other example runs in gallery-run.
+  const open = ex.page || `gallery-run.html?example=${encodeURIComponent(ex.key)}`;
+  const run = ex.page || `${open}&autorun=1`;
   const card = document.createElement('article');
   card.className = 'card';
   card.innerHTML = `
-    <a href="gallery-run.html?example=${encodeURIComponent(ex.key)}">
+    <a href="${open}">
       <img class="card-poster" alt="" loading="lazy"
            src="images/poster-${encodeURIComponent(ex.key)}.png"
            onerror="this.remove()">
     </a>
-    <a class="card-body" href="gallery-run.html?example=${encodeURIComponent(ex.key)}">
+    <a class="card-body" href="${open}">
       <h3></h3>
       <p class="desc"></p>
     </a>
     <div class="card-actions">
-      <a class="card-action open" href="gallery-run.html?example=${encodeURIComponent(ex.key)}">Open</a>
-      <a class="card-action run" href="gallery-run.html?example=${encodeURIComponent(ex.key)}&autorun=1">▶ Run</a>
+      <a class="card-action open" href="${open}">Open</a>
+      <a class="card-action run" href="${run}">▶ Run</a>
     </div>
   `;
   const poster = card.querySelector('.card-poster');

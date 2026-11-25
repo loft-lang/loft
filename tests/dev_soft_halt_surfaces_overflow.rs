@@ -1,7 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: an undefended overflow is not surfaced by the C — its `--native` runs as `--native-rust` until then.
-
 //! `--dev-soft-halt` surfaces integer overflow, on both backends (loft#1265).
 //!
 //! `formal/operational.md` (E-Report) states the flag's contract in as many words — it
@@ -11,10 +9,10 @@
 //! is silent everywhere by design (the null IS the signal), so this flag was the whole of
 //! its observability.
 //!
-//! The fix reports from `checked_long!`'s `None` arm, which already existed to build the
-//! sentinel, so no non-overflowing operation gained a test.  Both backends call the same
-//! `ops::` functions (`#rust"ops::op_add_int(@v1, @v2)"`), which is why one site serves
-//! both — and why both legs are checked here rather than assumed from one.
+//! The interpreter reports from `checked_long!`'s `None` arm and the C from the overflow arm of
+//! its checked operators (`loft_ovf`), both of which already existed to build the sentinel, so
+//! no non-overflowing operation gained a test.  Both legs are checked here rather than one
+//! assumed from the other.
 //!
 //! Four properties, because each regresses on its own:
 //!   1. an undefended overflow is SURFACED, and names its operands;
@@ -33,8 +31,6 @@
 //! with 0 surfaced overflows against 3, while the div0 peer still reports — so the row is
 //! measuring the overflow channel and not the flag as a whole.  The flag-OFF test passes
 //! on BOTH trees, which is what makes it a control rather than a second copy of the claim.
-//! The control tree has no `target/release`, so `have_rustc()` skips its `--native` leg
-//! there; the fixed tree runs both, and the fix is one shared `ops::` function either way.
 
 use loft::file_access as fa;
 
@@ -79,23 +75,8 @@ fn main() {
 }
 ";
 
-/// `rustc` is needed for the `--native` leg; skip cleanly where it is absent, like the
-/// other native suites.
-fn have_rustc() -> bool {
-    loft::platform::process::harness_command("rustc")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
-}
-
-fn backends() -> Vec<&'static str> {
-    let mut v = vec!["--interpret"];
-    if have_rustc() {
-        v.push("--native-rust");
-    } else {
-        println!("dev_soft_halt_surfaces_overflow: --native leg skipped (no rustc)");
-    }
-    v
+fn backends() -> [&'static str; 2] {
+    ["--interpret", "--native"]
 }
 
 #[test]

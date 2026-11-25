@@ -15,8 +15,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > `(Perf-Weight)`.  The plan this page is the report of: @PLN158.
 
 **The bar:** every routine within **3×** its Rust twin, and — the owner's goal — every
-routine within **2×**.  A ratio is native ns/op over the twin's, medians of pinned, calibrated,
-interleaved samples; both lanes printed the same result hash or the row would not be here.
+routine within **2×**.  A ratio is the C ship lane's ns/op over the twin's (the retired rustc
+writer's on a row measured before it went), medians of pinned, calibrated, interleaved samples; both
+lanes printed the same result hash or the row would not be here.
 
 ## Hosts — the latest run on each machine
 

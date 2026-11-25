@@ -404,3 +404,28 @@ spelling; the code failed to convert at the boundary.
 
 **rules written (2026-07-07), 1 open** — the FORMAT counterpart to heap.md's steps (it defines the `field_offset` heap.md reads at); one format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); **D-layout-1** (no version guard on persisted bytes, #477) is **mechanism-shipped** — the golden test + the `.dschema` sidecar — pending a durable-store consumer to auto-invoke it (@PLN97)
 
+## Carried by layout.md until 2026-11-25 — the null text as a content
+
+`(L-Null-Text)` read: "`text` reserves TWO spellings of absence and they are ONE value: an UNSET
+handle (str_rec 0) and an ALLOCATED record holding the `STRING_NULL` (`"\0"`) bytes.  A reader
+tests the CONTENT, never the handle alone: `get_str` maps an unset or out-of-range handle onto
+`STRING_NULL` too, so the content test is TOTAL and subsumes the handle test."  The content
+spelling made a text of exactly one NUL byte the null text, in flight as well as stored:
+`"a\0b"[1..2] == null` held, `"a" + t + "b"` went null, and a field holding it read back
+absent, on both backends.  The rule now spells absence as an identity in every representation.
+
+The rationale it carried:
+
+`(L-Null-Text)` is the same kind of record for the one scalar whose sentinel is not a bit
+pattern in its own slot.  A text slot holds a HANDLE, and absence is spelled twice because the
+two writers spell it differently: a never-written slot keeps the zero handle a fresh record
+starts with, while writing `null` — from a literal, an assignment, a call, or any native text
+path — allocates a record holding the sentinel bytes.  Neither writer is wrong; what is wrong is
+a reader that knows only one.  Measured (loft#1270): `Stores::is_null` tested the handle alone
+and decided whether a struct field was OMITTED (a null field was left out until @C143), so `NT { a: 1, t: null }`
+serialised `{"a":1,"t":null}` while the same value parsed back serialised `{"a":1}` — one value,
+two documents, and a document that is hashed, signed or diffed changed for a value that did not.
+The render arm applied the content test only under `json`/`loft`, so the plain form put the
+sentinel on the wire AS TEXT: `"{x}"` answered `{a:1,t:"\0"}`, a present one-character string
+where the program meant nothing.  `native.rs` had carried the total test for its own reader since
+loft#769 — the rule was discoverable in the code and simply not written down here.

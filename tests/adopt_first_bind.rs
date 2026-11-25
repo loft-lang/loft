@@ -11,7 +11,6 @@
 //! call's buffer, that buffer is NOT pooled at function entry, a bound local that is itself a
 //! return buffer keeps its in-place copy, and `LOFT_NO_ADOPT_FIRST_BIND=1` restores the copy
 //! — and the store census the change buys.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -35,25 +34,6 @@ fn loft() -> Command {
     cmd
 }
 
-fn emit(out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = loft();
-    cmd.arg("--native-rust")
-        .arg("--native-emit")
-        .arg(out)
-        .arg(cells());
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let status = cmd.output().expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    fa::read_to_string(out).expect("read the emitted Rust")
-}
-
 fn introspect(env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
     cmd.arg("introspect").arg(cells());
@@ -62,23 +42,6 @@ fn introspect(env: &[(&str, &str)]) -> String {
     }
     let out = cmd.output().expect("spawn loft introspect");
     String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-/// The emitted body of `fn <name>(` up to the next top-level `fn`.
-fn fn_body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
-/// Does the emitted body copy a call result INTO `var` — the reset-and-copy pair, or the one
-/// call that exchanges the result's store in instead when it can (`@FR-H-SwapRebind`)?
-fn copies_into(body: &str, var: &str) -> bool {
-    body.contains(&format!("OpCopyRecord(cell,_src, var_{var}"))
-        || body.contains(&format!("var_{var} = OpRebindRecord(cell,"))
 }
 
 /// The interpreter's IR + bytecode listing of one function.
@@ -91,79 +54,7 @@ fn ir_section<'a>(listing: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
-fn store_mints(mode: &str, env: &[(&str, &str)]) -> usize {
-    let mut cmd = loft();
-    cmd.arg(mode).arg(cells()).env("LOFT_TRACE_DB", "1");
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let out = cmd.output().expect("spawn loft");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| l.contains("OpDatabase"))
-        .count()
-}
-
 const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_FIRST_BIND", "1")];
-
-#[test]
-fn native_binds_the_minted_store_directly() {
-    let out = std::env::temp_dir().join("loft_adopt_first_bind_on.rs");
-    let rust = emit(&out, &[]);
-    let c1 = fn_body(&rust, "n_c1");
-    assert!(
-        c1.contains("let mut var_b: DbRef = n_mk_loc(cell, var_i, var___ref_2);"),
-        "c1: `b` takes the plain assignment"
-    );
-    assert!(!copies_into(c1, "b"), "c1: no deep copy into `b`");
-    assert!(
-        c1.contains("if (var_b).store_nr != (var___ref_2).store_nr { OpFreeRef(cell,var_b"),
-        "c1: `b`'s free is guarded by identity against the call's buffer"
-    );
-    assert!(
-        !c1.contains("var___ref_2 = OpDatabase(cell,var___ref_2"),
-        "c1: the paired buffer of a minting callee is not pooled at function entry"
-    );
-    assert!(
-        c1.contains("var___ref_1 = OpDatabase(cell,var___ref_1"),
-        "c1: the literal-returning callee's buffer keeps its pool"
-    );
-    // The destination that IS a return buffer keeps the in-place copy (plan 51 cluster 3) —
-    // where the rebind does not stand directly before the tail.  Directly before it, the tail
-    // local is handed the return buffer, so the call writes the caller's buffer itself.
-    let apart = fn_body(&rust, "n_render_lit_then_call_apart");
-    assert!(
-        copies_into(apart, "cv"),
-        "render_lit_then_call_apart: the promoted buffer local still copies its rebind in place"
-    );
-    let lit = fn_body(&rust, "n_render_lit_then_call");
-    assert!(
-        lit.contains("var_cv = n_alloc_canvas(cell, 4_i64, 5_i64,") && !copies_into(lit, "cv"),
-        "render_lit_then_call: the rebind before the tail is handed the return buffer (no copy)"
-    );
-    let _ = fa::remove_file(&out);
-}
-
-#[test]
-fn the_switch_restores_the_copy_on_native() {
-    let out = std::env::temp_dir().join("loft_adopt_first_bind_off.rs");
-    let rust = emit(&out, OFF);
-    let c1 = fn_body(&rust, "n_c1");
-    assert!(
-        copies_into(c1, "b"),
-        "c1 under LOFT_NO_ADOPT_FIRST_BIND: `b` is deep-copied"
-    );
-    assert!(
-        !c1.contains("let mut var_b: DbRef = n_mk_loc("),
-        "c1 under LOFT_NO_ADOPT_FIRST_BIND: no plain assignment"
-    );
-    let _ = fa::remove_file(&out);
-}
 
 #[test]
 fn the_interpreter_binds_by_put_ref() {
@@ -195,67 +86,4 @@ fn the_interpreter_binds_by_put_ref() {
         c1_off.contains("OpFreeRef(b(5));"),
         "c1 IR under the switch: the plain free"
     );
-}
-
-#[test]
-fn the_store_census_drops_by_one_per_adopting_bind() {
-    // Hand-checked 2026-09-17 on the cells as written (the bind after an `if` pre-init adopts
-    // too since then); a cell edit re-measures both pairs.  The native pair fell 101/137 →
-    // 91/127 on 2026-09-18 with `@FR-R-LoopRecord`: a record literal bound inside a loop keeps
-    // its store across the iterations, so ten per-pass mints are one — in BOTH arms, which is
-    // why the adoption's own drop (36) is unchanged.  The interpreter's OFF count is 134 since the
-    // arm became the scope (`@FR-B-Scope`, loft#1600, 2026-09-23; it read 139 before): c11's
-    // `k = build(d - 1)` is its arm's local, a first bind, where the pre-init that used to stand in
-    // front of the `if` made it a rebind that copies — one mint for each of the five activations
-    // with `d > 0`.  2026-09-30: a LIFTED call result adopts the callee's minted store as a
-    // named bind does (`Scopes::lift_set`, `tests/lift_adopt.rs`), so the copy's store per
-    // lifted minted call goes in the ON arm alone (the switch restores it): 98 → 86 on the
-    // interpreter, 91 → 85 on native; the OFF arms unchanged.  2026-10-02: a native rebind that
-    // exchanges the result's store in resets nothing first (`@FR-H-SwapRebind`), so its
-    // `OpDatabase` line goes in both native arms: 85/127 → 75/117, the interpreter unchanged.
-    // And a complete-literal callee refills the store such a rebind released
-    // (`@FR-R-RefillBuffer`): 75/117 → 65/107 (`LOFT_NO_REFILL_BUFFER=1` gives back the old pair).
-    // 2026-10-08: a `-> P?` return takes the buffer its dense twin takes (loft#1934), so each
-    // call site of `maybe` mints its `__ref_N` as a `-> P` site does: 86/134 → 90/140 on the
-    // interpreter, 65/107 → 66/109 on native (`LOFT_NO_NULLABLE_RETBUF=1` gives back both pairs).
-    // 2026-10-16: 90/140 → 104/154 on the interpreter on the tree that joins the x86-64 perf
-    // cut with loft#2016, #2017 and #2021, native unchanged; the same count with the
-    // return-branch sink narrowed and wide, so the three fixes are not the movers.
-    // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
-    // interpreter too: 104/154 → 94/144, ten in each arm; `LOFT_NO_LOOP_RECORD=1` gives back
-    // 104/154.  A rebind from a call whose answer is its minted buffer store adopts it as
-    // the first bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 94 → 80 in the ON arm,
-    // the OFF arm unchanged since its switch turns every adopt off;
-    // `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 94/144.
-    // loft#2535 hands the tail local the return buffer whatever the line breaks, so c6's
-    // `render_lit_then_call` rebind writes the caller's buffer itself: 80/144 → 62/126.  Its twin
-    // `render_lit_then_call_apart`, added to keep the promoted-buffer path under test, adds its
-    // own share: 62/126 → 86/156.  A rebind whose answer is copied (R2b) makes its store
-    // once, after the call, instead of before it as well (STORE_MODEL D43): 86/156 → 79/136.
-    // Such a rebind whose call gives its answer up exchanges it into the local's own store
-    // (`ReBind::exchange`, D43): six fewer with adoption off, 79/136 → 79/130
-    // (`LOFT_NO_SWAP_REBIND=1` gives back 136).
-    let (i_on, i_off) = (
-        store_mints("--interpret", &[]),
-        store_mints("--interpret", OFF),
-    );
-    assert!(
-        i_on < i_off,
-        "interpret: {i_on} mints with adoption, {i_off} without"
-    );
-    assert_eq!((i_on, i_off), (79, 130), "interpret mints (on, off)");
-    let (n_on, n_off) = (
-        store_mints("--native-rust", &[]),
-        store_mints("--native-rust", OFF),
-    );
-    assert!(
-        n_on < n_off,
-        "native: {n_on} mints with adoption, {n_off} without"
-    );
-    // A rebind `bind_lowering::re_bind` binds plain is bound plain on rustc too
-    // (`call_bind_taken`): its copy-or-adopt's copy store goes, 5 fewer in the ON arm and 7 in
-    // the OFF one (that arm's switch turns the first-bind adopt off, not this);
-    // `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 66/109.
-    // loft#2535's handover and the `_apart` twin together: 61/102 → 67/114.
-    assert_eq!((n_on, n_off), (67, 114), "native mints (on, off)");
 }

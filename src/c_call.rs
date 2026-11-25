@@ -246,11 +246,6 @@ pub struct CBinding {
     pub text_return: bool,
 }
 
-/// Side table: library index -> the binding that index calls. Populated by
-/// [`register`], read by [`dispatch`].
-static C_BINDINGS: std::sync::Mutex<Option<std::collections::HashMap<u16, CBinding>>> =
-    std::sync::Mutex::new(None);
-
 /// Wire every `#c` declaration into the interpreter's static-call table.
 ///
 /// The call site needs no change: a body-less definition with no `#native`
@@ -276,7 +271,9 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
     // to be able to answer about any declared library, not only optional ones.
     set_declared_libraries(data.c_libraries.clone());
     set_library_symbols(library_symbol_table(data));
-    let mut table = std::collections::HashMap::new();
+    // `@PLN226` — the bindings are the program's own: a slot per library index in its wired
+    // natives (`Stores::wired`), read by [`dispatch`] without a lock.
+    let mut table = Vec::new();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         if def.c_sig.is_empty() || *def.code() != crate::data::Value::Null {
@@ -306,12 +303,10 @@ pub fn register(state: &mut crate::state::State, data: &crate::data::Data) {
         };
         state.static_fn(def.name(), dispatch);
         if let Some(&idx) = state.library_names.get(def.name()) {
-            table.insert(idx, binding);
+            crate::extensions::put_slot(&mut table, idx, std::sync::Arc::new(binding));
         }
     }
-    *C_BINDINGS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(table);
+    crate::extensions::wired_mut(&mut state.database).c_bindings = table;
 }
 
 /// A scalar `#c` argument popped at its loft type's own width: a boolean or a plain enum fills
@@ -343,15 +338,14 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
     use crate::c_signature::CArg;
     use crate::keys::{DbRef, Str};
 
-    let idx = crate::call_frames::current_lib_idx();
-    let binding = {
-        let guard = C_BINDINGS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match guard.as_ref().and_then(|t| t.get(&idx)) {
-            Some(b) => b.clone(),
-            None => panic!("no `#c` binding registered for library index {idx}"),
-        }
+    let idx = stores.lib_idx;
+    let Some(binding) = crate::extensions::wired(stores)
+        .c_bindings
+        .get(usize::from(idx))
+        .cloned()
+        .flatten()
+    else {
+        panic!("no `#c` binding registered for library index {idx}")
     };
 
     // The NUL-terminated copies a C string argument needs. Held here so they
@@ -452,10 +446,12 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
             );
         };
         let s = c_text(raw);
-        stores
-            .store_mut(&dest)
-            .addr_mut::<String>(dest.rec, dest.pos)
-            .push_str(&s);
+        crate::text_null::put(
+            stores
+                .store_mut(&dest)
+                .addr_mut::<String>(dest.rec, dest.pos),
+            &s,
+        );
         return;
     }
     // The declared width is what makes this right; read raw, a negative `int`
@@ -527,8 +523,8 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 /// twin of this in `output_c_direct_call`) — a text return that differed between
 /// them would be exactly the divergence arc C was built to stop:
 ///
-/// - **NULL is loft null.** text-null is CONTENT-based (`STRING_NULL`), so the
-///   record carries it and `??` / `!` / `match` read it as null.
+/// - **NULL is loft null** (`text_null::null_string`), so `??` / `!` / `match` read it as
+///   null.
 /// - **The bytes end at the first NUL**, because that is what `char *` means. A
 ///   loft text carries a length and can hold an interior NUL; a C string cannot,
 ///   so the crossing truncates there rather than inventing a length.
@@ -540,7 +536,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 #[must_use]
 fn c_text(raw: u64) -> String {
     if raw == 0 {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_string();
     }
     let p = raw as *const std::ffi::c_char;
     // SAFETY: the declaration says this symbol returns `char *`, and that

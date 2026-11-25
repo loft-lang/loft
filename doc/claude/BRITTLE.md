@@ -152,45 +152,10 @@ three new fields that each have to be propagated at five sites.
 
 ---
 
-## 4. `src/generation/emit.rs` `Str::new(...)` wrap heuristic
+## 4. (closed) — the rustc writer's `Str::new(...)` wrap heuristic
 
-**Files:** `src/generation/emit.rs::{Value::Return, output_block::wrap_result}`.
-
-**What it does:** Native codegen represents loft `text` values as
-`Str` (owned) or `&str` (borrowed).  Return expressions and block-tail
-expressions have to decide whether to wrap the inner expression in
-`Str::new(...)` to produce a `Str`.  The current heuristic excludes
-user-defined text-returning functions (empty `rust`/`native` fields,
-non-`Op` prefix) because those already return `Str`, but *does* wrap
-`Op*`-prefixed template calls because those produce `&str`.
-
-**Signal:**
-- `expected &str, found Str` or `expected Str, found &str` compile
-  errors in generated Rust, often with a long sequence of nested
-  Str::new wrappers.
-- Bounded-generic T-stubs that silently return STRING_NULL instead
-  of their real text value.
-
-**Risk:**
-- The "this is an Op template" test is a prefix match on the function
-  name.  Renaming an op from `OpGetTextSub` to `GetTextSub` would
-  silently move it from the `&str` branch to the `Str` branch.
-- `patch_hoisted_returns` now runs for `Type::Text` bodies only when
-  the *function name* starts with `t_` (the T-stub convention).  Any
-  non-t_-prefixed text function whose IR matches the
-  `[Call, OpFreeText, Return(Null)]` pattern will silently drop its
-  Call value.
-
-**Mitigation:**
-- Replace the "starts with Op" heuristic with an explicit
-  `is_template` flag on `Definition`.
-- Replace the "starts with t_" gate with a structural check — detect
-  the `[expr, OpFreeText(work), Return(Null)]` shape and patch
-  wherever it appears.  Or add the flag at definition time.
-
-**Recent bugs:** P86n (native interfaces).  Required three separate
-fixes to emit text correctly for bounded-generic interface methods;
-each was scoped narrowly to avoid breaking six unrelated test files.
+It left the tree with the writer (@PLN225); the entry is in
+[BRITTLE-history.md](BRITTLE-history.md).
 
 ---
 
@@ -361,8 +326,8 @@ a compile error**:
   are asked by several of the arms above at different strengths, so a condition that looks local
   is usually one of a pair.
 
-⚠ **And the interpreter's arm has a NATIVE twin** (`src/generation/dispatch.rs`) that answers the
-same questions with a runtime test where this one uses a static predicate.  A fix applied to one
+⚠ **And the interpreter's arm has a C twin** — the C writer's rebind lowering (`src/c/body.rs`,
+`owns_displaced_store`) answers the same questions on its own.  A fix applied to one
 and not the other is invisible to the differential oracle, because that oracle compares the two
 backends and the partial fix is what made them disagree — see D-own-41, which shipped a two-line
 wrong value for a cycle exactly that way.
@@ -372,7 +337,8 @@ first of them to get a single home, read by both the freshness gate and the defe
 they cannot drift.  The rest are still per-site.  Beyond that, the missing instrument is a census
 over `(H-Drop)`'s three deaths (scope end, displacing reassignment, container cascade), counted
 per RESOURCE rather than per record: every defect in this section's history has been a hook or a
-free that no single gate represents, and `LOFT_OWN_ORACLE=check` is free-side only.
+free that no single gate represents, and the store records follow a hook only where it meets a
+copy, a free or a return (`copied-lease`).
 
 ## 8. `src/fill.rs` — 233 opcodes, auto-generated, hand-maintained
 
@@ -586,13 +552,13 @@ construct adding speculative parse could regress it silently.
    without `.base()` is **20 sites** against **128** that peel. Two are already known suspects —
    `scopes.rs`'s fn-ref free test and its tuple test, both in `get_free_vars`. Not every one is a
    defect: some types cannot be wrapped, and some sites peel upstream. The walk is to ask each
-   *"can this slot arrive wrapped, and does the Rust type the emitter declares agree with what
+   *"can this slot arrive wrapped, and does the type the emitter declares agree with what
    this test believes?"* — the second half is the one that catches it, because the emitter
    renders the bare tuple either way (`tuples.md (T-Absent)`) while the test does not.
 
    The cure that lasts is (4)'s: **one home with a name**, not a peel per site.
-   `generation::var_tuple_elems`, `use_analysis::projection_container_var` and `data::has_null`
-   are the three added for this, and each doc block says what it exists to stop being restated.
+   `use_analysis::projection_container_var` and `data::has_null` are the homes added for this
+   that remain, and each doc block says what it exists to stop being restated.
    For the fast-decoder shape the cure is the same one turned around: a replacement for a scan
    owes a statement of which ROUTES write the fact it reads, and that statement belongs on the
    fast path, where the next person to add a route will be standing.

@@ -3,7 +3,7 @@
 5 src/host.rs
 4 src/lib_placement.rs
 5 src/main.rs
-4 src/native_utils.rs
+3 src/native_utils.rs
 1 src/self_update.rs
 2 tests/c_emit.rs
 2 tests/common/mod.rs
@@ -29,6 +29,5 @@
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
 1 tests/self_update_swap.rs
-1 tests/wasm_debug_relay.rs
 1 tests/windows_probe.rs
 2 tests/wrap.rs

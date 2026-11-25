@@ -1,0 +1,26 @@
+diff --git a/src/c/loft_text.h b/src/c/loft_text.h
+index c076ece062..1ef62b9921 100644
+--- a/src/c/loft_text.h
++++ b/src/c/loft_text.h
+@@ -34,7 +34,7 @@ static loft_str loft_null_text(loft_cx *cx) {
+ }
+ 
+ static int loft_str_is_null(loft_cx *cx, loft_str s) {
+-    return s.p == 0;
++    return s.p == 0 || (s.len == 1 && s.p[0] == 0);
+ }
+ 
+ /* A thread's freed text buffers by power-of-two capacity (16 .. 4096 bytes), handed to the next
+diff --git a/src/text_null.rs b/src/text_null.rs
+index d2253d1a2e..cda59771c6 100644
+--- a/src/text_null.rs
++++ b/src/text_null.rs
+@@ -87,7 +87,7 @@ pub fn own(s: &str) -> String {
+ #[inline]
+ #[must_use]
+ pub fn is_null(s: &str) -> bool {
+-    std::ptr::eq(s.as_ptr(), NULL_TEXT.as_ptr())
++    std::ptr::eq(s.as_ptr(), NULL_TEXT.as_ptr()) || s == "\0"
+ }
+ 
+ /// The bytes a text key's digest is taken over (`@FR-S-Digest`): a null key digests as one

@@ -1,4 +1,0 @@
-// @PLN26 phase 1 regression fixture — package B.  Exports the SAME `#native`
-// symbol (`collide_shared`) as collide_a.
-pub fn cb_compute() -> integer;
-#native "collide_shared"

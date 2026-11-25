@@ -16,6 +16,7 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 loft="$here/target/release/loft"
+case "${1:-}" in -h|--help) sed -n '5,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 if [ "${1:-}" = "--loft" ]; then loft=$2; shift 2; fi
 src=${1:-}
 main=${2:-main.loft}

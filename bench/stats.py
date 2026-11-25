@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """stats.py — the benchmark suite as STATISTICS: is each routine within its bar of Rust?
 
-    python3 bench/stats.py [--only 01,08] [--lanes rust,c,cship[,native][,ship]] [--samples 7]
+    python3 bench/stats.py [--only 01,08] [--lanes rust,c,cship[,interp][,python]] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
                            [--package DIR[=NAME]]... [--routine [BENCH/]NAME[,…]]...
 
@@ -29,7 +29,7 @@ with numbers that can be compared from one pass to the next:
     so it has per-process modes that only more processes average out;
   * one warm-up round is discarded, and a row reports the MEDIAN, the spread of the
     samples (their interquartile range, as a percentage of the median) and the ratio with
-    its RANGE (the native lane's first quartile over the reference's third, and the
+    its RANGE (the C ship lane's first quartile over the reference's third, and the
     reverse).  The verdict reads the range, not the point: `ok` only when the whole range
     is inside the bar, `OVER` only when the whole range is outside it, and `unclear`
     otherwise — a row this tool cannot decide says so instead of printing a number that
@@ -39,16 +39,9 @@ with numbers that can be compared from one pass to the next:
 
 The default lanes, `rust,c,cship`, are the judged ones: the C ship lane against the Rust twin,
 the checked C beside it (doc/claude/PERFORMANCE.md § What is judged).
-Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen unit — what
-`--ship` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
-otherwise), `interp` (the loft interpreter), `python`, and `ship`: the program compiled whole,
-its libraries' loft code included and their Rust linked in (`--static`), under
-`LOFT_RELEASE_PASS_PROBE=1` — what a game's release build would emit once its own checked
-runs licensed dropping the fault checks (@PLN201).  The
-ratio column is native / rust; `ship` adds `ship_ratio` (ship / rust) to each row, the speed
-of the shipped product beside the speed of the checked build.  The ship hash is not one of the
-hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
-ship hash differs is marked and carries no ship ratio.
+Lanes: `rust` (the reference, `rustc -O` unless `--ref-flags` says otherwise), `interp` (the
+loft interpreter), `python`, `c` and `cship`.  The ratio column and its verdict are cship / rust,
+read only where the cship hash is the twin's.
 `c` and `cship` measure the C99 backend (@PLN200, `loft --emit-c`, built by `--cc` with
 `--c-flags`, `-std=c11 -O3`) against the same Rust twin: `c` is the CHECKED C — every
 expression's fault check kept, as the interpreter answers — and VALIDATES the C generator: its
@@ -59,9 +52,7 @@ and like that lane a differing hash is marked, never fatal.  Each row adds `c_ra
 the C lanes are reported as not built, with the reason.
 
 `--package DIR` measures a LIBRARY's own bench — `DIR/bench/bench.loft` beside its twin
-`DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  A package has
-dependencies, so its native lane is built by loft itself (`--ship`, what a consumer
-gets) and sampled from the binary loft cached.  Point it at a SCRATCH CLONE, never at the
+`DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  Point it at a SCRATCH CLONE, never at the
 library's working tree: the build writes caches beside the source.
 
 The programs are BUILT before they are measured, in sets of `--batch` (20): a set compiles
@@ -89,38 +80,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-
-
-def dependency_search_args(lib_dir):
-    """`-L` for every directory rustc searches to resolve loft's dependencies, under either
-    cargo layout — `src/cargo_layout.rs::dependency_dirs`, mirrored: the classic `deps/`, or
-    cargo 1.100's per-unit `build/<crate>/<hash>/out/` (no `deps/` at all, so `-L <lib>/deps`
-    named nothing and rustc said `E0463: can't find crate for sha2`).  A `deps/` beside a
-    per-unit tree whose rlib IS the linked one is an older toolchain's debris (loft#2033)."""
-    classic = os.path.join(lib_dir, "deps")
-    per_unit = []
-    build_root = os.path.join(lib_dir, "build")
-    for c in sorted(os.listdir(build_root)) if os.path.isdir(build_root) else []:
-        cdir = os.path.join(build_root, c)
-        for h in sorted(os.listdir(cdir)) if os.path.isdir(cdir) else []:
-            out = os.path.join(cdir, h, "out")
-            if os.path.isdir(out) and any(f.rsplit(".", 1)[-1].lower() in ("rlib", "so", "dylib", "dll")
-                                          for f in os.listdir(out)):
-                per_unit.append(out)
-    rlib = os.path.join(lib_dir, "libloft.rlib")
-    linked_is_per_unit = os.path.exists(rlib) and any(
-        os.path.exists(os.path.join(d, "libloft.rlib")) and os.path.samefile(os.path.join(d, "libloft.rlib"), rlib)
-        for d in per_unit)
-    dirs = [classic] if (os.path.isdir(classic) and not linked_is_per_unit) or not per_unit else per_unit
-    return [x for d in dirs for x in ("-L", d)]
-
-
-def release_rustc_args():
-    """The shipped tier's rustc arguments (`src/native_release_args.txt`, the list loft
-    compiles in), then `LOFT_NATIVE_RELEASE_FLAGS` as loft appends it."""
-    with open(os.path.join(ROOT, "src", "native_release_args.txt"), encoding="utf-8") as f:
-        args = [x.strip() for x in f if x.strip() and not x.strip().startswith("#")]
-    return args + os.environ.get("LOFT_NATIVE_RELEASE_FLAGS", "").split()
 
 
 def host_key():
@@ -239,42 +198,12 @@ def run_checked(cmd, what, times, step, reserve_gb=0.0, **kw):
                               f"{err.read().decode(errors='replace')[-3000:]}")
 
 
-def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
+def build(bench, lanes, loft, ref_flags, times, reserve_gb):
     """The command that runs each requested lane of `bench`, built where it needs building."""
     d = os.path.join(HERE, bench)
     out = os.path.join(d, ".loft")
     os.makedirs(out, exist_ok=True)
     cmds = {}
-    if "native" in lanes:
-        rs = os.path.join(out, "stats_native.rs")
-        exe = os.path.join(out, "stats_native")
-        # `--native-rust`: these two lanes measure the rustc writer, and `--native-emit` writes
-        # through whichever writer is selected — the C backend by default since the C9 flip.
-        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
-                     os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit", times,
-                    "native-emit", reserve_gb)
-        run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
-                     "-o", exe, rs], f"{bench}: rustc (native lane)", times, "native-rustc",
-                    reserve_gb)
-        os.remove(rs)
-        cmds["native"] = [exe]
-    if "ship" in lanes:
-        # The SHIP lane: what a game's release build would emit (@PLN201, NATIVE.md §
-        # Optimisation tiers) — the program compiled whole with the fault checks the
-        # release-pass probe drops.  The hash check below keeps a row only while its values
-        # still agree with the checked lanes.
-        rs = os.path.join(out, "stats_ship.rs")
-        exe = os.path.join(out, "stats_ship")
-        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
-                     os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit (ship)", times,
-                    "ship-emit", reserve_gb, env=SHIP_ENV)
-        run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
-                     "-o", exe, rs], f"{bench}: rustc (ship lane)", times, "ship-rustc",
-                    reserve_gb)
-        os.remove(rs)
-        cmds["ship"] = [exe]
     for lane, env in (("c", None), ("cship", SHIP_ENV)):
         # The C99 backend (@PLN200): checked, and under the release-pass probe.  A program it
         # does not carry yet drops these two lanes, never the program's others.
@@ -313,44 +242,12 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
 
 
 def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
-    """The lanes of a library's own bench.  The native lane is what `loft --ship`
-    builds and caches for `bench/bench.loft`; the newest binary in that cache IS the binary.
-    A binary is named `native-<key>` (by what it compiles to, so one program at two paths is
-    one entry); a cache written by an older loft still names it `bench-<key>`."""
+    """The lanes of a library's own bench."""
     bench_dir = os.path.join(pkg_dir, "bench")
     src = os.path.join(bench_dir, "bench.loft")
     if not os.path.exists(src):
         raise BuildFailed(f"{pkg_dir}: no bench/bench.loft")
     cmds = {}
-    if "native" in lanes:
-        # `--install-libs`: since @PLN195 the binary binds its packages' native libraries at
-        # start, and run straight from the cache below it has no driver to hand it their
-        # directories (`LOFT_LIB_PATH`); installed by version under `~/.loft/lib/` it finds
-        # them the way any built program does.
-        run_checked([loft, "--ship", "--install-libs", "bench/bench.loft", "--n", "2"],
-                    f"{pkg_dir}: loft --ship", times, "native-release", reserve_gb,
-                    cwd=pkg_dir)
-        cache = os.path.join(bench_dir, ".loft", "cache")
-        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))] \
-            if os.path.isdir(cache) else []
-        if not built:
-            raise BuildFailed(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
-        cmds["native"] = [max(built, key=os.path.getmtime)]
-    if "ship" in lanes:
-        # Every library recompiled inside the program at the ship level: `--ship`
-        # compiles the libraries' loft code into the binary from source, `--static` links
-        # their Rust into it as well (one file, as a game ships), and the probe switch is part
-        # of the cache key, so this is a binary of its own (the newest one).
-        run_checked([loft, "--ship", "--static", "--install-libs", "bench/bench.loft",
-                     "--n", "2"],
-                    f"{pkg_dir}: loft --ship (ship)", times, "ship-release", reserve_gb,
-                    cwd=pkg_dir, env=SHIP_ENV)
-        cache = os.path.join(bench_dir, ".loft", "cache")
-        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))]
-        ship = max(built, key=os.path.getmtime)
-        if ship in cmds.get("native", []):
-            raise BuildFailed(f"{pkg_dir}: the ship build reused the checked binary")
-        cmds["ship"] = [ship]
     if "rust" in lanes and os.path.exists(os.path.join(bench_dir, "bench.rs")):
         out = os.path.join(bench_dir, ".build")
         os.makedirs(out, exist_ok=True)
@@ -570,7 +467,7 @@ def build_batch(batch, lanes, a, build_rows, failed):
         times = []
         try:
             if pkg_dir is None:
-                cmds = build(bench, lanes, a.loft, a.lib_dir, a.ref_flags.split(), times,
+                cmds = build(bench, lanes, a.loft, a.ref_flags.split(), times,
                              a.build_mem_reserve_gb)
             else:
                 cmds = build_package(pkg_dir, lanes, a.loft, a.ref_flags.split(), times,
@@ -638,7 +535,7 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
     names = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
     for name in names:
         seen = {lane: hashes[lane].get(name) for lane in cmds
-                if name in hashes[lane] and lane not in ("ship", *C_LANES)}
+                if name in hashes[lane] and lane not in C_LANES}
         if len(set(seen.values())) > 1:
             fail(f"{bench}/{name}: the lanes compute different results — {seen}")
         line = f"{bench:15} {name:13}"
@@ -654,8 +551,9 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
             line += f" {med:>15,.0f} {sp:>5.1f}"
             rec.update({f"{lane}_ns": med, f"{lane}_min": min(xs), f"{lane}_max": max(xs),
                         f"{lane}_spread": sp, f"{lane}_n": n_of[lane]})
-        nat, ref = samples.get("native", {}).get(name), samples.get("rust", {}).get(name)
-        if nat and ref:
+        # The verdict is the C ship lane's against the twin, where its value is the twin's.
+        nat, ref = samples.get("cship", {}).get(name), samples.get("rust", {}).get(name)
+        if nat and ref and hashes["cship"].get(name) == rec["hash"]:
             ratio = statistics.median(nat) / statistics.median(ref)
             (nq1, nq3), (rq1, rq3) = quartiles(nat), quartiles(ref)
             lo, hi = nq1 / rq3, nq3 / rq1
@@ -671,23 +569,12 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
             # A program runs every routine `--n` times, calibrated on its SLOWEST one, so a
             # routine a thousand times faster is timed over a region of a few microseconds
             # of a microsecond clock.  Such a row is COARSE: its figure is real but blunt.
-            coarse = min(statistics.median(regions["native"][name]),
+            coarse = min(statistics.median(regions["cship"][name]),
                          statistics.median(regions["rust"][name])) < a.coarse_us
             flags = ("  (noisy)" if noisy else "") + ("  (coarse)" if coarse else "")
             line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{flags}"
             rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict,
                        flags=(("noisy " if noisy else "") + ("coarse" if coarse else "")).strip())
-        shp = samples.get("ship", {}).get(name)
-        ship_same = hashes.get("ship", {}).get(name) == rec["hash"]
-        if shp and ref and not ship_same:
-            # A fault the checked lanes answer as null, wrapped: the ship time is of other
-            # work, so it is not a ratio.  The row says so instead of failing the run.
-            line += "  ship (hash differs)"
-            rec.update(ship_hash=hashes["ship"][name])
-        elif shp and ref:
-            ship_ratio = statistics.median(shp) / statistics.median(ref)
-            line += f"  ship {ship_ratio:.2f}"
-            rec.update(ship_ratio=ship_ratio)
         # The C99 backend.  The checked `c` lane validates the generator: its value must be the
         # twin's.  `cship` is the probe's tier, where a fault wraps, so a differing hash only
         # marks the row.
@@ -784,12 +671,11 @@ def threads_of(bench, pkg_dir):
 def require_compiled_stdlib(loft):
     """Refuse to time an interpreter whose compiled standard library is declined (@PLN181).
 
-    The binary bakes the stdlib's compiled bodies against a hash of `default/*.loft`; run
-    against a different `default/` (a stale `src/compiled_stdlib_gen.rs`, or a binary built
-    before the stdlib moved) it declines them all and interprets — correct, and 5-23x slower on
-    text routines.  Measured 2026-10-02, that read as a +2213 % "regression" of an unrelated
-    change.  The binary itself says how many it dispatched (`LOFT_TIMING=1`); none is a refusal
-    here, not a number in the table."""
+    The stdlib's compiled bodies are a C unit the binary builds in the user cache; where it
+    cannot (no C compiler) the binary interprets them — correct, and 5-23x slower on text
+    routines, which reads as a large "regression" of an unrelated change.  The binary itself
+    says how many it dispatched (`LOFT_TIMING=1`); none is a refusal here, not a number in the
+    table."""
     probe = os.path.join(ROOT, "target", "stdlib_probe.loft")
     os.makedirs(os.path.dirname(probe), exist_ok=True)
     with open(probe, "w") as f:
@@ -798,10 +684,10 @@ def require_compiled_stdlib(loft):
                          env={**os.environ, "LOFT_TIMING": "1"}, timeout=120)
     m = re.search(r"compiled stdlib: (\d+) function", out.stderr)
     if not m or int(m.group(1)) == 0:
-        fail(f"{loft} declines its compiled standard library here: it was not compiled from this "
-             "tree's default/*.loft, so the interpreter lane would time the slow path.  Run "
-             "`make compiled-stdlib` and rebuild that binary (or pass --allow-declined-stdlib to "
-             "measure the declined state on purpose).")
+        fail(f"{loft} runs its standard library interpreted here: its C unit could not be built "
+             "(no C compiler, or LOFT_NO_COMPILED_STDLIB is set), so the interpreter lane would "
+             "time the slow path.  `LOFT_HOSTED_VERIFY=1` says why (or pass "
+             "--allow-declined-stdlib to measure the interpreted state on purpose).")
 
 
 def main():
@@ -854,22 +740,21 @@ def main():
                          "routines together, once --n is calibrated on the picked ones")
     ap.add_argument("--no-pin", action="store_true")
     ap.add_argument("--show-samples", action="store_true", help="print every sample under its row")
-    # The production pair by default (scripts/lean_build.sh): a lane measures what ships, so
-    # it runs the binary and runtime `make install` builds, not the development build with
-    # its debugging aids.  `--loft` / `--lib-dir` (or LOFT_BIN / LOFT_LIB_DIR) pick another
-    # pair — an A/B of a runtime change names both of its builds that way.
-    lean = os.path.join(ROOT, "target/install-lib/release")
-    ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(lean, "loft")))
-    ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", lean))
+    # The production binary by default (scripts/lean_build.sh): a lane measures what ships,
+    # so it runs the binary `make install` builds, not the development build with its
+    # debugging aids.  `--loft` (or LOFT_BIN) picks another — an A/B of a runtime change
+    # names both of its builds that way.
+    lean = os.path.join(ROOT, "target/install-lib/release/loft")
+    ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", lean))
     ap.add_argument("--no-lean-build", action="store_true",
-                    help="do not (re)build the production pair before measuring")
+                    help="do not (re)build the production binary before measuring")
     ap.add_argument("--allow-declined-stdlib", action="store_true",
                     help="measure the interpreter even when its compiled stdlib is declined")
     a = ap.parse_args()
-    if os.path.realpath(a.lib_dir) == os.path.realpath(lean) and not a.no_lean_build:
-        # Cargo answers in a second when the pair is current; a stale pair would measure
+    if os.path.realpath(a.loft) == os.path.realpath(lean) and not a.no_lean_build:
+        # Cargo answers in a second when the binary is current; a stale one would measure
         # code that no longer exists.
-        r = subprocess.run([os.path.join(ROOT, "scripts", "lean_build.sh"), "--lib", "--bin", "loft"],
+        r = subprocess.run([os.path.join(ROOT, "scripts", "lean_build.sh"), "--bin", "loft"],
                            capture_output=True, text=True)
         if r.returncode != 0:
             fail(f"scripts/lean_build.sh failed:\n{r.stderr[-2000:]}")
@@ -877,7 +762,11 @@ def main():
     subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 
     lanes = [x for x in a.lanes.split(",") if x]
-    unknown = set(lanes) - {"native", "rust", "interp", "python", "ship", *C_LANES}
+    retired = set(lanes) & {"native", "ship"}
+    if retired:
+        fail(f"lane(s) {', '.join(sorted(retired))} compiled the rustc writer's Rust, which is gone: "
+             "the compiled lanes are c and cship")
+    unknown = set(lanes) - {"rust", "interp", "python", *C_LANES}
     if unknown:
         fail(f"unknown lane(s): {', '.join(sorted(unknown))}")
     if not os.access(a.loft, os.X_OK):
@@ -917,8 +806,8 @@ def main():
     head = f"{'bench':15} {'routine':13}"
     for lane in lanes:
         head += f" {lane + ' ns/op':>15} {'±%':>5}"
-    if "native" in lanes and "rust" in lanes:
-        head += f" {'nat/rust':>9} {'range':>13}  verdict"
+    if "cship" in lanes and "rust" in lanes:
+        head += f" {'cship/rust':>9} {'range':>13}  verdict"
     print(head)
 
     stamp = run_metadata(a)

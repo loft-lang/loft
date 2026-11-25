@@ -26,12 +26,6 @@ make ci                                  # fmt → clippy → test (full local g
                                          #   its failures are fixed and checked — the PR's CI is
                                          #   the verdict (CI_BUDGET.md § After a red gate)
 make test                                # clippy + test → result.txt
-make check-rlib                          # 1s pre-flight: is libloft.rlib current? RUN IT
-                                         #   BEFORE a bare `cargo test` — `cargo build
-                                         #   --bin loft` never rebuilds the lib rlib the
-                                         #   native tests link, and a bare `cargo test`
-                                         #   builds no rlib either (`make ci` builds all
-                                         #   three itself, so it needs no pre-flight)
 ./scripts/find_problems.sh --changed [ref]      # SECONDS — the tight loop: the subjects YOUR
                                          #   DIFF touches (uncommitted edits, or vs `ref`),
                                          #   an edited tests/<x>.rs picks its own binary, an
@@ -80,7 +74,7 @@ cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole 
                                          #   (`make ci` runs it in the pool)
 make suite ARGS="@FR-B-Copy --mode both-c" # the LANGUAGE SUITE (loft-lang/loft-suite, beside
                                          #   this tree): one rule's cells on the interpreter and
-                                         #   the C backend (`all` adds rustc-native), a chapter
+                                         #   the C backend, a chapter
                                          #   (`--chapter heap`), or everything.  A new .loft test
                                          #   is a CELL there, under its rule; `tests/scripts`
                                          #   keeps only what this repo names — TESTING.md.  Every
@@ -173,14 +167,11 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   library routines still waiting for a row (@PLN158).
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
-                                         #   adds a library's own bench; ARGS="--lanes
-                                         #   native,rust,ship" adds a SHIP column per routine:
-                                         #   the program as a game's release build would be
-                                         #   compiled, fault checks dropped (@PLN201);
-                                         #   `,c,cship` adds the C99 backend checked and
-                                         #   probed against the same twin, its hash
-                                         #   VALIDATED (bench/README.md § The C lanes).  A
-                                         #   REPORT, never a gate
+                                         #   adds a library's own bench.  The lanes are the
+                                         #   Rust twin and the C backend, checked (`c`) and
+                                         #   probed (`cship`, fault checks dropped, @PLN201),
+                                         #   the checked hash VALIDATED (bench/README.md
+                                         #   § The C lanes).  A REPORT, never a gate
 make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
                                          #   wait — a commit needs the matrix, the pins, clippy
                                          #   and one targeted A/B on its own row; CI_BUDGET.md
@@ -202,11 +193,12 @@ make perf-local [ARGS="13/split"]        # every measurement THIS checkout took 
                                          #   run, full or partial, per routine, tagged by
                                          #   --subject; hand prices via `local.py add`.  Local,
                                          #   never committed — bench/README.md § Local results
-python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
+python3 bench/stats.py                   # C vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the
                                          #   fastest core, the ratio with its RANGE and an
-                                         #   ok / OVER / unclear verdict against --bar (2.0);
+                                         #   ok / OVER / unclear verdict (the C ship lane's)
+                                         #   against --bar (2.0);
                                          #   hashes must agree across lanes.  `--tsv` keeps a
                                          #   run to diff against the next — bench/README.md
 make interp-gap [ARGS="--only 14"]       # INTERPRETER vs NATIVE per bench routine: the

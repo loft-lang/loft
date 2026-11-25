@@ -10,31 +10,25 @@ use loft::file_access as fa;
 
 extern crate loft;
 
-/// W1.9 (native): virt_fs populate, get, and clear round-trip.
-///
-/// This exercises the thread-local VIRT_FS helpers without needing WASM.
-#[cfg(feature = "wasm")]
+/// The files a page hands the module are served from memory by the parser's lexer, each by
+/// its name, and a name it was not handed reads as absent.
 #[test]
-fn virt_fs_roundtrip() {
-    use loft::wasm::{virt_fs_clear, virt_fs_get, virt_fs_populate};
-
-    virt_fs_populate(&[
+fn a_page_s_files_are_read_by_their_name() {
+    let mut parser = loft::parser::Parser::new();
+    let lexer = &mut parser.lexer;
+    lexer.add_page_files(&[
         ("main.loft".to_string(), "fn main() {}".to_string()),
         (
             "helper.loft".to_string(),
             "fn greet() -> text { \"hi\" }".to_string(),
         ),
     ]);
-
-    assert_eq!(virt_fs_get("main.loft").as_deref(), Some("fn main() {}"));
+    assert_eq!(lexer.page_file("main.loft"), Some("fn main() {}"));
     assert_eq!(
-        virt_fs_get("helper.loft").as_deref(),
+        lexer.page_file("helper.loft"),
         Some("fn greet() -> text { \"hi\" }")
     );
-    assert!(virt_fs_get("missing.loft").is_none());
-
-    virt_fs_clear();
-    assert!(virt_fs_get("main.loft").is_none());
+    assert!(lexer.page_file("missing.loft").is_none());
 }
 
 /// W1.9 (Node.js integration test): runs the full WASM bridge test suite.
@@ -84,19 +78,19 @@ fn wasm_compile_and_run_smoke() {
 /// source, list what there is to call, break on a LINE (what a gutter click sends), pause,
 /// read a live local, call the program's own function against the frame, and resume.
 ///
-/// Native, because the entries are ordinary functions — only the `wasm_bindgen` attribute
+/// Native, because the entries are ordinary methods — only the `wasm_bindgen` attribute
 /// is behind the feature — so the contract is checkable without a browser.  The `output`
 /// field is the one part that is not: print is captured only in a browser build, so it is
 /// empty here and the browser harness is what checks it carries the program's output.
 #[test]
 fn debug_session_json_surface() {
-    use loft::wasm_debug::{debug_command, debug_start};
+    let mut dbg = loft::wasm_debug::Debugger::new();
     let src = "fn fib(n: integer) -> integer { if n < 2 { return n; } fib(n-1) + fib(n-2) }\n\
                fn main() {\n  a = fib(9);\n  b = a * 2;\n  print(\"a={a} b={b}\\n\");\n}\n";
-    assert_eq!(debug_start(src), "{\"ok\":true}");
+    assert_eq!(dbg.start(src), "{\"ok\":true}");
 
     // The callable list is the program's own functions — not `main`, and not the stdlib.
-    let fns = debug_command("fns");
+    let fns = dbg.command("fns");
     assert!(
         fns.contains("fib(n: integer) -> integer"),
         "the program's function, with its signature: {fns}"
@@ -108,8 +102,8 @@ fn debug_session_json_surface() {
 
     // A LINE breakpoint, which is what a gutter click sends: line 4 is `b = a * 2;`, so
     // `a` is assigned by now and `b` is not.
-    assert!(debug_command("bp 4").contains("D:ok bp 4"));
-    let hit = debug_command("run");
+    assert!(dbg.command("bp 4").contains("D:ok bp 4"));
+    let hit = dbg.command("run");
     assert!(hit.contains("D:hit main"), "paused in main: {hit}");
     assert!(hit.contains("a=34"), "fib(9) is 34, and it is live: {hit}");
     assert!(
@@ -123,12 +117,12 @@ fn debug_session_json_surface() {
 
     // Evaluate against the paused frame: a live local, an expression over it, and the
     // program's own function — the last is the one the panel exists for.
-    assert!(debug_command("eval a").contains("D:eval a=34"));
-    assert!(debug_command("eval a * 2").contains("D:eval a * 2=68"));
-    assert!(debug_command("eval fib(6)").contains("D:eval fib(6)=8"));
+    assert!(dbg.command("eval a").contains("D:eval a=34"));
+    assert!(dbg.command("eval a * 2").contains("D:eval a * 2=68"));
+    assert!(dbg.command("eval fib(6)").contains("D:eval fib(6)=8"));
 
     assert!(
-        debug_command("resume").contains("D:terminated"),
+        dbg.command("resume").contains("D:terminated"),
         "runs to completion"
     );
 }
@@ -137,7 +131,7 @@ fn debug_session_json_surface() {
 /// will not run the reader's code has to say why.
 #[test]
 fn debug_start_reports_why_it_did_not_compile() {
-    let bad = loft::wasm_debug::debug_start("fn main() { nosuchfunction(1); }\n");
+    let bad = loft::wasm_debug::Debugger::new().start("fn main() { nosuchfunction(1); }\n");
     assert!(bad.starts_with("{\"ok\":false"), "refused: {bad}");
     assert!(
         bad.contains("nosuchfunction"),
@@ -150,8 +144,9 @@ fn debug_start_reports_why_it_did_not_compile() {
 #[test]
 fn debug_command_without_a_session_says_so() {
     // A failed start leaves no session behind.
-    let _ = loft::wasm_debug::debug_start("fn main() { nosuchfunction(1); }\n");
-    let r = loft::wasm_debug::debug_command("run");
+    let mut dbg = loft::wasm_debug::Debugger::new();
+    let _ = dbg.start("fn main() { nosuchfunction(1); }\n");
+    let r = dbg.command("run");
     assert!(r.contains("no session"), "answers without a session: {r}");
 }
 

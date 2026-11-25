@@ -41,10 +41,10 @@ checker inside the compiler.  The rules themselves are
   over.  Neither is a reason to remove a rule now: the count is of sites, not of time (the
   performance portal weighs that), and it is of the programs measured.  It is the evidence a
   removal is argued from when one is proposed.
-- **The census runs every writer.**  It reads the C writer and the rustc one while that
-  exists (`rewrite_census.WRITERS`, the one list), and takes the larger count where both
-  report: a rule the parser or the scope pass decides counts the same under each.  A rule
-  only the rustc writer applies leaves the census with that writer.
+- **The census runs the compiled writer.**  It reads the C writer, the one compiled writer
+  (`rewrite_census.WRITERS`, the one list); a rule the parser or the scope pass decides counts
+  there as well.  The rules only the retired rustc writer applied are in
+  [formal/rewrites-history.md § Retired with the rustc writer](formal/rewrites-history.md#retired-with-the-rustc-writer-pln225-r5).
 - **No self-check.**  The compiler has no mode in which it verifies its own analyses while a
   program runs.  A layer that validates the analyses adds complexity to check complexity.
 - **Logging is the assurance.**  A decision is trusted because it can be read from outside:
@@ -95,9 +95,8 @@ A refusal is a MATCH that validation rejected, and
   clauses of the rule's statement and says more about the probe to write.  No table maps a
   test to a clause; a reason that reads badly is reworded in the gate.
 - **A gate that validates before it knows it matched undercounts.**  Some gates walk the
-  code once, testing what it may not hold before they know the pattern is there
-  (`(R-FaultFlag)`: a `for` statement is refused at a forbidden node ahead of its first fault
-  form).  Such a gate counts a refusal only once the pattern was seen, so a non-match is
+  code once, testing what it may not hold before they know the pattern is there (a
+  statement refused at a forbidden node ahead of the first node of the pattern).  Such a gate counts a refusal only once the pattern was seen, so a non-match is
   never logged and a match refused early is missed.  The gate is not reordered for the log;
   the rule carries a `@decline-owed` marker naming what is missed.
 - **One count per site.**  A site counts once, under the first test that refused it.
@@ -111,7 +110,7 @@ A refusal is a MATCH that validation rejected, and
 - **No cost when off.**  The call returns at once unless the census is switched on.
 
 An admission logs no reason.  The reason a rewrite fired is the rule, and the clause it
-fired under is in the name it reports (`R-Header/kept`, `R-Apart/records`).
+fired under is in the name it reports (`R-Header/narrow`, `R-Apart/records`).
 
 ## The state of every rule
 
@@ -163,18 +162,11 @@ shows everything of the functions it matches.  It reads `LOFT_REWRITE_CENSUS_FN`
   give enough context to write the right probe.  Added for a rule when its listing proves
   too thin.
 
-### Two lines left as they are
+### A line left as it is
 
-Both are accurate and are the largest lines of a listing after `(R-Range)`'s.  Neither is
-changed until its rule gives grief.
+It is accurate and is the largest line of a listing after `(R-Range)`'s.  It is not changed
+until its rule gives grief.
 
-- **`(R-LeafChain)`: one combined reason, under almost every function.**  A function that
-  calls another and is not frameless counts once, as "its call tree reaches a framed callee,
-  a cycle, a fn ref, a parallel or a yield".  It stays because the listing compared between
-  two builds names the function that lost the rewrite.  It is noise only in the overview
-  with no name.  The viewer hides no rule.  What would improve it: the recursive test
-  (`frameless_chain_from`) answering WHICH cause applied; and, if the overview is read
-  often, counting only a function whose own body is clean and that a callee blocks.
 - **`(R-RecPtr)`: "no fusable field read or write of the view".**  The gate's first test
   after its walk (`hoist::NO_FUSABLE_USE`).  It covers a view nobody reads through, which is
   no match, and a view read only in ways the address cannot serve, which is a refusal; the

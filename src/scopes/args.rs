@@ -50,6 +50,29 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
         Value::Call(d_nr, cargs) if crate::use_analysis::is_projection_op(data, *d_nr) => {
             lift_view_deps(cargs.first()?, data)
         }
+        // A call whose answer lies in the hidden return buffer its caller passes (`n_none(
+        // __ref_1)`: every dep of its return names that buffer parameter): its value is in that
+        // buffer's store, which the caller owns and frees, so the temp borrows the buffer.  Left
+        // unnamed, the outer call's copy kept no source-free, and a fresh answer of the outer
+        // callee leaked once per call (`fn first(v) -> R { v[0]? }` called as `first(f())`).
+        // `LOFT_NO_RETBUF_ARG_LIFT=1` leaves such an argument unnamed again.
+        Value::Call(d_nr, cargs)
+            if !crate::env_once!(std::env::var_os("LOFT_NO_RETBUF_ARG_LIFT").is_some()) =>
+        {
+            let def = data.def(*d_nr);
+            let buf = def.hidden_return_buffer_attr()?;
+            let deps = def.returned().heap_dep()?;
+            let only_buffer = !deps.is_empty()
+                && deps.iter().all(|&d| {
+                    matches!(crate::data::DepEntry::decode(d), crate::data::DepEntry::Attr(a)
+                        if a as usize == buf)
+                });
+            match cargs.get(buf).map(Value::unspan) {
+                Some(Value::Var(b)) if only_buffer => Some(vec![*b]),
+                _ => None,
+            }
+        }
+        // Any other value makes or reads a store this walk cannot name, and is not bound.
         _ => None,
     }
 }
@@ -1134,7 +1157,7 @@ impl Scopes<'_> {
         if !ls[1..].iter().any(|later| writes_vector(later, x, data)) {
             return;
         }
-        let wrapper = data.def_nr(&format!("main_vector<{}>", elem.name(data)));
+        let wrapper = data.def_nr(&data.vector_wrapper_name(&elem));
         let vec_def = data.def_nr(&Type::Vector(Box::new(elem.clone()), Deps::none()).name(data));
         let elem_def = data.type_def_nr(&elem);
         if [wrapper, vec_def, elem_def].contains(&u32::MAX) {
@@ -1329,7 +1352,21 @@ impl Scopes<'_> {
         if matches!(arg.unspan(), Value::Var(_)) {
             return None;
         }
-        if crate::use_analysis::bracket_can_name(data, arg) {
+        // A value the bracket can name needs nothing — except a join one of whose arms BUILDS a
+        // store in a buffer the caller frees (`v[0].n ?? mk()`, `?? TU`: a view of `v`, or the
+        // default built in its buffer — a block of several statements ending in that buffer).  The bracket protects both roots, but the bind of the call's answer
+        // copies or adopts against ONE witness, the base the oracle names, so on the default's
+        // path it adopted the buffer's store, which the buffer's own free released again
+        // (loft#2638).  Bound to a temp, the witness holds whichever arm ran.  A choice of two
+        // named variables keeps its reading: both are protected and the answer is copied.
+        // `LOFT_NO_JOIN_ARG_LIFT=1` leaves the join unbound.
+        if crate::use_analysis::bracket_can_name(data, arg)
+            && (crate::env_once!(std::env::var_os("LOFT_NO_JOIN_ARG_LIFT").is_some())
+                || !arg.any_node(&mut |n| {
+                    matches!(n, Value::Block(b) if b.operators.len() > 1
+                        && matches!(b.operators.last().map(Value::unspan), Some(Value::Var(_))))
+                }))
+        {
             return None;
         }
         let tp = callee.attributes().get(arg_idx)?.typedef.clone();
@@ -1434,7 +1471,16 @@ impl Scopes<'_> {
         // `var_scope` would keep pointing those vars at a scope no emitted code opens and
         // slot assignment would place them against a sibling's zone.
         if self.scope_encloses(*w) {
-            Some((*w, None))
+            // The block disappears whatever its tail: a vector literal whose view is declared
+            // outside still declares its element records (`_elm_N`) at its own scope, which no
+            // emitted code opens once it is hoisted (`@FR-B-Scope`).  So does a struct literal
+            // with a vector field: its element records sit at the struct block's scope, while its
+            // tail, the owner, is declared outside and keeps its entry.
+            // `LOFT_NO_STRUCT_LITERAL_ABSORB=1` keeps a struct literal's block scope as before.
+            let absorb = (matches!(bl.result.base(), Type::Vector(_, _))
+                || !crate::env_once!(std::env::var_os("LOFT_NO_STRUCT_LITERAL_ABSORB").is_some()))
+            .then_some(bl.scope);
+            Some((*w, absorb))
         } else if self.var_scope.get(w) == Some(&bl.scope) {
             Some((*w, Some(bl.scope)))
         } else {

@@ -72,13 +72,9 @@ fn any_chrome() -> bool {
         .any(|c| which(c).is_some())
 }
 
+/// A clang that links a WASI program: the C's wasm route a page is built through.
 fn wasm32_target_installed() -> bool {
-    loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .is_some_and(|s| s.lines().any(|l| l == "wasm32-unknown-unknown"))
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 fn repo_root() -> PathBuf {
@@ -192,7 +188,7 @@ fn html_asyncify_program_resumes_to_completion() {
         return;
     }
     let root = repo_root();
-    let Some(html) = build_html("--native-rust") else {
+    let Some(html) = build_html("--native") else {
         return;
     };
     assert_resumes(&root, &html, None); // visible — requestAnimationFrame

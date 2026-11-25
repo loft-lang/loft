@@ -3,8 +3,8 @@
 //! `@PLN206 P6` — a library's loft code never resolves to a rustc-built binary: it runs as a
 //! hosted C unit, or interpreted where no C compiler is found.  A stub `cargo` and `rustc` first
 //! on `PATH` (and named by `CARGO` / `RUSTC`) log every call; the cells must leave the log empty
-//! and answer right.  A library whose own native part is Rust only (a hand-written cdylib)
-//! keeps that cdylib for the interpreter; a C build refuses it by the library's name.
+//! and answer right.  A library that declares a native library of its own in Rust
+//! (`[library] native`, `[native] crate`) is refused on every backend (@PLN225), with no call.
 //!
 //! @falsified-at: none — the route is removed by this change, so the receipt is the tree before
 //!   it (2026-11-23): `LOFT_LIB_BACKEND=rust`, a run with no C compiler and a library declaring
@@ -89,8 +89,7 @@ impl Scratch {
             .env("CARGO", bin.join("cargo"))
             .env("RUSTC", bin.join("rustc"))
             .env("LOFT_NO_CACHE", "1")
-            .env_remove("LOFT_LIB_BACKEND")
-            .env_remove("LOFT_NO_RUSTC");
+            .env_remove("LOFT_LIB_BACKEND");
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -168,20 +167,21 @@ fn a_librarys_loft_code_never_resolves_to_a_rustc_built_artifact() {
     assert!(ok && out == "2000\n", "c: {out}{err}");
     assert!(!s.built_c_unit("counts"), "c: nothing was compiled");
     assert_eq!(s.calls(), "", "c: rustc was asked to build a library");
-    // d. A library that also declares a Rust crate for its natives: its loft code is a C unit.
+    // d. A library that also declares a Rust crate for its natives is refused (@PLN225), and
+    //    nothing is built for it.
     s.package("crated", "\n[native]\ncrate = \"crated-native\"\n", TALLY);
     let prog = s.program("use crated;\nfn main() {\n  println(\"{crated::tally(1000)}\");\n}\n");
     let (ok, out, err) = s.run(&["--interpret"], &prog, &[]);
-    assert!(ok && out == "2000\n", "d: {out}{err}");
     assert!(
-        s.built_c_unit("crated"),
-        "d: the library runs as a C unit: {err}"
+        !ok && err.contains(loft::manifest::RUST_NATIVE_REFUSED),
+        "d: the Rust crate is refused: {out}{err}"
     );
+    assert!(!s.built_c_unit("crated"), "d: nothing was compiled");
     assert_eq!(s.calls(), "", "d: rustc was asked to build a library");
 }
 
-/// A library whose native part is a hand-written Rust cdylib only cannot be part of a C build;
-/// the refusal names the library and the cure.
+/// A library whose native part is a hand-written Rust cdylib is refused on every backend at
+/// its manifest, naming the cure (@PLN225), and nothing calls cargo or rustc.
 #[test]
 fn a_rust_only_native_part_is_refused_by_its_librarys_name() {
     let s = Scratch::new("refuse");
@@ -191,10 +191,13 @@ fn a_rust_only_native_part_is_refused_by_its_librarys_name() {
         "pub fn add_one(x: integer) -> integer;\n#native \"rusty_add_one\"\n\npub fn plus_two(x: integer) -> integer {\n  add_one(add_one(x))\n}\n",
     );
     let prog = s.program("use rusty;\nfn main() {\n  println(\"{rusty::plus_two(40)}\");\n}\n");
-    let (ok, _, err) = s.run(&["--native"], &prog, &[("LOFT_TIMEOUT", "120")]);
-    assert!(!ok, "a C build of a Rust-only native part is refused");
-    assert!(
-        err.contains("its library, rusty,") && err.contains("loft install rusty"),
-        "the refusal names the library: {err}"
-    );
+    for backend in ["--interpret", "--native"] {
+        let (ok, _, err) = s.run(&[backend], &prog, &[("LOFT_TIMEOUT", "120")]);
+        assert!(!ok, "{backend}: a Rust-only native part is refused");
+        assert!(
+            err.contains(loft::manifest::RUST_NATIVE_REFUSED) && err.contains("rusty/loft.toml"),
+            "{backend}: the refusal names the library's manifest and the cure: {err}"
+        );
+        assert_eq!(s.calls(), "", "{backend}: cargo or rustc was called");
+    }
 }

@@ -54,18 +54,14 @@ fn section<'a>(stdout: &'a str, name: &str) -> &'a str {
     &stdout[after..end]
 }
 
-/// Acceptance #1 — default emits all four sections, in order, with the user fns.
+/// Acceptance #1 — default emits the three sections (bytecode, slots, types), in
+/// order, with the user fns.  The Rust section left with the rustc writer.
 #[test]
-fn default_emits_all_four_sections() {
+fn default_emits_all_three_sections() {
     let (out, ok) = introspect(&[]);
     assert!(ok, "introspect should exit 0; stdout:\n{out}");
     let (mut last, mut order) = (0usize, Vec::new());
-    for sec in [
-        "=== bytecode ===",
-        "=== rust ===",
-        "=== slots ===",
-        "=== types ===",
-    ] {
+    for sec in ["=== bytecode ===", "=== slots ===", "=== types ==="] {
         let at = out
             .find(sec)
             .unwrap_or_else(|| panic!("missing {sec} in:\n{out}"));
@@ -76,6 +72,10 @@ fn default_emits_all_four_sections() {
         );
         last = at;
     }
+    assert!(
+        !out.contains("=== rust ==="),
+        "no Rust section without the rustc writer:\n{out}"
+    );
     assert!(out.contains("n_dbl"), "user fn n_dbl missing\n{out}");
     assert!(out.contains("n_test"), "user fn n_test missing\n{out}");
 }
@@ -154,8 +154,8 @@ fn json_mode_emits_a_parseable_section_object() {
     let keys: Vec<&str> = fields.iter().map(|(k, _, _)| k.as_str()).collect();
     assert_eq!(
         keys,
-        vec!["bytecode", "rust", "slots", "types"],
-        "the four default sections, in canonical order"
+        vec!["bytecode", "slots", "types"],
+        "the three default sections, in canonical order"
     );
     // Each section value is a string carrying the same dump as the text mode.
     let types = fields

@@ -103,9 +103,13 @@ jobs:
 
       # Mirrors release.yml: make-release.sh needs `zip`; the Linux leg runs as root in the
       # manylinux image (dnf, no sudo); macOS ships zip; Windows takes it from chocolatey.
+      # A mirror that stalls is left for the next one (a request's own timeout and a minimum
+      # rate), and dnf that still does not answer leaves the bundle to Python's zipfile
+      # (make-release.sh, scripts/unzip_keep_modes.py).
       - name: Install packaging tools (Linux)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: timeout 600 dnf -y -q install zip unzip
+        run: |
+          timeout 300 dnf -y -q --setopt=timeout=30 --setopt=minrate=10k --setopt=retries=5 install zip unzip || echo "dnf did not answer: the bundle is packed and unpacked with Python's zipfile"
 
       - name: Install packaging tools (Windows)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'
@@ -185,7 +189,7 @@ jobs:
           set -e
           zip=$(ls dist/*.zip | head -1)
           rm -rf _smoke && mkdir _smoke
-          if command -v unzip >/dev/null; then unzip -q "$zip" -d _smoke; else 7z x -bso0 -bsp0 -o_smoke "$zip"; fi
+          if command -v unzip >/dev/null; then unzip -q "$zip" -d _smoke; elif command -v 7z >/dev/null; then 7z x -bso0 -bsp0 -o_smoke "$zip"; else python3 scripts/unzip_keep_modes.py "$zip" _smoke; fi
           root=$(ls -d _smoke/*/ | head -1)
           exe="${root}bin/loft"
           case "${{ matrix.target }}" in *windows*) exe="${root}bin/loft.exe";; esac
@@ -219,27 +223,26 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # The runtime library the bundle deliberately leaves out — `libloft.rlib`, its `deps/`
-      # and the standard library, in the installed layout (scripts/runtime_bundle.sh) — so
-      # `make install-main` installs main's loft with `--native` working, without compiling it
-      # (scripts/install_main_ci.sh).  The same target directory as the bundle's binary: the
-      # library is already built as that binary's dependency, and the pair must be one build.
+      # The binary and the standard library in the installed layout (scripts/runtime_bundle.sh),
+      # so `make install-main` installs main's loft without compiling it
+      # (scripts/install_main_ci.sh).  `--native` needs nothing more: it compiles through the
+      # machine's C compiler.
       - name: Package the runtime library
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
-          CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
+          CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft --target ${{ matrix.target }}
           scripts/runtime_bundle.sh ${{ matrix.target }} dist
 
       # A runtime that cannot link a program is the one failure the download exists to avoid,
       # so each leg that can run its own artefact compiles one with `--native` against it.
       - name: Smoke-test the runtime (--native)
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
@@ -255,9 +258,9 @@ jobs:
           [ "$out" = "daily runtime ok" ] || { echo "the runtime did not compile and run its own program"; exit 1; }
 
       - name: Upload the runtime
-        # Not Windows: an installed loft there cannot link `--native` yet — the import
-        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
-        # output directories only a build tree has (LNK1181 in the smoke).
+        # Not Windows: the leg was left out while `--native` linked the runtime library, whose
+        # dependencies' import libraries only a build tree has (LNK1181); through C that reason
+        # is gone, and the leg is untried there.
         if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         uses: actions/upload-artifact@v4
         with:

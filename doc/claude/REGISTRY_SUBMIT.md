@@ -310,16 +310,21 @@ Fields:
 Generating it is copy-paste from step 2: `loft package` already prints the `entry`
 body; wrap it and add `name`/`version`/`repo`/`tag`/`subpath`.
 
-What the maintainer's `loft maintain-registry` does with it (no human step unless flagged):
+What happens to it (no human step unless flagged):
 
-1. **Vets** `repo@tag` through `scripts/vet-lib.sh` — the same V1–V6 gate own libs
-   pass: it compiles + runs your tests against the current loft, checks metadata, and
-   flags any `#rust`/`#native` code.
-2. On **PASS** (pure loft), folds `entry` into `index.json`, deletes the staging file,
-   and **re-signs** — all in one atomic commit.  The sign step re-verifies your
-   `sha256` against the actual release tarball, so a wrong hash is caught there.
-3. **`#native`/`#rust`** code → a one-time human **review** before admission (arbitrary
-   native code is never auto-trusted); a **gate failure** → reported, not admitted.
+1. **Vetted on your PR.**  The registry's CI (`vet-submission.yml`) runs
+   `scripts/vet-lib.sh --isolated` on `repo@tag` — the same V1–V7 gate own libs pass: it
+   checks metadata, third-party declarations and the risk tier, compiles + runs your tests
+   against the current loft, and flags native code (`#c` bindings, a `[c]` section,
+   `#native`/`#rust`).  It runs there, on a fresh runner with no secrets, because your
+   tests are code: it never runs on a machine that holds a registry signing key
+   (`vet-lib.sh` refuses to).  Its verdict is the PR's check.
+2. On **PASS** (pure loft) the check is green, and `loft maintain-registry` merges the PR,
+   folds `entry` into `index.json`, deletes the staging file, and **re-signs** — all in one
+   atomic commit.  The sign step re-verifies your `sha256` against the actual release
+   tarball, so a wrong hash is caught there.
+3. **Native code** → the check is red with NEEDS REVIEW: a person reads the code and merges
+   the PR by hand (native code is never auto-trusted); a **gate failure** → red, not admitted.
 
 Because the submission never edits `index.json`, it can't race the signed index, and
 because it is vetted before it is folded, a broken or incompatible library never

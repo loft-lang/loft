@@ -48,6 +48,10 @@ enum Pt {
     Store(SKey),
     /// The store a parameter brought in: the caller's, never this function's to end.
     Param(u16),
+    /// The record a parameter's slot at this offset names (`h.link`, a stored reference read
+    /// off a holder the caller brought in): the caller's, as `Param` is, and a store of its own,
+    /// not the holder's (loft#2511).
+    Slot(u16, i32),
     /// Something the analysis does not follow (a native's answer, a closure call): no finding
     /// is ever drawn from it.
     Unknown,
@@ -164,6 +168,36 @@ struct State {
     /// The function's closure-record variables (`___clos_N`), the same on every path: the
     /// `live_some` candidates of a store no record captures (`live_some_candidates`).
     records: BTreeSet<u16>,
+    /// `(r, h)`: `r` was bound from `OpPlaceRecord(h, …)`, a record built INSIDE the store `h`
+    /// names (`@FR-H-RefHome`), until `r` is bound again.  A re-mint of that store
+    /// (`OpDatabase(h)` on a live store re-initialises it in place) ends such a record.
+    placed: BTreeSet<(u16, u16)>,
+    /// The stores whose lease may be settled along the paths reaching here: a drop hook ran on
+    /// it (`t_<T>_OpDrop(v)`, a cascade), or a copy took it over (`OpCopyRecord(v, w)`, the
+    /// displacement before a rebind: the hook runs on the copy, and the source is freed bare).
+    /// One handed to the caller from here may get its hook run a second time there
+    /// (`@FR-H-DropOnce`); one freed bare from here has had its hook.
+    dropped: BTreeSet<SKey>,
+    /// A hook run under `OpDistinctStore(v, w)`: `v`'s store settled except where it is `w`'s,
+    /// `(store, w)`.  Returning `w` then hands on no settled lease.
+    dropped_unless: BTreeSet<(SKey, u16)>,
+    /// The MUST twin of `dropped`: a hook ran on it on every path reaching here where it is
+    /// live (a null side of `if bool(x) drop(x)` does not count against it).
+    dropped_must: BTreeSet<SKey>,
+    /// The stores whose lease a code-generator copy took (`x = y` of a type that owns a
+    /// droppable and declares no `OpCopy`), with the copy's variable: the copy is the move it
+    /// stands for while the source is freed bare, and a hook run on one of them later is the
+    /// second drop of one value (`(H-Lease)`).
+    lease_copied: BTreeMap<SKey, u16>,
+}
+
+/// The stores a code-generator copy took the lease of on either side (`State::lease_copied`).
+fn join_lease_copied(a: &State, b: &State) -> BTreeMap<SKey, u16> {
+    let mut m = a.lease_copied.clone();
+    for (k, c) in &b.lease_copied {
+        m.entry(*k).or_insert(*c);
+    }
+    m
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -416,6 +450,12 @@ fn slot_sole_holder() -> bool {
 fn identity_test_no_use() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE").is_none())
+}
+
+/// `LOFT_RECORDS_NO_LEASE=1`: the records follow no drop lease (`@PLN228` P9) — no
+/// `copied-lease` finding.  The lease checks' bisect switch.
+pub(super) fn lease_on() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LEASE").is_some())
 }
 
 /// `LOFT_RECORDS_NO_COVER=1`: no key keeps a cover, so a free never finds its last holder gone.
@@ -723,6 +763,21 @@ fn join_state(a: &State, b: &State) -> State {
         copies: join_copies(a, b),
         views: join_views(a, b),
         records: a.records.union(&b.records).copied().collect(),
+        placed: a.placed.union(&b.placed).copied().collect(),
+        dropped: a.dropped.union(&b.dropped).copied().collect(),
+        dropped_unless: a.dropped_unless.union(&b.dropped_unless).copied().collect(),
+        lease_copied: join_lease_copied(a, b),
+        dropped_must: {
+            let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
+            let mut m: BTreeSet<SKey> = a
+                .dropped_must
+                .intersection(&b.dropped_must)
+                .copied()
+                .collect();
+            m.extend(a.dropped_must.iter().filter(|k| !live(b, k)).copied());
+            m.extend(b.dropped_must.iter().filter(|k| !live(a, k)).copied());
+            m
+        },
         mints: a.mints.clone(),
     }
 }
@@ -870,13 +925,18 @@ enum Summary {
     /// The i-th argument's store where the argument names one, a fresh store where it is null:
     /// a function filling the buffer it is handed (`OpDatabase` mints only on null).
     Buf(u16),
+    /// The record the i-th argument's slot at this offset names: the caller's, borrowed.
+    Slot(u16, i32),
+    /// Fresh on some paths, the record the i-th argument's slot names on others
+    /// (`h.link ?? S { … }`).
+    JoinSlot(u16, i32),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, Unknown};
+        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, JoinSlot, Slot, Unknown};
         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
         // Every rule naming an argument index names ONE index on both sides (or collects them
         // in `Args`): the answer does not depend on the order the returns are met in.
@@ -892,6 +952,12 @@ impl Summary {
             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
             (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
+            (Fresh, Slot(i, o) | JoinSlot(i, o)) | (Slot(i, o) | JoinSlot(i, o), Fresh) => {
+                JoinSlot(i, o)
+            }
+            (JoinSlot(i, o), Slot(j, p)) | (Slot(j, p), JoinSlot(i, o)) if (i, o) == (j, p) => {
+                JoinSlot(i, o)
+            }
             _ => Unknown,
         }
     }
@@ -1014,6 +1080,11 @@ struct Run<'a> {
     /// Where each store first ended: its line and the free that ended it, for the re-free and
     /// use-after-end findings to name.  Beside the state, not in it: a fact about the walk.
     end_lines: BTreeMap<SKey, (u32, String)>,
+    /// The ended generations a re-mint made of a store records were placed in
+    /// (`remint_ends_placed`): a reference to one written into a field is a use after its end.
+    reminted: BTreeSet<SKey>,
+    /// The `OpDistinctStore(v, w)` tests whose THEN branch is being read, `(v, w)`.
+    distinct_guards: Vec<(u16, u16)>,
     /// The function's answer, joined over every return.
     answer: Summary,
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
@@ -1174,6 +1245,15 @@ impl Run<'_> {
 
     /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
     fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
+        // A scalar local holds no store: `n = r` through a `&integer` link copies the value out
+        // of the record, and reading `n` later reads nothing that record's end touches.
+        let none = Val::null();
+        let function = &self.data.def(self.d_nr).variables;
+        let val = if v < function.count() && crate::data::is_scalar(function.tp(v)) {
+            &none
+        } else {
+            val
+        };
         st.copies.retain(|&(a, b)| a != v && b != v);
         st.views.retain(|&(a, b)| a != v && b != v);
         for k in Self::stores_of(&Self::pts(st, v)) {
@@ -1311,6 +1391,15 @@ impl Run<'_> {
         }
     }
 }
+/// Does `LOFT_STORE_TRACE` ask for the walk of function `name`?
+fn traced(name: &str) -> bool {
+    static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TRACE
+        .get_or_init(|| std::env::var("LOFT_STORE_TRACE").ok())
+        .as_deref()
+        .is_some_and(|f| name.contains(f))
+}
+
 /// Run one function's body; its answer, findings and records.
 fn run_fn<'a>(
     data: &'a Data,
@@ -1337,16 +1426,12 @@ fn run_fn<'a>(
         findings: BTreeMap::new(),
         line: 0,
         end_lines: BTreeMap::new(),
+        reminted: BTreeSet::new(),
+        distinct_guards: Vec::new(),
         answer: Summary::Bottom,
         imprecise: false,
         in_field_reset: 0,
-        traced: {
-            static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-            TRACE
-                .get_or_init(|| std::env::var("LOFT_STORE_TRACE").ok())
-                .as_deref()
-                .is_some_and(|f| def.name().contains(f))
-        },
+        traced: traced(def.name()),
         steps: 0,
         loops: Vec::new(),
         params,
@@ -1721,6 +1806,22 @@ fn analyse_all(
     found
 }
 
+/// Every finding of the records over the closed program, `(definition, line)`, in definition
+/// order: what `LOFT_OWN_ORACLE=check-records` prints as `RED` lines, for the one-report
+/// lifetime check (`crate::lifetime_check`).
+pub fn findings(data: &Data) -> Vec<(u32, String)> {
+    let ops = Ops::new(data);
+    let mut sum = BTreeMap::new();
+    let found = analyse_all(data, &ops, &mut sum);
+    let mut out = Vec::new();
+    for (d, (lines, ok)) in &found {
+        if !ok {
+            out.extend(lines.iter().map(|l| (*d, l.clone())));
+        }
+    }
+    out
+}
+
 /// The observer entry point, at the end of `close_program`.
 pub fn observe(data: &Data) {
     let table = std::env::var("LOFT_STORE_TABLE").ok();
@@ -1890,6 +1991,20 @@ fn sets_var(v: &Value, w: u16) -> bool {
 mod tests {
     use super::*;
     use crate::data::{Type, v_block, v_if};
+
+    /// A callee answering a stored reference's referent on one path and a fresh store on the
+    /// other answers `JoinSlot` (loft#2511), whichever order the returns are met in; the same
+    /// slot of another argument, or a plain argument beside it, is not followed.
+    #[test]
+    fn a_referent_beside_a_fresh_store_is_a_slot_join() {
+        use Summary::{Arg, Fresh, JoinSlot, Slot, Unknown};
+        assert_eq!(Fresh.join(Slot(0, 0)), JoinSlot(0, 0));
+        assert_eq!(Slot(0, 0).join(Fresh), JoinSlot(0, 0));
+        assert_eq!(JoinSlot(0, 0).join(Slot(0, 0)), JoinSlot(0, 0));
+        assert_eq!(Slot(0, 0).join(Slot(0, 0)), Slot(0, 0));
+        assert_eq!(JoinSlot(0, 0).join(Slot(1, 0)), Unknown);
+        assert_eq!(Slot(0, 0).join(Arg(0)), Unknown);
+    }
 
     /// Parse `source` beside the stdlib, run the scope pass, replace `fn_name`'s body by what
     /// `body` builds from (the data, the function's number), and answer the records' findings

@@ -78,7 +78,7 @@ pub(crate) fn is_synthetic_name(stored_name: &str) -> bool {
 /// type-table layout (#461), so the row registered here is the row the caller has.
 pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> Option<String> {
     match t.base() {
-        Type::Vector(elm, _) => Some(format!("main_vector<{}>", elm.name(data))),
+        Type::Vector(elm, _) => Some(data.vector_wrapper_name(elm)),
         Type::Reference(td, _) | Type::Enum(td, true, _) => {
             let def = data.def(*td);
             Some(
@@ -225,18 +225,6 @@ pub(crate) fn contributing_fingerprint(contributing: &[String]) -> u64 {
     h.finish()
 }
 
-pub(crate) fn type_layout_fingerprint(stores: &Stores) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    stores.types.len().hash(&mut h);
-    for t in &stores.types {
-        t.name.hash(&mut h);
-        t.size_bytes().hash(&mut h);
-        t.align_bytes().hash(&mut h);
-    }
-    h.finish()
-}
-
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source
 /// under `pkg_dirs` (build/artifact dirs skipped, files visited in sorted order for a
 /// stable digest).  Used to detect "did this library's source change since the last
@@ -363,24 +351,6 @@ pub(crate) fn source_newer_than(pkg_dirs: &[String], artifact: &std::path::Path)
     newest.is_some_and(|src| src > art_mtime)
 }
 
-/// The fingerprint of the first `n` types of `stores`, or `None` when it has fewer.  The same
-/// facts `native_lib`'s whole-table fingerprint hashes (name, size, alignment), over a prefix.
-pub(crate) fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
-    if stores.types.len() < n {
-        return None;
-    }
-    let mut facts: Vec<Vec<u8>> = Vec::with_capacity(n + 1);
-    facts.push((n as u64).to_le_bytes().to_vec());
-    for t in &stores.types[..n] {
-        let mut f = t.name.as_bytes().to_vec();
-        f.extend_from_slice(&t.size_bytes().to_le_bytes());
-        f.push(t.align_bytes());
-        facts.push(f);
-    }
-    let parts: Vec<&[u8]> = facts.iter().map(Vec::as_slice).collect();
-    Some(crate::cache::stable_hash(&parts))
-}
-
 /// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
 /// `#native` definition its exports reach.  The program around it may load others; linked
 /// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
@@ -403,8 +373,7 @@ pub(crate) fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(St
 }
 
 /// The `[library] native` stem of the package at `pkg_dir` and its resolved cdylib — the file
-/// a library artifact that calls the package links (`native_lib::native_pkg_cabi_link_args`) and needs
-/// loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
+/// a library artifact that calls the package links and needs loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
 /// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
 /// falling back to the crate name.  `None` when the cdylib cannot be resolved
 /// ([`crate::extensions::resolve_native_lib`] already printed why).

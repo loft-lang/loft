@@ -2,7 +2,7 @@
 // literals, the loop's counters, a nested counted loop's counters, integer locals the loop
 // never writes and hoisted record scalars run with the processor's plain operators when a
 // guard, evaluated once at the loop's entry, proves every leaf is not the sentinel and every
-// chain's magnitude bound fits the type; the checked loop is the `else` arm.  `(R-BoundedNest)`'s
+// chain's magnitude bound fits the type; the checked loop is the `else` arm.  The guarded
 // method for any counted loop's index arithmetic — composite_layer's `j * lw + i`, `x0 + i`,
 // `y0 + j` over record scalars no static proof can bound.  The interpreter keeps the checked
 // operators and is the oracle; every cell prints its values.  `LOFT_NO_GUARDED_CHAIN=1` and

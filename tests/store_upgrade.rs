@@ -303,7 +303,6 @@ fn cell_dir(name: &str) -> std::path::PathBuf {
 /// Run `loft <args>` in `dir`; (exit code, stdout, stderr).
 fn run_loft(dir: &std::path::Path, args: &[&str]) -> (i32, String, String) {
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .args(args)
         .current_dir(dir)
         .env("LOFT_TIMEOUT", "120")
@@ -902,7 +901,6 @@ fn a_reference_into_another_store_refuses_the_write() {
     let dir = cell_dir("ref_foreign");
     loft::file_access::write(dir.join("a.loft"), &writer).unwrap();
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .arg("a.loft")
         .current_dir(&dir)
         .env("LOFT_TIMEOUT", "120")
@@ -1288,7 +1286,6 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
     let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
     for mode in ["--interpret", "--native-c"] {
         let out = loft::platform::process::harness_command(loft_bin())
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .args([mode, "--lib"])
             .arg(&lib)
             .arg("b.loft")
@@ -1327,7 +1324,6 @@ fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
         let file = format!("{name}.loft");
         args.push(&file);
         let out = loft::platform::process::harness_command(loft_bin())
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")
@@ -1786,7 +1782,6 @@ fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
         }
         args.push("next.loft");
         let out = loft::platform::process::harness_command(loft_bin())
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")
@@ -2197,4 +2192,168 @@ fn cell_a_struct_wider_than_its_layout_has_types() {
         ),
         "5 0 3 x2\n",
     );
+}
+
+// The name a store records for a library type depends on what else its WRITER
+// loaded: the second definition of a name registers as `lib::Name` (`typedef::fill_database`),
+// so `assets`' `Scene`, written beside `mesh3d`'s, is `assets::Scene` in the sidecar, and
+// `assets`' own hosted unit, compiled alone, calls it `Scene`.  A library qualifier one side
+// lacks names the same type; the fields decide the rest.
+
+/// Write library `name` under `libs`: a manifest and `src/<name>.loft` holding `src`.
+fn lib_package(libs: &std::path::Path, name: &str, src: &str) {
+    let dir = libs.join(name);
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\nentry = \"src/{name}.loft\"\n"),
+    )
+    .unwrap();
+    loft::file_access::write(dir.join("src").join(format!("{name}.loft")), src).unwrap();
+}
+
+const OTHER_SCENE: &str =
+    "pub struct Scene { pub a_x: integer }\npub fn mk_a() -> Scene { Scene { a_x: 3 } }\n";
+const PACK_LIB: &str = "pub struct Scene { pub sc_name: text, pub sc_w: integer }\npub struct Pack { pub scenes: vector<Scene> }\npub fn first_w(p: Pack) -> integer { p.scenes[0].sc_w }\n";
+const PACK_READER: &str = "use pack;\nfn main() {\n  p = pack::Pack {};\n  if !store_load(p, \"a.store\") { println(\"not loaded\"); return; }\n  println(\"{pack::first_w(p)}\");\n}\n";
+
+/// The store a program that loads BOTH libraries writes: `pack`'s `Scene` is the second
+/// definition of the name, so the sidecar records it as `pack::Scene`.
+fn write_beside_another_scene(name: &str) -> std::path::PathBuf {
+    let dir = cell_dir(name);
+    let libs = dir.join("libs");
+    lib_package(&libs, "early", OTHER_SCENE);
+    lib_package(&libs, "pack", PACK_LIB);
+    loft::file_access::write(
+        dir.join("a.loft"),
+        "use early;\nuse pack;\nfn main() {\n  e = early::mk_a();\n  p = pack::Pack {};\n  p.scenes += [pack::Scene { sc_name: \"s\", sc_w: 7 }];\n  println(\"saved {store_persist_copy(p, \\\"a.store\\\")} {e.a_x}\");\n}\n",
+    )
+    .unwrap();
+    let libs = libs.to_string_lossy().into_owned();
+    let (code, out, err) = run_loft(&dir, &["--lib", &libs, "--interpret", "a.loft"]);
+    assert!(
+        code == 0 && out.contains("saved true"),
+        "{name}: the writer failed ({code}):\n{out}\n{err}"
+    );
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("pack::Scene"),
+        "the writer records the qualified name:\n{side}"
+    );
+    dir
+}
+
+/// A program that loads only `pack` reads it on both backends: its `Scene` is bare, and a
+/// library qualifier one side lacks names the same type.
+#[test]
+fn cell_a_store_written_beside_another_same_named_type_reads_without_it() {
+    let dir = write_beside_another_scene("lib_qualifier");
+    loft::file_access::write(dir.join("b.loft"), PACK_READER).unwrap();
+    let libs = dir.join("libs").to_string_lossy().into_owned();
+    for mode in [&[][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = vec!["--lib", &libs];
+        args.extend_from_slice(mode);
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "7\n"),
+            "{mode:?}: the reader saw\n{out}\n{err}"
+        );
+    }
+}
+
+/// The qualifier is all the name rule forgives: a `Scene` whose field changed kind is still
+/// refused, by the field.
+#[test]
+fn cell_a_qualified_type_whose_field_changed_is_still_refused() {
+    let dir = write_beside_another_scene("lib_qualifier_changed");
+    let libs2 = dir.join("libs2");
+    lib_package(
+        &libs2,
+        "pack",
+        &PACK_LIB
+            .replace("pub sc_w: integer", "pub sc_w: text")
+            .replace(
+                "-> integer { p.scenes[0].sc_w }",
+                "-> text { p.scenes[0].sc_w }",
+            ),
+    );
+    loft::file_access::write(dir.join("b.loft"), PACK_READER).unwrap();
+    let libs2 = libs2.to_string_lossy().into_owned();
+    for mode in [&[][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = vec!["--lib", &libs2];
+        args.extend_from_slice(mode);
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0 && out.starts_with("not loaded"),
+            "{mode:?}: a changed field was read ({code}):\n{out}\n{err}"
+        );
+    }
+}
+
+/// `@FR-L-Null-Text` × `@FR-S-Format`, `@C171` — an image written while a null text was stored as a
+/// record holding one NUL byte still reads every such slot as null.  The image is
+/// `tests/golden/images/null-text-n0` (`tests/golden/images/null-text.loft`): a nullable and a
+/// plain field, a nested field, a vector element and a hash, sorted and index key, each null,
+/// beside `""` and a present text — seven NUL records, one per place.  Read whole, on the
+/// interpreter and on the C:
+///   fields, element    -> `N N '' 'a' N 7 | 'a' N ''`
+///   hash lookups       -> the null key finds 1, `""` 2, `b` 3
+///   sorted and index   -> walked null first: `N '' 'b'`
+/// and the reading leaves the image's bytes as they were.
+/// Falsified with `schema_sidecar::nul_is_null` answering false: every null reads back as a
+/// one-NUL text and the null hash key is not found (`' ' ' ' '' 'a' ' ' 7 | … | -123 | …`).
+#[test]
+fn cell_an_image_holding_the_nul_record_reads_null() {
+    let images =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/images/null-text-n0");
+    let reader = r#"struct NT { k: text, v: integer }
+struct NS { k: text, v: integer }
+struct NI { k: text, v: integer }
+struct NInner { t: text?, n: integer }
+struct NRoot {
+  opt: text?, plain: text, empty: text, here: text, inner: NInner,
+  elems: vector<text?>, h: hash<NT[k]>, s: sorted<NS[k]>, i: index<NI[k]>
+}
+fn show(t: text?) -> text { if t == null { "N" } else { "'" + t + "'" } }
+fn main() {
+  e = "";
+  r = NRoot { opt: e, plain: e, empty: e, here: e, inner: NInner { t: e, n: 0 }, elems: [], h: [], s: [], i: [] };
+  if !store_load(r, "a.store") { println("not loaded"); return; }
+  nt: text? = null;
+  b = "b";
+  out = "{show(r.opt)} {show(r.plain)} {show(r.empty)} {show(r.here)} {show(r.inner.t)} {r.inner.n} |";
+  for x in r.elems { out += " {show(x)}"; }
+  out += " | {r.h[nt].v ?? -1}{r.h[e].v ?? -1}{r.h[b].v ?? -1} |";
+  for x in r.s { out += " {show(x.k)}"; }
+  out += " |";
+  for x in r.i { out += " {show(x.k)}"; }
+  println(out);
+}
+"#;
+    let expect = "N N '' 'a' N 7 | 'a' N '' | 123 | N '' 'b' | N '' 'b'\n";
+    let dir = cell_dir("nul_record");
+    for name in ["root.store", "root.store.dschema"] {
+        let to = name.replacen("root", "a", 1);
+        loft::file_access::write(
+            dir.join(to),
+            loft::file_access::read(images.join(name)).unwrap(),
+        )
+        .unwrap();
+    }
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    for mode in [&["--interpret"][..], &["--native-c"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0 && out == expect,
+            "{mode:?}: ({code})\n{out}\n{err}"
+        );
+    }
+    assert!(store_bytes(&dir) == before, "reading the image changed it");
+    let _ = loft::file_access::remove_dir_all(&dir);
 }

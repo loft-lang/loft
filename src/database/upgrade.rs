@@ -1201,8 +1201,11 @@ impl Stores {
         let changes = self
             .upgrade_map(&old, old_root, new_root, true, routines)
             .changes;
-        let store = crate::store::Store::from_bytes(bytes)
+        let mut store = crate::store::Store::from_bytes(bytes)
             .ok_or_else(|| format!("{what} is not a store image"))?;
+        // An image older than sidecar version 3 may hold a null text as a NUL record; the
+        // conversion reads it as null and writes the unset handle (`@FR-L-Null-Text`).
+        store.legacy_nul = crate::schema_sidecar::nul_is_null(sidecar);
         let old_slot = self.adopt_store(store);
         let result = self.upgrade_store_run(
             old_slot,

@@ -495,6 +495,8 @@ pub struct Lexer {
     /// (REPL snippets, probes, live-reload's "<live-reload>") — names like
     /// `<probe>` are not openable paths on any platform.
     virtual_files: std::collections::HashMap<String, String>,
+    /// The files a page handed the module (`add_page_files`), read where a host reads its disk.
+    page_files: std::collections::HashMap<String, String>,
     /// The bytes each file on disk had when this parse first read it (loft#1648).
     ///
     /// A parse reads every source TWICE — pass 1 and pass 2 each `switch` to it — and the
@@ -860,6 +862,7 @@ impl Default for Lexer {
         let cfg = LexConfig::default();
         Lexer {
             virtual_files: std::collections::HashMap::new(),
+            page_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             call_forms: 0,
             after_name: false,
@@ -940,6 +943,7 @@ impl Lexer {
     ) -> Lexer {
         Lexer {
             virtual_files: std::collections::HashMap::new(),
+            page_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             call_forms: 0,
             after_name: false,
@@ -2827,6 +2831,20 @@ impl Lexer {
         self.restart(filename);
     }
 
+    /// Serve `files` from memory: the files a page hands the module (`wasm_entry`), which has
+    /// no file system of its own.
+    pub fn add_page_files(&mut self, files: &[(String, String)]) {
+        for (name, content) in files {
+            self.page_files.insert(name.clone(), content.clone());
+        }
+    }
+
+    /// The text of a file a page handed the module ([`Self::add_page_files`]).
+    #[must_use]
+    pub fn page_file(&self, filename: &str) -> Option<&str> {
+        self.page_files.get(filename).map(String::as_str)
+    }
+
     /// The text of an in-memory source registered by [`Self::parse_string`], or `None` for a
     /// file that lives on disk.
     #[must_use]
@@ -2844,16 +2862,10 @@ impl Lexer {
             self.restart(filename);
             return;
         }
-        // try VIRT_FS first (WASM has no real filesystem for library files).
-        #[cfg(feature = "wasm")]
-        if let Some(content) = crate::wasm::virt_fs_get(filename) {
-            self.lines = Box::new(
-                content
-                    .lines()
-                    .map(|l| Ok(l.to_string()))
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            );
+        // A file the page handed the module (wasm has no file system for library files).
+        if let Some(content) = self.page_files.get(filename) {
+            let v: Vec<IoResult<String>> = content.lines().map(|l| Ok(l.to_string())).collect();
+            self.lines = Box::new(v.into_iter());
             self.restart(filename);
             return;
         }

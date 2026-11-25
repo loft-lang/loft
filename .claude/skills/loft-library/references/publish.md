@@ -91,8 +91,9 @@ consumer's loft itself carries the needed compiler support.)
      **commits + pushes DIRECTLY to `main` — no PR**.
    - **Foreign submissions** (an author without signing access): either a **staging file**
      `submissions/<name>-<version>.json` in a PR against
-     `loft-lang/registry` — it never touches `index.json`; the maintainer run vets it
-     (`scripts/vet-lib.sh`) and folds + re-signs atomically — or the direct `index.json`
+     `loft-lang/registry` — it never touches `index.json`; the registry's CI vets it on the
+     PR (`vet-submission.yml` runs `scripts/vet-lib.sh --isolated`, where no signing key
+     exists), and the maintainer run folds the merged ones + re-signs atomically — or the direct `index.json`
      PR the registry repo's own `SUBMITTING.md` still documents; only the maintainer half
      of the staging route is wired (REGISTRY_SUBMIT.md § 4 says what that means for a
      submitter). Preview your entry

@@ -12,7 +12,7 @@ at the pin and exports it as LOFT_SUITE_DIR for the commands that follow:
   * an explicit LOFT_SUITE_DIR is kept as it is (a curator points it at a suite AHEAD of the
     pin on purpose); a note says when it is not at the pin;
   * else `../loft-suite` when its HEAD is the pin;
-  * else a detached worktree at the pin, cached in .git/loft-suite-pin and re-pointed on each
+  * else a detached worktree at the pin, cached in the checkout's git directory (`loft-suite-pin`) and re-pointed on each
     call — `../loft-suite`'s own checkout is never moved (it may be someone's work).  The pin is
     fetched into `../loft-suite` when it lacks it, or the suite is cloned when there is none.
 
@@ -58,7 +58,9 @@ def ensure(quiet=False):
             sys.exit(f"suite_pin: cannot clone {REMOTE}: {r.stderr.strip()}")
     if _git("-C", str(sibling), "cat-file", "-e", f"{want}^{{commit}}").returncode != 0:
         _git("-C", str(sibling), "fetch", "-q", "origin")
-    cache = ROOT / ".git" / "loft-suite-pin"
+    # This checkout's own git directory: `.git` itself, or in a linked worktree (where `.git` is a
+    # file) the directory it names.
+    cache = Path(_git("-C", str(ROOT), "rev-parse", "--absolute-git-dir").stdout.strip()) / "loft-suite-pin"
     if not (cache / ".git").exists():
         _git("-C", str(sibling), "worktree", "prune")
         r = _git("-C", str(sibling), "worktree", "add", "-q", "--detach", str(cache), want)

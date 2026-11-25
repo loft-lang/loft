@@ -125,7 +125,7 @@ Recently corrected (this README was stale before 2026-05-26):
 - **The graphics/imaging blocker ("task #67", `&ref`-arg store
   forwarding) is RESOLVED** — @P321c's native fix emits
   `to_loft_ref(...)` at the call site
-  ([`src/generation/mod.rs:2402`](../../../../src/generation/mod.rs));
+  (`src/generation/mod.rs:2402`, retired with the rustc writer);
   graphics + imaging both pass `native_library_suite` (not skipped).
   So Phase 5 is no longer codegen-blocked.
 - **`imaging` migrated to the manifest pattern** (2026-05-26):

@@ -44,7 +44,7 @@ REPO = "loft-lang/loft"
 # The workflows that ARE gates, with how they are meant to fire.  "scheduled" means
 # silence IS drift — a nightly that stopped firing is a green badge over nothing.
 # "dispatch" means silence is normal (a deliberate, occasional probe: the release gate,
-# the Windows rlib escape-hatch) — its age is reported without the alarm, because an
+# the Windows static-link escape-hatch) — its age is reported without the alarm, because an
 # alarm that fires on the expected state teaches readers to ignore the census.
 # Pure-reaction workflows (labelling, close-on-merge) are not gates and are not here.
 GATE_WORKFLOWS = [

@@ -2584,11 +2584,9 @@ impl Stores {
                 3 => store.get_float(rec, pos).is_nan(),
                 4 => store.get_byte(rec, pos, 0) > 1,
                 5 => {
-                    // @FR-L-Null-Text — text nullity is CONTENT-based, and `Store::text_is_null`
-                    // is its one home: an unset handle and an allocated `STRING_NULL` record are
-                    // one absence, so a field written `t: null` is omitted exactly where a parsed
-                    // absent one is.  @P375 still holds inside it — an allocated `""` is a present
-                    // value and must serialise as `""`.
+                    // @FR-L-Null-Text — `Store::text_is_null` is the stored null's one home, so a
+                    // field written `t: null` is omitted exactly where a parsed absent one is,
+                    // and an allocated `""` stays a present value that serialises as `""`.
                     store.text_is_null(rec, pos)
                 }
                 _ => false,
@@ -3088,9 +3086,8 @@ impl Stores {
         // that invariant, checked where the record is actually born.
         //
         // It is here because this is the one call every record allocation makes with
-        // the type row still in hand — both `OpDatabase` twins (`state/io.rs`,
-        // `codegen_runtime.rs`) and the placement arena — so a single site covers
-        // both backends without the interp/native mirror being written twice.
+        // the type row still in hand — `OpDatabase` (`state/io.rs`) and the placement
+        // arena — so a single site covers them.
         //
         // ⚠ It is checked at RUNTIME, and unconditionally, because the failure it
         // replaces has no other signal.  A record built to the placeholder's layout

@@ -1,8 +1,8 @@
 diff --git a/src/coroutine_layout.rs b/src/coroutine_layout.rs
-index e8d9fa654..51c127bf2 100644
+index 39973dc9d..8af710bfa 100644
 --- a/src/coroutine_layout.rs
 +++ b/src/coroutine_layout.rs
-@@ -17,13 +17,15 @@
+@@ -16,13 +16,15 @@
  //! the *same* `T`, the two ends agree by construction — no runtime shape tag,
  //! no per-shape codec template.
  //!
@@ -25,7 +25,7 @@ index e8d9fa654..51c127bf2 100644
  
  use crate::data::{Data, Type, Value};
  
-@@ -47,10 +49,6 @@
+@@ -46,10 +48,6 @@ pub enum YieldSlot {
      /// Any `DbRef`-repr type (reference / vector / sorted / hash / index /
      /// boxed-enum / iterator).  Two slots: the full absolute `DbRef`.
      Ref,
@@ -36,7 +36,7 @@ index e8d9fa654..51c127bf2 100644
  }
  
  impl YieldSlot {
-@@ -67,7 +65,6 @@
+@@ -66,7 +64,6 @@ impl YieldSlot {
              Type::Float => Some(YieldSlot::F64),
              Type::Single => Some(YieldSlot::F32),
              Type::Routine(_) => Some(YieldSlot::Routine),
@@ -44,9 +44,9 @@ index e8d9fa654..51c127bf2 100644
              // An iterator handle is not in the DbRef set — it is a coroutine state handle,
              // not a store handle — but it travels the same slot, so it stays named here.
              Type::Iterator(_, _) => Some(YieldSlot::Ref),
-@@ -91,8 +88,9 @@
-             // short-list bug was fixed, and `classify` is the residual that fix recorded and
-             // left behind.
+@@ -87,8 +84,9 @@ impl YieldSlot {
+             //
+             // `parser/collections.rs` asks the same `is_dbref`.
              _ if crate::data::is_dbref(tp) => Some(YieldSlot::Ref),
 -            // A function is a (u32, DbRef) pair still served by the dedicated fn-ref
 -            // channel; a nested tuple would need recursion the walk does not yet do.
@@ -56,7 +56,7 @@ index e8d9fa654..51c127bf2 100644
              _ => None,
          }
      }
-@@ -117,7 +115,6 @@
+@@ -113,7 +111,6 @@ impl YieldSlot {
              YieldSlot::F32 => 4,
              YieldSlot::Routine => 5,
              YieldSlot::Ref => 6,
@@ -64,7 +64,7 @@ index e8d9fa654..51c127bf2 100644
          }
      }
  
-@@ -134,7 +131,6 @@
+@@ -130,7 +127,6 @@ impl YieldSlot {
              4 => YieldSlot::F32,
              5 => YieldSlot::Routine,
              6 => YieldSlot::Ref,
@@ -72,7 +72,7 @@ index e8d9fa654..51c127bf2 100644
              _ => YieldSlot::Int,
          }
      }
-@@ -250,12 +246,10 @@
+@@ -246,12 +242,10 @@ pub fn eager_tuple_kinds(tp: &Type) -> Option<Vec<YieldSlot>> {
      if matches!(tp.base(), Type::Function(..)) {
          return Some(vec![YieldSlot::Int, YieldSlot::Int]);
      }
@@ -86,55 +86,11 @@ index e8d9fa654..51c127bf2 100644
          .then_some(kinds)
  }
  
-diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
-index d393d9364..91ae8cf7e 100644
---- a/src/generation/coroutine.rs
-+++ b/src/generation/coroutine.rs
-@@ -63,10 +63,6 @@
-         YieldSlot::Bool => Some(format!("(({expr}) as u8) as i64")),
-         // f64::to_bits → u64 / f32::to_bits → u32, both zero-extend to i64.
-         YieldSlot::F64 | YieldSlot::F32 => Some(format!("(({expr}).to_bits()) as i64")),
--        // An owned copy handed over as a boxed pointer; `yield_slot_read` takes it back once.
--        YieldSlot::Text => Some(format!(
--            "(Box::into_raw(Box::new(({expr}).to_string())) as usize as i64)"
--        )),
-         YieldSlot::Ref => None,
-     }
- }
-@@ -107,11 +103,6 @@
-         YieldSlot::F64 => format!("f64::from_bits(_loft_yield_buf[{slot}] as u64)"),
-         YieldSlot::F32 => format!("f32::from_bits(_loft_yield_buf[{slot}] as u32)"),
-         YieldSlot::Routine => format!("(_loft_yield_buf[{slot}] as u32)"),
--        // The producer's boxed `String`, taken back exactly once — the consumer reads each
--        // slot once per advance.  `0` is an exhausted advance: the tuple's text is null.
--        YieldSlot::Text => format!(
--            "{{ let _p = _loft_yield_buf[{slot}]; if _p == 0 {{              loft::state::STRING_NULL.to_string() }} else {{              *unsafe {{ Box::from_raw(_p as usize as *mut String) }} }} }}"
--        ),
-         YieldSlot::Ref => format!(
-             "DbRef {{ store_nr: (_loft_yield_buf[{slot}] as u16), \
-              rec: (_loft_yield_buf[{s1}] as u64 as u32), \
-@@ -810,13 +801,13 @@
- 
- /// Why a yield type is refused on the straight-line channel ladder.
- const NO_CHANNEL: &str = "has no native transport channel — every element of a yielded \
--                          tuple must have one, and a nested tuple does not.";
-+                          tuple must have one, and a `text` element or a nested tuple does \
-+                          not.";
- 
- /// Why a yield type is refused from a LOOP body, where the collector is eager.
- const NO_EAGER_BUFFER: &str = "cannot be collected from a generator's LOOP body — the \
-                                eager collector holds values by copy, and this one carries \
--                               a store handle every iteration would overwrite, or a text the \
--                               collector could not release.  The loop \
-+                               a store handle every iteration would overwrite.  The loop \
-                                runs eagerly because a `yield` sits inside an expression; \
-                                as a statement of its own it is handed over lazily.";
- 
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index a33ee1a80..1caa54655 100644
+index 0513054a8..60e1169eb 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -3824,22 +3824,7 @@
+@@ -4142,22 +4142,7 @@ use #count instead"
                          } else {
                              elem_tp.clone()
                          };

@@ -39,12 +39,6 @@ name = "loft-keygen"
 path = "src/bin/loft-keygen.rs"
 required-features = ["registry"]
 
-# `make compiled-stdlib`: regenerates src/compiled_stdlib_gen.rs, linking the release library
-# the `loft` binary already built (a maintenance tool, never installed).
-[[bin]]
-name = "loft-stdlib-gen"
-path = "src/bin/loft-stdlib-gen.rs"
-
 # @PLN205 — builds the components loft ships beside its binary (`make components`).
 [[bin]]
 name = "loft-components"
@@ -130,10 +124,6 @@ strict-stores = []
 # out loud.  In `default`; the installed runtime and the wasm builds leave it out.
 stack-verify = []
 
-[build-dependencies]
-# build.rs re-derives the compiled stdlib's source hash to warn when it is stale (@PLN181).
-sha2 = { version = "0.10" }
-
 [dependencies]
 rand_core          = { version = "0.9", optional = true }
 rand_pcg           = { version = "0.9", optional = true }
@@ -198,6 +188,10 @@ find-msvc-tools    = "0.1"
 # output.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustyline          = "14"
+# The operating system's random source on every host, for a debug session's token
+# (src/debug_token.rs).  The version `ring` already brings in, so no crate is added; wasm has
+# no debug listener to guard.
+getrandom          = "0.2"
 
 [dev-dependencies]
 stdext = "0.3"

@@ -48,9 +48,7 @@ pub struct Stack<'a> {
     /// destroys a live value (the moros glb H4 UAF).  The block-exit `OpFreeRef`
     /// (`generate_call`) resets these — and only these — to the null sentinel, so
     /// the pre-build free no-ops.  Excludes retbuf/Database-reused locals (`off`),
-    /// which never take a pre-build free and rely on keeping their DbRef.  Mirrors
-    /// native's unconditional post-free reset (`generation/ops/ref_ops.rs`), scoped
-    /// to the vars that actually need it.
+    /// which never take a pre-build free and rely on keeping their DbRef.
     pub owned_reassigned: std::collections::HashSet<u16>,
     /// `@FR-T-Record` — per tuple local, the narrow members a `&` names, which hold their field
     /// encoding (`tuple_links::linked_narrow_members`, derived once from the function's IR).

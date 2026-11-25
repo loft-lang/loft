@@ -1,16 +1,16 @@
 ---
 name: loft-codegen
 description: >-
-  The discipline for ANY loft compiler work on any of the three generators — the
-  interpreter's bytecode, the C backend and the rustc writer (`--native-rust`): fixing a store-lifetime
+  The discipline for ANY loft compiler work on either generator — the interpreter's
+  bytecode and the C backend: fixing a store-lifetime
   or codegen bug, adding an operator or builtin (default/*.loft and its #rust template),
   changing parser IR or the scope pass, or reshaping any of those without meaning to change
   what they emit. USE THIS the moment you are about to edit src/parser/, src/scopes/,
-  src/compile.rs, src/state/codegen.rs, src/generation/, src/c/ or an operator's #rust
+  src/compile.rs, src/state/codegen.rs, src/c/ or an operator's #rust
   template — ESPECIALLY when a fix looks obvious and you are tempted to patch the generator
   and run the suite. The one instrument: loft introspect on every backend BEFORE touching
   the compiler. A BUG FIX proves the WORKING bytecode standalone beside the broken one; a
-  behaviour-preserving REFACTOR proves the emitted IR, Rust and C byte-identical before
+  behaviour-preserving REFACTOR proves the emitted IR, bytecode and C byte-identical before
   and after. The design and diagnosis halves are engineering-rigor and design-protocol; this
   is the emit-mode sibling. Routes to CODEGEN_METHOD.md and OWNERSHIP_MODEL.md.
 user-invocable: true
@@ -22,12 +22,11 @@ user-invocable: true
 
 > **Do NOT edit the compiler until you have the WORKING bytecode/IR for THIS
 > situation, captured beside the current/broken bytecode, and proven correct on
-> BOTH backends (`--interpret` AND the C backend, `--native`) — and on the rustc writer
-> (`--native-rust`) too when the edit is in what that writer emits.**
+> BOTH backends (`--interpret` AND the C backend, `--native`).**
 
 This is the step that, skipped, wrecks codegen work. The proof is cheap (a `/tmp`
 source shape + `loft introspect` + a run on each backend); skipping it is what costs
-hours. A patch to `src/generation/` or `gen_set_*` written *before* you can point at
+hours. A patch to `src/c/` or `gen_set_*` written *before* you can point at
 the exact ops you intend to emit is a guess — and guesses in codegen regress the
 suite, because every new shape needs another condition and the conditions interact.
 
@@ -113,7 +112,7 @@ byte-identical before/after diff, and an EMPTY diff is the proof.**
    misses a path can't catch a regression in it. Save it under the plan's
    `bytecode-comparisons/`.
 2. **Capture BEFORE.** `loft introspect corpus.loft > before.txt` (it carries the IR
-   + bytecode AND the rustc writer's Rust — not the C); the C backend's emission is a second
+   + bytecode — not the C); the C backend's emission is a second
    capture, `loft --native-c --native-emit before.c corpus.loft`. Confirm the
    corpus runs clean on `--interpret` and `--native-c` (`LOFT_STORES=warn` /
    `LOFT_NATIVE_LEAK_CHECK`).
@@ -154,23 +153,20 @@ carried one more fact?* Yes → the fact belongs in the type.
 
 ## The both-backends rule
 
-Interp (`src/state/codegen.rs` → bytecode), the C backend (`src/c/`, `--native` → C99) and the
-rustc writer (`src/generation/`, `--native-rust` → Rust) are **separate generators reading the
-same IR**.  A
-new operator lands in all three: its `#rust` template in `default/*.loft` gives the
-interpreter (`make fill` regenerates `src/fill.rs`) and the rustc writer, its `#loft` template beside
+Interp (`src/state/codegen.rs` → bytecode) and the C backend (`src/c/`, `--native` → C99) are
+**separate generators reading the same IR**.  A
+new operator lands in both: its `#rust` template in `default/*.loft` gives the
+interpreter (`make fill` regenerates `src/fill.rs`), its `#loft` template beside
 it gives the loft runner (regenerate `selfhost/src/fill.loft`,
 `doc/claude/plans/91-self-host/1b-fill-port.md`), and `make surface-gen` re-derives
 `index/target_surface.json`, while the C backend
 implements it by hand (`src/c/body.rs` or a file under `src/c/body/`, plus its runtime
 header) and lists it in the
 operator shape table that matches its result (`OP_INT`, `OP_REF`, … in `src/c/body.rs`).
-Per change, "both backends" is the interpreter and the C backend; the rustc writer runs daily,
-and is added to a change's own checks only when the change is in `src/generation/`,
-`src/codegen_runtime.rs`, an operator's `#rust` body or a Rust native. A rung is closed ONLY when BOTH emit
+A rung is closed ONLY when BOTH emit
 the proven bytecode and pass (correct + clean + no leak). An interp fix that breaks
 native compile is NOT landable. When they diverge on the same IR (one clean, one
-wrong/E0425), that divergence is the bug — neither "the suite is green" nor "interp
+wrong or refused by `cc`), that divergence is the bug — neither "the suite is green" nor "interp
 works" closes it.
 
 ## Before you add the arm: does this predicate already exist?
@@ -263,29 +259,28 @@ lowering change.  The full order is
 [CODEGEN_METHOD.md § The order of a lowering change](../../../doc/claude/CODEGEN_METHOD.md#the-order-of-a-lowering-change-and-what-each-build-is-for);
 the checklist:
 
-1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust or C of
-   the failing function (`loft introspect`, `--native-emit` for the C, `--native-rust --native-emit` for the Rust),
+1. **The cause named from an artefact, not a guess** — the IR and the emitted C of
+   the failing function (`loft introspect`, `--native-emit` for the C),
    pointing at the wrong node or line,
    BEFORE any build (step 1 above).  A fix built on a hypothesis the artefact never showed is
    a build that may change nothing.
 2. **Compile questions go to `cargo check --bin loft`**; the loop runs on the dev binary
    (`cargo build --bin loft`, then `target/debug/loft --interpret | --native | introspect |
-   --native-emit …` — its `--native-rust` links the `deps/` rlib the same build wrote; `make iter
+   --native-emit …`; `make iter
    TEST=…` for one test).  One release build per fix, at the end, never one per hypothesis:
-   it refreshes `target/release/libloft.rlib`, which only the `cargo test --release` native
-   suites link, and `make check-rlib` says whether it is due.
+   it refreshes `target/release/loft`, which the tests that spawn the release binary run.
 3. **One heavy job at a time** — a build, a gate (`ci-run.sh start`), the corpus census, a
    `cargo test` of many binaries, `make falsify` (one dev build against the installed main, two
    against a `REF`), the drop gate (every core for an hour); beside one another they slow every
    one of them.  While a build runs, read the next unit's code, and wait on its pid or output
    file (CLAUDE.md § Never wait on a process by NAME).
-4. **Every gate the change can move runs BEFORE the push**: the pin tests of the rewrites it
-   touches; `cargo test --release --test ownership_drop_gate` on both backends for anything
-   that changes what a value is held in or when it is released; the poison and stack sweeps
-   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`); the corpus census when the change is meant to
-   move emission — the emission diff first, the native run bounded by what it names; both
-   clippy legs.  A gate first run on GitHub after the push costs the gate, a fix build and a
-   red tip a sibling may already have joined.
+4. **A gate the PR's CI runs is proven there, not locally first** (owner): the pin tests of the
+   rewrites it touches, the ownership drop gate (part of the full suite), the rewrite census
+   and both clippy legs are steps of every PR run — none is re-run here just to prove what
+   that run proves.  Run one locally only while a fix is aimed at it (a change to what a value
+   is held in or when it is released iterates against the drop gate's cells; a change meant to
+   move emission reads the emission diff first), and run the sweeps the PR does not
+   (`LOFT_POISON=1`, `LOFT_VERIFY_STACK=1`) when the change is in what they watch.
 5. **Receipts last** — `scripts/falsify.sh` builds the working tree, so it runs after the fix
    is committed and while no edit is pending.  Score against the installed main
    (`make install-main`, then `make falsify GUARD=…` without `REF`) before the branch is

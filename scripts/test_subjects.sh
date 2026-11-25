@@ -68,8 +68,8 @@ HEAVY_BINARIES=(
 # (`--list-subjects` prints the counts; `subject_filter <name>` the names): a bare
 # stem over-matches as easily as it under-matches — `~par` (for par_*/parallel)
 # also took `group_apart_lint`, `~own` took `viewer_markd*own*`, and `~import`
-# took the browser test `html_gl_imports`, which made `--subject packages` rebuild
-# the wasm rlibs it never links.  The doc_hygiene guard below catches an UNMATCHED
+# took the browser test `html_gl_imports`, which made `--subject packages` run a
+# browser suite it never meant to.  The doc_hygiene guard below catches an UNMATCHED
 # binary, never a wrongly matched one; only reading the list does.
 pattern_matches() {
   local p="$1" b="$2"
@@ -89,11 +89,11 @@ subject_patterns() {
   case "$1" in
     (parser)    echo '=state_trace ~pars ~keyless_sorted ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14 ~in_place_literal ~format_append ~frontend ~slice_copy ~limits ~tail_call_caret ~later_call' ;;
     (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~join_witness ~join_arm ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_ ~callee_disturb ~buffer_is_place ~compact =lease_refuse =copy_lease =heap_sound =read_after_move ~byte_copy ~vec_copy ~repeat_run ~text_run ~rebind_own_buffer ~work_buffer =dump_determinism ~copy_view =bound_append' ;;
-    (codegen)   echo '~codegen ~leaf_inline ~ctor_literal ~fresh_text_hold ~text_set_header ~versioned_text_walk ~tested_text_borrow ~call_text_borrow ~forward_walk ~same_read ~self_replace ~in_range ~discharge_into ~single_use ~range_end_header ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~discharge_set ~literal_walk ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~lift_reuse ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~lift_adopt ~return_field ~fn_header ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field ~field_mint ~iteration_base ~nested_field ~mint_window ~copy_in_place ~leaving_free ~enum_record ~push_window ~join_read ~bounded_sum ~text_borrow ~char_walk ~split_table ~table_handle ~guard_free ~prealloc_stride ~heap_discharge ~walk_accumulator ~record_window ~scalar_file_read ~compiled_stdlib ~prealloc_elide ~loop_layout ~start_step ~swap_rebind ~refill_buffer ~refill_text ~rebind_buffer ~pure_reuse ~apart_headers ~apart_param ~file_hold ~apart_value ~apart_mint ~decode_view ~decode_structure ~field_append ~index_recptr ~stream_walk ~decline_census ~apart_records ~hand_over_rotate ~kept_header ~literal_host =trace_switches ~ranged_call_vars ~while_counter ~c_emit =width32' ;;
+    (codegen)   echo '~codegen ~leaf_inline ~ctor_literal ~fresh_text_hold ~text_set_header ~versioned_text_walk ~tested_text_borrow ~call_text_borrow ~forward_walk ~same_read ~self_replace ~in_range ~discharge_into ~single_use ~range_end_header ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~discharge_set ~literal_walk ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~lift_reuse ~vector_wrapper ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~lift_adopt ~return_field ~fn_header ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field ~field_mint ~iteration_base ~nested_field ~mint_window ~copy_in_place ~leaving_free ~enum_record ~push_window ~join_read ~bounded_sum ~text_borrow ~char_walk ~split_table ~table_handle ~guard_free ~prealloc_stride ~heap_discharge ~walk_accumulator ~record_window ~scalar_file_read ~compiled_stdlib ~prealloc_elide ~loop_layout ~start_step ~swap_rebind ~refill_buffer ~refill_text ~rebind_buffer ~pure_reuse ~apart_headers ~apart_param ~file_hold ~apart_value ~apart_mint ~decode_view ~decode_structure ~field_append ~index_recptr ~stream_walk ~decline_census ~apart_records ~hand_over_rotate ~kept_header ~literal_host =trace_switches ~ranged_call_vars ~while_counter ~c_emit =width32' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~code_base ~fast_table ~frame_headroom ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus =json_ref_read ~test ~env_ ~fs_ ~frame_readers ~ledger' ;;
-    (store)     echo '=keyed_same_name ~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures ~btree =concurrent_warm_start =vector_capacity' ;;
+    (store)     echo '=keyed_same_name ~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures ~btree =concurrent_warm_start =vector_capacity' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger =selfhost =crt_bodies' ;;
+    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger =selfhost =crt_bodies =loft_develop' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
@@ -130,11 +130,11 @@ subject_paths() {
   case "$1" in
     (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/|^src/limits\.rs' ;;
     (scopes)   echo '^src/scopes\.rs|^src/scopes/|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs|^src/repeat_run\.rs|^src/byte_copy\.rs|^src/vec_copy\.rs|^src/text_run\.rs|^src/pure_reuse\.rs|^src/shared_call\.rs|^src/bound_append\.rs|^src/forward_result\.rs|^src/literal_append\.rs' ;;
-    (codegen)  echo '^src/generation/|^src/opt/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/ctor_literal\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/self_replace\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
+    (codegen)  echo '^src/opt/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/ctor_literal\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/self_replace\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs|^src/ledger\.rs' ;;
     (store)    echo '^src/store\.rs|^src/vector\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/btree\.rs|^src/placement\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
-    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/|^src/triggers\.rs|^src/libscan\.rs' ;;
+    (packages) echo '^src/manifest\.rs|^src/develop\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/|^src/triggers\.rs|^src/libscan\.rs' ;;
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
@@ -147,9 +147,7 @@ subject_paths() {
 
 # The nextest filterset for the DEFAULT run: everything except the heavy binaries and the
 # nightly-only tests.  The nightly clause is CI's own (`ci_test_filter.py nightly`): a test whose
-# subject is the Rust writer lives in a `mod rust_writer` and runs on neither per-change gate,
-# which is also what lets the curated run skip the two wasm rlib builds (find_problems.sh
-# `selection_needs`): the per-change `--html` / `--native-wasm` tests go through the C.
+# subject is the Rust writer lives in a `mod rust_writer` and runs on neither per-change gate.
 curated_filter() {
   local parts=() b d
   for b in "${HEAVY_BINARIES[@]}"; do parts+=("binary($b)"); done

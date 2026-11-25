@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       filter:
-        description: 'cargo-nextest filterset, e.g. `binary(native) or binary(n2_cdylib)`.'
+        description: 'cargo-nextest filterset, e.g. `binary(native)`.'
         required: false
         default: ''
       run:
@@ -52,7 +52,7 @@ env:
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
   # The standing filter a push runs; a dispatch's `filter` replaces it.
   STANDING_FILTER: >-
-    binary(native) or binary(n2_cdylib) or binary(n3_use_native) or binary(native_loader)
+    binary(native) or binary(n3_use_native) or binary(native_loader)
     or binary(native_abi_contract) or binary(package_layout)
 
 jobs:
@@ -91,9 +91,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
-      # The native tests link loft's RELEASE rlib and drive the release binary, as in ci.yml.
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
+      # The native tests drive the release binary, as in ci.yml.
+      - name: Build (release loft binary for integration tests)
+        run: cargo build --release --bin loft
       - name: Install cargo-nextest
         if: github.event_name == 'push' || inputs.filter != ''
         uses: taiki-e/install-action@nextest

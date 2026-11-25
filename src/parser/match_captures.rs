@@ -682,7 +682,7 @@ impl Parser {
                         "a `match` over an iterator read more than {limit} elements (max_lookahead) — \
                          the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD"
                     )),
-                    Value::str(match_pos.file.as_str()),
+                    self.site_file(match_pos.file.as_str()),
                     Value::Int(match_pos.line as i32),
                 ],
             );

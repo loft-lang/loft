@@ -69,8 +69,8 @@ the tagged source to verify byte-for-byte equality.
 unit: each loft release builds the units of every published library with the loft it ships
 (`scripts/release-lib-artifacts.sh`), and its registry row lists them, so `loft install` gives
 a machine with no C compiler the compiled library.  A library's own native code is C (a
-`[c] shim`); a hand-written Rust cdylib (`[library] native`) is not prebuilt, and is built from
-source on first use where cargo is installed ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT).
+`[c] shim`); a native library of its own in Rust (`[library] native`) is refused, and no
+prebuilt one is fetched ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT).
 
 ### 4c. Emit the registry entry
 

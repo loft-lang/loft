@@ -16,7 +16,7 @@
 extern crate loft;
 
 use loft::data::{Data, Value};
-use loft::generation::hoist;
+use loft::opt::hoist;
 use loft::parser::Parser;
 
 /// Parse `script` against the stdlib and hand back its `Data`.

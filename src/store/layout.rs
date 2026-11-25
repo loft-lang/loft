@@ -57,6 +57,7 @@ fn rust_offsets() -> Vec<(&'static str, usize)> {
         ),
         ("frame_holds", offset_of!(Store, frame_holds)),
         ("orphaned", offset_of!(Store, orphaned)),
+        ("legacy_nul", offset_of!(Store, legacy_nul)),
         ("mapped", offset_of!(Store, mapped)),
         ("map_file", offset_of!(Store, map_file)),
         ("closure_shares", offset_of!(Store, c_share_count)),
@@ -72,6 +73,7 @@ fn c_offsets() -> Option<String> {
         "loft_os.h",
         "loft_width.h",
         "loft_cc.h",
+        "loft_cx.h",
         "loft_text.h",
         "loft_store.h",
     ] {
@@ -80,7 +82,7 @@ fn c_offsets() -> Option<String> {
     }
     // `loft_store.h` declares the locked-write refusal `loft_rt.h` defines; an offset probe
     // writes nothing, so it links against a stub.
-    src += "static int loft_locked_write(void) { return 0; }\n";
+    src += "static int loft_locked_write_on(loft_cx *cx, uint8_t kind) { (void) cx; (void) kind; return 0; }\n";
     src += "#include <stddef.h>\nint main(void) {\n";
     for (f, _) in rust_offsets() {
         let _ = writeln!(

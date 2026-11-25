@@ -90,8 +90,6 @@ HOMES = {"proxy_says_owned", "is_marked_vector_borrow"}
 # them is that the residue becomes actionable: a copy with no entry here is debt, and a NEW one
 # stands out instead of joining a list of seven that everyone has stopped reading.
 EXEMPT = {
-    "run_leak_scan": "audit — checks the licence, so it must not ask the predicate under test",
-    "run_over_free_check": "audit — same",
     "check_ref_leaks": "audit — asserts a free is MISSING; reads the raw facts to do it",
     "tuple_owned_elem_frees": "two subjects — proxy off the ELEMENT, veto off the CONTAINER",
     "build_null_coalesce_default_inner": "different question — `is_skip_free` is read as an ARM"

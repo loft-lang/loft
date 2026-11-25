@@ -50,7 +50,7 @@ SRC = ROOT / "src"
 # layer SIBLINGS names beside it.  core: the IR types, keys, stores, database, and the runtime
 # compiled programs call (@PLN191's RUNTIME set); front: lexer-to-IR; opt: what every backend
 # asks and the IR-phase rewrites; interp: the bytecode compiler and the interpreter; lower: a
-# compiled target's decisions as data; rust: the Rust writer and artifact building; facade:
+# compiled target's decisions as data; rust: src/fill.rs's generator (`create`); facade:
 # the tools (@PLN200).  Every other module sits where the fewest references cross a layer
 # upward.  A new module is added to the layer it belongs in.  `lib` is lib.rs's own items —
 # its macros and host imports, which every layer uses.
@@ -58,58 +58,60 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("core", [
         "api_diff", "api_surface", "arena", "base64", "bound_append", "btree", "build_phase",
         "byte_copy", "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc",
-        "call_frames", "cargo_layout", "codegen_runtime", "compact", "components", "const_eval",
+        "call_frames", "cargo_layout", "compact", "components", "const_eval", "coroutine_host",
         "coroutine_layout", "crash_report", "data", "data_ref", "data_store", "database",
-        "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct", "doc_render",
-        "documentation", "engine_host", "exit_record", "exit_vector", "fault_log", "ffi_deliver",
-        "file_access", "fixpoint", "fnref", "forward_result", "fxhash", "git_query", "hash",
-        "host_abi", "host_imports", "html_embed", "html_fonts", "install", "integrity",
-        "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "layout_schema", "ledger",
-        "lexer", "lib", "libscan", "limits", "literal_append", "live_control", "live_rebuild",
-        "lockfile", "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape",
-        "manifest", "migrate_long", "mmap_file", "narrow", "native", "native_bind",
-        "native_build", "net", "net_profile", "null_census", "op_census", "op_layout", "op_sets",
-        "ops", "package", "package_layout", "page_metrics", "paged_reader", "par_pool",
-        "placement", "platform", "platform_census", "png_store", "process_run", "pure_reuse",
-        "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
-        "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
-        "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
-        "rust_spelling", "sandbox", "schema_sidecar", "self_update", "shared_call", "ship_tier", "siphash",
-        "slice_text", "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops",
-        "stdlib_sources", "store", "store_budget", "store_census", "store_guard", "store_trace",
-        "take_local",
-        "text_calls", "text_run", "timeout", "tls", "toolchain", "trace", "trie_db", "triggers",
-        "tuple_links", "type_schema", "variables", "vec_copy", "vector", "verify_self", "wasm",
-        "wasm_assets", "web_browser", "web_bytes", "wrapper_inline", "ws_handshake",
+        "debug_token", "develop", "diagnostic_render", "diagnostics", "doc_catalogue",
+        "doc_construct", "doc_render", "documentation", "engine_host", "exit_record",
+        "exit_vector", "fault_log", "ffi_deliver", "file_access", "fixpoint", "fnref",
+        "forward_result", "fs_ops", "fxhash", "git_query", "hash", "host_abi", "host_imports",
+        "host_print", "html_embed", "html_fonts", "install", "integrity", "ir_schema",
+        "ir_schema_gen", "ir_shape", "json", "keys", "layout_schema", "ledger", "lexer", "lib",
+        "libscan", "limits", "literal_append", "live_control", "live_rebuild", "lockfile",
+        "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape", "manifest",
+        "migrate_long", "mmap_file", "narrow", "native", "native_bind", "native_build", "net",
+        "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
+        "package_layout", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
+        "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
+        "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
+        "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
+        "rewrite_census", "runtime_error", "rust_spelling", "sandbox", "schema_sidecar",
+        "self_update", "shared_call", "ship_tier", "siphash", "slice_text", "slot_alias",
+        "spatial", "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources", "store",
+        "store_budget", "store_census", "store_guard", "store_trace", "take_local", "text_calls",
+        "text_null", "text_run", "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links",
+        "type_schema", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
+        "web_browser", "web_bytes", "wrapper_inline", "ws_handshake",
     ]),
     ("front", [
         "bind_lowering", "const_fn", "const_literal", "copy_manifest", "copy_view",
-        "discharge_into", "empty_slot", "forward_walk", "host_result", "host_store", "in_range",
-        "gen_facts", "ir_node", "ir_read", "ir_store", "par_facts", "lease", "literal_host", "ownership_cfg", "parser",
-        "place_result", "rebind_place", "same_read", "scopes", "single_use", "slice_into",
-        "spent", "store_records", "tail_frame", "typedef", "use_analysis",
+        "discharge_into", "empty_slot", "forward_walk", "gen_facts", "host_result", "host_store",
+        "in_range", "ir_node", "ir_read", "ir_store", "lease", "lifetime_check", "literal_host",
+        "ownership_cfg", "par_facts", "parser", "place_result", "rebind_place", "same_read",
+        "scope_check", "scopes", "single_use", "slice_into", "spent", "store_records",
+        "tail_frame", "typedef", "use_analysis",
     ]),
     ("opt", [
         "ctor_literal", "exp_pow", "leaf_inline", "lib_ids", "native_gate", "opt", "self_replace",
         "text_len", "value_record", "zero_count",
     ]),
     ("interp", [
-        "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
-        "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt",
-        "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+        "c_call", "compile", "debugger", "extensions", "fill", "fuzz_keyed", "fuzz_oracle",
+        "interp", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
+        "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
     ("lower", [
         "lower",
     ]),
     ("rust", [
-        "create", "generation", "native_lib", "stdlib_codegen",
+        "create",
     ]),
     ("c", [
         "c",
     ]),
     ("facade", [
-        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
-        "script", "serve", "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
+        "compiled_stdlib", "doc_site", "fix_apply", "host", "lib_placement", "lsp",
+        "native_artifact", "repl", "rpc", "script", "serve", "startup_cache", "wasm_debug",
+        "wasm_entry", "wasm_threads",
     ]),
 ]
 
@@ -130,8 +132,8 @@ SIBLINGS: list[tuple[str, str]] = [
 BUDGET: dict[tuple[str, str], int] = {
 }
 
-# The RUNTIME (@PLN191 R1): the modules a compiled program links — what the generator names
-# (`loft::codegen_runtime`, `loft::store`, …) and what those reach — which become ONE crate,
+# The RUNTIME (@PLN191 R1): the modules a compiled program linked — what the retired Rust
+# writer named (`loft::store`, …) and what those reach — which become ONE crate,
 # `loft-runtime`, that the `loft` binary uses as a single dependency.  Kept whole so the
 # optimiser sees all of it at once: compiled-code speed is the first priority.  Seeded from
 # the closure of the generated code's roots with the compiler, the interpreter (`State`), the
@@ -140,16 +142,17 @@ BUDGET: dict[tuple[str, str], int] = {
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
     "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "cargo_layout",
-    "codegen_runtime", "crash_report", "database", "diagnostic_render", "diagnostics",
+    "coroutine_host", "crash_report", "database", "debug_token", "diagnostic_render", "diagnostics",
     "engine_host", "fault_log", "file_access", "fxhash", "git_query", "hash", "host_abi",
-    "integrity", "json", "keys", "ledger", "lexer", "limits", "live_control", "live_rebuild",
-    "lockfile", "log_config", "logger", "loop_kernels", "mmap_file", "narrow", "native",
-    "native_bind", "net", "net_profile", "op_census", "ops", "page_metrics", "paged_reader",
-    "par_pool", "placement", "platform", "png_store", "process_run", "radix_db", "radix_tree",
-    "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar",
-    "siphash", "stack_verify", "store", "store_budget", "store_census", "store_guard",
-    "store_trace", "timeout",
-    "tls", "trie_db", "vector", "wasm", "wasm_assets", "web_browser", "web_bytes", "ws_handshake",
+    "host_print", "integrity", "json", "keys", "ledger", "lexer", "limits", "live_control",
+    "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels", "mmap_file", "narrow",
+    "native", "native_bind", "net", "net_profile", "op_census", "ops", "page_metrics",
+    "paged_reader", "par_pool", "placement", "platform", "png_store", "process_run", "radix_db",
+    "radix_tree", "resolution_scope", "rewrite_census", "runtime_error",
+    "schema_sidecar", "siphash", "stack_verify", "store", "store_budget", "store_census",
+    "store_guard", "store_trace", "text_null", "timeout", "tls", "trie_db", "vector", "wasm",
+    "wasm_assets",
+    "web_browser", "web_bytes", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.

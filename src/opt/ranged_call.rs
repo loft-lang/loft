@@ -5,9 +5,8 @@
 //! `@FR-R-RangedCall`'s facts, which every writer reads: whether a call of a function repays a
 //! ranged variant (the gain test), whether a call's integer arguments are proven within
 //! `[-L, L]`, and the facts a ranged variant's body runs under (its integer parameters seeded
-//! to `[-L, L]`).  The writers keep only their spelling — native's `__rg` variants and guarded
-//! copy (`generation::ranged_call`), the C's `__rg` twin (`c::RG_BIT`).  `LOFT_NO_RANGED_CALLS=1`
-//! keeps every template on both (`range::ranged_calls_enabled`).
+//! to `[-L, L]`).  The C writer keeps only its spelling, the `__rg` twin (`c::RG_BIT`).
+//! `LOFT_NO_RANGED_CALLS=1` keeps every template (`range::ranged_calls_enabled`).
 
 use crate::data::{Block, Data, Type, Value};
 use crate::opt::range::{self, Range, Ranges};

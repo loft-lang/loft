@@ -182,7 +182,6 @@
 915-loop-variable-per-loop.loft
 923-nullable-vector-element-schema.loft
 927-trie-spatial-linked-group.loft
-928-generator-duplicate-local-name.loft
 945-stdlib-worked-examples.loft
 946-stdlib-file-worked-examples.loft
 947-feature-worked-examples.loft

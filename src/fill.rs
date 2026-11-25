@@ -11,16 +11,11 @@
 // Byte-for-byte equality of this file with that regeneration is enforced by
 // `tests/issues.rs::fill_rs_up_to_date` and `::n9_generated_fill_matches_src`,
 // so hand-edits fail CI — edit the `#rust` template in default/*.loft instead.
-//
-// The SAME templates feed native code generation (`src/generation/`): there the
-// `s.<method>` calls below are rewritten to their `stores.*` / `*_runtime`
-// equivalents by `src/generation/calls.rs::substitute_template_body`.
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
 use crate::btree;
-use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{DbRef, Str};
 use crate::ops;
@@ -1321,7 +1316,7 @@ fn cast_text_from_bool<const F: bool>(s: &mut State) {
     let new_value = if v_v1 == 1 {
         "true"
     } else if v_v1 == 255 {
-        "\0"
+        crate::text_null::null_str()
     } else {
         "false"
     };
@@ -3190,7 +3185,7 @@ fn const_text_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn conv_text_from_null<const F: bool>(s: &mut State) {
-    let new_value = Str::new(crate::state::STRING_NULL);
+    let new_value = Str::null();
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3205,7 +3200,7 @@ fn length_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
     let new_value = {
         let __t = v_v1.str();
-        if __t == crate::state::STRING_NULL {
+        if crate::text_null::is_null(__t) {
             0
         } else {
             __t.chars().count() as i64
@@ -3225,7 +3220,7 @@ fn size_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
     let new_value = {
         let __t = v_v1.str();
-        if __t == crate::state::STRING_NULL {
+        if crate::text_null::is_null(__t) {
             0
         } else {
             __t.len() as i64
@@ -3254,7 +3249,7 @@ fn length_character_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn conv_bool_from_text<const F: bool>(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str() != crate::state::STRING_NULL;
+    let new_value = !crate::text_null::is_null(v_v1.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3537,11 +3532,11 @@ fn cast_text_from_enum<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_enum_tp = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, u8>();
-    let new_value = Str::new(if v_v1 == 0 || v_v1 == 255 {
-        "\0"
+    let new_value = if v_v1 == 0 || v_v1 == 255 {
+        Str::null()
     } else {
-        s.database.enum_val(v_enum_tp, v_v1)
-    });
+        Str::new(s.database.enum_val(v_enum_tp, v_v1))
+    };
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -4295,7 +4290,7 @@ fn get_text<const F: bool>(s: &mut State) {
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
-            Str::new(crate::state::STRING_NULL)
+            Str::null()
         } else {
             let store = s.database.store(&db);
             Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(v_fld))))
@@ -4764,7 +4759,7 @@ fn set_text<const F: bool>(s: &mut State) {
     let v_v1 = s.get_stack_m::<F, DbRef>();
     {
         let db = v_v1;
-        let s_val = v_val.str().to_string();
+        let s_val = crate::text_null::own(v_val.str());
         if db.rec != 0 {
             let store = s.database.store_mut(&db);
             let s_pos = store.set_str(&s_val);
@@ -4789,7 +4784,7 @@ fn set_text_replace<const F: bool>(s: &mut State) {
     let v_v1 = s.get_stack_m::<F, DbRef>();
     {
         let db = v_v1;
-        let s_val = v_val.str().to_string();
+        let s_val = crate::text_null::own(v_val.str());
         if db.rec != 0 {
             s.database
                 .store_mut(&db)
@@ -5584,11 +5579,11 @@ fn print<const F: bool>(s: &mut State) {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
     crate::loft_host_print(v_v1.str().as_ptr(), v_v1.str().len());
     #[cfg(all(not(feature = "wasm"), not(target_arch = "wasm32")))]
-    crate::codegen_runtime::print_or_host(v_v1.str());
+    s.database.print_or_host(v_v1.str());
     #[cfg(all(not(feature = "wasm"), target_arch = "wasm32", target_os = "wasi"))]
-    crate::codegen_runtime::host_print(v_v1.str());
+    crate::host_print::host_print(v_v1.str());
     #[cfg(feature = "wasm")]
-    crate::wasm::output_push(v_v1.str());
+    s.database.print_or_host(v_v1.str());
 }
 
 fn print_r(s: &mut State, r: Regs) -> Regs {
@@ -5972,7 +5967,7 @@ fn set_keyed_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::radix_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5985,10 +5980,7 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_spatial<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::spatial_bytes(
-        &v_r,
-        &s.database.allocations,
-    ));
+    let new_value = i64::from(crate::radix_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6001,7 +5993,7 @@ fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn length_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_len(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6014,7 +6006,7 @@ fn length_trie_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn size_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+    let new_value = i64::from(crate::trie_db::table_bytes(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 

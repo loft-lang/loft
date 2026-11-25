@@ -484,16 +484,13 @@ discover the declared operators, so what their bodies call must exist first.
    `cargo test --release --test issues regen_fill_rs -- --ignored --nocapture`.
    `OPERATORS` is slice-typed, so the array grows in the same pass; `fill_rs_up_to_date` and
    `n9_generated_fill_matches_src` fail on a stale `fill.rs`.
-4. **Native codegen:** regeneration does not touch `src/codegen_runtime.rs`.  An operator that
-   adds a `Parts` variant needs its arm in each `match` over `Parts` there; one that calls new
-   `stores` methods needs the same calls mirrored (compare the `OpGetInt4` / `OpSetInt4`
-   handling).
+4. **Native codegen:** regeneration does not touch the C backend (`src/c/`); an operator needs
+   its C lowering there.
 5. **Re-derive the surface:** `make surface-gen` — a new operator renumbers
-   `index/target_surface.json`, and it reads a prebuilt wasm rlib, so rebuild that rlib first
+   `index/target_surface.json`; the script builds the wasm32 runtime it probes itself
    (CLAUDE.md § Conventions).
 6. **Run `cargo test --release --test native native_dir`** before committing: it compiles the
    script corpus natively and catches a native program that hangs while every unit test passes.
-   `make ci` rebuilds the wasm rlibs and the fixture cdylibs itself.
 
 ### Opcode budget — and why the count is never written down
 

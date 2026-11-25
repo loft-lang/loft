@@ -78,6 +78,9 @@ fn main() {
   // power rounds to 0.02408592796925743
   dk = decay(52.16578514998299454 / 14.0);
   assert(dk * 4294967296.0 == 103448272.92177233, "decay {dk * 4294967296.0:.17}");
+  // the same power spelled `pow(E, x)`: the exponential, not the power of the rounded E
+  gk = grow(0.0 - 52.16578514998299454 / 14.0);
+  assert(gk * 4294967296.0 == 103448272.92177233, "grow {gk * 4294967296.0:.17}");
   // a text made of two nested text answers: "ab" is 2 bytes, WIDTHS[2] = 4
   assert(tag("ab") == "<ab:4|ab:4>", "tag {tag("ab")}");
   // a local held in its own text slot while the answer is built in another: "ab:4" is 4 bytes

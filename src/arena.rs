@@ -350,6 +350,101 @@ pub fn all_records(store: &Store, table: u32) -> Vec<u32> {
     out
 }
 
+/// `@FR-S-Sound` — whether the arena of table record `table`, at `stride` bytes a slot, has the
+/// shape every insert follows (`(S-Arena)`): a directory that is a record, a chunk for every
+/// index below the append cursor, each chunk a record of at least its chunk's words, and no
+/// record named twice — by two chunks, or by a chunk and the table or the directory.  Answers
+/// the cursor (the first index never handed out), or the first number that does not hold.
+///
+/// An insert believes all of these: it takes the free-list head or the cursor as an index and
+/// writes a whole slot at the offset the tiling gives it, in whichever record the directory
+/// names.
+pub(crate) fn sound(store: &Store, table: u32, stride: u32) -> Result<u32, String> {
+    let dir = store.get_u32_raw(table, DIR_FLD);
+    let next = store.get_u32_raw(table, NEXT_FLD).max(1);
+    if dir == 0 {
+        if next > 1 || store.get_u32_raw(table, FREE_FLD) != 0 {
+            return Err(format!(
+                "hash arena of table {table} has handed out entries and has no directory"
+            ));
+        }
+        return Ok(1);
+    }
+    let Some(words) = store.claimed_words(dir) else {
+        return Err(format!("hash arena directory {dir} is not a record"));
+    };
+    let cap = (words - 1) * 2;
+    // The last chunk an index below the cursor lies in; every chunk up to it must be there.
+    let last = (next >= 2).then(|| chunk_of(next - 2));
+    if last.is_some_and(|l| l >= cap) {
+        return Err(format!(
+            "hash arena directory {dir} holds {cap} chunks; the table has handed out {} entries",
+            next - 1
+        ));
+    }
+    let mut named = vec![table, dir];
+    for k in 0..cap {
+        let rec = store.get_u32_raw(dir, DIR0 + 4 * k);
+        if rec == 0 {
+            if last.is_some_and(|l| k <= l) {
+                return Err(format!(
+                    "hash arena chunk {k} is missing; the table has handed out {} entries",
+                    next - 1
+                ));
+            }
+            continue;
+        }
+        let need = chunk_words(k, stride);
+        if store.claimed_words(rec).is_none_or(|w| w < need) {
+            return Err(format!(
+                "hash arena chunk {k} is record {rec}, which is not a record of {need} words"
+            ));
+        }
+        named.push(rec);
+    }
+    named.sort_unstable();
+    if let Some(twice) = named
+        .windows(2)
+        .find_map(|w| (w[0] == w[1]).then_some(w[0]))
+    {
+        return Err(format!(
+            "hash arena of table {table} names record {twice} twice"
+        ));
+    }
+    Ok(next)
+}
+
+/// `@FR-S-Sound` — whether the free list of table record `table`'s arena, already [`sound`]
+/// with cursor `next`, runs through indices below the cursor that no bucket names, each once.
+/// `taken[i]` says index `i` is named already; the list's own indices are added to it, so the
+/// walk ends within `next` steps whatever the file holds.
+pub(crate) fn free_list_sound(
+    store: &Store,
+    table: u32,
+    stride: u32,
+    next: u32,
+    taken: &mut [bool],
+) -> Result<(), String> {
+    let dir = store.get_u32_raw(table, DIR_FLD);
+    let mut at = store.get_u32_raw(table, FREE_FLD);
+    while at != 0 {
+        if at >= next {
+            return Err(format!(
+                "hash arena free list names entry {at}; the table has handed out {}",
+                next - 1
+            ));
+        }
+        if std::mem::replace(&mut taken[at as usize], true) {
+            return Err(format!(
+                "hash arena free list names entry {at}, which is in use or listed twice"
+            ));
+        }
+        let (k, off) = locate(at, stride);
+        at = store.get_u32_raw(chunk_rec(store, dir, k), off);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

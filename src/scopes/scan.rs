@@ -277,6 +277,7 @@ impl Scopes<'_> {
                     let fname = data.def(self.d_nr).original_name();
                     let via = disturbance_via(data, &cause);
                     report_materialised_view(
+                        data,
                         cause.reported_cause(),
                         &vname,
                         &cname,
@@ -306,7 +307,39 @@ impl Scopes<'_> {
                 self.scan_inner(&rewritten, function, data)
             }
             Value::Set(ov, value) => {
+                let first = !self
+                    .var_scope
+                    .contains_key(self.var_mapping.get(ov).unwrap_or(ov));
                 let set = self.scan_set(*ov, value, function, data);
+                // A FIRST bind of a call whose arguments were hoisted (`{ INSERT <literals>; f(…) }`, `scan_args`)
+                // is bound as the call itself, its preamble run first: the bind arm reads the
+                // call (`bind_lowering::first_arm` asks `callee_of`, which an `Insert` hides) and
+                // copies or adopts its answer as it does for `o = f(x, y)`.  Bound through the
+                // `Insert` it read as a plain adopt, and a callee answering its second argument
+                // left that argument's buffer freed beside the binding (loft#2638).
+                // A rebind keeps it: its displaced store is released against the value it reads
+                // (a loop's `s = me(Bx { … })` leaked one record split apart).
+                // `LOFT_NO_SET_PREAMBLE_HOIST=1` keeps the `Insert` as the value.
+                let set = match set {
+                    Value::Set(v, val)
+                        if first
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_NO_SET_PREAMBLE_HOIST").is_some()
+                            )
+                            && matches!(val.unspan(), Value::Insert(ops)
+                            if ops.len() > 1
+                                && matches!(ops.last().map(Value::unspan),
+                                    Some(Value::Call(..) | Value::CallRef(..)))) =>
+                    {
+                        let Value::Insert(mut ops) = val.unspan().clone() else {
+                            unreachable!("matched above")
+                        };
+                        let call = ops.pop().expect("matched above");
+                        ops.push(Value::Set(v, Box::new(call)));
+                        Value::Insert(ops)
+                    }
+                    other => other,
+                };
                 // loft#2594 — the bind took the buffer's store (`literal_moves`): the buffer's
                 // slot is reset to the null sentinel behind it, freeing nothing.
                 match self.moved_buffer.take_if(|(local, _)| *local == *ov) {

@@ -884,3 +884,13 @@ rest-c 15.2 — every leg within budget, from 20–37 min per leg two days earli
 legs' walls: build 2.3–5.0 (the leg holding `--lib` the longest), the runtime rlibs 2.8–3.4
 side by side, the warm-up 1.4–1.8, tests 4.2–8.3.  Windows runs the same five legs on a PR
 and had not run them by this commit.
+
+## Open-work row H, retired with the rustc writer (@PLN225, 2026-11-24)
+
+The row stood in CI_BUDGET.md § Open work until the rustc writer was retired (`@C170`): its
+premise — a native test program carried through `rustc`, keyed on the whole `libloft` rlib — left
+with the writer.
+
+| item | what | trigger / size |
+|---|---|---|
+| **H — reuse compiled blocks** | Every loft rebuild invalidates every cached native test program (the key folds the whole `libloft` rlib) and, on a development build, every library artifact; and each test program carries the standard library's 3.3k lines through `rustc` again (~70 % of its generated Rust).  Keying both on generated source ⊕ the runtime's fingerprint, and compiling the standard library once for the test tier, is [@PLN200 B7](plans/200-backend-structure.md#b7--testing-reuse-compiled-blocks) | after @PLN191's runtime crate; B7.5 earlier; M–L |

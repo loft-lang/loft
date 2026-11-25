@@ -96,10 +96,10 @@ fn idents(s: &str) -> Vec<&str> {
 
 /// The release statements a tail is made of: one call, one line, no block of its own.
 const RELEASES: [&str; 4] = [
-    "loft_free_var(&",
-    "loft_free_var_distinct(&",
-    "loft_text_free(&",
-    "loft_wpark_put(&",
+    "loft_free_var(cx, &",
+    "loft_free_var_distinct(cx, &",
+    "loft_text_free(cx, &",
+    "loft_wpark_put(cx, &",
 ];
 
 fn is_release(t: &str) -> bool {
@@ -174,7 +174,8 @@ fn exit_at(lines: &[&str], ret: usize, nested: &HashSet<&str>) -> Option<Exit> {
             return None;
         }
     }
-    let writes = format!("(&{x}");
+    // A release names what it writes first after the store context: `loft_free_var(cx, &x)`.
+    let writes = format!("(cx, &{x}");
     let mut stmts = Vec::with_capacity(ret - from + 2);
     // The tail's read of the result moves to the front when no other statement of the tail
     // names what it reads: a release writes only what it names, so the value is the one the
@@ -329,11 +330,11 @@ pub(crate) fn merge(name: &str, ret: &str, body: &str) -> Option<String> {
     Some(text)
 }
 
-/// The store variable a release statement frees (`loft_free_var(&x)`, `…_distinct(&x, w)`).
+/// The store variable a release statement frees (`loft_free_var(cx, &x)`, `…_distinct(cx, &x, w)`).
 fn freed_ref(t: &str) -> Option<&str> {
     let r = t
-        .strip_prefix("loft_free_var(&")
-        .or_else(|| t.strip_prefix("loft_free_var_distinct(&"))?;
+        .strip_prefix("loft_free_var(cx, &")
+        .or_else(|| t.strip_prefix("loft_free_var_distinct(cx, &"))?;
     let end = r.find([',', ')'])?;
     is_ident(&r[..end]).then_some(&r[..end])
 }
@@ -402,7 +403,7 @@ fn probe(name: &str, body: &str) -> Option<String> {
         for v in all.iter().filter(|v| !here.contains(v)) {
             let _ = writeln!(
                 out,
-                "    if ({v}.store_nr != 0xFFFF) fprintf(stderr, \"[tail-held]\\t{name}\\t{v}\\t{k}\\t%d\\n\", (int) ({v}.store_nr < loft_nstores ? (int) loft_stores[{v}.store_nr].live : -1));"
+                "    if ({v}.store_nr != 0xFFFF) fprintf(stderr, \"[tail-held]\\t{name}\\t{v}\\t{k}\\t%d\\n\", (int) ({v}.store_nr < cx->nstores ? (int) cx->stores[{v}.store_nr].live : -1));"
             );
         }
     }
@@ -420,7 +421,7 @@ mod tests {
     fn tail(n: usize) -> String {
         let mut t = String::new();
         for k in 0..n {
-            let _ = writeln!(t, "        loft_free_var(&v{k}_x);");
+            let _ = writeln!(t, "        loft_free_var(cx, &v{k}_x);");
         }
         t
     }
@@ -428,18 +429,18 @@ mod tests {
     #[test]
     fn a_shared_tail_is_written_once() {
         let body = format!(
-            "    if (a) {{\n{t}        t1 = v9_r;\n        loft_text_free(&t7);\n        return t1;\n    }}\n    if (b) {{\n        loft_free_var(&v99_own);\n{t}        t2 = v8_r;\n        loft_text_free(&t7);\n        return t2;\n    }}\n{t}    t3 = v9_r;\n    loft_text_free(&t7);\n    return t3;\n",
+            "    if (a) {{\n{t}        t1 = v9_r;\n        loft_text_free(cx, &t7);\n        return t1;\n    }}\n    if (b) {{\n        loft_free_var(cx, &v99_own);\n{t}        t2 = v8_r;\n        loft_text_free(cx, &t7);\n        return t2;\n    }}\n{t}    t3 = v9_r;\n    loft_text_free(cx, &t7);\n    return t3;\n",
             t = tail(10)
         );
         let m = merge("f", "loft_ref", &body).expect("merged");
         // The first exit is written whole and the third shares all of it.  The second returns
         // another value, read mid-tail, but no release names what it reads: the read moves to
         // the front, and the exit writes its read and its own release, then shares the rest.
-        assert_eq!(m.matches("loft_free_var(&v0_x);").count(), 1, "{m}");
-        assert_eq!(m.matches("loft_text_free(&t7);").count(), 1, "{m}");
+        assert_eq!(m.matches("loft_free_var(cx, &v0_x);").count(), 1, "{m}");
+        assert_eq!(m.matches("loft_text_free(cx, &t7);").count(), 1, "{m}");
         assert_eq!(m.matches("return loft_rv;").count(), 1, "{m}");
         assert_eq!(m.matches("goto loft_rt").count(), 2, "{m}");
-        assert!(m.contains("loft_rv = v8_r;") && m.contains("loft_free_var(&v99_own);"));
+        assert!(m.contains("loft_rv = v8_r;") && m.contains("loft_free_var(cx, &v99_own);"));
         assert!(m.starts_with("    loft_ref loft_rv;\n"));
     }
 
@@ -457,7 +458,7 @@ mod tests {
         let free =
             format!("{t}    t1 = v55_y;\n    return t1;\n{t}    t2 = v66_y;\n    return t2;\n");
         let m = merge("f", "loft_ref", &free).expect("merged");
-        assert_eq!(m.matches("loft_free_var(&v5_x);").count(), 1, "{m}");
+        assert_eq!(m.matches("loft_free_var(cx, &v5_x);").count(), 1, "{m}");
         assert!(
             m.contains("loft_rv = v55_y;") && m.contains("loft_rv = v66_y;"),
             "{m}"
@@ -486,6 +487,6 @@ mod tests {
         // The second exit shares all of the first, its read of the result included.
         assert_eq!(m.matches("loft_rv = v77_r;").count(), 1, "{m}");
         assert_eq!(m.matches("goto loft_rt0;").count(), 1, "{m}");
-        assert_eq!(m.matches("loft_free_var(&v0_x);").count(), 1, "{m}");
+        assert_eq!(m.matches("loft_free_var(cx, &v0_x);").count(), 1, "{m}");
     }
 }

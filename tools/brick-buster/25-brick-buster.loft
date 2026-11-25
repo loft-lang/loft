@@ -9,6 +9,7 @@
 use graphics::*;
 use shapes::*;
 use assets::*;
+use audio;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -158,6 +159,114 @@ fn load_atlas() -> graphics::Canvas {
   at
 }
 
+// ── Drawing ──────────────────────────────────────────────────────────
+
+// The painter and the frame's screen shake: the world draws through it
+// offset by (`sx`, `sy`) pixels, the HUD and overlays with both at 0,
+// so a shake moves the playfield and leaves the score where it is.
+struct Pen {
+  p: graphics::Painter,
+  sx: float,
+  sy: float,
+}
+
+// A filled rectangle, channels 0.0-1.0, blended by its alpha.
+fn rect(self: Pen, w: graphics::Window, x: float, y: float, wide: float, high: float,
+        r: float, g: float, b: float, a: float) {
+  self.p.rect(w, x + self.sx, y + self.sy, wide, high, r, g, b, a);
+}
+
+// Sprite `index` of `sheet` stretched over the rectangle.
+fn sprite(self: Pen, w: graphics::Window, sheet: graphics::Sprites,
+          x: float, y: float, wide: float, high: float, index: integer) {
+  self.p.sprite(w, sheet, x + self.sx, y + self.sy, wide, high, index);
+}
+
+// A texture (a text label) stretched over the rectangle; nothing for none.
+fn image(self: Pen, w: graphics::Window, t: const graphics::Texture?,
+         x: float, y: float, wide: float, high: float) {
+  if t == null { return; }
+  self.p.image(w, t, x + self.sx, y + self.sy, wide, high);
+}
+
+// ── Sound ────────────────────────────────────────────────────────────
+//
+// Every sound is synthesised here, chiptune style, and played once as raw
+// mono samples: no sound file ships with the game.
+
+SFX_RATE = 22050;
+
+// Square wave sample: phase 0.0-1.0, duty 0.0-1.0.
+fn sfx_sq(sq_phase: single, sq_duty: single) -> single {
+  if sq_phase < sq_duty { return 1.0f; }
+  -1.0f
+}
+
+// Triangle wave sample: phase 0.0-1.0.
+fn sfx_tri(tri_p: single) -> single {
+  if tri_p < 0.5f { return tri_p * 4.0f - 1.0f; }
+  3.0f - tri_p * 4.0f
+}
+
+// Sawtooth wave sample: phase 0.0-1.0.
+fn sfx_saw(saw_p: single) -> single {
+  saw_p * 2.0f - 1.0f
+}
+
+// Linear attack-decay envelope, 0.0-1.0, at `env_t` seconds into a sound of
+// `env_dur` seconds whose attack takes `env_atk`.
+fn sfx_env(env_t: single, env_atk: single, env_dur: single) -> single {
+  // the attack branch is taken only with env_t < env_atk, so env_atk > 0 there
+  if env_t < env_atk { return (env_t / env_atk) ?? 0.0f; }
+  env_rem = env_dur - env_t;
+  if env_rem < 0.0f { return 0.0f; }
+  env_dec = env_dur - env_atk;
+  if env_dec <= 0.0f { return 0.0f; }
+  (env_rem / env_dec) ?? 0.0f
+}
+
+// Short percussive beep — brick hit, wall tick, a note of the music.
+fn sfx_beep(sb_freq: single, sb_dur: single, sb_vol: single) {
+  sb_n = (sb_dur * SFX_RATE as single) as integer;
+  sb_buf: vector<single> = [for sb_i in 0..sb_n {
+    sb_t = sb_i as single / SFX_RATE as single;
+    sb_p = (sb_t * sb_freq) % 1.0f;
+    sfx_sq(sb_p, 0.5f) * sfx_env(sb_t, 0.005f, sb_dur) * sb_vol
+  }];
+  _ = audio::play_raw(sb_buf, SFX_RATE, 1.0);
+}
+
+// Descending tone — a life lost.
+fn sfx_descend(sd_f0: single, sd_f1: single, sd_dur: single, sd_vol: single) {
+  sd_n = (sd_dur * SFX_RATE as single) as integer;
+  sd_ph = 0.0f;
+  sd_buf: vector<single> = [for sd_i in 0..sd_n {
+    sd_t = sd_i as single / SFX_RATE as single;
+    sd_f = sd_f0 + (sd_f1 - sd_f0) * ((sd_t / sd_dur) ?? 0.0f);
+    sd_ph = (sd_ph + sd_f / SFX_RATE as single) % 1.0f;
+    sfx_saw(sd_ph) * sfx_env(sd_t, 0.01f, sd_dur) * sd_vol
+  }];
+  _ = audio::play_raw(sd_buf, SFX_RATE, 1.0);
+}
+
+// Rising chirp — a pickup collected.
+fn sfx_chirp(sc_f0: single, sc_f1: single, sc_dur: single, sc_vol: single) {
+  sc_n = (sc_dur * SFX_RATE as single) as integer;
+  sc_ph = 0.0f;
+  sc_buf: vector<single> = [for sc_i in 0..sc_n {
+    sc_t = sc_i as single / SFX_RATE as single;
+    sc_f = sc_f0 + (sc_f1 - sc_f0) * ((sc_t / sc_dur) ?? 0.0f);
+    sc_ph = (sc_ph + sc_f / SFX_RATE as single) % 1.0f;
+    sfx_tri(sc_ph) * sfx_env(sc_t, 0.005f, sc_dur) * sc_vol
+  }];
+  _ = audio::play_raw(sc_buf, SFX_RATE, 1.0);
+}
+
+// Paddle bounce — a low square-wave thud.
+fn sfx_bounce(sp_freq: single, sp_vol: single) {
+  sfx_beep(sp_freq, 0.08f, sp_vol);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 // Map 1..20 to their Roman-numeral text — the level progression is
@@ -300,8 +409,8 @@ fn pickup_sprite(sp_type: integer) -> integer {
 
 // `dg_value`'s decimal digits (at most six) right to left from digit textures, the leftmost at
 // `dg_x`, each `dg_w` wide; nothing for 0.
-fn draw_digits(dg_painter: const graphics::Painter2D, dg_dig: vector<integer>, dg_value: integer,
-               dg_x: float, dg_y: float, dg_w: float, dg_h: float) {
+fn draw_digits(dg_pen: Pen, w: graphics::Window, dg_dig: const vector<graphics::Texture>,
+               dg_value: integer, dg_x: float, dg_y: float, dg_w: float, dg_h: float) {
   dg_count = 0;
   dg_rest = dg_value;
   for _dg_n in 0..6 {
@@ -311,7 +420,7 @@ fn draw_digits(dg_painter: const graphics::Painter2D, dg_dig: vector<integer>, d
     dg_at = dg_x + (dg_count - 1) as float * dg_w;
     dg_rest = dg_value;
     for _dg_i in 0..dg_count {
-      graphics::draw_texture_at(dg_painter, dg_dig[dg_rest % 10] ?? 0, dg_at, dg_y, dg_w, dg_h);
+      dg_pen.image(w, dg_dig[dg_rest % 10], dg_at, dg_y, dg_w, dg_h);
       dg_at -= dg_w;
       dg_rest = dg_rest / 10;
     }
@@ -322,45 +431,46 @@ fn draw_digits(dg_painter: const graphics::Painter2D, dg_dig: vector<integer>, d
 // the high score under it in smaller grey digits (hidden at 0), the combo bar under the
 // score, and the level's Roman numeral (top middle) from the compact numeral textures —
 // the full "LEVEL <n>" texture belongs to the level-pause fade.
-fn draw_hud(hd_painter: const graphics::Painter2D, hd_sheet: const graphics::SpriteSheet,
-            hd_dig: vector<integer>, hd_lives: integer, hd_score_label: integer, hd_score: integer,
-            hd_hi_label: integer, hd_highscore: integer, hd_combo: integer, hd_level: integer,
-            hd_lvl_num: vector<integer>) {
+fn draw_hud(hd_pen: Pen, w: graphics::Window, hd_sheet: graphics::Sprites,
+            hd_dig: const vector<graphics::Texture>, hd_lives: integer,
+            hd_score_label: const graphics::Texture, hd_score: integer,
+            hd_hi_label: const graphics::Texture, hd_highscore: integer, hd_combo: integer,
+            hd_level: integer, hd_lvl_num: const vector<graphics::Texture>) {
   for hd_l in 0..hd_lives {
-    graphics::draw_sprite_at(hd_sheet, hd_painter,
+    hd_pen.sprite(w, hd_sheet,
       SCREEN_W - 24.0 - (hd_l as float) * 22.0, 6.0, 20.0, 20.0, S_HEART);
   }
-  graphics::draw_texture_at(hd_painter, hd_score_label, 10.0, 4.0, 60.0, 14.0);
+  hd_pen.image(w, hd_score_label, 10.0, 4.0, 60.0, 14.0);
   if hd_score == 0 {
-    graphics::draw_texture_at(hd_painter, hd_dig[0] ?? 0, 72.0, 2.0, 14.0, 20.0);
+    hd_pen.image(w, hd_dig[0], 72.0, 2.0, 14.0, 20.0);
   }
-  draw_digits(hd_painter, hd_dig, hd_score, 72.0, 2.0, 14.0, 20.0);
+  draw_digits(hd_pen, w, hd_dig, hd_score, 72.0, 2.0, 14.0, 20.0);
   if hd_highscore > 0 {
-    graphics::draw_texture_at(hd_painter, hd_hi_label, 10.0, 26.0, 20.0, 10.0);
-    draw_digits(hd_painter, hd_dig, hd_highscore, 34.0, 26.0, 9.0, 12.0);
+    hd_pen.image(w, hd_hi_label, 10.0, 26.0, 20.0, 10.0);
+    draw_digits(hd_pen, w, hd_dig, hd_highscore, 34.0, 26.0, 9.0, 12.0);
   }
   if hd_combo > 1 {
-    graphics::draw_rect_at(hd_painter, 10.0, 24.0, clamp((hd_combo as float) * 15.0, 0.0, 200.0),
+    hd_pen.rect(w, 10.0, 24.0, clamp((hd_combo as float) * 15.0, 0.0, 200.0),
       3.0, 1.0, clamp(1.0 - (hd_combo as float) * 0.08, 0.0, 1.0), 0.0, 1.0);
   }
   hd_lvl = hd_level - 1;
-  if hd_lvl >= 0 && hd_lvl < 20 && hd_lvl_num[hd_lvl] != 0 {
-    graphics::draw_texture_at(hd_painter, hd_lvl_num[hd_lvl] ?? 0, SCREEN_W / 2.0 - 36.0, 4.0, 72.0, 28.0);
+  if hd_lvl >= 0 && hd_lvl < 20 {
+    hd_pen.image(w, hd_lvl_num[hd_lvl], SCREEN_W / 2.0 - 36.0, 4.0, 72.0, 28.0);
   }
 }
 
 // One hint per active pickup TYPE, stacked upward from the bottom right.
-fn draw_pickup_hints(ph_painter: const graphics::Painter2D, ph_on: vector<integer>,
-                     ph_type: vector<integer>, ph_tex: vector<integer>) {
+fn draw_pickup_hints(ph_pen: Pen, w: graphics::Window, ph_on: vector<integer>,
+                     ph_type: vector<integer>, ph_tex: const vector<graphics::Texture>) {
   ph_shown = 0;
   ph_y = SCREEN_H - 18.0;
   for ph_i in 0..8 {
     if ph_on[ph_i] == 1 {
       ph_t = ph_type[ph_i];
       ph_bit = 1 << ph_t;
-      if ph_t >= 1 && ph_t <= 7 && ph_tex[ph_t] != 0 && (ph_shown & ph_bit) == 0 {
+      if ph_t >= 1 && ph_t <= 7 && (ph_shown & ph_bit) == 0 {
         ph_shown = ph_shown | ph_bit;
-        graphics::draw_texture_at(ph_painter, ph_tex[ph_t] ?? 0, SCREEN_W - 85.0, ph_y, 80.0, 14.0);
+        ph_pen.image(w, ph_tex[ph_t], SCREEN_W - 85.0, ph_y, 80.0, 14.0);
         ph_y -= 16.0;
       }
     }
@@ -369,60 +479,55 @@ fn draw_pickup_hints(ph_painter: const graphics::Painter2D, ph_on: vector<intege
 
 // The atlas diagnostic overlay (the I cheat key): all 20 sprite indices on a 4x5 grid, each
 // with its two-digit index beside it, so a mis-mapped sprite is visible at a glance.
-fn draw_atlas_diag(dd_painter: const graphics::Painter2D, dd_sheet: const graphics::SpriteSheet,
-                   dd_dig: vector<integer>) {
+fn draw_atlas_diag(dd_pen: Pen, w: graphics::Window, dd_sheet: graphics::Sprites,
+                   dd_dig: const vector<graphics::Texture>) {
   // Translucent backdrop so gameplay stays partially visible.
-  graphics::draw_rect_at(dd_painter, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.0, 0.6);
+  dd_pen.rect(w, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.0, 0.6);
   for dd_i in 0..20 {
     dd_x = 80.0 + ((dd_i % 4) as float) * 160.0;
     dd_y = 60.0 + ((dd_i / 4) as float) * 100.0;
     // Thin outline so the cell's extent is visible.
-    graphics::draw_rect_at(dd_painter, dd_x - 2.0, dd_y - 2.0, 68.0, 68.0, 0.2, 0.2, 0.3, 0.9);
+    dd_pen.rect(w, dd_x - 2.0, dd_y - 2.0, 68.0, 68.0, 0.2, 0.2, 0.3, 0.9);
     // The sprite itself at 64x64, bigger than in game so its pixels read.
-    graphics::draw_sprite_at(dd_sheet, dd_painter, dd_x, dd_y, 64.0, 64.0, dd_i);
+    dd_pen.sprite(w, dd_sheet, dd_x, dd_y, 64.0, 64.0, dd_i);
     if dd_i / 10 > 0 {
-      graphics::draw_texture_at(dd_painter, dd_dig[dd_i / 10] ?? 0, dd_x + 68.0, dd_y, 12.0, 18.0);
+      dd_pen.image(w, dd_dig[dd_i / 10], dd_x + 68.0, dd_y, 12.0, 18.0);
     }
-    graphics::draw_texture_at(dd_painter, dd_dig[dd_i % 10] ?? 0, dd_x + 82.0, dd_y, 12.0, 18.0);
+    dd_pen.image(w, dd_dig[dd_i % 10], dd_x + 82.0, dd_y, 12.0, 18.0);
   }
 }
 
+// The font every label is drawn in.  It sits beside the program, and
+// `[[embed]]` in loft.toml carries it into the browser page.
+FONT_PATH = "DejaVuSans-Bold.ttf";
+
 fn main() {
-  if !graphics::gl_create_window(800, 600, "Brick Buster") {
-    println("Failed to create window");
-    return;
-  }
+  br_win = graphics::open_window(800, 600, "Brick Buster") ?? return println("Failed to create window");
+  // The sound output; where the machine has none the game plays silent.
+  _ = audio::start();
 
   br_atlas = load_atlas();
-  br_painter = graphics::create_painter_2d(SCREEN_W, SCREEN_H);
-  br_sheet = graphics::create_sprite_sheet(br_atlas, 4, 5, graphics::painter_vao(br_painter));
+  br_pen = Pen {
+    p: br_win.painter() ?? return println("brick-buster: the painter's shaders did not compile"),
+    sx: 0.0,
+    sy: 0.0,
+  };
+  br_sheet = br_win.sprites(br_atlas, 4, 5) ?? return println("brick-buster: the sprite shader did not compile");
 
-  // Font — try local first, then absolute path
-  br_font = graphics::gl_load_font("DejaVuSans-Bold.ttf");
-  if !br_font {
-    // Native mode runs from a temp dir; try the script's directory
-    br_font = graphics::gl_load_font("lib/graphics/examples/DejaVuSans-Bold.ttf");
-  }
-  if !br_font { println("WARNING: font not loaded — text will be invisible"); }
+  br_font = graphics::load_font(FONT_PATH) ?? return println("brick-buster: no font at {FONT_PATH}");
   br_white = graphics::rgba(255, 255, 255, 255);
   br_gray = graphics::rgba(200, 200, 200, 180);
 
   // Pickup labels — one auto-sized text texture per pickup type.
   br_pk_names = ["", "wider", "boom!", "blast", "rows+", "multi", "fire!", "shield"];
-  br_pk_tex = [for _ in 0..8 { 0 }];
-  for br_ti in 1..8 {
-    br_pk_tex[br_ti] = graphics::create_text_texture(br_font, br_pk_names[br_ti], 12.0, br_gray);
-  }
+  br_pk_tex = [for br_pn in br_pk_names { br_win.text_texture(br_font, br_pn, 12.0, br_gray) }];
 
   // Digit textures 0-9 for numeric score display
   br_digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-  br_dig_tex = [for _ in 0..10 { 0 }];
-  for br_di in 0..10 {
-    br_dig_tex[br_di] = graphics::create_text_texture(br_font, br_digits[br_di], 22.0, br_white);
-  }
+  br_dig_tex = [for br_dn in br_digits { br_win.text_texture(br_font, br_dn, 22.0, br_white) }];
 
   // Intro text
-  br_intro_tex = graphics::create_text_texture(br_font, "A / D  or  Arrow Keys to move", 28.0, br_white);
+  br_intro_tex = br_win.text_texture(br_font, "A / D  or  Arrow Keys to move", 28.0, br_white);
 
   // "LEVEL N" textures — one per level.  Two flavours:
   //   br_lvl_tex      — full "LEVEL III" text used on the big
@@ -430,30 +535,30 @@ fn main() {
   //   br_lvl_num_tex  — just "III" at a smaller size, used in the
   //                     top-middle HUD so the numeral is visible
   //                     at a glance while playing.
-  br_lvl_tex     = [for _ in 0..20 { 0 }];
-  br_lvl_num_tex = [for _ in 0..20 { 0 }];
+  br_lvl_tex: vector<graphics::Texture> = [];
+  br_lvl_num_tex: vector<graphics::Texture> = [];
   for br_tl in 0..20 {
     br_ln = br_tl + 1;
     br_rn = roman(br_ln);
-    br_lvl_tex[br_tl]     = graphics::create_text_texture(br_font, "LEVEL {br_rn}", 48.0, br_white);
+    br_lvl_tex += [br_win.text_texture(br_font, "LEVEL {br_rn}", 48.0, br_white)];
     // Bake the HUD numeral at 28pt so single-character strings ("I",
     // "V", "X") still have a chunky on-screen presence at the 28-px
     // draw height below.
-    br_lvl_num_tex[br_tl] = graphics::create_text_texture(br_font, br_rn,           28.0, br_white);
+    br_lvl_num_tex += [br_win.text_texture(br_font, br_rn,           28.0, br_white)];
   }
 
   // "SCORE" label
-  br_score_label_tex = graphics::create_text_texture(br_font, "SCORE", 14.0, br_gray);
-  br_hi_label_tex    = graphics::create_text_texture(br_font, "HI",    10.0, br_gray);
+  br_score_label_tex = br_win.text_texture(br_font, "SCORE", 14.0, br_gray);
+  br_hi_label_tex    = br_win.text_texture(br_font, "HI",    10.0, br_gray);
 
   // BK.5/BK.6: Title, pause, and game-over screen textures.
-  br_title_tex = graphics::create_text_texture(br_font, "BRICK BUSTER", 64.0, br_white);
-  br_start_tex = graphics::create_text_texture(br_font, "Press SPACE to start", 24.0, br_gray);
-  br_paused_tex = graphics::create_text_texture(br_font, "PAUSED", 48.0, br_white);
-  br_resume_tex = graphics::create_text_texture(br_font, "Press SPACE to continue", 20.0, br_gray);
-  br_over_tex = graphics::create_text_texture(br_font, "GAME OVER", 48.0, graphics::rgba(255, 80, 80, 255));
-  br_restart_tex = graphics::create_text_texture(br_font, "Press SPACE to restart", 20.0, br_gray);
-  br_controls_tex = graphics::create_text_texture(br_font, "A/D or Arrows to move  |  P to pause", 16.0, br_gray);
+  br_title_tex = br_win.text_texture(br_font, "BRICK BUSTER", 64.0, br_white);
+  br_start_tex = br_win.text_texture(br_font, "Press SPACE to start", 24.0, br_gray);
+  br_paused_tex = br_win.text_texture(br_font, "PAUSED", 48.0, br_white);
+  br_resume_tex = br_win.text_texture(br_font, "Press SPACE to continue", 20.0, br_gray);
+  br_over_tex = br_win.text_texture(br_font, "GAME OVER", 48.0, graphics::rgba(255, 80, 80, 255));
+  br_restart_tex = br_win.text_texture(br_font, "Press SPACE to restart", 20.0, br_gray);
+  br_controls_tex = br_win.text_texture(br_font, "A/D or Arrows to move  |  P to pause", 16.0, br_gray);
 
   // ── Game state ─────────────────────────────────────────────────
   br_px = (SCREEN_W - PADDLE_W_DEFAULT) / 2.0;
@@ -667,12 +772,12 @@ fn main() {
   br_cheat_i_was_down = false;
   br_diag_on          = false;
 
-  graphics::gl_disable(graphics::GL_DEPTH_TEST);
-  graphics::gl_enable(graphics::GL_BLEND);
-  graphics::gl_blend_func(graphics::BLEND_SRC_ALPHA, graphics::BLEND_ONE_MINUS_SRC_ALPHA);
+  br_win.disable(graphics::GL_DEPTH_TEST);
+  br_win.enable(graphics::GL_BLEND);
+  br_win.blend(graphics::BLEND_SRC_ALPHA, graphics::BLEND_ONE_MINUS_SRC_ALPHA);
 
   for _ in 0..10000000 {
-    if !graphics::gl_poll_events() { break; }
+    if !br_win.poll() { break; }
 
     br_now = ticks();
     br_dt = (br_now - br_last) as float / 1000000.0;
@@ -696,10 +801,10 @@ fn main() {
     }
 
     // BK.5/BK.6: Key edge detection (react on press, not hold)
-    br_space_down = graphics::gl_key_pressed(32);
+    br_space_down = br_win.key_down(32);
     br_space_pressed = br_space_down && !br_space_was_down;
     br_space_was_down = br_space_down;
-    br_p_down = graphics::gl_key_pressed(112);
+    br_p_down = br_win.key_down(112);
     br_p_pressed = br_p_down && !br_p_was_down;
     br_p_was_down = br_p_down;
 
@@ -711,13 +816,13 @@ fn main() {
     // These are harmless in normal play — the keys are not bound to
     // anything gameplay-related.  Edge-detected so holding a cheat key
     // does not retrigger every frame.
-    br_cheat_k_down = graphics::gl_key_pressed(107);
+    br_cheat_k_down = br_win.key_down(107);
     br_cheat_k_pressed = br_cheat_k_down && !br_cheat_k_was_down;
     br_cheat_k_was_down = br_cheat_k_down;
-    br_cheat_x_down = graphics::gl_key_pressed(120);
+    br_cheat_x_down = br_win.key_down(120);
     br_cheat_x_pressed = br_cheat_x_down && !br_cheat_x_was_down;
     br_cheat_x_was_down = br_cheat_x_down;
-    br_cheat_u_down = graphics::gl_key_pressed(117);
+    br_cheat_u_down = br_win.key_down(117);
     br_cheat_u_pressed = br_cheat_u_down && !br_cheat_u_was_down;
     br_cheat_u_was_down = br_cheat_u_down;
     // I (105) — toggle the atlas diagnostic overlay.  Purely a read-
@@ -725,7 +830,7 @@ fn main() {
     // 0..19) on a grid, labelled with its index, so a mapping bug
     // between intended sprite (`S_BALL_NORMAL = 16`) and the actual
     // atlas cell is visible at a glance.  Does not pause gameplay.
-    br_cheat_i_down    = graphics::gl_key_pressed(105);
+    br_cheat_i_down    = br_win.key_down(105);
     br_cheat_i_pressed = br_cheat_i_down && !br_cheat_i_was_down;
     br_cheat_i_was_down = br_cheat_i_down;
     if br_cheat_i_pressed { br_diag_on = !br_diag_on; }
@@ -735,7 +840,7 @@ fn main() {
       if br_space_pressed { br_game_state = GS_PLAYING; }
     }
     if br_game_state == GS_PLAYING {
-      if br_p_pressed || graphics::gl_key_pressed(graphics::KEY_ESCAPE) {
+      if br_p_pressed || br_win.key_down(graphics::KEY_ESCAPE) {
         br_game_state = GS_PAUSED;
       }
       if br_cheat_k_pressed {
@@ -878,7 +983,7 @@ fn main() {
             TRACK_C_DUR
           };
           if br_mnote > 0 {
-            graphics::sfx_beep((br_mnote ?? 0) as single, br_mus_step, MUSIC_VOL);
+            sfx_beep((br_mnote ?? 0) as single, br_mus_step, MUSIC_VOL);
           }
           br_mus_t = br_mus_step;
           br_mus_idx += 1;
@@ -903,10 +1008,10 @@ fn main() {
       // Paddle movement is disabled during the explosion respawn pause
       // so the player can't slide a non-existent paddle around the screen.
       if br_paddle_state == 0 {
-        if graphics::gl_key_pressed(graphics::KEY_LEFT) || graphics::gl_key_pressed(graphics::KEY_A) {
+        if br_win.key_down(graphics::KEY_LEFT) || br_win.key_down(graphics::KEY_A) {
           br_px -= PADDLE_SPEED * br_dt;
         }
-        if graphics::gl_key_pressed(graphics::KEY_RIGHT) || graphics::gl_key_pressed(graphics::KEY_D) {
+        if br_win.key_down(graphics::KEY_RIGHT) || br_win.key_down(graphics::KEY_D) {
           br_px += PADDLE_SPEED * br_dt;
         }
         br_px = clamp(br_px, 0.0, SCREEN_W - br_pw);
@@ -969,7 +1074,7 @@ fn main() {
           br_ball_sq_axis[br_bi] = 0;  // vertical bounce
           br_wall_hit = true;
         }
-        if br_wall_hit { graphics::sfx_beep(600.0f, 0.03f, 0.1f); }
+        if br_wall_hit { sfx_beep(600.0f, 0.03f, 0.1f); }
 
         // Paddle (skipped during the explosion respawn pause).
         // Circle vs AABB: clamp the paddle's closest point to the ball
@@ -988,7 +1093,7 @@ fn main() {
             br_ball_sq_t[br_bi] = BALL_SQUASH_DURATION;
             br_ball_sq_axis[br_bi] = 0;
             br_combo = 0;  // reset combo on paddle hit
-            graphics::sfx_bounce(180.0f, 0.3f);
+            sfx_bounce(180.0f, 0.3f);
           }
         }
 
@@ -1049,7 +1154,7 @@ fn main() {
                 br_alive -= 1;
                 br_combo += 1;
                 // BK.1: brick break sound — pitch rises with combo
-                graphics::sfx_beep(400.0f + br_combo as single * 40.0f, 0.06f, 0.25f);
+                sfx_beep(400.0f + br_combo as single * 40.0f, 0.06f, 0.25f);
                 if br_combo > br_combo_best { br_combo_best = br_combo; }
                 br_pts = br_combo;
                 if br_pts > 10 { br_pts = 10; }
@@ -1109,7 +1214,7 @@ fn main() {
       if !br_any_ball && br_paddle_state == 0 {
         br_lives -= 1;
         br_combo = 0;
-        graphics::sfx_descend(500.0f, 150.0f, 0.4f, 0.4f);
+        sfx_descend(500.0f, 150.0f, 0.4f, 0.4f);
         if br_lives <= 0 {
           br_lost = true;
         } else {
@@ -1198,7 +1303,7 @@ fn main() {
             br_px, PADDLE_Y, br_pw, PADDLE_H) { continue; }
         br_pk_on[br_pi] = 0;
         br_pkt = br_pk_type[br_pi];
-        graphics::sfx_chirp(400.0f, 900.0f, 0.12f, 0.3f);
+        sfx_chirp(400.0f, 900.0f, 0.12f, 0.3f);
 
         if br_pkt == SP_EXTEND {
           br_pw = PADDLE_W_DEFAULT + EXTEND_EXTRA;
@@ -1488,13 +1593,13 @@ fn main() {
     }
 
     // ── Render ───────────────────────────────────────────────────
-    graphics::gl_clear(graphics::rgba(20, 20, 30, 255));
+    br_win.clear(graphics::rgba(20, 20, 30, 255));
 
-    // Push the shake offset into the painter's orthographic
-    // projection so every world-space draw inherits it automatically.
-    // Restored to identity before HUD / overlay draws below.
-    br_painter.p2_proj[12] = (-1.0 + br_shake_x * 2.0 / SCREEN_W) ?? 0.0;
-    br_painter.p2_proj[13] =  (1.0 - br_shake_y * 2.0 / SCREEN_H) ?? 0.0;
+    // Give the pen the shake offset so every world-space draw
+    // inherits it automatically.  Set back to zero before the HUD /
+    // overlay draws below.
+    br_pen.sx = br_shake_x;
+    br_pen.sy = br_shake_y;
 
     // Bricks — flat color + sprite icon overlay for specials
     for br_dr in 0..br_rows {
@@ -1502,29 +1607,29 @@ fn main() {
       for br_dc in 0..BRICK_COLS {
         br_di = br_dr * BRICK_COLS + br_dc;
         if br_bricks[br_di] == 1 {
-          graphics::draw_rect_at(br_painter,
+          br_pen.rect(br_win,
             bk_x(br_dc), bk_y(br_dr), BRICK_W, BRICK_H,
             br_pcr[br_ci], br_pcg[br_ci], br_pcb[br_ci], 1.0);
           // Highlight + ghost pass (alpha 1.0 then 0.15 over the same pixels)
-          graphics::draw_rect_at(br_painter,
+          br_pen.rect(br_win,
             bk_x(br_dc) + 1.0, bk_y(br_dr) + 1.0, BRICK_W - 2.0, 2.0,
             1.0, 1.0, 1.0, 1.0);
-          graphics::draw_rect_at(br_painter,
+          br_pen.rect(br_win,
             bk_x(br_dc) + 1.0, bk_y(br_dr) + 1.0, BRICK_W - 2.0, 2.0,
             1.0, 1.0, 1.0, 0.15);
           // Icon overlay for specials
           br_ic = brick_icon(br_specials[br_di]);
           if br_ic < 99 {
-            graphics::draw_sprite_at(br_sheet, br_painter,
+            br_pen.sprite(br_win, br_sheet,
               bk_x(br_dc) + BRICK_W - 22.0, bk_y(br_dr), 20.0, 20.0, br_ic);
           }
           // Multi-hit dots
           if br_hp[br_di] >= 2 {
-            graphics::draw_rect_at(br_painter,
+            br_pen.rect(br_win,
               bk_x(br_dc) + 3.0, bk_y(br_dr) + 3.0, 4.0, 4.0, 1.0, 1.0, 1.0, 1.0);
           }
           if br_hp[br_di] >= 3 {
-            graphics::draw_rect_at(br_painter,
+            br_pen.rect(br_win,
               bk_x(br_dc) + 9.0, bk_y(br_dr) + 3.0, 4.0, 4.0, 1.0, 1.0, 1.0, 1.0);
           }
         }
@@ -1534,16 +1639,16 @@ fn main() {
     // Rising balloon — the red-balloon pickup sprite plus a small
     // orange flame drawn on top as an "about to pop" hint.
     if br_bl_on {
-      graphics::draw_sprite_at(br_sheet, br_painter,
+      br_pen.sprite(br_win, br_sheet,
         br_bl_x, br_bl_y, BALLOON_W, BALLOON_H, S_PK_BALLOON);
       // Flame on top of the balloon (roughly over the knot/fuse).
       br_fl_x = br_bl_x + BALLOON_W / 2.0 - 3.0;
       br_fl_y = br_bl_y - 4.0;
-      graphics::draw_rect_at(br_painter, br_fl_x - 1.0, br_fl_y - 1.0, 8.0, 8.0,
+      br_pen.rect(br_win, br_fl_x - 1.0, br_fl_y - 1.0, 8.0, 8.0,
         0.08, 0.08, 0.10, 1.0);
-      graphics::draw_rect_at(br_painter, br_fl_x,       br_fl_y,       6.0, 6.0,
+      br_pen.rect(br_win, br_fl_x,       br_fl_y,       6.0, 6.0,
         1.0, 0.55, 0.0, 1.0);
-      graphics::draw_rect_at(br_painter, br_fl_x + 1.0, br_fl_y - 2.0, 4.0, 3.0,
+      br_pen.rect(br_win, br_fl_x + 1.0, br_fl_y - 2.0, 4.0, 3.0,
         1.0, 0.85, 0.1, 1.0);
     }
 
@@ -1552,23 +1657,23 @@ fn main() {
       if br_pk_on[br_pdi] == 1 {
         br_psp = pickup_sprite(br_pk_type[br_pdi]);
         // Render at 56x56 centered on the pickup hitbox
-        graphics::draw_sprite_at(br_sheet, br_painter,
+        br_pen.sprite(br_win, br_sheet,
           br_pk_x[br_pdi] - 18.0, br_pk_y[br_pdi] - 22.0, 56.0, 56.0, br_psp);
       }
     }
 
     // Shield bar at bottom
     if br_shield_on {
-      graphics::draw_rect_at(br_painter,
+      br_pen.rect(br_win,
         0.0, SCREEN_H - 3.0, SCREEN_W, 3.0, 0.3, 0.6, 1.0, 0.6);
     }
 
     // Paddle — flat color (suppressed during the explosion phase)
     if br_paddle_state == 0 {
       if br_extend_timer > 0.0 {
-        graphics::draw_rect_at(br_painter, br_px, PADDLE_Y, br_pw, PADDLE_H, 0.3, 0.9, 0.5, 1.0);
+        br_pen.rect(br_win, br_px, PADDLE_Y, br_pw, PADDLE_H, 0.3, 0.9, 0.5, 1.0);
       } else {
-        graphics::draw_rect_at(br_painter, br_px, PADDLE_Y, br_pw, PADDLE_H, 0.8, 0.8, 0.9, 1.0);
+        br_pen.rect(br_win, br_px, PADDLE_Y, br_pw, PADDLE_H, 0.8, 0.8, 0.9, 1.0);
       }
     } else {
       // Exploding — draw up to 12 pieces.  Each visible piece gets a
@@ -1581,7 +1686,7 @@ fn main() {
         br_pp_jx = sin(br_pp_rot[br_pp_d]) * 1.5;
         br_pp_jy = cos(br_pp_rot[br_pp_d]) * 1.5;
         br_pp_shade = 0.82 + (((br_pp_d as float) * 0.03) % 0.15);
-        graphics::draw_rect_at(br_painter,
+        br_pen.rect(br_win,
           br_pp_x[br_pp_d] + br_pp_jx, br_pp_y[br_pp_d] + br_pp_jy,
           br_pp_w[br_pp_d], PADDLE_H,
           br_pp_shade, br_pp_shade, br_pp_shade + 0.05, 1.0);
@@ -1589,7 +1694,7 @@ fn main() {
         // piece (not the rightmost to avoid a halo at the paddle end).
         if br_pp_d < MAX_PIECES - 1 && br_pp_on[br_pp_d + 1] == 1 {
           br_pp_cx = (br_pp_cut[br_pp_d] as float);
-          graphics::draw_rect_at(br_painter,
+          br_pen.rect(br_win,
             br_pp_x[br_pp_d] + br_pp_jx + br_pp_w[br_pp_d] - 2.0 - br_pp_cx,
             br_pp_y[br_pp_d] + br_pp_jy,
             2.0, PADDLE_H, 1.0, 0.9, 0.6, 1.0);
@@ -1630,7 +1735,7 @@ fn main() {
       br_trw = BALL_SIZE * br_trsc;
       br_trox = br_ft_x[br_ftd] + (BALL_SIZE - br_trw) / 2.0;
       br_troy = br_ft_y[br_ftd] + (BALL_SIZE - br_trw) / 2.0;
-      graphics::draw_rect_at(br_painter, br_trox, br_troy, br_trw, br_trw,
+      br_pen.rect(br_win, br_trox, br_troy, br_trw, br_trw,
         br_trr, br_trg, br_trb, br_tra);
     }
 
@@ -1653,11 +1758,11 @@ fn main() {
       if br_ball_on[br_bd] == 0 { continue; }
       if br_fire_timer > 0.0 {
         // Fire: cel-shaded orange square, no squash animation.
-        graphics::draw_rect_at(br_painter,
+        br_pen.rect(br_win,
           br_ball_x[br_bd] - 1.0, br_ball_y[br_bd] - 1.0,
           BALL_SIZE + 2.0, BALL_SIZE + 2.0,
           0.08, 0.08, 0.10, 1.0);
-        graphics::draw_rect_at(br_painter,
+        br_pen.rect(br_win,
           br_ball_x[br_bd], br_ball_y[br_bd], BALL_SIZE, BALL_SIZE,
           1.0, 0.5, 0.0, 1.0);
         continue;
@@ -1705,7 +1810,7 @@ fn main() {
       // the squash expands outward instead of shifting the visual.
       br_ox = br_ball_x[br_bd] + (BALL_SIZE - br_dw) / 2.0;
       br_oy = br_ball_y[br_bd] + (BALL_SIZE - br_dh) / 2.0;
-      graphics::draw_sprite_at(br_sheet, br_painter,
+      br_pen.sprite(br_win, br_sheet,
         br_ox, br_oy, br_dw, br_dh, br_sprite);
     }
 
@@ -1713,18 +1818,18 @@ fn main() {
     for br_pd in 0..MAX_PARTICLES {
       if br_pt_t[br_pd] > 0.0 {
         br_pa = br_pt_t[br_pd] / PARTICLE_LIFE ?? 0.0;
-        graphics::draw_rect_at(br_painter,
+        br_pen.rect(br_win,
           br_pt_x[br_pd], br_pt_y[br_pd], 4.0, 4.0,
           br_pt_r[br_pd], br_pt_g[br_pd], br_pt_b[br_pd], br_pa);
       }
     }
 
-    // Restore identity projection so HUD elements stay glued to the
-    // screen regardless of the current shake offset.
-    br_painter.p2_proj[12] = -1.0;
-    br_painter.p2_proj[13] =  1.0;
+    // Drop the shake offset so HUD elements stay glued to the
+    // screen regardless of the current shake.
+    br_pen.sx = 0.0;
+    br_pen.sy = 0.0;
 
-    draw_hud(br_painter, br_sheet, br_dig_tex, br_lives, br_score_label_tex, br_score,
+    draw_hud(br_pen, br_win, br_sheet, br_dig_tex, br_lives, br_score_label_tex, br_score,
              br_hi_label_tex, br_highscore, br_combo, br_level, br_lvl_num_tex);
 
     // Atlas diagnostic overlay (toggled by the I cheat key).  Draws
@@ -1734,7 +1839,7 @@ fn main() {
     // art) is immediately visible because the art at label "16"
     // would clearly not be the ball.
     if br_diag_on {
-      draw_atlas_diag(br_painter, br_sheet, br_dig_tex);
+      draw_atlas_diag(br_pen, br_win, br_sheet, br_dig_tex);
     }
 
     // Atlas diagnostic overlay (toggled by the I cheat key).  Draws
@@ -1744,64 +1849,64 @@ fn main() {
     // art) is immediately visible because the art at label "16"
     // would clearly not be the ball.
     if br_diag_on {
-      draw_atlas_diag(br_painter, br_sheet, br_dig_tex);
+      draw_atlas_diag(br_pen, br_win, br_sheet, br_dig_tex);
     }
 
-    draw_pickup_hints(br_painter, br_pk_on, br_pk_type, br_pk_tex);
+    draw_pickup_hints(br_pen, br_win, br_pk_on, br_pk_type, br_pk_tex);
 
     // Level transition text — big "LEVEL N" centered
     if br_level_timer > 0.0 {
       br_tli = br_level - 1;
-      if br_tli >= 0 && br_tli < 20 && br_lvl_tex[br_tli] != 0 {
-        graphics::draw_texture_at(br_painter, br_lvl_tex[br_tli],
+      if br_tli >= 0 && br_tli < 20 {
+        br_pen.image(br_win, br_lvl_tex[br_tli],
           SCREEN_W / 2.0 - 150.0, SCREEN_H / 2.0 - 30.0, 300.0, 60.0);
       }
     }
 
     // Intro text
     if br_intro_timer > 0.0 {
-      graphics::draw_texture_at(br_painter, br_intro_tex,
+      br_pen.image(br_win, br_intro_tex,
         SCREEN_W / 2.0 - 250.0, SCREEN_H / 2.0 + 40.0, 500.0, 40.0);
     }
 
     // Screen flash overlay
     if br_flash_timer > 0.0 {
       br_fa = br_flash_timer / FLASH_DURATION * 0.4 ?? 0.0;
-      graphics::draw_rect_at(br_painter,
+      br_pen.rect(br_win,
         0.0, 0.0, SCREEN_W, SCREEN_H, br_flash_r, br_flash_g, br_flash_b, br_fa);
     }
 
     // BK.6: Title screen
     if br_game_state == GS_TITLE {
-      graphics::draw_rect_at(br_painter, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.1, 0.85);
-      graphics::draw_texture_at(br_painter, br_title_tex,
+      br_pen.rect(br_win, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.1, 0.85);
+      br_pen.image(br_win, br_title_tex,
         SCREEN_W / 2.0 - 200.0, SCREEN_H / 2.0 - 80.0, 400.0, 80.0);
-      graphics::draw_texture_at(br_painter, br_start_tex,
+      br_pen.image(br_win, br_start_tex,
         SCREEN_W / 2.0 - 160.0, SCREEN_H / 2.0 + 20.0, 320.0, 30.0);
-      graphics::draw_texture_at(br_painter, br_controls_tex,
+      br_pen.image(br_win, br_controls_tex,
         SCREEN_W / 2.0 - 200.0, SCREEN_H / 2.0 + 70.0, 400.0, 20.0);
     }
 
     // BK.5: Pause screen
     if br_game_state == GS_PAUSED {
-      graphics::draw_rect_at(br_painter, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.0, 0.6);
-      graphics::draw_texture_at(br_painter, br_paused_tex,
+      br_pen.rect(br_win, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.0, 0.6);
+      br_pen.image(br_win, br_paused_tex,
         SCREEN_W / 2.0 - 150.0, SCREEN_H / 2.0 - 40.0, 300.0, 60.0);
-      graphics::draw_texture_at(br_painter, br_resume_tex,
+      br_pen.image(br_win, br_resume_tex,
         SCREEN_W / 2.0 - 160.0, SCREEN_H / 2.0 + 30.0, 320.0, 26.0);
     }
 
     // BK.6: Game over screen
     if br_game_state == GS_GAME_OVER {
-      graphics::draw_rect_at(br_painter, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.1, 0.0, 0.0, 0.7);
-      graphics::draw_texture_at(br_painter, br_over_tex,
+      br_pen.rect(br_win, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.1, 0.0, 0.0, 0.7);
+      br_pen.image(br_win, br_over_tex,
         SCREEN_W / 2.0 - 180.0, SCREEN_H / 2.0 - 50.0, 360.0, 60.0);
-      graphics::draw_texture_at(br_painter, br_restart_tex,
+      br_pen.image(br_win, br_restart_tex,
         SCREEN_W / 2.0 - 160.0, SCREEN_H / 2.0 + 30.0, 320.0, 26.0);
     }
 
-    graphics::gl_swap_buffers();
+    br_win.swap();
   }
 
-  graphics::gl_destroy_window();
+  br_win.close();
 }

@@ -455,13 +455,12 @@ impl Stores {
         // hash<Worker[id]> }`) resolves to the field's type rather than to the
         // wrapper's — which is what makes `company.people` an
         // owner-parameterised query rather than an unreachable shape (#632).
-        let db = self.collection_type_of_store(self.allocations[coll.store_nr as usize].known_type);
+        let db = self.collection_type_at(
+            self.allocations[coll.store_nr as usize].known_type,
+            coll.pos,
+        );
         if db == u16::MAX {
-            return self.lazy_refuse(
-                slot,
-                "this collection has no type to derive a query from — a struct \
-                 wrapping several keyed collections cannot say which one this is",
-            );
+            return self.lazy_refuse(slot, "this collection has no type to derive a query from");
         }
         let desc = self.layout_descriptor(&[db]);
         let shape = QueryShape::Filter(condition.to_string());
@@ -532,7 +531,10 @@ impl Stores {
         let LazySource::Sql(driver, target) = LazySource::of(&source) else {
             return self.lazy_refuse(slot, &format!("`{source}` is not a database source"));
         };
-        let db = self.collection_type_of_store(self.allocations[coll.store_nr as usize].known_type);
+        let db = self.collection_type_at(
+            self.allocations[coll.store_nr as usize].known_type,
+            coll.pos,
+        );
         if db == u16::MAX {
             return self.lazy_refuse(slot, "this collection has no type to derive a query from");
         }

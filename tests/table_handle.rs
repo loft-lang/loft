@@ -202,7 +202,7 @@ fn the_keyed_operations_on_one_place_share_one_handle() {
         "add: one handle\n{add}"
     );
     assert!(
-        add.contains("loft_hh_find_i64(&hh") && add.contains("loft_hh_insert(&hh"),
+        add.contains("loft_hh_find_i64(cx, &hh") && add.contains("loft_hh_insert(cx, &hh"),
         "{add}"
     );
     // the table emptied and refilled between uses: lookups and the insert on one handle
@@ -213,7 +213,7 @@ fn the_keyed_operations_on_one_place_share_one_handle() {
         "refill: one handle\n{refill}"
     );
     assert!(
-        refill.matches("loft_hh_find_i64(&hh").count() >= 2,
+        refill.matches("loft_hh_find_i64(cx, &hh").count() >= 2,
         "{refill}"
     );
     // owned elements live in an inline table the handle does not cover: the plain calls
@@ -225,7 +225,7 @@ fn the_keyed_operations_on_one_place_share_one_handle() {
     assert!(evict.contains("loft_hash_remove_i64("), "{evict}");
     // a generator's resume body is assembled from its frame: it takes no handle
     let resume = &c[c
-        .find("(void *frp, void *out) {\n    loft_gen")
+        .find("(loft_cx *cx, void *frp, void *out) {\n    loft_gen")
         .expect("a generator resume body")..];
     let resume = &resume[..resume.find("\n}\n").unwrap_or(resume.len())];
     assert!(

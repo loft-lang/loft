@@ -71,7 +71,7 @@ fn the_pairs_agree_on_both_backends_under_every_falsifier() {
         out.contains("16 pairs, inline and callee agree"),
         "the guard did not reach its last pair:\n{out}"
     );
-    let (native_ok, native, native_err) = run("--native-rust", STRICT_NATIVE);
+    let (native_ok, native, native_err) = run("--native", STRICT_NATIVE);
     assert!(native_ok, "the guard failed on --native:\n{native_err}");
     assert_eq!(out, native, "the two backends must print the same");
 }
@@ -81,7 +81,7 @@ fn the_pairs_agree_on_both_backends_under_every_falsifier() {
 /// nothing.
 #[test]
 fn the_switch_restores_the_defect_the_guard_catches() {
-    for mode in ["--interpret", "--native-rust"] {
+    for mode in ["--interpret", "--native"] {
         let (ok, _, err) = run(mode, OFF);
         assert!(
             !ok,

@@ -17,7 +17,7 @@
 #
 # The gates: dispatch + fallback + nested par (par-thread-proof), the
 # shared-memory model (par-memory-proof), scaling (par-scaling-bench), UI
-# responsiveness (par-ui-responsive), and the `loft --html` bundle
+# responsiveness (par-ui-responsive), and a `loft --html` page that uses `par`
 # (html-thread-proof).  par-scaling-bench and par-ui-responsive read thresholds
 # from the environment because runner hardware is smaller than this dev box; the
 # workflow .github/workflows/browser-threads.yml sets them.
@@ -48,7 +48,7 @@ if [ $ci -eq 1 ]; then
   command -v chromium >/dev/null || command -v chromium-browser >/dev/null || command -v google-chrome >/dev/null \
     || { echo "::error::no headless chromium/chrome on PATH"; pre=1; }
   rustup run nightly rustc --version >/dev/null 2>&1 \
-    || { echo "::error::no nightly toolchain — the threaded --html build rebuilds std with atomics"; pre=1; }
+    || { echo "::error::no nightly toolchain — the threaded bundle rebuilds std with atomics"; pre=1; }
   [ $pre -eq 0 ] || { echo "PREFLIGHT FAILED — the gates would have skipped themselves green."; exit 1; }
 fi
 

@@ -393,8 +393,10 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 subject, a return-delivery stage) is never-free for the sweep because its
                 value outlives the block the sweep would free it in, and the pass that
                 staged it frees it after the statement that copied the value out.
-                `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) is the gate: a free of
-                any other never-free binding, by any live spelling, is a RED.
+                A free of any other never-free binding, by a spelling neither backend
+                intercepts, releases what the binding views; the store records
+                (`LOFT_LIFETIME_CHECK`) report the store that free ends twice or leaves
+                (`tests/ownership_oracle.rs` injects one).
                 The veto reaches the transition free (O-Detach) as it reaches every other
                 spelling: a flagged binding is never detached by a free, so what it names is
                 released by its owner — a local whose assignments mix ownership through its
@@ -507,7 +509,7 @@ over-free direction, and a leak is recoverable where a premature free is not.
 **And the translation itself has ONE home.**  `use_analysis::structural_arg_base` carries the
 hidden-parameter rule, the delivery-buffer exception and the projection-root walk, and both
 derivations of the fact read it — the oracle, and the @PLN94 flow-sensitive shadow that
-cross-checks it (Check A).  The shadow's own copy, written to *mirror* the oracle's, carried
+cross-checks it (the `own` dump's shadow-diff).  The shadow's own copy, written to *mirror* the oracle's, carried
 none of loft#1318's three fixes and reported the oracle's CORRECT answers as disagreements;
 what the shadow keeps independent is the FLOW, never the translation.  The oracle's answer for
 a VARIABLE is likewise the join of ALL its definitions — a store `OpDatabase` minted into it
@@ -691,19 +693,18 @@ the sole site where the stale `u=Owned` could authorize a bad free never arises.
 interprocedural induction (d), is where the over-free guarantee rests on the O-\* rules rather than the
 fact alone; the INDEPENDENT part is the flow-sensitive structure — the meet, the structural-op
 classification, the self-borrow/null carve-outs. A disagreement in the rule-relative cases is exactly
-what the shadow-diff (Check A) surfaces — which is why the two run beside forever.
+what the shadow-diff (`LOFT_OWN_ORACLE=own`) surfaces.
 
 **(5) Fixpoint soundness — from (1)+(4), DISCHARGED.** The round-robin least fixpoint over the CFG
 converges (**≤ n+2** passes, asserted SI-3), and by (4)'s local soundness + monotonicity + Tarski, the
 per-block OUT-state soundly over-approximates the concrete ownership at every reachable point (given
 the O-\* rules). *Bound, convergence, and — with (4) now discharged — the soundness step all hold.*
 
-**(6) The check corollary.** With (5): if the oracle's check is **GREEN** — Check B finds no
-unconditional `OpFreeRef(v)` with `st(v) = Borrowed`, and Check A finds no fact the shipped analysis
-disagrees with in the unsound direction — then the emitted plan performs **no over-free** of the
-covered classes. Contrapositive is the A1b catch: the `LOFT_NO_A1B` plan returns a store the fact
-reads `Join`/`Borrowed` while the shipped fact reads `Owned` → RED (verified end-to-end,
-`tests/ownership_oracle.rs`), a wrong plan every runtime gate passes.
+**(6) The check corollary.** With (5): a plan in which no unconditional `OpFreeRef(v)` has
+`st(v) = Borrowed` performs **no over-free** of the covered classes.  The instrument that reads it
+off the emitted plan is the store records (`re-free`, `wrong-end`, STORE_RECORDS.md § The checks),
+whose states come from the IR alone, never from this fact.  The A1b plan (`LOFT_NO_A1B` with its
+two sibling guards off) is caught at run time, its fixture failing (`tests/ownership_oracle.rs`).
 
 **(7) Coexistence conclusion.** The proven oracle is a machine-checked *certifier*: on every program
 where oracle and shipped analysis agree (empirically: 505-corpus + 54-cell fuzzer + 377 scripts, all
@@ -719,7 +720,7 @@ and the one moved-source staleness bridged by O-Move**; (5) fixpoint bound/conve
 soundness step; (6) the check corollary; backend fact-identity (SI-2, `tests/ownership_oracle.rs`);
 no-crying-wolf at corpus + fuzz scale (empirical). REMAINING (rigour polish, not a gap): a
 machine-checked (Coq/Lean) rendering of this prose — the argument is complete but hand-written. OUT OF
-SCOPE: no-leak (under-free — the leak detector's + the `check-leak` scan's class); the `Join`
+SCOPE: no-leak (under-free — the leak detector's and the store records' `leak` class); the `Join`
 runtime-witness discharge (a separate `OpFreeRefIfDistinct` lemma); proving the shipped 8-mechanism
 analysis directly (the certifier sidesteps it).
 

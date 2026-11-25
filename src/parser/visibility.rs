@@ -276,7 +276,7 @@ impl Parser {
         let src = self
             .lexer
             .source_text(file)
-            .map_or_else(|| Self::read_source(file), str::to_string);
+            .map_or_else(|| self.read_source(file), str::to_string);
         for name in crate::libscan::scan_type_declarations(&src) {
             if self.prelude_shadowed(&name) {
                 self.data.add_def(&name, self.lexer.pos(), DefType::Unknown);

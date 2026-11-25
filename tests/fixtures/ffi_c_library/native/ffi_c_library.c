@@ -80,6 +80,28 @@ loft_ffi_ref n_pair(loft_ffi_store s, int64_t a, int64_t b) {
 /* Answers that SHARE what their argument holds (loft#2227): the argument itself, a vector field
  * of a record argument, and a fresh record that takes over its argument's text. */
 loft_ffi_ref n_same(loft_ffi_store s, loft_ffi_ref a) { (void) s; return a; }
+/* `bump(a, b)` adds a's length to every byte of `b`, in place (its parameter is not `const`),
+ * and answers the sum of `b` after. */
+int64_t n_bump(loft_ffi_store s, loft_ffi_ref a, loft_ffi_ref b) {
+    uint32_t na = loft_ffi_vector_len(s, a), nb = loft_ffi_vector_len(s, b);
+    uint8_t *d = (uint8_t *) loft_ffi_vector_data(s, b);
+    int64_t t = 0;
+    for (uint32_t i = 0; i < nb; i++) {
+        d[i] = (uint8_t) (d[i] + na);
+        t += d[i];
+    }
+    return t;
+}
+/* `bag_sum(x, y)`: the sum of both bags' items, each read through its record's vector field. */
+static int64_t bag_total(loft_ffi_store s, loft_ffi_ref b) {
+    uint32_t vrec;
+    memcpy(&vrec, s.ptr + (size_t) b.rec * 8 + b.pos, sizeof vrec);
+    loft_ffi_ref v = { b.store_nr, vrec, 0 };
+    return n_sum_bytes(s, v);
+}
+int64_t n_bag_sum(loft_ffi_store s, loft_ffi_ref x, loft_ffi_ref y) {
+    return bag_total(s, x) * 1000 + bag_total(s, y);
+}
 loft_ffi_ref n_bag_items(loft_ffi_store s, loft_ffi_ref b) {
     loft_ffi_ref r;
     uint32_t vrec;
@@ -121,6 +143,8 @@ static void b_pair(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi
 
 static void b_same(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_same(s, a[0].payload.r)); }
 static void b_bag_items(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_bag_items(s, a[0].payload.r)); }
+static void b_bump(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_i64(n_bump(s, a[0].payload.r, a[1].payload.r)); }
+static void b_bag_sum(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_i64(n_bag_sum(s, a[0].payload.r, a[1].payload.r)); }
 static void b_named_k(loft_ffi_store s, const loft_ffi_value *a, size_t n, loft_ffi_value *r) { (void) n; *r = loft_ffi_value_ref(n_named_k(s, a[0].payload.r, a[1].payload.i)); }
 
 #define REG(cb, ctx, name, fn) cb((const uint8_t *) name, sizeof name - 1, (const void *) fn, ctx)
@@ -131,6 +155,7 @@ void loft_register_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_iota", n_iota); REG(cb, ctx, "n_none_vec", n_none_vec); REG(cb, ctx, "n_rev", n_rev); REG(cb, ctx, "n_pair", n_pair);
     REG(cb, ctx, "n_cat", n_cat);
     REG(cb, ctx, "n_same", n_same); REG(cb, ctx, "n_bag_items", n_bag_items); REG(cb, ctx, "n_named_k", n_named_k);
+    REG(cb, ctx, "n_bump", n_bump); REG(cb, ctx, "n_bag_sum", n_bag_sum);
 }
 void loft_register_bridges_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_make_bin", b_make_bin); REG(cb, ctx, "n_text_len", b_text_len); REG(cb, ctx, "n_wrap", b_wrap);
@@ -139,4 +164,5 @@ void loft_register_bridges_v1(loft_ffi_register_cb cb, void *ctx) {
     REG(cb, ctx, "n_iota", b_iota); REG(cb, ctx, "n_none_vec", b_none_vec); REG(cb, ctx, "n_rev", b_rev); REG(cb, ctx, "n_pair", b_pair);
     REG(cb, ctx, "n_cat", b_cat);
     REG(cb, ctx, "n_same", b_same); REG(cb, ctx, "n_bag_items", b_bag_items); REG(cb, ctx, "n_named_k", b_named_k);
+    REG(cb, ctx, "n_bump", b_bump); REG(cb, ctx, "n_bag_sum", b_bag_sum);
 }

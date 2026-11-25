@@ -2,6 +2,104 @@
 /* eslint-disable */
 
 /**
+ * `@PLN226` — a page's debugger: the debug session over the program it started.  The page
+ * holds the handle and passes it to every call (`@FR-C-Boundary`): two debuggers on one page
+ * never meet, and nothing is kept per thread.
+ *
+ * A doc page (@PLN149 step 8) holds the source the reader is editing and drives it through
+ * [`Self::start`] and [`Self::command`] — set a breakpoint, pause, read the frame, evaluate
+ * an expression against it, resume; the writer route's relay feeds the same grammar through
+ * [`Self::pump`], so the two drive one implementation.
+ *
+ * ```js
+ * const dbg = new Debugger();
+ * JSON.parse(dbg.start(source));            // {"ok":true} | {"ok":false,"error":"…"}
+ * JSON.parse(dbg.command('bp 4'));          // {"replies":[…],"output":"…"}
+ * ```
+ */
+export class Debugger {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Apply one debug command to the live session.
+     *
+     * Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced
+     * and whatever the program printed while it ran.  The two travel together because a
+     * `run` or a `resume` produces both, and a page fetching them separately could paint a
+     * pause before the output that led to it.
+     *
+     * The grammar is [`Self::replies`]': `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
+     * `eval <expr>`, `fns`.
+     */
+    command(cmd: string): string;
+    /**
+     * A debugger with no program yet.
+     */
+    constructor();
+    /**
+     * Start a debug session over `source`, replacing this debugger's previous one.
+     *
+     * Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
+     * page that offers to run the code in front of the reader has to say why it will not.
+     *
+     * A bare script (top-level statements, no `fn main`) is desugared exactly as
+     * `compile_and_run` desugars it, so the two entries accept the same inputs.
+     */
+    start(source: string): string;
+}
+
+/**
+ * `@PLN226` — a page's game: the program it started and runs frame by frame, and the world
+ * snapshot staged for the next program it starts (@PLN18 08-S6).  The page holds the handle and
+ * passes it to every call (`@FR-C-Boundary`): two games on one page never meet, and nothing is
+ * kept per thread.
+ *
+ * ```js
+ * const game = new Game();
+ * let r = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: src }])));
+ * while (r.running) { await nextFrame(); r = JSON.parse(game.resume_frame()); }
+ * ```
+ */
+export class Game {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * A game with nothing started.
+     */
+    constructor();
+    /**
+     * Run the next frame.  JSON `{"running":true}` (with `"output"` when the frame printed),
+     * `{"running":false,"output":"…"}` when the program finished, or
+     * `{"running":false,"error":"…"}` when it crashed.
+     */
+    resume_frame(): string;
+    /**
+     * Stage `snapshot` (`swap_export` of another game) for the next program this game starts:
+     * its `swap_world` restores it — the browser's form of the native `LOFT_RESUME`.
+     */
+    stage_swap(snapshot: string): void;
+    /**
+     * Start the program in `files_json` (`[{name, content}]`), ending this game's previous
+     * one: parse, compile, execute until the first frame yield.  JSON
+     * `{"ok":true,"running":true}`, `{"ok":true,"running":false,"output":"…"}` when it ran to
+     * its end, or `{"ok":false,"error":"…"}`.
+     */
+    start(files_json: string): string;
+    /**
+     * End the running program and close its window.
+     */
+    stop(): void;
+    /**
+     * May the program in `files_json` take over this game's world?
+     */
+    swap_check(files_json: string): string;
+    /**
+     * The running program's world, for another game to take over (`stage_swap`).
+     */
+    swap_export(): string;
+}
+
+/**
  * Run a loft program supplied as a JSON array of `{name, content}` file objects.
  *
  * Returns a JSON string: `{"output": "...", "diagnostics": [...], "success": true|false}`.
@@ -23,87 +121,23 @@
  */
 export function compile_and_run(files_json: string): string;
 
-/**
- * Start a game session: parse, compile, execute until the first frame yield.
- * Returns JSON `{"ok":true}` on success or `{"ok":false,"error":"..."}` on failure.
- */
-export function compile_and_start(files_json: string): string;
-
-/**
- * Apply one debug command to the live session.
- *
- * Returns JSON `{"replies":[…],"output":"…"}` — the `D:` replies the command produced and
- * whatever the program printed while it ran.  The two travel together because a `run` or a
- * `resume` produces both, and a page fetching them separately could paint a pause before
- * the output that led to it.
- *
- * The grammar is [`command`]'s: `bp <fn>` / `bp <line>`, `run`, `resume`, `step`,
- * `eval <expr>`, `fns`.
- */
-export function debug_command(cmd: string): string;
-
-/**
- * Start a debug session over `source`, replacing any previous one.
- *
- * Returns JSON `{"ok":true}`, or `{"ok":false,"error":"…"}` carrying the diagnostics — a
- * page that offers to run the code in front of the reader has to say why it will not.
- *
- * A bare script (top-level statements, no `fn main`) is desugared exactly as
- * `compile_and_run` desugars it, so the two entries accept the same inputs.
- */
-export function debug_start(source: string): string;
-
-/**
- * Resume execution after a frame yield.  Returns JSON:
- * `{"running":true}` — yielded again, call on next requestAnimationFrame
- * `{"running":false,"output":"..."}` — program finished
- * `{"running":false,"error":"..."}` — program crashed
- */
-export function resume_frame(): string;
-
-/**
- * @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
- * browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
- * it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
- * leaves the running build serving.  The program is parsed and scope-checked, not run, and
- * the parked run is not touched.
- *
- * Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
- * the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
- * program that does not compile or a world it cannot take over.
- */
-export function swap_check(files_json: string): string;
-
-/**
- * Export the registered world of the PARKED (frame-yielded) run; "" when no run is parked
- * or no world was registered.
- *
- * @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
- * that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
- * next run's `swap_world` reads through the converter: keyed collections and references
- * survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
- * before.
- */
-export function swap_export(): string;
-
-/**
- * Stage a snapshot for the next run's `swap_world` (the browser analog of
- * the native LOFT_RESUME env).
- */
-export function swap_stage(snapshot: string): void;
-
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_debugger_free: (a: number, b: number) => void;
+    readonly __wbg_game_free: (a: number, b: number) => void;
     readonly compile_and_run: (a: number, b: number) => [number, number];
-    readonly compile_and_start: (a: number, b: number) => [number, number];
-    readonly debug_command: (a: number, b: number) => [number, number];
-    readonly debug_start: (a: number, b: number) => [number, number];
-    readonly resume_frame: () => [number, number];
-    readonly swap_check: (a: number, b: number) => [number, number];
-    readonly swap_export: () => [number, number];
-    readonly swap_stage: (a: number, b: number) => void;
+    readonly debugger_command: (a: number, b: number, c: number) => [number, number];
+    readonly debugger_new: () => number;
+    readonly debugger_start: (a: number, b: number, c: number) => [number, number];
+    readonly game_new: () => number;
+    readonly game_resume_frame: (a: number) => [number, number];
+    readonly game_stage_swap: (a: number, b: number, c: number) => void;
+    readonly game_start: (a: number, b: number, c: number) => [number, number];
+    readonly game_stop: (a: number) => void;
+    readonly game_swap_check: (a: number, b: number, c: number) => [number, number];
+    readonly game_swap_export: (a: number) => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

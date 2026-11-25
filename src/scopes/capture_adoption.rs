@@ -1081,6 +1081,19 @@ pub(super) fn owning_record_locals(
     // a STRUCT capture names the local outright, a COLLECTION capture names a view whose
     // backing local is this one.
     let name = function.name(v).to_string();
+    // A scalar ARGUMENT the closure mutates lives in a shadow cell (`__bx_<name>`,
+    // `promote_boxed_scalar_arg`), and the record's attribute keeps the argument's name: the
+    // shadow answers to it.  Unnamed, a run that skipped the build released the cell nowhere
+    // (loft#2639).  `LOFT_NO_SHADOW_CELL_OWNER=1` matches the shadow's own name only.
+    let arg_name = match function.promoted_from(v) {
+        a if a != u16::MAX
+            && a < function.count()
+            && !crate::env_once!(std::env::var_os("LOFT_NO_SHADOW_CELL_OWNER").is_some()) =>
+        {
+            Some(function.name(a).to_string())
+        }
+        _ => None,
+    };
     let (adopters, _) = capture_store_adopters(data, function, builds);
     for group in adopters.values() {
         // `@FR-L-CapOne` — every member owns where the records CANNOT COEXIST, the same condition
@@ -1099,7 +1112,10 @@ pub(super) fn owning_record_locals(
         for owner in owners {
             let (local, record, a) = group[owner];
             let attr = super::capture_builds::capture_name(data, record, a);
-            if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
+            if attr == name
+                || arg_name.as_deref() == Some(attr.as_str())
+                || builds.backing.get(&function.var(&attr)) == Some(&v)
+            {
                 locals.push(local);
             }
         }

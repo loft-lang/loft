@@ -9,7 +9,7 @@ import sys
 
 HEADER = """\
 # Baseline of every `#[ignore = "..."]` and `#[cfg_attr(<cfg>, ignore = "...")]` in
-# tests/*.rs and src/**/*.rs.  One `<file>::<test_name>\\t<reason>` pair per line,
+# tests/*.rs (with the parts in tests/<binary>/) and src/**/*.rs.  One `<file>::<test_name>\\t<reason>` pair per line,
 # sorted; the file is part of the key because two `src/` tests share a bare name.
 # Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on
 # any drift.  A drift typically means one of:
@@ -53,7 +53,10 @@ def scan(path):
 
 
 def main() -> int:
-    files = sorted(glob.glob("tests/*.rs")) + sorted(glob.glob("src/**/*.rs", recursive=True))
+    binaries = sorted(glob.glob("tests/*.rs"))
+    # a test binary split into parts keeps them in the directory named after it
+    parts = [q for b in binaries for q in sorted(glob.glob(b[:-3] + "/*.rs"))]
+    files = sorted(binaries + parts) + sorted(glob.glob("src/**/*.rs", recursive=True))
     out = sorted(pair for p in files for pair in scan(p))
     sys.stdout.write(HEADER)
     for name, reason in out:

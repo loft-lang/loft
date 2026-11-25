@@ -213,10 +213,6 @@ case past it (QUALITY-history.md B8i).
 **OPEN: 0.**  The record of the others is in the companion
 [iteration-history.md](iteration-history.md).
 
-- **D-iter-17** (loft#2579) — violates `(I-Comp)` and `(E-Once)`: a comprehension over a
-  `sorted` or an `index` source reduces the source once per step; the `for` statement over
-  the same source reduces it once.
-
 ## Conformance
 
 - **Order + length (`I-For` / `I-Map`)** — `[1,2,3,4,5,6].map(|x| x*2)` is `[2,4,6,8,10,12]` in

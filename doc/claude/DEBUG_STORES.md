@@ -182,7 +182,7 @@ struct fields.
 |---|---|---|
 | `LOFT_STORE_GUARD=1` | Reports each block-confined vector store that is scoped (and freed) later than the block it is confined to — the lifetime model under-freeing (Goal E).  Read-only, off by default.  Confinement is the least-common-ancestor of every reference's scope-path, with escape exclusions (return/yield/break, block-result, tuple-element, dep-aliasing) and loop-internal reuse excluded — adversarially hardened by `plans/2-vector-store-watermark/probes/cluster-I/`. | "Does a program hold more heap than the source implies?"  Drive the store-lifetime fix until it is silent corpus-wide, then promote to a `debug_assertions` assert.  See [GOALS.md Goal E](GOALS.md#goal-e--predictable-memory-the-programmers-model-is-the-truth). |
 | `LOFT_LOG=zero_claim` (or `LOFT_ZERO_CLAIM=1`) | Zeroes every freshly-claimed payload and grown tail (off by default: a claim writes nothing, `@FR-H-Claim`), so a read-before-write / stale read returns a deterministic `0` instead of arena garbage. | A result is **non-deterministic** run-to-run.  If `zero_claim` makes it deterministic-and-correct → a read-before-write: find it with `LOFT_POISON_CLAIM=1` and fix the READER (write the value it assumed where the value is built), never the claim.  If it stays non-deterministic → NOT a claimed-slack read (rule it out; suspect a deep-copy logic bug or addresses-as-data). |
-| `LOFT_STORE_LIVE_DIGEST=1` | When `store_persist_copy` writes an image, prints `loft: live-digest <hash> bytes <n> <path>` to stderr: a digest of the bytes the written (rebuilt) store holds IN ACTIVE USE (`Stores::live_digest` — block headers, record fields, a vector's header and its length's elements, a text's header and bytes, a keyed table and its entry arena). | Two saved images are compared by this, never byte for byte: a claim writes nothing (`@FR-H-Claim`), so a vector's capacity past its length and a text's tail keep what a freed block held there, and differ with the allocation history while the stored data is the same.  Equal digests: the same data in the same layout. |
+| `LOFT_STORE_LIVE_DIGEST=1` | When `store_persist_copy` writes an image, prints `loft: live-digest <hash> bytes <n> <path>` to stderr: a digest of the bytes the written (rebuilt) store holds IN ACTIVE USE (`Stores::live_digest` — block headers, record fields, a vector's header and its length's elements, a text's header and bytes, a keyed table and its entry arena). | Two saved images are compared by this, never byte for byte: a claim writes nothing (`@FR-H-Claim`), so a vector's capacity past its length and a text's tail keep what a freed block held there, and differ with the allocation history while the stored data is the same.  Equal digests: the same data in the same layout.  `--interpret` only: the C writes no digest line. |
 | `LOFT_LOG=poison_free` | Overwrites a store's buffer with `0xDEADBEEF` on free. | Suspected use-after-free of a *whole store*.  No effect ⇒ not a freed-store UAF. |
 | `LOFT_UAF_GEN=1` (+ `LOFT_UAF_SRC=1`) | Detector (c): stamps every DbRef pushed on the operand stack with its store's generation and reports at the matching pop when the slot was freed since.  `_SRC` adds the freeing pc + op. | The freed-then-**reused** read `LOFT_POISON` is blind to (the new occupant is live, so the bytes look fine).  **Scope: only the window between a push and its pop** — a ref that goes stale sitting in a FRAME slot is invisible to it, which is why it never saw loft#723. |
 | `LOFT_UAF_GEN_INJECT=1` | Ages every ref just after its push stamps it, so each is stale while live.  The positive control for the row above. | Before believing a silent `LOFT_UAF_GEN` run.  A detector that cannot fire and a clean corpus look identical; under injection ~471/548 corpus scripts report, against 0 without it. |
@@ -216,9 +216,9 @@ struct fields.
 | `LOFT_TRACE_INSTANCE_KEY=1` | Each method-shaped generic instance key rewritten (`old key -> new key`) with the spelling of every binding. | Two instances of one generic that should be one (a duplicate `t_…` emitted), or one that should be two. |
 | `LOFT_TRACE_CLOSURE_KEEP=1` | Per function, the closure-keep analysis: the records kept, their holders and which are owning. | A captured record freed under a live closure, or kept past its last use. |
 | `LOFT_TRACE_PAR_WORKERS=1` | Per `parallel` dispatch (native only, read once): the site, `n_rows`, threads, DISTINCT workers and the indices each took. | A `par` that ran on one thread, or two workers that took the same row. |
-| `LOFT_KEEP_NATIVE_RS=1` | Preserves the generated Rust at `/tmp/loft_native_*.rs` instead of cleaning it. | Read the generated Rust at a specific line a runtime panic cites.  Added during PLAN51 V-c diagnosis. |
+| `LOFT_KEEP_NATIVE_C=1` | Keeps the generated C of a native build instead of cleaning it, and prints `loft: C source preserved at …`. | Read the generated C at a specific line a runtime fault or a debugger cites. |
 | `check_store_leaks` (interp, **`--interpret` only** — see note) / `LOFT_NATIVE_LEAK_CHECK=1` (native) | At-exit summary of unfreed stores, **aggregated by type** (`kt=68 ChunkKey×6026`). | Pin *which type* leaks.  Run the **same** repro on both backends — a leak on one and not the other means a backend-specific free emission bug (the @P317 symptom-2 shape). |
-| `--native-emit out.rs` | Writes the generated Rust and exits. | A native-only bug.  Read the generated function: look for a `null_named(...)` placeholder that is overwritten without a free, or a missing/extra `OpFreeRef`. |
+| `--native-emit out.c` | Writes the generated C and exits. | A native-only bug.  Read the generated function: look for a reference that is overwritten without a free, or a missing/extra `OpFreeRef`. |
 | `"Allocating a used store #N (known_type=…, requested by=…)"` panic (`allocation.rs:104`) | The store-pool tripwire (free-bitmap vs `store.free` disagree), now with slot + type + requester. | Fires at the *next* allocation after the real over-free/leak — a tripwire, not the bug site.  The pool near `u16::MAX` ⇒ a leak exhausted the pool and `max` wrapped to 0; otherwise a double-free. |
 
 > **Gotcha — the interpreter leak check needs `--interpret`.** Bare `loft prog.loft` runs the
@@ -228,14 +228,13 @@ struct fields.
 > `loft --interpret prog.loft` (or rely on the test harness, which is interpreter-based:
 > `tests/leak.rs::leaks_for`, `loft_suite`). Native leak-checking is the separate
 > `LOFT_NATIVE_LEAK_CHECK=1` axis. Note also that some leaks are interpreter-only: the eager
-> `OpInitRef` null-init allocates a store in the interpreter but native lowers it to `DbRef::NULL`
+> `OpInitRef` null-init allocates a store in the interpreter but native lowers it to the null reference
 > (no allocation), so an interpreter `kt=65535` leak can be genuinely absent under native.
 
 Workflow: reproduce minimally, run on **both** backends (divergence localises
 the backend), use `zero_claim` to classify the non-determinism, then `--native-emit`
 + `LOFT_STORES=log` to pin the site.  Mirror the @P311/@P313 fix shape (a
-missing/spurious `0x8000` free-source bit or a `null_named`-vs-sentinel
-choice in `src/generation/dispatch.rs::emit_null_dbref`).
+missing/spurious `0x8000` free-source bit).
 
 ---
 
@@ -293,28 +292,13 @@ the defect shipped.  Both were true of loft#899's `OpDatabase(db_tp = u16::MAX)`
 exactly one producer, zero corpus coverage.  Remove the probe once the invariant
 is enforced at its chokepoint.
 
-**Never set `RUSTFLAGS` against the MAIN target dir.**  Cargo keeps BOTH
-flag-generations of every dep in `target/release/deps/` — including two
-`libloft_ffi-*.rlib` — and anything that sweeps `deps/` (the cdylib
-auto-builds pass `--extern` for every rlib there) then dies on
-`colliding StableCrateId values`, while `loft-ffi`'s fingerprint change
-invalidates every cached cdylib.  Recovery, in order: `cargo clean --release`
-→ full `cargo build --release` → `make rebuild-native-cdylibs` → rebuild the
-registry graphics cdylib (`cd ~/.loft/registry/graphics-*/native && cargo
-build --release`) → `loft cache prune --all` (the whole-cache sweep; plain
-`loft cache prune` keeps the live generation and drops only what this loft
-cannot select — see loft#861) → rebuild the wasm rlib (the `html_wasm`
-staleness guard checks it against source mtimes).
-
-**Prevent + auto-heal it.**  Run sanitizer/nightly builds through
-**`scripts/asan.sh`**, which sets `CARGO_TARGET_DIR=target/asan` so nightly
-artifacts never land in the shared `target/` — the pollution simply cannot
-happen.  If a stray nightly build already polluted it (E0514 "incompatible
-version of rustc" on the native tests), **`find_problems.sh` self-heals**: its
-`ffi_toolchain_guard` reads the rustc version embedded in each
-`libloft_ffi-*.rlib`, and when it differs from the active `rustc` it deletes the
-stale rlib so the next build recompiles it — turning the silent, mtime-immune
-E0514 into an automatic rebuild.
+**Never set `RUSTFLAGS` against the MAIN target dir.**  A changed `RUSTFLAGS`
+rebuilds every crate there, and the next ordinary build rebuilds them all again.
+Run sanitizer/nightly builds through **`scripts/asan.sh`**, which sets
+`CARGO_TARGET_DIR=target/asan` so nightly artifacts never land in the shared
+`target/`.  Compiled libraries a stray build left behind go with
+`loft cache prune --all` (the whole-cache sweep; plain `loft cache prune` keeps
+the live generation and drops only what this loft cannot select).
 
 Reading the results: CLI-spawning tests fail en masse if the stdlib symlink
 is missing (lens artifact, not a finding); confirm any surprising cell

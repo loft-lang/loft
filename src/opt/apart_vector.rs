@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 //! `@FR-R-Apart`, instance 3 — a `vector<float>` local that never leaves its function is held
-//! as an INLINE buffer with a spill (`codegen_runtime::ApVec`): its pushes, element reads and
+//! as an INLINE buffer with a spill (the C's `loft_apvec`): its pushes, element reads and
 //! writes and its length touch no store.  Nothing crosses a boundary, so there is no
 //! conversion and no twin, and the rewrite is local to one body — which a build that ships
 //! the live tier may make too, since a flipped function runs its interpreted body whole.

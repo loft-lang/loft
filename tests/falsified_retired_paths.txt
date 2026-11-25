@@ -1,0 +1,10 @@
+# Retired source a patch receipt may still carry a hunk of.  scripts/falsify.sh,
+# scripts/receipts_ci.py and doc_hygiene::every_patch_receipt_still_applies leave these hunks
+# out (GUARDS.md § The patch receipt).  One `git apply --exclude` pattern per line.
+src/compiled_stdlib_gen.rs
+src/generation/*
+src/codegen_runtime.rs
+src/native_lib.rs
+src/stdlib_codegen.rs
+src/toolchain.rs
+src/native_release_args.txt

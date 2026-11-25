@@ -1,0 +1,24 @@
+diff --git a/src/c/mod.rs b/src/c/mod.rs
+index acb2bb0..b03197b 100644
+--- a/src/c/mod.rs
++++ b/src/c/mod.rs
+@@ -3069,16 +3069,9 @@ fn unit_defines(
+ /// that header: a program may ask `store_lazy_error` of a collection it never bound, and the
+ /// answer (no failure, `""`) is the header's as well as the interpreter's.
+ fn is_lazy_native(name: &str) -> bool {
+-    matches!(
+-        name,
+-        "n_store_bind_lazy"
+-            | "n_store_lazy_query"
+-            | "n_store_lazy_range"
+-            | "n_store_lazy_error"
+-            | "n_store_lazy_faults"
+-            | "n_store_lazy_clear"
+-            | "n_store_lazy_fail"
+-    )
++    // SABOTAGE: only a bind carries the lazy header; a unit asking `store_lazy_error` of a
++    // collection it never bound misses it.
++    name == "n_store_bind_lazy"
+ }
+ 
+ fn fetch_defines(

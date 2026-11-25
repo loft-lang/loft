@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 rust-writer: the live tier (flips, live edits) runs the interpreter inside a Rust-writer build, so those cells run with LOFT_NATIVE_BACKEND=rust; the build swap is also run on the C (`s5_c_*`), and the rest of the C kernel is c_emit's and c_https's.
+// `@C170`: live edits, breakpoints and the `D!:` debugger run on the interpreter (`--interpret`); the C build has no live tier, so the cells that flipped a compiled function into one (@PLN225 R4) keep their interpreter and C halves only.  The build swap runs on the C (`s5_c_*`), and the rest of the C kernel is c_emit's and c_https's.
 
 // The kernel lifecycle suite is unix-only v1: the swap machinery rides
 // SO_REUSEPORT + process groups (killpg cleans the --native grandchildren),
@@ -68,6 +68,10 @@ impl Drop for Guard {
     }
 }
 
+/// `@C172` — the debug token every child a test debugs is handed (`LOFT_DEBUG_TOKEN`), and that
+/// every request below names (`/ws?t=…`), as a launcher hands on its own.
+const TEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
 /// Whether an upgrade sent as a browser page of `origin` would send it is answered with
 /// anything but `101` — the endpoint must be listening, so a refusal is a refusal.
 fn ws_refused_as(port: u16, origin: &str) -> bool {
@@ -76,7 +80,27 @@ fn ws_refused_as(port: u16, origin: &str) -> bool {
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     let req = format!(
-        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nOrigin: {origin}\r\n\
+        "GET /ws?t=0123456789abcdef0123456789abcdef HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nOrigin: {origin}\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let _ = stream.read_to_end(&mut head);
+    !String::from_utf8_lossy(&head).contains("101")
+}
+
+/// A request target naming a token that is not this run's.
+const OTHER_TOKEN: &str = "/ws?t=00000000000000000000000000000000";
+
+/// Whether an upgrade to `target` is answered with anything but `101` (the endpoint listens).
+fn ws_refused_target(port: u16, target: &str) -> bool {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("the endpoint listens");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let req = format!(
+        "GET {target} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
          Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
          Sec-WebSocket-Version: 13\r\n\r\n"
     );
@@ -87,6 +111,11 @@ fn ws_refused_as(port: u16, origin: &str) -> bool {
 }
 
 fn ws_connect(port: u16) -> TcpStream {
+    ws_connect_target(port, &format!("/ws?t={TEST_TOKEN}"))
+}
+
+/// [`ws_connect`] with the request target given: `/ws` names no debug token, a game peer's.
+fn ws_connect_target(port: u16, target: &str) -> TcpStream {
     let deadline = vm_deadline(15);
     let stream = loop {
         if let Ok(s) = TcpStream::connect(("127.0.0.1", port)) {
@@ -98,9 +127,11 @@ fn ws_connect(port: u16) -> TcpStream {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
-               Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-               Sec-WebSocket-Version: 13\r\n\r\n";
+    let req = format!(
+        "GET {target} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
     (&stream).write_all(req.as_bytes()).unwrap();
     // Read the 101 head to its blank line (unbuffered).
     let mut head = Vec::new();
@@ -157,45 +188,35 @@ fn s1_native_baseline_matches_interpreted() {
     run_kernel_scenario(common::bind_port(18094), false);
 }
 
-/// @PLN18 08 scenario S3 — edit the interpreted fn; the MIXED build keeps
-/// running.  The flip target is interpreted from startup (`LOFT_FLIP_FNS`);
-/// the test then EDITS the source file under the serving kernel: a good
+/// @PLN18 08 scenario S3 — edit a fn under the serving kernel: a good
 /// edit (+1 -> +100) applies live — observed as the world counter's STEP
 /// changing while the counter itself stays monotone (continuity: no
 /// restart, no reset); a broken edit (a real parse ERROR) keeps the +100
 /// body serving; a signature change is rejected (call sites embed frame
-/// sizes).  The timeline is differential: the interpreted leg (the original
-/// tier-0 reload path) passes the SAME milestones.  Application is
-/// asynchronous (dispatch-path poll vs the interp loop's op counter), so
-/// the legs assert step timelines + reload milestones, not raw vectors;
+/// sizes).  Application is asynchronous (the interp loop's op counter), so
+/// the leg asserts a step timeline + reload milestones, not raw vectors;
 /// the stderr file is the synchronization point for the REJECTED edits.
+/// `@C170`: the live edit is the interpreter's; the compiled leg that flipped
+/// the fn into the rustc writer's live tier went with the writer (@PLN225 R4).
 // @speed 5.2
 #[test]
 fn s3_live_edit_under_native_baseline() {
-    let native = run_s3_scenario(common::bind_port(18097), false);
-    let interp = run_s3_scenario(common::bind_port(18098), true);
+    let run = run_s3_scenario(common::bind_port(18098));
     assert!(
-        native.stderr.contains("live-dispatch: n_bump_events"),
-        "the native leg must dispatch through the interpreter:\n{}",
-        native.stderr
+        run.stderr.contains("'bump_events' v1 live"),
+        "the good edit must reload:\n{}",
+        run.stderr
     );
-    for (leg, run) in [("native", &native), ("interp", &interp)] {
-        assert!(
-            run.stderr.contains("'bump_events' v1 live"),
-            "{leg}: the good edit must reload:\n{}",
-            run.stderr
-        );
-        assert!(
-            run.stderr.contains("kept its old body"),
-            "{leg}: the broken edit must be refused:\n{}",
-            run.stderr
-        );
-        assert!(
-            run.stderr.contains("changed its signature"),
-            "{leg}: the signature change must be refused:\n{}",
-            run.stderr
-        );
-    }
+    assert!(
+        run.stderr.contains("kept its old body"),
+        "the broken edit must be refused:\n{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("changed its signature"),
+        "the signature change must be refused:\n{}",
+        run.stderr
+    );
 }
 
 fn s3_fixture(port: u16, bump_decl: &str, bump_stmt: &str) -> String {
@@ -274,7 +295,7 @@ fn s3_await_stderr(ws: &TcpStream, last: &mut i64, path: &std::path::Path, needl
     }
 }
 
-fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
+fn run_s3_scenario(port: u16) -> S2Run {
     if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return S2Run {
@@ -289,16 +310,9 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     let err_path = test_tmp().join(format!("eh_s3_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1");
-    if interpret {
-        cmd.arg("--interpret");
-    } else {
-        cmd.env("LOFT_LIVE_FLIP", "1")
-            .env("LOFT_FLIP_FNS", "bump_events")
-            .env("LOFT_DISPATCH_DEBUG", "1");
-    }
+    cmd.arg("--interpret");
     cmd.process_group(0); // own group, so Guard can kill driver + grandchild
     let child = cmd
         .arg("--no-warnings")
@@ -371,7 +385,7 @@ fn ws_try_connect(port: u16) -> Option<TcpStream> {
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .ok()?;
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+    let req = "GET /ws?t=0123456789abcdef0123456789abcdef HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
                Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
                Sec-WebSocket-Version: 13\r\n\r\n";
     (&stream).write_all(req.as_bytes()).ok()?;
@@ -501,267 +515,8 @@ impl Drop for S5Hygiene {
     }
 }
 
-// @speed 1.8
-#[test]
-fn s5_native_swap_under_running_world() {
-    if !fa::exists(loft_bin()) {
-        eprintln!("skipping: release loft not built");
-        return;
-    }
-    // Both stems carry a PORT, and the two ports are not the same one: a prior run's orphan
-    // sits on this checkout's CANONICAL port (`test_port`, pure), while our own child lands on
-    // whatever `bind_port` could actually take — which differs exactly when an orphan already
-    // holds the canonical one, the case the sweep exists for.
-    s5_kill_stale(&format!("/.loft/cache/eh_s5_{}-", common::test_port(18100))); // a stale orphan from a prior run shares the port
-    std::thread::sleep(Duration::from_millis(200));
-    let port = common::bind_port(18100);
-    reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
-    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5_{port}-"), Some(port)); // OUR swap child dies at exit
-    // A test-OWNED always-fails binary: /bin/false varies across platforms
-    // and runners (macOS CI refused it — forensics pending); a temp script
-    // is deterministic everywhere this unix-only suite runs.
-    let bad_bin = test_tmp().join(format!("eh_s5_false_{port}.sh"));
-    fa::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fa::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let bad_bin = bad_bin.to_string_lossy().into_owned();
-    // v2 also GROWS the world (@PLN196 step 8): `bonus` is added with a default computed
-    // from the record, so the swap must carry the world through the converter — the old
-    // JSON snapshot left a field it did not have at null.
-    let fixture = |ver: &str| {
-        let (bonus_field, bonus_reply) = if ver == "v2" {
-            (
-                ", bonus: integer = $.events * 10",
-                "if ev.payload == \"bonus\" { engine_host::send(ev.cid, \"bonus:{w.bonus}\"); return; }",
-            )
-        } else {
-            ("", "")
-        };
-        format!(
-            r#"
-use engine_host;
-struct W {{ events: integer not null, ticks: integer not null{bonus_field} }}
-fn bump_events(w: W) -> integer {{
-  w.events = w.events + 1;
-  w.events
-}}
-fn main() {{
-  w = W {{ events: 0, ticks: 0 }};
-  resumed = engine_host::swap_world(w);
-  engine_host::run({port}, 10000,
-    fn(ev: engine_host::Event) {{
-      if ev.kind != 1 {{ return; }}
-      n = bump_events(w);
-      if ev.payload == "rebuild" {{
-        engine_host::send(ev.cid, "rebuild:{{engine_host::rebuild_start()}}");
-        return;
-      }}
-      if ev.payload == "status" {{
-        engine_host::send(ev.cid, "status:{{engine_host::rebuild_status()}}");
-        return;
-      }}
-      if ev.payload == "swap" {{
-        engine_host::send(ev.cid, "swap:{{engine_host::swap_start(engine_host::rebuild_artifact())}}");
-        return;
-      }}
-      if ev.payload == "badpath" {{
-        engine_host::send(ev.cid, "badpath:{{engine_host::swap_start("/nonexistent/binary")}}");
-        return;
-      }}
-      if ev.payload == "badswap" {{
-        engine_host::send(ev.cid, "badswap:{{engine_host::swap_start("{bad_bin}")}}");
-        return;
-      }}
-      {bonus_reply}
-      engine_host::send(ev.cid, "{ver}:{{ev.payload}}#{{n}}t{{w.ticks}}");
-    }},
-    fn() {{ w.ticks = w.ticks + 1; }});
-}}
-"#
-        )
-    };
-    let prog = test_tmp().join(format!("eh_s5_{port}.loft"));
-    fa::write(&prog, fixture("v1")).unwrap();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let err_path = test_tmp().join(format!("eh_s5_{port}.err"));
-    let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
-    cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
-    cmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_FLIP_FNS", "bump_events")
-        .env("LOFT_DISPATCH_DEBUG", "1");
-    cmd.process_group(0);
-    let child = cmd
-        .arg("--no-warnings")
-        .arg("--lib")
-        .arg(root.join("lib"))
-        .arg(&prog)
-        .current_dir(&root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(err_file))
-        .spawn()
-        .expect("spawn kernel");
-    let _guard = Guard(Some(child));
-
-    let stderr_now = || fa::read_to_string(&err_path).unwrap_or_default();
-    let mut count = 0i64; // every event bumps the world counter
-    let ws = ws_connect(port);
-    let ask = |ws: &TcpStream, msg: &str, count: &mut i64| -> String {
-        ws_send(ws, msg);
-        *count += 1;
-        ws_recv(ws)
-    };
-    // The flipped baseline serves (S2 still alive under this fixture).
-    let r = ask(&ws, "a", &mut count);
-    assert_eq!(
-        r,
-        format!("v1:a#{count}t")
-            .rsplit_once('t')
-            .unwrap()
-            .0
-            .to_string()
-            + "t"
-            + r.rsplit_once('t').unwrap().1,
-        "shape — first-ask flake probe: raw={r:?} count={count}; subprocess stderr:\n{}",
-        stderr_now()
-    );
-    assert!(r.starts_with(&format!("v1:a#{count}t")), "baseline: {r}");
-    assert!(stderr_now().contains("live-dispatch: n_bump_events"));
-
-    // Rollback leg 1: a missing artifact is refused outright (no freeze).
-    assert_eq!(ask(&ws, "badpath", &mut count), "badpath:false");
-    // Rollback leg 2: a build that dies before serving.  The freeze defers
-    // the next replies; they drain after the rollback (recv timeout rides
-    // it).  The world must keep counting and the old build keep serving.
-    let badswap = ask(&ws, "badswap", &mut count);
-    assert_eq!(
-        badswap,
-        "badswap:true",
-        "swap_start must accept the test's false-binary; server stderr:\n{}",
-        fa::read_to_string(&err_path).unwrap_or_default()
-    );
-    let r = ask(&ws, "b", &mut count);
-    assert!(
-        r.starts_with(&format!("v1:b#{count}t")),
-        "post-rollback: {r}"
-    );
-    assert!(
-        stderr_now().contains("rolled back"),
-        "the dead build must roll back:\n{}",
-        stderr_now()
-    );
-
-    // S3+S4: live edit, then background rebuild to ready.
-    fa::write(&prog, fixture("v2")).unwrap();
-    assert_eq!(ask(&ws, "rebuild", &mut count), "rebuild:true");
-    let deadline = vm_deadline(300);
-    loop {
-        let st = ask(&ws, "status", &mut count);
-        if st == "status:2" {
-            break;
-        }
-        assert!(Instant::now() < deadline, "rebuild never ready");
-        std::thread::sleep(Duration::from_millis(300));
-    }
-
-    // THE SWAP.  The ack arrives before the freeze; the world counter and
-    // tick stamp in the LAST pre-swap reply are the continuity anchors.
-    let r = ask(&ws, "c", &mut count);
-    assert!(r.starts_with(&format!("v1:c#{count}t")), "pre-swap: {r}");
-    let t_pre: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
-    assert_eq!(ask(&ws, "swap", &mut count), "swap:true");
-    // The world is frozen after the swap event: its counter is `count` from here.
-    let frozen = count;
-
-    // Wait for the handover: the old process closes this connection.
-    ws.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-    let gap_start = Instant::now();
-    while ws_try_recv(&ws).is_some() {}
-    // Reconnect into the NEW build (seat-reconnect semantics; measure it).
-    // Full-attempt retry: a dial in the dual-bind overlap can land on the
-    // dying process and drop mid-upgrade.
-    let reconnect_deadline = vm_deadline(10);
-    let new_ws = loop {
-        if let Some(ws) = ws_try_connect(port) {
-            break ws;
-        }
-        if Instant::now() >= reconnect_deadline {
-            // Diagnostics: who exists, who listens, what the server said.
-            let ps = loft::platform::process::harness_command("pgrep")
-                .args(["-af", "eh_s5_18100"])
-                .output();
-            let ss = loft::platform::process::harness_command("ss")
-                .args(["-tlnp"])
-                .output();
-            panic!(
-                "never reconnected into the new build\n--- pgrep:\n{}\n--- ss -tlnp:\n{}\n--- server stderr tail:\n{}",
-                String::from_utf8_lossy(&ps.map(|o| o.stdout).unwrap_or_default()),
-                String::from_utf8_lossy(&ss.map(|o| o.stdout).unwrap_or_default())
-                    .lines()
-                    .filter(|l| l.contains("18100"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                stderr_now()
-                    .lines()
-                    .rev()
-                    .take(8)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    let gap = gap_start.elapsed();
-    eprintln!("S5 swap gap (close -> serving reconnect): {gap:?}");
-    assert!(
-        gap < Duration::from_secs(3),
-        "the swap gap must stay under the keepalive timeout: {gap:?}"
-    );
-
-    // Continuity: the new build serves v2 meaning over the SAME world —
-    // counter exactly +1 (nothing lost, nothing duplicated), ticks never
-    // reset.
-    let marker = stderr_now();
-    let r = ask(&new_ws, "d", &mut count);
-    assert!(
-        r.starts_with(&format!("v2:d#{count}t")),
-        "the new build must serve the new meaning over the OLD world: {r}"
-    );
-    let t_post: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
-    // The added field took its default from the converted record: the counter at the freeze.
-    assert_eq!(
-        ask(&new_ws, "bonus", &mut count),
-        format!("bonus:{}", frozen * 10),
-        "the grown world's added field holds its computed default:\n{}",
-        stderr_now()
-    );
-    assert!(
-        t_post >= t_pre,
-        "tick stamp must cross the swap monotonically ({t_pre} -> {t_post})"
-    );
-    assert!(
-        marker.contains("loft-swap: world restored from"),
-        "the new build must restore the snapshot:\n{marker}"
-    );
-    // Dispatch reset: bump_events is COMPILED in the new build — no interp
-    // dispatches after the handover marker.
-    let full = stderr_now();
-    let after = full.split("handing over").nth(1).unwrap_or("");
-    let _ = ask(&new_ws, "e", &mut count); // drive one more dispatch window
-    assert!(
-        !after.contains("live-dispatch:"),
-        "the swap must reset the dispatch tier:\n{after}"
-    );
-    drop(_guard);
-    let _ = fa::remove_file(&prog);
-    let _ = fa::remove_file(&err_path);
-}
+// `s5_native_swap_under_running_world` went with the rustc writer (@PLN225 R4): its swap is
+// `s5_c_swap_under_running_world` below, and its dispatch assertions were the writer's live tier.
 
 /// @PLN18 08-S5 on the C backend — the same swap under a running world, every build a C one: the
 /// serving build rebuilds its edited source in the background through the driver
@@ -858,7 +613,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s5cb_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
     let child = cmd
@@ -1066,7 +820,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1107,9 +860,9 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s5c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
     ccmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_DEBUG_CONTROL", "1");
+        .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
         .arg("--no-warnings")
@@ -1144,6 +897,12 @@ fn main() {{
     assert!(
         ws_refused_as(ctl_port, "https://attacker.example"),
         "the control endpoint took another site's page"
+    );
+    // `@C172` — nor for a peer that does not name this run's token: another account on this
+    // machine connects from loopback too.
+    assert!(
+        ws_refused_target(ctl_port, "/ws") && ws_refused_target(ctl_port, OTHER_TOKEN),
+        "the control endpoint took a peer without the run's token"
     );
     // Drive the self-swap over the channel.
     let ctl = ws_connect(ctl_port);
@@ -1257,7 +1016,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1298,8 +1056,8 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s5cc_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5cc_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
-    ccmd.env("LOFT_DEBUG_CONTROL", "1");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
         .arg("--no-warnings")
@@ -1334,6 +1092,10 @@ fn main() {{
     assert!(
         ws_refused_as(ctl_port, "https://attacker.example"),
         "the C build's control endpoint took another site's page"
+    );
+    assert!(
+        ws_refused_target(ctl_port, "/ws") && ws_refused_target(ctl_port, OTHER_TOKEN),
+        "the C build's control endpoint took a peer without the run's token"
     );
     let ctl = ws_connect(ctl_port);
     std::thread::sleep(Duration::from_millis(300)); // let some ticks land
@@ -1418,7 +1180,7 @@ fn main() {{
 /// so under LOFT_DEBUG_CONTROL=1 it binds a loopback listener and announces
 /// "engine_host: debug control on 127.0.0.1:<port>" on stdout (the editor
 /// scrapes that line exactly like a server's port announce).  The SAME D!:
-/// protocol drives it: bp (entry, name-keyed, implies the flip) -> hit with
+/// protocol drives it: bp (entry, name-keyed) -> hit with
 /// frame bindings while the client's tick is HELD (its mini-pump keeps the
 /// server connection alive) -> eval -> resume -> a SECOND hit (still armed,
 /// still serving) -> quit over the channel.
@@ -1453,7 +1215,6 @@ fn main() {{
     )
     .unwrap();
     let mut scmd = loft::platform::process::harness_command(loft_bin());
-    scmd.env("LOFT_NATIVE_BACKEND", "rust");
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -1468,7 +1229,7 @@ fn main() {{
         .expect("spawn server");
     let _sguard = Guard(Some(server));
 
-    // The COMPILED debuggable client: tick_step is the breakpoint target.
+    // The debuggable client, on the interpreter (`@C170`): tick_step is the breakpoint target.
     let cli_prog = test_tmp().join(format!("eh_s7c_cli_{port}.loft"));
     fa::write(
         &cli_prog,
@@ -1497,12 +1258,11 @@ fn main() {{
     let out_path = test_tmp().join(format!("eh_s7c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s7c_cli_{port}.err"));
     let mut ccmd = loft::platform::process::harness_command(loft_bin());
-    ccmd.env("LOFT_NATIVE_BACKEND", "rust");
-    ccmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_DEBUG_CONTROL", "1")
-        .env("LOFT_DISPATCH_DEBUG", "1");
+    ccmd.env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     ccmd.process_group(0);
     let client = ccmd
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
@@ -1576,14 +1336,16 @@ fn main() {{
 }
 
 /// @PLN18 08 scenario S8 — THE STANDING DIFFERENTIAL: one meaning scenario
-/// executed in four tier states — interpreted, compiled, mixed (the S2/S3
-/// standing state: a fn flipped to the interpreter), and post-swap (the
-/// process REPLACED mid-sequence via a control-channel self-swap) — with
-/// byte-equal game transcripts.  Goal D's sweep extended to the mixed
-/// states; it pins "a target change is observable only as speed"
-/// permanently.  Positive controls per leg: the mixed leg must really
-/// dispatch through the interpreter; the swap leg must really restore the
-/// world across a new process.
+/// executed in four tier states — interpreted, compiled, interpreted-swap (an
+/// interpreted process REPLACED mid-sequence by its compiled build through a
+/// control-channel self-swap), and post-swap (a compiled process replaced the
+/// same way) — with byte-equal game transcripts.  Goal D's sweep extended to
+/// the mixed states; it pins "a target change is observable only as speed"
+/// permanently.  Positive control per swap leg: it must really restore the
+/// world across a new process.  The rustc writer's mixed state (a compiled fn
+/// flipped into its live tier) went with the writer (@PLN225 R4); `@C170` puts
+/// the development tier in the interpreter, and its swap into the C build is
+/// the mixed state now.
 // @speed 1.1
 #[test]
 fn s8_standing_four_state_differential() {
@@ -1596,7 +1358,7 @@ fn s8_standing_four_state_differential() {
     let legs = [
         ("interpreted", common::bind_port(18110)),
         ("compiled", common::bind_port(18111)),
-        ("mixed", common::bind_port(18112)),
+        ("interpreted-swap", common::bind_port(18112)),
         ("post-swap", common::bind_port(18113)),
     ];
     let mut transcripts = Vec::new();
@@ -1647,24 +1409,24 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s8_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     match mode {
         "interpreted" => {
             cmd.arg("--interpret");
         }
         "compiled" => {}
-        "mixed" => {
-            cmd.env("LOFT_LIVE_FLIP", "1")
-                .env("LOFT_FLIP_FNS", "bump_events")
-                .env("LOFT_DISPATCH_DEBUG", "1");
+        "interpreted-swap" => {
+            cmd.arg("--interpret")
+                .env("LOFT_DEBUG_CONTROL", "1")
+                .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
         }
         "post-swap" => {
-            cmd.env("LOFT_LIVE_FLIP", "1")
-                .env("LOFT_DEBUG_CONTROL", "1");
+            cmd.env("LOFT_DEBUG_CONTROL", "1")
+                .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
         }
         _ => unreachable!(),
     }
+    let swaps = mode.ends_with("swap");
     cmd.process_group(0);
     let child = cmd
         .arg("--no-warnings")
@@ -1686,9 +1448,9 @@ fn main() {{
     ws_send(&ws, "b");
     replies.push(ws_recv(&ws));
 
-    let tail_ws = if mode == "post-swap" {
-        // THE SELF-SWAP between b and c: rebuild the UNCHANGED source (a
-        // cache hit on the artifact this very process runs), swap to it —
+    let tail_ws = if swaps {
+        // THE SELF-SWAP between b and c: rebuild the UNCHANGED source (for a
+        // compiled process, a cache hit on the artifact it runs), swap to it —
         // a new process under the same world — then finish the sequence.
         let ctl = ws_connect(port);
         ws_send(&ctl, "D!:rebuild");
@@ -1730,22 +1492,15 @@ fn main() {{
 
     // Per-leg positive controls: the tier state must be REAL, not silent.
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
-    match mode {
-        "mixed" => assert!(
-            stderr.contains("live-dispatch: n_bump_events"),
-            "the mixed leg must dispatch through the interpreter:\n{stderr}"
-        ),
-        "post-swap" => {
-            assert!(
-                stderr.contains("loft-swap: world restored"),
-                "the swap leg must restore the world:\n{stderr}"
-            );
-            assert!(
-                stderr.contains("handing over"),
-                "the swap leg must hand over:\n{stderr}"
-            );
-        }
-        _ => {}
+    if swaps {
+        assert!(
+            stderr.contains("loft-swap: world restored"),
+            "the {mode} leg must restore the world:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("handing over"),
+            "the {mode} leg must hand over:\n{stderr}"
+        );
     }
     let _ = fa::remove_file(&prog);
     let _ = fa::remove_file(&err_path);
@@ -1766,13 +1521,15 @@ fn scopeguard_kill(stem: String) -> impl Drop {
 
 /// @PLN18 08 scenario S7 — the debugger loop end-to-end (@PLN16 6b/6c
 /// convergence): a scripted control-channel session against a serving
-/// compiled kernel, asserting each stage IN ORDER — breakpoint hit with
+/// interpreted kernel (`@C170`: the debugger lives in the interpreter),
+/// asserting each stage IN ORDER — breakpoint hit with
 /// frame bindings (the pause's mini-pump keeps mechanics alive), frame
 /// eval, live edit acknowledged through the pause (the S3 poll-now),
 /// resume, the SECOND hit proving breakpoint re-resolution across the
 /// reload (offsets moved, identity did not), rebuild driven over the
-/// channel, swap — and a post-swap breakpoint hitting in the NEW build
-/// over the RESTORED world.
+/// channel, swap — and the program interpreted again, serving the edit over the
+/// RESTORED world and hitting a breakpoint set in it: the session keeps its
+/// debugger across a rebuild (`@C170`).
 // @speed 2.4
 #[test]
 fn s7_debugger_loop_end_to_end() {
@@ -1781,7 +1538,7 @@ fn s7_debugger_loop_end_to_end() {
         return;
     }
     // The canonical port for the prior run's orphan, the resolved one for our own child —
-    // see `s5_native_swap_under_running_world` for why they are two different numbers.
+    // see `s5_c_swap_under_running_world` for why they are two different numbers.
     s5_kill_stale(&format!("/.loft/cache/eh_s7_{}-", common::test_port(18108)));
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18108);
@@ -1819,14 +1576,13 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s7_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
-    cmd.env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_LIVE_RELOAD", "1")
+    cmd.env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
-        .env("LOFT_DISPATCH_DEBUG", "1");
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
     cmd.process_group(0);
     let child = cmd
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
@@ -1901,16 +1657,15 @@ fn main() {{
         assert!(Instant::now() < deadline, "rebuild never ready");
     }
 
-    // Stage 8: swap over the channel; both seats reconnect into the new
-    // build and the debugger RE-ARMS — still debuggable after the swap.
+    // Stage 8: swap over the channel; the seat reconnects into the new build.
     ws_send(&ctl, "D!:swap auto");
     assert_eq!(ws_recv(&ctl), "D:swap true");
     ctl.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     while ws_try_recv(&ctl).is_some() {}
     let reconnect_deadline = vm_deadline(10);
-    let (ctl2, game2) = loop {
-        if let (Some(c), Some(g)) = (ws_try_connect(port), ws_try_connect(port)) {
-            break (c, g);
+    let game2 = loop {
+        if let Some(g) = ws_try_connect(port) {
+            break g;
         }
         assert!(
             Instant::now() < reconnect_deadline,
@@ -1918,19 +1673,25 @@ fn main() {{
         );
         std::thread::sleep(Duration::from_millis(100));
     };
+
+    // Stage 9: the new build serves the edit over the RESTORED world (events=101).
+    ws_send(&game2, "c");
+    assert_eq!(ws_recv(&game2), "got:c#201");
+
+    // Stage 10: the successor is the program interpreted again, so the session keeps its
+    // debugger across the swap: a breakpoint set over a new control connection is hit there.
+    let ctl2 = ws_connect(port);
     ws_send(&ctl2, "D!:bp bump_events");
     assert_eq!(ws_recv(&ctl2), "D:ok bp bump_events");
-
-    // Stage 9: the post-swap hit, over the RESTORED world (events=101).
-    ws_send(&game2, "c");
+    ws_send(&game2, "d");
     let hit3 = ws_recv(&ctl2);
     assert!(
-        hit3.starts_with("D:hit bump_events") && hit3.contains("101"),
-        "post-swap hit over the restored world: {hit3}"
+        hit3.starts_with("D:hit bump_events"),
+        "a hit in the swapped-in process: {hit3}"
     );
     ws_send(&ctl2, "D!:resume");
     assert_eq!(ws_recv(&ctl2), "D:resumed");
-    assert_eq!(ws_recv(&game2), "got:c#201");
+    assert_eq!(ws_recv(&game2), "got:d#301");
 
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(
@@ -2002,7 +1763,6 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s4_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
     let child = cmd
@@ -2134,30 +1894,173 @@ fn main() {{
     let _ = fa::remove_file(&err_path);
 }
 
-/// @PLN18 08 scenario S2 — the debugger pushes one fn to the interpreter,
-/// LIVE, under a serving kernel.  The flip target (`bump_events(w: W) ->
-/// integer`) mutates the shared world; the event counter must count
-/// monotonically across compiled -> interp -> compiled (state continuity is
-/// the whole claim).  The flip is driven by a CONTROL INPUT (a WS message ->
-/// `live_flip`), and is observable ONLY via the `LOFT_DISPATCH_DEBUG`
-/// sentinel — the meaning transcript is byte-identical to the interpreted
-/// run of the same fixture (the differential leg).
+/// A development game switches to full speed and back without losing its world (`@C170`).
+/// The game is served on the interpreter, where its debugger lives; `D!:swap fast` hands the
+/// running world to its shipped build (`rebuild fast`, `--ship`), so its speed is the speed it
+/// ships at — a semantics build is refused for it — and
+/// `D!:swap dev` hands it back to the program interpreted again, debugger and all.  Each leg
+/// is told by what only that tier answers: a flip of a function that exists is `true` on the
+/// interpreter and `false` on the C, and a breakpoint is hit only on the interpreter.  The
+/// world's counter carries across both swaps (1, then 2, then 3).
+// @speed 2.4
+#[test]
+fn a_dev_game_switches_to_full_speed_and_back() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    s5_kill_stale(&format!("/.loft/cache/eh_s9_{}-", common::test_port(18117)));
+    std::thread::sleep(Duration::from_millis(200));
+    let port = common::bind_port(18117);
+    reap_port(port);
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s9_{port}-"), Some(port));
+    let src = format!(
+        r#"
+use engine_host;
+struct W {{ events: integer not null, ticks: integer not null }}
+fn bump_events(w: W) -> integer {{
+  w.events = w.events + 1;
+  w.events
+}}
+fn main() {{
+  w = W {{ events: 0, ticks: 0 }};
+  resumed = engine_host::swap_world(w);
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind != 1 {{ return; }}
+      n = bump_events(w);
+      engine_host::send(ev.cid, "got:{{ev.payload}}#{{n}}");
+    }},
+    fn() {{ w.ticks = w.ticks + 1; }});
+}}
+"#
+    );
+    let prog = test_tmp().join(format!("eh_s9_{port}.loft"));
+    fa::write(&prog, src).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let err_path = test_tmp().join(format!("eh_s9_{port}.err"));
+    let err_file = fa::create(&err_path).unwrap();
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.env("LOFT_OFFLINE", "1")
+        .env("LOFT_LIVE_RELOAD", "1")
+        .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
+    cmd.process_group(0);
+    let child = cmd
+        .arg("--interpret")
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(err_file))
+        .spawn()
+        .expect("spawn kernel");
+    let _guard = Guard(Some(child));
+    let reconnect = |what: &str| {
+        let deadline = vm_deadline(20);
+        loop {
+            if let Some(g) = ws_try_connect(port) {
+                break g;
+            }
+            assert!(Instant::now() < deadline, "never reconnected into {what}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    let swap = |ctl: &TcpStream, to: &str| {
+        // Full speed is the shipped build: `rebuild fast` builds it (`--ship`).
+        ws_send(
+            ctl,
+            if to == "fast" {
+                "D!:rebuild fast"
+            } else {
+                "D!:rebuild"
+            },
+        );
+        assert_eq!(ws_recv(ctl), "D:rebuild started");
+        let deadline = vm_deadline(300);
+        loop {
+            std::thread::sleep(Duration::from_millis(300));
+            ws_send(ctl, "D!:rebuild?");
+            let st = ws_recv(ctl);
+            if st == "D:rebuild 2" {
+                break;
+            }
+            assert!(st == "D:rebuild 1", "rebuild status: {st}");
+            assert!(Instant::now() < deadline, "rebuild never ready");
+        }
+        ws_send(ctl, &format!("D!:swap {to}"));
+        assert_eq!(ws_recv(ctl), "D:swap true", "swap {to}");
+        ctl.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        while ws_try_recv(ctl).is_some() {}
+    };
+
+    // Dev, on the interpreter: a flip of a function that exists answers true.
+    let ctl = ws_connect(port);
+    let game = ws_connect(port);
+    ws_send(&game, "a");
+    assert_eq!(ws_recv(&game), "got:a#1");
+    ws_send(&ctl, "D!:flip bump_events");
+    assert_eq!(ws_recv(&ctl), "D:flip true", "the dev game is interpreted");
+    // No shipped build is ready, so full speed refuses: a speed measured on a semantics
+    // build would not be the speed the game ships at.
+    ws_send(&ctl, "D!:swap fast");
+    assert_eq!(
+        ws_recv(&ctl),
+        "D:swap false",
+        "full speed waits for `rebuild fast`"
+    );
+
+    // Fast: the world moves to the C build, which flips nothing.
+    swap(&ctl, "fast");
+    let game = reconnect("the fast build");
+    let ctl = ws_connect(port);
+    ws_send(&game, "b");
+    assert_eq!(
+        ws_recv(&game),
+        "got:b#2",
+        "the world carried into the fast build"
+    );
+    ws_send(&ctl, "D!:flip bump_events");
+    assert_eq!(ws_recv(&ctl), "D:flip false", "the fast build is the C");
+
+    // Dev again: the world comes back, and so does the debugger.
+    swap(&ctl, "dev");
+    let game = reconnect("the dev build");
+    let ctl = ws_connect(port);
+    ws_send(&ctl, "D!:bp bump_events");
+    assert_eq!(ws_recv(&ctl), "D:ok bp bump_events");
+    ws_send(&game, "c");
+    let hit = ws_recv(&ctl);
+    assert!(
+        hit.starts_with("D:hit bump_events"),
+        "a hit after the way back: {hit}"
+    );
+    ws_send(&ctl, "D!:resume");
+    assert_eq!(ws_recv(&ctl), "D:resumed");
+    assert_eq!(ws_recv(&game), "got:c#3", "the world carried back");
+    drop(_guard);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
+}
+
+/// @PLN18 08 scenario S2 — `live_flip` asked LIVE under a serving kernel.
+/// The flip target (`bump_events(w: W) -> integer`) mutates the shared world;
+/// the event counter must count monotonically across every flip request
+/// (state continuity is the whole claim).  The flip is driven by a CONTROL
+/// INPUT (a WS message -> `live_flip`), and the meaning transcript of the
+/// compiled run is byte-identical to the interpreted run of the same fixture
+/// (the differential leg).  The compiled build has no live tier to flip into
+/// (`@C170`), so the rustc writer's dispatch sentinel is not asked of it
+/// (@PLN225 R4): the flip answers false there, as on the interpreter.
 #[test]
 fn s2_live_flip_under_serving_kernel() {
     let native = run_s2_scenario(18095, false);
     let interp = run_s2_scenario(18096, true);
     assert_eq!(
         native.replies, interp.replies,
-        "S2 differential: a tier flip must be meaning-invisible"
-    );
-    assert!(
-        native.stderr.contains("live-dispatch: n_bump_events"),
-        "the native leg must really dispatch through the interpreter:\n{}",
-        native.stderr
-    );
-    assert!(
-        !interp.stderr.contains("live-dispatch"),
-        "the interpreted leg has no live dispatch"
+        "S2 differential: a flip request must be meaning-invisible"
     );
 }
 
@@ -2213,13 +2116,9 @@ fn main() {{
     let err_path = test_tmp().join(format!("eh_s2_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
-    } else {
-        cmd.env("LOFT_LIVE_FLIP", "1")
-            .env("LOFT_DISPATCH_DEBUG", "1");
     }
     cmd.process_group(0); // own group, so Guard can kill driver + grandchild
     let child = cmd
@@ -2236,8 +2135,8 @@ fn main() {{
 
     let ws = ws_connect(port);
     let mut replies = Vec::new();
-    // compiled -> flip -> interp -> unflip -> compiled; the counter must
-    // cross every tier boundary without a gap or repeat (1..=5).
+    // a -> flip -> b -> unflip -> c; the counter must cross every flip
+    // request without a gap or repeat (1..=5).
     for msg in ["a", "flip", "b", "unflip", "c"] {
         ws_send(&ws, msg);
         replies.push(ws_recv(&ws));
@@ -2251,8 +2150,8 @@ fn main() {{
             "unflip-ack#4",
             "got:c#5"
         ],
-        "the world's counter must be continuous across tier flips ({})",
-        if interpret { "interp" } else { "native+flip" }
+        "the world's counter must be continuous across flip requests ({})",
+        if interpret { "interp" } else { "native" }
     );
     drop(_guard); // kill now so the stderr file is complete
     let stderr = fa::read_to_string(&err_path).unwrap_or_default();
@@ -2294,7 +2193,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
@@ -2362,7 +2260,6 @@ fn main() {
             std::env::temp_dir().join(format!("eh_local_{}_{interpret}.loft", std::process::id()));
         fa::write(&prog, fixture).unwrap();
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.env("LOFT_NATIVE_BACKEND", "rust");
         cmd.env("LOFT_OFFLINE", "1");
         if interpret {
             cmd.arg("--interpret");
@@ -2443,7 +2340,6 @@ fn main() {{
             ));
             fa::write(&prog, src).unwrap();
             let mut cmd = loft::platform::process::harness_command(loft_bin());
-            cmd.env("LOFT_NATIVE_BACKEND", "rust");
             cmd.env("LOFT_OFFLINE", "1");
             if interpret {
                 cmd.arg("--interpret");
@@ -2520,7 +2416,6 @@ fn main() {
     fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
         .arg("--lib")
@@ -2590,7 +2485,6 @@ fn main() {
     fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = loft::platform::process::harness_command(loft_bin())
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
         .arg("--native-c")
@@ -2660,7 +2554,6 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_LIVE_FLIP", "1")
@@ -2693,9 +2586,9 @@ fn main() {{
 }
 
 // @PLN98 — the debugger driven THROUGH A GAME-SERVER SETUP: a running engine_host
-// kernel (the server) with the live tier, debugged over the SAME WebSocket a
+// kernel (the server) on the interpreter (`@C170`), debugged over the SAME WebSocket a
 // client connects on, via the REAL `D!:` control channel (debug_cmd_dispatch +
-// debug_pause_loop). A client sets a breakpoint on a flipped game fn; a game event
+// debug_pause_loop). A client sets a breakpoint on a game fn; a game event
 // triggers it; the server PAUSES (`D:hit` carries the live frame); the client evals
 // a frame local and resumes; the game continues with the right result. This is the
 // server-side of the browser relay, end-to-end on loopback — no browser needed.
@@ -2733,12 +2626,11 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
-        .env("LOFT_LIVE_FLIP", "1")
-        .env("LOFT_FLIP_FNS", "hit_me")
         .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN)
         .process_group(0)
+        .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
@@ -2824,9 +2716,9 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.env("LOFT_NATIVE_BACKEND", "rust");
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
+        .env("LOFT_DEBUG_TOKEN", TEST_TOKEN)
         .process_group(0)
         .arg("--no-warnings")
         .arg("--lib")
@@ -3029,4 +2921,77 @@ fn the_shared_client_loop_calls_only_natives_the_browser_kernel_has() {
          first turn (loft#1189).  Implement each in `engine_host::browser` and register it in \
          `KERNEL_FUNCTIONS_WASM`."
     );
+}
+
+/// `@C172` — on the game port, a debug command acts only for a peer whose opening request named
+/// this run's token: one without it, and one naming another token, play the game and get no
+/// answer to the same command an agent with it is answered.  Both backends: the interpreter's
+/// kernel and the C build's.
+#[test]
+fn an_agent_command_on_the_game_port_needs_the_runs_token() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    for (base, interpret) in [(18170, true), (18172, false)] {
+        let port = common::bind_port(base);
+        let prog = test_tmp().join(format!("eh_token_{port}_{}.loft", std::process::id()));
+        fa::write(
+            &prog,
+            format!(
+                r#"
+use engine_host;
+fn main() {{
+  engine_host::run({port}, 10000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind != 1 {{ return; }}
+      engine_host::send(ev.cid, "got:{{ev.payload}}");
+    }},
+    fn() {{ }});
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.env("LOFT_OFFLINE", "1")
+            .env("LOFT_DEBUG_CONTROL", "1")
+            .env("LOFT_DEBUG_TOKEN", TEST_TOKEN);
+        if interpret {
+            cmd.arg("--interpret");
+        }
+        cmd.process_group(0);
+        let child = cmd
+            .arg("--no-warnings")
+            .arg("--lib")
+            .arg(root.join("lib"))
+            .arg(&prog)
+            .current_dir(&root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn kernel");
+        let _guard = Guard(Some(child));
+        let leg = if interpret { "interpreter" } else { "C" };
+        let agent = ws_connect(port);
+        for target in ["/ws", OTHER_TOKEN] {
+            let peer = ws_connect_target(port, target);
+            ws_send(&peer, "D!:bp nothing_here");
+            ws_send(&peer, "hello");
+            // The game's answer to `hello` comes after whatever the command drew.
+            assert_eq!(
+                ws_recv(&peer),
+                "got:hello",
+                "{leg}: a peer at {target} is answered by the game, not the debugger"
+            );
+        }
+        ws_send(&agent, "D!:bp nothing_here");
+        let reply = ws_recv(&agent);
+        assert!(
+            reply.starts_with("D:"),
+            "{leg}: the agent with the run's token is answered: {reply}"
+        );
+        let _ = fa::remove_file(&prog);
+    }
 }

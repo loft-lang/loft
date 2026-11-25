@@ -4,10 +4,8 @@
 
 //! The browser host imports: which `#native` functions a page's module imports from the
 //! `loft_gl` module the page's script supplies (`doc/loft-gl-wasm.js`), and the wasm signature
-//! each is imported with.  One contract for both writers of a browser module — the Rust writer
-//! renders it as `extern` declarations (`generation::emit_file_header`), the C writer as
-//! `import_module` declarations (`c::browser_import_native`) — so a page hosts the module
-//! either one wrote.
+//! each is imported with.  The C writer renders it as `import_module` declarations
+//! (`c::browser_import_native`), so the module and the page's script agree on every import.
 
 use crate::data::{Data, Type};
 use std::collections::HashSet;

@@ -307,14 +307,11 @@ fn rooted(
 }
 
 /// What a function's lowered body says about who releases each local's store — the facts a
-/// STATIC leak mirror needs before it may call a local with no frame free a leak.
-///
-/// One home for two mirrors of `get_free_vars`: [`check_ref_leaks`] (the debug-build assert)
-/// and `ownership_cfg`'s leak scan (`LOFT_OWN_ORACLE=check-leak`).  Each suppression leg the
-/// emitter has grown had to be taught to each mirror separately, and the scan, holding only the
-/// first, reported the other legs' stores as leaks: the literal buffer behind an escaping
-/// nullable capture, a closure written out through a `&fn` link, a `_read_N` moved into its
-/// destination.
+/// STATIC leak mirror of `get_free_vars` needs before it may call a local with no frame free a
+/// leak: the literal buffer behind an escaping nullable capture, a closure written out through
+/// a `&fn` link, a `_read_N` moved into its destination.  Its one user is [`check_ref_leaks`],
+/// the debug build's assert; the static check of a program's store lifetimes is the store
+/// records' (`LOFT_LIFETIME_CHECK`), which reads none of these emitter facts.
 pub(crate) struct FrameReleases {
     pub(crate) freed: HashSet<u16>,
     pub(crate) adopted: HashSet<u16>,

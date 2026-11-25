@@ -57,7 +57,7 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             | "n_store_memory"
             // Always-non-null: "" IS the healthy answer.
             | "n_store_lazy_error"
-            // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
+            // @PLN10 Phase 1 batch 2 — always-non-null runtime producers.
             | "n_struct_to_json"
             | "n_struct_to_json_pretty"
             // @PLN10 Phase 1 — par-text buffer reader (interp; native is owned
@@ -117,10 +117,8 @@ pub(crate) fn is_c_text_call(def: &crate::data::Definition) -> bool {
 /// Database}` / `OpAppendCharacter` IR on that buffer, but those ops
 /// expect a local `String` destination.  The `Stack` variants exist
 /// for the refvar case — this table maps a base op name to its Stack
-/// variant.  Both `src/state/codegen.rs::generate_call` (interp
-/// bytecode dispatch) and `src/generation/dispatch.rs::output_call_inner`
-/// (native emit dispatch) consult it.  Kept here, out-of-band of
-/// `output_call_inner`'s `Op` match-arm budget gate.
+/// variant.  `src/state/codegen.rs::generate_call` (interp bytecode
+/// dispatch) and the parser's refvar write (`parser::objects`) consult it.
 #[must_use]
 pub fn refvar_text_stack_variant(name: &str) -> Option<&'static str> {
     match name {

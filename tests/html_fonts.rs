@@ -514,7 +514,7 @@ fn a_declared_font_reaches_the_emitted_page_on(backend: &str) {
 // @speed 20.0
 #[test]
 fn a_declared_font_reaches_the_emitted_page() {
-    a_declared_font_reaches_the_emitted_page_on("--native-rust");
+    a_declared_font_reaches_the_emitted_page_on("--native");
 }
 
 /// [`a_declared_font_reaches_the_emitted_page`] on a page whose module the C backend wrote (@PLN203 C6).
@@ -579,7 +579,7 @@ fn a_drifting_family_is_refused_before_the_build_on(backend: &str) {
 // @speed 2.0
 #[test]
 fn a_drifting_family_is_refused_before_the_build() {
-    a_drifting_family_is_refused_before_the_build_on("--native-rust");
+    a_drifting_family_is_refused_before_the_build_on("--native");
 }
 
 /// [`a_drifting_family_is_refused_before_the_build`] on a page whose module the C backend wrote (@PLN203 C6).

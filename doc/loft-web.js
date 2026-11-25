@@ -32,7 +32,7 @@
     ns.ws_connect = function (urlPtr, urlLen) {
       let url;
       try {
-        url = dec.decode(bytesAt(urlPtr, urlLen));
+        url = dec.decode(bytesAt(urlPtr, urlLen).slice());
       } catch (_e) {
         return -1;
       }

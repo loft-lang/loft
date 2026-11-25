@@ -183,34 +183,15 @@ values.
 
 ---
 
-## A private `HOME` hides the Rust toolchain
-
-A test that runs `loft` with `HOME` pointed at a scratch directory (the usual way to give it a
-private registry cache) also moves rustup, which finds its toolchains through `HOME`.  With no
-`rustc` reachable, every `use`d library interprets and prints *"has no native build and no
-Rust toolchain"* — so the auto-native path is silently untested, and a defect that lives
-only there shows up as an "intermittent" failure in whichever runner happens to expose
-`rustc` (nextest does).  Point `LOFT_HOME` at the scratch directory and leave `HOME` alone,
-or set `RUSTUP_HOME` / `CARGO_HOME` to the real ones, when the native half is part of what
-the test claims.  `n3_use_native.rs::a_dependency_version_is_part_of_its_users_native_artifact`
-is the worked example; the defect it guards read as a flake in `manifest_less_resolution.rs`.
-
 ## Cargo's build-dir layout: every reader takes both
 
 Cargo 1.100 builds into a per-unit layout: one `target/<profile>/build/<crate>/<hash>/` per
 unit, the build script's output under `run/`, and no `target/<profile>/deps/`; older cargo and
-an existing tree still have `deps/`.  Every reader of the build directory takes both:
-`src/cargo_layout.rs` for the native toolchain, the cache and the tests
-(`dependency_dirs`, `build_units`, `runtime_profile_dir`, `rlib_meta_header`), and
-`scripts/cargo_dep_files.sh` for `runtime_bundle.sh`, `make install` and `find_problems.sh`.
-A new reader goes through one of the two; a path spelled `deps/` by hand breaks on the default
-layout (`E0463: can't find crate for loft`, or `E0514` where a stale `deps/` from another
-rustc is still there).  The history of the switch is in
-[TEST_ENVIRONMENTS-history.md](TEST_ENVIRONMENTS-history.md).
-
-A `--native` run whose runtime rlib was built by another rustc rebuilds the runtime with
-`cargo build --release` from the CURRENT tree, replacing `target/release/loft` underneath any
-gate that runs it; a gate sets `LOFT_NO_AUTO_REBUILD=1`.
+an existing tree still have `deps/`.  Every reader of the build directory takes both, through
+`src/cargo_layout.rs` (`dependency_dirs`, `build_units`, `runtime_profile_dir`).  A new reader
+goes through it; a path spelled `deps/` by hand finds nothing on the default layout.  The
+history of the switch is in [TEST_ENVIRONMENTS-history.md](TEST_ENVIRONMENTS-history.md), with the
+rustc writer's toolchain hazards (a private `HOME` hiding rustup, a page's Rust rebuilt without `-O`).
 
 ## macOS: what makes the suite slow, and the setup that removes it
 
@@ -226,7 +207,7 @@ binary starts in ~10 ms; only NEW ones pay.  To exempt processes started from yo
    from, and switch it on;
 3. quit and reopen that terminal: the exemption applies to processes started after it relaunches.
 
-Check it with two launches of a fresh binary (`rustc -O h.rs -o h && time ./h && time ./h`): the
+Check it with two launches of a fresh binary (`printf 'int main(void){return 0;}' > h.c && cc h.c -o h && time ./h && time ./h`): the
 first should cost about what the second does.  A managed endpoint agent can still scan on its
 own; the same check shows that.  Whatever does not fit the 20-minute cap afterwards is split or
 moved, never given a longer limit (`scripts/hard_cap.sh`, CI_BUDGET.md).
@@ -234,7 +215,7 @@ moved, never given a longer limit (`scripts/hard_cap.sh`, CI_BUDGET.md).
 **A crowded `target/debug/deps` delays every child the suite starts.**  A process whose binary
 sits in a directory of hundreds of thousands of files starts each child late: the child blocks
 in dyld, before `main`, on a synchronous image-load notification.  The suite is a tree of such
-spawns (test binary → `loft` → `rustc` / the compiled cell), and every test binary runs from
+spawns (test binary → `loft` → the C compiler / the compiled cell), and every test binary runs from
 `target/debug/deps`.  Measured: 40 spawns of a 20 ms `loft --interpret` cell took 0.5 s from a
 small directory and 13 s beside 400,000 empty files, and a `copy_lease` cell took 0.7–1.4 s
 against 0.03 s.  The files were the compiler's object files: macOS keeps every codegen unit's
@@ -295,7 +276,7 @@ One command, one verdict, per-file logs in `target/vg/`.  It runs `loft --interp
 file (`--tests` for `tests/scripts`, whose files have no `main`) and, for `tests/docs`, builds
 each document with `loft --native` and hands the cached binary in `<dir>/.loft/cache/` to
 memcheck directly — the compiled program is where the native runtime's `unsafe` runs, and
-`--trace-children` cannot reach it without also tracing rustc.  `VG_JOBS` bounds the parallel
+`--trace-children` cannot reach it without also tracing the C compiler.  `VG_JOBS` bounds the parallel
 memchecks (each takes ~200 MB); the default is every core on a machine of four or fewer (the
 CI runner) and five sixths of a larger one.
 
@@ -440,10 +421,9 @@ Debug-build loft + valgrind + Mesa swrast is **very slow** — expect
 
 ## Debugging `loft --html` WASM traps
 
-WASM compiled for `wasm32-unknown-unknown` with `-O` uses `panic = "abort"`: a panic becomes
-a bare `unreachable` instruction with no message, no location and no panic handler, so the
-engine reports only `RuntimeError: unreachable executed` and a WASM function index.  The
-panic site is recovered by rebuilding the same generated Rust without `-O`.
+A trap in a page reports a bare `RuntimeError` (`unreachable executed`, an out-of-bounds
+access) and a WASM function index.  The page's module is the C backend's, compiled by clang
+for WASI (`c_driver::build_wasm`); two switches recover the site.
 
 ### The technique
 
@@ -452,37 +432,20 @@ panic site is recovered by rebuilding the same generated Rust without `-O`.
    (Stores::new / stdlib load / host-import wiring), **not** in any
    user-code path.  Don't bisect user code yet.
 
-2. **Keep the generated Rust.**  `LOFT_KEEP_NATIVE_RS=1` makes `loft --html` keep the
-   `prog.rs` it compiled and print where (`browser-wasm source preserved at …`, a per-process
-   directory under the temp dir):
+2. **Name the frames.**  `loft --html --names` keeps the wasm name section and builds every
+   loft function as a frame of its own, so the frames a browser prints for a trap name the
+   function the author wrote instead of a bare index.
+
+3. **Keep the generated C.**  `LOFT_KEEP_NATIVE_C=1` keeps the C the module was compiled
+   from (`loft_wasm_c_<pid>.c` in loft's scratch directory), so a named frame can be read in
+   the source that produced it.
+
+4. **Run the module in Node with `tools/wasm_repro.mjs`** and print the stack (the
+   harness's header shows how to take the module out of a page):
 
    ```bash
-   LOFT_KEEP_NATIVE_RS=1 ./target/release/loft --html /tmp/app.html app.loft
-   cp <printed path> /tmp/loft_html_saved.rs
+   node tools/wasm_repro.mjs /tmp/app.wasm
    ```
-
-3. **Compile the saved Rust without `-O`** so Rust's panic machinery
-   still emits symbols:
-
-   ```bash
-   rustc --edition=2024 --target wasm32-unknown-unknown \
-     --crate-type cdylib \
-     --extern loft=target/loft/html/wasm32-unknown-unknown/release/libloft.rlib \
-     -L dependency=target/loft/html/wasm32-unknown-unknown/release/deps \
-     -L dependency=target/release/deps \
-     /tmp/loft_html_saved.rs -o /tmp/debug.wasm
-   ```
-
-4. **Run in Node with `tools/wasm_repro.mjs`** and print the stack:
-
-   ```bash
-   node tools/wasm_repro.mjs /tmp/debug.wasm
-   ```
-
-   The debug build's stack shows `_ZN...` mangled Rust symbols.  The
-   first non-panic-machinery symbol is the function that panicked —
-   often `std::...::now`, `Vec::index`, `Option::unwrap`,
-   `core::panicking::panic_fmt`.
 
 ### Repro harness — `tools/wasm_repro.mjs`
 
@@ -500,5 +463,5 @@ function last reached the host boundary before the fault.
 Used by the **`tests/html_wasm.rs::p137_html_hello_world_does_not_trap`**
 regression test, which builds a hello-world `.loft` program through
 `--html`, extracts the WASM, and runs the harness.  Skipped in
-environments without node or the wasm32-unknown-unknown rustup target.
+environments without node or the clang/WASI toolchain.
 

@@ -418,6 +418,11 @@ Auto-detects the project root from the path of the running executable. In order:
   `default/` dir** (at most 6 levels).
 - The result is the project root, and the default library is expected at `<root>/default/`.
 
+So the stdlib a binary runs is the one of the tree its `target/` sits in, not the tree it was
+built from.  A `CARGO_TARGET_DIR` inside ANOTHER checkout (to share its build cache) gives a
+binary that loads that checkout's `default/` without a word: build into the tree you test, or
+point `CARGO_TARGET_DIR` outside every checkout.
+
 That walk is what makes the resolution layout-agnostic, and it is not optional.
 Cargo puts the binary somewhere else in three ordinary situations, none of which
 match the two stripped suffixes: `--target <triple>` nests the profile one level

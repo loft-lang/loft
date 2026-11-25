@@ -95,8 +95,10 @@ hole when its first executable step fails to build (loft#680 — a coverage plan
 written on the assumption that the working-set store loaders worked in the browser,
 and only the first `--html` build said otherwise). The answer is **derived, never
 hand-written**: `scripts/gen_target_surface.py` asks rustc which runtime methods each
-builtin's `#rust` body can reach on that target, so it cannot drift from the `cfg`s
-the real build obeys, and `make ci` fails if the committed table goes stale. As of
+builtin's `#rust` body can reach in loft's Rust runtime built for the browser, and
+`make ci` fails if the committed table goes stale.  A page is built from the C, which
+that table does not read: a builtin the C cannot serve on a page shows at the
+`--html` build. As of
 this writing every stdlib builtin is available on the browser target.
 - **Audio** — raw PCM playback via the Web Audio API.
 - **WebSocket** — a live network socket, through the `web` library (see §4b).

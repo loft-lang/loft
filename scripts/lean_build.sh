@@ -7,16 +7,16 @@
 # `strict-stores` (LOFT_STRICT_STORES, a use-after-free probe whose per-access test costs a
 # store-heavy routine 4-11 %, bench/portal/analysis/store-checks.md) and `stack-verify`
 # (LOFT_VERIFY_STACK, the interpreter stack's init shadow, tested on every store write).
-# The ONE home of that list: `make install` builds the binary and runtime it installs through this,
+# The ONE home of that list: `make install` builds the binary it installs through this,
 # scripts/make-release.sh the bundle's binary (and scripts/repro-verify.sh rebuilds it the
-# same way), and bench/stats.py the pair its lanes measure, because a perf number taken on
+# same way), and bench/stats.py the binary its lanes measure, because a perf number taken on
 # the development build is not a measurement of what ships (NATIVE.md § Optimisation tiers).
 #
-#   scripts/lean_build.sh --lib --bin loft            # what `make install` installs, and
-#                                                     # the pair a perf lane runs
+#   scripts/lean_build.sh --bin loft                    # what `make install` installs, and
+#                                                       # the binary a perf lane runs
 #   scripts/lean_build.sh --bin loft --target <triple>  # a release bundle's binary
 #
-# The binary crate ALONE (`--bin loft` without `--lib`, the release bundle's build) is compiled
+# The binary crate ALONE (`--bin loft` without `--lib`, every build above) is compiled
 # as one codegen unit.  Split into rustc's default sixteen, the unit that holds the MSVC
 # `type_info` vtable reference (`??_7type_info@@6B@`, the `rust_panic` exception descriptor's)
 # is not the same from build to build — unit 04 or 06 — and the linker lays `.data` out by

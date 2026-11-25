@@ -3,8 +3,7 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-LazySplit` — the `for piece in text.split(c)` loops that take their pieces straight
-//! from the text.  Here, in `opt`, because both compiled writers ask it (the Rust writer and
-//! the C backend); moved from `generation::hoist`, which re-exports it.
+//! from the text.  Here, in `opt`, with the other analyses the C backend asks.
 
 use crate::data::{Block, Data, Value};
 use crate::ir_shape::{as_var, call_named, split_call};
@@ -31,7 +30,7 @@ pub struct LazySplit {
 /// declined loop keeps the vector, which is always correct:
 ///
 /// - the call is the STANDARD LIBRARY's `split(self: text, separator: character)`, whose
-///   pieces `codegen_runtime::lazy_split` reproduces;
+///   pieces the lazy walk reproduces;
 /// - the separator is a character CONSTANT other than the null character — a null
 ///   separator compares equal to a NUL inside the text, which the iterator does not model;
 /// - the `For` block and its loop have exactly the shape the parser gives a forward walk of
@@ -122,9 +121,8 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     });
     // A buffer that serves this call alone is never minted.  Its every mention must be
     // accounted for — the one call argument, its frees, its null declaration, and the null
-    // test that guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends`
-    // reconciles a placed buffer; a buffer with any other use keeps its mint, and the loop
-    // is lazy all the same.
+    // test that guards a mint at first use (`@FR-O-LazyBuffer`); a buffer with any other
+    // use keeps its mint, and the loop is lazy all the same.
     for (vec, ls) in &mut out {
         let buf = bufs[vec];
         if buffer_serves_one_call(body, data, buf) {
@@ -214,8 +212,8 @@ fn lazy_split_block(
 /// Does the hidden buffer `buf` serve ONE call and nothing else, so that a rewrite which
 /// drops that call may leave the buffer unminted?  Its every mention must be accounted
 /// for — the one call argument, its frees, its null declaration, and the null test that
-/// guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends` reconciles a placed
-/// buffer.  A buffer with any other use keeps its mint, and the rewrite stands all the same.
+/// guards a mint at first use (`@FR-O-LazyBuffer`).  A buffer with any other use keeps its
+/// mint, and the rewrite stands all the same.
 pub(crate) fn buffer_serves_one_call(body: &Value, data: &Data, buf: u16) -> bool {
     let mut total = 0u32;
     let mut call_args = 0u32;

@@ -212,8 +212,8 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
 /// receipt).  Each must still `git apply --check`; a stale one is re-derived at the current
-/// tree and re-scored.  A hunk of the generated `src/compiled_stdlib_gen.rs` is left out, as
-/// `falsify.sh` and `receipts_ci.py` leave it out: the control regenerates that file.  `tests/falsified_patches.baseline` lists the ones already stale when
+/// tree and re-scored.  A hunk of retired source (`tests/falsified_retired_paths.txt`) is left
+/// out, as `falsify.sh` and `receipts_ci.py` leave it out.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
 #[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
@@ -230,11 +230,20 @@ fn every_patch_receipt_still_applies() {
         !patches.is_empty(),
         "no patch receipts found — the path is wrong, not the tree"
     );
+    // Hunks of retired source are left out, as `falsify.sh` and `receipts_ci.py` leave them out.
+    let retired_src = fa::read_to_string(root.join("tests/falsified_retired_paths.txt"))
+        .expect("cannot read tests/falsified_retired_paths.txt");
+    let retired: Vec<&str> = retired_src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
     let stale: std::collections::BTreeSet<String> = patches
         .iter()
         .filter(|p| {
             !loft::platform::process::harness_command("git")
-                .args(["apply", "--check", "--exclude=src/compiled_stdlib_gen.rs"])
+                .args(["apply", "--check"])
+                .args(retired.iter().map(|r| format!("--exclude={r}")))
                 .arg(p)
                 .current_dir(&root)
                 .output()
@@ -398,7 +407,7 @@ fn every_new_guard_records_its_control() {
 }
 
 /// Every `#[ignore = "..."]` — and every `#[cfg_attr(<cfg>, ignore = "...")]` — in
-/// `tests/*.rs` and `src/**/*.rs` must match the committed baseline at
+/// `tests/*.rs` (with the parts in `tests/<binary>/`) and `src/**/*.rs` must match the committed baseline at
 /// `tests/ignored_tests.baseline`, keyed `<file>::<test>` because two `src/` tests share
 /// a bare name.  A drift is one of three things worth the author's attention at review:
 ///   * an ignored test just got its fix landed — delete its line and un-ignore it;
@@ -427,12 +436,22 @@ fn ignored_tests_baseline_is_current() {
             }
         }
     }
-    let mut files: Vec<String> = Vec::new();
-    for e in fa::read_dir("tests").expect("read tests/") {
-        let p = e.os_spelling();
-        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
-            files.push(p.to_string_lossy().replace('\\', "/"));
+    fn top_rust_files(dir: &str, out: &mut Vec<String>) {
+        let Ok(entries) = fa::read_dir(dir) else {
+            return;
+        };
+        for e in entries {
+            let p = e.os_spelling();
+            if fa::is_file(&p) && fa::has_extension(&p, "rs") {
+                out.push(p.to_string_lossy().replace('\\', "/"));
+            }
         }
+    }
+    let mut files: Vec<String> = Vec::new();
+    top_rust_files("tests", &mut files);
+    // a test binary split into parts keeps them in the directory named after it
+    for binary in files.clone() {
+        top_rust_files(&binary[..binary.len() - 3], &mut files);
     }
     rust_files("src", &mut files);
     files.sort();
@@ -530,39 +549,49 @@ fn ignored_tests_baseline_is_current() {
 /// about `code!()` once; this guard prevents it reoccurring.
 #[test]
 fn no_orphan_test_attributes_in_tests_issues_rs() {
-    let path = "tests/issues.rs";
-    let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
-    let lines: Vec<&str> = src.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed != "#[test]" {
-            continue;
+    // the binary and its parts in tests/issues/
+    let mut paths = vec!["tests/issues.rs".to_string()];
+    for e in fa::read_dir("tests/issues").expect("read tests/issues/") {
+        let p = e.os_spelling();
+        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
+            paths.push(p.to_string_lossy().replace('\\', "/"));
         }
-        // Scan forward through blank lines, other attributes, and
-        // `///` / `//` doc/comment lines until we find the next
-        // non-trivial line.  It must be either another `#[…]`
-        // attribute or a `fn` declaration.
-        let next = lines
-            .iter()
-            .enumerate()
-            .skip(i + 1)
-            .find(|(_, l)| {
-                let t = l.trim_start();
-                !t.is_empty() && !t.starts_with("//")
-            })
-            .map(|(j, l)| (j, l.trim_start()));
-        match next {
-            Some((_, t))
-                if t.starts_with("#[") || t.starts_with("fn ") || t.starts_with("pub fn ") => {}
-            Some((j, t)) => panic!(
-                "Orphan #[test] attribute at {path}:{} — next non-comment line is {path}:{} `{t}` (expected another `#[…]` or `fn`). Remove the stray attribute.",
-                i + 1,
-                j + 1
-            ),
-            None => panic!(
-                "Orphan #[test] attribute at {path}:{} with no following declaration.",
-                i + 1
-            ),
+    }
+    paths.sort();
+    for path in &paths {
+        let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed != "#[test]" {
+                continue;
+            }
+            // Scan forward through blank lines, other attributes, and
+            // `///` / `//` doc/comment lines until we find the next
+            // non-trivial line.  It must be either another `#[…]`
+            // attribute or a `fn` declaration.
+            let next = lines
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .find(|(_, l)| {
+                    let t = l.trim_start();
+                    !t.is_empty() && !t.starts_with("//")
+                })
+                .map(|(j, l)| (j, l.trim_start()));
+            match next {
+                Some((_, t))
+                    if t.starts_with("#[") || t.starts_with("fn ") || t.starts_with("pub fn ") => {}
+                Some((j, t)) => panic!(
+                    "Orphan #[test] attribute at {path}:{} — next non-comment line is {path}:{} `{t}` (expected another `#[…]` or `fn`). Remove the stray attribute.",
+                    i + 1,
+                    j + 1
+                ),
+                None => panic!(
+                    "Orphan #[test] attribute at {path}:{} with no following declaration.",
+                    i + 1
+                ),
+            }
         }
     }
 }
@@ -659,10 +688,11 @@ fn ci_target_verdict_covers_every_phase_not_just_the_tests() {
 /// stress regression from CI.
 #[test]
 fn p122_long_running_struct_loop_is_cfg_attr_ignored_in_debug_only() {
-    let src = fa::read_to_string("tests/issues.rs").expect("cannot read tests/issues.rs");
+    let src = fa::read_to_string("tests/issues/loop_returns.rs")
+        .expect("cannot read tests/issues/loop_returns.rs");
     let idx = src
         .find("fn p122_long_running_struct_loop")
-        .expect("tests/issues.rs must define p122_long_running_struct_loop");
+        .expect("tests/issues/loop_returns.rs must define p122_long_running_struct_loop");
     // Look backwards ~30 lines to capture the attribute stack above the fn.
     let preamble_start = src[..idx]
         .rfind("#[test]")
@@ -892,7 +922,7 @@ fn json_stdlib_has_no_stale_stub_language() {
 /// had no reachable filesystem. It does now, so the stubs are gone — but the
 /// hazard the old guard was pointing at is real and unchanged: these arms drift.
 /// They drifted for a year. The interpreter's browser branches were real host
-/// bridges while `codegen_runtime.rs`'s were stubs returning nothing, so the two
+/// bridges while the compiled runtime's were stubs returning nothing, so the two
 /// backends had different filesystems and `--html` — which runs the generated
 /// code — had the empty one.
 ///
@@ -903,19 +933,15 @@ fn json_stdlib_has_no_stale_stub_language() {
 /// wasm-bindgen FEATURE.
 #[test]
 fn file_operations_gate_on_host_fs_not_the_wasm_feature() {
-    for path in [
-        "src/state/io.rs",
-        "src/database/io.rs",
-        "src/codegen_runtime.rs",
-    ] {
+    for path in ["src/state/io.rs", "src/database/io.rs", "src/fs_ops.rs"] {
         let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
         assert!(
             src.contains("host_fs"),
             "{path} must gate its file operations on the `host_fs` cfg — the one name for \
              \"this build reaches the filesystem through a JS host\" (loft#851)."
         );
-        // `feature = "wasm"` still has honest uses here: `src/codegen_runtime.rs`
-        // reads the CLOCK differently under wasm-bindgen, which is a real
+        // `feature = "wasm"` still has honest uses in these files: a file may read the
+        // CLOCK differently under wasm-bindgen, which is a real
         // difference between the two browsers rather than a file question. So the
         // check is scoped to lines that also mention a file operation.
         let strays: Vec<String> = src
@@ -2400,49 +2426,79 @@ fn diagnostics_spell_types_as_the_author_wrote_them() {
     );
 }
 
-/// `src/ir_schema_gen.rs` must be what `selfhost/src/ir.loft` generates.
-///
-/// The generated file IS the store layout — record sizes, field byte offsets, the `Node`
-/// discriminants that `data_store.rs` mirrors in its baked `DISC_*` constants — and it
-/// carries a `DO NOT EDIT — regenerate` header that nothing enforced. It drifted: `Key`
-/// gained a `start` field in loft#812, the generated file was updated to match, `ir.loft`
-/// — the source — was not, and the next regeneration silently dropped the field and took
-/// `KEY_STRIDE` from 24 to 16. A wrong layout is not a build error; it is a wrong byte
-/// offset, found later and elsewhere.
-///
-/// Shells out to the same script a person runs, so the gate and the tool cannot drift.
-/// The script SKIPS (exit 0, with a line saying so) when there is no built `loft` to
-/// regenerate with, or no `python3`; that line is surfaced here, because a check that
-/// quietly did not run must not read as a check that passed.
+/// `src/ir_schema_gen.rs` registers the compiler IR's types in a store, and the store LAYOUT is
+/// derived from it: record sizes, field byte offsets, the `Node` discriminants
+/// `data_store.rs`'s baked `DISC_*` constants mirror.  Its source is `selfhost/src/ir.loft`, and
+/// the two drift silently — a wrong store layout is a wrong byte offset, not a build error.  So
+/// every type the file registers is compared with the type the parser builds from `ir.loft`, by
+/// name: its size, each field's name, offset and content type, each enum's variants.  Edit the
+/// two together.
 #[test]
 fn ir_schema_gen_matches_its_loft_source() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out =
-        match loft::platform::process::harness_command(root.join("scripts/ir_schema_check.sh"))
-            .current_dir(root)
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!(
-                    "SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})"
-                );
-                return;
-            }
+    use loft::database::{Parts, Stores};
+    fn render(s: &Stores, tp: u16) -> String {
+        let t = &s.types[tp as usize];
+        let name = |i: u16| {
+            s.types
+                .get(i as usize)
+                .map_or_else(|| format!("#{i}"), |t| t.name.clone())
         };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if stdout.starts_with("SKIP ") {
-        eprintln!(
-            "SKIP ir_schema_gen_matches_its_loft_source: {}",
-            stdout.trim()
-        );
-        return;
+        let fields = |f: &[loft::database::Field]| {
+            f.iter()
+                .map(|f| format!("{}@{}:{}", f.name, f.position, name(f.content)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let parts = match &t.parts {
+            Parts::Struct(f) => format!("struct {{{}}}", fields(f)),
+            Parts::EnumValue(v, f) => format!("variant {v} {{{}}}", fields(f)),
+            Parts::Enum(v) => format!(
+                "enum [{}]",
+                v.iter()
+                    .map(|(t, n)| format!("{n}:{}", name(*t)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Parts::Vector(e) => format!("vector<{}>", name(*e)),
+            Parts::Array(e) => format!("array<{}>", name(*e)),
+            Parts::ChildRec(e) => format!("child_rec<{}>", name(*e)),
+            other => format!("{other:?}"),
+        };
+        format!("{} size {} {parts}", t.name, s.size(tp))
+    }
+    let mut generated = Stores::new();
+    let base = generated.types.len();
+    let _ = loft::ir_schema_gen::register_ir_schema(&mut generated);
+    let mut p = loft::parser::Parser::new();
+    p.parse_dir("default", true, false)
+        .expect("the standard library parses");
+    p.parse("selfhost/src/ir.loft", false);
+    let parsed = &p.database;
+    let mut differ = Vec::new();
+    for tp in base..generated.types.len() {
+        let tp = tp as u16;
+        let want = render(&generated, tp);
+        let name = &generated.types[tp as usize].name;
+        match parsed.types.iter().position(|t| &t.name == name) {
+            None => differ.push(format!("{name}: registered, but ir.loft has no such type")),
+            Some(at) => {
+                let got = render(parsed, at as u16);
+                if got != want {
+                    differ.push(format!("registered: {want}\n  ir.loft:    {got}"));
+                }
+            }
+        }
     }
     assert!(
-        out.status.success(),
-        "the generated IR schema does not match its source:\n{}{}",
-        stdout,
-        String::from_utf8_lossy(&out.stderr),
+        generated.types.len() - base > 40,
+        "expected the IR's types, saw {}",
+        generated.types.len() - base
+    );
+    assert!(
+        differ.is_empty(),
+        "src/ir_schema_gen.rs and selfhost/src/ir.loft disagree on {} type(s):\n{}",
+        differ.len(),
+        differ.join("\n")
     );
 }
 
@@ -3156,6 +3212,7 @@ fn page_is_exempt(name: &str) -> bool {
         // the page's own runtime shim — which a reader meets as a running program, not as
         // documentation.
         "brick-buster.html"
+        | "crystal-editor.html"
         | "playground.html"
         | "gallery-run.html"
         | "kernel-differential.html"

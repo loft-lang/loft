@@ -1689,7 +1689,7 @@ impl Parser {
         };
         // A producer whose result depends on one of its own parameters answers a VIEW of it
         // (`fn item(b: Bag, i: integer) -> Item { b.items[i]! }`): it builds nothing, and the
-        // copy a call of it may cost is the call's (`(R-ViewReturn)`), paid however the caller
+        // copy a call of it may cost is the call's, paid however the caller
         // reads the result — answering the record once does not remove it.
         let library_producer = |g: u32| -> bool {
             let def = data.def(g);
@@ -3996,10 +3996,9 @@ impl Parser {
             }
         };
         let def = self.data.def(self.context);
-        // The SAME filter the two marshallers use (`c_call::register` and
-        // `generation::output_c_direct_call`). It has to be: they derive the
-        // slot assignment from this list, so a list that differs here would
-        // check one binding and call another.
+        // The SAME filter the interpreter's marshaller uses (`c_call::register`).
+        // It has to be: it derives the slot assignment from this list, so a list
+        // that differs here would check one binding and call another.
         let params: Vec<crate::data::Type> = def
             .attributes()
             .iter()
@@ -4112,8 +4111,8 @@ impl Parser {
                 && (id.as_deref() == Some("rust") || id.as_deref() == Some("iterator"))
             {
                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
-                // operators, compiled into loft itself; a library's Rust goes through
-                // `#native` and a native crate, which reaches all four targets.  The template
+                // operators, compiled into loft itself; a library's native part is C, bound
+                // with `#c` and built from its `[c] shim`, which reaches every target.  The template
                 // strings are consumed so the refusal is the only diagnostic.  @C135 — this is
                 // also the door a program would observe representation through: it stays shut,
                 // so every representation rewrite may assume no program can tell the forms apart.
@@ -4123,8 +4122,8 @@ impl Parser {
                     self.lexer,
                     Level::Error,
                     "#{what} is the standard library's own Rust template, not a library route; \
-                     bind Rust with a bare `#native` and implement the function in the \
-                     package's native crate (PACKAGES.md § Function binding model)"
+                     a library's native part is C: bind the function with \
+                     `#c \"<symbol>\" \"<signature>\"` and list its source under `[c] shim`"
                 );
             } else if id.as_deref() == Some("c") {
                 // @PLN24 arc A — `#c "<symbol>" "<c-signature>"` binds this

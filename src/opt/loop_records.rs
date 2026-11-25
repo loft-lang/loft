@@ -608,8 +608,7 @@ pub struct LoopRecord {
 }
 
 /// [`loop_records`]' answer: the admitted locals, and the literal zeros of the refill-clause
-/// records' vector fields (by node address) — the empties `emit.rs` writes for
-/// `@FR-R-RefillBuffer` too.
+/// records' vector fields (by node address).
 #[derive(Default)]
 pub struct LoopRecords {
     pub recs: HashMap<u16, LoopRecord>,

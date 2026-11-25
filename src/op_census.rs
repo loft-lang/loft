@@ -32,10 +32,11 @@
 //! call, a return, an iteration step) come last, which are exactly the adjacent ones.
 //!
 //! Output, written when the run ends: a `# bytes: counted|not counted` line, then
-//! `line<TAB>function<TAB>operator<TAB>count<TAB>copy<TAB>relocate<TAB>text`.  Only the thread that runs `main` is counted: a `par` worker's ops
-//! are not in the file.  Read by `scripts/interp_gap.py`.
+//! `line<TAB>function<TAB>operator<TAB>count<TAB>copy<TAB>relocate<TAB>text`.  The tallies are
+//! the interpreter's own (`State::op_census`, `@FR-C-Own`) and only the one that runs `main`
+//! writes them: a `par` worker's ops are not in the file.  The bytes are its stores' (the
+//! context's `store_census::Tap`).  Read by `scripts/interp_gap.py`.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
@@ -51,16 +52,12 @@ pub enum Moved {
 
 static ARMED: AtomicBool = AtomicBool::new(false);
 
-thread_local! {
-    static MOVED: Cell<[u64; 3]> = const { Cell::new([0; 3]) };
-    static CENSUS: RefCell<Census> = RefCell::new(Census::default());
-}
-
 /// Operators are `u8` plus an extension page: 255 + 256 opcodes at most.
 const OPS: usize = 512;
 
+/// One interpreter's census: its rows, keyed by (segment line, function), and the op running.
 #[derive(Default)]
-struct Census {
+pub struct Census {
     index: HashMap<(u32, u32), usize>,
     rows: Vec<Row>,
     cur_key: Option<(u32, u32)>,
@@ -147,16 +144,16 @@ pub fn armed() -> bool {
     ARMED.load(Ordering::Relaxed)
 }
 
-/// `bytes` moved through `route` by the op now running.  Its call sites are compiled only
-/// with the `op-census` feature: the block routes are shared with the native runtime, and a
-/// shipped runtime carries no census.  Without the feature the census still counts every
-/// op, and says the bytes were not counted.
+/// `bytes` moved through `route` by the op now running, in a store of the context `tap`
+/// belongs to.  Its call sites are compiled only with the `op-census` feature: the block routes
+/// are shared with the native runtime, and a shipped runtime carries no census.  Without the
+/// feature the census still counts every op, and says the bytes were not counted.
 #[cfg(feature = "op-census")]
 #[inline]
-pub fn moved(route: Moved, bytes: usize) {
+pub fn moved(tap: Option<&crate::store_census::Tap>, route: Moved, bytes: usize) {
     use crate::store_census::{Work, note};
     match route {
-        // Classified by destination at the copy site (`store_census::copied_into`).
+        // Classified by destination at the copy site (`store_census::Tap::copied_into`).
         Moved::Copy => {}
         Moved::Text => note(Work::TextBytes, bytes as u64),
         Moved::Relocate => {
@@ -164,75 +161,80 @@ pub fn moved(route: Moved, bytes: usize) {
             note(Work::RelocateBytes, bytes as u64);
         }
     }
-    if ARMED.load(Ordering::Relaxed) {
-        count_moved(route, bytes);
+    if ARMED.load(Ordering::Relaxed)
+        && let Some(tap) = tap
+    {
+        tap.count_moved(route, bytes as u64);
     }
 }
 
-#[cfg(feature = "op-census")]
-#[cold]
-#[inline(never)]
-fn count_moved(route: Moved, bytes: usize) {
-    MOVED.with(|m| {
-        let mut v = m.get();
-        v[route as usize] += bytes as u64;
-        m.set(v);
-    });
+/// The bytes the stores of `db`'s context moved so far, per route; nothing without the
+/// `op-census` feature.
+#[must_use]
+pub fn moved_so_far(db: &crate::database::Stores) -> [u64; 3] {
+    #[cfg(feature = "op-census")]
+    {
+        db.tap.moved()
+    }
+    #[cfg(not(feature = "op-census"))]
+    {
+        let _ = db;
+        [0; 3]
+    }
 }
 
-/// The line of the entry function's call at `call_pos`, resolved by `resolve` once per call
-/// rather than once per op of the callee chain under it.
-pub fn site_line(call_pos: u32, resolve: impl FnOnce() -> u32) -> u32 {
-    let known = CENSUS.with_borrow(|c| c.site.filter(|s| s.0 == call_pos).map(|s| s.1));
-    known.unwrap_or_else(|| {
-        let line = resolve();
-        CENSUS.with_borrow_mut(|c| c.site = Some((call_pos, line)));
-        line
-    })
+/// The line of the entry function's call at `call_pos`, if it is the call the last op ran
+/// under: a call is resolved once ([`set_site_line`]), not once per op of the callee chain
+/// under it.
+#[must_use]
+pub fn site_line(c: &Census, call_pos: u32) -> Option<u32> {
+    c.site.filter(|s| s.0 == call_pos).map(|s| s.1)
+}
+
+/// The entry function's call at `call_pos` is on `line`.
+pub fn set_site_line(c: &mut Census, call_pos: u32, line: u32) {
+    c.site = Some((call_pos, line));
 }
 
 /// Operator `opcode` of `function` (a definition number) is about to run under entry-function
-/// `line`: count it, and settle the bytes the previous op moved.  Keyed before the op runs,
-/// because a call or a return changes both.
-pub fn step(line: u32, function: u32, opcode: u16) {
-    let moved = MOVED.with(Cell::get);
-    CENSUS.with_borrow_mut(|c| {
-        c.settle(moved);
-        if c.cur_key != Some((line, function)) {
-            let next = c.rows.len();
-            let at = *c.index.entry((line, function)).or_insert(next);
-            if at == next {
-                c.rows.push(Row {
-                    line,
-                    d_nr: function,
-                    count: vec![0; OPS],
-                    bytes: vec![[0; 3]; OPS],
-                });
-            }
-            c.cur_key = Some((line, function));
-            c.cur = at;
+/// `line`: count it, and settle the bytes the previous op moved (`moved`, the context's
+/// totals so far).  Keyed before the op runs, because a call or a return changes both.
+pub fn step(c: &mut Census, moved: [u64; 3], line: u32, function: u32, opcode: u16) {
+    c.settle(moved);
+    if c.cur_key != Some((line, function)) {
+        let next = c.rows.len();
+        let at = *c.index.entry((line, function)).or_insert(next);
+        if at == next {
+            c.rows.push(Row {
+                line,
+                d_nr: function,
+                count: vec![0; OPS],
+                bytes: vec![[0; 3]; OPS],
+            });
         }
-        let op = usize::from(opcode).min(OPS - 1);
-        let cur = c.cur;
-        c.rows[cur].count[op] += 1;
-        c.last = Some((cur, op));
-        if ngram_target().is_some() {
-            if c.window_fn != function {
-                c.window_fn = function;
-                c.window_len = 0;
-            }
-            let mut seq = [0u16; 4];
-            let have = c.window_len;
-            seq[..have].copy_from_slice(&c.window[3 - have..]);
-            seq[have] = opcode;
-            for n in 2..=have + 1 {
-                *c.ngrams.entry(pack(&seq[have + 1 - n..=have])).or_insert(0) += 1;
-            }
-            c.window.rotate_left(1);
-            c.window[2] = opcode;
-            c.window_len = (have + 1).min(3);
+        c.cur_key = Some((line, function));
+        c.cur = at;
+    }
+    let op = usize::from(opcode).min(OPS - 1);
+    let cur = c.cur;
+    c.rows[cur].count[op] += 1;
+    c.last = Some((cur, op));
+    if ngram_target().is_some() {
+        if c.window_fn != function {
+            c.window_fn = function;
+            c.window_len = 0;
         }
-    });
+        let mut seq = [0u16; 4];
+        let have = c.window_len;
+        seq[..have].copy_from_slice(&c.window[3 - have..]);
+        seq[have] = opcode;
+        for n in 2..=have + 1 {
+            *c.ngrams.entry(pack(&seq[have + 1 - n..=have])).or_insert(0) += 1;
+        }
+        c.window.rotate_left(1);
+        c.window[2] = opcode;
+        c.window_len = (have + 1).min(3);
+    }
 }
 
 /// Is `name` an operator after which the next one executed need not be the next in the
@@ -252,23 +254,22 @@ fn is_control(name: &str) -> bool {
     .any(|p| name.starts_with(p))
 }
 
-fn write_ngrams(names: &Names) {
+fn write_ngrams(c: &Census, names: &Names) {
     let Some(path) = ngram_target() else { return };
     let name = |op: u16| (names.operator)(op).unwrap_or_else(|| format!("op#{op}"));
-    let mut rows: Vec<(u64, String)> = CENSUS.with_borrow(|c| {
-        c.ngrams
-            .iter()
-            .filter_map(|(&key, &n)| {
-                let ops = unpack(key);
-                let names: Vec<String> = ops.iter().map(|&o| name(o)).collect();
-                // A control op anywhere but last means the run crossed a jump.
-                if names[..names.len() - 1].iter().any(|n| is_control(n)) {
-                    return None;
-                }
-                Some((n, format!("{}\t{}", names.len(), names.join(" "))))
-            })
-            .collect()
-    });
+    let mut rows: Vec<(u64, String)> = c
+        .ngrams
+        .iter()
+        .filter_map(|(&key, &n)| {
+            let ops = unpack(key);
+            let names: Vec<String> = ops.iter().map(|&o| name(o)).collect();
+            // A control op anywhere but last means the run crossed a jump.
+            if names[..names.len() - 1].iter().any(|n| is_control(n)) {
+                return None;
+            }
+            Some((n, format!("{}\t{}", names.len(), names.join(" "))))
+        })
+        .collect();
     rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     let mut out = String::from("# count<TAB>n<TAB>operators\n");
     for (n, row) in rows {
@@ -286,40 +287,38 @@ pub struct Names<'a> {
     pub function: &'a dyn Fn(u32) -> String,
 }
 
-/// Write the census to `LOFT_OP_CENSUS`, one line per (segment, function, operator).
-pub fn write(names: &Names) {
+/// Write census `c` to `LOFT_OP_CENSUS`, one line per (segment, function, operator); `moved`
+/// is the context's byte totals at the end of the run.
+pub fn write(c: &mut Census, moved: [u64; 3], names: &Names) {
     let Some(path) = target() else { return };
     let mut out = String::from(if cfg!(feature = "op-census") {
         "# bytes: counted\n"
     } else {
         "# bytes: not counted (build with --features op-census)\n"
     });
-    let moved = MOVED.with(Cell::get);
-    CENSUS.with_borrow_mut(|c| c.settle(moved));
-    CENSUS.with_borrow(|c| {
-        for row in &c.rows {
-            let function = if row.d_nr == u32::MAX {
-                "?".to_string()
-            } else {
-                (names.function)(row.d_nr)
-            };
-            for (op, &n) in row.count.iter().enumerate() {
-                if n == 0 {
-                    continue;
-                }
-                let name = u16::try_from(op)
-                    .ok()
-                    .and_then(|o| (names.operator)(o))
-                    .unwrap_or_else(|| format!("op#{op}"));
-                let [copy, relocate, text] = row.bytes[op];
-                let _ = writeln!(
-                    out,
-                    "{}\t{function}\t{name}\t{n}\t{copy}\t{relocate}\t{text}",
-                    row.line
-                );
+    c.settle(moved);
+    for row in &c.rows {
+        let function = if row.d_nr == u32::MAX {
+            "?".to_string()
+        } else {
+            (names.function)(row.d_nr)
+        };
+        for (op, &n) in row.count.iter().enumerate() {
+            if n == 0 {
+                continue;
             }
+            let name = u16::try_from(op)
+                .ok()
+                .and_then(|o| (names.operator)(o))
+                .unwrap_or_else(|| format!("op#{op}"));
+            let [copy, relocate, text] = row.bytes[op];
+            let _ = writeln!(
+                out,
+                "{}\t{function}\t{name}\t{n}\t{copy}\t{relocate}\t{text}",
+                row.line
+            );
         }
-    });
+    }
     crate::platform::write_env_output(path, &out, "the op census");
-    write_ngrams(names);
+    write_ngrams(c, names);
 }

@@ -15,6 +15,8 @@ store-lifetime fix follows: [§ Every new defect](#every-new-defect-updates-the-
 The ownership model these records describe is [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md); its
 formal rules are [formal/ownership.md](formal/ownership.md).  The checker that reads the
 records grows out of the existing oracle in `src/ownership_cfg.rs`.
+The lowerings of the retired rustc writer that this doc once described are in
+[STORE_RECORDS-history.md](STORE_RECORDS-history.md).
 
 ## Why a record, and not more checks over `deps`
 
@@ -82,6 +84,30 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 | **re-free** | a double end whose second end is a free the runtime refuses (`@FR-H-FreeTwice`) |
 | **use after end** | a use of a store is reachable from one of its ends |
 | **wrong end** | a free of a foreign store, or of a view |
+| **out of scope** | a use of a variable lies outside the variable's scope (`@FR-B-Scope`) |
+
+The last kind is not read off a record.  `src/scope_check.rs` walks the closed program's block
+nesting against the variable table's scopes, under `LOFT_OWN_ORACLE=check-records` and in the
+lifetime report.  A local's value ends with its scope, so a read after that end answers a
+released value.  What the check does not report, and why:
+
+- an initialisation to a constant and a release: neither reads the value;
+- a variable that holds no store (an integer, a float, a boolean, a plain enum, a tuple of
+  them): its scope's end releases nothing, and its slot is placed by its live range, so a later
+  read answers what it holds;
+- a block's tail variable after the block: it is the block's value, handed on, not released;
+- a binder of an `if`'s condition read in its then branch: a pattern binds into its arm, its
+  guard and its body (`(B-Scope)`).
+
+The run-time fault this answers is a wrong value, which no detector sees, so
+`own_sweep.py --wrong` counts a failed test as one.
+
+**One report: `LOFT_LIFETIME_CHECK=<file>`** (`-` for standard error) runs every check of this
+table on any compile, `--emit-image` included, which runs no program, and writes one sorted line
+per problem: the program file, the function, the rule it breaks, the kind, the site (`line N`, or
+`-`) and a one-line reason, tab-separated; then `# N problem(s) in M function(s) (kind=count, …)`
+or `# no problems` (`src/lifetime_check.rs`).  It is the form a gate reads: two runs of one program
+print the same lines, so a change shows as the lines it adds or removes.
 
 The runtime detects the same four, on the paths a run takes: the leak check
 (`LOFT_LEAK_CHECK`), `LOFT_STRICT_STORES` for a use after free (it never reuses a slot), and
@@ -143,14 +169,22 @@ local then names a record it does not own, and its release frees it
 (`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
 that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
 record having adopted a capture it only relays (`@FR-L-CapOwn`;
-`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A fn-ref a callee hands
+`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A stored reference read
+off any other parameter (`h.link`) names the record that slot holds, a store of its own, not
+the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
+reads the answer as what its records know that slot of the argument holds — so a join whose
+witness is the holder adopts the record, and the two holders' frees are one store's
+(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+the callee such a record is judged only where it is answered: who owns a field's value is not
+one fact here (a record a stored reference names, a generator a hand-off flag guards).
+A fn-ref a callee hands
 back holds the closure record its caller built, though a function type names no store: a call
 whose summary answers a view of its arguments (`fn pass(f) -> fn(…) { f }`) is read through
 that summary, so the holder and the record's own local are two names for one store
 (`LOFT_RECORDS_NO_FN_RETURN=1` reads such an answer as holding nothing).
 A finding names the source line it was first seen at, and a re-free or a use after the end names
 the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
-of a block is its value is one reading shared with the C and rustc writers
+of a block is its value is one reading shared with the C writer
 (`op_sets::is_release_statement`): a release after the value, a witness's with its reset
 included, yields none.
 A call the interpreter brackets only on its copy arm (F9c, F7-copy, R2b) is read bracketed there
@@ -161,8 +195,37 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
-A first bind that joins at run time copies what lies in its witness's store and adopts the
-rest, so a store the value names while another variable holds it (a branch arm's call that
+**The drop lease (`@PLN228` P9; `LOFT_RECORDS_NO_LEASE=1` turns it off).**  A type that owns a
+droppable has a LEASE per value: its hook runs once.  The records follow, per path, the stores a
+hook ran on (may and must), a hook guarded by `OpDistinctStore(v, w)` (settled except where `v` is
+`w`), and where a lease moves: a record copy or an append hands its source's lease to the
+destination (a displacement before a rebind, a tuple member's move — a member of a nested tuple
+held whole reads what its holder names), and a re-mint gives fresh content a fresh lease.  A type
+with no release function (a closure record that only borrows its captures) holds no lease, and a
+free the code generator does not emit releases nothing.  A copy the code generator makes out of a
+local takes its source's lease per STORE: a move while the source's store is freed bare, the
+second drop where a hook still runs on it.  Reported as `copied-lease`: that hook, and a copy
+out of an argument or an element, of a type owning a droppable with no `OpCopy`
+(`@FR-H-Lease`); a hook on a value its hand-off flag says moved; a return of a store every path
+ran the hook on (`@FR-H-DropOnce`); an `OpFreeRef` of such a store no path ran the hook on
+(`@FR-H-Drop`).
+A stored reference's holder is rooted through field AND element reads (`b.hs[i].r = …`): an
+element of a parameter's collection is the caller's record, so a reference written there naming
+a record this frame releases is read by the caller after its end
+(`LOFT_RECORDS_NO_ELEMENT_HOLDER=1` follows field reads only).  A refusal cell
+(`@EXPECT_ERROR`) never reaches the program's close under `--tests`, so `own_sweep.py` cannot
+score it; the compile-only report (`LOFT_LIFETIME_CHECK` with `--emit-image`) does.
+A copy the code generator makes into a local lands in the store that local already names where
+that one is live, and is minted only where the local is null (`alloc_record_at`), so a loop's
+copy into one local is one store across its passes, as `OpDatabase`'s is
+(`LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints every copy).
+A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@FR-H-RefHome`) is
+gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
+`r` names an ended generation from there, and writing it into a field is a use after its end —
+every later read of that field finds the wiped record
+(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
+A bind that joins at run time, first or a reassignment, copies what lies in its witness's
+store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
 free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
 A value whose tail projects a variable `w`, or is `w` itself (a branch arm answering its
@@ -276,16 +339,7 @@ field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning
 read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.  A literal
 buffer adopted by a renamed return buffer that is assigned again takes no free, its guard against
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
-On rustc `--native`, a call arm inside `output_set`'s `_old_<name>` stash leaves the displaced
-store to that stash (`Output::old_stash_var`); `LOFT_NATIVE_INNER_DISPLACED_FREE=1` frees it in
-the arm too.  The records read IR, which both spellings share, so they cannot see this one.
-Nor the next two, also rustc `--native` only: a call bind that aliases a borrowed view into a
-never-free local (`adopt` is `true`) leaves `call_bind_owns` false, so a runtime-Join local's
-owned-store tracker does not take the caller's store as its own
-(`LOFT_NATIVE_VIEW_ALIAS_OWNS=1` does); and a guarded free of such a local
-(`OpFreeRefIfDistinct`) lets its tracker go of the store it releases
-(`LOFT_NATIVE_GUARDED_FREE_KEEPS_TRACKER=1` keeps it) — each switch re-frees a sub-rule run's
-answer (P-Rule `borrowed`, `mixed_run`).  A
+A
 record update built in a temporary (`Unit { hp: …, ..u }` as a value) gives the temporary a store
 of its own and copies the base in, which on a return buffer is the caller's store, refilled
 (`parse_object_update`); `LOFT_NO_UPDATE_TEMP_COPY=1` binds a whole-variable base instead, which
@@ -420,7 +474,7 @@ not a re-free.
 
 ## Measuring: the sweep
 
-`scripts/own_sweep.py` runs language-suite cells with the checker on and the runtime
+`scripts/own_sweep.py` runs language-suite cells with the checker on (the store records and the scope check, `LOFT_OWN_ORACLE=check-records`) and the runtime
 detectors armed, once per lowering switch asked for, and gives each run a verdict:
 **MISS** (the runtime found a fault, the checker did not), **CAUGHT**, **STATIC** (the
 checker reported something the runtime did not see) or **CLEAN**.  A `LOFT_NO_*` switch from
@@ -457,6 +511,10 @@ or a wrong free — is fixed in three places, in the same change:
    falsify` uses), the checker reports the defect.  `scripts/own_sweep.py --cell <cell>`
    with that switch reads CAUGHT, not MISS.
 
+A **scope defect** follows the same rule: a pass that leaves a use of a variable outside its
+scope (`@FR-B-Scope`) is cured in the compiler, and with the cure switched off the check reports
+it: `scripts/own_sweep.py --wrong --cell <cell>` reads CAUGHT, its finding `out-of-scope`.
+
 A fix that makes the runtime clean while the checker stays silent on the defect is
 incomplete: the next defect of the same shape is again found only by a run.  This holds for
 a defect found by any route: a failing run, the sweep, an issue, a consumer's report.
@@ -468,8 +526,8 @@ An IR `Set(v, value)` does not say what happens to stores.  The code generator d
 30 named lowerings (`LOFT_TRACE_BIND` prints the one each assignment takes): bind `v` to the
 value, deep-copy the value into a fresh store of `v`'s own and free the source, adopt the
 store a callee minted, move, and more.  The choice reads the facts the records must not
-trust (`deps`, `return_adopts_fresh_store`), and the Rust-native (`src/generation/`) and C
-(`src/c/`) backends repeat it in their own code.
+trust (`deps`, `return_adopts_fresh_store`), and the C backend (`src/c/`) repeats it in its
+own code.
 
 So the IR is not yet a full description of a function's stores, and a record built from it
 alone mis-reads every assignment whose lowering copies.  Measured: `x = f(e)` where `f`
@@ -515,15 +573,7 @@ protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), 
 writer compares against them: a callee that re-points a `&` argument and answers its old
 store hands that store to the copy, and one that answers the new store hands over a store the
 argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
-leaks the first and frees the second while the argument holds it.  The rustc writer reads it for whether a reassignment frees what it displaces
-(`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
-(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
-runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
-owner witness then takes the answer as its own where it is no other argument's store
-(`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
-`_disp_` stash already releases the displaced store (`old_stash_var`).  A reassignment from
-another variable's record copies only where `re_bind` copies it (R2c), the owner witness asking
-the same (`var_copy_taken`; `LOFT_NATIVE_OWN_VAR_COPY=1`).  And `re_bind` itself frees nothing a
+leaks the first and frees the second while the argument holds it.  `re_bind` itself frees nothing a
 keyed local displaces when its null init minted nothing and every value it is bound to is a null
 or a borrow (`__kvb_N = b.0`): it never holds a store (`LOFT_KEYED_VIEW_DISPLACED_FREE=1`).  A writer row's `lowering=` asks
 `bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
@@ -558,8 +608,7 @@ interpreter arm it has no entry for.  The judgment is two tables in `scripts/bin
 
 A new arm on either side is added to the table it belongs in, with the rule that settles it.
 The nightly `Lowering census` job runs the whole suite; `tests/bind_census.rs` holds one
-program on every PR and proves the check can fail.  The rustc writer's census
-(`--writer native`) is a report and has no table.
+program on every PR and proves the check can fail.
 
 ## Phases
 

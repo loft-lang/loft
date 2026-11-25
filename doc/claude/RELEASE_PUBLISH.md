@@ -141,10 +141,10 @@ toolchain ships through it — signed, with checksums a user can verify offline.
 
 ## Library artifacts
 
-A bundle carries no `libloft.rlib`, so a released loft cannot compile a library: without an
-artifact built for it, every library it runs is interpreted.  The release therefore builds
-the published libraries' artifacts itself, with the binary it ships, and the release's row
-in the registry names them.
+A library's compiled form is its hosted C unit, which a run builds where a C compiler is;
+without one, and without an artifact built for it, every library a released loft runs is
+interpreted.  The release therefore builds the published libraries' artifacts itself, with
+the binary it ships, and the release's row in the registry names them.
 
 - **Which legs.**  A leg builds them when its matrix row says `artifacts: true`:
   `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The Linux leg
@@ -153,8 +153,7 @@ in the registry names them.
 - **How.**  `scripts/release-lib-artifacts.sh --loft <bin> --out <dir>` installs every
   published library at its latest version into a scratch home, and runs a program that only
   `use`s it.  That ordinary run compiles the library and its dependencies under the names a
-  user's run of the same loft computes.  `<bin>` is the bundle's binary in the target
-  directory, where the rlib of its own build still lies in `deps/`.  A library that fails to
+  user's run of the same loft computes.  `<bin>` is the bundle's binary.  A library that fails to
   build is listed in the job summary and left out; it runs interpreted.  The step never
   fails the leg.
 - **What is attached.**  Each artifact (`loft_auto_<package>_<version>_<key>` with the
@@ -254,16 +253,14 @@ None of the three reads a sentence; whether the reference still describes the la
 ## Two install layouts
 
 A release bundle is `<prefix>/bin/loft` beside `<prefix>/default/` and `<prefix>/lib/loft/components/`; a source install
-(`make install`) is `<prefix>/bin/loft` with `<prefix>/share/loft/{default,libloft.rlib,deps}`.
+(`make install`) is `<prefix>/bin/loft` with `<prefix>/share/loft/default` and `<prefix>/lib/loft/components/`.
 The runtime's resolver (`native_utils::project_root_for`) prefers `<prefix>/share/loft/`
 whenever it exists, so `self-update` over a prefix that was once source-installed would write
 a `default/` nothing loads and leave the older standard library winning under a newer binary.
 
 `self-update` therefore REFUSES that case before writing anything, naming both trees and the
-two layouts to choose between; `--force` installs anyway and says what state it leaves.  It
-refuses rather than relocating the write because a release bundle carries no `libloft.rlib`,
-and `--native` links that rlib from `share/loft/`: writing the stdlib into the source tree
-would swap one mismatch for a subtler one.  Writer and loader ask the same home,
+two layouts to choose between; `--force` installs anyway and says what state it leaves.
+Writer and loader ask the same home,
 `stdlib_default_dir()`, which `loft run`, `loft fmt`, the LSP and `verify-self` all use.
 
 ## Reproducible builds
@@ -276,8 +273,8 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 
 - **Paths:** `scripts/repro-flags.sh` remaps the build roots on BOTH sides (the release and the
   verifier source it), and `build.rs` drops every `--remap-path-prefix` entry before baking
-  `LOFT_BUILD_RUSTFLAGS`.  That string must stay a string: `extensions.rs` passes it to child
-  cargo builds so a shared dependency's SVH matches loft's own (#274).  Bundles carry
+  `LOFT_BUILD_RUSTFLAGS`.  That string must stay a string: it is part of the build identity
+  that keys loft's caches (`src/cache.rs`, `build_identity_tag`).  Bundles carry
   `reproducible-paths = yes`.
 - **The platform C toolchain:** `ring` (via rustls → ureq) compiles C through the `cc` crate
   with the runner image's compiler — `cl.exe` on Windows, Apple clang on macOS — and a hosted

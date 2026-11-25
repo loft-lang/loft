@@ -1936,7 +1936,10 @@ impl Parser {
         ) {
             (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
             _ => (
-                self.lexer.pos().file.to_string(),
+                match self.site_file(self.lexer.pos().file.as_str()) {
+                    Value::Text(t) => t,
+                    _ => String::new(),
+                },
                 self.lexer.pos().line as i32,
             ),
         };

@@ -5,29 +5,36 @@
 #include <string.h>
 #include <time.h>
 
-typedef struct { const char *p; size_t len; } loft_str;
-typedef struct { char *p; size_t len; size_t cap; } loft_text;
 
 
-static loft_str loft_lit(const char *p, size_t len) {
+static loft_str loft_lit(loft_cx *cx, const char *p, size_t len) {
     loft_str s;
     s.p = p;
     s.len = len;
     return s;
 }
 
-static loft_str loft_view(const loft_text *t) {
-    return loft_lit(t->p ? t->p : "", t->len);
+static int loft_text_is_null(loft_cx *cx, const loft_text *t);
+static loft_str loft_null_text(loft_cx *cx);
+
+static loft_str loft_view(loft_cx *cx, const loft_text *t) {
+    if (loft_text_is_null(cx, t)) return loft_null_text(cx);
+    return loft_lit(cx, t->p ? t->p : "", t->len);
 }
 
-/* The null text: the one byte "\0". */
-static loft_str loft_null_text(void) {
-    static const char zero[1] = { 0 };
-    return loft_lit(zero, 1);
+/* The null text (`@FR-L-Null-Text`).  Every producer of an absent text takes it from
+ * `loft_null_text` (a view) or `loft_text_set_null` (an owned text), and every reader asks
+ * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.  It
+ * is an identity, never a content — a text of one NUL byte is an ordinary text: a view is null
+ * when it has no pointer (the interpreter's `Str::null`), an owned text when it has a pointer
+ * and neither length nor room (`loft_text_set_null`).  Neither test compares an address, so
+ * both hold across every unit a program is built from. */
+static loft_str loft_null_text(loft_cx *cx) {
+    return loft_lit(cx, 0, 0);
 }
 
-static int loft_str_is_null(loft_str s) {
-    return s.len == 1 && s.p[0] == 0;
+static int loft_str_is_null(loft_cx *cx, loft_str s) {
+    return s.p == 0;
 }
 
 /* A thread's freed text buffers by power-of-two capacity (16 .. 4096 bytes), handed to the next
@@ -37,15 +44,7 @@ static int loft_str_is_null(loft_str s) {
  * buffer directly stays right; a buffer past the cache's depth goes back to malloc.  Measured on
  * the library benches' text routines (gcc -O3, one E-core): markdown render_inline -27 %,
  * server header -16 %. */
-/* A header built without `loft_cc.h` keeps one cache: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-#define LOFT_TP_CLASSES 9
-#define LOFT_TP_DEPTH 32
-static LOFT_TLS char *loft_tp_blocks[LOFT_TP_CLASSES][LOFT_TP_DEPTH];
-static LOFT_TLS unsigned char loft_tp_n[LOFT_TP_CLASSES];
-static int loft_tp_class(size_t cap) {
+static int loft_tp_class(loft_cx *cx, size_t cap) {
     if (cap < 16 || cap > 4096 || (cap & (cap - 1)) != 0) return -1;
     int c = 0;
     while (((size_t) 16 << c) < cap) c++;
@@ -60,27 +59,33 @@ static int loft_tp_class(size_t cap) {
 #define LOFT_TP_OFF 1
 #endif
 #endif
-static char *loft_tp_take(size_t cap) {
+static char *loft_tp_take(loft_cx *cx, size_t cap) {
 #ifdef LOFT_TP_OFF
     return (char *) malloc(cap);
 #endif
-    int c = loft_tp_class(cap);
-    if (c >= 0 && loft_tp_n[c]) return loft_tp_blocks[c][--loft_tp_n[c]];
+    /* No context (a component built without the program's runtime): no pool. */
+    if (!cx) return (char *) malloc(cap);
+    int c = loft_tp_class(cx, cap);
+    if (c >= 0 && cx->tp_n[c]) return cx->tp_blocks[c][--cx->tp_n[c]];
     return (char *) malloc(cap);
 }
-static void loft_tp_give(char *p, size_t cap) {
+static void loft_tp_give(loft_cx *cx, char *p, size_t cap) {
 #ifdef LOFT_TP_OFF
     free(p);
     return;
 #endif
-    int c = loft_tp_class(cap);
-    if (c >= 0 && loft_tp_n[c] < LOFT_TP_DEPTH) {
-        loft_tp_blocks[c][loft_tp_n[c]++] = p;
+    if (!cx) {
+        free(p);
+        return;
+    }
+    int c = loft_tp_class(cx, cap);
+    if (c >= 0 && cx->tp_n[c] < LOFT_TP_DEPTH) {
+        cx->tp_blocks[c][cx->tp_n[c]++] = p;
         return;
     }
     free(p);
 }
-static void loft_reserve(loft_text *t, size_t extra) {
+static void loft_reserve(loft_cx *cx, loft_text *t, size_t extra) {
     size_t need = t->len + extra;
     if (need <= t->cap) return;
     /* On a 32-bit target a size can wrap: a sum below the length, or a doubling past the
@@ -89,28 +94,28 @@ static void loft_reserve(loft_text *t, size_t extra) {
     size_t cap = t->cap ? t->cap * 2 : 16;
     if (cap < t->cap) cap = need;
     while (cap < need) cap = cap > SIZE_MAX / 2 ? need : cap * 2;
-    char *p = loft_tp_take(cap);
+    char *p = loft_tp_take(cx, cap);
     if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-    if (t->p) {
+    if (t->p && t->cap) {
         if (t->len) memcpy(p, t->p, t->len);
-        loft_tp_give(t->p, t->cap);
+        loft_tp_give(cx, t->p, t->cap);
     }
     t->p = p;
     t->cap = cap;
 }
 
-static void loft_push_slow(loft_text *t, const char *p, size_t n) {
+static void loft_push_slow(loft_cx *cx, loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (t->p && p >= t->p && p < t->p + t->cap) {
         /* Appending a part of itself: the buffer may move, so copy the part first. */
         char *copy = (char *) malloc(n);
         if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
         memcpy(copy, p, n);
-        loft_reserve(t, n);
+        loft_reserve(cx, t, n);
         memcpy(t->p + t->len, copy, n);
         free(copy);
     } else {
-        loft_reserve(t, n);
+        loft_reserve(cx, t, n);
         memcpy(t->p + t->len, p, n);
     }
     t->len += n;
@@ -121,7 +126,7 @@ static void loft_push_slow(loft_text *t, const char *p, size_t n) {
  * one character (up to four bytes) is copied byte by byte: its length is not known to the C
  * compiler, so `memcpy` would be a library call per character.  `-DLOFT_NO_SHORT_APPEND`
  * copies every piece with `memcpy`. */
-LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
+LOFT_HOT_INLINE void loft_push(loft_cx *cx, loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
         /* Room for `n > 0` bytes means a buffer: said to the compiler, which otherwise reads the
@@ -153,15 +158,40 @@ LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
         t->len += n;
         return;
     }
-    loft_push_slow(t, p, n);
+    loft_push_slow(cx, t, p, n);
 }
 
-static void loft_push_char(loft_text *t, char c) {
-    loft_push(t, &c, 1);
+static void loft_push_char(loft_cx *cx, loft_text *t, char c) {
+    loft_push(cx, t, &c, 1);
 }
 
-static void loft_text_append(loft_text *t, loft_str s) {
-    loft_push(t, s.p, s.len);
+/* An owned text's absence: is it the null text, make it the null text, make it "" (a null
+ * one too — the start of every assignment). */
+static int loft_text_is_null(loft_cx *cx, const loft_text *t) {
+    return t->p && t->cap == 0 && t->len == 0;
+}
+/* The owned null: a pointer, no length, no room.  Every fast path sees no room and goes the
+ * slow way; nothing frees or pools a buffer of capacity 0. */
+static void loft_text_set_null(loft_cx *cx, loft_text *t) {
+    static const char none[1] = { 0 };
+    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
+    t->p = (char *) none;
+    t->len = 0;
+    t->cap = 0;
+}
+static inline void loft_text_clear(loft_cx *cx, loft_text *t) {
+    if (loft_text_is_null(cx, t)) t->p = 0;
+    t->len = 0;
+}
+
+/* The bytes a text key's digest is taken over (`@FR-S-Digest`, `text_null::digest_text`): a
+ * null key digests as one NUL byte, what every stored digest of a null key was taken over. */
+static loft_str loft_digest_text(loft_cx *cx, loft_str s) {
+    return loft_str_is_null(cx, s) ? loft_lit(cx, "", 1) : s;
+}
+
+static void loft_text_append(loft_cx *cx, loft_text *t, loft_str s) {
+    loft_push(cx, t, s.p, s.len);
 }
 
 /* OpAppendText (ops::append_text): a null text stays null, a null source makes it null. */
@@ -177,26 +207,30 @@ static void loft_text_append(loft_text *t, loft_str s) {
 #define LOFT_TEXT_INLINE LOFT_HOT_INLINE
 #endif
 
-LOFT_TEXT_INLINE void loft_text_concat(loft_text *t, loft_str s) {
+LOFT_TEXT_INLINE void loft_text_concat(loft_cx *cx, loft_text *t, loft_str s) {
 #ifndef LOFT_NO_SHORT_APPEND
     /* One byte into a buffer with room: a store and a length bump.  Behind a one-byte slice's
      * own fast path (`loft_text_sub`) the C compiler sees the length 1 and keeps only this. */
-    if (s.len == 1 && s.p[0] != 0 && t->len < t->cap && !(t->len == 1 && t->p[0] == 0)) {
+    if (s.len == 1 && !loft_str_is_null(cx, s) && t->len < t->cap && !loft_text_is_null(cx, t)) {
         char c = s.p[0];
         t->p[t->len++] = c;
         return;
     }
 #endif
-    if (loft_str_is_null(loft_view(t))) return;
-    if (loft_str_is_null(s)) {
-        t->len = 0;
-        loft_push_char(t, 0);
+    if (loft_text_is_null(cx, t)) return;
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, t);
         return;
     }
-    loft_text_append(t, s);
+    loft_text_append(cx, t, s);
 }
 
-LOFT_TEXT_INLINE void loft_text_set(loft_text *t, loft_str s) {
+LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, t);
+        return;
+    }
+    if (loft_text_is_null(cx, t)) t->p = 0;
     if (t->p && s.p == t->p && s.len == t->len) return;
     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
         memmove(t->p, s.p, s.len);
@@ -204,24 +238,27 @@ LOFT_TEXT_INLINE void loft_text_set(loft_text *t, loft_str s) {
         return;
     }
     t->len = 0;
-    loft_push(t, s.p, s.len);
+    loft_push(cx, t, s.p, s.len);
 }
 
-static void loft_text_free(loft_text *t) {
-    if (t->p) loft_tp_give(t->p, t->cap);
+static void loft_text_free(loft_cx *cx, loft_text *t) {
+    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
     t->p = 0;
     t->len = 0;
     t->cap = 0;
 }
 
-/* Nothing is parked on a `par` worker: its thread ends with the job (its slots with it), and
- * the job runs on a store table of its own. */
-static LOFT_TLS int loft_no_park = 0;
+/* The parks are statics the main thread owns (`@FR-C-Main`): a `par` worker and a hosted unit's
+ * bridge call (`cx->no_park`) neither take from them nor park into them. */
 
 /* A frame's work text kept between its calls (`FnWriter::park_work_texts`): taken empty from
  * its slot at entry — the slot left empty, so a recursive frame takes nothing — and parked
  * back at each release, or freed when the slot is taken again meanwhile. */
-static inline loft_text loft_wpark_take(loft_text *slot) {
+static inline loft_text loft_wpark_take(loft_cx *cx, loft_text *slot) {
+    if (cx->no_park) {
+        loft_text none = { 0, 0, 0 };
+        return none;
+    }
     loft_text t = *slot;
     t.len = 0;
     slot->p = 0;
@@ -229,38 +266,42 @@ static inline loft_text loft_wpark_take(loft_text *slot) {
     slot->cap = 0;
     return t;
 }
-static inline void loft_wpark_put(loft_text *slot, loft_text *t) {
-    if (!loft_no_park && !slot->p && t->p) {
+static inline void loft_wpark_put(loft_cx *cx, loft_text *slot, loft_text *t) {
+    if (!cx->no_park && !slot->p && t->p) {
         *slot = *t;
         slot->len = 0;
         t->p = 0;
         t->len = 0;
         t->cap = 0;
     } else {
-        loft_text_free(t);
+        loft_text_free(cx, t);
     }
 }
 
 /* `*to = *from` for a `from` nothing else names: `to` releases what it held and takes `from`'s
  * buffer, which is left empty — the value `loft_text_set` would copy, without the copy. */
-static void loft_text_move(loft_text *to, loft_text *from) {
+static void loft_text_move(loft_cx *cx, loft_text *to, loft_text *from) {
     if (to == from) return;
-    loft_text_free(to);
+    loft_text_free(cx, to);
     *to = *from;
     from->p = 0;
     from->len = 0;
     from->cap = 0;
 }
 
-static loft_text loft_text_own(loft_str s) {
+static loft_text loft_text_own(loft_cx *cx, loft_str s) {
     loft_text t = { 0, 0, 0 };
-    loft_push(&t, s.p, s.len);
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &t);
+        return t;
+    }
+    loft_push(cx, &t, s.p, s.len);
     return t;
 }
 
 /* A text as a NUL-terminated C string the caller frees: what a `#c` binding's `const char *`
  * parameter receives (`c_call`'s `TextPointer`). */
-static char *loft_cstr_own(loft_str s) {
+static char *loft_cstr_own(loft_cx *cx, loft_str s) {
     char *c = (char *) malloc(s.len + 1);
     if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
     if (s.len) memcpy(c, s.p, s.len);
@@ -268,12 +309,12 @@ static char *loft_cstr_own(loft_str s) {
     return c;
 }
 
-static void loft_push_cstr(loft_text *s, const char *p) {
-    loft_push(s, p, strlen(p));
+static void loft_push_cstr(loft_cx *cx, loft_text *s, const char *p) {
+    loft_push(cx, s, p, strlen(p));
 }
 
 /* Is `p[0..n)` well-formed UTF-8, as Rust's `String::from_utf8` asks? */
-static int loft_utf8_valid(const unsigned char *p, size_t n) {
+static int loft_utf8_valid(loft_cx *cx, const unsigned char *p, size_t n) {
     size_t i = 0;
     while (i < n) {
         unsigned char c = p[i];
@@ -296,20 +337,20 @@ static int loft_utf8_valid(const unsigned char *p, size_t n) {
 }
 
 /* `String::from_utf8_lossy` over bytes that may hold a NUL: an invalid byte is U+FFFD. */
-static void loft_push_lossy(loft_text *t, const char *c, size_t n) {
+static void loft_push_lossy(loft_cx *cx, loft_text *t, const char *c, size_t n) {
     const unsigned char *p = (const unsigned char *) c;
-    if (loft_utf8_valid(p, n)) {
-        loft_push(t, c, n);
+    if (loft_utf8_valid(cx, p, n)) {
+        loft_push(cx, t, c, n);
         return;
     }
     for (size_t i = 0; i < n;) {
         size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
                    : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
-        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
-            loft_push(t, c + i, len);
+        if (len && i + len <= n && loft_utf8_valid(cx, p + i, len)) {
+            loft_push(cx, t, c + i, len);
             i += len;
         } else {
-            loft_push(t, "\xEF\xBF\xBD", 3);
+            loft_push(cx, t, "\xEF\xBF\xBD", 3);
             i++;
         }
     }
@@ -327,22 +368,26 @@ __declspec(dllimport) int __stdcall QueryPerformanceCounter(union _LARGE_INTEGER
 __declspec(dllimport) int __stdcall QueryPerformanceFrequency(union _LARGE_INTEGER *freq);
 
 /* Milliseconds since the Unix epoch. */
-static int64_t loft_win_wall_ms(void) {
+static int64_t loft_win_wall_ms(loft_cx *cx) {
     unsigned long long ticks = 0; /* a FILETIME: the low word, then the high one */
     GetSystemTimePreciseAsFileTime((struct _FILETIME *) &ticks);
     return (int64_t) ((ticks - 116444736000000000ull) / 10000ull);
 }
 #endif
 
-static int64_t loft_now_us(void) {
+static int64_t loft_now_us(loft_cx *cx) {
 #if defined(LOFT_POSIX)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (int64_t) t.tv_sec * 1000000 + t.tv_nsec / 1000;
 #elif defined(_WIN32)
-    static long long freq = 0;
-    long long count = 0;
-    if (!freq) QueryPerformanceFrequency((union _LARGE_INTEGER *) &freq);
+    static long long known = 0;
+    long long freq, count = 0;
+    LOFT_PUB_GET(known, freq);
+    if (!freq) {
+        QueryPerformanceFrequency((union _LARGE_INTEGER *) &freq);
+        LOFT_PUB_SET(known, freq);
+    }
     QueryPerformanceCounter((union _LARGE_INTEGER *) &count);
     return (int64_t) (count / freq * 1000000 + count % freq * 1000000 / freq);
 #else

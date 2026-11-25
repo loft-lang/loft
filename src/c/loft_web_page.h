@@ -36,26 +36,26 @@ LOFT_WB_IMPORT(http_free) void loft_wbi_http_free(int32_t h);
 static loft_text loft_wp_body, loft_wp_heads, loft_wp_msg, loft_wp_pack;
 static int64_t loft_wp_op = 0;
 
-static int32_t loft_wp_handle(int64_t h) { return h < INT32_MIN || h > INT32_MAX ? -1 : (int32_t) h; }
+static int32_t loft_wp_handle(loft_cx *cx, int64_t h) { return h < INT32_MIN || h > INT32_MAX ? -1 : (int32_t) h; }
 
 /* Replace `t` with the `n` bytes `copy` writes. */
-static void loft_wp_fill(loft_text *t, int32_t n, int32_t h, void (*copy)(int32_t, char *)) {
+static void loft_wp_fill(loft_cx *cx, loft_text *t, int32_t n, int32_t h, void (*copy)(int32_t, char *)) {
     t->len = 0;
     if (n <= 0) return;
     char *b = (char *) malloc((size_t) n);
     if (!b) return;
     copy(h, b);
-    loft_push(t, b, (size_t) n);
+    loft_push(cx, t, b, (size_t) n);
     free(b);
 }
 
-static loft_text loft_wp_copy(const loft_text *t) {
-    return loft_text_own(loft_lit(t->p ? t->p : "", t->len));
+static loft_text loft_wp_copy(loft_cx *cx, const loft_text *t) {
+    return loft_text_own(cx, loft_lit(cx, t->p ? t->p : "", t->len));
 }
 
 /* A fetch run to completion — the page yields to its event loop until the answer is in — with
  * its body and headers kept: the status, or 0 on a transport failure. */
-static int64_t loft_wp_http_run(const char *m, size_t ml, loft_str url, loft_str body,
+static int64_t loft_wp_http_run(loft_cx *cx, const char *m, size_t ml, loft_str url, loft_str body,
                                 loft_str headers) {
     int32_t h = loft_wbi_http_start(m, ml, url.p, url.len, body.p, body.len, headers.p,
                                     headers.len);
@@ -70,28 +70,28 @@ static int64_t loft_wp_http_run(const char *m, size_t ml, loft_str url, loft_str
         loft_wbi_ws_yield();
     }
     int64_t status = loft_wbi_http_status(h);
-    loft_wp_fill(&loft_wp_body, loft_wbi_http_body_len(h), h, loft_wbi_http_body_copy);
-    loft_wp_fill(&loft_wp_heads, loft_wbi_http_headers_len(h), h, loft_wbi_http_headers_copy);
+    loft_wp_fill(cx, &loft_wp_body, loft_wbi_http_body_len(h), h, loft_wbi_http_body_copy);
+    loft_wp_fill(cx, &loft_wp_heads, loft_wbi_http_headers_len(h), h, loft_wbi_http_headers_copy);
     loft_wbi_http_free(h);
     return status;
 }
 
-static int64_t loft_wp_http_do(loft_str method, loft_str url, loft_str body, loft_str headers) {
-    return loft_wp_http_run(method.p, method.len, url, body, headers);
+static int64_t loft_wp_http_do(loft_cx *cx, loft_str method, loft_str url, loft_str body, loft_str headers) {
+    return loft_wp_http_run(cx, method.p, method.len, url, body, headers);
 }
-static loft_text loft_wp_http_body(void) { return loft_wp_copy(&loft_wp_body); }
-static loft_text loft_wp_http_headers(void) {
+static loft_text loft_wp_http_body(loft_cx *cx) { return loft_wp_copy(cx, &loft_wp_body); }
+static loft_text loft_wp_http_headers(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    loft_hi_push_lossy(&t, (const unsigned char *) (loft_wp_heads.p ? loft_wp_heads.p : ""),
+    loft_hi_push_lossy(cx, &t, (const unsigned char *) (loft_wp_heads.p ? loft_wp_heads.p : ""),
                        loft_wp_heads.len);
     return t;
 }
 
 /* A `HEAD`'s `Content-Length`, or -1 — also when the page's CORS hides the header; the library
  * then falls back to a range read. */
-static int64_t loft_wp_http_head_size(loft_str url) {
+static int64_t loft_wp_http_head_size(loft_cx *cx, loft_str url) {
     loft_str none = { "", 0 };
-    int64_t status = loft_wp_http_run("HEAD", 4, url, none, none);
+    int64_t status = loft_wp_http_run(cx, "HEAD", 4, url, none, none);
     if (status < 200 || status >= 400) return -1;
     const char *p = loft_wp_heads.p ? loft_wp_heads.p : "";
     size_t n = loft_wp_heads.len;
@@ -129,51 +129,51 @@ static int64_t loft_wp_http_head_size(loft_str url) {
     return -1;
 }
 
-static int64_t loft_wp_ws_connect(loft_str url) { return loft_wbi_ws_connect(url.p, url.len); }
-static uint8_t loft_wp_ws_client_send(int64_t h, loft_str msg) {
-    return loft_wbi_ws_send(loft_wp_handle(h), msg.p, msg.len) == 1;
+static int64_t loft_wp_ws_connect(loft_cx *cx, loft_str url) { return loft_wbi_ws_connect(url.p, url.len); }
+static uint8_t loft_wp_ws_client_send(loft_cx *cx, int64_t h, loft_str msg) {
+    return loft_wbi_ws_send(loft_wp_handle(cx, h), msg.p, msg.len) == 1;
 }
-static uint8_t loft_wp_ws_client_send_binary(int64_t h, loft_str msg) {
-    return loft_wbi_ws_send_binary(loft_wp_handle(h), msg.p, msg.len) == 1;
+static uint8_t loft_wp_ws_client_send_binary(loft_cx *cx, int64_t h, loft_str msg) {
+    return loft_wbi_ws_send_binary(loft_wp_handle(cx, h), msg.p, msg.len) == 1;
 }
-static uint8_t loft_wp_ws_client_recv(int64_t h) {
-    int32_t s = loft_wp_handle(h);
+static uint8_t loft_wp_ws_client_recv(loft_cx *cx, int64_t h) {
+    int32_t s = loft_wp_handle(cx, h);
     if (loft_wbi_ws_poll(s) != 1) return 0;
-    loft_wp_fill(&loft_wp_msg, loft_wbi_ws_msg_len(s), s, loft_wbi_ws_msg_copy);
+    loft_wp_fill(cx, &loft_wp_msg, loft_wbi_ws_msg_len(s), s, loft_wbi_ws_msg_copy);
     loft_wp_op = loft_wbi_ws_opcode(s);
     return 1;
 }
-static loft_text loft_wp_ws_client_message(void) { return loft_wp_copy(&loft_wp_msg); }
-static int64_t loft_wp_ws_client_opcode(void) { return loft_wp_op; }
-static void loft_wp_ws_client_close(int64_t h) { loft_wbi_ws_close(loft_wp_handle(h)); }
+static loft_text loft_wp_ws_client_message(loft_cx *cx) { return loft_wp_copy(cx, &loft_wp_msg); }
+static int64_t loft_wp_ws_client_opcode(loft_cx *cx) { return loft_wp_op; }
+static void loft_wp_ws_client_close(loft_cx *cx, int64_t h) { loft_wbi_ws_close(loft_wp_handle(cx, h)); }
 /* The page's event loop paces a program; it paces itself with `frame_yield`. */
-static void loft_wp_sleep_ms(int64_t ms) { (void) ms; }
-static void loft_wp_frame_yield(void) { loft_wbi_ws_yield(); }
+static void loft_wp_sleep_ms(loft_cx *cx, int64_t ms) { (void) ms; }
+static void loft_wp_frame_yield(loft_cx *cx) { loft_wbi_ws_yield(); }
 
-static void loft_wp_pack_reset(void) { loft_wp_pack.len = 0; }
-static void loft_wp_pack_u8(int64_t b) {
+static void loft_wp_pack_reset(loft_cx *cx) { loft_wp_pack.len = 0; }
+static void loft_wp_pack_u8(loft_cx *cx, int64_t b) {
     char c = (char) (b & 0xFF);
-    loft_push(&loft_wp_pack, &c, 1);
+    loft_push(cx, &loft_wp_pack, &c, 1);
 }
-static void loft_wp_pack_u16_le(int64_t v) {
+static void loft_wp_pack_u16_le(loft_cx *cx, int64_t v) {
     char c[2] = { (char) (v & 0xFF), (char) ((v >> 8) & 0xFF) };
-    loft_push(&loft_wp_pack, c, 2);
+    loft_push(cx, &loft_wp_pack, c, 2);
 }
-static void loft_wp_pack_u32_le(int64_t v) {
+static void loft_wp_pack_u32_le(loft_cx *cx, int64_t v) {
     char c[4] = { (char) (v & 0xFF), (char) ((v >> 8) & 0xFF), (char) ((v >> 16) & 0xFF),
                   (char) ((v >> 24) & 0xFF) };
-    loft_push(&loft_wp_pack, c, 4);
+    loft_push(cx, &loft_wp_pack, c, 4);
 }
-static loft_text loft_wp_pack_take(void) {
-    loft_text t = loft_wp_copy(&loft_wp_pack);
+static loft_text loft_wp_pack_take(loft_cx *cx) {
+    loft_text t = loft_wp_copy(cx, &loft_wp_pack);
     loft_wp_pack.len = 0;
     return t;
 }
-static int64_t loft_wp_byte_at(int64_t idx, loft_str t) {
+static int64_t loft_wp_byte_at(loft_cx *cx, int64_t idx, loft_str t) {
     return idx < 0 || (uint64_t) idx >= t.len ? -1 : (int64_t) (unsigned char) t.p[idx];
 }
 /* A page rarely multiplexes sockets: the group is a stub, nothing is ever ready. */
-static void loft_wp_ws_group_clear(void) {}
-static void loft_wp_ws_group_add(int64_t h) { (void) h; }
-static int64_t loft_wp_ws_group_poll(void) { return -1; }
+static void loft_wp_ws_group_clear(loft_cx *cx) {}
+static void loft_wp_ws_group_add(loft_cx *cx, int64_t h) { (void) h; }
+static int64_t loft_wp_ws_group_poll(loft_cx *cx) { return -1; }
 #endif
