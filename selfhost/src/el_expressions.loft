@@ -557,6 +557,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.
   if rb >= 0 && el_types::base(result) is TyVector {
+    // (The tail before its delivery, for the return-promotion report: `el_retpromo`.)
+    vars.ret_src = raw_tail(code);
     code = el_ex_deliver::vector_return(e, vars, code, rb, result);
     rb = -1;
   }
@@ -582,7 +584,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     el_trace::route(e, "classify_reference_delivery=MaterializeView");
   }
   vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
-  vars.ret_src = raw_tail(code);
+  if !(el_types::base(result) is TyVector) {
+    vars.ret_src = raw_tail(code);
+  }
   if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {

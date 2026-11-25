@@ -1059,6 +1059,14 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           pos = ir::NdInt { n: field_position(e, d, fname) };
           list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
           place = el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, sed).known_type }]);
+          // (`literal_into_place`: a variant literal in a struct-enum field is written into the
+          // field, which Rust's trace reports where the outer literal's own destination is a
+          // variable the program declared — a local, a place, a parameter it rebinds — and not
+          // for an appended element, a return buffer or a record built apart.)
+          rroot = el_ex_base::place_root(e, r);
+          if !e.first_pass && rroot >= 0 && rroot < len(vars.vars) && !el_vars::is_compiler_generated(vars, rroot) {
+            literal_route(e, fe!, "literal_into_place=in_place(place)");
+          }
           built = fields_at(e, vars, v, place, vd, sub);
           if built == null {
             return null;

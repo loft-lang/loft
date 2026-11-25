@@ -8,6 +8,7 @@ use syntax::*;
 use lex;
 use el;
 use el_ir;
+use binds;
 use fold;
 use el_vars;
 use el_types;
@@ -245,9 +246,31 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     // freed, and that is linked.  A text place (the callee's store-text twin), a narrow one, a
     // tuple member and a value that is no place stay refused by name.
     place = el_ir::unspan(arg);
+    // `Parser::slot_cell_argument` (`@FR-F-ParamRef`, `@FR-B-Ref-Lvalue`): an out-of-line FIELD
+    // (`OpRefFromChildRec(OpGetField(host, pos, kt))`, `take_min(t.right)`) handed to a `&S` /
+    // `&S?` whose `S` is held out of line gets a cell of this frame naming the field
+    // (`OpSlotTag`), so the callee's whole write is the field write.  The cell is a second-pass
+    // work ref, never freed; the first pass mints nothing for it.
+    slot_d = binds::slot_link_def(e.b, pt);
+    slot_field = match place { NdCall { def_nr: sfd, args: sfa } => if el::def(e, sfd).name == "OpRefFromChildRec" && len(sfa) > 0 { el_ir::unspan(sfa[0]!) } else { ir::NdNull }, _ => ir::NdNull };
+    slot_kt = match slot_field { NdCall { def_nr: gfd, args: gfa } => if el::def(e, gfd).name == "OpGetField" && len(gfa) == 3 { match el_ir::unspan(gfa[2]!) { NdInt { n } => n, _ => 0 } } else { 0 }, _ => 0 };
+    if slot_d != null && slot_kt != 0 {
+      if e.first_pass {
+        return arg;
+      }
+      cell = el_vars::work_ref_p2(vars, ir::TyReference { n: slot_d!, dep: [] });
+      el_vars::set_skip_free(vars, cell, "slot_cell_argument");
+      return ir::NdInsert { items: [el_ir::v_set(cell, el_ir::cl(e, "OpSlotTag", [slot_field])), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: cell }])] };
+    }
     is_place = calls(e, place, "OpGetField") || calls(e, place, "OpGetVector");
     same = !el_types::is_unknown(at) && !(at is TyOptional) && el_types::is_equal(e, el_types::base(inner), el_types::base(at));
     narrow = match el_types::base(at) { TyInteger { spec } => spec.forced_size > 0, _ => false };
+    // (`scalar_place_ref` of a TUPLE member, `@FR-B-Ref-Lvalue` / `@FR-T-Record`: a wide plain
+    // scalar member of a stack tuple is linked where it lies, `OpCreateStack(t.i)`, as a scalar
+    // local is.  Rust refuses a narrow member by name, as here.)
+    if same && !narrow && el_convert::plain_scalar(el_types::base(inner)) && place is NdTupleGet {
+      return el_ir::cl(e, "OpCreateStack", [place]);
+    }
     if same && !narrow && el_convert::plain_scalar(el_types::base(inner)) && !(place is NdTupleGet) {
       sp = el_ex_vector::scalar_place(e, place);
       if sp != null && scalar_read(e, place) {
@@ -272,6 +295,13 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
       _ => {}
     }
     refuse_known(e, at, "a `&` argument that is not a local");
+    return null;
+  }
+  // `slot_cell_argument`'s other half: a LOCAL link to an out-of-line field (`n = &t.right;
+  // take_min(n)`) is handed as a cell naming the link's slot (`OpSlotTag(_slot_n_N)`), the call's
+  // answer held while the link is read again after it — not carried: refused by name.
+  if !e.first_pass && binds::slot_link_def(e.b, pt) != null && vars.amp_places.contains(v) && !vars.vars[v].argument {
+    el::refuse(e, "a local field link handed to a `&` parameter of a record held out of line");
     return null;
   }
   vt = el_vars::tp(vars, v);
@@ -2246,14 +2276,27 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
 // `Parser::match_subject_shape`: `<shape>/<type>[<borrows>]` — a literal, a parameter, a local,
 // a read (an `Op…`), a call; the record, enum, text, scalar, collection or tuple it types as,
 // `nullable_` for a `τ?`; and the locals its type borrows, by name.
-fn subject_shape(e: el::El, vars: el_vars::Vars, code: ir::Node, st: ir::TypeT) -> text {
-  shape = if subject_literal(code) { "literal" } else {
+// A literal owns its store: Rust's literal subject names no borrow, its work ref is no view.
+// (Where this port lowers no subject — the first pass — the shape is read off its syntax.)
+fn subject_shape(e: el::El, vars: el_vars::Vars, subject: integer, code: ir::Node, st0: ir::TypeT) -> text {
+  lit = subject_literal(code);
+  shape = if lit { "literal" } else {
     match el_ir::unspan(code) {
       NdVar { n } => if n >= 0 && n < len(vars.vars) && vars.vars[n].argument { "argument" } else { "local" },
       NdCall { def_nr } => if starts_with(el::def(e, def_nr).name, "Op") { "read" } else { "call" },
-      _ => "other"
+      _ => syntax_shape(e, vars, subject)
     }
   };
+  st = if lit { el_types::without_deps(st0) } else { st0 };
+  if st is TyRefVar {
+    names0: vector<text> = [];
+    for d in el_types::deps(match st { TyRefVar { inner: ri } => ri, _ => st }) {
+      if d >= 0 && d < len(vars.vars) {
+        names0 += [el_vars::name_of(vars, d)];
+      }
+    }
+    return "{shape}/other[{names0.join(",")}]";
+  }
   inner = match st { TyOptional { inner: i } => i, _ => st };
   nullable = if st is TyOptional { "nullable_" } else { "" };
   b = el_types::base(inner);
@@ -2278,6 +2321,23 @@ fn subject_shape(e: el::El, vars: el_vars::Vars, code: ir::Node, st: ir::TypeT) 
   "{shape}/{nullable}{kind}[{names.join(",")}]"
 }
 
+// The shape of a subject read off its syntax: an index or a field read is a `read` (an `Op…`
+// in Rust's IR), a call of a declared function a `call`, a name a local or a parameter.
+fn syntax_shape(e: el::El, vars: el_vars::Vars, n: integer) -> text {
+  match e.p.nodes[n] {
+    // (A field read is no `Op…` on Rust's first pass where its base is not typed yet — `e.key`
+    // of a loop's element, an enum constant `Q.Qb`: `other`.)
+    SIndex { at: _ } => "read",
+    SMember { call } => if call { "call" } else { "other" },
+    SCall { at: _ } => "call",
+    SName { name, member } => {
+      v = if member == "" { el_vars::var(vars, name) } else { -1 };
+      if v >= 0 && vars.vars[v].argument { "argument" } else if v >= 0 { "local" } else { "other" }
+    },
+    _ => "other"
+  }
+}
+
 fn subject_literal(n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && subject_literal(el_ir::last(block[0].operators))),
@@ -2294,14 +2354,15 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
   at_bind = node >= 0 && vars.expect_node == node;
   x = el_ex_assign::expression(e, vars, subject);
+  // (`match_subject`: what the match is over, as Rust's trace prints it — compared per site.
+  // Rust prints the subject expression's own type, a `&` parameter's `RefVar` included.)
+  if el_trace::on() {
+    el_trace::route(e, "match_subject={subject_shape(e, vars, subject, x.code, x.tp)}");
+  }
   st = x.tp;
   match st {
     TyRefVar { inner } => { st = inner; },
     _ => {}
-  }
-  // (`match_subject`: what the match is over, as Rust's trace prints it — compared per site.)
-  if el_trace::on() {
-    el_trace::route(e, "match_subject={subject_shape(e, vars, x.code, st)}");
   }
   // `@PLN25`: a `τ?` scalar subject matches as its base (`peel_link` starts at `base()`), its
   // null reaching the `_` arm.
