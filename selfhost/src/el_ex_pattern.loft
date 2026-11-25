@@ -1660,7 +1660,10 @@ pub struct RangeWalk {
   pub next_init: vector<ir::Node>,
   pub idx: integer,
   pub constant: boolean,
-  pub empty: boolean
+  pub empty: boolean,
+  // The walk's type, `in_type`: a start of a declared narrow width (`u8`) where the walk stays
+  // inside it, else the count type.
+  pub elem: ir::TypeT
 }
 
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
@@ -1689,7 +1692,12 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     incl = true;
   }
   l = el_ex_assign::expression(e, vars, lo_n!);
-  h = if open { ex(ir::NdLong { n: 9223372036854775807 }, ir::TyInteger { spec: wide_spec() }) } else { el_ex_assign::expression(e, vars, hi_n!) };
+  // (`in_type` is the start's type: one of a declared narrow width (`u8`, `i16`, …) types the
+  // walk, and an open range over it stops at that type's maximum (loft#2275).)
+  // (A nullable start keeps its `?` on the counters in Rust — the null is their not-started
+  // state — which this port does not carry: such a start keeps the count type.)
+  narrow_spec = if l.tp is TyOptional { null } else { match el_types::base(l.tp) { TyInteger { spec: nls } => if nls.forced_size > 0 && nls.forced_size < 8 { nls } else { null }, _ => null } };
+  h = if open && narrow_spec != null { ex(ir::NdLong { n: narrow_spec!.max }, el_types::without_deps(el_types::base(l.tp))) } else if open { ex(ir::NdLong { n: 9223372036854775807 }, ir::TyInteger { spec: wide_spec() }) } else { el_ex_assign::expression(e, vars, hi_n!) };
   if (!el_types::is_unknown(l.tp) && !(el_types::base(l.tp) is TyInteger)) || (!el_types::is_unknown(h.tp) && !(el_types::base(h.tp) is TyInteger)) {
     el::refuse(e, "a range over this type: {type_kind(l.tp)}");
     return null;
@@ -1699,6 +1707,22 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   // in `_range_start_N` / `_range_end_N`.
   lc = el_convert::const_int(e, l.code);
   hc = el_convert::const_int(e, h.code);
+  // (The counters keep the start's type; the loop variable holds every value the range yields,
+  // the union of its bounds' types (`@FR-I-Join`) unless the last value fits the start's type,
+  // `end_fits_start`.)
+  in_t = int_t;
+  elem_t = int_t;
+  if narrow_spec != null {
+    in_t = el_types::without_deps(el_types::base(l.tp));
+    elem_t = in_t;
+    last = if hc == null { null } else if incl { hc } else { hc! - 1 };
+    if !open && !(last != null && last! <= narrow_spec!.max && last! >= narrow_spec!.min) {
+      ju = el_ex_null::int_arm_union(e, in_t, h.tp);
+      if ju != null {
+        elem_t = match ju! { TyOptional { inner: jui } => jui, _ => ju! };
+      }
+    }
+  }
   // (An open range from a computed start holds its end too, `_range_end_N = i64::MAX`.)
   if open && lc == null {
     hc = null;
@@ -1709,7 +1733,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   rs = -1;
   re = -1;
   if lc == null {
-    rs = el_vars::create_unique(vars, "range_start", int_t);
+    rs = el_vars::create_unique(vars, "range_start", in_t);
     prelude += [el_ir::v_set(rs, l.code)];
     lo_node = ir::NdVar { n: rs };
   }
@@ -1745,7 +1769,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     }
     prelude += [el_ir::v_block(guard, ir::TyVoid, "Range null guard")];
   }
-  idx = loop_index(e, vars, id);
+  idx = loop_index(e, vars, id, tp: in_t);
   i = ir::NdVar { n: idx };
   // `rev(r)` (`want_reverse`): the same bounds and guard, walked from the end down.
   if rev {
@@ -1754,7 +1778,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     rnext: vector<ir::Node> = [];
     if incl {
       // `rev(a..=b)`: `_next_N` starts at `b`, is tested, yielded, then steps down.
-      rnx = el_vars::create_unique(vars, "next", int_t);
+      rnx = el_vars::create_unique(vars, "next", in_t);
       rn_v = ir::NdVar { n: rnx };
       rnext = [el_ir::v_set(rnx, hi_node)];
       rls += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [rn_v, lo_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
@@ -1768,14 +1792,17 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     }
     rls += [i];
     rend = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
-    return RangeWalk { lo: lc, end_var: rend, prelude: prelude, steps: rls, counter: rcounter, next_init: rnext, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! };
+    return RangeWalk { lo: lc, end_var: rend, prelude: prelude, steps: rls, counter: rcounter, next_init: rnext, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc!, elem: elem_t };
   }
   // `plain_init`: only an `i32` literal start (`Value::Int`) seeds the counter at `lo - 1`; a
   // 64-bit literal takes the `next` counter, as a computed start does.
   plain = lc != null && lc! >= 0 && lo_node is NdInt;
   cmp = if incl { "OpLtInt" } else { "OpLeInt" };
   ls: vector<ir::Node> = [];
-  if incl && (hc == null || open) {
+  // (`end_can_reach_max`: tested first unless the end is an `i32` literal below the walk type's
+  // maximum.)
+  in_max = match el_types::base(in_t) { TyInteger { spec: ims } => ims.max, _ => 9223372036854775807 };
+  if incl && !(hc != null && hi_node is NdInt && hc! < in_max) {
     ls += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, hi_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
   }
   counter = el_ir::cl(e, "OpConvIntFromNull", []);
@@ -1785,7 +1812,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     ls += [el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]))];
     ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, i]), ir::NdBreak { n: 0 }, ir::NdNull)];
   } else {
-    nx = el_vars::create_unique(vars, "next", int_t);
+    nx = el_vars::create_unique(vars, "next", in_t);
     n_v = ir::NdVar { n: nx };
     next_init = el_ir::v_set(nx, lo_node);
     ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, n_v]), ir::NdBreak { n: 0 }, ir::NdNull)];
@@ -1793,7 +1820,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   }
   ls += [i];
   end_var = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
-  RangeWalk { lo: lc, end_var: end_var, prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! }
+  RangeWalk { lo: lc, end_var: end_var, prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc!, elem: elem_t }
 }
 
 // The statements that start a range walk: the hoisted bounds, `_next_N`'s first value, the index.
@@ -1815,7 +1842,7 @@ pub fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, re
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = count_type(e);
+  int_t = rw.elem;
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1951,7 +1978,7 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = count_type(e);
+  int_t = rw.elem;
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1976,8 +2003,8 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding unless `named`.
-pub fn loop_index(e: el::El, vars: el_vars::Vars, id: text, named: boolean = false) -> integer {
-  int_t = count_type(e);
+pub fn loop_index(e: el::El, vars: el_vars::Vars, id: text, named: boolean = false, tp: ir::TypeT = ir::TyVoid) -> integer {
+  int_t = if tp is TyVoid { count_type(e) } else { tp };
   idx = if id == "_" && !named { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
   el_vars::set_defined(vars, idx);
   idx
