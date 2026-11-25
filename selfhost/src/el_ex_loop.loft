@@ -145,18 +145,17 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     }
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
+    // (`rev(v[lo..hi])` starts at the slice's top and steps down to its start.)
+    vars.rev_slice = rev && vars.slice_node >= 0;
     x = el_ex_assign::expression(e, vars, source);
+    vars.rev_slice = false;
     // loft#1540 — a walk over a value-const value's elements binds a read-only loop variable
     // (`loop_var` marks it where it is made).
     clr = el_ex_base::const_view_root(e, x.code, true);
     vars.const_loop_root = if clr >= 0 && clr < len(vars.vars) && vars.vars[clr].value_const { clr } else { -1 };
     vars.slice_node = outer_slice;
     if x.code is NdIter {
-      if rev {
-        el::refuse(e, "a reversed walk of a slice");
-        return ex(ir::NdNull, ir::TyVoid);
-      }
-      return el_ex_vector::slice_for(e, vars, h, x);
+      return el_ex_vector::slice_for(e, vars, h, x, rev: rev);
     }
   }
   if unordered {
