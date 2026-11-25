@@ -1267,9 +1267,21 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // road is the second pass's: every reason this port builds such a literal apart is a primed
   // collection field reading the place.)
   // (Built in place, the route is printed once the fields are, with their notes.)
+  // (`builds_into_element`: an ELEMENT of a record type holding any collection field is never
+  // built in place — the copy road, the literal apart and copied over the element.)
+  coll_decline = false;
+  if element_place && !apart {
+    for ra in el::def(e, rd).attributes {
+      rab = el_types::base(ra.typedef[0] ?? ir::TyVoid);
+      if rab is TyVector || rab is TyHash || rab is TyIndex || rab is TySorted || rab is TyRadix || rab is TyTrie {
+        coll_decline = true;
+      }
+    }
+  }
   if apart {
     place_literal_route(e, vars, place, rhs, "apart(decline_place:primed_reads_place)");
   }
+  apart = apart || coll_decline;
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
   // (Built apart from a place in a local, a scalar or text field reading the place is staged
