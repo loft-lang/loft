@@ -29,14 +29,11 @@ const MARK: &str = "# loft develop: was ";
 
 /// `path` as a loft.toml string holds it.  A backslash there starts an escape
 /// (`manifest::read_manifest` refuses one that is not), and a Windows path holds one per
-/// directory: it is written with `/`, which Windows accepts and which reads back as written.
-/// Elsewhere a `\\` or `"` is part of a name, and no string spelling reads back as written.
-fn toml_path(path: &str, windows: bool) -> Result<String, String> {
-    let path = if windows {
-        path.replace('\\', "/")
-    } else {
-        path.to_string()
-    };
+/// directory: it is written with `/` (`file_access::portable_str`), which Windows accepts and
+/// which reads back as written.  A `\\` or `"` left after that is part of a name, and no
+/// string spelling reads back as written.
+fn toml_path(path: &str) -> Result<String, String> {
+    let path = crate::file_access::portable_str(path);
     if path.contains(['"', '\\']) {
         return Err(format!(
             "{path} cannot be written into loft.toml: rename the directory without `\"` or `\\`"
@@ -126,7 +123,7 @@ fn start(text: &str, name: &str, dir: Option<&String>) -> Result<(String, String
             crate::manifest::extract_version_req(&d.value).map(|v| v.trim_matches('"').to_string())
         })
         .unwrap_or_else(|| version.clone());
-    let path = toml_path(&path, cfg!(windows))?;
+    let path = toml_path(&path)?;
     let line = format!("{name} = {{ path = \"{path}\", version = \"{req}\" }}  {MARK}{was}");
     let new_text = set_line(text, name, &line);
     Ok((
@@ -357,15 +354,14 @@ mod tests {
     }
 
     #[test]
-    fn a_windows_path_is_written_with_slashes() {
+    fn a_path_is_written_as_loft_toml_reads_it_back() {
         assert_eq!(
-            super::toml_path(r"C:\Users\me\checkout", true).as_deref(),
-            Ok("C:/Users/me/checkout")
-        );
-        assert_eq!(
-            super::toml_path("/home/me/checkout", false).as_deref(),
+            super::toml_path("/home/me/checkout").as_deref(),
             Ok("/home/me/checkout")
         );
-        assert!(super::toml_path(r"/home/a\b", false).is_err());
+        assert!(super::toml_path("/home/a\"b").is_err());
+        if !crate::platform::is_windows_fs() {
+            assert!(super::toml_path(r"/home/a\b").is_err());
+        }
     }
 }
