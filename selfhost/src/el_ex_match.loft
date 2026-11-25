@@ -1374,7 +1374,15 @@ pub struct KeyRange {
   pub elem: ir::TypeT,
   // A walk of the WHOLE collection: `x#iter_state` and `x#index`, started with no bounds.
   pub whole: boolean = false,
-  pub idx: integer = -1
+  pub idx: integer = -1,
+  // A partial key (`s[k1]` of a `sorted<T[k1, k2]>`, `parse_key`'s partial-key match): the
+  // range `k1..=k1`, its step block named "Partial key match".
+  pub partial: boolean = false
+}
+
+// `parse_key`'s partial-key test: fewer keys than an ordered collection of several keys has.
+fn partial_key(ct: ir::TypeT, keys: vector<integer>) -> boolean {
+  (ct is TySorted || ct is TyIndex) && len(keys) >= 1 && len(el_types::key_names(ct)) > 1 && len(keys) < len(el_types::key_names(ct))
 }
 
 // A comprehension's source that is a local sorted or index, walked whole.
@@ -1412,8 +1420,8 @@ pub fn key_whole(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
 // Is `n` a range index of a local that is a sorted or an index, by its syntax and the local's type?
 pub fn key_range_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
   match e.p.nodes[n] {
-    SIndex { e: ie, range, limit, spatial } => {
-      if !range || ie == null || limit != null || spatial {
+    SIndex { e: ie, keys, range, limit, spatial } => {
+      if ie == null || limit != null || spatial {
         return -1;
       }
       cv = match e.p.nodes[ie!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
@@ -1421,7 +1429,7 @@ pub fn key_range_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
         return -1;
       }
       ct = el_types::base(el_vars::tp(vars, cv));
-      if (ct is TySorted || ct is TyIndex) { cv } else { -1 }
+      if (ct is TySorted || ct is TyIndex) && (range || partial_key(ct, keys)) { cv } else { -1 }
     },
     _ => -1
   }
@@ -1434,8 +1442,8 @@ pub fn key_range_syntax(e: el::El, n: integer) -> boolean {
 // A field of a local that is a sorted or an index (`d.m[15..35]`): the local, or -1.
 fn key_range_field_root(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
   match e.p.nodes[n] {
-    SIndex { e: ie, range, limit, spatial } => {
-      if !range || ie == null || limit != null || spatial {
+    SIndex { e: ie, keys: fkeys, range, limit, spatial } => {
+      if ie == null || limit != null || spatial {
         return -1;
       }
       match e.p.nodes[ie!] {
@@ -1450,7 +1458,7 @@ fn key_range_field_root(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
           rd = struct_ref(e, el_types::base(el_vars::tp(vars, rv)));
           fa = if rd < 0 { -1 } else { attr_nr(el::def(e, rd), fname) };
           ft = if fa < 0 { ir::TyVoid } else { el_types::base(el::def(e, rd).attributes[fa]!.typedef[0] ?? ir::TyVoid) };
-          if (ft is TySorted || ft is TyIndex) { rv } else { -1 }
+          if (ft is TySorted || ft is TyIndex) && (range || partial_key(ft, fkeys)) { rv } else { -1 }
         },
         _ => -1
       }
@@ -1480,13 +1488,17 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   lo: vector<integer> = [];
   hi: vector<integer> = [];
   inclusive = false;
+  partial = false;
   match e.p.nodes[n] {
-    SIndex { keys, hi: h, inclusive: inc } => { lo = keys; hi = h; inclusive = inc; },
+    SIndex { keys, hi: h, inclusive: inc, range: rg } => { lo = keys; hi = h; inclusive = inc; partial = !rg; },
     _ => {}
+  }
+  if partial {
+    inclusive = true;
   }
   el_d = el_types::keyed_elem(ct);
   elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, if froot >= 0 { [froot] } else { el_types::deps(ct) + [cv] });
-  if len(lo) > 1 || len(hi) > 1 {
+  if !partial && (len(lo) > 1 || len(hi) > 1) {
     el::refuse(e, "a key range over more than one key");
     return null;
   }
@@ -1502,7 +1514,15 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   }
   it = el_vars::create_unique(vars, "iter", count_type(e));
   el_vars::set_defined(vars, it);
-  to: vector<ir::Node> = [];
+  // (`parse_key`'s partial match: its till is the same keys, and its two `fill_iter`s each run
+  // under a loop of their own — the start's on the second pass only.)
+  if partial {
+    if !e.first_pass {
+      el_ex_base::start_loop(e, vars);
+    }
+    el_ex_base::start_loop(e, vars);
+  }
+  to: vector<ir::Node> = if partial { from } else { [] };
   for k in hi {
     kx = el_ex_assign::expression(e, vars, k);
     if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) && !(el_types::base(kx.tp) is TyText) {
@@ -1512,7 +1532,7 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
     to += [kx.code];
   }
   if e.first_pass {
-    return KeyRange { iter: it, start: ir::NdNull, coll: coll, on: 0, arg: 0, elem: elem };
+    return KeyRange { iter: it, start: ir::NdNull, coll: coll, on: 0, arg: 0, elem: elem, partial: partial };
   }
   known = el_schema::keyed_type(e, ct);
   on = 2;
@@ -1534,15 +1554,21 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   args += from;
   args += [ir::NdInt { n: len(to) }];
   args += to;
-  KeyRange { iter: it, start: el_ir::cl(e, "OpIterate", args), coll: coll, on: on, arg: arg, elem: elem }
+  KeyRange { iter: it, start: el_ir::cl(e, "OpIterate", args), coll: coll, on: on, arg: arg, elem: elem, partial: partial }
 }
 
 pub fn key_range_step(e: el::El, kr: KeyRange) -> ir::Node {
-  el_ir::v_block([el_ir::cl(e, "OpStep", [ir::NdVar { n: kr.iter }, kr.coll, ir::NdInt { n: kr.on }, ir::NdInt { n: kr.arg }])], kr.elem, "Iterate keys")
+  el_ir::v_block([el_ir::cl(e, "OpStep", [ir::NdVar { n: kr.iter }, kr.coll, ir::NdInt { n: kr.on }, ir::NdInt { n: kr.arg }])], kr.elem, if kr.partial { "Partial key match" } else { "Iterate keys" })
 }
 
 // `for x in s[lo..hi]`: the key range's iterator started, then each record until the sentinel.
 pub fn key_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, kr: KeyRange) -> Ex {
+  // (The first pass reads a partial-key match as any iterator, whose walk counts: `x#index`
+  // stands before the loop variable.)
+  if e.first_pass && kr.partial {
+    pidx = el_vars::add_variable(vars, "{h.id}#index", count_type(e));
+    el_vars::set_defined(vars, pidx);
+  }
   lv = loop_var(vars, h.src_id, h.id, kr.elem);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
