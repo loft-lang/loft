@@ -1721,6 +1721,22 @@ fn analyse_all(
     found
 }
 
+/// Every finding of the records over the closed program, `(definition, line)`, in definition
+/// order: what `LOFT_OWN_ORACLE=check-records` prints as `RED` lines, for the one-report
+/// lifetime check (`crate::lifetime_check`).
+pub fn findings(data: &Data) -> Vec<(u32, String)> {
+    let ops = Ops::new(data);
+    let mut sum = BTreeMap::new();
+    let found = analyse_all(data, &ops, &mut sum);
+    let mut out = Vec::new();
+    for (d, (lines, ok)) in &found {
+        if !ok {
+            out.extend(lines.iter().map(|l| (*d, l.clone())));
+        }
+    }
+    out
+}
+
 /// The observer entry point, at the end of `close_program`.
 pub fn observe(data: &Data) {
     let table = std::env::var("LOFT_STORE_TABLE").ok();

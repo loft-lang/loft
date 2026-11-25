@@ -102,6 +102,13 @@ released value.  What the check does not report, and why:
 The run-time fault this answers is a wrong value, which no detector sees, so
 `own_sweep.py --wrong` counts a failed test as one.
 
+**One report: `LOFT_LIFETIME_CHECK=<file>`** (`-` for standard error) runs every check of this
+table on any compile, `--emit-image` included, which runs no program, and writes one sorted line
+per problem: the program file, the function, the rule it breaks, the kind, the site (`line N`, or
+`-`) and a one-line reason, tab-separated; then `# N problem(s) in M function(s) (kind=count, …)`
+or `# no problems` (`src/lifetime_check.rs`).  It is the form a gate reads: two runs of one program
+print the same lines, so a change shows as the lines it adds or removes.
+
 The runtime detects the same four, on the paths a run takes: the leak check
 (`LOFT_LEAK_CHECK`), `LOFT_STRICT_STORES` for a use after free (it never reuses a slot), and
 the refused-free reports (#306, #405).  A runtime fault the checker did not report is a hole

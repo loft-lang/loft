@@ -37,17 +37,58 @@ use crate::data::{Data, DefType, Type, Value};
 use crate::variables::Function;
 
 /// One use of a variable outside its scope.
-struct Finding {
-    var: u16,
-    var_scope: u16,
-    use_scope: u16,
+pub struct Finding {
+    pub var: u16,
+    pub var_scope: u16,
+    pub use_scope: u16,
+    /// The source line of the statement holding the use (the IR's last `Line` marker), 0 when
+    /// none precedes it.
+    pub line: u32,
+}
+
+impl Finding {
+    /// The one-line reason the report prints.
+    #[must_use]
+    pub fn reason(&self, vars: &Function) -> String {
+        format!(
+            "`{}` is used outside its scope: declared in scope {}, used in scope {}, after that \
+             scope's end released its value",
+            vars.name(self.var),
+            self.var_scope,
+            self.use_scope
+        )
+    }
+}
+
+/// Every use outside its scope in the closed program, `(definition, finding)`, in definition
+/// order — for the one-report lifetime check (`crate::lifetime_check`).
+pub fn findings(data: &Data) -> Vec<(u32, Finding)> {
+    let releases = release_ops(data);
+    let mut out = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !matches!(def.def_type, DefType::Function) || matches!(def.code.unspan(), Value::Null) {
+            continue;
+        }
+        out.extend(
+            check_function(&def.variables, &def.code, &releases, data)
+                .into_iter()
+                .map(|f| (d, f)),
+        );
+    }
+    out
+}
+
+/// The `OpFree*` operators: a release of a variable reads no value of it.
+fn release_ops(data: &Data) -> Vec<u32> {
+    (0..data.definitions())
+        .filter(|&d| data.def(d).name().starts_with("OpFree"))
+        .collect()
 }
 
 /// The observer entry point, at the end of `close_program`.
 pub fn observe(data: &Data) {
-    let releases: Vec<u32> = (0..data.definitions())
-        .filter(|&d| data.def(d).name().starts_with("OpFree"))
-        .collect();
+    let releases = release_ops(data);
     let Ok(mode) = std::env::var("LOFT_OWN_ORACLE") else {
         return;
     };
@@ -83,6 +124,7 @@ fn check_function(vars: &Function, code: &Value, releases: &[u32], data: &Data) 
         releases,
         data,
         yielded: Vec::new(),
+        line: 0,
         open: vec![0],
         found: Vec::new(),
     };
@@ -97,6 +139,8 @@ struct Walk<'a> {
     data: &'a Data,
     /// The variables a block yielded as its value: they outlive that block.
     yielded: Vec<u16>,
+    /// The source line of the statement being read.
+    line: u32,
     /// The scopes enclosing the node being read, outermost first: the function's own (0), then
     /// one per enclosing block.
     open: Vec<u16>,
@@ -119,6 +163,7 @@ impl Walk<'_> {
             var: v,
             var_scope: s,
             use_scope: self.open.last().copied().unwrap_or(u16::MAX),
+            line: self.line,
         });
     }
 
@@ -212,8 +257,8 @@ impl Walk<'_> {
             | Value::Parallel(args) => self.all(args),
             Value::Return(v) | Value::Drop(v) | Value::Yield(v) => self.node(v),
             Value::Span(s) => self.node(&s.1),
+            Value::Line(l) => self.line = *l,
             Value::Null
-            | Value::Line(_)
             | Value::Int(_)
             | Value::Enum(_, _)
             | Value::Boolean(_)

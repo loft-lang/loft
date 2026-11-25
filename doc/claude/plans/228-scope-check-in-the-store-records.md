@@ -7,8 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-P0–P3 built 2026-11-25 on `tuxedo-pr2634-next3`; P4 stays closed unless P1–P2 find what the
-suite did not.  [loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is
+P0–P3 built 2026-11-25 on `tuxedo-pr2634-next3`.  P5–P8 (owner, same day): ONE opt-in check
+with one report, usable by the tester's try gate, covering the lifetime defects the records still
+miss.  P4 stays closed unless the checks find what the suite did not.  [loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is
 canonical.  This plan was first written as a separate IR verifier with five rules, its own
 switch and a Lean model.  On 2026-11-25 the owner narrowed it to the one rule no instrument
 checks yet, built into the checker that already exists.  The reasons are under
@@ -81,9 +82,16 @@ Each phase has a positive control that must go red.
 | P1 the check | The walk above; the new kind in STORE_RECORDS.md § The checks | **Done:** #2636's cell with the fix reversed reports `v` in all five functions, clean with it.  The suite (2139 cells) and the gate corpus (619 files) at HEAD: 2600 reports first, 0 after.  Fixed in the compiler: `(R-ForwardWalk)`'s index, `(R-LiftReuse)`'s shared lift, a hoisted vector literal's element records (`scopes/args.rs`); the rest were the check's own, fixed in the check | S |
 | P2 the sweep | `own_sweep.py --wrong` scores the kind: a failed test is a fault (`wrong`) the kind answers | **Done:** #2636's cell CAUGHT (matched) with the fix reversed, CLEAN at HEAD.  The binding chapter under every `LOFT_NO_*` switch (16016 runs): the kind fires in none, so no false finding.  Its 32 wrong-only MISS rows are other rewrites' classes (`OUT_OF_LINE`, `CALLEE_DISTURB`, `OWNER_WITNESS`), and `ENDED_CAPTURE_SCOPE`'s is a parse-time name binding the IR keeps consistent | S |
 | P3 the rule | The owner's three-place rule for store-lifetime defects (STORE_RECORDS.md § Every new defect) also names a scope defect: the compiler, the records, and the check reporting it with the cure off | **Done:** STORE_RECORDS.md § Every new defect; `formal/binding.md` `(B-Scope)` § Checked; the check's site cites `@FR-B-Scope` | XS |
+| P5 one check, one report | `LOFT_LIFETIME_CHECK=<file>` (`-` for standard error): the store records and the scope check together, on any compile (`--emit-image` included, which runs no program); one TSV line per problem — program, function, rule, kind, site, reason — in a fixed order, and one summary line | **Done** (`src/lifetime_check.rs`): #2636's cell with the fix reversed, compile only: its five `out-of-scope` lines, `# no problems` with the fix; #2612's cell under `LOFT_NO_REF_HOME`: eight lines, the eight `RED` lines `check-records` prints on that run | S |
+| P6 the gate | The tester's try gate runs it per program, compile only, and diffs the lines against the base try | A seeded defect shows as a NEW line in the gate's delta | XS (tester) |
+| P7 one checker | `LOFT_OWN_ORACLE=check` (the shipped `ownership_cfg` checks) retires into the records: in 5831 runs (heap, ownership and closures chapters × 17 cure settings) it caught nothing the records did not, and reported 112 findings on runs the records judged clean | `own_sweep.py` defaults to the records; no CAUGHT row lost | S |
+| P8 the missed shapes | One shape at a time, each with its cell, under the three-place rule: loft#2511 (a view returned through a `??` local reads as a fresh copy), loft#2621 (a holder re-minted ends the records built in its store), loft#2552 (a drop hook run twice), then the sweep's 6 MISS, 8 unmatched CAUGHT and 17 STATIC | Each: its cell with the cure off reads CAUGHT, matched | M |
 | P4 (later) read before write | A static check that every read of a heap or reference variable follows a write on every path: the static twin of `LOFT_VERIFY_STACK` | Opened only if P1–P2 find defects the suite did not.  Control: loft#1386's shape on the build before its fix | M |
 
 ## Out of scope
+
+- A wrong value with no store fault behind it: an evaluation order (loft#2582), an
+  interpreter-only text (loft#2526).  No record describes it; the suite's values guard it.
 
 - A separate verifier, a `LOFT_VERIFY_IR` switch, or a second model of the store rules.
 - Arming `validate.rs` in release: P0 showed it does not reach this class.

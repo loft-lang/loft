@@ -18,6 +18,9 @@ All notable changes to the loft language and interpreter.
   scope, so such a read answers a released value with nothing at run time to say so: loft#2636's
   vector read back empty.  With that fix reversed the check reports the local in every function
   of its cell; over the language suite and the gate corpus at HEAD it reports nothing.
+- `LOFT_LIFETIME_CHECK=<file>` is the one report of both: on any compile, `--emit-image` (no
+  run) included, one sorted tab-separated line per problem (program, function, rule, kind, line,
+  reason) and a summary line, so a gate that only compiles can diff it against its base.
 - `scripts/own_sweep.py --wrong` counts a failed test as a run-time fault (`wrong`), which the
   new kind answers, so the sweep scores the check: CAUGHT on the reversed build, CLEAN at HEAD.
 - Three passes recorded a scope that did not enclose a variable's uses, and now record the one

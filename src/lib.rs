@@ -363,6 +363,7 @@ pub mod host_store;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod ledger;
+pub mod lifetime_check;
 pub mod literal_append;
 pub mod literal_host;
 pub mod loop_kernel_rewrite;
