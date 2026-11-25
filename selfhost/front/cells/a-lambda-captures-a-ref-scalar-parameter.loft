@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lambda capturing a `&integer` parameter copies the value the link names when
+// the closure is built (`OpSetInt(___clos_1, 0, x)`), so a later write through the link is
+// not seen by the closure.
+// Prints: 16 10
+
+fn scalar(x: &integer) -> integer { g = fn() -> integer { x * 2 }; x = 10; g() + x }
+fn main() { x = 3; r = scalar(x); println("{r} {x}"); }
