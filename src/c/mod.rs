@@ -258,7 +258,7 @@ pub(crate) struct Cx<'a> {
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
     eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
-    /// Every keyed collection type whose key parts the unit names (`loft_keys{tp}`).
+    /// Every keyed collection type whose key parts the unit names (`loft_keys_<ident>`).
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The root types a `store_persist_copy` writes an image of: one sidecar each.
     sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
@@ -334,6 +334,8 @@ pub(crate) struct Cx<'a> {
     /// `<library>/src/<file>.loft` on every machine the unit is adopted on; and the standard
     /// library's directory.
     pub(crate) source_roots: crate::source_name::Roots,
+    /// Each type's C name ([`Cx::type_ident`]), worked out once per unit.
+    type_idents: std::cell::OnceCell<Vec<String>>,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -480,6 +482,7 @@ impl<'a> Cx<'a> {
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
             source_roots: crate::source_name::roots_of(data, None),
+            type_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -732,11 +735,40 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// The C name of keyed collection type `tp`'s key parts (`loft_keys{tp}`) and their count.
+    /// The part of a C name that stands for type `tp` (`loft_keys_<ident>`, `loft_fields_<ident>`,
+    /// `loft_dflt_<ident>`): the type's own name made an identifier ([`c_ident`]), never its
+    /// number in the program's type table, which moves whenever a type is added before it
+    /// (@PLN229 B0: a unit's text depends on the types it names, not on the others).  Two types
+    /// that share a name keep their number beside it, so no two C names collide.
+    pub(crate) fn type_ident(&self, tp: u16) -> String {
+        let all = self.type_idents.get_or_init(|| {
+            let names: Vec<String> = self.stores.types.iter().map(|t| c_ident(&t.name)).collect();
+            let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for n in &names {
+                *seen.entry(n.as_str()).or_default() += 1;
+            }
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    if seen[n.as_str()] > 1 {
+                        format!("{n}_{i}")
+                    } else {
+                        n.clone()
+                    }
+                })
+                .collect()
+        });
+        all.get(tp as usize)
+            .cloned()
+            .unwrap_or_else(|| tp.to_string())
+    }
+
+    /// The C name of keyed collection type `tp`'s key parts (`loft_keys_<ident>`) and their count.
     pub(crate) fn keys_of(&self, tp: u16) -> (String, usize) {
         self.key_types.borrow_mut().insert(tp);
         (
-            format!("loft_keys{tp}"),
+            format!("loft_keys_{}", self.type_ident(tp)),
             self.stores.types[tp as usize].keys.len(),
         )
     }
@@ -965,7 +997,7 @@ impl<'a> Cx<'a> {
             let bytes = s.store(&r).read_span(r.rec, r.pos, size).to_vec();
             self.defaults.borrow_mut().insert(tp, bytes);
         }
-        (format!("loft_dflt{tp}"), size)
+        (format!("loft_dflt_{}", self.type_ident(tp)), size)
     }
 
     /// Is record type `tp`'s default image all zero bytes, so a zero fill already writes it?
@@ -1234,7 +1266,7 @@ impl<'a> Cx<'a> {
         walk(self.stores, tp, &mut Vec::new())
     }
 
-    /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
+    /// A struct's field rows, `loft_fields_<ident>` ([`Cx::type_ident`]): each field's byte position, its type, whether it
     /// is a view member of a linked group (it borrows its records), whether it is hidden (a
     /// `#`-named field), its group, and a stored reference's target type (`Field::target`).
     fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
@@ -1260,7 +1292,8 @@ impl<'a> Cx<'a> {
             })
             .collect();
         format!(
-            "static const loft_fld loft_fields{tp}[] = {{ {} }};",
+            "static const loft_fld loft_fields_{}[] = {{ {} }};",
+            self.type_ident(tp),
             if list.is_empty() {
                 "{ 0, 0, 0, 0, 0, 0xFFFF }".into()
             } else {
@@ -1315,8 +1348,9 @@ impl<'a> Cx<'a> {
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                     let _ = writeln!(out, "{}", self.field_rows(tp, fields));
                     format!(
-                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
-                        fields.len()
+                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields_{}, 0 }}",
+                        fields.len(),
+                        self.type_ident(tp)
                     )
                 }
                 Parts::Vector(c) | Parts::Sorted(c, _) => {
@@ -1410,7 +1444,8 @@ impl<'a> Cx<'a> {
                 .collect();
             let _ = writeln!(
                 out,
-                "static const loft_key loft_keys{tp}[] = {{ {} }};",
+                "static const loft_key loft_keys_{}[] = {{ {} }};",
+                self.type_ident(*tp),
                 if parts.is_empty() {
                     "{ 0, 0, 0 }".into()
                 } else {
@@ -1439,7 +1474,8 @@ impl<'a> Cx<'a> {
             let list: Vec<String> = bytes.iter().map(u8::to_string).collect();
             let _ = writeln!(
                 out,
-                "static const uint8_t loft_dflt{tp}[{}] = {{ {} }};",
+                "static const uint8_t loft_dflt_{}[{}] = {{ {} }};",
+                self.type_ident(*tp),
                 bytes.len().max(1),
                 if list.is_empty() {
                     "0".to_string()
@@ -1798,6 +1834,22 @@ impl Cx<'_> {
 pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, String>> {
     let archive = tls::archive().ok()?;
     (std::path::Path::new(link) == archive).then(tls::sources)
+}
+
+/// `name` as a C identifier, injectively: a letter or digit stays, `_` is `__`, and any other
+/// character is `_` and its code in hex (two digits, or `u` and six), so two names never meet in
+/// one identifier (`vector<P>` is `vector_3cP_3e`, `two::P` is `two_3a_3aP`).
+pub(crate) fn c_ident(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' => out.push(ch),
+            '_' => out.push_str("__"),
+            c if (c as u32) < 0x100 => out.push_str(&format!("_{:02x}", c as u32)),
+            c => out.push_str(&format!("_u{:06x}", c as u32)),
+        }
+    }
+    out
 }
 
 pub fn c_name(data: &Data, d: u32) -> String {
