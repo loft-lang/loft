@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a constant empty range comprehension mints no `_comp_N`, so the next one is
+// numbered as Rust numbers it; a text `par` worker answering literals by early `return` is
+// given its hidden text buffer — a worker is no `FnRef` value to `targeted_tret_promotion`.
+// Prints: 0 1 7
+
+fn lit(x: integer) -> text {
+  if x > 1 { return "big"; } return "sm";
+}
+fn main() {
+  b = [for i in 5..5 { i }];
+  d = [for x in [4] { x * 2 }];
+  lt = 0;
+  for i in 0..3 par(r = lit(i), 2) { lt += r.len(); }
+  println("{len(b)} {len(d)} {lt}");
+}

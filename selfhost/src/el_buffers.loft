@@ -170,15 +170,16 @@ fn suspends(n: ir::Node) -> boolean {
 }
 
 // `address_taken_defs`: every definition a `FnRef` names, and every `par` worker.
-pub fn address_taken(e: el::El) -> vector<integer> {
+// `workers: false` — `targeted_tret_promotion`'s set: the `FnRef` values alone.
+pub fn address_taken(e: el::El, workers: boolean = true) -> vector<integer> {
   out: vector<integer> = [];
   for d in e.b.data.definitions {
-    taken_in(e, d.code[0] ?? ir::NdNull, out);
+    taken_in(e, d.code[0] ?? ir::NdNull, out, workers);
   }
   out
 }
 
-fn taken_in(e: el::El, n: ir::Node, out: vector<integer>) {
+fn taken_in(e: el::El, n: ir::Node, out: vector<integer>, workers: boolean) {
   match n {
     NdFnRef { def_nr } => {
       if def_nr >= 0 && !out.contains(def_nr) {
@@ -187,7 +188,7 @@ fn taken_in(e: el::El, n: ir::Node, out: vector<integer>) {
     },
     NdCall { def_nr, args } => {
       cd = el::def(e, def_nr);
-      if starts_with(cd.name, "n_parallel_") {
+      if workers && starts_with(cd.name, "n_parallel_") {
         for a in cd.attributes {
           if a.name == "func" {
             match el_ir::unspan(args[a#index] ?? ir::NdNull) {
@@ -205,7 +206,7 @@ fn taken_in(e: el::El, n: ir::Node, out: vector<integer>) {
     _ => {}
   }
   for c in el_ir::children(n) {
-    taken_in(e, c, out);
+    taken_in(e, c, out, workers);
   }
 }
 
