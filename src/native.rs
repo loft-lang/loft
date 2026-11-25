@@ -3267,8 +3267,8 @@ fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 // The destination-passing variant of `n_as_text`: a `JString`'s value, null for
-// any other variant; the dest carries the null as the null text (`text_null::put`).  Per-call
-// dests retire the @P354 sibling-aliasing scratch hazard.
+// any other variant; the dest carries the null as the null text (`text_null::put`).  Each call
+// has its own dest, so two sibling calls never share one scratch text.
 fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v = stores.get::<DbRef>(stack);
