@@ -3641,7 +3641,9 @@ static loft_str loft_store_str(loft_cx *cx, loft_store_t *s, uint32_t srec) {
     if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text(cx);
     uint32_t len = loft_u32(cx, s, srec, 4);
     if (len / 8 + srec > s->size) return loft_null_text(cx);
-    return loft_lit(cx, (const char *) loft_at(cx, s, srec, 8), len);
+    const char *p = (const char *) loft_at(cx, s, srec, 8);
+    if (s->legacy_nul && len == 1 && p[0] == 0) return loft_null_text(cx);
+    return loft_lit(cx, p, len);
 }
 
 /* @FR-R-RecPtr's text clause — a text field through a held element's address: its string

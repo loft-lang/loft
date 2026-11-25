@@ -51,6 +51,9 @@ typedef struct {
     /* PagedReader::trie_v1: the image's tries were written under placement token 1 — keys read
      * raw, no null slot — and are read as written. */
     int trie_v1;
+    /* PagedReader::legacy_nul: the image predates sidecar version 3, so a text record holding
+     * one NUL byte is the null text. */
+    int legacy_nul;
 } loft_pg;
 
 /* PageSource::open: the image, refused when it does not begin with the store signature — 1, else
@@ -238,6 +241,7 @@ static loft_str loft_pg_text_at(loft_cx *cx, loft_pg *r, uint32_t srec) {
     }
     if (len) loft_pg_read(cx, r, (uint64_t) srec * 8 + 8, r->kbuf, len);
     r->klen = len;
+    if (r->legacy_nul && len == 1 && r->kbuf[0] == 0) return loft_null_text(cx);
     return loft_lit(cx, (const char *) r->kbuf, len);
 }
 

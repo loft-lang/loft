@@ -257,6 +257,9 @@ struct loft_cx {
     char *pg_refusal;
     int gate_paged;
     int gate_trie_v1;
+    /* The gate's sidecar predates version 3: its image may hold a null text as a NUL record
+     * (`Store::legacy_nul`). */
+    int gate_legacy_nul;
     long vc_own;
     uint64_t *vc_starts;
     uint32_t vc_words;

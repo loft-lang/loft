@@ -2173,6 +2173,8 @@ static int loft_up_load(loft_cx *cx, loft_ref r, const loft_sidecar *sc, const c
             loft_ub_printf(cx, why, "%s is not a store image", what);
             goto done;
         }
+        /* The conversion reads an older image's NUL-record null as null (`@FR-L-Null-Text`). */
+        cx->stores[old_nr].legacy_nul = (uint8_t) loft_sidecar_legacy_nul(cx, sidecar);
     }
     dst_nr = loft_up_convert(cx, &run, &m, &od, &nd, new_root, sc->tp, old_nr, h.slot, h.version, why);
     if (dst_nr == 0xFFFF) goto done;

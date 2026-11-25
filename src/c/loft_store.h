@@ -276,6 +276,9 @@ typedef struct loft_store_t {
      * as an argument, and whether its owner released it while they did. */
     uint32_t frame_holds;
     uint8_t orphaned;
+    /* `Store::legacy_nul`: loaded from an image written before sidecar version 3, whose null
+     * texts may be records holding one NUL byte; `loft_store_str` reads one as the null text. */
+    uint8_t legacy_nul;
     /* `@FR-S-Mapped` (loft_mapped.h): the length in bytes of the file `buf` maps, shared — grown
      * and cut with the file and unmapped when the store is released — and 0 for a store in
      * memory; `map_file` is the open file (a descriptor, or a Windows handle).  The interpreter's
@@ -1368,6 +1371,7 @@ static void loft_st_init(loft_cx *cx, loft_store_t *s) {
     loft_bits_clear(cx, &s->referenced);
     loft_bits_clear(cx, &s->removed);
     s->released_root = 0;
+    s->legacy_nul = 0;
     s->lazy = LOFT_LAZY_START;
     s->dead_words = 0;
     loft_bits_clear(cx, &s->lazy_free);

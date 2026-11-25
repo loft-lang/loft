@@ -48,6 +48,7 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
     char err[1100];
     cx->gate_paged = 1;
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
 #ifdef LOFT_NET
     int ok = known == 0xFFFF || (url ? loft_net_gate(cx, p, sc, 0, 0, 0) : loft_image_gate(cx, p, sc, 0, 0));
 #else
@@ -66,7 +67,10 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
         ok = 0;
     }
     if (!ok) loft_pg_close(cx, r);
-    else r->trie_v1 = cx->gate_trie_v1;
+    else {
+        r->trie_v1 = cx->gate_trie_v1;
+        r->legacy_nul = cx->gate_legacy_nul;
+    }
     free(p);
     return ok;
 }
@@ -220,7 +224,12 @@ static void loft_pg_relocate(loft_cx *cx, loft_pg *r, const loft_tdesc *T, uint1
         uint32_t at = dst_fb + f->pos, sub, nrec;
         if (ft->kind == LOFT_T_TEXT || (ft->kind == LOFT_T_VECTOR && T[ft->elem].kind == LOFT_T_SCALAR)) {
             sub = loft_u32(cx, &cx->stores[store_nr], dst_rec, at);
-            if (sub != 0) {
+            /* An image before sidecar version 3 may hold a null text as a NUL record: it lands
+             * as the unset handle (`@FR-L-Null-Text`). */
+            if (sub != 0 && ft->kind == LOFT_T_TEXT && r->legacy_nul &&
+                loft_str_is_null(cx, loft_pg_text_at(cx, r, sub))) {
+                loft_set_u32(cx, &cx->stores[store_nr], dst_rec, at, 0);
+            } else if (sub != 0) {
                 nrec = loft_pg_copy_flat(cx, r, store_nr, sub, ft->kind == LOFT_T_TEXT ? 1 : T[ft->elem].size);
                 loft_set_u32(cx, &cx->stores[store_nr], dst_rec, at, nrec);
             }

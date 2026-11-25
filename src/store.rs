@@ -788,6 +788,10 @@ pub struct Store {
     pub frame_holds: u32,
     /// `@FR-G-Arg-Rebind` — the owner let go of this store while a frame held it.
     pub orphaned: bool,
+    /// The store was loaded from an image written before sidecar version 3, where a null text
+    /// could be stored as a record holding one NUL byte: [`Store::get_str`] reads such a record
+    /// as the null text (`@FR-L-Null-Text`).  The C runtime's `loft_store_t::legacy_nul`.
+    pub legacy_nul: bool,
     /// The C runtime's mapped length (`loft_mapped.h`).  The interpreter's own file-backed store
     /// keeps its mapping in `file` and leaves this 0: a hosted C call is never made on one
     /// (`p3-p4-design.md`, failure path 5).
@@ -1537,6 +1541,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1756,6 +1761,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1878,6 +1884,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -2017,6 +2024,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -2060,6 +2068,8 @@ impl Store {
         self.referenced.clear();
         self.removed.clear();
         self.released_root = false;
+        // Whatever it held, a reset store holds this build's texts only.
+        self.legacy_nul = false;
         // A reset store holds no parsed root, so it answers no parse errors.
         self.parse_errors.clear();
         self.parse_type = u16::MAX;
@@ -3884,6 +3894,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3987,6 +3998,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -4064,6 +4076,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -6195,6 +6208,9 @@ impl Store {
         }
         let len = self.get_u32_raw(rec, 4);
         if (len / 8) + rec > self.size {
+            return crate::text_null::null_str();
+        }
+        if self.legacy_nul && len == 1 && self.get_byte(rec, 8, 0) == 0 {
             return crate::text_null::null_str();
         }
         unsafe {

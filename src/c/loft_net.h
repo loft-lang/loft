@@ -310,7 +310,9 @@ static int loft_image_load_url(loft_cx *cx, loft_ref r, loft_str url, const char
         return 0;
     }
     int trie_v1 = cx->gate_trie_v1;
+    int legacy_nul = cx->gate_legacy_nul;
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
     if (!loft_fetch(cx, u, &b, err, sizeof err)) {
         fprintf(stderr, sha ? "store loader: refusing %s — fetch failed: %s\n" : "store loader: %s — fetch failed: %s\n", u, err);
         free(u);
@@ -351,6 +353,7 @@ static int loft_image_load_url(loft_cx *cx, loft_ref r, loft_str url, const char
     }
 #endif
     int ok = loft_image_adopt(cx, r, b.p, b.n, 1, sc, recorded, u, who);
+    if (ok) cx->stores[r.store_nr].legacy_nul = (uint8_t) legacy_nul;
     free(u);
     if (ok && trie_v1) loft_trie_refile(cx, sc->types, sc->tp, r.store_nr);
     if (ok && gate == 2) loft_rekey_image(cx, sc, r);

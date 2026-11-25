@@ -57,6 +57,7 @@ fn rust_offsets() -> Vec<(&'static str, usize)> {
         ),
         ("frame_holds", offset_of!(Store, frame_holds)),
         ("orphaned", offset_of!(Store, orphaned)),
+        ("legacy_nul", offset_of!(Store, legacy_nul)),
         ("mapped", offset_of!(Store, mapped)),
         ("map_file", offset_of!(Store, map_file)),
         ("closure_shares", offset_of!(Store, c_share_count)),

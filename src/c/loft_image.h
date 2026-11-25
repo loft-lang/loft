@@ -863,7 +863,9 @@ static int loft_image_gate_text(loft_cx *cx, const char *path, char *text, const
     if (fence && strncmp(text, "LOFT-DSCHEMA v", 14) == 0) {
         *fence = 0;
         ver = atoi(text + 14);
-        ok = ver >= 1 && ver <= 2;
+        ok = ver >= 1 && ver <= 3;
+        /* Before version 3 a null text may be a record holding one NUL byte. */
+        cx->gate_legacy_nul = ok && ver < 3;
         for (char *line = strchr(text, '\n'); ok && line && line < fence;) {
             char *start = line + 1, *end = strchr(start, '\n');
             if (!end) end = fence;
@@ -1029,6 +1031,12 @@ static const char *loft_image_refusal(loft_cx *cx, const uint8_t *bytes, size_t 
 /* `store_load` (`load_path`), and with `untrusted` `store_load_untrusted`
  * (`load_path_untrusted`): an image whose block structure does not hold is rejected before it is
  * adopted, and the slot keeps the store it had. */
+/* `schema_sidecar::nul_is_null`: a sidecar before version 3, whose image may hold a null text
+ * as a record of one NUL byte. */
+static int loft_sidecar_legacy_nul(loft_cx *cx, const char *text) {
+    return text && strncmp(text, "LOFT-DSCHEMA v", 14) == 0 && atoi(text + 14) < 3;
+}
+
 /* `LayoutIdentity::from_sidecar`'s slot: the `slot=` line of a v2 sidecar, -1 for none. */
 static long loft_sidecar_slot(loft_cx *cx, const char *text) {
     if (!text || strncmp(text, "LOFT-DSCHEMA v", 14) != 0 || atoi(text + 14) < 2) return -1;
@@ -1212,13 +1220,16 @@ static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_si
     if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores || loft_path_refused(cx, path)) return 0;
     char *p = loft_cpath(cx, path, 0);
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
     int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_image_gate(cx, p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
     }
     int trie_v1 = cx->gate_trie_v1;
+    int legacy_nul = cx->gate_legacy_nul;
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
     FILE *f = fopen(p, "rb");
     free(p);
     if (!f) return 0;
@@ -1295,6 +1306,7 @@ static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_si
     char *what = loft_cstr_own(cx, path);
     int ok = loft_image_adopt(cx, r, bytes, n, untrusted, sc, recorded, what, untrusted ? "store_load_untrusted" : "store_load");
     free(what);
+    if (ok) cx->stores[r.store_nr].legacy_nul = (uint8_t) legacy_nul;
     if (ok && trie_v1) loft_trie_refile(cx, sc->types, sc->tp, r.store_nr);
     if (ok && gate == 2) loft_rekey_image(cx, sc, r);
     return ok;

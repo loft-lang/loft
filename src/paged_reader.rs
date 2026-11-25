@@ -498,25 +498,38 @@ impl PageProvider for PageSource {
 /// an image whose layout nothing records is never range-read at schema-derived offsets,
 /// and neither is a mismatched one.
 #[must_use]
+///
+/// The second answer says the sidecar predates version 3, so a record holding one NUL byte
+/// is the null text ([`PagedReader::legacy_nul`], `schema_sidecar::nul_is_null`).
 pub fn check_sidecar(
     spec: &str,
     current: &crate::schema_sidecar::LayoutIdentity,
     release: &crate::database::Release,
-) -> crate::schema_sidecar::SchemaVerdict {
+) -> (crate::schema_sidecar::SchemaVerdict, bool) {
     use crate::schema_sidecar::SchemaVerdict;
     if spec.starts_with("http://") || spec.starts_with("https://") {
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
-            Ok(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
-            Err(None) => SchemaVerdict::Bare,
+            Ok(text) => (
+                crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
+                crate::schema_sidecar::nul_is_null(&text),
+            ),
+            Err(None) => (SchemaVerdict::Bare, false),
             // The request failed, so nothing is known about the sidecar: refused, naming
             // why, never read as "there is none".
-            Err(Some(why)) => SchemaVerdict::Refused(format!(
-                "its layout sidecar (`.dschema`) could not be fetched: {why}"
-            )),
+            Err(Some(why)) => (
+                SchemaVerdict::Refused(format!(
+                    "its layout sidecar (`.dschema`) could not be fetched: {why}"
+                )),
+                false,
+            ),
         }
     } else {
-        crate::schema_sidecar::check_beside(std::path::Path::new(spec), current, release)
-            .unwrap_or(SchemaVerdict::Unreadable)
+        let path = std::path::Path::new(spec);
+        (
+            crate::schema_sidecar::check_beside(path, current, release)
+                .unwrap_or(SchemaVerdict::Unreadable),
+            crate::schema_sidecar::nul_is_null_beside(path),
+        )
     }
 }
 
@@ -529,6 +542,9 @@ pub struct PagedReader<P: PageProvider> {
     /// read raw (no `0x00`/`0x01` escape) and a null key was filed in the tree, as that
     /// writer did, so the image reads exactly as it was written.  Set by the layout gate.
     pub trie_v1: bool,
+    /// The image predates sidecar version 3: a text record holding one NUL byte is the null
+    /// text (`@FR-L-Null-Text`).  Set by the layout gate.
+    pub legacy_nul: bool,
     provider: P,
     page_size: usize,
     /// `page_idx -> page bytes` (always `page_size` long; the last page is
@@ -612,6 +628,7 @@ impl<P: PageProvider> PagedReader<P> {
     pub fn with_config(provider: P, page_size: usize, capacity: usize) -> Self {
         Self {
             trie_v1: false,
+            legacy_nul: false,
             provider,
             page_size: page_size.max(1),
             pages: std::collections::HashMap::new(),
@@ -1221,7 +1238,11 @@ fn read_reader_str<P: PageProvider>(reader: &mut PagedReader<P>, rec: u32) -> St
     if rec == 0 {
         return crate::text_null::null_string();
     }
-    String::from_utf8_lossy(&reader.str_bytes(rec)).into_owned()
+    let bytes = reader.str_bytes(rec);
+    if reader.legacy_nul && bytes == [0] {
+        return crate::text_null::null_string();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// An integer key or axis field's value at byte `p` of record `rec` in the paged image —
