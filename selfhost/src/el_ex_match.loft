@@ -250,13 +250,15 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     // (`OpRefFromChildRec(OpGetField(host, pos, kt))`, `take_min(t.right)`) handed to a `&S` /
     // `&S?` whose `S` is held out of line gets a cell of this frame naming the field
     // (`OpSlotTag`), so the callee's whole write is the field write.  The cell is a second-pass
-    // work ref, never freed; the first pass mints nothing for it.
+    // work ref, never freed.  On the first pass `slot_cell_argument` answers nothing for a field,
+    // and the argument takes `convert`'s general road: a work ref of its type holding it.
     slot_d = binds::slot_link_def(e.b, pt);
     slot_field = match place { NdCall { def_nr: sfd, args: sfa } => if el::def(e, sfd).name == "OpRefFromChildRec" && len(sfa) > 0 { el_ir::unspan(sfa[0]!) } else { ir::NdNull }, _ => ir::NdNull };
     slot_kt = match slot_field { NdCall { def_nr: gfd, args: gfa } => if el::def(e, gfd).name == "OpGetField" && len(gfa) == 3 { match el_ir::unspan(gfa[2]!) { NdInt { n } => n, _ => 0 } } else { 0 }, _ => 0 };
     if slot_d != null && slot_kt != 0 {
       if e.first_pass {
-        return arg;
+        fwv = el_vars::work_ref(vars, at);
+        return ir::NdInsert { items: [el_ir::v_set(fwv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: fwv }])] };
       }
       cell = el_vars::work_ref_p2(vars, ir::TyReference { n: slot_d!, dep: [] });
       el_vars::set_skip_free(vars, cell, "slot_cell_argument");
