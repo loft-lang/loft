@@ -30,6 +30,9 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_cast;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_vector;
 use el_cell;
@@ -772,7 +775,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SUnary { op, e: ue } => el_ex_vector::unary(e, vars, op, ue),
     SIf { cond, then, other } => el_ex_null::if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
     SStructLit { name, member, fields, base } => el_ex_object::object_expr(e, vars, name, member, fields, base),
-    SFor { at: _ } => el_ex_match::for_expr(e, vars, n),
+    SFor { at: _ } => el_ex_loop::for_expr(e, vars, n),
     SWhile { cond, body } => el_ex_pattern::while_expr(e, vars, cond, body),
     SMatch { subject, arms } => el_ex_match::match_expr(e, vars, subject, arms, node: n),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
@@ -808,9 +811,9 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
       if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n, hinted: vars.bare_literal != n).x }
     },
-    SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),
-    SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),
-    SAs { at, e: ae, tp: at_tp, checked } => el_ex_match::cast_expr(e, vars, ae, at_tp),
+    SYield { from, e: ye } => el_ex_loop::yield_expr(e, vars, from, ye),
+    SComprehension { at: _ } => el_ex_loop::comprehension_value(e, vars, n),
+    SAs { at, e: ae, tp: at_tp, checked } => el_ex_cast::cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { el_ex_name::sizeof_of(e, vars, st, se) } else if kind == "type_name" { el_ex_name::type_name_of(e, vars, st, se) } else { el_ex_name::sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => el_ex_tuple::tuple_lit(e, vars, elems),
@@ -1696,7 +1699,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       fresh_call = match el_ir::unspan(wx.code) { NdCall { def_nr: wd } => starts_with(el::def(e, wd).name, "n_") && struct_ref(e, el_types::base(wx.tp)) == struct_ref(e, vb) && !(wx.tp is TyOptional), _ => false };
       built = match el_ir::unspan(wx.code) { NdBlock { block: wb } => wb[0].name == "Object", _ => false };
       if (lit && built) || (!lit && fresh_call) {
-        return ex(el_ir::cl(e, "OpCopyRecord", [wx.code, ir::NdVar { n: v }, ir::NdInt { n: kt + (if !lit && el_ex_match::gives_away_its_store(e, wx.code) { 32768 } else { 0 }) }]), ir::TyVoid);
+        return ex(el_ir::cl(e, "OpCopyRecord", [wx.code, ir::NdVar { n: v }, ir::NdInt { n: kt + (if !lit && el_ex_link::gives_away_its_store(e, wx.code) { 32768 } else { 0 }) }]), ir::TyVoid);
       }
     }
   }
@@ -1876,7 +1879,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, fx.code) }, ir::TyVoid);
     }
   }
-  if link && !el_ex_match::scalar_link(vars, v) && !declaring {
+  if link && !el_ex_link::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1988,7 +1991,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
   if e.p.nodes[rhs!] is SComprehension {
-    return el_ex_match::comprehension_into(e, vars, v, rhs!);
+    return el_ex_loop::comprehension_into(e, vars, v, rhs!);
   }
   // A struct literal that receives a call (`s = S { n: s.n + 1 }.me()`) is first parsed by
   // `parse_object` as built in place, its fields that read `s` staged in `__ref_N`s; the
@@ -2334,7 +2337,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
         };
         pd = el::def_nr(e, "n_protect_store_frees");
         ud = el::def_nr(e, "n_unprotect_store_frees");
-        if self_only && pd >= 0 && ud >= 0 && el_ex_match::gives_away_its_store(e, x.code) {
+        if self_only && pd >= 0 && ud >= 0 && el_ex_link::gives_away_its_store(e, x.code) {
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           // (A captured local's guard sits in the replace's destination, as for a join.)
@@ -2358,7 +2361,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           }
           return ex(ir::NdInsert { items: sitems }, ir::TyVoid);
         }
-        if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
+        if plain_args && el_ex_link::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);

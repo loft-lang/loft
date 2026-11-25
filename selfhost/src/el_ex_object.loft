@@ -24,6 +24,8 @@ use el_ex_assign;
 use el_ex_place;
 use el_ex_call;
 use el_ex_match;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_name;
 use el_ex_into;
@@ -272,7 +274,7 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       // vector, filled as a vector literal's record item is (`record_item_copy`), finished.
       el_vars::set_var_type(vars, elm, ir::TyReference { n: ird, dep: el_types::deps(el_vars::tp(vars, elm)) });
       at = ir::NdVar { n: elm };
-      fill = el_ex_match::record_item_copy(e, vars, elm, ird, x);
+      fill = el_ex_link::record_item_copy(e, vars, elm, ird, x);
       if fill == null {
         return null;
       }
@@ -292,7 +294,7 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       sen = el_types::struct_enum_def(inner);
       el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: el_types::deps(el_vars::tp(vars, elm)) });
       at = ir::NdVar { n: elm };
-      fill = el_ex_match::record_item_copy(e, vars, elm, sen, x);
+      fill = el_ex_link::record_item_copy(e, vars, elm, sen, x);
       if fill == null {
         return null;
       }
@@ -1901,13 +1903,13 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   // place as the method spelling is, where the program declares none of its own.
   if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
     if name == "map" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::map_call(e, vars, at, list, types);
+      return el_ex_loop::map_call(e, vars, at, list, types);
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::filter_call(e, vars, at, list, types);
+      return el_ex_loop::filter_call(e, vars, at, list, types);
     }
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
-      return el_ex_match::reduce_call(e, vars, list, types);
+      return el_ex_loop::reduce_call(e, vars, list, types);
     }
   }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
@@ -1918,7 +1920,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
     }
-    ops = el_ex_match::next_operands(step);
+    ops = el_ex_loop::next_operands(step);
     // A tuple's advance is followed by the generator's own state (Rust's `next_tuple` block,
     // an exhausted advance answering a tuple of nulls): not carried.
     if len(ops) == 0 || step is TyTuple {
@@ -2984,16 +2986,16 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   // `parse_map`: a vector's `map` is built in place, where the program declares none of its own.
   if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
-    return el_ex_match::map_call(e, vars, at, list, types);
+    return el_ex_loop::map_call(e, vars, at, list, types);
   }
   // `parse_filter`, `parse_reduce`: built in place as well.
   if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
-    return el_ex_match::filter_call(e, vars, at, list, types);
+    return el_ex_loop::filter_call(e, vars, at, list, types);
   }
   // (`reduce` through a function VALUE is a call of the standard library's generic: only a
   // function the call names directly is folded in place.)
   if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
-    return el_ex_match::reduce_call(e, vars, list, types);
+    return el_ex_loop::reduce_call(e, vars, list, types);
   }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).

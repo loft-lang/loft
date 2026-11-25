@@ -1,0 +1,436 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: arguments handed by link (`&` parameters: `Parser::convert`'s `RefVar` arm,
+// `slot_cell_argument`) and the record copies a delivery makes (`record_item_copy`).
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use binds;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_ex_assign;
+use el_ex_call;
+use el_ex_null;
+use el_ex_pattern;
+use el_ex_vector;
+use el_ex_copy;
+use el_ex_bind;
+use el_ex_closure;
+use el_ex_into;
+use el_ex_deliver;
+use el_ex_match;
+
+// `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
+// `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
+// literal tail builds into it.  -1 for any other function.  A record with a `__nullable<…>`
+// field is left out (`record_is_fully_written_by_a_literal`): its literal relies on a zeroed
+// record.
+pub fn chain_buffer(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>) -> integer {
+  def = el::def(e, e.context);
+  if def.def_type != el::DT_FUNCTION || len(ops) == 0 || def.name.contains("__lambda") {
+    return -1;
+  }
+  for a in def.attributes {
+    if a.hidden && el_types::base(a.typedef[0]) is TyReference {
+      if !starts_with(a.name, "__ref_") || starts_with(a.name, "__ref_p2_") || has_nullable_field(e, heap_def(a.typedef[0])) {
+        return -1;
+      }
+      w = el_vars::var(vars, a.name);
+      if w < 0 || !vars.vars[w].argument {
+        return -1;
+      }
+      for op in ops {
+        if el_ir::names_outside_chain(op, w) {
+          return -1;
+        }
+      }
+      return w;
+    }
+  }
+  -1
+}
+
+// `record_is_fully_written_by_a_literal`: a literal writes every byte of a `td` record — none
+// of its fields (any variant's, for an enum) is a `__nullable<…>`, whose absent spelling is the
+// zeroed bytes a fresh record has and an offered one may not.
+pub fn fully_written_by_literal(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return false;
+  }
+  if el::def(e, td).def_type == el::DT_ENUM {
+    for c in e.b.data.definitions {
+      if c.def_type == el::DT_ENUM_VALUE && c.parent == td && has_nullable_field(e, c#index) {
+        return false;
+      }
+    }
+    return true;
+  }
+  !has_nullable_field(e, td)
+}
+
+pub fn has_nullable_field(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return true;
+  }
+  for a in el::def(e, td).attributes {
+    match el_types::base(a.typedef[0]) {
+      TyEnum { n } => { if starts_with(el::def(e, n).name, "__nullable<") { return true; } },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `build_vector_list`'s record arm for one item that is no literal: what fills the element `elm`
+// once it is made (`OpNewRecord`) and before it is finished.  A local is copied in as a fresh
+// destination (`COPY_FRESH_DEST`); a call answering a fresh record
+// (`element_call_takes_record_buffer`) is handed the element as its return buffer, its answer
+// copied only when it lands elsewhere (`OpDistinctStore`), its store freed after when it gives it
+// away (`call_gives_away_its_store`).  Any other item is copied in.
+pub fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x: Ex) -> vector<ir::Node>? {
+  at = ir::NdVar { n: elm };
+  kt = el::def(e, rd).known_type;
+  match el_ir::unspan(x.code) {
+    NdVar { n: _ } => {
+      return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
+    },
+    NdCall { def_nr, args } => {
+      // A record with a field no literal writes straight into a fresh element (a collection, a
+      // struct-enum) keeps the copy: the call's answer copied into the fresh element, its
+      // store freed after when it gives it away (`record_fields_placeable`).
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) && !fields_placeable(e, rd, 0) {
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + bit + 16384 }])];
+      }
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
+        a2 = args;
+        a2[len(a2) - 1] = at;
+        rr = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+        el_vars::set_skip_free(vars, rr, "new_record");
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        copy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rr }, at, ir::NdInt { n: kt + bit + 16384 }]);
+        return [el_ir::v_set(rr, ir::NdCall { def_nr: def_nr, args: a2 }), el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rr }, at]), copy, ir::NdNull)];
+      }
+    },
+    _ => {}
+  }
+  // Any other item — a field, an element, a call that takes no buffer — is copied into the
+  // fresh element, its store freed after when it is a call that gives it away.
+  [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])]
+}
+
+// `call_gives_away_its_store` (with `is_struct_returning_call`): on the second pass, a call of
+// a loft function that has a body and answers no view of its arguments — or a record literal's
+// block — hands its record's store over.
+pub fn gives_away_its_store(e: el::El, code: ir::Node) -> boolean {
+  if e.first_pass {
+    return false;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr } => {
+      cd = el::def(e, def_nr);
+      starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !returns_argument_view(cd)
+    },
+    NdBlock { block } => block[0].name == "Object",
+    _ => false
+  }
+}
+
+// `record_fields_placeable`: every field of record `rd` is one a literal may write straight into
+// a fresh element — a constant, a function, a scalar, a text, or an inline record whose fields
+// are (to a depth of 8) the same.
+pub fn fields_placeable(e: el::El, rd: integer, depth: integer) -> boolean {
+  if depth > 8 {
+    return false;
+  }
+  for a in el::def(e, rd).attributes {
+    t = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    ok = a.constant || t is TyFunction || el_ex_call::scalar(t) || t is TyText || (struct_ref(e, t) >= 0 && fields_placeable(e, struct_ref(e, t), depth + 1));
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// `element_call_takes_record_buffer`: a loft function answering a non-null record of struct `rd`
+// in a fresh store (`return_adopts_fresh_store`: no borrow) through its last, hidden parameter of
+// that struct.
+pub fn takes_record_buffer(e: el::El, d: integer, rd: integer) -> boolean {
+  def = el::def(e, d);
+  if !starts_with(def.name, "n_") || len(def.attributes) == 0 || def.returned[0] is TyOptional {
+    return false;
+  }
+  if struct_ref(e, el_types::base(def.returned[0])) != rd || len(el_types::deps(def.returned[0])) > 0 {
+    return false;
+  }
+  last = def.attributes[-1];
+  last.hidden && struct_ref(e, last.typedef[0] ?? ir::TyVoid) == rd
+}
+
+// Is local `v` a link to a plain scalar (`n: &integer`)?
+pub fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
+  match el_vars::tp(vars, v) {
+    // (A nullable scalar, a plain enum and a nullable text are written whole the same way:
+    // the value converted to the place's type, `null` its null.)
+    TyRefVar { inner } => el_convert::plain_scalar(el_types::base(inner)) || el_convert::plain_enum(el_types::base(inner)) || (inner is TyOptional && el_types::base(inner) is TyText),
+    _ => false
+  }
+}
+
+// `is_amp_place`'s scalar reads: an `OpGet<scalar>` of a place in a store.
+fn scalar_read(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      nm = el::def(e, def_nr).name;
+      nm == "OpGetInt" || nm == "OpGetFloat" || nm == "OpGetSingle" || nm == "OpGetCharacter" || nm == "OpGetBoolean" || nm == "OpGetEnum"
+    },
+    _ => false
+  }
+}
+
+// `Parser::convert`'s `&text` arm for a text VALUE — no variable, place or tuple member (a text
+// place goes to the callee's store-text twin, `@st1`, not carried): the
+// value is copied into a work text, which is linked (a "text_ref"); the callee reads it, and its
+// writes are dropped with the copy.  Null for any other argument.
+pub fn text_value_link(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  inner = match pt { TyRefVar { inner } => inner, _ => return null };
+  place = el_ir::unspan(arg);
+  if !(inner is TyText) || !(el_types::base(at) is TyText) || place is NdVar || place is NdTupleGet || match place { NdBlock { block: lb } => lb[0].name == "default ref" || lb[0].name == "text_ref", _ => false } || calls(e, place, "OpGetField") || calls(e, place, "OpGetVector") || calls(e, place, "OpGetText") {
+    return null;
+  }
+  wt = el_vars::work_text(vars);
+  tls: vector<ir::Node> = [];
+  if place != ir::NdText { s: "" } {
+    tls += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: wt }, arg])];
+  }
+  tls += [el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wt }])];
+  el_ir::v_block(tls, ir::TyReference { n: el::def_nr(e, "reference"), dep: [wt] }, "text_ref")
+}
+
+// `Parser::convert`'s `RefVar` arm for an argument handed to a `&T` parameter: a local holding a
+// `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
+// (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
+// member — a narrow or collection local and any other value are refused by name.
+pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  inner = match pt {
+    TyRefVar { inner } => inner,
+    _ => pt
+  };
+  // A "default ref" (`add_defaults`' fresh stack text) already is the link, as a "text_ref"
+  // (`text_value_link`, linked before the defaults were added) is.
+  is_default_ref = match arg { NdBlock { block } => (block[0]!).name == "default ref" || (block[0]!).name == "text_ref", _ => false };
+  if is_default_ref {
+    return arg;
+  }
+  v = match arg {
+    NdVar { n } => n,
+    _ => -1
+  };
+  if v < 0 {
+    // `Parser::convert`'s `RefVar` arm for a PLACE — a field or an element read in a store — of
+    // the parameter's own type: a plain scalar's is handed as its address (`scalar_place_ref`);
+    // a record's or a vector's is held in a `__ref_N` viewing what the place views, never
+    // freed, and that is linked.  A text place (the callee's store-text twin), a narrow one, a
+    // tuple member and a value that is no place stay refused by name.
+    place = el_ir::unspan(arg);
+    // `Parser::slot_cell_argument` (`@FR-F-ParamRef`, `@FR-B-Ref-Lvalue`): an out-of-line FIELD
+    // (`OpRefFromChildRec(OpGetField(host, pos, kt))`, `take_min(t.right)`) handed to a `&S` /
+    // `&S?` whose `S` is held out of line gets a cell of this frame naming the field
+    // (`OpSlotTag`), so the callee's whole write is the field write.  The cell is a second-pass
+    // work ref, never freed.  On the first pass `slot_cell_argument` answers nothing for a field,
+    // and the argument takes `convert`'s general road: a work ref of its type holding it.
+    slot_d = binds::slot_link_def(e.b, pt);
+    slot_field = match place { NdCall { def_nr: sfd, args: sfa } => if el::def(e, sfd).name == "OpRefFromChildRec" && len(sfa) > 0 { el_ir::unspan(sfa[0]!) } else { ir::NdNull }, _ => ir::NdNull };
+    slot_kt = match slot_field { NdCall { def_nr: gfd, args: gfa } => if el::def(e, gfd).name == "OpGetField" && len(gfa) == 3 { match el_ir::unspan(gfa[2]!) { NdInt { n } => n, _ => 0 } } else { 0 }, _ => 0 };
+    if slot_d != null && slot_kt != 0 {
+      if e.first_pass {
+        fwv = el_vars::work_ref(vars, at);
+        return ir::NdInsert { items: [el_ir::v_set(fwv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: fwv }])] };
+      }
+      cell = el_vars::work_ref_p2(vars, ir::TyReference { n: slot_d!, dep: [] });
+      el_vars::set_skip_free(vars, cell, "slot_cell_argument");
+      return ir::NdInsert { items: [el_ir::v_set(cell, el_ir::cl(e, "OpSlotTag", [slot_field])), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: cell }])] };
+    }
+    is_place = calls(e, place, "OpGetField") || calls(e, place, "OpGetVector");
+    same = !el_types::is_unknown(at) && !(at is TyOptional) && el_types::is_equal(e, el_types::base(inner), el_types::base(at));
+    narrow = match el_types::base(at) { TyInteger { spec } => spec.forced_size > 0, _ => false };
+    // (`scalar_place_ref` of a TUPLE member, `@FR-B-Ref-Lvalue` / `@FR-T-Record`: a wide plain
+    // scalar member of a stack tuple is linked where it lies, `OpCreateStack(t.i)`, as a scalar
+    // local is.  Rust refuses a narrow member by name, as here.)
+    if same && !narrow && el_convert::plain_scalar(el_types::base(inner)) && place is NdTupleGet {
+      return el_ir::cl(e, "OpCreateStack", [place]);
+    }
+    if same && !narrow && el_convert::plain_scalar(el_types::base(inner)) && !(place is NdTupleGet) {
+      sp = el_ex_vector::scalar_place(e, place);
+      if sp != null && scalar_read(e, place) {
+        return sp;
+      }
+    }
+    // (A keyed collection in a field is held and linked the same way.)
+    // (So is a struct enum in a field — its inline record.)
+    if same && is_place && (struct_ref(e, el_types::base(at)) >= 0 || el_types::struct_enum_def(el_types::base(at)) >= 0 || el_types::base(at) is TyVector || keyed_kind(el_types::base(at))) {
+      wv = el_vars::work_ref(vars, at);
+      if !e.first_pass {
+        el_vars::set_skip_free(vars, wv, "convert_store_as");
+      }
+      return ir::NdInsert { items: [el_ir::v_set(wv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])] };
+    }
+    tv = text_value_link(e, vars, arg, at, pt);
+    if tv != null {
+      return tv;
+    }
+    match place {
+      NdTupleGet { var: htv, idx: hti } => record_heap_member_link(e, vars, htv, hti),
+      _ => {}
+    }
+    refuse_known(e, at, "a `&` argument that is not a local");
+    return null;
+  }
+  // `slot_cell_argument`'s other half: a LOCAL link to an out-of-line field (`n = &t.right;
+  // take_min(n)`) is handed as a cell naming the link's slot (`OpSlotTag(_slot_n_N)`), the call's
+  // answer held while the link is read again after it — not carried: refused by name.
+  // The first pass records that the link is handed on, so the second keeps its field in a slot
+  // (`el_ex_assign`'s slot-link bind); a link the bind gave no slot keeps the general road.
+  if binds::slot_link_def(e.b, pt) != null && vars.amp_places.contains(v) && !vars.vars[v].argument {
+    lkey = e.context * 65536 + v;
+    if e.first_pass && !e.slot_links.contains(lkey) {
+      e.slot_links += [lkey];
+    }
+    lslot = -1;
+    for so in vars.slot_of {
+      if so == v {
+        lslot = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    if !e.first_pass && lslot >= 0 {
+      lcell = el_vars::work_ref_p2(vars, ir::TyReference { n: binds::slot_link_def(e.b, pt)!, dep: [] });
+      el_vars::set_skip_free(vars, lcell, "slot_cell_argument");
+      vars.arg_posts += [el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: lslot }]))];
+      return ir::NdInsert { items: [el_ir::v_set(lcell, el_ir::cl(e, "OpSlotTag", [ir::NdVar { n: lslot }])), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: lcell }])] };
+    }
+    if !e.first_pass {
+      el::refuse(e, "a local field link handed to a `&` parameter of a record held out of line");
+      return null;
+    }
+  }
+  vt = el_vars::tp(vars, v);
+  // `@FR-T-Ref-Rep` (`ref_linked_tuple_locals`): a tuple local handed to a `&(…)` parameter
+  // that links the `__tuple<…>` record is recorded on the first pass, and built as that record
+  // on the second (`ref_tuple_local_bind`), where it is linked as any record local is.
+  ltd = match el_types::base(inner) { TyReference { n: ln } => if starts_with(el::def(e, ln).name, "__tuple<") { ln } else { -1 }, _ => -1 };
+  if ltd >= 0 && el_types::base(vt) is TyTuple && !vars.vars[v].argument {
+    if e.first_pass {
+      lnm = el_vars::name_of(vars, v);
+      if len([for rl in e.ref_tuple_links if rl.d == e.context && rl.name == lnm { 1 }]) == 0 {
+        e.ref_tuple_links += [el::StepOver { d: e.context, name: lnm, site: -1 }];
+      }
+      return el_ir::cl(e, "OpCreateStack", [arg]);
+    }
+    el::refuse(e, "a tuple local handed to a `&` tuple parameter not built as its record");
+    return null;
+  }
+  if vt is TyRefVar {
+    // (A `&text` link is passed on as the variable itself, as every other link is.)
+    if el_types::is_equal(e, vt, pt) {
+      return arg;
+    }
+    el::refuse(e, "a `&` argument that is a link of another type");
+    return null;
+  }
+  if !el_types::is_equal(e, el_types::base(inner), el_types::base(at)) {
+    refuse_known(e, at, "a `&` argument of another type: {type_kind(at)} to {type_kind(inner)}");
+    return null;
+  }
+  match el_types::base(vt) {
+    TyInteger { spec } => {
+      if spec.forced_size > 0 {
+        el::refuse(e, "a narrow local handed to a `&` parameter");
+        return null;
+      }
+    },
+    _ => {}
+  }
+  // A vector local is linked as any local is; a keyed collection's link (its appends and
+  // lookups through `&`) is not carried yet.
+  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) && !(el_types::base(vt) is TyHash) && !(el_types::base(vt) is TySorted) && !(el_types::base(vt) is TyIndex) {
+    el::refuse(e, "a keyed collection local handed to a `&` parameter");
+    return null;
+  }
+  // @C118 (`null_local_slot`): a nullable collection LOCAL handed by `&` is given its slot
+  // first, marked ABSENT, so an append through the link lands in it — a vector with no backing
+  // yet by a guarded mint (`vector_db_init`, `OpRefIsNull`), the backing an inline ref.  A local
+  // with a backing (`null_backing_home`) or a keyed one is not carried: refused by name.
+  if !e.first_pass && !vars.vars[v].argument && vt is TyOptional && el_types::is_collection(el_types::base(vt)) {
+    match el_types::base(vt) {
+      TyVector { inner: nle } => {
+        if len(el_types::deps(vt)) == 0 {
+          nrows = vector_rows(e, nle, 0, true);
+          if nrows != null {
+            nops = el_ex_pattern::literal_store(e, vars, v, nrows!, slot: -1);
+            for ndb in el_types::deps(el_vars::tp(vars, v)) {
+              el_vars::mark_inline(vars, ndb, "vector_db_init");
+            }
+            nguard = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), ir::NdInsert { items: nops }, ir::NdNull);
+            return ir::NdInsert { items: [nguard, el_ir::cl(e, "OpCreateStack", [arg])] };
+          }
+        }
+        // (`null_backing_home`: only a single `__ref_N` vector backing is pointed into first;
+        // any other backed local is linked as it is.)
+        nbd = el_types::deps(vt);
+        if len(nbd) == 1 && starts_with(el_vars::name_of(vars, nbd[0]!), "__ref_") && el_types::base(el_vars::tp(vars, nbd[0]!)) is TyVector {
+          el::refuse(e, "a nullable vector local backed by a call's buffer handed to a `&` parameter");
+          return null;
+        }
+      },
+      _ => {
+        el::refuse(e, "a nullable keyed local handed to a `&` parameter");
+        return null;
+      }
+    }
+  }
+  el_ir::cl(e, "OpCreateStack", [arg])
+}
+
+// `Parser::record_heap_member_link` (`@FR-T-Record`): a `&` argument naming a HEAP member of a
+// by-value tuple local makes the tuple's `__tuple<…>` record where the call's statement ends,
+// when the record can lay every member out (`ref_tuple_is_record`: no `τ?`, fn-ref or nested
+// tuple).  Refused here, but registered first: every later definition keeps Rust's number.
+fn record_heap_member_link(e: el::El, vars: el_vars::Vars, t: integer, i: integer) {
+  if t < 0 || t >= len(vars.vars) || vars.vars[t].argument || vars.call_tok < 0 {
+    return;
+  }
+  match el_types::base(el_vars::tp(vars, t)) {
+    TyTuple { elems } => {
+      if i < 0 || i >= len(elems) {
+        return;
+      }
+      m = el_types::base(elems[i]);
+      scalar = m is TyInteger || m is TyFloat || m is TySingle || m is TyCharacter || m is TyBoolean || match m { TyEnum { is_ref } => !is_ref, _ => false };
+      if scalar || m is TyText {
+        return;
+      }
+      for x in elems {
+        if x is TyOptional || x is TyFunction || x is TyTuple {
+          return;
+        }
+      }
+      _ = el_types::tuple_def(e, [for x in elems { el_types::without_deps(x) }], el::pos_at(e, el_ex_object::past_call(e, vars.call_tok)));
+    },
+    _ => {}
+  }
+}
