@@ -2272,7 +2272,13 @@ impl Output<'_> {
     pub(super) fn source_path(&self, file: &str) -> String {
         let plain = crate::file_access::portable_str(file);
         if self.shared_ids.is_none() {
-            return plain;
+            // A program names a source from its root, never from where it was built
+            // ([`crate::source_name::name`]): the same program generates the same Rust in any
+            // checkout (@PLN229, reproducible builds).
+            return crate::source_name::name(
+                &plain,
+                &crate::source_name::roots_of(self.data, None),
+            );
         }
         let mut dir = crate::file_access::parent(file);
         while let Some(d) = dir {
