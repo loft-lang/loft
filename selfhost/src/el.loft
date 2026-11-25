@@ -95,6 +95,9 @@ pub struct El {
   pub p: syntax::Syntax,
   // the file the tree came from, as positions name it
   pub file: text,
+  // `Parser::program_entry`: the program's main file, whose directory names the files beneath
+  // it (`site_file`); empty for the standard library's own parse.
+  pub entry: text = "",
   // `Data::def_names`: `"{source}\t{name}"` -> definition number
   pub names: hash<DefName[key]>,
   // `Data::source`: 0 the standard library, 1 the program
@@ -256,6 +259,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     b: ir::Bundle { data: ir::Data { definitions: [], source: 0 }, types: [], cwd: false },
     p: p,
     file: file,
+    entry: if default { "" } else { file },
     names: [],
     source: if default { STD_SOURCE } else { MAIN_SOURCE },
     first_pass: true,
@@ -880,3 +884,70 @@ pub fn lambda_take(el: El, root: text) -> integer {
   el.lambda_next += [1];
   0
 }
+
+// `Parser::site_file` / `source_name::name` (@PLN229): the name a call site's file argument
+// gives its source, the same wherever the sources lie — a relative name as it is; a
+// standard-library file `default/<rest>`; a file beneath the program entry's directory its
+// path from there; any other its path from its package's parent (the directory above the
+// nearest `loft.toml`), else its file name.  The standard library's directory is its first
+// definition's file's.
+pub fn site_file(el: El, file: text) -> text {
+  if !file.starts_with("/") {
+    return file;
+  }
+  std_dir = "";
+  for d in el.b.data.definitions {
+    if std_dir == "" && d.source == STD_SOURCE && d.position.file != "" {
+      std_dir = dir_of(d.position.file);
+    }
+  }
+  sr = beneath(file, std_dir);
+  if sr != "" {
+    return "default/{sr}";
+  }
+  mr = beneath(file, dir_of(el.entry));
+  if mr != "" {
+    return mr;
+  }
+  d = dir_of(file);
+  while d != "" {
+    if exists("{d}/loft.toml") {
+      pp = dir_of(d);
+      pr = if pp == "/" { file[1..] } else { beneath(file, pp) };
+      if pr != "" {
+        return pr;
+      }
+    }
+    d = if d == "/" { "" } else { dir_of(d) };
+  }
+  file[dir_end(file) + 1..]
+}
+
+// `Path::parent`: everything before the last `/` (`/` for a file at the root), "" for none.
+fn dir_of(f: text) -> text {
+  i = dir_end(f);
+  if i < 0 { "" } else if i == 0 { "/" } else { f[..i] }
+}
+
+fn dir_end(f: text) -> integer {
+  last = -1;
+  for c in f {
+    if c == '/' {
+      last = c#index;
+    }
+  }
+  last
+}
+
+// The rest of `file` beneath directory `dir`, or "" where it is not beneath it.
+fn beneath(file: text, dir: text) -> text {
+  dd = dir;
+  while dd.ends_with("/") {
+    dd = dd[..len(dd) - 1];
+  }
+  if dd == "" || !file.starts_with("{dd}/") {
+    return "";
+  }
+  file[len(dd) + 1..]
+}
+
