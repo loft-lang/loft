@@ -79,14 +79,9 @@
 #
 #   make wasm            Build the wasm-pack bundle that drives the gallery.
 #   make wasm-html-test  WASM-runtime safety gate (tests/html_wasm.rs).
-#                        Rebuilds the wasm rlib in the --html shape first
-#                        so the gate is deterministic regardless of whether
-#                        `make wasm` last stomped the rlib with the
-#                        wasm-bindgen variant.
 #   make install         System-wide install to /usr/local (sudo if not writable).
 #   make install-user    Sudo-free install to ~/.local (PREFIX=$$HOME/.local).
-#   make install-user-fast  As install-user, but native-only (no wasm) — fast
-#                        reinstall for the after-each-PR-merge loop.
+#   make install-user-fast  The same as install-user (kept for the scripts that name it).
 #   make test-gl-golden  Pixel-compare the smoke-test screenshot (Xvfb).
 #   make fill            Regenerate src/fill.rs from default/*.loft annotations.
 #   make pdf             Rebuild the printable reference PDF.
@@ -155,8 +150,8 @@ endif
 # Install prefix.  Default is system-wide /usr/local; override with a user-writable
 # prefix for a sudo-free install:  make install PREFIX=$$HOME/.local  (or the
 # `install-user` shortcut).  No code change is needed — the runtime finds its stdlib
-# and rlibs RELATIVE to the binary: a loft at <PREFIX>/bin/loft searches
-# <PREFIX>/share/loft and .../deps (src/cache.rs, src/native_lib.rs).
+# and components RELATIVE to the binary: a loft at <PREFIX>/bin/loft reads
+# <PREFIX>/share/loft/default and <PREFIX>/lib/loft/components (src/components.rs).
 PREFIX ?= /usr/local
 
 # Root is needed only when PREFIX is not writable by the invoking user — computed,
@@ -166,13 +161,7 @@ PREFIX ?= /usr/local
 # the ancestor is writable and nothing extra runs.  Empty = run the copies directly.
 SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$$d" ]; do d=$$(dirname "$$d"); done; if [ -w "$$d" ]; then echo ""; else echo "sudo"; fi)
 
-# Native-only install: skip the wasm + html-mt browser runtimes — the slow part of
-# the build — for a FAST reinstall.  The result runs loft programs and builds library
-# cdylibs (all a dev needs after a PR merge); only `--html` / wasm export needs the
-# skipped runtimes.  Set by `make install-native` / `install-user-fast`.
-NATIVE_ONLY ?=
-
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads wasi-threads-sysroot wasi-sdk check-no-threading par-gates gate ci-miri all doctor install install-user install-native install-user-fast install-artifacts install-main install-main-build components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -182,29 +171,8 @@ help:
 	  | sed 's/^# \{0,1\}//'
 
 all:
-	@# `cargo fmt`, not `rustfmt src/*.rs`: the latter also reformats the `include!`d
-	@# generated sources cargo fmt never reaches (src/compiled_stdlib_gen.rs), which left
-	@# every `make install` with a dirty tree and a stale-stdlib test failure.
 	@cargo fmt
 	@RUSTFLAGS=-g cargo build --release
-
-check-targets:
-	@if ! command -v rustup >/dev/null 2>&1; then \
-		echo "WARNING: rustup not found; can't verify cross-compile targets."; \
-		echo "If the build fails with E0463, install wasm32-wasip2 and"; \
-		echo "wasm32-unknown-unknown manually for your toolchain."; \
-		exit 0; \
-	fi
-	@for target in wasm32-wasip2 wasm32-unknown-unknown; do \
-		if ! rustup target list --installed | grep -q "^$$target$$"; then \
-			echo "Installing missing rustup target: $$target"; \
-			rustup target add "$$target" || { \
-				echo "ERROR: failed to install $$target."; \
-				echo "Install manually:  rustup target add $$target"; \
-				exit 1; \
-			}; \
-		fi; \
-	done
 
 # doctor: report the status of every external tool the wasm / --html / native
 # pipelines depend on, and print environment-specific install commands for
@@ -214,59 +182,13 @@ check-targets:
 doctor:
 	@bash scripts/doctor.sh
 
-# Compile every artifact that lands in /usr/local.  Runs as the unprivileged
-# user (see AS_USER) — never root — so sccache and target/ ownership stay
-# correct even under `sudo make install`.
-#
-# The three builds, in recipe order:
-#   1. wasm32-wasip2 lib.
-#   2. wasm32-unknown-unknown lib — W1.1, the browser target for `--html` export.
-#   3. the host lib into an ISOLATED target dir, so deps/ contains exactly one
-#      copy of each crate — no binary-only duplicates (e.g. libloading) that
-#      cause StableCrateId collisions during native compilation.
-#
-# Why build 3 carries the feature list it does:
-#   - `native-extensions` is REQUIRED: the `--native` codegen unconditionally
-#     emits `loft::native_call::{enter,build_store}` to marshal a heap value
-#     (`vector<u8>`, struct) across the cdylib FFI (src/generation/mod.rs), and
-#     that module is `#[cfg(feature = "native-extensions")]` (src/lib.rs).  Drop
-#     it here and the installed `libloft.rlib` lacks `native_call`, so every
-#     `--native` run of a library with a `vector`/struct-returning (or -taking)
-#     `#native` fn fails to compile with `E0433: cannot find native_call in loft`.
-#   - `registry` + `remote-store` are BOTH in the crate's `default` features, so
-#     omitting them here made the installed native runtime diverge from a normal
-#     build: `store_load_url*` (registry-gated `load_url`,
-#     src/database/allocation.rs) and the sibling remote/URL store loaders
-#     (remote-store-gated) then `--interpret`-accept but `--native`-REJECT with
-#     `no method load_url` on the stable toolchain (reported by a consumer on
-#     2026.7.1).  Both pull only `ureq` (+ archive/crypto for registry) and are
-#     dead-stripped from any `--native` binary that doesn't call them, so
-#     bundling them is free for programs that don't fetch stores.
-#
-# The closing prune is the E0514 guard — cargo's deps/ accumulates a
-# `libloft_ffi-<hash>.rlib` per rustc version across builds; after a `rustup
-# update` the OLD one lingers beside the freshly-built one.  The install `cp`s
-# ALL of them into the shared deps/, and because `cp` flattens every file's
-# mtime to install-time the mtime-based loft_ffi resolver
-# (native_lib::loft_ffi_for_libloft) can then pick the STALE one — so every
-# `--native` build fails `E0514: crate loft_ffi compiled by an incompatible
-# version of rustc`.  Keep only the newest (the just-built, current-rustc)
-# loft_ffi rlib so exactly one, matching, copy is installed.
-install-artifacts: check-targets all wasm-html-mt-lib
-	@cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random
-	@cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
-	@scripts/lean_build.sh --lib --bin loft
-	@stale=$$(scripts/cargo_dep_files.sh target/install-lib/release 'libloft_ffi-*.rlib' | xargs -r ls -t | tail -n +2); \
-	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
-
-# Native-only artifacts: the same install-lib rlib, but WITHOUT the two wasm target
-# builds, the wasm-target check, or the html-mt build-std runtime.  `all` builds the
-# native binary + lib; this adds the feature-complete install-lib rlib the copies
-# need.  Same stale-loft_ffi prune as the full target.
-install-artifacts-native: all
-	@scripts/lean_build.sh --lib --bin loft
-	@stale=$$(scripts/cargo_dep_files.sh target/install-lib/release 'libloft_ffi-*.rlib' | xargs -r ls -t | tail -n +2); \
-	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
+# Compile what `make install` copies: the production binary (scripts/lean_build.sh, into
+# target/install-lib).  Runs as the unprivileged user (see AS_USER) — never root — so
+# sccache and target/ ownership stay correct even under `sudo make install`.  Nothing
+# beside the binary is compiled for it: `--native`, `--native-wasm` and `--html` compile
+# through the C, so an install carries no runtime library.
+install-artifacts:
+	@scripts/lean_build.sh --bin loft
 
 install:
 	@if [ -n "$(SUDO)" ]; then \
@@ -279,41 +201,20 @@ install:
 	else \
 		echo "install: writing $(PREFIX) as $$(id -un) — no sudo needed"; \
 	fi
-	@$(AS_USER) $(MAKE) --no-print-directory $(if $(NATIVE_ONLY),install-artifacts-native,install-artifacts)
-	@$(AS_USER) $(MAKE) --no-print-directory rebuild-native-cdylibs
-	@$(SUDO) install -d $(PREFIX)/share/loft/deps
-	@$(SUDO) install -m 644 target/install-lib/release/libloft.rlib $(PREFIX)/share/loft/
-	@$(SUDO) rm -f $(PREFIX)/share/loft/deps/*.rlib $(PREFIX)/share/loft/deps/*.so $(PREFIX)/share/loft/deps/*.dylib
-	@# Every dependency, under either cargo layout (`deps/`, or cargo 1.100's per-unit dirs).
-	@# One file per NAME, the newest: a classic `deps/` left beside a per-unit tree lists a
-	@# crate twice, `cp` refuses to overwrite what it just created, and the install stopped
-	@# here with the new standard library in place and the old binary still installed.
-	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/
-	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.so')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/ || { \
-			echo "ERROR: failed to install dependency .so files (rights?)."; exit 1; }; \
-	fi
-	@# Proc-macro deps (e.g. displaydoc) are host dylibs — `.dylib` on macOS,
-	@# `.so` on Linux (copied above).  A cdylib's `extern crate loft;` needs them,
-	@# so omitting the macOS `.dylib` broke every library native build with
-	@# E0463 "can't find crate for displaydoc" (see plans/user-local-install).
-	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.dylib')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/ || { \
-			echo "ERROR: failed to install dependency .dylib files (rights?)."; exit 1; }; \
-	fi
-	@if [ -n "$(NATIVE_ONLY)" ]; then \
-		echo "install: native-only — skipping wasm + html-mt runtimes ('--html'/wasm export unavailable)"; \
-	else \
-		$(MAKE) --no-print-directory install-wasm-artifacts PREFIX="$(PREFIX)"; \
-	fi
+	@$(AS_USER) $(MAKE) --no-print-directory install-artifacts
+	@$(SUDO) install -d $(PREFIX)/share/loft
+	@# What an earlier install shipped for the retired rustc writer — the runtime rlib, its
+	@# dependencies and the wasm runtimes — is read by nothing now, so a reinstall clears it.
+	@$(SUDO) rm -rf $(PREFIX)/share/loft/libloft.rlib $(PREFIX)/share/loft/libloft.rmeta \
+	    $(PREFIX)/share/loft/RUSTC $(PREFIX)/share/loft/deps $(PREFIX)/share/loft/wasm32-wasip2 \
+	    $(PREFIX)/share/loft/wasm32-unknown-unknown $(PREFIX)/share/loft/html-mt
 	@$(SUDO) chmod -R a+rX $(PREFIX)/share/loft
 	@$(AS_USER) $(MAKE) --no-print-directory components
 	@$(SUDO) rm -rf $(PREFIX)/lib/loft/components
 	@$(SUDO) install -d $(PREFIX)/lib/loft/components
 	@$(SUDO) cp target/components/lib* target/components/.loft-build-fp $(PREFIX)/lib/loft/components/
 	@$(SUDO) install -d $(PREFIX)/bin
-	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
-	@# no development aids, and one feature set for the interpreter and `--native`.
+	@# The production binary (scripts/lean_build.sh): no development aids.
 	@# The standard library goes in WITH the binary that reads it, after every copy that can
 	@# fail: replaced first, a failed install left an old binary over a new library.
 	@$(SUDO) rm -rf $(PREFIX)/share/loft/default
@@ -341,28 +242,6 @@ install:
 	fi; \
 	rm -f "$$smoke" "$$smoke.err"; \
 	echo "install: post-install smoke OK (installed loft runs the installed stdlib)"
-	@# loft#693 — the smoke above proves binary<->STDLIB.  It cannot prove
-	@# binary<->RLIB: generated cdylib source calls loft runtime methods, so a
-	@# libloft.rlib older than the binary fails to compile and the program cannot
-	@# start at all.  That shipped once (a new borrowed-capture helper the installed
-	@# rlib lacked) and surfaced to the consumer as "library X failed to build
-	@# native".  Building one throwaway cdylib against the INSTALLED rlib closes it.
-	@# The capture below is a PROJECTION on purpose — a borrowed capture, the newest
-	@# emission path — and any drift in the shared type-registration replay fails here.
-	@sdir="$${TMPDIR:-/tmp}/loft-install-smoke-lib"; \
-	rm -rf "$$sdir"; mkdir -p "$$sdir/libs/smokelib/src"; \
-	printf '[package]\nname = "smokelib"\nversion = "0.1.0"\nloft = ">=0.8"\n[library]\nentry = "src/smokelib.loft"\n' > "$$sdir/libs/smokelib/loft.toml"; \
-	printf 'pub fn smoke_sum(v: vector<integer>) -> integer {\n  t = 0;\n  for e in v { t += e; }\n  t\n}\n' > "$$sdir/libs/smokelib/src/smokelib.loft"; \
-	printf 'use smokelib::(smoke_sum);\nstruct SmIn { items: vector<integer> }\nstruct SmOut { inner: SmIn }\nfn smk() -> SmOut { SmOut { inner: SmIn { items: [1, 2, 3] } } }\nfn app(f: fn(float) -> float, x: float) -> float { f(x) }\nfn main() {\n  o = smk();\n  w = o.inner;\n  g = fn(a: float) -> float { a + (len(w.items) as float) };\n  println("smoke {app(g, 1.0)} {smoke_sum([1, 2, 3])}");\n}\n' > "$$sdir/main.loft"; \
-	if ! $(PREFIX)/bin/loft --interpret --lib "$$sdir/libs" "$$sdir/main.loft" >/dev/null 2>"$$sdir/err"; then \
-		echo "ERROR: 'make install' left a broken binary<->rlib pair —"; \
-		echo "the installed loft cannot build a library cdylib against the installed libloft.rlib:"; \
-		sed 's/^/    /' "$$sdir/err"; \
-		echo "Fix: rebuild + reinstall as one unit:  make all && make install"; \
-		rm -rf "$$sdir"; exit 1; \
-	fi; \
-	rm -rf "$$sdir"; \
-	echo "install: cdylib smoke OK (a library builds against the installed rlib)"
 	@# PATH check — the freshly installed loft must be the one the shell resolves.
 	@# Two ways it isn't: $(PREFIX)/bin not on PATH, or an older loft earlier on PATH
 	@# shadowing it.  We report both, with the OS/shell-appropriate rc file, and edit
@@ -391,49 +270,6 @@ install:
 		fi; \
 	fi
 
-# Copy the wasm (wasm32-wasip2, wasm32-unknown-unknown) + html-mt browser runtimes
-# into the install prefix.  Split out of `install` so a native-only install can skip
-# it; called with the same PREFIX/SUDO the parent resolved.
-#
-# The html-mt dependency copy reads BOTH cargo layouts.  `-Z build-std` lands its
-# rlibs under the per-unit `build/<crate>/<hash>/out/` tree cargo adopted on
-# 2026-07-29, where `release/deps/` does not exist at all — so `cp .../deps/*.rlib`
-# failed with `cannot stat` and took the whole install down.  This step runs BEFORE
-# the binary is installed, so the failure is at least honest: it leaves the user on
-# their previous loft rather than pairing a new binary with stale runtimes.
-# `src/cargo_layout.rs` reads both layouts for the LINK; this is the same fact on the
-# install side, and the two ordinary wasm builds above read it through
-# `scripts/cargo_dep_files.sh`, which leaves loft's own rlib out.
-#
-# loft's OWN rlib is excluded, for the reason `assemble_atomics_sysroot` gives when
-# it skips the same file: the link names it with `--extern` and `-L dependency=`, and
-# a second copy on the search path is how rustc comes to report multiple candidates
-# for one crate.  Under the per-unit layout it is worse than redundant — two build
-# dirs each hold a `libloft.rlib`, so the copy aborts on the duplicate basename.
-install-wasm-artifacts:
-	@$(SUDO) install -d $(PREFIX)/share/loft/wasm32-wasip2/deps
-	@$(SUDO) install -m 644 target/wasm32-wasip2/release/libloft.rlib $(PREFIX)/share/loft/wasm32-wasip2/
-	@$(SUDO) rm -f $(PREFIX)/share/loft/wasm32-wasip2/deps/*.rlib
-	@$(SUDO) cp $$(scripts/cargo_dep_files.sh target/wasm32-wasip2/release '*.rlib') $(PREFIX)/share/loft/wasm32-wasip2/deps/
-	@$(SUDO) install -d $(PREFIX)/share/loft/wasm32-unknown-unknown/deps
-	@$(SUDO) install -m 644 target/wasm32-unknown-unknown/release/libloft.rlib $(PREFIX)/share/loft/wasm32-unknown-unknown/
-	@$(SUDO) rm -f $(PREFIX)/share/loft/wasm32-unknown-unknown/deps/*.rlib
-	@$(SUDO) cp $$(scripts/cargo_dep_files.sh target/wasm32-unknown-unknown/release '*.rlib') $(PREFIX)/share/loft/wasm32-unknown-unknown/deps/
-	@if [ -f target/loft/html-mt/wasm32-unknown-unknown/release/libloft.rlib ]; then \
-	  echo "install: shipping the threaded browser runtime (html-mt)"; \
-	  $(SUDO) install -d $(PREFIX)/share/loft/html-mt/wasm32-unknown-unknown/deps; \
-	  $(SUDO) install -m 644 target/loft/html-mt/wasm32-unknown-unknown/release/libloft.rlib \
-	    $(PREFIX)/share/loft/html-mt/wasm32-unknown-unknown/; \
-	  $(SUDO) rm -f $(PREFIX)/share/loft/html-mt/wasm32-unknown-unknown/deps/*.rlib; \
-	  set -- $$(ls target/loft/html-mt/wasm32-unknown-unknown/release/deps/*.rlib 2>/dev/null); \
-	  [ $$# -gt 0 ] || set -- $$(ls target/loft/html-mt/wasm32-unknown-unknown/release/build/*/*/out/*.rlib 2>/dev/null \
-	    | grep -v '/libloft[.-]'); \
-	  [ $$# -gt 0 ] || { echo "install: html-mt built but no dependency rlibs found in either cargo layout" >&2; exit 1; }; \
-	  $(SUDO) cp "$$@" $(PREFIX)/share/loft/html-mt/wasm32-unknown-unknown/deps/; \
-	else \
-	  echo "install: no threaded browser runtime built — 'loft --html --threads' will report it"; \
-	fi
-
 # Sudo-free install into the user's home prefix — reinstall as often as you like
 # (e.g. after each PR merge) with no root.  Just `make install` with PREFIX pointed
 # at ~/.local, which is user-writable so $(SUDO) resolves empty.
@@ -446,14 +282,13 @@ components:
 install-user:
 	@$(MAKE) --no-print-directory install PREFIX=$(HOME)/.local
 
-# Fast reinstalls: skip the wasm + html-mt runtimes.  `install-native` respects
-# PREFIX (system by default); `install-user-fast` is the sudo-free ~/.local variant —
-# the one to run after each PR merge when you only need to run + build loft locally.
+# The names the fast reinstall had while an install also built the wasm runtimes; an
+# install builds the binary alone now, so each is `install` (`install-user` for ~/.local).
 install-native:
-	@$(MAKE) --no-print-directory install NATIVE_ONLY=1
+	@$(MAKE) --no-print-directory install
 
 install-user-fast:
-	@$(MAKE) --no-print-directory install PREFIX=$(HOME)/.local NATIVE_ONLY=1
+	@$(MAKE) --no-print-directory install PREFIX=$(HOME)/.local
 
 # The installed loft as the build `origin/main` is: fetched, checked out in a worktree of its
 # own and installed from there like `install-user-fast`.  The worktree persists, so the next
@@ -461,10 +296,10 @@ install-user-fast:
 # a guard against this build (GUARDS.md § The control is installed main).
 LOFT_MAIN_TREE ?= $(HOME)/.cache/loft-main
 install-main:  ## Install origin/main for this user (~/.local): main's daily build, else a local build
-	@# The download first: main's daily build ships the binary with the runtime library
-	@# `--native` links (scripts/install_main_ci.sh).  It answers 3 when it cannot be used here
-	@# — no run for main's commit yet, or this machine's rustc is not the one that built the
-	@# rlib — and only then is main built locally.  LOFT_INSTALL_MAIN_BUILD=1 skips it.
+	@# The download first: main's daily build ships the binary and its standard library
+	@# (scripts/install_main_ci.sh).  It answers 3 when it cannot be used here — no finished
+	@# run for main's commit on this host yet, or no `gh` — and only then is main built
+	@# locally.  LOFT_INSTALL_MAIN_BUILD=1 skips it.
 	@if [ -z "$(LOFT_INSTALL_MAIN_BUILD)" ]; then \
 		scripts/install_main_ci.sh; rc=$$?; \
 		[ $$rc -eq 0 ] && exit 0; \
@@ -501,65 +336,18 @@ debug:
 	RUSTFLAGS=-g RUST_BACKTRACE=1 cargo build -v
 	sudo ln -f -s ${PWD}/target/debug/loft /usr/local/bin/loft
 
-# Rebuild every derived artefact the test suite depends on.  Covers
-# four classes of stale artefact that each cascade into misleading
-# test failures (rustc 1.94→1.96 update on 2026-05-29 surfaced #2):
-#   0. The top-level release rlib `target/release/libloft.rlib` —
-#      linked by the native code-gen pipeline (P200/P244 tests) —
-#      AND the release `target/release/loft` binary.  `--bins` is
-#      load-bearing (#304): tests that spawn the release binary by
-#      path (tests/viewer_markdown.rs) get a stale-source binary
-#      otherwise — `make ci` runs its tests in the debug profile, so
-#      nothing else in that chain ever rebuilds the release bin, and
-#      the fresh rlib + stale bin pair made the binary build (or
-#      validate) native cdylibs against a loft that is not its own.
-#      Cargo's fingerprint detects rustc version bumps, so this is
-#      a no-op when fresh and a forced rebuild after a toolchain
-#      update.
-#   1. Sibling cdylibs under lib/*/native/  (loaded via
-#      extensions::load_all, linked via --native)
-#   2. Test fixture cdylibs under tests/lib/*/native/
-#   3. The wasm32-unknown-unknown rlib the html_wasm suite links
-#      AND the wasm32-wasip2 rlib the wasm_library_suite uses
-#      (only when the target dir already exists, so `make test`
-#      doesn't impose the wasm targets on developers who never
-#      touch --html / wasip2)
-# Cargo is incremental; each step is ~free on a clean tree.
+# Rebuild the release binaries the tests spawn by path (`target/release/loft`;
+# tests/html_asyncify.rs, deliver_wasm.rs): `make ci` runs its tests in the debug profile,
+# so nothing else in that chain rebuilds them, and a stale release binary answers for a
+# source tree that is not its own (#304).  Cargo is incremental, so this is a no-op when
+# fresh and a forced rebuild after a toolchain update.  Nothing else is derived any more:
+# a library's compiled part is a hosted C unit loft builds on first use, keyed on the
+# loft build that asks (`cache::loft_build_fingerprint`), and the wasm targets compile
+# through the C.  The name stays because scripts, workflows and loft's own messages cite it.
 rebuild-native-cdylibs:
-	@cargo build --release --lib --bins -q || { \
-	  echo "FAIL: top-level libloft.rlib + loft binary rebuild"; exit 1; \
+	@cargo build --release --bins -q || { \
+	  echo "FAIL: release loft binaries rebuild"; exit 1; \
 	}
-	@for d in lib/*/native tests/lib/*/native; do \
-	  [ -f "$$d/Cargo.toml" ] || continue; \
-	  (cd "$$d" && cargo build --release -q) || { \
-	    echo "FAIL: rebuild $$d"; exit 1; \
-	  }; \
-	done
-	@# Gate on the target's std being INSTALLED, not on the output dir
-	@# (which persists across toolchain switches — a fresh `rustup default`
-	@# drops the wasm std but leaves target/wasm32-*/, so the old `[ -d … ]`
-	@# heuristic hard-failed with a buried E0463).  Installed → rebuild;
-	@# stale artefact but std gone → warn with the fix and SKIP; neither → skip.
-	@if [ -n "$(NATIVE_ONLY)" ]; then :; \
-	elif rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then \
-	  cargo build --release --target wasm32-unknown-unknown \
-	    --lib --no-default-features --features random -q || { \
-	    echo "FAIL: wasm32-unknown-unknown rlib rebuild"; exit 1; \
-	  }; \
-	elif [ -d target/wasm32-unknown-unknown ]; then \
-	  echo "WARN: wasm32-unknown-unknown std not installed — skipping wasm rlib refresh"; \
-	  echo "      (stale target/wasm32-unknown-unknown/ present; run: rustup target add wasm32-unknown-unknown)"; \
-	fi
-	@if [ -n "$(NATIVE_ONLY)" ]; then :; \
-	elif rustup target list --installed 2>/dev/null | grep -qx wasm32-wasip2; then \
-	  cargo build --release --target wasm32-wasip2 \
-	    --lib --no-default-features --features random -q || { \
-	    echo "FAIL: wasm32-wasip2 rlib rebuild"; exit 1; \
-	  }; \
-	elif [ -d target/wasm32-wasip2 ]; then \
-	  echo "WARN: wasm32-wasip2 std not installed — skipping wasm rlib refresh"; \
-	  echo "      (stale target/wasm32-wasip2/ present; run: rustup target add wasm32-wasip2)"; \
-	fi
 
 # Disk-backed scratch for native/wasm test compiles — keeps rustc/rust-lld link
 # intermediates AND the loft native binary cache off the /tmp tmpfs (a ~7.5G RAM
@@ -576,10 +364,8 @@ rebuild-native-cdylibs:
 # sweeping an empty directory and reporting the 23 GB one emptied.
 REPO_TAG := $(shell printf '%s' "$(notdir $(CURDIR))" | tr -c 'A-Za-z0-9._-' '_').$(shell printf '%s' "$(CURDIR)" | cksum | cut -d' ' -f1)
 TEST_SCRATCH := /var/tmp/loft-test-scratch-$(REPO_TAG)
-# The native backend a TEST run compiles through: the C, as on CI's PR gate (@PLN203); the
-# rustc-native backend runs on the daily schedule.  `make <target> NATIVE_BACKEND=` puts rustc
-# back for one run.  Only the test runs read it: a census or a perf lane counting the Rust
-# writer keeps `--native` = rustc.
+# The native backend a TEST run compiles through: the C, the one compiled backend, named as
+# CI's PR gate names it (@PLN203).
 NATIVE_BACKEND ?= c
 TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH) LOFT_NATIVE_BACKEND=$(NATIVE_BACKEND)
 
@@ -628,7 +414,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: wide-ledger wide-ledger-bless c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install reason-census rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: wide-ledger wide-ledger-bless c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap janitor-install reason-census rewrite-census rewrite-census-bless decline-census speed-discover speed-bless sweep-scratch sweep-target claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -669,19 +455,13 @@ fences:  ## Every code sample on LOFT.md / STDLIB.md / the comparison pages, and
 	python3 scripts/rule_tags.py fences
 sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sample, a rule, a feature, a stdlib name (@PLN176; gated in ci)
 	python3 scripts/rule_tags.py sections
-rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline, on either writer, or a rule reports to no census
+rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline, or a rule reports to no census
 	python3 scripts/rule_tags.py phases --check
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
-runtime-surface:  ## What emitted Rust names in the loft crate, over the corpus, and what of it lies outside the runtime set (doc/claude/RUNTIME_SURFACE.md; a report)
+interp-gap:  ## Where the interpreter still moves data the C backend no longer does, per bench routine (a report; ARGS="--only 14,16")
 	cargo build --release --bin loft -q
-	python3 scripts/runtime_surface.py --write
-gap-report:  ## Where one routine's distance to its Rust twin lives: own code, inlined runtime, called runtime, loft lines, declines (ARGS="--bench 17 --fn c_slope_path")
-	cargo build --release --lib --bin loft -q
-	python3 scripts/gap_report.py $(ARGS)
-interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
-	cargo build --release --lib --bin loft -q
-	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
+	cargo build --release --bin loft -q --features op-census --target-dir target/op-census
 	python3 scripts/interp_gap.py $(ARGS)
 worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal), re-timed quickly (ARGS="--axis interp|native", "--list")
 	cargo build --release --bin loft -q
@@ -778,13 +558,9 @@ iter:
 # wasm: build the browser bundle (loft.js + loft_bg.wasm under doc/pkg/)
 # via wasm-pack.  Uses the `wasm` feature → pulls in wasm-bindgen → the
 # resulting wasm has __wbindgen_placeholder__ imports that wasm-bindgen-cli
-# replaces during post-processing.  This is the wasm-pack pipeline; it
-# is NOT compatible with the `loft --html` pipeline (see `make game` /
-# `make wasm-html-test`), which links a no-wasm-feature rlib instead.
-#
-# CAVEAT: this overwrites target/wasm32-unknown-unknown/release/libloft.rlib
-# with the wasm-bindgen variant.  Re-run `make game` (or
-# `make wasm-html-test`) afterwards if you need the --html variant back.
+# replaces during post-processing.  This is the interpreter in the browser
+# (the gallery and the playground); a `loft --html` page is the program
+# itself, compiled through the C and clang.
 wasm:
 	$$HOME/.cargo/bin/wasm-pack build --target web --out-dir doc/pkg --release -- --features wasm --no-default-features
 	@./scripts/wasm_bundle_stamp.sh > doc/pkg-src.stamp
@@ -987,11 +763,9 @@ index:  ## Refresh index/tags.json via the loft scanner
 	    echo "host loft binary missing; run: cargo build --release"; exit 1; \
 	fi
 	@mkdir -p index
-	@# `--ship` (rather than bare `--native`) instructs rustc
-	@# to emit `-O` (opt-level=2) and the loft codegen to emit only
-	@# reachable functions.  For a hot loop like scan.loft the
-	@# difference is dramatic: scan loop 1.7s → 165ms, total 5s → 1.3s
-	@# warm-cache.  Cold compile costs ~6s but the per-source cache
+	@# `--ship` (rather than bare `--native`) is the optimised C build.
+	@# For a hot loop like scan.loft the difference is large.  The cold
+	@# compile costs seconds, but the per-source cache
 	@# (tools/indexer/src/.loft/cache/) survives across runs, so the
 	@# everyday `make index` invocation is the warm path.
 	@LOFT_INDEX_BUCKETED=1 ./target/release/loft --ship --no-warnings --lib lib/ \
@@ -1015,11 +789,8 @@ hooks:
 # that CI runs cross-backend.  See doc/claude/plans/92-feature-catalogue/.
 FEATURES_REPO ?= loft-lang/features
 
-# The probe reads the `--html` shape's OWN rlib, target/loft/html/wasm32-unknown-unknown/
-# release — the one `loft --html` links, in the directory `make wasm`'s wasm-bindgen build
-# cannot overwrite.  Build it first: `loft cache warm`, or `cargo build --release --target
-# wasm32-unknown-unknown --lib --no-default-features --features random --target-dir
-# target/loft/html`.
+# The probe builds the Rust runtime for wasm32-unknown-unknown in its own directory,
+# target/loft/html, and asks rustc which runtime methods it has.
 surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per target)
 	@python3 scripts/gen_target_surface.py
 
@@ -1215,7 +986,7 @@ nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twi
 # against this tree's release binary (`LOFT=` names another).  CI runs it at the commit
 # `tests/loft-suite.pin` names; by hand it runs whatever that checkout has.
 #   make suite                                # every rule cell, interpreter
-#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends (the rlib must be current)
+#   make suite ARGS="@FR-B-Copy --mode both"  # one rule, both backends
 #   make suite ARGS="--chapter ownership"
 .PHONY: suite
 suite:  ## @PLN193: the language suite beside this checkout (../loft-suite or LOFT_SUITE_DIR) against target/release/loft
@@ -1344,11 +1115,10 @@ view: view-refresh
 	    echo "host loft binary missing; run: make view-build"; \
 	    exit 1; \
 	fi
-	# Default to --ship (rustc -O).  Bare --native runs
-	# unoptimised generated Rust — for an HTTP server that handles
-	# repeated requests, the per-request cost difference is large
-	# (10× on hot loops; see PERFORMANCE.md § Measuring native code).  Cold
-	# compile is ~6s; cached binary survives across restarts via
+	# Default to --ship (the optimised C build).  Bare --native is
+	# unoptimised — for an HTTP server that handles repeated requests,
+	# the per-request cost difference is large (see PERFORMANCE.md
+	# § Measuring native code).  The cached binary survives restarts via
 	# tools/viewer/src/.loft/cache/.
 	# @P274 closed 2026-05-14 (use-after-free in
 	# patch_hoisted_returns Pass 2 + text-concat type-dispatch in
@@ -1361,26 +1131,16 @@ view: view-refresh
 	    ./target/release/loft --ship --lib lib/ tools/viewer/src/main.loft; \
 	fi
 
-# game: rebuild the efficient browser build of Brick Buster from any
-# state — clean rebuild of the wasm32-unknown-unknown rlibs + host
-# binary + `loft --html`, then publish the resulting self-contained
-# HTML to doc/brick-buster.html.  Use when the check-in looks broken
-# or after an upstream change that invalidates either the wasm rlib
-# or the host tooling.
+# game: rebuild the browser build of Brick Buster from any state — the host binary,
+# then `loft --html` (the C, compiled by clang to wasm), then publish the resulting
+# self-contained HTML to doc/brick-buster.html.
 #
 # Steps (each fails loudly, no silent skips):
-#   1. Rebuild the host binary so --html and its native_utils helpers
-#      are current.
-#   2. Ensure the wasm32-unknown-unknown target is installed.
-#   3. Rebuild the wasm32-unknown-unknown libloft.rlib + deps via
-#      `make wasm-assets`; this is the ingredient `--html` links
-#      against and is the single most common source of "W1.1"
-#      compile failures.
-#   4. Verify libloft.rlib exists for both wasm32 and the host
-#      (proc-macros need the host deps dir).
-#   5. Run `loft --html doc/brick-buster.html ...25-brick-buster.loft`.
-#   6. Sanity-check the output HTML: doctype + loft_start + > 5kB.
-#   7. Print the file:// URL so the user can click through.
+#   1. Rebuild the host binary so --html is current.
+#   2. Draw the sprite pack, then run `loft --html doc/brick-buster.html ...`.
+#   3. Sanity-check the output HTML: doctype + loft_start + > 5kB, then the
+#      bundle's import/export shape (tools/check_html_bundle.mjs).
+#   4. Print the file:// URL so the user can click through.
 # ── Brick Buster's sprite pack ─────────────────────────────────────
 #
 # The atlas is drawn ONCE, into a content pack the game reads, rather
@@ -1424,39 +1184,19 @@ brick-buster-pack:
 	    echo "    FAIL: pack_atlas.loft produced no assets/bb.blobs.store"; exit 1; }
 
 game:
-	@echo "  [1/7] building host binary + libloft.rlib ..."
-	@# `--bin loft` alone does not always produce the top-level
-	@# libloft.rlib that step 4 requires for proc-macro lookup;
-	@# building both explicitly guarantees both artefacts exist.
-	@cargo build --release -q --lib --bin loft || { echo "    FAIL: host cargo build"; exit 1; }
-	@echo "  [2/7] checking wasm32-unknown-unknown target ..."
-	@rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown || { \
-	    echo "    FAIL: rustup target not installed"; \
-	    echo "    install with: rustup target add wasm32-unknown-unknown"; \
-	    exit 1; }
-	@echo "  [3/7] rebuilding wasm32-unknown-unknown rlibs ..."
-	@cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random \
-	    >/tmp/loft_game_wasm.log 2>&1 || { \
-	    echo "    FAIL: wasm rlib build — see /tmp/loft_game_wasm.log"; \
-	    tail -20 /tmp/loft_game_wasm.log; exit 1; }
-	@echo "  [4/7] verifying libloft.rlib for both targets ..."
-	@test -f target/wasm32-unknown-unknown/release/libloft.rlib || { \
-	    echo "    FAIL: target/wasm32-unknown-unknown/release/libloft.rlib missing"; exit 1; }
-	@test -f target/release/libloft.rlib || { \
-	    echo "    FAIL: target/release/libloft.rlib missing (needed for proc-macros)"; exit 1; }
-	@echo "  [5/7] compiling Brick Buster to self-contained HTML ..."
+	@echo "  [1/4] building the host binary ..."
+	@cargo build --release -q --bin loft || { echo "    FAIL: host cargo build"; exit 1; }
+	@echo "  [2/4] compiling Brick Buster to self-contained HTML ..."
 	@$(MAKE) --no-print-directory brick-buster-pack
-	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
-	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
-	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
-	@# passes on it.
-	@./target/release/loft --native-rust --html doc/brick-buster.html \
+	@# The page builds through the C and clang (`--html`, @PLN203 C9): the rustc writer is
+	@# retired (@C170).
+	@./target/release/loft --html doc/brick-buster.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/brick-buster/25-brick-buster.loft \
 	    >/tmp/loft_game_html.log 2>&1 || { \
 	    echo "    FAIL: --html compilation — see /tmp/loft_game_html.log"; \
 	    tail -30 /tmp/loft_game_html.log; exit 1; }
-	@echo "  [6/7] sanity-checking HTML output ..."
+	@echo "  [3/4] sanity-checking HTML output ..."
 	@test -f doc/brick-buster.html || { echo "    FAIL: doc/brick-buster.html not created"; exit 1; }
 	@size=$$(stat -c %s doc/brick-buster.html 2>/dev/null || stat -f %z doc/brick-buster.html); \
 	if [ $$size -lt 5000 ]; then \
@@ -1465,8 +1205,8 @@ game:
 	grep -q "<!DOCTYPE html>" doc/brick-buster.html || { echo "    FAIL: missing DOCTYPE"; exit 1; }; \
 	grep -q "loft_start" doc/brick-buster.html || { echo "    FAIL: missing loft_start entry"; exit 1; }
 	@# Integrity gate (@P337): a size/DOCTYPE check is NOT enough — the two
-	@# ways this bundle silently breaks are (a) a STOMPED rlib (wasm-bindgen
-	@# placeholder imports → won't instantiate) and (b) MISSING wasm-opt
+	@# ways this bundle silently breaks are (a) a wasm that imports a module the
+	@# page does not supply (won't instantiate) and (b) MISSING wasm-opt
 	@# (no asyncify → render loop hangs the tab).  Both pass the size check.
 	@# This instantiates the embedded wasm with stub imports and asserts the
 	@# import/export shape, so a broken bundle fails the build loudly instead
@@ -1481,7 +1221,7 @@ game:
 	@# scripts/cache_bust_html.py for rationale (GitHub Pages doesn't
 	@# let us set custom HTTP headers; the only lever is the HTML).
 	@python3 scripts/cache_bust_html.py >/dev/null
-	@echo "  [7/7] Brick Buster ready."
+	@echo "  [4/4] Brick Buster ready."
 	@echo ""
 	@echo "    Open in your browser:"
 	@echo "      file://$$(pwd)/doc/brick-buster.html"
@@ -1492,27 +1232,15 @@ game:
 # crystal-editor: build the stand-alone audience crystal editor
 # (tools/audience-demo/crystal_editor.loft) to a self-contained browser
 # page doc/crystal-editor.html — the GitHub Pages demo.  Mirrors `make
-# game`: host binary + wasm rlib, then `loft --html` (which bundles the
-# WebGL backend lib/graphics/js/loft-gl.js), then cache-bust.
+# game`: host binary, then `loft --html` (which bundles the WebGL backend
+# lib/graphics/js/loft-gl.js), then cache-bust.
 crystal-editor:
-	@echo "  [1/5] building host binary + libloft.rlib ..."
-	@cargo build --release -q --lib --bin loft || { echo "    FAIL: host cargo build"; exit 1; }
-	@echo "  [2/5] checking wasm32-unknown-unknown target ..."
-	@rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown || { \
-	    echo "    FAIL: rustup target not installed"; \
-	    echo "    install with: rustup target add wasm32-unknown-unknown"; \
-	    exit 1; }
-	@echo "  [3/5] rebuilding wasm32-unknown-unknown rlibs ..."
-	@cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random \
-	    >/tmp/loft_crystal_wasm.log 2>&1 || { \
-	    echo "    FAIL: wasm rlib build — see /tmp/loft_crystal_wasm.log"; \
-	    tail -20 /tmp/loft_crystal_wasm.log; exit 1; }
-	@echo "  [4/5] compiling Crystal Editor to self-contained HTML ..."
-	@# The deployed page is the rustc writer's: steps above build the wasm32-unknown-unknown
-	@# rlib it links, and tools/check_html_bundle.mjs checks that shape.  `--html` alone now
-	@# builds through the C (@PLN203 C9); the site moves to the C page once the browser probe
-	@# passes on it.
-	@./target/release/loft --native-rust --html doc/crystal-editor.html \
+	@echo "  [1/3] building the host binary ..."
+	@cargo build --release -q --bin loft || { echo "    FAIL: host cargo build"; exit 1; }
+	@echo "  [2/3] compiling Crystal Editor to self-contained HTML ..."
+	@# The page builds through the C and clang (`--html`, @PLN203 C9): the rustc writer is
+	@# retired (@C170).
+	@./target/release/loft --html doc/crystal-editor.html \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/audience-demo/crystal_editor.loft \
 	    >/tmp/loft_crystal_html.log 2>&1 || { \
@@ -1526,7 +1254,7 @@ crystal-editor:
 	grep -q "<!DOCTYPE html>" doc/crystal-editor.html || { echo "    FAIL: missing DOCTYPE"; exit 1; }; \
 	grep -q "loft_start" doc/crystal-editor.html || { echo "    FAIL: missing loft_start entry"; exit 1; }
 	@python3 scripts/cache_bust_html.py >/dev/null
-	@echo "  [5/5] Crystal Editor ready."
+	@echo "  [3/3] Crystal Editor ready."
 	@echo ""
 	@echo "    Open in your browser:"
 	@echo "      file://$$(pwd)/doc/crystal-editor.html"
@@ -1538,13 +1266,8 @@ crystal-editor:
 # Buster, then launch the game.  Prerequisites checked in order so
 # the first missing item fails fast with an actionable message.
 play:
-	@echo "  [1/5] checking loft binary + libloft.rlib ..."
-	@# Build both --lib and --bin so libloft.rlib (consumed by the
-	@# /tmp/loft_native.rs compile in step 5) matches the current
-	@# transitive dep set.  Building only --bin can leave a stale
-	@# libloft.rlib referencing an older rand_core and rustc fails
-	@# with E0460 "found possibly newer version of crate `rand_core`".
-	@cargo build --release -q --lib --bin loft 2>/tmp/loft_play_host.log || { \
+	@echo "  [1/5] checking the loft binary ..."
+	@cargo build --release -q --bin loft 2>/tmp/loft_play_host.log || { \
 	    echo "    FAIL: host cargo build — see /tmp/loft_play_host.log"; \
 	    tail -20 /tmp/loft_play_host.log; exit 1; }
 	@echo "  [2/5] checking system GL libraries ..."
@@ -1595,10 +1318,8 @@ play:
 	@echo ""
 	@echo "    Controls: ←/→ or A/D to move, Space to launch, Esc to quit"
 	@echo ""
-	@# --ship (rustc -O) for the game frame loop; bare
-	@# --native runs unoptimised generated Rust and burns frame
-	@# budget on call-ABI / null-sentinel bookkeeping the optimiser
-	@# normally elides.  Cold compile is ~6s; cached binary survives
+	@# --ship (the optimised C build) for the game frame loop; bare
+	@# --native is the unoptimised build.  The compiled binary is cached
 	@# across runs.
 	@$(MAKE) --no-print-directory brick-buster-pack
 	@./target/release/loft --ship \
@@ -1622,7 +1343,7 @@ play:
 #                       or the graphics cdylib installed.
 native-editor:
 	@echo "  [1/3] building loft binary + cdylib ..."
-	@cargo build --release -q --lib --bin loft 2>/tmp/loft_editor_host.log || { \
+	@cargo build --release -q --bin loft 2>/tmp/loft_editor_host.log || { \
 	    echo "    FAIL: host cargo build — see /tmp/loft_editor_host.log"; \
 	    tail -20 /tmp/loft_editor_host.log; exit 1; }
 	@cd lib/graphics/native && cargo build --release -q 2>/tmp/loft_editor_graphics.log || { \
@@ -1646,7 +1367,7 @@ native-editor:
 
 editor-dist:
 	@echo "  [1/5] building loft binary + cdylib (release-optimised) ..."
-	@cargo build --release -q --lib --bin loft 2>/tmp/loft_dist_host.log || { \
+	@cargo build --release -q --bin loft 2>/tmp/loft_dist_host.log || { \
 	    echo "    FAIL: host cargo build — see /tmp/loft_dist_host.log"; \
 	    tail -20 /tmp/loft_dist_host.log; exit 1; }
 	@cd lib/graphics/native && cargo build --release -q 2>/tmp/loft_dist_graphics.log || { \
@@ -1699,31 +1420,16 @@ editor-dist:
 	@echo "  Distributable:  dist/moros-editor/"
 	@echo "  Run:            ./dist/moros-editor/moros-editor"
 
-# wasm-html-test: run the WASM-runtime safety gate (tests/html_wasm.rs).
-#
-# Why this target exists:  `make wasm` (wasm-pack pipeline) and
-# `loft --html` (Brick Buster pipeline) both write to the same path
-# `target/wasm32-unknown-unknown/release/libloft.rlib` but with
-# incompatible feature sets.  After `make wasm` the rlib pulls in
-# wasm-bindgen and the html_wasm tests fail to instantiate (`Import #1
-# module="__wbindgen_placeholder__": module is not an object or
-# function`).  This target rebuilds the rlib in the --html shape
-# (no `wasm` feature) before invoking the test, so the gate is
-# deterministic regardless of what was built last.
+# wasm-html-test: run the WASM-runtime safety gate (tests/html_wasm.rs), on a
+# current host binary.  `--html` compiles through the C and clang, so nothing
+# else is built first.
 #
 # RELEASE.md § Safety gate cites this as the WASM-runtime gate.
 wasm-html-test:
-	@echo "  [1/3] checking wasm32-unknown-unknown target ..."
-	@rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown || { \
-	    echo "    FAIL: rustup target not installed"; \
-	    echo "    install with: rustup target add wasm32-unknown-unknown"; \
-	    exit 1; }
-	@echo "  [2/3] rebuilding wasm rlib for --html (no wasm feature) ..."
-	@cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random || { \
-	    echo "    FAIL: wasm rlib build"; exit 1; }
-	@cargo build --release -q --lib --bin loft || { \
-	    echo "    FAIL: host binary + libloft.rlib build"; exit 1; }
-	@echo "  [3/3] running html_wasm safety gate ..."
+	@echo "  [1/2] building the host binary ..."
+	@cargo build --release -q --bin loft || { \
+	    echo "    FAIL: host binary build"; exit 1; }
+	@echo "  [2/2] running html_wasm safety gate ..."
 	@cargo test --release --test html_wasm
 
 # Browser-side WebGL rendering gate.  Builds doc/brick-buster.html
@@ -1741,8 +1447,7 @@ test-html-render:
 	@# Build the HTML artefact BEFORE the cargo test invocation.
 	@# tests/html_render.rs intentionally does NOT auto-build via
 	@# `make game` — that would invoke `cargo build` mid-`cargo test`
-	@# and race the rustc invocations in tests/native.rs over
-	@# target/release/deps/.  Calling `make game` from this target
+	@# and race the test build over target/release/.  Calling `make game` from this target
 	@# keeps the build outside the test process.
 	@$(MAKE) game >/dev/null
 	@cargo test --release --test html_render
@@ -1751,10 +1456,9 @@ clean:
 	-rm -rf result.txt tests/dumps/*.txt tests/generated/* pkg target/* perf.data perf.data.old profiler.svg
 
 # Nuke only the wasm32 build trees + the browser bundle.  Run when a
-# rustc bump leaves a stale rlib that masks real wasm regressions
-# (pre-existing failures silently pass until a full rebuild).  Keep
-# this OUT of `make ci` — the fast gate stays fast.  Use before
-# `make wasm-html-test` or `make gallery` when you suspect staleness.
+# rustc bump leaves a stale wasm build that masks real regressions in the
+# gallery bundle.  Keep this OUT of `make ci` — the fast gate stays fast.
+# Use before `make gallery` when you suspect staleness.
 clean-wasm:
 	-rm -rf target/wasm32-unknown-unknown target/wasm32-wasip2 doc/pkg
 
@@ -1828,39 +1532,35 @@ par-gates:
 
 # @PLN117 — type-check loft's OWN browser thread pool (src/wasm_threads.rs).  It
 # is browser-only by nature, so the host `cargo clippy --all-features` never sees
-# it; this is where it gets compiled.  Same recipe the `--html` threaded build
-# uses, minus the link step.
-# #619 — BUILD the threaded browser runtime (the `html-mt` shape) so `make
-# install` can ship it.  Without this the installed loft has only the plain
-# `wasm32-unknown-unknown` shape, so `--html --threads` finds no threaded
-# runtime and falls back to a single-threaded page — the half of #619 that the
-# silent-fallback diagnostic reports but could not fix.
-#
-# NIGHTLY-CONDITIONAL by necessity: only `-Z build-std` can produce a std
-# compiled with wasm atomics, and that is nightly-only.  A stable-only box skips
-# it with a message and installs everything else; `--html --threads` then says
-# exactly what is missing (the #619 diagnostic) instead of silently degrading.
-wasm-html-mt-lib:
-	@if ! rustup run nightly rustc -V >/dev/null 2>&1; then \
-	  echo "skip: threaded browser runtime needs the nightly toolchain (rustup toolchain install nightly)"; \
-	  echo "      installing without it — 'loft --html --threads' will report the missing runtime."; \
-	elif ! rustup run nightly rustc --print sysroot 2>/dev/null | xargs -I{} test -d {}/lib/rustlib/src/rust; then \
-	  echo "skip: threaded browser runtime needs rust-src (rustup component add rust-src --toolchain nightly)"; \
-	  echo "      installing without it — 'loft --html --threads' will report the missing runtime."; \
-	else \
-	  echo "building the threaded browser runtime (html-mt) — build-std, one-time"; \
-	  RUSTFLAGS='$(WASM_MT_RUSTFLAGS)' RUSTC=$(NIGHTLY_RUSTC) \
-	  rustup run nightly cargo build --release --lib --target wasm32-unknown-unknown \
-	    --no-default-features --features "random wasm-native-threads" \
-	    --target-dir target/loft/html-mt -Zbuild-std=panic_abort,std \
-	  || { echo "FAIL: threaded browser runtime build"; exit 1; }; \
-	fi
-
+# it; this is where it gets compiled.  Same recipe the threaded gallery bundle
+# (`make gallery-mt`) uses, minus the link step.
 check-wasm-threads:
 	RUSTFLAGS='-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals' RUSTC=$(NIGHTLY_RUSTC) \
 	rustup run nightly cargo check --lib --target wasm32-unknown-unknown \
 	--no-default-features --features "random wasm-native-threads" \
 	--target-dir target/loft/html-mt -Zbuild-std=panic_abort,std
+
+# @C3 — wasi-sdk's WASI sysroot, whose `wasm32-wasip1-threads` libc a page that runs `par` on
+# Web Workers links against (plans/227-par-on-c-pages.md); distribution packages of the WASI
+# libc carry no threads variant.  Put where `loft::platform::wasm_threads_sysroot` looks.
+WASI_SDK_VERSION ?= 34
+wasi-threads-sysroot:
+	@d="$$HOME/.loft/toolchains"; v=$(WASI_SDK_VERSION); \
+	if [ -f "$$d/wasi-sysroot/lib/wasm32-wasip1-threads/libc.a" ]; then exit 0; fi; \
+	mkdir -p "$$d" && \
+	curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$$v/wasi-sysroot-$$v.0.tar.gz" \
+	  | tar xz -C "$$d" && rm -rf "$$d/wasi-sysroot" && mv "$$d/wasi-sysroot-$$v.0" "$$d/wasi-sysroot"
+
+# The whole wasi-sdk of the same release: its clang, wasm-ld and compiler builtins beside the
+# sysroot they were built with.  A distribution's older clang can fail to link that sysroot's
+# threads libc, and loft then builds the page unthreaded; `LOFT_WASM_CC=<dir>/bin/clang` with
+# `WASI_SDK_PATH=<dir>` names this one.
+wasi-sdk:
+	@d="$$HOME/.loft/toolchains"; v=$(WASI_SDK_VERSION); \
+	if [ -x "$$d/wasi-sdk/bin/clang" ]; then exit 0; fi; \
+	mkdir -p "$$d" && \
+	curl -fsSL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$$v/wasi-sdk-$$v.0-x86_64-linux.tar.gz" \
+	  | tar xz -C "$$d" && rm -rf "$$d/wasi-sdk" && mv "$$d/wasi-sdk-$$v.0-x86_64-linux" "$$d/wasi-sdk"
 
 wasm-mt:
 	RUSTFLAGS='$(WASM_MT_RUSTFLAGS)' RUSTC=$(NIGHTLY_RUSTC) \
@@ -2142,7 +1842,6 @@ o-proxy-check:  ## @FR-O-Proxy: does every free on the empty-deps proxy consult 
 	@# `doc_hygiene::o_proxy_frees_consult_the_override`, which runs this same script.
 	@python3 scripts/o_proxy_check.py
 
-.PHONY: ir-schema-check ir-schema-regen
 falsify:  ## Run a guard against the build it was written to catch: GUARD=<file> [REF=<commit>]
 	@# A guard that passes on the build it was written for proves nothing, and the ways
 	@# that happens are not exotic — the wrong ENTRY POINT, a success marker the error
@@ -2160,73 +1859,6 @@ falsify:  ## Run a guard against the build it was written to catch: GUARD=<file>
 	@if [ -n "$(REF)" ]; then ./scripts/falsify.sh "$(GUARD)" "$(REF)"; \
 	else ./scripts/falsify.sh "$(GUARD)" --installed; fi
 
-ir-schema-check:  ## Is src/ir_schema_gen.rs still what selfhost/src/ir.loft generates?
-	@# The generated file IS the store layout (record sizes, field offsets, the Node
-	@# discriminants data_store.rs bakes into DISC_*).  It drifted once already — Key
-	@# gained a `start` field, the generated file was updated, ir.loft was not — and a
-	@# wrong layout is a wrong byte offset, not a build error.  Gated by
-	@# `doc_hygiene::ir_schema_gen_matches_its_loft_source`, which runs this same script.
-	@scripts/ir_schema_check.sh
-
-ir-schema-regen:  ## Rewrite src/ir_schema_gen.rs from selfhost/src/ir.loft
-	@scripts/ir_schema_check.sh --fix
-	@echo "now run: cargo test --lib baked_layout_mirrors_loft_schema"
-
-.PHONY: check-rlib
-check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present and current?
-	@# The native path (`build_shared_cdylib`) links `libloft.rlib`, and NOTHING in an
-	@# ordinary edit loop rebuilds it: `cargo build --bin loft` refreshes the binary and
-	@# leaves the library rlib alone, `cargo build --release --lib` is the only thing that
-	@# touches it.  So a session that iterates on the compiler with `--bin loft` drifts,
-	@# and the drift is invisible until a gate runs.
-	@#
-	@# It costs a full cycle when it lands, which is why this check exists at all.  It does
-	@# not fail like a compile error: it surfaces ~9 minutes in as a handful of native tests
-	@# failing for what look like unrelated reasons — `libloft.rlib not found for this
-	@# build`, a cdylib mtime that did not advance, a `native_scripts` sweep going red — each
-	@# naming a file that is present when you go and look.
-	@#
-	@# This target REPORTS; it is not wired into `ci`.  `make ci` builds all three itself
-	@# (beside the wasm builds it already ran), because a gate that refuses on a condition
-	@# it could satisfy is friction on every run after every edit, and friction is what
-	@# gets a check switched off.  Reach for this before a BARE `cargo test --release`,
-	@# which builds no rlib of its own and is where the drift actually bites.
-	@# Keyed on the SOURCES, not on `deps/`.  A from-source tree usually has no
-	@# `deps/libloft-<hash>.rlib` at all — only the bare uplifted one — so comparing the
-	@# two finds nothing and reports "current" on a tree that is anything but.  What is
-	@# always true is that a `.rs` newer than an rlib means that rlib predates the code
-	@# the rest of the gate is about to test.
-	@#
-	@# THREE rlibs, because there are three link targets and each has its own suite:
-	@# the native one (`--native`, the cdylib tests), the browser one (`--html`), and
-	@# wasip2 (the wasm library suite).  They drift independently — refreshing the
-	@# native rlib does nothing for `--html`, which is how a green re-run still went red
-	@# on `moros_editor_html_smoke` and `wasm_library_suite` alone.  A target directory
-	@# that does not exist is SKIPPED, not failed: not every checkout installs the wasm
-	@# targets, and a check that fails on their absence would just be turned off.
-	@fail=0; \
-	for spec in \
-	    "target/release/libloft.rlib|cargo build --release --lib|native (--native, cdylib tests)" \
-	    "target/loft/html/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html|browser (--html)" \
-	    "target/wasm32-wasip2/release/libloft.rlib|cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random|wasip2 (wasm library suite)"; do \
-	    rlib=$${spec%%|*}; rest=$${spec#*|}; cure=$${rest%%|*}; what=$${rest#*|}; \
-	    dir=$$(dirname "$$(dirname "$$rlib")"); \
-	    if [ ! -d "$$dir" ]; then continue; fi; \
-	    if [ ! -f "$$rlib" ]; then \
-	        echo "make: $$rlib is MISSING — the $$what tests cannot link."; \
-	        echo "  Run: $$cure"; fail=1; continue; \
-	    fi; \
-	    newer=$$(find src Cargo.toml -newer "$$rlib" -print -quit 2>/dev/null); \
-	    if [ -n "$$newer" ]; then \
-	        echo "make: $$rlib is STALE — $$newer is newer than it."; \
-	        echo "  The $$what tests link it, so they would test an outdated library"; \
-	        echo "  and fail ~9 minutes in for reasons that look unrelated to the edit."; \
-	        echo "  Run: $$cure"; fail=1; \
-	    fi; \
-	done; \
-	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "libloft.rlib: present and current (native + wasm)"
-
 .PHONY: ci-guard
 # What a full gate needs free BEFORE it starts: three profiles rebuilt plus a run's scratch
 # (measured 2026-09-28: a gate that began with 33 GB free died three minutes in on
@@ -2241,10 +1873,8 @@ ci-guard:
 	@# they FAKE FAILURES in each other and both reports become fiction:
 	@#
 	@#   * they share `target/`, so the second run's `cargo build` replaces the
-	@#     debug rlib the first is linking tests against.  The symptom is
-	@#     `error: extern location for loft does not exist:
-	@#     target/debug/deps/libloft.rlib` across ~20 native tests — a red gate
-	@#     naming a file that is present when you look;
+	@#     artefacts the first is testing — a red gate naming a file that is
+	@#     present when you look;
 	@#   * they share `result.txt`, so the second truncates the first's report
 	@#     mid-write and the surviving text belongs to neither run.
 	@#
@@ -2280,8 +1910,8 @@ ci-guard:
 	fi; \
 	if [ -n "$$claim" ]; then \
 	    echo "make ci: REFUSED — a gate is already running in this tree (make pid $$claim)."; \
-	    echo "  Two runs share target/ and result.txt; the second deletes the rlib the first"; \
-	    echo "  links against and truncates its report, so BOTH results would be fiction."; \
+	    echo "  Two runs share target/ and result.txt; the second rebuilds what the first is"; \
+	    echo "  testing and truncates its report, so BOTH results would be fiction."; \
 	    echo "  Wait for it to finish, or stop it first."; \
 	    exit 1; \
 	fi
@@ -2398,38 +2028,23 @@ ci: ci-guard
 	#                       repeated PR-212 cycles where ignored drift
 	#                       surfaced as downstream test failures)
 	#   3b. cache warm     → loft#1238: build the native artifacts this run is
-	#                       about to need, ONCE, before the parallel section.
-	#                       loft's own wasm runtime rlib is keyed on the rlib's
-	#                       content hash, so the rebuild above invalidates it
-	#                       (package cdylibs are keyed on the loft-ffi ABI +
-	#                       RUSTFLAGS and survive, @PLN159 C) — and the FIRST
-	#                       test to want a stale one pays the full rebuild
-	#                       while the rest queue on the global build lock.  Measured: 25.6s for the wasm rlib,
-	#                       63s for the `random` cdylib on a loaded box,
-	#                       against a 60s per-test budget that blew twice.
-	#                       Run with BOTH binaries: the cdylib key is
-	#                       profile-independent, but the wasm-rlib fingerprint
-	#                       is a content hash of the rlib beside the binary, and
-	#                       `html_asyncify` drives `target/release/loft` while
-	#                       every `CARGO_BIN_EXE_loft` test drives the dev one
-	#                       (`w1_1_html_export_produces_file` built its own for
-	#                       238-353 s in CI when only the release one was warm).
+	#                       about to need, ONCE, before the parallel section,
+	#                       so no test pays a library's build while the rest
+	#                       queue on the global build lock (63s for the `random`
+	#                       library on a loaded box, against a 60s per-test
+	#                       budget that blew twice).  Run with BOTH binaries:
+	#                       what is built is keyed on the loft build that asks
+	#                       (`cache::loft_build_fingerprint`, its executable's
+	#                       content hash), and `html_asyncify` drives
+	#                       `target/release/loft` while every
+	#                       `CARGO_BIN_EXE_loft` test drives the dev one.
 	#                       0.3-0.5s once warm; never fails the gate.
 	#   4. Test       job → cargo build --all-targets,
-	#                       cargo build --release --target wasm32-wasip2/
-	#                         wasm32-unknown-unknown --lib (added
-	#                         2026-06-12: the wasm targets are a separate
-	#                         COMPILE GATE — a cfg'd fn whose call sites
-	#                         aren't cfg'd breaks them while every native
-	#                         gate stays green, hidden behind stale rlibs
-	#                         until something rebuilds one; bit twice in
-	#                         the @PLN18 arc.  ~seconds when warm),
-	#                       cargo build --no-default-features
-	#                         (to an isolated --target-dir: this strips
-	#                          `native-extensions` from libloft.rlib, and
-	#                          sharing target/debug/deps/ let it stomp the
-	#                          rlib the native tests link → intermittent
-	#                          `E0433: cannot find native_call`),
+	#                       cargo build --no-default-features (to an isolated
+	#                         --target-dir, so it does not rebuild the
+	#                         default-feature artefacts the tests use),
+	#                       gen_target_surface.py --check (builds the Rust
+	#                         runtime for wasm32-unknown-unknown itself),
 	#                       cargo nextest run --profile ci
 	#
 	# Drift from what GH runs is the most common cause of "passed local,
@@ -2469,24 +2084,6 @@ ci: ci-guard
 	#      uncommitted diff to subjects (test_subjects.sh) and hands nextest a
 	#      `priority` override in a tool config file that layers under
 	#      .config/nextest.toml.  Coverage is untouched — it is an order.
-	# And one local-only GATE that ci.yml does not run (2026-09-28):
-	#   R. The native/Rust ratio gate — `scripts/native_ratio.sh --gate` against
-	#      bench/ratio_oracle.tsv, LAST in the chain so it measures on a box the gate
-	#      has finished loading.  It is the (Perf-Weight) bar of formal/performance.md
-	#      made a gate; the release checklist's `M-perf-pass` row reads it as such.
-	#      Not mirrored in ci.yml because a shared runner's timing is noise
-	#      (CI_BUDGET.md § What a GitHub run cannot do), and a timing gate that
-	#      flakes is a gate people learn to ignore.  Red here: `make
-	#      native-ratio-gate` alone before believing it.  ~40 s.
-	#      ⚠ The bars are RATIOS, and a ratio is machine-bound: the oracle's rows
-	#      were measured on the owner's x86-64 laptop (bench/README.md § The row
-	#      protocol).  Another CPU can read a row over its bar REPEATABLY — a cloud
-	#      Xeon @ 2.80GHz read sum_loop 3.1/3.5 against 2.3, collatz 3.7/4.1 against
-	#      2.5 and sort 3.5/3.4 against 3.1 on two consecutive runs (2026-09-28),
-	#      with sieve, mandelbrot and dot_product at their laptop values.  So a red
-	#      row on a box the bars were not set on is a CALIBRATION question, not a
-	#      regression in the diff: read the table as the report it also is, and
-	#      raise it rather than re-blessing the oracle on that box.
 	# The `Browser build + probe` (gallery) job is intentionally not
 	# mirrored here: it requires wasm-pack + node + a clean network and
 	# is heavy enough that local devs run `make gallery` separately when
@@ -2536,10 +2133,7 @@ ci: ci-guard
 	python3 scripts/unreleased-work.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
 	cargo build --all-targets >> result.txt 2>&1 && \
-	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
-	cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random >> result.txt 2>&1 && \
-	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html >> result.txt 2>&1 && \
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
@@ -2560,7 +2154,6 @@ ci: ci-guard
 	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
 	  [ $$rc -eq 0 ]; } && \
 	{ [ "$$sel" = NONE ] || python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1; } && \
-	bash scripts/native_ratio.sh --gate >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,
@@ -2729,8 +2322,6 @@ last:
 	cargo test --package dryopea --test wrap last --release -- --nocapture
 
 meld:
-	rustfmt tests/generated/text.rs --edition 2024
-	cmp -s tests/generated/text.rs src/text.rs; if [ $$? -eq 1 ]; then meld tests/generated/text.rs src/text.rs; fi
 	rustfmt tests/generated/fill.rs --edition 2024
 	cmp -s tests/generated/fill.rs src/fill.rs; if [ $$? -eq 1 ]; then meld tests/generated/fill.rs src/fill.rs; fi
 
@@ -2777,21 +2368,6 @@ perf-libs:
 
 perf-portal-render:
 	python3 bench/portal/portal.py render
-
-# Per-routine loft-native vs plain-Rust ratios with asserted output hashes
-# (@PLN157 P0, loft#1426).  `native-ratio` is the REPORT; `native-ratio-gate`
-# also fails a ratio over bench/ratio_oracle.tsv's bar, and is the step `make ci`
-# runs last (formal/performance.md (Perf-Weight): the bars ratchet DOWN toward 3).
-# Hash mismatches always fail, in both forms.  It stays out of ci.yml on purpose:
-# a shared GitHub runner's timing is noise (CI_BUDGET.md), so the ratio is judged
-# on a box somebody owns.  A red row after a loaded `make ci`: rerun this target
-# ALONE — contention does not repeat alone (the speed-gate rule).
-native-ratio:
-	cargo build --release -q
-	bash scripts/native_ratio.sh
-native-ratio-gate:  ## Fail a native/Rust ratio over its bar in bench/ratio_oracle.tsv
-	cargo build --release -q
-	bash scripts/native_ratio.sh --gate
 
 .PHONY: doc doc-packages
 # The whole doc site, the way the release builds it (@PLN149).
@@ -3033,11 +2609,6 @@ script-census:  ## @PLN179 the work list: every Python/bash script by what a lof
 script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (ARGS=--count prints the open number instead)
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
-
-.PHONY: compiled-stdlib
-compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
-	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
-	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
 
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)

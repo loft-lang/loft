@@ -8,7 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Which environment variable arms which profiler, and what each one can and cannot see.  Start
 with `make profile`, which picks the instrument; [PERFORMANCE.md](PERFORMANCE.md) § Profiling a
 run is the method, and [PROFILE_ORACLE.md](PROFILE_ORACLE.md) is what `make profile-corpus`
-checks the instruments against.
+checks the instruments against.  The rustc writer's per-operator instrument
+(`LOFT_NATIVE_CHECKPOINTS`) left with that writer: [PROFILING-history.md](PROFILING-history.md).
 
 ## The sampler and the allocation sites (`--interpret`)
 
@@ -44,27 +45,6 @@ allocation paths, the op census or a breakpoint take the full loop, which costs 
 its own. A frame-driven program (a game loop, `yield_frame()`) is sampled over every frame:
 the run continues through the same dispatch after each yield. PERFORMANCE.md § Profiling.
 
-## `LOFT_NATIVE_CHECKPOINTS` (native, wasm)
-
-**`LOFT_NATIVE_CHECKPOINTS=count|time[:filter]`** — the SECOND profiler, for where the
-sampler cannot reach (a stripped binary, no `perf`, **wasm**). The generator writes a probe
-at the one call/op chokepoint, so every OPERATOR is counted at its own loft `file:line`,
-with a by-function rollup that is exclusive by construction (a user CALL is deliberately
-not a site — timing it would mix inclusive and exclusive rows). `count` needs no clock and
-so behaves identically on native, wasip2 and in a browser; `time` adds the cycle counter
-where one exists and says so where it does not. **The COUNTS are the trustworthy column; the tick
-share is a hint.** Counts validate exactly against the pure-Rust reference (whole-number
-operators per call: `chan` 3.00, `color_g` 2.00, `ramp` 9.00). Ticks do not: the counter
-advances only every ~41.7 ns against a ~1-3 ns operator, so a total is a sum of dithered
-samples, AND the per-operator probe inflates operator-dense functions — measured against
-the instrumented reference, the two biggest `lock_curved` rows disagree ~2× in opposite
-directions. Never quote a tick share as "where the time goes". Costs 3.0×
-(`count`) / 5.4× (`time`), and `:filter` narrows it to one function or module. It changes
-what rustc may inline ACROSS a probe, so it tells you WHICH code runs and roughly where
-time concentrates — confirm a ratio with `compare.py` or `profile.sh`. It is not the normal
-route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
-`LOFT_NATIVE_CHECKPOINTS`.
-
 ## What the interpreter executes, per routine (`LOFT_OP_CENSUS`)
 
 **`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. (`=1` prints it to
@@ -76,17 +56,16 @@ Beside each count go the bytes the op moved through the store's block routes: `c
 written into a store). A bench times each routine between lines of `main`, so a line is a
 routine. Only the thread that runs `main` is counted, so a `par` worker's ops are missing.
 The per-op hook rides the sampler's debugger branch, so an unarmed interpreter pays nothing
-for it. The byte counters are different. They sit in store code the native runtime shares,
-so their call sites are compiled only with `--features op-census`, and a shipped runtime
-carries none of them. `make interp-gap` builds that binary in `target/op-census`. Without
+for it. The byte counters are different. They sit in the store code every interpreted run
+executes, so their call sites are compiled only with `--features op-census`, and a release
+build carries none of them. `make interp-gap` builds that binary in `target/op-census`. Without
 the feature, the file's first line says the bytes were not counted. Armed, a run is
 1.6–1.8× slower (lanes 01, 14 and 16).
 
 **`LOFT_REWRITE_CENSUS_FN=<file>`** splits `LOFT_REWRITE_CENSUS` by WHERE each rewrite was
-admitted, written as `phase<TAB>function<TAB>rule<TAB>count`. The phase is `native` for the
-rustc writer and `c` for the C writer (the interpreter never gets either form), `interp` for
-the interpreter's bytecode generator (compiled code never gets that form), `ir` for the scope
-pass (both backends) and `parse` for everything earlier.  Summed over the benches per rule, the
+admitted, written as `phase<TAB>function<TAB>rule<TAB>count`. The phase is `c` for the C writer
+(the interpreter never gets that form), `interp` for the interpreter's bytecode generator
+(compiled code never gets that form), `ir` for the scope pass (both backends) and `parse` for everything earlier.  Summed over the benches per rule, the
 same split is `bench/portal/rule_phases.tsv`, which `make rewrite-census` keeps
 (`scripts/rule_phases.py` reads it). The per-function totals equal the per-rule census.
 
@@ -99,14 +78,13 @@ same split is `bench/portal/rule_phases.tsv`, which `make rewrite-census` keeps
 that execute one after the other within a function, keeping only runs whose control operators
 come last — the statically adjacent ones, which a superinstruction can fuse.
 
-**`LOFT_STORE_CENSUS=<file>`** counts the work a run does on its stores, on EITHER backend:
+**`LOFT_STORE_CENSUS=<file>`** (`--interpret`) counts the work a run does on its stores:
 stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
 copies and text writes move.  Each `ticks()` call appends one line (the clock value, then the
 counters so far), so the work between two calls is the difference of two lines — a bench
-routine's timed loop sits between two of them on both backends.  The counters sit in store
-code the native runtime shares, so they are compiled only with `--features op-census`, and a
-native program measured this way must link an rlib built with it (PERFORMANCE.md § Store
-work).
+routine's timed loop sits between two of them.  The counters sit in the interpreter's store
+code, so they are compiled only with `--features op-census`; a `--native` program's C store
+carries none.
 
 `make interp-gap` (`scripts/interp_gap.py`) joins the two with a `stats.py` timing of both
 backends ([bench/README.md § Interpreter against native](../../bench/README.md)).
@@ -114,8 +92,7 @@ backends ([bench/README.md § Interpreter against native](../../bench/README.md)
 ## Resident size of a `--native` run
 
 `/usr/bin/time -f %M` on `loft --native p.loft` reports the largest RSS of any process in the
-tree, and a first run includes rustc compiling the program: about 220 MB, whatever the program
-does. loft#1723 filed that peak as a retention of 1 MiB bridge answers. Measured, the program
-peaked at 11 MB, below the interpreter's 22 MB. Time a second run, which hits the cache under
+tree, and a first run includes the C compiler building the program, whose peak is not the
+program's. Time a second run, which hits the cache under
 `.loft/cache/`, or run that cached binary directly. A peak that stays the same with a loop
 count of 1 is the compiler, not the program.

@@ -41,14 +41,14 @@ struct TtBuf {
 /// only when the timeline is armed; off, no hook reaches it.
 static TEXT_TL: std::sync::LazyLock<std::sync::Mutex<TextTimeline>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(TextTimeline::default()));
-thread_local! {
-    static TEXT_TL_ON: bool = std::env::var_os("LOFT_TEXT_TIMELINE").is_some();
-    static TEXT_TL_VERBOSE: bool = std::env::var("LOFT_TEXT_TIMELINE").as_deref() == Ok("timeline");
-}
-
 #[inline]
 fn text_tl_on() -> bool {
-    TEXT_TL_ON.with(|b| *b)
+    crate::env_once!(std::env::var_os("LOFT_TEXT_TIMELINE").is_some())
+}
+
+/// `LOFT_TEXT_TIMELINE=timeline`: every event, not only the summary.
+fn text_tl_verbose() -> bool {
+    crate::env_once!(std::env::var("LOFT_TEXT_TIMELINE").as_deref() == Ok("timeline"))
 }
 
 /// Record a text-buffer GROWTH (an append / format that may have (re)allocated).
@@ -95,7 +95,7 @@ fn text_tl_grow(fn_nr: Option<u32>, before: (usize, usize), after: (usize, usize
             t.peak_bytes = t.peak_bytes.max(t.live_bytes);
         }
     }
-    if ac > 0 && TEXT_TL_VERBOSE.with(|b| *b) {
+    if ac > 0 && text_tl_verbose() {
         eprintln!("[text-tl] grow fn={fn_nr:?} cap={ac} ptr={ap:#x} {content:?}");
     }
 }
@@ -114,7 +114,7 @@ fn text_tl_free(fn_nr: Option<u32>, ptr: usize, cap: usize, content: &str) {
             t.live_bytes -= b.cap;
         }
     }
-    if TEXT_TL_VERBOSE.with(|b| *b) {
+    if text_tl_verbose() {
         eprintln!("[text-tl] free fn={fn_nr:?} cap={cap} ptr={ptr:#x} {content:?}");
     }
 }
@@ -196,7 +196,7 @@ pub fn text_timeline_summary() {
 
 impl State {
     pub fn conv_text_from_null(&mut self) {
-        self.put_stack(Str::new(super::STRING_NULL));
+        self.put_stack(Str::null());
     }
 
     pub fn string_from_code(&mut self) {
@@ -307,17 +307,15 @@ impl State {
         let off = pos - size_ptr() as u16;
         // The destination's address and capacity, taken through a borrow that ENDS here — see
         // `aliased_source` for why the copy must not be taken through a live `&mut`.
-        // @PLN25 slice (c): a null `text?` accumulator (the STRING_NULL sentinel) IGNORES the
-        // append, so `s += x` on a null `s` stays null (propagate — nulls stay visible, never
-        // swept into "\0x"). A non-null text is never the sentinel, so this never fires for it.
-        // DN1-gated so gate-OFF (the legacy nullable model, where a plain text can still be
-        // STRING_NULL) keeps its byte-identical append behaviour.
+        // @PLN25 slice (c): a null `text?` accumulator IGNORES the append, so `s += x` on a
+        // null `s` stays null (`@FR-E-NullArg`).  DN1-gated so gate-OFF (the legacy nullable
+        // model, where a plain text can still be null) keeps its append behaviour.
         let (dst_at, dst_cap, is_null) = {
             let d = self.string_mut(off);
             (
                 d.as_ptr() as usize,
                 d.capacity(),
-                crate::keys::pln25_dn1_enabled() && d.as_str() == super::STRING_NULL,
+                crate::keys::pln25_dn1_enabled() && crate::text_null::is_null(d),
             )
         };
         if is_null {
@@ -460,14 +458,13 @@ impl State {
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let off = pos - size_ptr() as u16;
         // Same order as `append_text`: decide and copy before the `&mut` exists.  And the same
-        // null rule: a `&text?` whose text is null (the STRING_NULL sentinel) ignores the
-        // append and stays null; a non-null text is never the sentinel.
+        // null rule: a `&text?` whose text is null ignores the append and stays null.
         let (dst_at, dst_cap, is_null) = {
             let d = self.string_ref_mut(off);
             (
                 d.as_ptr() as usize,
                 d.capacity(),
-                crate::keys::pln25_dn1_enabled() && d.as_str() == super::STRING_NULL,
+                crate::keys::pln25_dn1_enabled() && crate::text_null::is_null(d),
             )
         };
         if is_null {
@@ -502,7 +499,7 @@ impl State {
     pub fn clear_stack_text(&mut self) {
         let pos = self.code::<u16>();
         let v1 = self.string_ref_mut(pos);
-        v1.clear();
+        crate::text_null::clear(v1);
     }
 
     #[inline]
@@ -633,7 +630,7 @@ impl State {
 
     pub fn clear_text(&mut self) {
         let pos = self.code::<u16>();
-        self.string_mut(pos).clear();
+        crate::text_null::clear(self.string_mut(pos));
     }
 
     /// #629 follow-up — free the entry fn's hidden TEXT return buffer, addressed by
@@ -787,7 +784,7 @@ impl State {
         let src = self.code::<u16>();
         let arg = self.code::<u8>();
         let step = self.code::<i32>();
-        if self.local_text(src, arg).str() != crate::state::STRING_NULL {
+        if !self.local_text(src, arg).is_null() {
             self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
         }
     }

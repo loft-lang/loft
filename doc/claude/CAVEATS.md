@@ -85,8 +85,8 @@ tables.
   Guard `tests/scripts/35p-iterator-match.loft`.
 
 - **A NUL character has no representation of its own (loft#755, loft#748).**  `character`'s
-  null IS code point 0, and loft's null *text* IS the one-byte NUL string, so a NUL is
-  reachable in a text but never distinguishable from "no character":
+  null IS code point 0, so a NUL is reachable in a text but never distinguishable from
+  "no character":
   * `text_from_bytes([65, 0, 66])` is a real 3-character text — `len`/`size` say 3,
     `byte_at` returns `65, 0, 66`, `find`/slicing work.
   * `s[1]` on that text answers **null**, and `for c in s` yields **null** at that
@@ -94,9 +94,11 @@ tables.
     `len(s)` characters and each equals `s[i]`.  Before loft#755 the loop terminated
     on the character VALUE, so it stopped at the NUL and silently dropped the rest
     while every other accessor read past it.
-  * `chr(0)` answers `""` for the same reason, and `text_from_bytes([0])` — a lone NUL —
-    is the null text, which has no characters: `len`, `size` and iteration all say so
-    (guard `loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-characters.loft`).
+  * `chr(0)` answers `""` for the same reason.  A lone NUL, `text_from_bytes([0])`, is a
+    one-character text like any other — it is not the null text, which is no text at all
+    and has no characters (guards: the null-text matrix,
+    `loft-suite/rules/layout/L-Null-Text/null-text-through-*.loft`, and
+    `loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-characters.loft`).
 
   So a NUL survives a round trip through **bytes** (`byte_at` / `text_from_bytes`) but not
   through **characters**.  A decoder that must preserve NULs should walk
@@ -121,29 +123,6 @@ test build keeps a call-depth limit that halts with a full report of the recursi
 
 **Until then:** a recursion that can go deeper than 10 000 frames is written as a loop
 over an explicit work list (a `vector` used as a stack).
-
----
-
-## Native build — same-symbol cross-package `#native` collision (fix deferred → @PLN26)
-
-Two native packages (`[native] crate`) that export the **same `#native` symbol**
-can't be disambiguated under `--native`: the C-ABI link resolves first-`.so`-wins,
-and the interpreter's bridge registry resolves last-loaded-wins (a *pre-existing
-both-backend* hazard).  Today `--native` **rejects a reachable call** to such a
-symbol with a clear `compile_error!` ("rename one with `#native \"<unique>\"`") —
-so you never silently call the wrong fn; two packages sharing an *unused* symbol
-still build.  `--interpret` keeps its existing (silent, last-loaded) behavior.
-
-- **Workaround:** rename one of the colliding `#native` symbols (when you own the
-  package); the error names the symbol.
-- **Deferred fix** (canonical home: [NATIVE.md § Open work](NATIVE.md) —
-  @PLN26 and its successor loft#388 are both closed/parked): per-package symbol
-  namespacing so same-symbol packages coexist — touches the cdylib export, the
-  interpreter registry, and codegen in lockstep; only needed to *call* a symbol
-  two un-renameable packages both export (uncommon).
-- **Repro / guards:** `tests/lib/collide_a` + `collide_b` (both export
-  `collide_shared`), `collide_main` (calls both → rejected) / `collide_unused`
-  (unused → builds); in-crate `native_symbol_collision_across_packages_detected`.
 
 ---
 
@@ -365,23 +344,6 @@ literal no longer parses.  Use `integer` (i64) and plain literals.
   bytes).  Narrow fields (`u8 / u16 / i8 / i16 / i32`) stay
   compact via `Parts::{Byte, Short, Int}` so pixel buffers,
   bit-packed protocols, and RGBA data are unaffected.
-- **Stale derived artefacts after the migration (discovered
-  2026-04-21).**  Neither `cargo test` nor `make ci` rebuilds
-  `target/wasm32-unknown-unknown/release/libloft.rlib` or
-  `tests/lib/native_pkg/native/target/release/libloft_native_test.so`.
-  A developer who runs `cargo test --release` against a
-  post-migration source tree but pre-migration artefacts will see
-  **5 html_wasm failures + 6 native_loader failures** that look
-  like real regressions:
-    * `--html` rustc errors cite `codegen_runtime.rs:1244` (old
-      `cr_rand_int` position) vs. current line 1409.
-    * `native_loader::scalar_before_vec` reports
-      `offset_sum: expected 106, got 103` because the .so still
-      reads elements as 4-byte i32 from the now-8-byte-stride
-      memory.
-  Rebuild commands are in `DEVELOPMENT.md § Common pitfalls`.
-  This class of tripwire is a general post-migration risk, not a
-  language bug.
 - **~~Cdylib FFI wrapper claim in this file was obsolete.~~ RESOLVED
   2026-05-21 (@P310).**  The half-stride discrepancy this bullet
   flagged is fixed: `vector_elem_rust_type` now emits `*const i64`
@@ -390,9 +352,7 @@ literal no longer parses.  Use `integer` (i64) and plain literals.
   `*const i64`; `lib/moros_render` takes no `vector<integer>` FFI
   arg (only graphics does), so no production cdylib was on `*const
   i32` for such an arg — verified by grep (no `*const i32` vector
-  externs).  The test fixture (`tests/lib/native_pkg/native`) and
-  graphics now agree with codegen.  Guards: `generation::p310_vector_elem_tests`
-  + `tests/codegen_emitter.rs::p310_graphics_vector_ffi_checks_clean`.
+  externs).  Graphics agrees with codegen.  Guard: `generation::p310_vector_elem_tests`.
 
 Regression guard for the overall migration:
 `tests/scripts/20-binary.loft`, `21-binary-ops.loft`,

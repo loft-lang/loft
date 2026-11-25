@@ -278,7 +278,7 @@ impl Cx<'_> {
         }
         let _ = writeln!(
             out,
-            "static const loft_ptype loft_ptypes[{}] = {{ {} }};\nstatic const loft_tdesc *loft_parse_types(void) {{ return loft_types; }}",
+            "static const loft_ptype loft_ptypes[{}] = {{ {} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ (void) cx; return loft_types; }}",
             u32::from(last) + 1,
             rows.join(", ")
         );
@@ -297,11 +297,11 @@ impl Cx<'_> {
             .map(|(tp, _)| format!("    case {tp}:"))
             .collect();
         if cases.is_empty() {
-            return "static int loft_is_main_vector(uint16_t tp) {\n    (void) tp;\n    return 0;\n}\n"
+            return "static int loft_is_main_vector(loft_cx *cx, uint16_t tp) {\n    (void) tp;\n    return 0;\n}\n"
                 .to_string();
         }
         format!(
-            "static int loft_is_main_vector(uint16_t tp) {{\n    switch (tp) {{\n{}\n        return 1;\n    default:\n        return 0;\n    }}\n}}\n",
+            "static int loft_is_main_vector(loft_cx *cx, uint16_t tp) {{\n    switch (tp) {{\n{}\n        return 1;\n    default:\n        return 0;\n    }}\n}}\n",
             cases.join("\n")
         )
     }

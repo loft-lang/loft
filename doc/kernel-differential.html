@@ -7,7 +7,7 @@
      listens there, and the transcript is the one a refused connect gives. -->
 <html><head><meta charset="utf-8"><title>kernel differential</title></head>
 <body><script type="module">
-import init, { compile_and_start, resume_frame } from './pkg/loft.js';
+import init, { Game } from './pkg/loft.js';
 import { createHost } from './loft-rt.js';
 
 const { host } = createHost();
@@ -54,17 +54,18 @@ const EXPECT = refused
   : ["t:connected", "t:event 7:hi", "t:sync-ok", "t:disconnected", "t:exited"];
 
 await init();
-// compile_and_start + resume_frame = the frame-yield pairing (a yielding
+// Game.start + Game.resume_frame = the frame-yield pairing (a yielding
 // program through compile_and_run silently DROPS the parked state — the
 // 08-S6 gate's second finding, masked by the time panic until it fell).
-let result = JSON.parse(compile_and_start(JSON.stringify([{ name: 'main.loft', content: SRC }])));
+const game = new Game();
+let result = JSON.parse(game.start(JSON.stringify([{ name: 'main.loft', content: SRC }])));
 if (!result.ok) {
   throw new Error('DIFFERENTIAL-COMPILE ' + JSON.stringify(result.error || result));
 }
 let output = result.output || '';
 while (result.running) {
   await new Promise(r => setTimeout(r, 5));
-  result = JSON.parse(resume_frame());
+  result = JSON.parse(game.resume_frame());
   if (result.error) throw new Error('DIFFERENTIAL-CRASH ' + result.error);
   // Every frame carries what the program printed DURING it, and reading clears it: the
   // transcript is the sum, not the last frame's share.

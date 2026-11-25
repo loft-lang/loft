@@ -4,7 +4,7 @@
 // @PLN98 P3.4 — drive the INTERACTIVE browser debug client of a
 // `loft --html --debug` wasm: queue a `bp -> run -> eval -> resume` sequence of
 // `D!:` control frames as the JS->wasm `host_input`, call `loft_debug_start` +
-// `loft_debug_pump`, and print the wasm's `D:` replies. This is what the server
+// `loft_debug_pump` (with the debugger handle the start answered), and print the wasm's `D:` replies. This is what the server
 // relay does over the WebSocket the client holds.
 import fs from 'node:fs';
 // loft#851 — the page's filesystem, imported rather than restubbed so every
@@ -28,7 +28,9 @@ const io = {
 const stubs = new Proxy({ loft_io: new Proxy(io, { get: (t, k) => (k in t ? t[k] : () => 0) }) }, { get: (t, k) => (k in t ? t[k] : new Proxy({}, { get: () => () => 0 })) });
 const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm), stubs);
 mem = inst.exports.memory;
-const started = inst.exports.loft_debug_start();
-inst.exports.loft_debug_pump();
+// The debugger is a handle (null when the program does not compile) every pump is handed.
+const dbg = inst.exports.loft_debug_start();
+const started = dbg !== 0 ? 1 : 0;
+inst.exports.loft_debug_pump(dbg);
 process.stdout.write(out);
 console.log('STARTED=' + started);

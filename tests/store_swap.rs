@@ -20,10 +20,9 @@ fn swaps(mode: &str, env: &[(&str, &str)]) -> (usize, String) {
         .env("LOFT_TIMEOUT", "240")
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_TRACE_STORE_SWAP", "1")
-        // `@FR-R-RebindBuffer` takes s12's rebind loop on `--native` by adopting instead of
-        // exchanging, and `@FR-O-Move`'s rebind adopt (`bind_lowering::re_bind`) takes it on the
-        // interpreter; this pins the exchange itself, so it is taken with both rules off.
-        .env("LOFT_NO_REBIND_BUFFER", "1")
+        // `@FR-O-Move`'s rebind adopt (`bind_lowering::re_bind`) takes s12's rebind loop by
+        // adopting instead of exchanging; this pins the exchange itself, so it is taken with
+        // that rule off.
         .env("LOFT_NO_REBIND_ADOPTS_MINTED", "1")
         .env_remove("LOFT_NO_STORE_SWAP");
     for (k, v) in env {
@@ -44,7 +43,10 @@ fn swaps(mode: &str, env: &[(&str, &str)]) -> (usize, String) {
 /// s12's 100 000 rebinds are the floor: each is one exchange on both backends.
 #[test]
 fn the_rebinds_exchange_their_stores_on_both_backends() {
-    for mode in ["--interpret", "--native-rust"] {
+    // The C backend makes and frees the same stores without counting an exchange, so the
+    // census is the interpreter's.
+    {
+        let mode = "--interpret";
         let (n, out) = swaps(mode, &[]);
         assert!(
             out.contains("done"),
@@ -59,7 +61,8 @@ fn the_rebinds_exchange_their_stores_on_both_backends() {
 
 #[test]
 fn the_switch_keeps_every_copy() {
-    for mode in ["--interpret", "--native-rust"] {
+    {
+        let mode = "--interpret";
         let (n, out) = swaps(mode, &[("LOFT_NO_STORE_SWAP", "1")]);
         assert!(
             out.contains("done"),
@@ -118,7 +121,7 @@ fn gate_swaps(mode: &str, tag: &str, rebinds: &str) -> (usize, String) {
 ///
 /// @falsified-at: none — the gate predates the guard, so the receipt is a SABOTAGE (2026-11-21):
 ///   with the scratch term struck from both gates (`swap_stores_in_as`'s
-///   `!self.live_scratches.is_empty()`, `loft_swap_blocked`'s `loft_nscratches != 0`), the walk
+///   `!self.live_scratches.is_empty()`, `loft_swap_blocked`'s `cx->nscratches != 0`), the walk
 ///   run exchanges as the after run does and the difference reads 0, not 3, on both backends.
 ///   CHANNEL: the `[swap-in]` count.  WITNESS: 5 and 5 instead of 5 and 2.
 ///   HOLDS: `sum 63 len 3` on every run, gate or no gate.

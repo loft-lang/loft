@@ -237,12 +237,12 @@ impl Fixture {
             keep,
         };
         if keep {
-            rt::touch_begin();
+            rt::touch_begin(&self.store);
         }
         let hits = super::box_walk(&mut src, 2, &qlo, &qhi, cap).len();
         Walk {
             nodes: if keep {
-                rt::touch_end()
+                rt::touch_end(&self.store)
             } else {
                 BTreeSet::new()
             },

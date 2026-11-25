@@ -114,7 +114,7 @@ jobs:
       - name: 'PHASE build'
         run: |
           s=$(date +%s)
-          cargo build --release --lib --bin loft --timings 2>&1 | tee /tmp/p_build.log
+          cargo build --release --bin loft --timings 2>&1 | tee /tmp/p_build.log
           d=$(( $(date +%s) - s ))
           # slowest 3 crates from the cargo --timings text, if present.
           slow=$(grep -oE "Compiling [a-z0-9_-]+ v[0-9.]+" /tmp/p_build.log | tail -3 | tr '\n' ';' || true)

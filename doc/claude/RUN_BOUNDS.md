@@ -325,8 +325,8 @@ layered:
   ANY op: the watchdog sets the dispatch loop's stop flag at `T`, which the loop tests after
   every op anyway (`@FR-R-DispatchStop`), so a loop that calls nothing stops cleanly too and
   names the frame that runs.  Raises a typed `Timeout`,
-  dumps the call stack (interpreter: `crash_tail` + `StackFrame`; native: the `CALL_STACK`
-  thread-local), and exits cleanly with `124`.
+  dumps the call stack (interpreter: `crash_tail` + `StackFrame`; native: the program's shadow
+  call stack), and exits cleanly with `124`.
 - **Watchdog hard-kill** fires at `T + grace` (grace 2 s, `LOFT_TIMEOUT_GRACE`) — a background
   thread calls `std::process::abort()`, so the run ends even when stuck in Rust, native code or
   a blocking syscall (on the interpreter, only those: a loft loop stops at `T`).  It prints a breadcrumb so the kill is still informative:
@@ -359,9 +359,9 @@ list, so `loft --tests --interpret <file>` does not run `<file>` — the path st
 not finish; the parse site is the `--tests` arm in `src/main.rs`.
 
 Implementation lives in `src/timeout.rs` (watchdog thread, deadline atomics, breadcrumb store),
-with checkpoint calls in `src/state/mod.rs` (interpreter dispatch), `src/codegen_runtime.rs`
-(`cr_check_deadline()` injected at native fn-entry and loop back-edges) and `src/lexer.rs`
-(parse-time recovery loop).
+with checkpoint calls in `src/state/mod.rs` (interpreter dispatch) and `src/lexer.rs`
+(parse-time recovery loop).  A compiled program bounds itself: `src/c/loft_rt.h` arms `alarm`
+(a watchdog thread on Windows) and stops with 124 at the deadline.
 
 **Under cargo test** a hang inside an in-process harness (`tests/wrap.rs`) is bounded by
 nextest instead: `.config/nextest.toml` gives every test process a `slow-timeout` (300 s

@@ -478,7 +478,7 @@ pub fn host_env_variable(name: &str) -> String {
         // `""`, exactly as `var_os` returning `Some("")` does natively.
         host_call("env_variable", &args)
             .as_string()
-            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
+            .unwrap_or_else(crate::text_null::null_string)
     }
     #[cfg(not(feature = "wasm"))]
     {
@@ -770,106 +770,12 @@ pub fn host_ws_close(id: i32) {
     }
 }
 
-// ── W1.9  Virtual filesystem (VIRT_FS) ───────────────────────────────────────
-
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-thread_local! {
-    /// Per-thread virtual filesystem used by `compile_and_run()`.
-    /// Maps filename → content.  Populated before parsing; cleared after execution.
-    pub(crate) static VIRT_FS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-}
-
-/// Populate the virtual filesystem with the given `(name, content)` pairs.
-pub fn virt_fs_populate(files: &[(String, String)]) {
-    VIRT_FS.with(|fs| {
-        let mut map = fs.borrow_mut();
-        for (name, content) in files {
-            map.insert(name.clone(), content.clone());
-        }
-    });
-}
-
-/// Return the content of `name` from the virtual filesystem, or `None` if absent.
-pub fn virt_fs_get(name: &str) -> Option<String> {
-    VIRT_FS.with(|fs| fs.borrow().get(name).cloned())
-}
-
-/// Clear all entries from the virtual filesystem.
-pub fn virt_fs_clear() {
-    VIRT_FS.with(|fs| fs.borrow_mut().clear());
-}
-
 // ── @PLN18 08-S6 — the living-page swap bridges ─────────────────────────────
 // The page (the persistent host layer) drives the swap: it exports the world
 // out of the PARKED instance A, stages it, starts instance B (whose
 // `swap_world` consumes the stage), and hands B the living WebSocket via the
 // loft-rt adoption hook.  These are the two wasm-side halves.
 
-thread_local! {
-    /// The world record registered by the running script's `swap_world(w)`.
-    static SWAP_ROOT: std::cell::Cell<Option<(crate::keys::DbRef, u16)>> =
-        const { std::cell::Cell::new(None) };
-    /// A snapshot staged by the page for the NEXT run's `swap_world`.
-    static SWAP_STAGE: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-// Consumed by the browser kernel's `swap_world`, which exists only in the
-// wasm-bindgen bundle.  Both other builds that compile this module — a native
-// `--all-features` one and `--html` (loft#851) — see these dead, and that is
-// the cfg, not rot.
-#[cfg_attr(not(all(target_arch = "wasm32", feature = "wasm")), allow(dead_code))]
-pub(crate) fn swap_root_set(root: crate::keys::DbRef, kt: u16) {
-    SWAP_ROOT.with(|r| r.set(Some((root, kt))));
-}
-
-#[cfg_attr(not(all(target_arch = "wasm32", feature = "wasm")), allow(dead_code))]
-pub(crate) fn swap_stage_take() -> Option<String> {
-    SWAP_STAGE.with(|s| s.borrow_mut().take())
-}
-
-/// The world the parked run registered, if any: its root and its known type.
-pub(crate) fn swap_root() -> Option<(crate::keys::DbRef, u16)> {
-    SWAP_ROOT.with(std::cell::Cell::get)
-}
-
 /// The first line of a world snapshot handed over as a store image: then the base64 of its
 /// layout sidecar and the base64 of the image, one line each (@PLN196 step 8 in the browser).
 pub(crate) const SWAP_IMAGE_MARKER: &str = "LOFT-IMAGE";
-
-/// Stage a snapshot for the next run's `swap_world` (the browser analog of
-/// the native LOFT_RESUME env).
-#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
-pub fn swap_stage(snapshot: &str) {
-    SWAP_STAGE.with(|s| *s.borrow_mut() = Some(snapshot.to_string()));
-}
-
-// ── W1.2  Output capture ─────────────────────────────────────────────────────
-
-thread_local! {
-    static OUTPUT: RefCell<String> = const { RefCell::new(String::new()) };
-}
-
-/// Append `text` to the per-thread output buffer.
-pub fn output_push(text: &str) {
-    OUTPUT.with(|buf| buf.borrow_mut().push_str(text));
-}
-
-/// Drain and return the accumulated output since the last call.
-pub fn output_take() -> String {
-    OUTPUT.with(|buf| std::mem::take(&mut *buf.borrow_mut()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn output_capture() {
-        output_push("hello ");
-        output_push("world");
-        assert_eq!(output_take(), "hello world");
-        assert_eq!(output_take(), ""); // cleared after take
-    }
-}

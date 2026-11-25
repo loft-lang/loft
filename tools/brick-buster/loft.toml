@@ -17,10 +17,13 @@ entry   = "25-brick-buster.loft"
 
 [dependencies]
 # Floors at the first releases that carry `pub` on what this reads: a field is private
-# to its file without it (C140).
-graphics = ">=0.9.10"
+# to its file without it (C140).  graphics in its current API line: the releases before it
+# carry a Rust native part, which loft no longer loads.
+graphics = ">=0.14.3"
 shapes   = ">=0.5.4"
 assets   = ">=0.4.2"
+# The sound: every effect is synthesised by the game and played as raw samples.
+audio    = ">=0.2.8"
 
 # The sprite atlas is DRAWN once here, not on every launch.  `pack_atlas.loft`
 # sits beside the game so `assets/bb` names the same two files for the packer
@@ -50,3 +53,8 @@ path = "assets/bb.meta.store"
 
 [[embed]]
 path = "assets/bb.blobs.store"
+
+# The font every label is drawn in: `graphics` rasterises text itself, so the page carries the
+# font file the desktop reads beside the program.
+[[embed]]
+path = "DejaVuSans-Bold.ttf"

@@ -132,7 +132,7 @@ fn declaration(line: &str) -> Option<(&str, Option<&str>)> {
 fn pure(init: &str) -> bool {
     let mut s = init.to_string();
     for keep in [
-        "loft_ref_null()",
+        "loft_ref_null(cx)",
         "(double) NAN",
         "(float) NAN",
         "INT64_C(",

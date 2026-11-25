@@ -777,7 +777,7 @@ Catalogue: @F45; guards: `tests/scripts/89-sizeof.loft`,
 
 ## Random numbers
 
-Three functions for pseudo-random integer generation. All use a thread-local PCG64 generator.
+Three functions for pseudo-random integer generation, from the `random` library. All use its one PCG-64 generator per process.
 
 ```grammar
 rand_seed(seed: integer)                   // seed the generator

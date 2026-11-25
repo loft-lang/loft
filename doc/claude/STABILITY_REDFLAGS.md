@@ -300,7 +300,6 @@ Re-derivation sites (loft2 tree):
 | `returned_var` single-`u16` walk | `src/scopes.rs:2285` | differing match/if arms collapse to "no return var" → arm buffers freed | **over-reach** (false invariant: ≤1 return source) |
 | return-save-to-temp forest (B5-L3) | `src/scopes.rs` (`free_vars`) | ~5 type-keyed save-temp shapes each deciding "hoist before frees?" | under-reach |
 | `has_ref_params` adopt-vs-copy | `src/` — **11 sites** (`grep has_ref_params`), incl. `state/codegen.rs` ×2 + `scopes.rs` | a heuristic standing in for "transfer or borrow?"; admits "cannot resolve statically" → runtime `OpFreeRefIfDistinct` | wrong-signal |
-| `is_borrowed_view` — computed **twice, divergently** | `src/state/codegen.rs:1716,2441` (interp) **vs** `src/generation/dispatch.rs:178` (native) | the same `0x8000` source-free bit, two different structural derivations → drift on the OOB/hidden-only edge | **divergence** (H4) |
 | bind-site owned-vs-borrow | `src/parser/expressions.rs` (`assign`) | per-RHS-shape copy decision (bare Var / borrowing Var / field-read / non-Var) | under-reach |
 | reassign free-strategy forest | `src/state/codegen.rs` (`gen_set_first_at_tos` region) | `is_hidden_buf_arg && owned_ref && rhs_reads_v && …` — the canonical `has_ref_params && …` forest | under-reach |
 | scan_set paired-witness | `src/scopes.rs` (`scan_set`) | emits a **runtime** store-nr comparison because the static fact is absent | re-derived → runtime |
@@ -313,17 +312,17 @@ scored `--interpret` 6/17 boundary cells against `--native` 14/17 **on the same 
 consequences for anyone working this cluster:
 
 - a store-lifetime matrix that is lopsided between backends is evidence of a missing dep,
-  not of a codegen bug — read the emitted Rust and look for an `OpCopyRecord` beside a
-  plain element read;
+  not of a codegen bug — read the emitted C (`--native-emit`) and look for an
+  `OpCopyRecord` beside a plain element read;
 - a `--native` PASS is not evidence the dep is present, so every ownership probe has to
   run `--interpret` under `LOFT_POISON=1` as well. The defensive copy is also why this
   class survives a green suite: it is a silent perf cost on one backend and a
   use-after-free on the other.
 
-**Twins drift exactly on the input nothing tests.** `State::append_copy` and
-`codegen_runtime::OpAppendCopy` disagreed on a NEGATIVE count (`--native` clamped, the
-interpreter cast `as u32` and walked off the store until glibc aborted) and on whether to
-re-read the backing record after a resize. A twin gets hardened where its bug was
+**Twins drift exactly on the input nothing tests.** `State::append_copy` (`fill.rs`) and
+its C twin (`OpAppendCopy` in `src/c/loft_rt.h`) are the shape: one clamping a NEGATIVE
+count while the other casts it `as u32` and walks off the store, or one re-reading the
+backing record after a resize and the other not. A twin gets hardened where its bug was
 *observed*, and an observation happens on one backend. When touching one twin, diff it
 against the other line by line, and land every new boundary row in the shared `.loft`
 guard so both backends run it — a "keep the two in step" comment is not a gate.
@@ -404,7 +403,7 @@ cluster in the tree** (the @P29x/@P3xx history). <!--noindex-->
 | `copy_claims` / `remove_claims` / `validate_claims` triad | `src/database/allocation.rs:1374 / 1682 / 984` (+ `copy_claims_{seq_vector,array,hash,index}_body` at `:1119/1163/1233/1303`) | 3 dispatchers × ~9 `Parts::` arms ≈ **27**, already drifting (copy has 4 helpers; remove/validate don't) | @P290 (SIGSEGV, `room*2` vs `(room-1)*2`), @P306/@P318 (hash slot-drift), @P309 (missing length header) |
 | `record_new` / `record_finish` / `insert_record` construction | `src/database/structures.rs` | 3 fns × ~8 arms; **3 independent encodings** of "element-record word count" | @P309 class |
 | `gen_set_first_*_null` codegen family | `src/state/codegen.rs:1091/1143/1303/1378/1390` + the multi-arm `gen_set_first_at_tos` ladder | 5 fns + ladder + 3× copy-pasted `sentinel \| owned-init \| borrowed-view` tri-state | #260/#330 class (wrong null-init → leak / use-before-init) |
-| keyed `Type::{Sorted,Hash,Index,Spacial} → database.{kind}` re-dispatch | `src/state/codegen.rs` + `src/parser/vectors.rs` + `src/generation/dispatch.rs` (+more) | same 4-arm block in **≥4 files**, interp/native already shaped differently | interp/native drift (H4) |
+| keyed `Type::{Sorted,Hash,Index,Spacial} → database.{kind}` re-dispatch | `src/state/codegen.rs` + `src/parser/vectors.rs` (+more) | the same 4-arm block in several files | interp/compiled drift (H4) |
 | `Stores::{vector,hash,sorted,index,spacial,child_rec}` constructors | `src/database/types.rs` | 6–7 near-identical intern-or-push bodies + **3× key-resolution drift** (`hash` resolves vs `key_owner`, `sorted`/`spacial` vs raw content) | latent @PLN25 nullable-key bug |
 
 **Would-one-fact-collapse-it?** Yes — a single `for_each_owned_child(tp, rec) ->
@@ -457,24 +456,9 @@ This is H6's thesis exactly ("one width-fact, N drifting copies" — already cos
 `389-h6` nullable-narrow bug). Tracked under **H6**; these specific consumers are the
 named-but-unconverted ones. Lands behind the staged `NullEnc`/`sentinel(tp)` table.
 
-**Landed — the heap-ref + character facet (Cluster D D.1/D.2).** The four named
-typed-null encoders (`write_typed_null` native, `emit_typed_null` interp,
-`STRING_NULL`, `init_ref_sentinel`) are converged:
-
-- **Heap-ref null = one source, `DbRef::NULL` (`keys.rs`).** Every heap-ref null
-  encoder (native `write_typed_null` / `default_native_value` / `dispatch` / `calls`
-  / `coroutine`, the `codegen_runtime`/`parallel`/`structures` runtime writers, and
-  the interp `init_ref_sentinel` / `null_ref_sentinel`) read the single
-  `DbRef::NULL` const instead of re-spelling `DbRef { store_nr: u16::MAX, … }`. The
-  drift was a mixed `pos: 0` (interp/canonical) vs `pos: 8` (native) literal —
-  semantically inert (`is_null()` keys off `store_nr`, ignores `pos`) but real byte
-  drift, now gone. Round-trip matrix byte-identical on both backends; regression
-  `tests/scripts/407-cluster-d-null-sentinel-roundtrip.loft`.
-- **Character null H4 cell, found + closed.** `Parser::null` folded `character`
-  into `OpConvIntFromNull` (the i64 integer sentinel), so `-> character { return
-  null; }` emitted `return i64::MIN` into an `i32` return slot — native rustc E0308,
-  interpreter tolerated. Now routes to `OpConvCharacterFromNull` (char-domain null
-  `'\0'`), correct on both backends.
+**The heap-ref null is one source, `DbRef::NULL` (`keys.rs`),** and a `character` null is
+`OpConvCharacterFromNull` (the char-domain `'\0'`), never the integer sentinel; the record of
+that convergence is in [STABILITY_REDFLAGS-history.md](STABILITY_REDFLAGS-history.md).
 
 **Deliberately LEFT (distinct representations, not the same fact).** `STRING_NULL`
 (a text `Str` sentinel `"\0"`, already a single `const` read by all text-null sites)
@@ -520,7 +504,7 @@ bad value. They are correct stopgaps; the stable future **retires** them when A 
 |---|---|---|---|
 | `free_named` OOB-refuse | `src/database/allocation.rs:191` | a wrong/stale free with an out-of-range `store_nr` — refused (release) instead of not-produced | #405 (cluster II) |
 | `free_protected` call-bracket | `src/database/allocation.rs:680` + `lock_store` | "safety net for `is_borrowed_view` mis-detection" (its own @P290 words) — runtime locking to stop the wrong free landing | @P290 (retire when dep inference is complete) |
-| `["??"]` one-buffer return marker | `src/generation/mod.rs:714`, `src/generation/dispatch.rs:173` | a placeholder dep standing in for the unresolved return-ownership fact | OWNERSHIP_MODEL `"??"` row |
+| `["??"]` one-buffer return marker | `src/data.rs` (`Deps::pointer_marker()`) | a placeholder dep standing in for the unresolved return-ownership fact | OWNERSHIP_MODEL `"??"` row |
 | `n_protect_store_frees` `rec != 0` guard | `src/native.rs` (per @P377) | a half-state `free_protected` leak across `unlock`/`init` | @P377 |
 
 ---

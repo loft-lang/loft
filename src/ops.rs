@@ -211,13 +211,10 @@ pub fn to_char(val: i32) -> char {
 
 #[inline]
 pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
-    // @PLN10 — render the text null sentinel ("\0") as `null`, mirroring
-    // `format_long`'s `i64::MIN → null`.  A loft text equal to `STRING_NULL`
-    // IS null (the content-based null model — `conv_bool_from_text`), so the
-    // substitution is consistent with `?? ` / `!`.  Both backends route text
-    // interpolation through this fn (interp `OpFormatText` + the native
-    // `generation/text.rs` emitter), so this one site fixes both.
-    let val = if val == crate::store::STRING_NULL {
+    // @PLN10 — render the null text as `null`, mirroring `format_long`'s `i64::MIN → null`,
+    // so the substitution is consistent with `??` / `!`.  The interpreter's `OpFormatText`
+    // routes text interpolation through this fn.
+    let val = if crate::text_null::is_null(val) {
         "null"
     } else {
         val
@@ -293,19 +290,7 @@ pub fn op_cast_int_from_single(val: f32) -> i64 {
 
 #[inline]
 #[must_use]
-pub fn op_cast_long_from_single(val: f32) -> i64 {
-    if val.is_nan() { i64::MIN } else { val as i64 }
-}
-
-#[inline]
-#[must_use]
 pub fn op_cast_int_from_float(val: f64) -> i64 {
-    if val.is_nan() { i64::MIN } else { val as i64 }
-}
-
-#[inline]
-#[must_use]
-pub fn op_cast_long_from_float(val: f64) -> i64 {
     if val.is_nan() { i64::MIN } else { val as i64 }
 }
 
@@ -476,97 +461,6 @@ pub fn range_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
         "range proof: plain {op} answered {plain} where the checked form answers {checked} — the proof admitted an operation that faults"
     );
     plain
-}
-
-/// `LOFT_HOIST_VERIFY=1` inside a guarded plain nest (`@FR-R-BoundedNest`): the plain
-/// operator's answer beside the checked template's, so a guard that admitted a nest whose
-/// arithmetic faults is caught at the operator that faulted, not read off a wrong result.
-///
-/// # Panics
-///
-/// When the two answers differ — the nest's guard admitted an operation that faults, which
-/// is the defect this instrument exists to surface.  Never in the emitted default.
-#[inline]
-#[must_use]
-pub fn nest_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
-    assert!(
-        plain == checked,
-        "bounded nest: plain {op} answered {plain} where the checked form answers {checked} — the guard admitted an operation that faults"
-    );
-    plain
-}
-
-/// `@FR-R-FaultFlag` — the reruns after which a site stops trying its fast copy.  A loop whose
-/// nulls are common flags every time, so it pays the fast copy at most this many times.
-const FAULT_FLAG_TRIES: u32 = 8;
-
-/// `@FR-R-FaultFlag` — should this site skip its fast copy and run the statement as written?
-/// Under `--dev-soft-halt` an integer overflow REPORTS, and the fast copy never reports, so
-/// that mode always takes the exact statement; otherwise a site skips once it has rerun
-/// [`FAULT_FLAG_TRIES`] times.
-#[inline]
-#[must_use]
-pub fn fault_flag_skip(reruns: &std::sync::atomic::AtomicU32) -> bool {
-    reruns.load(std::sync::atomic::Ordering::Relaxed) >= FAULT_FLAG_TRIES || dev_soft_halt()
-}
-
-/// `@FR-R-FaultFlag` — count one exact run of a site, up to the point where it stops trying.
-#[cold]
-pub fn fault_flag_rerun(reruns: &std::sync::atomic::AtomicU32) {
-    if reruns.load(std::sync::atomic::Ordering::Relaxed) < FAULT_FLAG_TRIES {
-        reruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// `@FR-R-FaultFlag` — a template's recoverable raise, in a fast copy: the fault is not
-/// reported here but flagged, and the exact rerun reports it once.
-#[inline]
-pub fn fault_flag_raise(flag: &mut bool, _kind: crate::runtime_error::RuntimeErrorKind) {
-    *flag = true;
-}
-
-#[inline]
-#[must_use]
-pub fn op_add_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_add(v2), "+", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_min_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_sub(v2), "-", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_mul_long_nn(v1: i64, v2: i64) -> i64 {
-    checked_long!(v1.checked_mul(v2), "*", v1, v2)
-}
-
-#[inline]
-#[must_use]
-pub fn op_div_long_nn(v1: i64, v2: i64) -> i64 {
-    if v2 != 0 {
-        checked_long!(v1.checked_div(v2), "/", v1, v2)
-    } else {
-        i64::MIN
-    }
-}
-
-#[inline]
-#[must_use]
-pub fn op_rem_long_nn(v1: i64, v2: i64) -> i64 {
-    if v2 != 0 {
-        checked_long!(v1.checked_rem(v2), "%", v1, v2)
-    } else {
-        i64::MIN
-    }
-}
-
-#[inline]
-#[must_use]
-pub fn op_neg_long_nn(v1: i64) -> i64 {
-    checked_long!(v1.checked_neg(), "-", v1, 0)
 }
 
 #[inline]
@@ -837,16 +731,15 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
 /// provenances.  @P347.
 ///
 /// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
-/// home both backends call, rather than at each operator site.
+/// included: `null < v` is true, `v < null` false, `null < null` false — `null < ""` too, which a
+/// byte compare cannot say (loft#1924).  Asked here, the one home both backends call, rather
+/// than at each operator site.
 #[inline]
 #[must_use]
 pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::store::STRING_NULL;
-    let b_null = b == crate::store::STRING_NULL;
+    let a_null = crate::text_null::is_null(a);
+    let b_null = crate::text_null::is_null(b);
     if a_null || b_null {
         return a_null && !b_null;
     }
@@ -859,8 +752,8 @@ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 #[must_use]
 pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::store::STRING_NULL;
-    if a_null || b == crate::store::STRING_NULL {
+    let a_null = crate::text_null::is_null(a);
+    if a_null || crate::text_null::is_null(b) {
         return a_null;
     }
     a <= b
@@ -872,12 +765,11 @@ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 /// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
 #[inline]
 pub fn append_text(dst: &mut String, src: &str) {
-    if dst.as_str() == crate::store::STRING_NULL {
+    if crate::text_null::is_null(dst) {
         return;
     }
-    if src == crate::store::STRING_NULL {
-        dst.clear();
-        dst.push_str(crate::store::STRING_NULL);
+    if crate::text_null::is_null(src) {
+        crate::text_null::set_null(dst);
         return;
     }
     dst.push_str(src);
@@ -897,14 +789,15 @@ pub fn append_text(dst: &mut String, src: &str) {
 #[inline]
 #[must_use]
 pub fn op_eq_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() == b.as_ref()
+    let (a, b) = (a.as_ref(), b.as_ref());
+    crate::text_null::is_null(a) == crate::text_null::is_null(b) && a == b
 }
 
 /// Text inequality — see [`op_eq_text`].  @P347 / #622.
 #[inline]
 #[must_use]
 pub fn op_ne_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() != b.as_ref()
+    !op_eq_text(a, b)
 }
 
 #[inline]

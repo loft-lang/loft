@@ -5,7 +5,6 @@
 
     scripts/ci_shards.py args <shard>     # the cargo target flags of one leg: `--test a … [--lib --bin x]`
     scripts/ci_shards.py html <shard>     # `true` when a binary of the leg runs a `--html` page
-    scripts/ci_shards.py wasi <shard>     # `true` when a binary of the leg builds for wasi
     scripts/ci_shards.py pack [--legs N]  # the rest legs' packs with their weights (a report)
     scripts/ci_shards.py proof            # every test binary is in exactly one leg, or exit 1
     scripts/ci_shards.py measure <junit>… # rewrite scripts/ci_shards.tsv from nextest junit reports
@@ -28,19 +27,17 @@ composes one filterset for every leg; the shard argument it takes no longer sele
   taking the whole runner under `threads-required`) and its other tests, all in the
   single-slot `heavy-serial` group.
 - `heavy` runs the other single-slot binaries that drive a `--html` page in a browser:
-  `html_wasm` (the `html-wasm-serial` group) and the `heavy-serial` members that need the
-  html runtime.  One leg installs the wasm toolchain for them.
+  `html_wasm` (the `html-wasm-serial` group) and the `heavy-serial` members that drive one.
 - the REST — every other `tests/*.rs`, the crate's unit tests (`lib`) and the bin targets'
   (`bin/loft`, `bin/gendoc`) — is packed into `REST_LEGS` legs by MEASURED weight:
   `scripts/ci_shards.tsv` holds each binary's test seconds from one run, a test that takes
   the whole runner (`threads-required` in `.config/nextest.toml`) counted `TEST_THREADS`
   times, since nothing runs beside it.  A binary the table does not know packs at the
   table's median; the greedy pack (heaviest first, into the lightest leg) is deterministic,
-  so every leg of one run agrees.  The binaries that need a wasm runtime rlib (`--html`
-  pages, wasi builds) are packed together into `rest-a`, so among the rest legs the runtime
-  rlib builds happen on that one; `html` and `wasi` say which runtime a leg's binaries need,
-  so it builds no other.  The other binaries pack over the rest legs AND `heavy`, whose own
-  browser binaries are few and short: it had no other way to fill the time after its build.
+  so every leg of one run agrees.  The rest binaries pack over the rest legs AND `heavy`,
+  whose own browser binaries are few and short: it had no other way to fill the time after
+  its build.  `html` says whether a leg's binaries drive a `--html` page, which is when the
+  leg installs the `wasm32-unknown-unknown` target those tests look for before they run.
 
 The partition is checked, not trusted: `proof` lists every test binary and fails when one is
 in no leg or in two.  A binary added to the repo lands in a rest leg by construction (the
@@ -72,16 +69,9 @@ CORPUS_BINARY = "native"
 # A GitHub-hosted runner's cores: nextest's default `test-threads` there, and what a test
 # with `threads-required` at or over it costs — the whole runner, for its duration.
 TEST_THREADS = 4
-# A binary whose source drives a `--html` page needs the html runtime rlib (and the
-# `wasm32-unknown-unknown` target); one whose source builds for wasi needs that rlib.
+# A binary whose source drives a `--html` page (the `heavy` leg's serial binaries, and the
+# legs that install the `wasm32-unknown-unknown` target for them).
 HTML_MARKS = ("--html", "html_wasm", ".html")
-WASI_MARKS = ("wasip2", "wasm32-wasi", "--native-wasm")
-# What the runtime rest leg pays before its tests start and the other rest legs do not —
-# the wasm target, the runtime rlib builds and their warm-up: 3.5 min measured on run
-# 39411552589 (rest-a 11.0 min before its tests, rest-b 7.5) — in the pack's unit (test
-# seconds over `TEST_THREADS` threads): the leg starts that much heavier, so the greedy
-# pack hands it that much less.
-RUNTIME_LEG_OVERHEAD = 3.5 * 60 * TEST_THREADS
 
 
 def excluded_binaries() -> set[str]:
@@ -126,15 +116,10 @@ def source(binary: str) -> str:
     return (TESTS / f"{binary}.rs").read_text(encoding="utf-8", errors="replace")
 
 
-def runtimes(binary: str) -> set[str]:
-    """The wasm runtime rlibs the binary's tests need: `html`, `wasi`, both or none."""
+def drives_html(binary: str) -> bool:
+    """Does the binary's source drive a `--html` page?"""
     text = source(binary)
-    out = set()
-    if any(mark in text for mark in HTML_MARKS):
-        out.add("html")
-    if any(mark in text for mark in WASI_MARKS):
-        out.add("wasi")
-    return out
+    return any(mark in text for mark in HTML_MARKS)
 
 
 def exclusive_tests() -> dict[str, list[re.Pattern[str]]]:
@@ -170,18 +155,16 @@ def weights() -> dict[str, float]:
 
 
 def heavy_binaries() -> list[str]:
-    return sorted(b for b in serial_binaries() if b != CORPUS_BINARY and "html" in runtimes(b))
+    return sorted(b for b in serial_binaries() if b != CORPUS_BINARY and drives_html(b))
 
 
 def packs() -> list[list[str]]:
     """The binaries packed onto the `heavy` leg beside its serial ones, then the rest legs'
     binaries, `REST_LEGS` lists — `1 + REST_LEGS` lists in leg order (`heavy` first).
 
-    The binaries that need a wasm runtime rlib stay together on `rest-a`, the leg whose `target`
-    is saved as the cache on `main` (ci.yml), so the cache keeps the runtime build; `rest-a`
-    and `heavy` each start one runtime overhead heavier.  Every other binary then packs
-    greedily, heaviest first, into whichever of the four legs is lightest — `heavy` included,
-    which otherwise sat nearly idle after its build (150 of 3216 test-seconds, PR #2400).
+    Every binary packs greedily, heaviest first, into whichever of the four legs is lightest —
+    `heavy` included, which otherwise sat nearly idle after its build (150 of 3216
+    test-seconds, PR #2400); `heavy` starts with its serial binaries' weight.
     """
     taken = set(heavy_binaries()) | {CORPUS_BINARY} | excluded_binaries()
     rest = [b for b in all_binaries() if b not in taken]
@@ -190,13 +173,8 @@ def packs() -> list[list[str]]:
     weight = {b: w.get(b, median) for b in rest}
     serial = sum(w.get(b, median) for b in heavy_binaries())
     legs: list[list] = [[0.0, []] for _ in range(1 + REST_LEGS)]
-    legs[0][0] = serial + RUNTIME_LEG_OVERHEAD
-    legs[1][0] = RUNTIME_LEG_OVERHEAD
-    pinned = sorted((b for b in rest if runtimes(b)), key=lambda b: (-weight[b], b))
-    for b in pinned:
-        legs[1][0] += weight[b]
-        legs[1][1].append(b)
-    for b in sorted((b for b in rest if b not in pinned), key=lambda b: (-weight[b], b)):
+    legs[0][0] = serial
+    for b in sorted(rest, key=lambda b: (-weight[b], b)):
         leg = min(legs, key=lambda l: l[0])
         leg[0] += weight[b]
         leg[1].append(b)
@@ -225,11 +203,8 @@ def args(shard: str) -> str:
     return " ".join(target_flag(b) for b in leg_binaries(shard))
 
 
-def leg_runtimes(shard: str) -> set[str]:
-    out: set[str] = set()
-    for b in leg_binaries(shard):
-        out |= runtimes(b)
-    return out
+def leg_drives_html(shard: str) -> bool:
+    return any(drives_html(b) for b in leg_binaries(shard))
 
 
 def proof() -> int:
@@ -284,16 +259,16 @@ def main() -> int:
     cmd = a[0]
     if cmd == "args" and len(a) == 2:
         print(args(a[1]))
-    elif cmd in ("html", "wasi") and len(a) == 2:
-        print("true" if cmd in leg_runtimes(a[1]) else "false")
+    elif cmd == "html" and len(a) == 2:
+        print("true" if leg_drives_html(a[1]) else "false")
     elif cmd == "pack":
         w = weights()
         median = statistics.median(w.values()) if w else 1.0
         for name in ["heavy", "corpus", *REST_NAMES]:
             bins = leg_binaries(name)
             total = sum(w.get(b, median) for b in bins)
-            print(f"{name}: {len(bins)} binaries, {total:.0f} s, runtime "
-                  f"{','.join(sorted(leg_runtimes(name))) or 'none'}; heaviest "
+            print(f"{name}: {len(bins)} binaries, {total:.0f} s, html "
+                  f"{'yes' if leg_drives_html(name) else 'no'}; heaviest "
                   + ", ".join(sorted(bins, key=lambda b: -w.get(b, median))[:4]))
     elif cmd == "proof":
         return proof()

@@ -15,70 +15,6 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-push-window.loft";
 
-/// Per function: `(windows opened, pushes through a window, pushes through the header)`.
-/// A loop whose index chains run behind a guard is emitted twice (`@FR-R-GuardedChain`),
-/// which doubles the pushes of w1, w2, w3, w8_mk and w9_run — over ONE window each.
-const EXPECTED: &[(&str, usize, usize, usize)] = &[
-    ("n_w1", 1, 2, 0),
-    ("n_w2", 1, 2, 0),
-    ("n_w3", 2, 4, 0),
-    ("n_w4", 1, 1, 0),
-    ("n_w5", 2, 2, 0),
-    ("n_w6", 2, 2, 0),
-    // The inner loop of the nest: three pushes a pass through one window.
-    ("n_w7", 1, 3, 0),
-    ("n_w8_mk", 1, 2, 0),
-    ("n_w8_mk2", 1, 1, 0),
-    ("n_w9_run", 1, 2, 0),
-    ("n_w10", 1, 1, 0),
-    ("n_w11_dbl", 1, 1, 0),
-    ("n_w11", 1, 1, 0),
-    ("n_w12", 1, 1, 0),
-    // A result vector beside a parameter read: the pushed root's store witness is the
-    // buffer the caller handed in, which the ownership test reads as an owned local.
-    ("n_d8_mk", 1, 1, 0),
-    ("n_a_mk", 1, 1, 0),
-    // The admission is reached and declines: the body names the pushed vector (d1), a
-    // sibling field of the pushed record (d7), or a view of it (d4).
-    ("n_d1", 0, 0, 1),
-    ("n_d4", 0, 0, 1),
-    // d5's first loop writes ANOTHER vector in place beside its push: an in-place set
-    // reallocates nothing, so since the window's write test is asked as the header hoist
-    // asks it that loop takes the window; its second loop pushes two paths, each reserved
-    // and each through a window of its own (the several-paths clause).
-    ("n_d5", 3, 3, 0),
-    ("n_d7", 0, 0, 1),
-    // Never a counted push loop: `len(v)` reads as another write to the path (d2), a
-    // filter is a `continue` (d6); a callee handed the vector declines the whole hoist (d3).
-    // A filter's `continue` stays inside its own loop, so the deep window serves d6's two
-    // loops — the comprehension's pushes and the statement's — with no reservation.
-    ("n_d2", 0, 0, 1),
-    ("n_d6", 2, 3, 0),
-    ("n_d3", 0, 0, 0),
-    // `x` owns its store and takes a window; `y`, `z` and `q` are rebound to a call's
-    // buffer later, so their root is not provably exclusive and they keep the header.
-    ("n_a1", 1, 1, 3),
-    ("n_b1", 0, 0, 2),
-    // The return buffer beside a parameter read: a scalar vector stored apart from it
-    // (s1, s4) takes the window; the same storage, however spelled (s2, s3), keeps the header.
-    // Each loop is emitted twice behind the guard on the parameter's element base, and each
-    // copy opens and closes a window of its own.
-    ("n_s1_mk", 2, 2, 0),
-    ("n_s2_mk", 0, 0, 2),
-    ("n_s3_mk", 0, 0, 2),
-    ("n_s4_mk", 2, 2, 0),
-    // A File parameter beside the return buffer: named only as the file of a scalar read,
-    // it cannot view a vector of scalars (f4); a `#next` read beside the read is a mention
-    // (f2).  f1's reader is a call here — this tier does not inline it — and the release tier
-    // pin below takes its window.  f3 pushes records, which the clause does not reach.
-    ("n_f1_mk", 0, 0, 1),
-    ("n_f2_mk", 0, 0, 1),
-    ("n_f3_mk", 0, 0, 0),
-    ("n_f4_mk", 1, 1, 0),
-    // `(R-Base)`'s growth condition: a mint left on its templates is still a growth.
-    ("n_r1", 0, 0, 0),
-];
-
 const SWITCHES: [&str; 6] = [
     "LOFT_NO_PUSH_WINDOW",
     "LOFT_NO_PUSH_FILL",
@@ -119,7 +55,7 @@ fn emit_tier(tag: &str, tier: &[&str], env: &[(&str, &str)]) -> String {
         out.to_str().unwrap().to_string(),
         cells().to_str().unwrap().to_string(),
     );
-    args.extend(["--native-rust", "--native-emit", &out_s, &cells_s]);
+    args.extend(["--native", "--native-emit", &out_s, &cells_s]);
     let status = loft(&args, env);
     assert!(
         fa::exists(&out),
@@ -130,16 +66,6 @@ fn emit_tier(tag: &str, tier: &[&str], env: &[(&str, &str)]) -> String {
     let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     let _ = fa::remove_file(&out);
     rust
-}
-
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
 }
 
 /// `(windows, windowed pushes, header pushes, closes)` per function.
@@ -211,19 +137,6 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
 }
 
 #[test]
-fn each_cell_emits_exactly_the_forms_predicted() {
-    let got = counts(&emit("on", &[]));
-    for (name, windows, windowed, header) in EXPECTED {
-        let row = got.get(*name).copied().unwrap_or_default();
-        assert_eq!(
-            (row.0, row.1, row.2),
-            (*windows, *windowed, *header),
-            "{name}: (windows, pushes through one, pushes through the header)"
-        );
-    }
-}
-
-#[test]
 fn every_window_opened_is_closed_exactly_once() {
     // The close is what writes the record's length: a window without one leaves the vector
     // at the length it had when the window opened, and two would be one too many headers.
@@ -234,143 +147,4 @@ fn every_window_opened_is_closed_exactly_once() {
             row.0, row.3
         );
     }
-}
-
-#[test]
-fn the_reservation_and_the_window_stand_in_front_of_the_guarded_copies() {
-    // A guard emits a whole copy of the loop ahead of its `else`.  A reservation written
-    // after it stands in the arm that does not run, and a window declared there would be
-    // one local per arm instead of one both arms push through.
-    let rust = emit("order", &[]);
-    let w1 = body(&rust, "n_w1");
-    let at = |needle: &str| {
-        w1.find(needle)
-            .unwrap_or_else(|| panic!("n_w1 lacks `{needle}`:\n{w1}"))
-    };
-    let (reserve, window, guard) = (
-        at("push reserve"),
-        at("= vector::push_window(&"),
-        at("@FR-R-GuardedChain guard"),
-    );
-    assert!(
-        reserve < window && window < guard,
-        "reserve, then the window, then the guard — got {reserve} / {window} / {guard}"
-    );
-    assert!(
-        at("stores.push_window_close::<") > at("/* checked chains */"),
-        "the window closes after BOTH copies of the loop"
-    );
-}
-
-#[test]
-fn a_comprehension_is_the_counted_range_it_spells() {
-    // Its counter steps through the non-null add (`@FR-R-Counter`), its index chain runs
-    // plain behind the guard (`@FR-R-GuardedChain`), and its pushes are reserved.
-    let rust = emit("comprehension", &[]);
-    let w2 = body(&rust, "n_w2");
-    // Since loft#1619 the end `n` is taken once into a local the range proof ranges, so the
-    // counter is ranged too and steps through the plain add (`@FR-R-Range`), which is the
-    // stronger form of the same claim.
-    assert!(
-        (w2.contains("var_i__index = ops::op_add_long_nn((var_i__index), (1_i64))")
-            || w2.contains("var_i__index = ((var_i__index).wrapping_add(1_i64))"))
-            && !w2.contains("var_i__index = ops::op_add_int("),
-        "the comprehension's counter steps through the non-null or the plain add:\n{w2}"
-    );
-    assert!(
-        w2.contains("@FR-R-GuardedChain guard") && w2.contains(".wrapping_mul(var_i)"),
-        "the comprehension's `i * i + salt` runs plain behind the guard:\n{w2}"
-    );
-    assert!(
-        w2.contains("push reserve"),
-        "the comprehension reserves its trip count:\n{w2}"
-    );
-}
-
-#[test]
-fn the_switch_restores_the_header_push() {
-    let rust = emit("off", &[("LOFT_NO_PUSH_WINDOW", "1")]);
-    assert!(
-        !rust.contains("vector::push_window(") && !rust.contains("push_windowed::<"),
-        "LOFT_NO_PUSH_WINDOW=1 opens no window anywhere"
-    );
-    let w1 = body(&rust, "n_w1");
-    assert!(
-        w1.contains("stores.push_hoisted::<") && w1.contains("push reserve"),
-        "w1 pushes through its header again, still reserved:\n{w1}"
-    );
-}
-
-#[test]
-fn the_verify_form_checks_every_windowed_push_and_the_close() {
-    let rust = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
-    let w1 = body(&rust, "n_w1");
-    assert!(
-        w1.contains("stores.push_windowed::<i64, true>(")
-            && w1.contains("stores.push_window_close::<true>("),
-        "LOFT_HOIST_VERIFY=1 emits the checking form of the push and the close:\n{w1}"
-    );
-}
-
-#[test]
-fn a_straight_line_run_of_byte_appends_is_one_append() {
-    // `@FR-R-PushFill`'s run clause: `tests/scripts/158-push-run.loft`.
-    let out = std::env::temp_dir().join(format!("loft_push_run_{}.rs", std::process::id()));
-    let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/158-push-run.loft");
-    let status = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells.to_str().unwrap(),
-        ],
-        &[],
-    );
-    let rust = fa::read_to_string(&out).unwrap_or_else(|e| {
-        panic!(
-            "no emission ({e}): {}",
-            String::from_utf8_lossy(&status.stderr)
-        )
-    });
-    let _ = fa::remove_file(&out);
-    for (name, want) in [
-        ("n_r1", 1),
-        ("n_r2_mk", 1),
-        ("n_r3", 1),
-        ("n_r5", 1),
-        ("n_r4", 0),
-        ("n_r7", 0),
-    ] {
-        let got = body(&rust, name).matches("one append of the run").count();
-        assert_eq!(got, want, "{name}: runs written as one append");
-    }
-}
-
-#[test]
-fn a_file_read_through_a_one_line_reader_takes_the_window_on_the_release_tier() {
-    // The crawler's `read_i16_vec`: `out += [f_read(bf)]` with `f_read` a one-line
-    // `bf#read(2) as i16 as integer`.  The release tier inlines the reader, so `bf` is named
-    // only as the file of a scalar read and the window opens; f2's `bf#next` still keeps
-    // the header there.
-    let got = counts(&emit_tier("release", &["--ship"], &[]));
-    for (name, want) in [("n_f1_mk", (1, 1, 0, 1)), ("n_f2_mk", (0, 0, 1, 0))] {
-        assert_eq!(
-            got.get(name).copied().unwrap_or_default(),
-            want,
-            "{name}: (windows, windowed pushes, header pushes, closes) on --ship"
-        );
-    }
-}
-
-#[test]
-fn a_mint_left_on_its_templates_is_still_a_growth() {
-    // `(R-Base)`: r1 appends a VECTOR element — no struct, so the mint earns no push
-    // header and keeps the runtime's append — beside a read of a sibling field of the same
-    // record.  That append grows the record's store, so the sibling takes no element base.
-    let rust = emit("growth", &[]);
-    let r1 = body(&rust, "n_r1");
-    assert!(
-        !r1.contains("__vb_"),
-        "r1 grows a store through its mint, so it binds no element base:\n{r1}"
-    );
 }

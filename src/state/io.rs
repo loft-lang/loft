@@ -32,16 +32,20 @@ impl State {
                     .get_str(store.get_u32_raw(file.rec, file.pos + 24))
                     .to_owned()
             };
+            // Consult the page's files first — `compile_and_run` hands the run every
+            // file passed to the playground/gallery (the program's bundled data,
+            // `Stores::page_files`).  Without this, runtime `file("x").content()` only hit the
+            // JS `fs_read_text` host bridge, which the browser playground does not provide →
+            // empty string (the lexer already reads source/lib files from them, but the
+            // runtime read did not).  A real host with no entry for the path still falls
+            // through to its `host_fs_read_text` bridge, so live-FS hosts are unaffected.
+            let given = self
+                .database
+                .page_files
+                .as_ref()
+                .and_then(|f| f.get(&file_path).cloned());
             let buf = self.database.store_mut(&r).addr_mut::<String>(r.rec, r.pos);
-            // @P349: consult VIRT_FS first — `compile_and_run` populates it with
-            // every file passed to the playground/gallery (the program's bundled
-            // data).  Without this, runtime `file("x").content()` only hit the JS
-            // `fs_read_text` host bridge, which the browser playground does not
-            // provide → empty string (the lexer already reads source/lib files
-            // from VIRT_FS via `virt_fs_get`, but the runtime read did not).  A
-            // real host with no VIRT_FS entry for the path still falls through to
-            // its `host_fs_read_text` bridge, so live-FS hosts are unaffected.
-            if let Some(text) = crate::wasm::virt_fs_get(&file_path) {
+            if let Some(text) = given {
                 *buf = text;
             } else if let Some(text) = crate::wasm::host_fs_read_text(&file_path) {
                 *buf = text;
@@ -68,7 +72,7 @@ impl State {
             // read a binary file in complete silence (loft#829).  A refused path reads as
             // no text (`@FR-Path-Refuse`, logged by `resolve_path`).
             match path_string {
-                Some(p) => crate::codegen_runtime::read_file_text_into(&p, buf),
+                Some(p) => crate::fs_ops::read_file_text_into(&p, buf),
                 None => buf.clear(),
             }
         }
@@ -790,8 +794,8 @@ impl State {
         }
         // @PLN199 D1 — a compiled library's generator lives in the host's native table.
         if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            super::release_native_text_yield(db);
-            crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
+            self.release_native_text_yield(db);
+            crate::coroutine_host::free_native_coroutine(db, &mut self.database);
             return;
         }
         // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
@@ -922,10 +926,9 @@ impl State {
                 db.store_nr, db.rec, db.pos,
             );
         }
-        // @PLAN51 Cluster II Step 2 — handle u16::MAX sentinel inputs.
-        // Mirrors the native runtime (`codegen_runtime.rs::OpDatabase`
-        // line 214) so the bytecode VM's `database` opcode accepts the
-        // same sentinel a caller-side `OpInitRefSentinel` reset
+        // Handle u16::MAX sentinel inputs,
+        // so the bytecode VM's `database` opcode accepts the
+        // sentinel a caller-side `OpInitRefSentinel` reset
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
         let mut fresh = db.store_nr == u16::MAX;
@@ -1092,7 +1095,6 @@ impl State {
 
     /// `OpGetRecord` — the keyed lookup `c[k]`.  Its one exit answers the record as a VALUE:
     /// `nullref` for a miss, whichever arm below missed (`DbRef::or_null`, @FR-L-Null).
-    /// `codegen_runtime::OpGetRecord` is the native twin, normalised at its exit the same way.
     pub fn get_record(&mut self) {
         let (db_tp, key) = self.read_key(false);
         let data = self.get_stack::<DbRef>();
@@ -1295,8 +1297,7 @@ impl State {
         let data = self.get_stack::<DbRef>();
         // A holder with no record — a field reached through `nullref` — holds no
         // collection, and the cursor says so before any store is resolved: `finish ==
-        // u32::MAX` is what `step` reads as "done", and the same test opens
-        // `codegen_runtime::OpIterate`.  Resolving the store first indexed
+        // u32::MAX` is what `step` reads as "done".  Resolving the store first indexed
         // `allocations[u16::MAX]`.
         if data.rec == 0 {
             self.put_stack((u64::from(u32::MAX) << 32) | u64::from(u32::MAX));
@@ -1446,9 +1447,8 @@ impl State {
                 // The five narrow STORAGE widths (`Parts::Int` / `Short` / `Byte` /
                 // `ShortRaw` / `IntRaw`).  Narrowing happens at the field boundary, so the bound a
                 // caller pushes for a ranged scan is an ordinary 8-byte integer whatever
-                // the field's width — the same rule `generation/text.rs::emit_content`
-                // states for the native side, where every integer width answers a
-                // `Content::Long(i64)` and the WIDTH lives in the stored record.
+                // the field's width: every integer width answers a `Content::Long(i64)`
+                // and the WIDTH lives in the stored record.
                 //
                 // Without these arms the interpreter panicked "Unknown key type" on any
                 // iteration of a collection keyed on `u8` / `i16` / `i32` / a limited
@@ -1475,8 +1475,7 @@ impl State {
         let reverse = on & 64 != 0;
         let data = self.get_stack::<DbRef>();
         // The holder's record is tested BEFORE its store is resolved: a holder reached
-        // through `nullref` has no store to resolve (`codegen_runtime::OpStep` asks in the
-        // same order).
+        // through `nullref` has no store to resolve.
         let cur = if data.rec == 0 || finish == u32::MAX {
             new_ref(&data, 0, 0)
         } else {
@@ -1486,16 +1485,16 @@ impl State {
                     let all = &self.database.allocations;
                     let n = if cur == 0 {
                         if reverse {
-                            btree::last_record(&data, all)
+                            btree::last_record(&self.database.bt_hints, &data, all)
                         } else {
-                            btree::first_record(&data, all)
+                            btree::first_record(&self.database.bt_hints, &data, all)
                         }
                     } else {
                         let keys = self.database.keys(arg);
                         if reverse {
-                            btree::previous_record(&data, all, keys, cur)
+                            btree::previous_record(&self.database.bt_hints, &data, all, keys, cur)
                         } else {
-                            btree::next_record(&data, all, keys, cur)
+                            btree::next_record(&self.database.bt_hints, &data, all, keys, cur)
                         }
                     };
                     self.put_var(state_var - 8, n);
@@ -1706,7 +1705,7 @@ impl State {
         // vector at all, so it clamps to zero and yields no elements. A bare `as u32`
         // instead turns `[7; -1]` into 4 294 967 295 `copy_block`s that walk off the store
         // until glibc aborts the process.
-        // Twin of `OpAppendCopy` (`src/codegen_runtime.rs`) — keep the two in step, or
+        // Twin of the C's `loft_vec_append_copy` — keep the two in step, or
         // they disagree on a heap-corrupting input.
         let multiply = count.clamp(0, i64::from(u32::MAX)) as u32;
         let data = self.get_stack::<DbRef>();
@@ -1749,14 +1748,14 @@ impl State {
         // source-record pops below are exactly where a stale `Vec3` sub-field surfaces.
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let raw_tp = self.code::<u16>();
         let to = self.get_stack::<DbRef>();
         let data = self.get_stack::<DbRef>();
         self.do_copy_record(data, to, raw_tp);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 
@@ -1780,8 +1779,8 @@ impl State {
         // like extended-S1 inner Sets).  Short-circuit before any
         // destructive op so callers that pass aliased src/dst (e.g.
         // ref_return-promoted callees whose return aliases their
-        // hidden buffer arg) get safe semantics.  Mirrors the safety
-        // gate the native runtime needs at codegen_runtime.rs:OpCopyRecord.
+        // hidden buffer arg) get safe semantics.  The C's `loft_copy_record`
+        // has the same gate.
         if data == to {
             // free_source is suppressed (data.store_nr == to.store_nr
             // is already the existing skip-free condition at line 1225);
@@ -1860,11 +1859,12 @@ impl State {
             && (data.store_nr as usize) < self.database.allocations.len()
             && !self.database.allocations[data.store_nr as usize].live
         {
-            thread_local! {
-                static REPORTED: std::cell::RefCell<std::collections::HashSet<u16>> =
-                    std::cell::RefCell::new(std::collections::HashSet::new());
-            }
-            let first = REPORTED.with(|s| s.borrow_mut().insert(data.store_nr));
+            let first = self.database.run.first_report(
+                crate::database::RunReport::LeakNamed,
+                data.store_nr,
+                0,
+                0,
+            );
             if first {
                 let line_of = |ln: &std::collections::BTreeMap<u32, u32>, pc: u32| -> u32 {
                     ln.range(..=pc).next_back().map_or(0, |(_, &v)| v)
@@ -1872,7 +1872,7 @@ impl State {
                 let copy_line = line_of(&self.line_numbers, self.code_pos);
                 let copy_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                 let (free_pc, free_line, free_d_nr, free_op) =
-                    crate::keys::uaf_freed_pc(data.store_nr)
+                    crate::keys::uaf_freed_pc(&self.database.checks, data.store_nr)
                         .map_or((0, 0, u32::MAX, u16::MAX), |(pc, d, op)| {
                             (pc, line_of(&self.line_numbers, pc), d, op)
                         });
@@ -1900,11 +1900,12 @@ impl State {
             self.database
                 .validate_claims(&data, tp, "uaf-reuse-src", &mut problems);
             if problems > 0 {
-                thread_local! {
-                    static REPORTED_REUSE: std::cell::RefCell<std::collections::HashSet<u16>> =
-                        std::cell::RefCell::new(std::collections::HashSet::new());
-                }
-                let first = REPORTED_REUSE.with(|s| s.borrow_mut().insert(data.store_nr));
+                let first = self.database.run.first_report(
+                    crate::database::RunReport::ReuseNamed,
+                    data.store_nr,
+                    0,
+                    0,
+                );
                 if first {
                     let line = self
                         .line_numbers
@@ -2108,12 +2109,8 @@ impl State {
             if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
                 && self.database.try_swap_rebind(&src, &dst, tp)
             {
-                // The released slot holds `v`'s old tree, freed as the C runtime's
-                // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
-                if self.database.spare_store == Some(src.store_nr) {
-                    self.database.spare_store = None;
-                    self.database.free(&src);
-                }
+                // The released slot holds `v`'s old tree, freed by the exchange as the C
+                // runtime's `loft_swap_in` frees it.
                 return;
             }
             let code_pos = self.code_pos;
@@ -2244,7 +2241,7 @@ impl State {
             && src.store_nr != u16::MAX
             && !self.database.is_stack_store(src.store_nr)
             && self.database.allocations[src.store_nr as usize].live
-            && !self.database.allocations[src.store_nr as usize].read_only
+            && !self.database.allocations[src.store_nr as usize].is_locked()
             && !self.database.allocations[src.store_nr as usize].is_free_protected()
         {
             self.database.free(&src);
@@ -2366,7 +2363,7 @@ impl State {
         // source record into a parent field; a stale source pop here is a copy-incomplete).
         let mark = crate::keys::uaf_gen_enabled();
         if mark {
-            crate::keys::uaf_copy_enter();
+            crate::keys::uaf_copy_enter(&mut self.database.checks);
         }
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
@@ -2374,7 +2371,7 @@ impl State {
         let data = self.get_stack::<DbRef>();
         self.database.record_finish(&data, &record, parent_tp, fld);
         if mark {
-            crate::keys::uaf_copy_exit();
+            crate::keys::uaf_copy_exit(&mut self.database.checks);
         }
     }
 

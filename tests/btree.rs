@@ -278,17 +278,18 @@ impl World {
             self.shape
         );
         let mut by_rec = Vec::new();
-        let mut r = btree::first_record(&self.bt, a);
+        let hints = btree::WalkHints::default();
+        let mut r = btree::first_record(&hints, &self.bt, a);
         while r != 0 {
             by_rec.push(r);
-            r = btree::next_record(&self.bt, a, &self.keys, r);
+            r = btree::next_record(&hints, &self.bt, a, &self.keys, r);
         }
         assert_eq!(out, by_rec, "{:?}: the walk by record differs", self.shape);
         let mut back = Vec::new();
-        let mut r = btree::last_record(&self.bt, a);
+        let mut r = btree::last_record(&hints, &self.bt, a);
         while r != 0 {
             back.push(r);
-            r = btree::previous_record(&self.bt, a, &self.keys, r);
+            r = btree::previous_record(&hints, &self.bt, a, &self.keys, r);
         }
         back.reverse();
         assert_eq!(
@@ -623,20 +624,22 @@ fn a_walk_by_record_survives_changes_around_it() {
                 other.insert(&kv);
             }
             for back in [false, true] {
+                // One walking context over both indexes: their hints share its table.
+                let hints = btree::WalkHints::default();
                 let first = |w: &World| {
                     let a = &w.stores.allocations;
                     if back {
-                        btree::last_record(&w.bt, a)
+                        btree::last_record(&hints, &w.bt, a)
                     } else {
-                        btree::first_record(&w.bt, a)
+                        btree::first_record(&hints, &w.bt, a)
                     }
                 };
                 let step = |w: &World, rec: u32| {
                     let a = &w.stores.allocations;
                     if back {
-                        btree::previous_record(&w.bt, a, &w.keys, rec)
+                        btree::previous_record(&hints, &w.bt, a, &w.keys, rec)
                     } else {
-                        btree::next_record(&w.bt, a, &w.keys, rec)
+                        btree::next_record(&hints, &w.bt, a, &w.keys, rec)
                     }
                 };
                 // The model's neighbour of `rec` in the walk's direction.

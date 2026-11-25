@@ -441,7 +441,7 @@ pub fn run_parallel_text(
         let slot_store = &worker_db.allocations[slot_nr as usize];
         for local_idx in 0..count {
             let s_pos = slot_store.get_u32_raw(array_rec, 4 + (local_idx as u32) * 4);
-            results[start + local_idx] = slot_store.get_str(s_pos).to_string();
+            results[start + local_idx] = crate::text_null::own(slot_store.get_str(s_pos));
         }
     }
     results
@@ -669,7 +669,7 @@ pub fn run_parallel_queue_ref(
         }
         (batch, state.into_database())
     });
-    trace.report("run_parallel_queue_ref", n_rows, n_workers);
+    trace.report(stores, "run_parallel_queue_ref", n_rows, n_workers);
     let null_db = DbRef::NULL;
     let mut refs: Vec<DbRef> = vec![null_db; n_rows];
     let mut adopted: Vec<u16> = Vec::new();

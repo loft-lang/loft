@@ -21,7 +21,7 @@
 # Legs.  `--legs ci` (default) runs CI's three clippy lines; `--legs all` adds the
 # two configurations CI never lints — the loft package with debug assertions
 # ON (the dev profile strips them, so `#[cfg(debug_assertions)]` code is
-# otherwise invisible) and the browser wasm rlib — and lists the warnings that
+# otherwise invisible) and the library built for wasm32-unknown-unknown — and lists the warnings that
 # hide there.
 #
 #   make clippy-review                       # the three CI legs, ~1 min warm

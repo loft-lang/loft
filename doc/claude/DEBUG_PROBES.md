@@ -17,7 +17,7 @@ as hard errors, so a matrix cannot silently measure nothing.
 scripts/probe-matrix init /tmp/p_followups/mybug   # scaffold (template + control cell)
 # … copy the template per cell, vary ONE dimension each, hand-write @EXPECT …
 scripts/probe-matrix /tmp/p_followups/mybug                          # interp, fast iteration
-scripts/probe-matrix /tmp/p_followups/mybug --backend both           # final verify (native pays rustc per cell)
+scripts/probe-matrix /tmp/p_followups/mybug --backend both           # final verify (the C pays a compile per cell)
 scripts/probe-matrix /tmp/p_followups/mybug \
     --baseline .claude/worktrees/prechange/target/release/loft       # A/B classification
 ```
@@ -84,7 +84,7 @@ an apparent backend difference, a runtime panic, a compile-time ICE, or silence,
 depending only on how the cell reads.
 
 Probing the nested-tuple fn-ref hole (`t = ((dbl, 1), "z")`, nothing else) reported it as
-native-only: rustc E0308 on one side, a clean `built` on the other.  It is not
+native-only: rustc E0308 on one side (the retired rustc writer), a clean `built` on the other.  It is not
 native-only.  The reason was in the probe's own output — `warning[never-read]: Variable t
 is never read` — and a cell that reads the tuple back faults on both.  Measured on a
 pristine tree, the *interpreter* gives two different failures depending on what the read

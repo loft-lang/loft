@@ -408,12 +408,12 @@ user invoked it.
 
 ### A native build links its libraries beside the binary, or into it
 
-A native build (`--native`, `--ship`) of a program that uses a library with Rust
-code in it — `regex`, `crypto`, the graphics libraries — links that library's code one of two
-ways.  **Dynamic**, the default: the library is a separate file (`.so` / `.dylib` / `.dll`)
+A native build (`--native`, `--ship`) of a program that uses a library with native
+code in it (a C `[c] shim`) — `regex`, `crypto`, the graphics libraries — links that library's
+code one of two ways.  **Dynamic**, the default: the library is a separate file (`.so` / `.dylib` / `.dll`)
 the binary loads when it starts, so a shipped binary needs that file beside it.  **Static**:
 the library's code is built into the binary, which is then one file that runs with no loft,
-no `rustc` and no library file beside it.  The program can say which it wants with a
+no compiler and no library file beside it.  The program can say which it wants with a
 directive at the top of the file, beside `#cwd`:
 
 ```grammar

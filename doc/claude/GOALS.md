@@ -400,7 +400,8 @@ to run or observe — so progress is measured, not claimed.
 ## North star
 
 **loft is stable when it is correct now AND stays correct as the world changes
-underneath it** — new rustc/LLVM toolchains, new platforms, new ways consumers
+underneath it** — new compiler toolchains (the rustc that builds loft, the C compilers
+that build its programs), new platforms, new ways consumers
 write code. The failure mode we guard against is **latent undefined behaviour
 (UB)**: a bug that passes every test on today's toolchain, then shows up as silent
 data corruption after a compiler upgrade or on a stricter platform. "Passes today"
@@ -547,9 +548,8 @@ Goal C's fraction measures *useful*, not *stable*: a consumer exercises only the
 **Definition.** loft behaves identically on **ubuntu / macOS-ARM / windows**, on
 **64-bit and 32-bit processors**, and across its backends: the **interpreter**, the
 **C backend** (`--native`, the compiled standard — every CI test's `--native` runs
-it), the **Rust writer** (`--native-rust`, kept for the attic) and **wasm**
-(`--native-wasm`, `--html`). No result depends on the platform, the width or the
-backend. macOS-ARM matters most here: it requires aligned memory reads, so an
+it) and **wasm** (`--native-wasm`, `--html`, built through the same C). No result
+depends on the platform, the width or the backend. macOS-ARM matters most here: it requires aligned memory reads, so an
 unaligned read is a real fault there. A `#width 32` program answers the same on
 every backend and every processor ([WIDTH32.md](WIDTH32.md), formal/types.md § The
 32-bit regime). The backends are separate implementations of the same language.

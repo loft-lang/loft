@@ -9,7 +9,7 @@
 #ifdef LOFT_LAZY
 
 /* The paged load of one key into collection `coll` from the image at `path`: the count loaded. */
-typedef int64_t (*loft_lazy_fetch_fn)(loft_ref coll, loft_str path, const loft_kv *key, int n);
+typedef int64_t (*loft_lazy_fetch_fn)(loft_cx *cx, loft_ref coll, loft_str path, const loft_kv *key, int n);
 
 /* A `sqlite:` source's plan for one collection type (`sql_query::derive_select`, derived when
  * the unit was written): the equality query, its table, each selected column with the field it
@@ -53,13 +53,13 @@ typedef struct { loft_ref coll; int64_t count; loft_text reason; } loft_lazy_err
 /* A program's own lazy drivers (`Data::lazy_fetch_drivers`, @PLN133 S8/S9): one per element type,
  * each an adapter the unit writes with the driver's fixed shape, bound by the unit's `main`; or
  * the reason the program's drivers were refused, which every miss then reports. */
-typedef int64_t (*loft_lazy_driver_fn)(loft_ref coll, loft_str source, int64_t key_int, loft_str key_text);
+typedef int64_t (*loft_lazy_driver_fn)(loft_cx *cx, loft_ref coll, loft_str source, int64_t key_int, loft_str key_text);
 typedef struct { const char *element; loft_lazy_driver_fn fn; } loft_lazy_driver;
 static const loft_lazy_driver *loft_lazy_drivers = 0;
 static uint32_t loft_nlazy_drivers = 0;
 static const char *loft_lazy_driver_refusal = 0;
 
-static loft_lazy_driver_fn loft_lazy_driver_for(const char *element) {
+static loft_lazy_driver_fn loft_lazy_driver_for(loft_cx *cx, const char *element) {
     for (uint32_t i = 0; element && i < loft_nlazy_drivers; i++)
         if (!strcmp(loft_lazy_drivers[i].element, element)) return loft_lazy_drivers[i].fn;
     return 0;
@@ -70,30 +70,30 @@ static size_t loft_nlazy = 0, loft_lazy_cap = 0;
 static loft_lazy_err *loft_lazy_errs = 0;
 static size_t loft_nlazy_errs = 0, loft_lazy_errs_cap = 0;
 
-static int loft_lazy_same(loft_ref a, loft_ref b) {
+static int loft_lazy_same(loft_cx *cx, loft_ref a, loft_ref b) {
     return a.store_nr == b.store_nr && a.rec == b.rec && a.pos == b.pos;
 }
 
-static loft_lazy_bind *loft_lazy_binding(loft_ref coll) {
+static loft_lazy_bind *loft_lazy_binding(loft_cx *cx, loft_ref coll) {
     for (size_t i = 0; i < loft_nlazy; i++)
-        if (loft_lazy_same(loft_lazy_binds[i].coll, coll)) return &loft_lazy_binds[i];
+        if (loft_lazy_same(cx, loft_lazy_binds[i].coll, coll)) return &loft_lazy_binds[i];
     return 0;
 }
 
 /* `Stores::lazy_bound`: is a source bound to this collection? */
-static int loft_lazy_bound(loft_ref coll) {
-    return loft_nlazy != 0 && loft_lazy_binding(coll) != 0;
+static int loft_lazy_bound(loft_cx *cx, loft_ref coll) {
+    return loft_nlazy != 0 && loft_lazy_binding(cx, coll) != 0;
 }
 
-static loft_lazy_err *loft_lazy_err_of(loft_ref coll) {
+static loft_lazy_err *loft_lazy_err_of(loft_cx *cx, loft_ref coll) {
     for (size_t i = 0; i < loft_nlazy_errs; i++)
-        if (loft_lazy_same(loft_lazy_errs[i].coll, coll)) return &loft_lazy_errs[i];
+        if (loft_lazy_same(cx, loft_lazy_errs[i].coll, coll)) return &loft_lazy_errs[i];
     return 0;
 }
 
 /* `Stores::lazy_refuse`: one more failure for the collection, the first reason kept; 0. */
-static int64_t loft_lazy_refuse(loft_ref coll, loft_str why) {
-    loft_lazy_err *e = loft_lazy_err_of(coll);
+static int64_t loft_lazy_refuse(loft_cx *cx, loft_ref coll, loft_str why) {
+    loft_lazy_err *e = loft_lazy_err_of(cx, coll);
     if (!e) {
         if (loft_nlazy_errs == loft_lazy_errs_cap) {
             loft_lazy_errs_cap = loft_lazy_errs_cap ? loft_lazy_errs_cap * 2 : 8;
@@ -103,14 +103,14 @@ static int64_t loft_lazy_refuse(loft_ref coll, loft_str why) {
         e = &loft_lazy_errs[loft_nlazy_errs++];
         e->coll = coll;
         e->count = 0;
-        e->reason = loft_text_own(why);
+        e->reason = loft_text_own(cx, why);
     }
     e->count++;
     return 0;
 }
 
 /* `Stores::source_pin`: a local source's identity, 0 for a URL or a path that is not there. */
-static int loft_lazy_pin(const char *source, uint64_t *len, uint64_t *mtime, uint64_t *ino) {
+static int loft_lazy_pin(loft_cx *cx, const char *source, uint64_t *len, uint64_t *mtime, uint64_t *ino) {
     if (strncmp(source, "http://", 7) == 0 || strncmp(source, "https://", 8) == 0) return 0;
 #ifdef LOFT_POSIX
     struct stat st;
@@ -132,7 +132,7 @@ static int loft_lazy_pin(const char *source, uint64_t *len, uint64_t *mtime, uin
 }
 
 /* Does `source` name a database (`sqlite:`) or a loft driver's scheme (`LazySource::of`)? */
-static int loft_lazy_database(loft_str source) {
+static int loft_lazy_database(loft_cx *cx, loft_str source) {
     static const char *const schemes[] = { "sqlite", "postgres", "postgresql", "pg", "mysql", "mariadb", "maria",
                                            "duckdb", "duck" };
     for (size_t i = 0; i < source.len; i++) {
@@ -156,19 +156,19 @@ static int loft_lazy_database(loft_str source) {
 /* `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a source an image cannot serve this
  * collection's kind from is refused here (`unservable`, the emitter's reason), the binding
  * dropped; else the collection is bound, the source pinned, a rebind re-pinning it. */
-static uint8_t loft_lazy_bind_coll(loft_ref coll, loft_str source, loft_lazy_fetch_fn fetch, const char *element,
+static uint8_t loft_lazy_bind_coll(loft_cx *cx, loft_ref coll, loft_str source, loft_lazy_fetch_fn fetch, const char *element,
                                    const char *unservable, const loft_sql_plan *sql) {
     if (coll.rec == 0) return 0;
-    loft_lazy_bind *b = loft_lazy_binding(coll);
-    if (unservable && !loft_lazy_database(source)) {
+    loft_lazy_bind *b = loft_lazy_binding(cx, coll);
+    if (unservable && !loft_lazy_database(cx, source)) {
         if (b) {
-            loft_text_free(&b->source);
+            loft_text_free(cx, &b->source);
             *b = loft_lazy_binds[--loft_nlazy];
         }
         fputs("store_bind_lazy: refusing `", stderr);
         fwrite(source.p, 1, source.len, stderr);
         fprintf(stderr, "` — %s\n", unservable);
-        loft_lazy_refuse(coll, loft_lit(unservable, strlen(unservable)));
+        loft_lazy_refuse(cx, coll, loft_lit(cx, unservable, strlen(unservable)));
         return 0;
     }
     if (!b) {
@@ -183,12 +183,12 @@ static uint8_t loft_lazy_bind_coll(loft_ref coll, loft_str source, loft_lazy_fet
         b->source.len = b->source.cap = 0;
         b->sql_refusal = 0;
     }
-    loft_text_set(&b->source, source);
+    loft_text_set(cx, &b->source, source);
     /* Every reader of the bound source takes `p` as a C string — the stat that pins it, the
      * path `sqlite:` opens, a message's `%s` — and a loft text carries no terminator: one is
      * kept past `len`.  Without it the driver read on into the buffer's old bytes (after a
      * rebind, the longer source's tail; on Windows, whatever the heap held). */
-    loft_push(&b->source, "", 1);
+    loft_push(cx, &b->source, "", 1);
     b->source.len--;
     b->fetch = fetch;
     b->element = element;
@@ -196,7 +196,7 @@ static uint8_t loft_lazy_bind_coll(loft_ref coll, loft_str source, loft_lazy_fet
     b->sql_checked = 0;
     free(b->sql_refusal);
     b->sql_refusal = 0;
-    b->pinned = loft_lazy_pin(b->source.p, &b->len, &b->mtime, &b->ino);
+    b->pinned = loft_lazy_pin(cx, b->source.p, &b->len, &b->mtime, &b->ino);
     return 1;
 }
 
@@ -227,8 +227,11 @@ static struct {
     int (*db_config)(void *, int, ...);
 } loft_sq;
 
-static int loft_sq_resolve(char *why, size_t cap) {
-    static const char *const names[] = { "winsqlite3.dll", "libsqlite3.so.0", 0 };
+static int loft_sq_resolve(loft_cx *cx, char *why, size_t cap) {
+    /* Windows' own first, by the name Windows uses (loft#770); then the soname and its macOS
+     * spellings (`platform::lib_variants`), as `sql_source::SqliteApi::ensure_loaded` loads it. */
+    static const char *const names[] = { "winsqlite3.dll", "libsqlite3.so.0", "libsqlite3.0.dylib",
+                                         "libsqlite3.dylib", 0 };
     static const char *const syms[] = { "sqlite3_open_v2", "sqlite3_prepare_v2", "sqlite3_step", "sqlite3_column_count",
                                         "sqlite3_column_type", "sqlite3_column_int64", "sqlite3_column_double",
                                         "sqlite3_column_text", "sqlite3_bind_int64", "sqlite3_bind_text",
@@ -244,15 +247,15 @@ static int loft_sq_resolve(char *why, size_t cap) {
         loft_sq.tried = 1;
         /* The program's own sqlite (linked, or a library it loaded) first, else Windows' own
          * `winsqlite3.dll` or the system's `libsqlite3` (`loft_dl_*`: `dlopen` / `LoadLibraryA`). */
-        int linked = loft_dl_self_sym("sqlite3_open_v2") != 0;
+        int linked = loft_dl_self_sym(cx, "sqlite3_open_v2") != 0;
         if (!linked)
-            for (const char *const *n = names; *n && !h; n++) h = loft_dl_open(*n, LOFT_DL_GLOBAL);
+            for (const char *const *n = names; *n && !h; n++) h = loft_dl_open(cx, *n, LOFT_DL_GLOBAL);
         loft_sq.ok = 1;
         for (int i = 0; syms[i]; i++) {
-            void *p = h ? loft_dl_sym(h, syms[i]) : 0;
-            if (!p) p = loft_dl_self_sym(syms[i]);
+            void *p = h ? loft_dl_sym(cx, h, syms[i]) : 0;
+            if (!p) p = loft_dl_self_sym(cx, syms[i]);
             if (!p) {
-                snprintf(why, cap, "sqlite is not installed — `%s` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0)",
+                snprintf(why, cap, "sqlite is not installed — `%s` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0, libsqlite3.dylib)",
                          syms[i]);
                 loft_sq.ok = 0;
                 break;
@@ -261,7 +264,7 @@ static int loft_sq_resolve(char *why, size_t cap) {
         }
     }
     if (!loft_sq.ok && !why[0])
-        snprintf(why, cap, "sqlite is not installed — `sqlite3_open_v2` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0)");
+        snprintf(why, cap, "sqlite is not installed — `sqlite3_open_v2` did not resolve (looked for winsqlite3.dll, libsqlite3.so.0, libsqlite3.dylib)");
     return loft_sq.ok;
 }
 
@@ -269,11 +272,11 @@ typedef struct { char *target; void *db; } loft_sq_conn;
 static loft_sq_conn *loft_sq_conns = 0;
 static size_t loft_sq_nconns = 0;
 
-static void *loft_sq_open(const char *target, char *why, size_t cap) {
+static void *loft_sq_open(loft_cx *cx, const char *target, char *why, size_t cap) {
     void *db = 0;
     for (size_t i = 0; i < loft_sq_nconns; i++)
         if (!strcmp(loft_sq_conns[i].target, target)) return loft_sq_conns[i].db;
-    if (!loft_sq_resolve(why, cap)) return 0;
+    if (!loft_sq_resolve(cx, why, cap)) return 0;
     int rc = loft_sq.open_v2(target, &db, 1 /* SQLITE_OPEN_READONLY */, 0);
     if (rc != 0 || !db) {
         if (!db) snprintf(why, cap, "`%s` could not be opened (sqlite rc %d)", target, rc);
@@ -287,7 +290,7 @@ static void *loft_sq_open(const char *target, char *why, size_t cap) {
     loft_sq.db_config(db, 1013 /* DQS_DDL */, 0, (int *) 0);
     loft_sq_conns = (loft_sq_conn *) realloc(loft_sq_conns, (loft_sq_nconns + 1) * sizeof *loft_sq_conns);
     if (!loft_sq_conns) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_sq_conns[loft_sq_nconns].target = loft_log_dup(target, strlen(target));
+    loft_sq_conns[loft_sq_nconns].target = loft_log_dup(cx, target, strlen(target));
     loft_sq_conns[loft_sq_nconns].db = db;
     loft_sq_nconns++;
     return db;
@@ -295,7 +298,7 @@ static void *loft_sq_open(const char *target, char *why, size_t cap) {
 
 /* `SqlConn::query`: every row of `sql` with `args` bound, as cells; 0 rows and `*n_rows` set on
  * success, -1 with the engine's own text in `why` when it does not prepare or run. */
-static int loft_sq_query(void *db, const char *target, const char *sql, const loft_kv *args, int nargs,
+static int loft_sq_query(loft_cx *cx, void *db, const char *target, const char *sql, const loft_kv *args, int nargs,
                          loft_sql_cell **rows, int *n_rows, int *n_cols, char *why, size_t cap) {
     void *st = 0;
     *rows = 0;
@@ -307,7 +310,7 @@ static int loft_sq_query(void *db, const char *target, const char *sql, const lo
     for (int i = 0; i < nargs; i++) {
         int rc;
         if (args[i].kind == LOFT_KV_TEXT) {
-            char *t = loft_log_dup(args[i].s.p, args[i].s.len);
+            char *t = loft_log_dup(cx, args[i].s.p, args[i].s.len);
             rc = loft_sq.bind_text(st, i + 1, t, -1, (void (*)(void *)) -1 /* SQLITE_TRANSIENT */);
             free(t);
         } else if (args[i].kind == LOFT_KV_FLOAT) rc = loft_sq.bind_double(st, i + 1, args[i].f);
@@ -343,8 +346,8 @@ static int loft_sq_query(void *db, const char *target, const char *sql, const lo
                 const unsigned char *t = loft_sq.col_text(st, i);
                 if (t) {
                     c->kind = 3;
-                    loft_push(&c->t, (const char *) t, strlen((const char *) t));
-                    loft_push(&c->t, "", 1); /* the NUL, counted in len */
+                    loft_push(cx, &c->t, (const char *) t, strlen((const char *) t));
+                    loft_push(cx, &c->t, "", 1); /* the NUL, counted in len */
                 }
             }
             }
@@ -355,13 +358,13 @@ static int loft_sq_query(void *db, const char *target, const char *sql, const lo
     return 0;
 }
 
-static void loft_sq_free_rows(loft_sql_cell *rows, int n_rows, int n_cols) {
+static void loft_sq_free_rows(loft_cx *cx, loft_sql_cell *rows, int n_rows, int n_cols) {
     for (int i = 0; i < n_rows * n_cols; i++) free(rows[i].t.p);
     free(rows);
 }
 
 /* SQLite's affinity rule for a declared column type (`sql_source::affinity`). */
-static const char *loft_sq_affinity(const char *declared) {
+static const char *loft_sq_affinity(loft_cx *cx, const char *declared) {
     char up[64];
     size_t n = strlen(declared);
     if (n >= sizeof up) n = sizeof up - 1;
@@ -376,15 +379,15 @@ static const char *loft_sq_affinity(const char *declared) {
 
 /* `interrogate_schema`: the table exists, each column exists with an affinity its field can
  * hold, and an index serves the lookup (EXPLAIN QUERY PLAN says SEARCH, never SCAN). */
-static int loft_sq_schema(void *db, const char *target, const loft_sql_plan *pl, char *why, size_t cap) {
+static int loft_sq_schema(loft_cx *cx, void *db, const char *target, const loft_sql_plan *pl, char *why, size_t cap) {
     char q[512];
     loft_sql_cell *rows;
     int nr, nc;
     snprintf(q, sizeof q, "PRAGMA table_info(%s)", pl->table);
-    if (loft_sq_query(db, target, q, 0, 0, &rows, &nr, &nc, why, cap) != 0) return 0;
+    if (loft_sq_query(cx, db, target, q, 0, 0, &rows, &nr, &nc, why, cap) != 0) return 0;
     if (nr == 0) {
         snprintf(why, cap, "the source has no table %s", pl->table);
-        loft_sq_free_rows(rows, nr, nc);
+        loft_sq_free_rows(cx, rows, nr, nc);
         return 0;
     }
     for (int c = 0; c < pl->ncols; c++) {
@@ -403,96 +406,96 @@ static int loft_sq_schema(void *db, const char *target, const loft_sql_plan *pl,
         }
         if (!tp) {
             snprintf(why, cap, "%s has no column `%s`", pl->table, want);
-            loft_sq_free_rows(rows, nr, nc);
+            loft_sq_free_rows(cx, rows, nr, nc);
             return 0;
         }
-        const char *a = loft_sq_affinity(tp);
+        const char *a = loft_sq_affinity(cx, tp);
         int content = pl->cols[c].content;
         int wrong = content <= 4 ? (!strcmp(a, "TEXT") || !strcmp(a, "BLOB"))
                     : content == 5 ? (!strcmp(a, "INTEGER") || !strcmp(a, "REAL")) : 1;
         if (wrong) {
             snprintf(why, cap, "%s.%s is %s (%s affinity), which cannot hold `%s`", pl->table, want, tp, a,
                      pl->cols[c].type_name);
-            loft_sq_free_rows(rows, nr, nc);
+            loft_sq_free_rows(cx, rows, nr, nc);
             return 0;
         }
     }
-    loft_sq_free_rows(rows, nr, nc);
+    loft_sq_free_rows(cx, rows, nr, nc);
     snprintf(q, sizeof q, "EXPLAIN QUERY PLAN %s", pl->select);
-    if (loft_sq_query(db, target, q, 0, 0, &rows, &nr, &nc, why, cap) != 0) return 0;
+    if (loft_sq_query(cx, db, target, q, 0, 0, &rows, &nr, &nc, why, cap) != 0) return 0;
     for (int i = 0; i < nr * nc; i++) {
         if (rows[i].kind == 3 && !strncmp(rows[i].t.p, "SCAN", 4)) {
             snprintf(why, cap, "the source has no index for this lookup — `%s`. Every fault would read the whole "
                      "table, which is a working feature and a catastrophic one", rows[i].t.p);
-            loft_sq_free_rows(rows, nr, nc);
+            loft_sq_free_rows(cx, rows, nr, nc);
             return 0;
         }
     }
-    loft_sq_free_rows(rows, nr, nc);
+    loft_sq_free_rows(cx, rows, nr, nc);
     return 1;
 }
 #endif
 
 #if defined(LOFT_DL)
-static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row);
+static void loft_lazy_sql_materialise(loft_cx *cx, const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row);
 #endif
 
 /* `fetch_from_sql`: the equality query for the missed key, its first row written into a fresh
  * record (`materialise` / `write_cell`: a NULL is loft's null for the field) and filed by the
  * collection's own insert.  1 inserted, 0 absent; a source that cannot answer is refused. */
-static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft_kv *key, int n) {
+static int loft_lazy_sql_fetch(loft_cx *cx, loft_lazy_bind *b, const char *target, const loft_kv *key, int n) {
     char why[1024];
     why[0] = 0;
     const loft_sql_plan *pl = b->sql;
     if (!pl) {
         snprintf(why, sizeof why, "no query can be derived for `%s` — its element has a field that is not a column",
                  b->element ? b->element : "?");
-        loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
     if (pl->nparams != n) {
         snprintf(why, sizeof why, "`%s` is keyed on %d column(s) and the lookup gave %d", pl->element, pl->nparams, n);
-        loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
 #if defined(LOFT_DL)
-    void *db = loft_sq_open(target, why, sizeof why);
+    void *db = loft_sq_open(cx, target, why, sizeof why);
     if (!db) {
-        loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
     if (!b->sql_checked) {
         b->sql_checked = 1;
-        if (!loft_sq_schema(db, target, pl, why, sizeof why)) b->sql_refusal = loft_log_dup(why, strlen(why));
+        if (!loft_sq_schema(cx, db, target, pl, why, sizeof why)) b->sql_refusal = loft_log_dup(cx, why, strlen(why));
     }
     if (b->sql_refusal) {
-        loft_lazy_refuse(b->coll, loft_lit(b->sql_refusal, strlen(b->sql_refusal)));
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, b->sql_refusal, strlen(b->sql_refusal)));
         return 0;
     }
     loft_sql_cell *rows;
     int nr, nc;
-    if (loft_sq_query(db, target, pl->select, key, n, &rows, &nr, &nc, why, sizeof why) != 0) {
-        loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    if (loft_sq_query(cx, db, target, pl->select, key, n, &rows, &nr, &nc, why, sizeof why) != 0) {
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
     if (nr == 0) {
-        loft_sq_free_rows(rows, nr, nc);
+        loft_sq_free_rows(cx, rows, nr, nc);
         return 0;
     }
     if (nc != pl->ncols) {
         snprintf(why, sizeof why, "`%s` answered %d column(s) where the query asked %d", target, nc, pl->ncols);
-        loft_sq_free_rows(rows, nr, nc);
-        loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+        loft_sq_free_rows(cx, rows, nr, nc);
+        loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
-    loft_lazy_sql_materialise(pl, b->coll, rows);
-    loft_sq_free_rows(rows, nr, nc);
+    loft_lazy_sql_materialise(cx, pl, b->coll, rows);
+    loft_sq_free_rows(cx, rows, nr, nc);
     return 1;
 #else
     (void) target;
     (void) key;
     snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
-    loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
     return 0;
 #endif
 }
@@ -500,10 +503,10 @@ static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft
 #if defined(LOFT_DL)
 /* `materialise` / `write_cell`: one row written into a fresh record and filed by the collection's
  * own insert; a NULL is the field's null. */
-static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row) {
+static void loft_lazy_sql_materialise(loft_cx *cx, const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row) {
     int nc = pl->ncols;
-    loft_ref tmp = loft_ref_null();
-    loft_database(&tmp, pl->size);
+    loft_ref tmp = loft_ref_null(cx);
+    loft_database(cx, &tmp, pl->size);
     for (int c = 0; c < nc; c++) {
         const loft_sql_cell *cell = &row[c];
         uint32_t at = pl->cols[c].pos;
@@ -514,57 +517,57 @@ static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, co
                     : cell->kind == 3 ? strtod(cell->t.p, 0) : (double) NAN;
         switch (pl->cols[c].content) {
         case 0:
-        case 1: loft_set_int(tmp, at, has_int ? iv : LOFT_NULL); break;
-        case 2: loft_set_single(tmp, at, (float) fv); break;
-        case 3: loft_set_float(tmp, at, fv); break;
-        case 4: loft_set_byte(tmp, at, (uint8_t) (has_int && iv != 0)); break;
+        case 1: loft_set_int(cx, tmp, at, has_int ? iv : LOFT_NULL); break;
+        case 2: loft_set_single(cx, tmp, at, (float) fv); break;
+        case 3: loft_set_float(cx, tmp, at, fv); break;
+        case 4: loft_set_byte(cx, tmp, at, (uint8_t) (has_int && iv != 0)); break;
         case 6: {
             uint32_t ch = 0;
             if (cell->kind == 3) {
-                loft_str sv = loft_lit(cell->t.p, cell->t.len ? cell->t.len - 1 : 0);
+                loft_str sv = loft_lit(cx, cell->t.p, cell->t.len ? cell->t.len - 1 : 0);
                 size_t used = 0;
-                if (sv.len) ch = loft_decode(sv, 0, &used);
+                if (sv.len) ch = loft_decode(cx, sv, 0, &used);
             } else if (has_int) ch = (uint32_t) iv;
-            loft_set_char(tmp, at, ch);
+            loft_set_char(cx, tmp, at, ch);
             break;
         }
         case 5:
             if (cell->kind == 0) break;
-            else if (cell->kind == 3) loft_set_text(tmp, at, loft_lit(cell->t.p, cell->t.len ? cell->t.len - 1 : 0));
+            else if (cell->kind == 3) loft_set_text(cx, tmp, at, loft_lit(cx, cell->t.p, cell->t.len ? cell->t.len - 1 : 0));
             else {
                 char num[64];
                 if (cell->kind == 1) snprintf(num, sizeof num, "%lld", (long long) cell->i);
                 else snprintf(num, sizeof num, "%.17g", cell->f);
-                loft_set_text(tmp, at, loft_lit(num, strlen(num)));
+                loft_set_text(cx, tmp, at, loft_lit(cx, num, strlen(num)));
             }
             break;
         default: break;
         }
     }
-    loft_set_keyed(pl->types, pl->elem, coll, tmp, pl->kind, pl->keys, pl->nk, 0, 0, 1, 0);
+    loft_set_keyed(cx, pl->types, pl->elem, coll, tmp, pl->kind, pl->keys, pl->nk, 0, 0, 1, 0);
 }
 
 /* `row_key` + the ask-first rule of `lazy_query` / `lazy_range`: every row whose key is not
  * resident is materialised (a person reached by a predicate and by navigation is one record);
  * the count added, or the refusal through the channel. */
-static int64_t loft_lazy_sql_rows(loft_lazy_bind *b, const char *target, const char *sql, const loft_kv *args,
+static int64_t loft_lazy_sql_rows(loft_cx *cx, loft_lazy_bind *b, const char *target, const char *sql, const loft_kv *args,
                                   int nargs) {
     const loft_sql_plan *pl = b->sql;
     char why[1024];
     why[0] = 0;
-    void *db = loft_sq_open(target, why, sizeof why);
-    if (!db) return loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    void *db = loft_sq_open(cx, target, why, sizeof why);
+    if (!db) return loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
     loft_sql_cell *rows;
     int nr, nc;
-    if (loft_sq_query(db, target, sql, args, nargs, &rows, &nr, &nc, why, sizeof why) != 0)
-        return loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    if (loft_sq_query(cx, db, target, sql, args, nargs, &rows, &nr, &nc, why, sizeof why) != 0)
+        return loft_lazy_refuse(cx, b->coll, loft_lit(cx, why, strlen(why)));
     int64_t added = 0;
     for (int r = 0; r < nr; r++) {
         const loft_sql_cell *row = rows + (size_t) r * (size_t) nc;
         if (nc != pl->ncols) {
-            loft_sq_free_rows(rows, nr, nc);
+            loft_sq_free_rows(cx, rows, nr, nc);
             static const char m[] = "the source answered a different column count";
-            return loft_lazy_refuse(b->coll, loft_lit(m, sizeof m - 1));
+            return loft_lazy_refuse(cx, b->coll, loft_lit(cx, m, sizeof m - 1));
         }
         loft_kv key[8];
         int nk = pl->nk < 8 ? pl->nk : 8, found_all = 1;
@@ -577,7 +580,7 @@ static int64_t loft_lazy_sql_rows(loft_lazy_bind *b, const char *target, const c
             const loft_sql_cell *cell = &row[col];
             if (cell->kind == 3) {
                 key[k].kind = LOFT_KV_TEXT;
-                key[k].s = loft_lit(cell->t.p, cell->t.len ? cell->t.len - 1 : 0);
+                key[k].s = loft_lit(cx, cell->t.p, cell->t.len ? cell->t.len - 1 : 0);
             } else if (pl->cols[col].content == 2 || pl->cols[col].content == 3) {
                 key[k].kind = LOFT_KV_FLOAT;
                 key[k].f = cell->kind == 2 ? cell->f : (double) cell->i;
@@ -588,31 +591,31 @@ static int64_t loft_lazy_sql_rows(loft_lazy_bind *b, const char *target, const c
             }
         }
         if (!found_all) {
-            loft_sq_free_rows(rows, nr, nc);
+            loft_sq_free_rows(cx, rows, nr, nc);
             static const char m[] = "a row arrived without the collection's key";
-            return loft_lazy_refuse(b->coll, loft_lit(m, sizeof m - 1));
+            return loft_lazy_refuse(cx, b->coll, loft_lit(cx, m, sizeof m - 1));
         }
-        if (loft_keyed_find(b->coll, pl->kind, pl->size, pl->keys, pl->nk, key, nk).rec != 0) continue;
-        loft_lazy_sql_materialise(pl, b->coll, row);
+        if (loft_keyed_find(cx, b->coll, pl->kind, pl->size, pl->keys, pl->nk, key, nk).rec != 0) continue;
+        loft_lazy_sql_materialise(cx, pl, b->coll, row);
         added++;
     }
-    loft_sq_free_rows(rows, nr, nc);
+    loft_sq_free_rows(cx, rows, nr, nc);
     return added;
 }
 #endif
 
 /* The binding of `coll` to a database, or the refusal (`lazy_query` / `lazy_range`'s preamble). */
-static loft_lazy_bind *loft_lazy_db_binding(loft_ref coll, int64_t *refused) {
-    loft_lazy_bind *b = loft_lazy_binding(coll);
+static loft_lazy_bind *loft_lazy_db_binding(loft_cx *cx, loft_ref coll, int64_t *refused) {
+    loft_lazy_bind *b = loft_lazy_binding(cx, coll);
     char why[512];
     if (!b) {
         static const char m[] = "this collection is not bound to a source";
-        *refused = loft_lazy_refuse(coll, loft_lit(m, sizeof m - 1));
+        *refused = loft_lazy_refuse(cx, coll, loft_lit(cx, m, sizeof m - 1));
         return 0;
     }
-    if (loft_lazy_database(loft_view(&b->source)) != 1) {
+    if (loft_lazy_database(cx, loft_view(cx, &b->source)) != 1) {
         snprintf(why, sizeof why, "`%s` is not a database source", b->source.p);
-        *refused = loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        *refused = loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
     return b;
@@ -620,103 +623,104 @@ static loft_lazy_bind *loft_lazy_db_binding(loft_ref coll, int64_t *refused) {
 
 /* `store_lazy_query(coll, condition)` (`Stores::lazy_query`): the caller's predicate, verbatim, after
  * the derived select — not index-checked, it is the escape hatch — every new row materialised. */
-static int64_t loft_lazy_query(loft_ref coll, loft_str condition) {
+static int64_t loft_lazy_query(loft_cx *cx, loft_ref coll, loft_str condition) {
     int64_t refused = 0;
-    loft_lazy_bind *b = loft_lazy_db_binding(coll, &refused);
+    loft_lazy_bind *b = loft_lazy_db_binding(cx, coll, &refused);
     char why[512];
     if (!b) return refused;
     if (!b->sql || !b->sql->filter) {
         snprintf(why, sizeof why, "no query can be derived for `%s`", b->element ? b->element : "?");
-        return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        return loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
     }
 #if defined(LOFT_DL)
     loft_text q = { 0, 0, 0 };
-    loft_push(&q, b->sql->filter, strlen(b->sql->filter));
-    loft_push(&q, condition.p, condition.len);
-    loft_push(&q, "", 1);
-    int64_t n = loft_lazy_sql_rows(b, b->source.p + 7, q.p, 0, 0);
+    loft_push(cx, &q, b->sql->filter, strlen(b->sql->filter));
+    loft_push(cx, &q, condition.p, condition.len);
+    loft_push(cx, &q, "", 1);
+    int64_t n = loft_lazy_sql_rows(cx, b, b->source.p + 7, q.p, 0, 0);
     free(q.p);
     return n;
 #else
     (void) condition;
     snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
-    return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    return loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
 #endif
 }
 
 /* `store_lazy_range(coll, lo, hi)` (`Stores::lazy_range`): the ordered collection's one key column
  * between `lo` and `hi`, schema-checked like a lookup, every new row materialised. */
-static int64_t loft_lazy_range(loft_ref coll, int64_t lo, int64_t hi) {
+static int64_t loft_lazy_range(loft_cx *cx, loft_ref coll, int64_t lo, int64_t hi) {
     int64_t refused = 0;
-    loft_lazy_bind *b = loft_lazy_db_binding(coll, &refused);
+    loft_lazy_bind *b = loft_lazy_db_binding(cx, coll, &refused);
     char why[1024];
     if (!b) return refused;
     if (!b->sql || !b->sql->range) {
         snprintf(why, sizeof why, "`%s` has no range to fetch — an ordered collection is what derives one",
                  b->element ? b->element : "?");
-        return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        return loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
     }
     if (b->sql->range_nparams != 2) {
         static const char m[] = "a range fetch takes ONE key column; a composite key needs an explicit query";
-        return loft_lazy_refuse(coll, loft_lit(m, sizeof m - 1));
+        return loft_lazy_refuse(cx, coll, loft_lit(cx, m, sizeof m - 1));
     }
 #if defined(LOFT_DL)
     const char *target = b->source.p + 7;
     why[0] = 0;
-    void *db = loft_sq_open(target, why, sizeof why);
-    if (!db) return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    void *db = loft_sq_open(cx, target, why, sizeof why);
+    if (!db) return loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
     if (!b->sql_checked) {
         b->sql_checked = 1;
-        if (!loft_sq_schema(db, target, b->sql, why, sizeof why)) b->sql_refusal = loft_log_dup(why, strlen(why));
+        if (!loft_sq_schema(cx, db, target, b->sql, why, sizeof why)) b->sql_refusal = loft_log_dup(cx, why, strlen(why));
     }
-    if (b->sql_refusal) return loft_lazy_refuse(coll, loft_lit(b->sql_refusal, strlen(b->sql_refusal)));
+    if (b->sql_refusal) return loft_lazy_refuse(cx, coll, loft_lit(cx, b->sql_refusal, strlen(b->sql_refusal)));
     loft_kv args[2];
     memset(args, 0, sizeof args);
     args[0].kind = args[1].kind = LOFT_KV_INT;
     args[0].i = lo;
     args[1].i = hi;
-    return loft_lazy_sql_rows(b, target, b->sql->range, args, 2);
+    return loft_lazy_sql_rows(cx, b, target, b->sql->range, args, 2);
 #else
     (void) lo;
     (void) hi;
     snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
-    return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    return loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
 #endif
 }
 
-/* `Stores::fetch_missing`: the lookup on bound collection `coll` missed `key`; 1 when the source
- * inserted the entry and the lookup is to be run again. */
-static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
-    loft_lazy_bind *b = loft_lazy_binding(coll);
+/* `Stores::fetch_missing`: the lookup on bound collection `coll` missed `key`; 1 when the lookup
+ * is to be run again — the source inserted the entry, or a loft driver faulted after inserting
+ * what it did. */
+static int loft_lazy_miss(loft_cx *cx, loft_ref coll, const loft_kv *key, int n) {
+    loft_lazy_bind *b = loft_lazy_binding(cx, coll);
     if (!b) return 0;
     const char *source = b->source.p;
     char why[1100];
     if (b->pinned) {
         uint64_t len = 0, mtime = 0, ino = 0;
-        if (!loft_lazy_pin(source, &len, &mtime, &ino) || len != b->len || mtime != b->mtime || ino != b->ino) {
+        if (!loft_lazy_pin(cx, source, &len, &mtime, &ino) || len != b->len || mtime != b->mtime || ino != b->ino) {
             snprintf(why, sizeof why, "`%s` changed since it was bound — rebind to accept the new version", source);
-            loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+            loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
             return 0;
         }
     }
-    int db = loft_lazy_database(loft_view(&b->source));
+    int db = loft_lazy_database(cx, loft_view(cx, &b->source));
     /* A driver WINS over the source core drives itself (@PLN133 S9), and a refused driver set
      * is reported at every miss rather than falling back. */
-    loft_lazy_driver_fn driver = loft_lazy_driver_for(b->element);
+    loft_lazy_driver_fn driver = loft_lazy_driver_for(cx, b->element);
     if (db && loft_lazy_driver_refusal) {
-        loft_lazy_refuse(coll, loft_lit(loft_lazy_driver_refusal, strlen(loft_lazy_driver_refusal)));
+        loft_lazy_refuse(cx, coll, loft_lit(cx, loft_lazy_driver_refusal, strlen(loft_lazy_driver_refusal)));
         return 0;
     }
     if (db && driver) {
         /* One key, whichever spelling it arrived in: fetching the WRONG row is worse than
          * answering absent. */
         int64_t key_int = 0;
-        loft_str key_text = loft_lit("", 0);
+        loft_str key_text = loft_lit(cx, "", 0);
         if (n == 1 && key[0].kind == LOFT_KV_INT) key_int = key[0].i;
         else if (n == 1 && key[0].kind == LOFT_KV_TEXT) key_text = key[0].s;
         else {
             static const char composite[] = "a composite key cannot be fetched — a driver is given one key";
-            loft_lazy_refuse(coll, loft_lit(composite, sizeof composite - 1));
+            loft_lazy_refuse(cx, coll, loft_lit(cx, composite, sizeof composite - 1));
             return 0;
         }
         /* The key crosses the `setjmp` as the rest of this frame's state does: volatile. */
@@ -724,48 +728,50 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
         const char *volatile key_p = key_text.p;
         volatile size_t key_n = key_text.len;
         jmp_buf jb;
-        jmp_buf *volatile outer = loft_lazy_jmp;
-        volatile uint64_t serial0 = loft_stores_allocated;
+        jmp_buf *volatile outer = cx->lazy_jmp;
+        volatile uint64_t serial0 = cx->stores_allocated;
 #if defined(LOFT_CALL_CHAIN)
-        volatile size_t depth = loft_nframes;
+        volatile size_t depth = cx->nframes;
 #endif
         volatile int64_t answer = 0;
 #if defined(LOFT_HALT_RELEASE)
-        volatile size_t held_outer = loft_lazy_held_floor;
+        volatile size_t held_outer = cx->lazy_held_floor;
 #endif
         if (setjmp(jb) == 0) {
-            loft_lazy_jmp = &jb;
+            cx->lazy_jmp = &jb;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = loft_nheld;
+            cx->lazy_held_floor = cx->nheld;
 #endif
-            answer = driver(coll, loft_view(&b->source), key_i, loft_lit(key_p, key_n));
-            loft_lazy_jmp = outer;
+            answer = driver(cx, coll, loft_view(cx, &b->source), key_i, loft_lit(cx, key_p, key_n));
+            cx->lazy_jmp = outer;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = held_outer;
+            cx->lazy_held_floor = held_outer;
 #endif
         } else {
             /* The driver faulted: the stores its abandoned frames made are freed (the teardown
              * the fault skipped, `lazy_watch_end`) — their texts went before the jump — and the
              * fault is the collection's failure. */
-            loft_lazy_jmp = outer;
+            cx->lazy_jmp = outer;
 #if defined(LOFT_HALT_RELEASE)
-            loft_lazy_held_floor = held_outer;
+            cx->lazy_held_floor = held_outer;
 #endif
-            for (uint32_t i = 0; i < loft_nstores; i++)
-                if (loft_stores[i].live && loft_stores[i].serial > serial0) {
+            for (uint32_t i = 0; i < cx->nstores; i++)
+                if (cx->stores[i].live && cx->stores[i].serial > serial0) {
                     loft_ref r = { (uint16_t) i, 0, 0, 0 };
-                    loft_free_ref(r);
+                    loft_free_ref(cx, r);
                 }
 #if defined(LOFT_CALL_CHAIN)
-            loft_nframes = depth;
+            cx->nframes = depth;
 #endif
-            loft_lazy_refuse(coll, loft_view(&loft_lazy_fault));
-            return 0;
+            loft_lazy_refuse(cx, coll, loft_view(cx, &cx->lazy_fault));
+            /* The lookup is asked again, as the interpreter's `find_or_fetch` asks it after any
+             * fetch: a row the driver inserted before it faulted is resident, and found. */
+            return 1;
         }
         if (answer != 0 && answer != 1) {
             snprintf(why, sizeof why, "`lazy_fetch` answered %lld; it must answer 1 (inserted) or 0 (absent)",
                      (long long) answer);
-            loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+            loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
             return 0;
         }
         return (int) answer;
@@ -776,52 +782,52 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
                  "`%s` needs a loft driver for %s — define `fn lazy_fetch(coll: <the %s collection>, source: text, "
                  "key_int: integer, key_text: text) -> integer` and bind the collection again",
                  source, b->element, b->element);
-        loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
-    if (db == 1) return loft_lazy_sql_fetch(b, source + 7 /* after `sqlite:` */, key, n);
-    free(loft_pg_refusal);
-    loft_pg_refusal = 0;
-    if (b->fetch(coll, loft_view(&b->source), key, n) > 0) return 1;
+    if (db == 1) return loft_lazy_sql_fetch(cx, b, source + 7 /* after `sqlite:` */, key, n);
+    free(cx->pg_refusal);
+    cx->pg_refusal = 0;
+    if (b->fetch(cx, coll, loft_view(cx, &b->source), key, n) > 0) return 1;
     /* Unreachable is decided by the open, a refusal by what the loader said, else the key is
      * absent from a source that was reached (`fetch_from_file`). */
-    char *p = loft_cpath(loft_view(&b->source), 0);
+    char *p = loft_cpath(cx, loft_view(cx, &b->source), 0);
     loft_pg probe;
-    int reached = loft_pg_open(&probe, p, why, sizeof why);
-    loft_pg_close(&probe);
+    int reached = loft_pg_open(cx, &probe, p, why, sizeof why);
+    loft_pg_close(cx, &probe);
     free(p);
     if (!reached) {
-        loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
-    if (loft_pg_refusal) loft_lazy_refuse(coll, loft_lit(loft_pg_refusal, strlen(loft_pg_refusal)));
+    if (cx->pg_refusal) loft_lazy_refuse(cx, coll, loft_lit(cx, cx->pg_refusal, strlen(cx->pg_refusal)));
     return 0;
 }
 
 /* `store_lazy_error`: the first reason a fetch for `coll` failed, "" when healthy. */
-static loft_str loft_lazy_error(loft_ref coll) {
-    loft_lazy_err *e = loft_lazy_err_of(coll);
-    return e ? loft_view(&e->reason) : loft_lit("", 0);
+static loft_str loft_lazy_error(loft_cx *cx, loft_ref coll) {
+    loft_lazy_err *e = loft_lazy_err_of(cx, coll);
+    return e ? loft_view(cx, &e->reason) : loft_lit(cx, "", 0);
 }
 
 /* `store_lazy_faults`: how many fetches for `coll` failed. */
-static int64_t loft_lazy_faults(loft_ref coll) {
-    loft_lazy_err *e = loft_lazy_err_of(coll);
+static int64_t loft_lazy_faults(loft_cx *cx, loft_ref coll) {
+    loft_lazy_err *e = loft_lazy_err_of(cx, coll);
     return e ? e->count : 0;
 }
 
 /* `store_lazy_clear`: the failures acknowledged; 1 when there was something to clear. */
-static uint8_t loft_lazy_clear(loft_ref coll) {
-    loft_lazy_err *e = loft_lazy_err_of(coll);
+static uint8_t loft_lazy_clear(loft_cx *cx, loft_ref coll) {
+    loft_lazy_err *e = loft_lazy_err_of(cx, coll);
     if (!e) return 0;
-    loft_text_free(&e->reason);
+    loft_text_free(cx, &e->reason);
     *e = loft_lazy_errs[--loft_nlazy_errs];
     return 1;
 }
 
 /* `store_lazy_fail(local, why)`: a driver's refusal, through the same channel. */
-static void loft_lazy_fail(loft_ref coll, loft_str why) {
-    loft_lazy_refuse(coll, why);
+static void loft_lazy_fail(loft_cx *cx, loft_ref coll, loft_str why) {
+    loft_lazy_refuse(cx, coll, why);
 }
 
 #endif
@@ -829,11 +835,11 @@ static void loft_lazy_fail(loft_ref coll, loft_str why) {
 /* `@FR-H-SwapIn`'s gates (`Stores::swap_stores_in_as`): no swap while a walk scratch is live
  * (it names its source by store) or a lazy binding or a lazy refusal is recorded (each names a
  * collection by store). */
-static int loft_swap_blocked(void) {
-    return loft_nscratches != 0
+static int loft_swap_blocked(loft_cx *cx) {
+    return cx->nscratches != 0
 #ifdef LOFT_LAZY
         || loft_nlazy != 0 || loft_nlazy_errs != 0
 #endif
         ;
 }
-static int (*loft_swap_blocked_hook)(void) = loft_swap_blocked;
+static int (*loft_swap_blocked_hook)(loft_cx *cx) = loft_swap_blocked;

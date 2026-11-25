@@ -1,0 +1,38 @@
+// A minimal package whose native part is C (`c/c_scalar.c`, bound by `#c`).  A program
+// that `use`s it and is compiled with `--native` links the package's C into the program; on
+// Windows that is the DLL staging of a `#link dynamic` build.
+
+pub fn native_answer() -> integer;
+#c "ns_answer" "int64_t(void)"
+
+// The ABI oracle.  `native_answer` returns 42, a small POSITIVE value, which survives any
+// integer width, so it cannot detect a signature mismatch.  This one returns -1, which does
+// not: if the C side declared a narrower return than the `int64_t` the binding names, the
+// upper half of the register would be undefined and -1 would arrive as 4294967295.  That is a
+// real bug this shape has caught in shipped libraries (loft-libs-net's `server::listen`, whose
+// `handle >= 0` check it silently defeated on --native).
+pub fn native_sentinel() -> integer;
+#c "ns_sentinel" "int64_t(void)"
+
+fn ns_fill(out: vector<integer>);
+#c "ns_fill" "void(int64_t*, int64_t)"
+
+// A vector the native part fills: `[100, 101, …, 100 + n - 1]`, written by C through the
+// element pointer loft hands over.  Deterministic on purpose, so a test asserts VALUES, not
+// just a length: a wrong element order or a truncated copy is visible.  A non-positive `n`
+// gives an empty vector.
+pub fn native_span(n: integer) -> vector<integer> {
+    v: vector<integer> = [];
+    for _ in 0..n { v += [0]; }
+    ns_fill(v);
+    v
+}
+
+// Loft functions over the natives: they compile into the library's own unit, which links the
+// C for the `#c` calls.
+pub fn answer_plus(k: integer) -> integer { native_answer() + k }
+pub fn span_sum(n: integer) -> integer {
+    s = 0;
+    for v in native_span(n) { s += v; }
+    s
+}

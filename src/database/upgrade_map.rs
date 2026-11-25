@@ -205,6 +205,48 @@ fn number_range(node: &LayoutNode) -> Option<(i128, i128, bool)> {
     })
 }
 
+/// Do two layout names name one type?  Equal, or equal once every library qualifier
+/// (`assets::` in `assets::Scene`, `lib::` inside `__nullable<lib::S>`) is removed.  The
+/// qualifier only separates two libraries' same-named types in ONE program's type table — the
+/// first definer keeps the bare name (`typedef::fill_database`) — so the name a store
+/// recorded depends on what else its writer loaded: a pack written beside `mesh3d` holds
+/// `assets::Scene`, and `assets`' own hosted unit, compiled alone, names the same type `Scene`.
+/// A library qualifier starts lower-case; a type's own name (`Shape::Circle`, an
+/// enum's variant) does not, and keeps its prefix.  The fields are compared after this, so a
+/// different type of the same name is still refused there.  Mirrored by `loft_um_one_type` in
+/// `src/c/loft_upgrade.h`.
+fn same_type_name(a: &str, b: &str) -> bool {
+    a == b || unqualified(a) == unqualified(b)
+}
+
+/// `name` without its library qualifiers: every `ident::` whose identifier starts lower-case or
+/// with `_` and does not follow another identifier character.
+fn unqualified(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut out = String::with_capacity(name.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let starts = (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'))
+            && (bytes[i].is_ascii_lowercase() || bytes[i] == b'_');
+        if starts {
+            let mut j = i;
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            if name[j..].starts_with("::") {
+                i = j + 2;
+                continue;
+            }
+            out.push_str(&name[i..j]);
+            i = j;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
 /// A short spelling of a node's kind for a refusal.
 fn kind_word(node: &LayoutNode) -> &'static str {
     match node {
@@ -412,7 +454,7 @@ impl Deriver<'_> {
         match (on, nn) {
             (LayoutNode::Record(of), LayoutNode::Record(nf))
             | (LayoutNode::EnumValue(_, of), LayoutNode::EnumValue(_, nf)) => {
-                if old_name != new_name {
+                if !same_type_name(&old_name, &new_name) {
                     self.refuse(
                         path,
                         format!("now holds a `{new_name}` where the store holds a `{old_name}`"),
@@ -429,7 +471,7 @@ impl Deriver<'_> {
                 Some(plan)
             }
             (LayoutNode::Choices(ov), LayoutNode::Choices(nv)) => {
-                if old_name != new_name {
+                if !same_type_name(&old_name, &new_name) {
                     self.refuse(
                         path,
                         format!("now holds a `{new_name}` where the store holds a `{old_name}`"),

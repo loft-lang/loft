@@ -2114,7 +2114,7 @@ fn b0_run_full(
 // @speed 1.5
 #[test]
 fn store_digest_b0_oracle_sees_loss_not_layout() {
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("b0_{tag}"));
         let run = |file: &str, order: &str, damage: &str, mode: &str, want: &str, seed| {
@@ -2173,31 +2173,39 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         }
         let base = base.expect("five representations");
 
-        // The controls for the claim above.  Negative: same order, same seed,
-        // the same live bytes — so the harness is deterministic and the differences
-        // below are attributable rather than noise.
-        assert!(
-            !images[0].is_empty(),
-            "{backend}: the persist printed no live digest"
-        );
-        assert_eq!(
-            images[0], images[1],
-            "{backend}: two identical runs must store identical live bytes, or \
-             nothing measured here can be attributed to anything"
-        );
-        // Positive: each lever really does reach the stored bytes, so the
-        // invariance above is a statement about data surviving a CHANGED
-        // representation — not about nothing having changed.
-        for (i, lever) in [
-            (2, "insertion order"),
-            (3, "insertion order"),
-            (4, "the bucket seed"),
-        ] {
-            assert_ne!(
-                images[0], images[i],
-                "{backend}: {lever} did not reach the stored live bytes, so the \
-                 digest's invariance across it proves nothing"
+        // The controls for the claim above, read off the live digest — the
+        // interpreter's instrument (`Stores::live_digest`; the C writes no such line,
+        // DEBUG_STORES.md).  The levers are the script's and the layout is the one
+        // both runtimes write (the C's five images measured byte-equal to the
+        // interpreter's), so the C leg keeps the invariance, the injuries and the
+        // round trip, and the controls are taken where the instrument is.
+        if backend == "--interpret" {
+            // Negative: same order, same seed, the same live bytes — so the harness
+            // is deterministic and the differences below are attributable rather
+            // than noise.
+            assert!(
+                !images[0].is_empty(),
+                "{backend}: the persist printed no live digest"
             );
+            assert_eq!(
+                images[0], images[1],
+                "{backend}: two identical runs must store identical live bytes, or \
+                 nothing measured here can be attributed to anything"
+            );
+            // Positive: each lever really does reach the stored bytes, so the
+            // invariance above is a statement about data surviving a CHANGED
+            // representation — not about nothing having changed.
+            for (i, lever) in [
+                (2, "insertion order"),
+                (3, "insertion order"),
+                (4, "the bucket seed"),
+            ] {
+                assert_ne!(
+                    images[0], images[i],
+                    "{backend}: {lever} did not reach the stored live bytes, so the \
+                     digest's invariance across it proves nothing"
+                );
+            }
         }
 
         // Each injury must move the numbers — the proof the digest can fail.
@@ -2463,8 +2471,14 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
 /// failure a digest catches (@P309: copied collections "read back as length 0").
 ///
 /// Per kind: build, fragment, persist, `store_load` back. The count, the
-/// order-independent digest and `store_verify` must all survive, and the loader
-/// must reach the verdict this kind should reach.
+/// order-independent digest and `store_verify` must all survive, on both
+/// backends.  On the interpreter the loader must also ADMIT the kind: its verdict
+/// (`LOFT_LOADER_STATS`) is a compaction, or a decline for density — never the
+/// shape refusal.  It is a decline for every kind here, because `store_persist_copy`
+/// writes the image already rebuilt and dense, so the cell no longer reaches the
+/// rebuild itself.  The C prints no verdict: it does not compact on load
+/// (C_BACKEND.md § Store images: "compaction on load is not done (it declines for
+/// an image `store_persist_copy` wrote, which is already dense)").
 ///
 /// **Two shapes could not be built at all, both pre-existing** (they reproduce
 /// on the released 2026.7.2 binary, so neither is compaction's doing):
@@ -2481,20 +2495,25 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
 fn compaction_is_correct_for_every_collection_kind_it_accepts() {
     let script = workspace_root().join("tests/scripts/store_compact_kinds.loft");
     // kind, and the verdict the loader must reach for it.
-    let kinds: [(&str, &str); 6] = [
-        ("hash", "compacted"),
-        ("sorted", "compacted"),
-        ("index", "compacted"),
-        ("nested", "compacted"),
-        // @PLN134 — a trie became compactable when its records had a reason to
-        // move: the rebuild places them in key order, which is what a paged
-        // prefix query is cheap on.
-        ("trie", "compacted"),
-        // @PLN136 — and a spatial did, for the same reason one step over: the
-        // rebuild places its records in MORTON order, which is what a paged
-        // bounding-box query is cheap on. It was the last refusal in this list.
-        ("spatial", "compacted"),
-    ];
+    // Every kind is admitted.  @PLN134 — a trie became compactable when its records
+    // had a reason to move: the rebuild places them in key order, which is what a
+    // paged prefix query is cheap on.  @PLN136 — and a spatial did, for the same
+    // reason one step over: MORTON order, which a paged bounding-box query is cheap
+    // on. It was the last refusal in this list.
+    let kinds = ["hash", "sorted", "index", "nested", "trie", "spatial"];
+    // The interpreter's verdicts for an admitted kind (`Stores::compact_slot`): a
+    // compaction, or a decline measured after the shape gate passed.
+    let admitted = |verdict: &str| -> bool {
+        verdict.starts_with("store_load: compacted #")
+            || (verdict.starts_with("store_load: not compacted #")
+                && [
+                    "the store is at or below the image floor",
+                    "free space between records and slack inside them",
+                    "already dense",
+                ]
+                .iter()
+                .any(|why| verdict.contains(why)))
+    };
     let run = |backend: &str, dir: &Path, kind: &str, reload: bool| -> String {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
@@ -2524,8 +2543,8 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
         t[i + 1].to_string()
     };
 
-    for backend in ["--interpret", "--native-rust"] {
-        for (kind, verdict) in kinds {
+    for backend in ["--interpret", "--native"] {
+        for kind in kinds {
             let tag = backend.trim_start_matches('-');
             let dir = scratch(&format!("kinds_{kind}_{tag}"));
             let wrote = run(backend, &dir, kind, false);
@@ -2545,11 +2564,19 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
                 field(&wrote, "sound") == "true" && field(&read, "sound") == "true",
                 "{backend}/{kind}: the heap graph must verify on both sides:\n{wrote}{read}"
             );
-            assert!(
-                read.contains(verdict),
-                "{backend}/{kind}: expected the loader to report `{verdict}`, \
-                 which is what makes this cell test anything:\n{read}"
-            );
+            if backend == "--interpret" {
+                let verdict = read
+                    .lines()
+                    .find(|l| l.starts_with("store_load: "))
+                    .unwrap_or_else(|| {
+                        panic!("{backend}/{kind}: the loader gave no verdict:\n{read}")
+                    });
+                assert!(
+                    admitted(verdict),
+                    "{backend}/{kind}: the loader must admit the kind — a compaction or \
+                     a decline for density, never the shape refusal:\n{read}"
+                );
+            }
         }
     }
 }
@@ -3497,7 +3524,7 @@ fn a_spatial_survives_the_rebuild_and_comes_out_in_morton_order() {
     let script = workspace_root().join("tests/scripts/136-persist-copy-morton-order.loft");
     let query = workspace_root().join("tests/scripts/136-persist-copy-box-query.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_spatial_{tag}"));
         let bound = dir.join("bound.store");
@@ -3613,7 +3640,7 @@ fn a_trie_survives_the_rebuild_and_comes_out_in_key_order() {
     let script = workspace_root().join("tests/scripts/134-persist-copy-key-order.loft");
     let query = workspace_root().join("tests/scripts/134-persist-copy-query.loft");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_{tag}"));
         let bound = dir.join("bound.store");
@@ -3764,7 +3791,7 @@ fn store_load_keys_text_batches_what_the_loop_repeats() {
 
     run("--interpret", "write");
 
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let batch = run(backend, "batch");
         let looped = run(backend, "loop");
 
@@ -3969,10 +3996,7 @@ fn layouts_updated(tag: &str) -> String {
 /// after it, so the mix is measured, not assumed.
 #[test]
 fn every_hash_layout_lives_beside_the_others_in_one_store() {
-    for (first, second) in [
-        ("--interpret", "--native-rust"),
-        ("--native-rust", "--interpret"),
-    ] {
+    for (first, second) in [("--interpret", "--native"), ("--native", "--interpret")] {
         for (wn, we) in HASH_LAYOUTS {
             for (un, ue) in HASH_LAYOUTS {
                 let cell = format!("{wn} written {first}, {un} update {second}");
@@ -4079,7 +4103,6 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the reader");
@@ -4097,7 +4120,6 @@ fn an_image_in_the_old_key_order_is_converted() {
             .arg(backend)
             .arg(&nest)
             .env("LOFT_PERSIST_TEST_PATH", &dir)
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(workspace_root())
             .output()
             .expect("run the nested reader");

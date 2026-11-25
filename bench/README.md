@@ -19,7 +19,7 @@ Performance comparison across five targets: Python, loft interpreter, loft nativ
 | 09 | matrix_mul | Float dot product, 2,000,000 elements |
 | 10 | sort | Insertion sort of 3,000 integers, built and sorted per op |
 | 11 | par | Parallel for-loop, 100K elements × 50-iter Newton's sqrt |
-| 12 | drawing | Drawing hot loops: seeded hash (100K calls) + brush-lock raster (~22K px), output hashes asserted — the loft#1426 / @PLN157 workload; per-routine ratios gated by `scripts/native_ratio.sh` against `ratio_oracle.tsv` |
+| 12 | drawing | Drawing hot loops: seeded hash (100K calls) + brush-lock raster (~22K px), output hashes asserted — the loft#1426 / @PLN157 workload |
 | 21 | tree | Linked records: a 2,000-key search tree built by insertion and by the textbook recursion, queried 4,000 times by a `&` cursor and by a plain copied one, and thinned by deletion (a `take_min` slot helper); a linked list grown at its front and after its head, reversed and walked; a `Cons` list of a recursive enum — the out-of-line layout (`L-OutOfLine`) and `@FR-R-Demote` |
 | 22 | expr | A recursive enum: complete depth-10 arithmetic expressions (`Num`, `Add`, `Mul`) built by recursion, evaluated, simplified by rewriting and rendered as text |
 | 23 | lru | An LRU cache of 500 entries: a `hash` owning the entries and a recency list of `reference<Node>?` back-links, 4,000 accesses over 1,000 keys |
@@ -34,31 +34,26 @@ op, so the numbers do not depend on how long a run was.
 one pass to the next, use:
 
 ```bash
-python3 bench/stats.py                       # native against the Rust reference, every bench
+python3 bench/stats.py                       # the C backend against the Rust reference, every bench
 python3 bench/stats.py --only 01,08          # some of them
-python3 bench/stats.py --lanes native,rust,interp,python
+python3 bench/stats.py --lanes rust,cship,interp,python
 python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the next one
 python3 bench/stats.py --show-samples        # every sample under its row
 python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
-python3 bench/stats.py --lanes native,rust,ship   # add the SHIPPED-GAME speed per routine
 python3 bench/stats.py --lanes rust,c,cship    # the C99 backend against the Rust twin (the default)
 ```
-
-**The ship lane** builds each program once more, its libraries' loft code included, under
-`LOFT_RELEASE_PASS_PROBE=1`: the code a game's release build emits when its own checked runs
-licensed dropping every fault check (@PLN201, NATIVE.md § Optimisation tiers).  Each row gains
-`ship N.NN`, the ship time over the Rust twin's, beside the checked ratio.  A routine slow in
-BOTH is slow for a reason the checks do not explain.  A routine slow only CHECKED is paying for
-its checks, which a range proof or a fault-flag rewrite can take back.  Its hash is reported, not
-required to agree: a fault wraps there instead of answering null, and a row whose ship hash
-differs is marked `ship (hash differs)` and carries no ship ratio.
 
 **The C lanes** measure the C99 backend (@PLN200, [C_BACKEND.md](../doc/claude/C_BACKEND.md))
 against the same Rust twin: `c` builds each program with `loft --emit-c` and `cc -std=c11 -O3`
 (`--cc`, `--c-flags`), every expression's fault check kept, and `cship` builds it under the
-release-pass probe, the C generator's twin of the ship lane.  The checked `c` lane VALIDATES the
-generator: its hash must be the twin's, a row whose hash differs reads `c HASH DIFFERS` and the
-run exits 1.  `cship` is marked as `ship` is.  Each row gains `c N.NN` and `cship N.NN` over the
+release-pass probe (`LOFT_RELEASE_PASS_PROBE=1`): the code a game's release build emits when its
+own checked runs licensed dropping every fault check (@PLN201, NATIVE.md § Optimisation tiers).
+A routine slow in BOTH is slow for a reason the checks do not explain; a routine slow only
+CHECKED is paying for its checks, which a range proof or a fault-flag rewrite can take back.
+The checked `c` lane VALIDATES the generator: its hash must be the twin's, a row whose hash
+differs reads `c HASH DIFFERS` and the run exits 1.  The `cship` hash is reported, not required
+to agree: a fault wraps there instead of answering null, so a differing row is marked
+`cship (hash differs)` and carries no ratio.  Each row gains `c N.NN` and `cship N.NN` over the
 Rust twin, and the run closes with each lane's median.  A program the C backend does not carry
 keeps its other lanes and is listed with the reason (`c lane not built for …`).
 
@@ -71,7 +66,7 @@ caps one whole run, so a fast pick beside a slow neighbour is timed over less th
 `--target-ms` and can come back `(coarse)`.
 
 ```
-bench           routine          native ns/op    ±%      rust ns/op    ±%  nat/rust         range  verdict
+bench           routine           cship ns/op    ±%      rust ns/op    ±%  cship/rust       range  verdict
 01_fibonacci    fibonacci          10,362,156   0.7       2,636,753   0.0      3.93     3.92–3.95  OVER
 02_sum_loop     sum_loop            5,384,541   0.0       2,975,253   0.0      1.81     1.81–1.81  ok
 ```
@@ -87,12 +82,12 @@ What it does, and why each part is there:
   unpinned run moves between core kinds, a ±10 % swing by itself.  A threaded bench — one whose `bench.loft` declares
   `// bench-threads: N` (§ The row protocol) — gets one thread of each of the N fastest cores.
 - **Reports the median, the spread (interquartile range, % of the median), and the ratio
-  with its RANGE** — native's first quartile over the reference's third, and the reverse.
+  with its RANGE** — the C ship lane's first quartile over the reference's third, and the reverse.
   The verdict reads the range: `ok` only when all of it is inside `--bar` (2.0), `OVER` only
   when all of it is outside, `unclear` otherwise.  A row the tool cannot decide says so.
 - **Requires the hashes to agree** across lanes.  A disagreement is fatal: the lanes are not
-  computing the same thing and their times do not compare.  The ship lane alone is exempt,
-  and is marked instead (above).
+  computing the same thing and their times do not compare.  The C lanes are checked apart
+  (above).
 - **Builds before it measures, and never beside a measurement.**  The programs go in sets of
   `--batch` (20): a set is compiled `--build-jobs` (5) at a time — each worker takes the next
   program the moment its last one is built, at `nice 10`, waiting while the machine has less
@@ -113,8 +108,7 @@ What it does, and why each part is there:
   faster against its twin in one parallel run — a lane that may depend on WHICH core it
   lands on.  The value is recorded in the run's metadata (`measure_jobs`).
 - **Records what each build step cost**: wall-clock and CPU seconds and peak memory, per
-  program and step (`native-emit`, `native-rustc`, `rust-rustc`, a package's
-  `native-release`), printed as it lands and written by `--build-tsv`; the portal keeps them
+  program and step (`c-emit`, `c-cc`, `cship-emit`, `cship-cc`, `rust-rustc`), printed as it lands and written by `--build-tsv`; the portal keeps them
   in `results/<host>-builds.tsv`.  Compare the CPU figure across runs — the wall-clock one
   depends on what built beside it.  Measured 2026-09-29: a cold package build is 2.5–8.6 s
   and under 350 MB, an in-repo bench about a second, so a full portal run is spent almost
@@ -139,15 +133,6 @@ variant of the same change moved `byte_walk` +34 % and `join` +24 % instead, and
 four alone.  A one-routine move after a runtime change is therefore not evidence of a
 regression until a second, unrelated rebuild reproduces it.  `record_append` is BIMODAL on
 top of that (35.6 or 56.7 µs, stable within a run), and it changes state between builds.
-
-`scripts/native_ratio.sh` (`make native-ratio`) reads the same rows against the per-routine
-bars in `ratio_oracle.tsv`; `--gate` (`make native-ratio-gate`, and the last step of the
-local `make ci`) fails a ratio over its bar.  The bars are ratcheted DOWN as the ratios fall.
-A ratio is machine-bound, and the bars are the owner's x86-64 laptop's: on another CPU a row
-can sit over its bar repeatably (a cloud Xeon read `sum_loop` at 3.1–3.5 against 2.3 and
-`collatz` at 3.7–4.1 against 2.5, twice, while `sieve` and `mandelbrot` read as on the
-laptop), which is a calibration question to raise, never a reason to re-bless the oracle
-on that box.
 
 ## When a gap is a bug
 
@@ -186,7 +171,7 @@ the fastest core, and answers per routine both medians, B/A with its range and a
 reads the range (`faster`/`slower` only when all of it is past ±2 %); a routine whose hash
 differs fails the run, since a price whose answer moved is no price.  `--subject` files it
 with the local results.  `portal/hand_price_c.sh` compiles an emitted C unit as the `c` lane
-does — the C counterpart of `hand_price.sh`.
+does.
 
 ```
 loft --emit-c /tmp/b.c --path $PWD/ bench/13_stdlib_text/bench.loft
@@ -267,18 +252,16 @@ hand, and it is never a gate.
 make interp-gap                                   # every lane: time both backends, census both
 make interp-gap ARGS="--only 14,16"               # some lanes
 make interp-gap ARGS="--no-timing"                # the censuses only: a minute, no ratio column
-make interp-gap ARGS="--timing old.tsv"           # reuse a `stats.py --lanes native,interp --tsv` run
+make interp-gap ARGS="--timing old.tsv"           # reuse a `stats.py --lanes c,interp --tsv` run
 make interp-gap ARGS="--package <scratch clone>/drawing=drawing"
-make interp-gap ARGS="--writer c"                 # against the C writer: its rewrites, its lane
 ```
 
-`--writer` picks the compiled side: `native` (the rustc writer, the default) or `c`.  The
-rewrite census comes from that writer's emission, the ratio from its `stats.py` lane, and the
-compiled store census column exists for `native` only (it links the census rlib).
+The compiled side is the C writer: the rewrite census comes from its emission and the ratio
+from the `c` lane of `stats.py`.  The store census column is the interpreter's alone.
 
 Per routine it reports:
 
-- the interp/native ratio (`stats.py --lanes native,interp`);
+- the interp/C ratio (`stats.py --lanes c,interp`);
 - the interpreter's operators per op, split into families: `frame` (a value onto the stack
   and back, which native keeps in registers), `store` (field and element reads and writes),
   `records` (records, vectors and texts built, copied, appended, freed), `control`,
@@ -363,7 +346,7 @@ form: it names an abstraction loft is missing, and the finding goes to the langu
 - **python** — CPython interpreter
 - **loft-interp** — loft interpreter (`loft --interpret`; a bare `loft prog.loft` runs the
   NATIVE backend, which is what this column measured until it said so)
-- **loft-native** — loft native binary (`loft build --native`)
+- **loft-native** — the C unit (`loft --emit-c`) built with `$CC -std=c11 -O3`
 - **loft-wasm** — loft WASM via wasmtime (`loft build --wasm`)
 - **rust** — Rust release build (`rustc -O`)
 
@@ -374,7 +357,8 @@ Missing tools produce a warning and that target is skipped — no hard failures.
 - `loft` — either in PATH, or set `LOFT_BIN=/path/to/loft`
 - `LOFT_STDLIB` — set to the directory containing `default/` if loft can't find its stdlib (e.g. `LOFT_STDLIB=/path/to/loft-repo/`)
 - `python3` — in PATH
-- `rustc` — in PATH
+- `rustc` — in PATH (the rust target)
+- a C compiler — `cc`, or `CC=<compiler>` (the loft-native target)
 - `wasmtime` — in PATH (wasm target only)
 
 ## Usage

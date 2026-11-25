@@ -53,7 +53,7 @@ fn an_arm_writing_only_the_result_borrows_and_one_writing_its_parameter_copies()
         let out = loft(
             &[
                 "--ship",
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 loft::platform::null_sink(),
             ],

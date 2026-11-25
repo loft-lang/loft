@@ -84,8 +84,11 @@ pub fn roots_of(data: &crate::data::Data, hosted_root: Option<String>) -> Roots 
     roots
 }
 
-/// `rest` when `file` lies beneath directory `dir`.
+/// `rest` when `file` lies beneath directory `dir`.  Both are compared in their `/` spelling: on
+/// Windows a package directory arrives with the host's separator and a source position may hold
+/// either, so a bare prefix test would miss and name the machine's path.
 fn beneath<'a>(file: &'a str, dir: &str) -> Option<&'a str> {
+    let dir = crate::file_access::portable_str(dir);
     let dir = dir.trim_end_matches('/');
     if dir.is_empty() {
         return None;
@@ -99,6 +102,8 @@ pub fn name(file: &str, roots: &Roots) -> String {
     if !Path::new(file).is_absolute() {
         return file.to_string();
     }
+    let portable = crate::file_access::portable_str(file);
+    let file = portable.as_str();
     if let Some(rest) = beneath(file, &roots.std_dir) {
         return format!("default/{rest}");
     }

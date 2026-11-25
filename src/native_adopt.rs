@@ -6,8 +6,8 @@
 //! this program (`artifact_matches_layout`), routing a library's calls to the bodies it
 //! carries ([`mark_exports`], [`probe_and_mark_exports`]), and the [`HOST_TABLE`] through
 //! which the artifact reaches this interpreter (its coroutines and function values).
-//! Building an artifact is the Rust writer's (`native_lib`); the key both use is
-//! `opt::native_key`.
+//! Building an artifact is the C backend's (`c::hosted::build_artifact`); the key both use
+//! is `opt::native_key`.
 
 use crate::data::Data;
 use crate::database::Stores;
@@ -220,18 +220,34 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     gen_adopt: hosted_gen_adopt,
     pause: &crate::debugger::INTERRUPT,
     handover: hosted_handover,
+    cx_of: hosted_cx_of,
 };
+
+/// `HostedTable::cx_of` — the unit's store context for the `Stores` of the calling thread.
+unsafe extern "C" fn hosted_cx_of(
+    stores: *mut Stores,
+    unit: *const std::ffi::c_void,
+    make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+    end: unsafe extern "C" fn(*mut std::ffi::c_void),
+) -> *mut std::ffi::c_void {
+    // SAFETY: the `Stores` the bridge call was handed, live for the call.
+    let stores = unsafe { &mut *stores };
+    stores.hosted_cx.of(unit, make, end)
+}
 
 /// `HostedTable::handover` — the interpreter running this bridge call takes the routine over.
 unsafe extern "C" fn hosted_handover(
-    _stores: *mut Stores,
+    stores: *mut Stores,
     key: *const u8,
     key_len: usize,
     scope: u32,
     entries: *const crate::host_abi::HandoverEntry,
     n: u32,
 ) -> u32 {
-    let state = crate::extensions::host_state();
+    // SAFETY: the `Stores` the bridge call was handed, live for the call.
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     if state.is_null() {
         return 0;
     }
@@ -271,20 +287,23 @@ impl HostedGen {
     }
 }
 
-impl crate::codegen_runtime::LoftCoroutine for HostedGen {
+impl crate::coroutine_host::LoftCoroutine for HostedGen {
     fn next_i64(&mut self, stores: &mut Stores) -> i64 {
         self.step(stores)
-            .map_or(crate::codegen_runtime::COROUTINE_EXHAUSTED, |a| a.scalar)
+            .map_or(crate::coroutine_host::COROUTINE_EXHAUSTED, |a| a.scalar)
     }
 
     fn next_text(&mut self, stores: &mut Stores) -> String {
         match self.step(stores) {
+            Some(a) if a.text_len == crate::host_abi::TEXT_NULL_LEN => {
+                crate::text_null::null_string()
+            }
             Some(a) if !a.text_ptr.is_null() => {
                 // SAFETY: the unit's yielded bytes, valid until its next step.
                 let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
                 String::from_utf8_lossy(b).into_owned()
             }
-            _ => crate::store::STRING_NULL.to_string(),
+            _ => crate::text_null::null_string(),
         }
     }
 
@@ -313,7 +332,7 @@ unsafe extern "C" fn hosted_gen_adopt(
     free: crate::host_abi::GenFree,
     ret: *mut LibArg,
 ) {
-    let coro: Box<dyn crate::codegen_runtime::LoftCoroutine> = Box::new(HostedGen {
+    let coro: Box<dyn crate::coroutine_host::LoftCoroutine> = Box::new(HostedGen {
         stores,
         slot,
         kind,
@@ -323,7 +342,7 @@ unsafe extern "C" fn hosted_gen_adopt(
     });
     // SAFETY: as `hosted_table`; `Stores` is the `UnsafeCell`'s only field.
     let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
-    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, coro);
+    let handle = crate::coroutine_host::alloc_coroutine_held(cell, coro);
     // SAFETY: the bridge's answer slot.
     unsafe { (*ret).dbref = handle };
     let stores = unsafe { &mut *stores };
@@ -382,25 +401,28 @@ unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
 /// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
 /// thread's bridge call for one of the interpreter's (`COROUTINE_STORE`), which a library is
 /// handed only through such a call.
-pub(crate) const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
-    crate::codegen_runtime::CoroutineHost {
-        alloc_held: crate::codegen_runtime::CoroutineHost::HERE.alloc_held,
-        alloc: crate::codegen_runtime::CoroutineHost::HERE.alloc,
+pub(crate) const HOST_COROUTINES: crate::coroutine_host::CoroutineHost =
+    crate::coroutine_host::CoroutineHost {
+        alloc_held: crate::coroutine_host::alloc_coroutine_held,
+        alloc: crate::coroutine_host::alloc_coroutine,
         retain: host_coroutine_retain,
         free: host_coroutine_free,
         next_i64: host_coroutine_next_i64,
-        next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
+        next_into: crate::coroutine_host::coroutine_next_into,
         next_dbref: host_coroutine_next_dbref,
         next_text: host_coroutine_next_text,
         exhausted: host_coroutine_exhausted,
     };
 
 /// The interpreter an interpreted generator handle belongs to, or `None` for a compiled one.
-pub(crate) fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::state::State> {
+pub(crate) fn interpreter_for(
+    gen_ref: DbRef,
+    stores: &Stores,
+) -> Option<&'static mut crate::state::State> {
     if gen_ref.store_nr != crate::database::COROUTINE_STORE {
         return None;
     }
-    let state = crate::extensions::host_state();
+    let state = stores.host_state.cast::<crate::state::State>();
     assert!(
         !state.is_null(),
         "an interpreted generator was advanced from compiled code outside a call from the \
@@ -410,22 +432,22 @@ pub(crate) fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::stat
 }
 
 pub(crate) fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
+    let Some(st) = interpreter_for(gen_ref, stores) else {
+        return crate::coroutine_host::coroutine_next_i64(gen_ref, stores);
     };
     // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
     match v.len() {
-        0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
+        0 => crate::coroutine_host::COROUTINE_EXHAUSTED,
         1 => i64::from(v[0]),
         _ => i64::from_ne_bytes(v[..8].try_into().unwrap_or_default()),
     }
 }
 
 pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
+    let Some(st) = interpreter_for(gen_ref, stores) else {
+        return crate::coroutine_host::coroutine_next_dbref(gen_ref, stores);
     };
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
@@ -437,37 +459,37 @@ pub(crate) fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> 
 }
 
 pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
+    let Some(st) = interpreter_for(gen_ref, stores) else {
+        return crate::coroutine_host::coroutine_next_text(gen_ref, stores);
     };
     // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
     if v.len() < std::mem::size_of::<crate::keys::Str>() {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_string();
     }
     let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
-    s.str().to_string()
+    crate::text_null::own(s.str())
 }
 
-pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {
-    match interpreter_for(gen_ref) {
+pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_exhausted(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref),
+        None => crate::coroutine_host::coroutine_is_exhausted(gen_ref, stores),
     }
 }
 
-pub(crate) fn host_coroutine_retain(gen_ref: DbRef) -> DbRef {
-    match interpreter_for(gen_ref) {
+pub(crate) fn host_coroutine_retain(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.coroutine_retain(gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref),
+        None => crate::coroutine_host::coroutine_retain(gen_ref, stores),
     }
 }
 
 pub(crate) fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
-    match interpreter_for(gen_ref) {
+    match interpreter_for(gen_ref, stores) {
         Some(st) => st.free_coroutine(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
+        None => crate::coroutine_host::free_native_coroutine(gen_ref, stores),
     }
 }
 
@@ -484,7 +506,10 @@ pub(crate) unsafe extern "C" fn host_call_ref(
 ) {
     let args = unsafe { std::slice::from_raw_parts(args, n) };
     let closure = unsafe { (*closure).dbref };
-    let state = crate::extensions::host_state();
+    // SAFETY: the `Stores` the bridge call was handed, or null on a worker of the library.
+    let state = unsafe { stores.as_ref() }.map_or(std::ptr::null_mut(), |s| {
+        s.host_state.cast::<crate::state::State>()
+    });
     let result = if state.is_null() {
         // A compiled library's own `par` worker: no interpreter runs on this thread, so one
         // is made over the worker's stores for the call.
@@ -510,10 +535,10 @@ pub(crate) unsafe extern "C" fn host_coroutine_adopt(
     coro: *mut std::ffi::c_void,
     ret: *mut LibArg,
 ) {
-    let coro: Box<Box<dyn crate::codegen_runtime::LoftCoroutine>> =
+    let coro: Box<Box<dyn crate::coroutine_host::LoftCoroutine>> =
         unsafe { Box::from_raw(coro.cast()) };
     let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
-    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, *coro);
+    let handle = crate::coroutine_host::alloc_coroutine_held(cell, *coro);
     unsafe { (*ret).dbref = handle };
 }
 
@@ -698,12 +723,49 @@ pub(crate) fn relocate_for_probe(
     if std::env::var_os("LOFT_FORCE_PROBE_RELOCATE_FAIL").is_some() {
         return Err("LOFT_FORCE_PROBE_RELOCATE_FAIL".to_string());
     }
-    if crate::file_access::hard_link(so, probe).is_ok() {
-        return Ok(());
+    if crate::file_access::hard_link(so, probe).is_err() {
+        crate::file_access::copy(so, probe)
+            .map_err(|e| format!("link and copy both failed: {e}"))?;
     }
-    crate::file_access::copy(so, probe)
-        .map(|_| ())
-        .map_err(|e| format!("link and copy both failed: {e}"))
+    relocate_imports_beside(so, probe);
+    Ok(())
+}
+
+/// Windows finds a library's imports beside the library (`file_access::load_library`), and
+/// where else a run path points elsewhere: a hosted unit imports its package's `[c] shim` from
+/// the `native-auto/` it lies in.  Moved aside alone, the probe found no shim, did not open,
+/// and a unit that was current was rebuilt — or, with no compiler, not adopted at all.  So each
+/// library beside the artifact whose file name the artifact carries (an import names its
+/// library by file name) goes aside with it.  A link that fails leaves the probe as it was.
+fn relocate_imports_beside(so: &std::path::Path, probe: &std::path::Path) {
+    if !crate::platform::stages_dlls_beside_binary() {
+        return;
+    }
+    let (Some(dir), Some(to), Ok(bytes)) =
+        (so.parent(), probe.parent(), crate::file_access::read(so))
+    else {
+        return;
+    };
+    let own = crate::file_access::file_name(so).unwrap_or_default();
+    let suffix = format!(".{}", crate::platform::dll_extension());
+    for entry in crate::file_access::read_dir(dir).unwrap_or_default() {
+        let Some(name) = crate::file_access::file_name(&entry) else {
+            continue;
+        };
+        let name = name.as_str();
+        if name == own || !name.to_ascii_lowercase().ends_with(&suffix) {
+            continue;
+        }
+        if bytes
+            .windows(name.len())
+            .any(|w| w.eq_ignore_ascii_case(name.as_bytes()))
+        {
+            let at = to.join(name);
+            if crate::file_access::hard_link(&entry, &at).is_err() {
+                let _ = crate::file_access::copy(&entry, &at);
+            }
+        }
+    }
 }
 
 /// Say once that an artifact could not be moved off its path to be asked about
@@ -774,11 +836,13 @@ pub fn adopt_shared_cdylib(
     // so it runs in any program: neither the program's type table nor its function numbering is
     // part of what it is built for, only the loft that built it and the sources it carries.  A
     // unit built with the verify's switches or without its safepoints (`LOFT_NO_HANDOVER`) is
-    // another artifact: its own key.
+    // another artifact: its own key, and so is one built with `@FR-R-ExpPow` off
+    // (`LOFT_NO_EXP_POW`), whose answers move in their last bit.
     let program_fp = 1
         | (u64::from(crate::keys::poison_claim()) << 1)
         | (u64::from(crate::keys::hosted_planted()) << 2)
-        | (u64::from(crate::keys::no_handover()) << 3);
+        | (u64::from(crate::keys::no_handover()) << 3)
+        | (u64::from(!crate::keys::exp_pow_enabled()) << 4);
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions
@@ -802,10 +866,7 @@ pub fn adopt_shared_cdylib(
     };
     let fp = mix_fp(
         mix_fp(loft_fp, program_fp),
-        mix_fp(
-            contributing_fingerprint(contributing),
-            crate::cache::native_release_flags_fingerprint(),
-        ),
+        contributing_fingerprint(contributing),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast

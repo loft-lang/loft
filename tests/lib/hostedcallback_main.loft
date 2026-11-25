@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The consumer of `tests/lib/hostedcallback`: two calls into the hosted unit, each calling back
+// into a lambda of this program, and the depth of the call stack before and after them.  By
+// hand: 5 * 2 + 1 = 11, 5 * 3 + 1 = 16; `depth` sees itself, `inner` and `main`: 3 each time.
+
+use hostedcallback;
+
+fn depth() -> integer {
+  len(stack_trace())
+}
+
+fn inner() -> text {
+  before = depth();
+  a = hostedcallback::apply(fn(x: integer) -> integer { x * 2 }, 5);
+  b = hostedcallback::apply(fn(x: integer) -> integer { x * 3 }, 5);
+  "{a} {b} {before} {depth()}"
+}
+
+fn main() {
+  println(inner());
+}

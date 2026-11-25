@@ -806,6 +806,13 @@ pub struct Parser {
     context: u32,
     /// Extra library directories for 'use' resolution (from --lib / --project flags)
     pub lib_dirs: Vec<String>,
+    /// `@C173` — the `--lib` directories THIS run was given, the explicit override: a name
+    /// one of them provides outranks a pin and a declaration (`packages::lib_path`).  The
+    /// rest of `lib_dirs` is implicit (a package's own `src/`, its parent for siblings).
+    pub flag_lib_dirs: Vec<String>,
+    /// The names already reported as taken from a `--lib` directory over a pin or a
+    /// declaration: one note per name.
+    pub(crate) lib_override_reported: std::collections::HashSet<String>,
     /// The library short-name of the file being parsed, when that file is a
     /// package entry — so a self-qualified call (`graphics::color_r(..)` inside
     /// `src/graphics.loft`) resolves to the definitions already in hand.
@@ -885,9 +892,6 @@ pub struct Parser {
     /// there can read.
     #[cfg(feature = "registry")]
     undeclared_reported: std::collections::HashSet<String>,
-    /// The `use` ids already reported by [`Parser::lib_flag_outranked`] — one advice per
-    /// id, for the same reason and with the same non-travel rule as `undeclared_reported`.
-    lib_outranked_reported: std::collections::HashSet<String>,
     /// What an auto-install already answered this run: `id -> Some(version)`, or `None`
     /// for a name the registry does not carry.  @PLN143 — a bare `use` is decided by
     /// `probe_auto_install` on EVERY parse pass now that no lockfile pins it, and asking
@@ -963,6 +967,14 @@ pub struct Parser {
     /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
     /// reads the manifests again, and an error is the author's to fix once.
     reported_manifest_errors: Vec<crate::manifest::ManifestError>,
+    /// The errors of the manifests this parse read since the last report
+    /// ([`Parser::read_manifest`]), each once — the parse's own (`@FR-C-Own`).  A cell, because
+    /// a manifest is read from helpers that see the parser through `&`.
+    manifest_errors: std::cell::RefCell<Vec<crate::manifest::ManifestError>>,
+    /// The source line the parse is on, for the report of an internal panic (`parse_file`).
+    compile_pos: Option<crate::lexer::Position>,
+    /// A parse is running: a nested one (an import) leaves the panic report to it.
+    parsing: bool,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -2142,8 +2154,8 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn new() -> Self {
         // A new parser is a new compilation: the copy manifest's records are keyed by
-        // definition and variable number, so the previous program's would name this one's.
-        crate::copy_manifest::begin_compilation();
+        // definition and variable number, so they are the new `Data`'s own, starting empty
+        // (`Data::copies`).
         let data = Data::new();
         Parser {
             todo_files: Vec::new(),
@@ -2317,6 +2329,8 @@ impl Parser {
             vars: Function::new("", "none"),
             line: 0,
             lib_dirs: Vec::new(),
+            flag_lib_dirs: Vec::new(),
+            lib_override_reported: std::collections::HashSet::new(),
             own_lib: None,
             pending_native_libs: Vec::new(),
             native_lib_regs: Vec::new(),
@@ -2332,7 +2346,6 @@ impl Parser {
             use_paths: std::collections::HashMap::new(),
             #[cfg(feature = "registry")]
             undeclared_reported: std::collections::HashSet::new(),
-            lib_outranked_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             auto_installed: std::collections::HashMap::new(),
             #[cfg(feature = "registry")]
@@ -2355,6 +2368,9 @@ impl Parser {
             auto_use_catalog_builders: None,
             auto_use_catalog_ambiguous: None,
             reported_manifest_errors: Vec::new(),
+            manifest_errors: std::cell::RefCell::default(),
+            compile_pos: None,
+            parsing: false,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -2705,9 +2721,29 @@ impl Parser {
         }
     }
 
+    /// Parse the lexer's file ([`Self::parse_file_body`]).  loft#665 piece 3 — a panic inside
+    /// it is reported at the line the parse was on (`crash_report::compile_panicked`), so an
+    /// internal error points at the user's line instead of a compiler source file; a nested
+    /// parse (an import) leaves the report to the outermost.
+    fn parse_file(&mut self) {
+        if self.parsing {
+            self.parse_file_body();
+            return;
+        }
+        self.parsing = true;
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.parse_file_body()));
+        self.parsing = false;
+        if let Err(payload) = ran {
+            if let Some(pos) = self.compile_pos {
+                crate::crash_report::compile_panicked(&pos, &*payload);
+            }
+            std::panic::resume_unwind(payload);
+        }
+    }
+
     /// Parse data from the current lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn parse_file(&mut self) {
+    fn parse_file_body(&mut self) {
         let start_def = self.data.definitions();
         self.parse_file_directives(true);
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured
@@ -2857,16 +2893,7 @@ impl Parser {
                     let f = self.lib_path(&id);
                     let refused = self.lexer.diagnostics().level() == Level::Fatal
                         && level_before != Level::Fatal;
-                    let f_exists = file_exists(&f) || {
-                        #[cfg(feature = "wasm")]
-                        {
-                            crate::wasm::virt_fs_get(&f).is_some()
-                        }
-                        #[cfg(not(feature = "wasm"))]
-                        {
-                            false
-                        }
-                    };
+                    let f_exists = file_exists(&f) || { self.lexer.page_file(&f).is_some() };
                     if f_exists {
                         let cur = &self.lexer.pos().file;
                         self.todo_files.push((cur.to_string(), self.data.source));
@@ -2980,7 +3007,7 @@ impl Parser {
                         .lexer
                         .source_text(auto_use_scan_file.as_str())
                         .map_or_else(
-                            || Self::read_source(auto_use_scan_file.as_str()),
+                            || self.read_source(auto_use_scan_file.as_str()),
                             str::to_string,
                         );
                     // A type the file DECLARES is its own, never a trigger: a script with
@@ -3812,8 +3839,6 @@ pub(crate) fn rename(op: &str) -> &str {
 }
 #[cfg(test)]
 mod h5_changed_source_tests;
-#[cfg(test)]
-mod p269_native_backfill_tests;
 #[cfg(test)]
 mod plan86_admission_tests;
 #[cfg(test)]

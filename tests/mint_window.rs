@@ -5,55 +5,10 @@
 //! `LOFT_NO_MINT_WINDOW=1` restores the store write per field.  The cell corpus
 //! (`tests/scripts/158-mint-window.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted.
-use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-mint-window.loft";
-
-/// Per function: `(element addresses bound, field writes through one)`.  A loop whose index
-/// chains run behind a guard is emitted twice (`@FR-R-GuardedChain`), which doubles m1 and
-/// m11.
-const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_m1", 2, 4),
-    // Four fusable fields through the address; the boolean keeps its store write.
-    ("n_m2", 1, 4),
-    // A text set re-allocates: the window declines.
-    ("n_m3", 0, 0),
-    // The outer element declines on its nested mint; the two nested elements hold one each.
-    ("n_m4", 2, 4),
-    // …and at a size that reallocates the store inside the window, nothing is held.
-    ("n_m4b", 0, 0),
-    // The call names the container, so it runs BEFORE the mint (loft#1548): a clean window.
-    ("n_m5", 1, 2),
-    // The call appends to an unrelated vector inside the window: declined.
-    ("n_m5b", 0, 0),
-    // Two literal groups, four elements.
-    ("n_m6", 4, 8),
-    // Keyed inserts: the sorted insert's claimed record takes the address and the finish
-    // files it by its key; the hash insert is `(R-KeyedEntry)`'s — the IR's one probe answers
-    // the entry under the key (no record claimed, no window), and the entry is a record
-    // reference the view clause holds the address of for its one write (the loop emitted
-    // twice behind its guard): three addresses, four writes.
-    ("n_m7", 3, 4),
-    ("n_m10", 1, 2),
-    ("n_m11", 2, 4),
-    // m12's and m13's callees answer a TUPLE (two and seven scalars), delivered into the
-    // element by a copy the emitter lowers to one setter per field — a fusable write of the
-    // element, so the mint window binds the address and every field goes through it.
-    ("n_m12", 1, 2),
-    ("n_m13", 1, 7),
-    // A struct-enum element is a record too (`@FR-R-RecPtr`'s enum clause): two variants,
-    // two windows, their three `integer` fields AND their two tags through the address
-    // (`OpSetEnum` is a fusable setter: one byte, the write `set_byte(…, 0, v)` makes).
-    ("n_m14", 2, 5),
-    // The `smooth` shape: three literal mints of `src` take `rec_ptr`, the loop's mint takes
-    // the WINDOW's address (a record view of another vector's element in the body is no
-    // length reader; the builder's tuple copied into the slot is the slot's own write);
-    // eight field writes through those addresses.
-    ("n_m15", 4, 8),
-];
 
 const SWITCHES: [&str; 5] = [
     "LOFT_NO_MINT_WINDOW",
@@ -78,55 +33,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    // One file per TEST: the tests run on threads of one process.
-    let out =
-        std::env::temp_dir().join(format!("loft_mint_window_{}_{tag}.rs", std::process::id()));
-    let status = loft(
-        &[
-            "--native-rust",
-            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells().to_str().unwrap(),
-        ],
-        env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-type Row = (usize, usize);
-
-fn counts(rust: &str) -> HashMap<String, Row> {
-    let mut map: HashMap<String, Row> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        let row = map.entry(current.clone()).or_default();
-        // A mint inside a record push window (`@FR-R-PushFill`'s record clause) takes its
-        // address off the window instead of `rec_ptr`: the same held element address.
-        row.0 += line
-            .matches(": *const u8 = vector::rec_ptr(&(var__elm_")
-            .count()
-            + line.matches("windowed mint address for var__elm_").count();
-        row.1 += line.matches("rec_set::<").count();
-    }
-    map
 }
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
@@ -172,43 +78,4 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
             );
         }
     }
-}
-
-#[test]
-fn each_cell_emits_exactly_the_forms_predicted() {
-    let got = counts(&emit("on", &[]));
-    for (name, addresses, writes) in EXPECTED {
-        assert_eq!(
-            got.get(*name).copied().unwrap_or_default(),
-            (*addresses, *writes),
-            "{name}: (element addresses, field writes through one)"
-        );
-    }
-}
-
-#[test]
-fn the_switch_restores_the_store_write() {
-    let got = counts(&emit("off", &[("LOFT_NO_MINT_WINDOW", "1")]));
-    for (name, _, _) in EXPECTED {
-        // m7's hash entries are no mint: the view clause holds their two addresses, which
-        // this switch does not govern.
-        let kept = if *name == "n_m7" { 2 } else { 0 };
-        assert_eq!(
-            got.get(*name).copied().unwrap_or_default().0,
-            kept,
-            "{name}: no minted element holds an address with the switch on"
-        );
-    }
-}
-
-/// `@FR-R-KeyedEntry` takes m7's hash inserts from the mint window; with it switched off the
-/// window still holds their addresses, so the clause it took over keeps its evidence.
-#[test]
-fn the_hash_inserts_are_windows_without_the_keyed_entry() {
-    let got = counts(&emit("nokeyed", &[("LOFT_NO_KEYED_ENTRY", "1")]));
-    assert_eq!(
-        got.get("n_m7").copied().unwrap_or_default(),
-        (3, 6),
-        "n_m7 under LOFT_NO_KEYED_ENTRY: (element addresses, field writes through one)"
-    );
 }

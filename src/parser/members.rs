@@ -1105,6 +1105,7 @@ impl Parser {
             let fname = self.data.def(self.context).original_name();
             let at = self.lexer.pos();
             crate::copy_manifest::note_rekeyed_view(
+                &self.data,
                 &vname,
                 &cname,
                 &field,
@@ -1189,11 +1190,8 @@ impl Parser {
         // PLAN51 V-b — when the source is a Call returning the
         // heap-promoted form of THIS tuple shape (i.e.
         // `Type::Reference(__tuple<…>, _)` whose def_nr matches
-        // tuple_d_nr we just resolved), the native codegen would
-        // otherwise stash a `DbRef` return into a `Type::Tuple` work-ref
-        // and emit an illegal Rust `as (DbRef, DbRef)` cast at
-        // `src/generation/dispatch.rs:459-468` (rustc E0605).  Skip
-        // the per-element TupleGet stash and emit a SINGLE
+        // tuple_d_nr we just resolved), its `DbRef` is not the tuple's
+        // members.  Skip the per-element TupleGet stash and emit a SINGLE
         // OpCopyRecord that deep-copies the entire inner-tuple struct
         // into the host field at `base_pos`.  Mirrors the
         // `Type::Reference(_, deps.is_empty())` arm in
@@ -1450,23 +1448,13 @@ impl Parser {
                 // OpSetInt4 template body sees an i64 the interpreter
                 // pops in 8 bytes; for fn-ref-shaped sources (Var,
                 // TupleGet, function call), interpreter `TupleGet`
-                // already pushes only the d_nr's 8 bytes via OpVarInt,
-                // and `output_call` projects `.0` natively (see the
-                // val_is_fn_ref handling in src/generation/calls.rs).
+                // already pushes only the d_nr's 8 bytes via OpVarInt.
                 //
-                // P251 fix (2026-05-11): for `Value::Var(v)` where `v`
-                // has type `Function`, wrap in `Value::FnRefDnr(v)` so
-                // native emit projects `(var_v.0 as i64)` (the d_nr
-                // half of the runtime `(u32, DbRef)` tuple).  Without
-                // this projection, native codegen emits
-                // `let _v_val = (var_v); ... _v_val as i32` which
-                // rustc rejects (E0308: expected `(u32, DbRef)`,
-                // found `i64`; E0605: non-primitive cast).  The
-                // direct fn-ref-struct-field-write path
-                // (`emit_fn_ref_field_write`, parser/mod.rs:4886)
-                // already does this projection — extending it to the
-                // tuple-element-of-struct-field path closes the
-                // remaining gap.
+                // P251: for `Value::Var(v)` where `v` has type
+                // `Function`, wrap in `Value::FnRefDnr(v)` so the
+                // write takes the d_nr half of the runtime
+                // `(u32, DbRef)` pair, as the direct fn-ref
+                // struct-field write (`emit_fn_ref_field_write`) does.
                 let d_nr_only = match value {
                     Value::FnRef(d_nr, _, tp) => {
                         return vec![self.fn_number_write(ref_code.clone(), pos_v, d_nr, &tp)];

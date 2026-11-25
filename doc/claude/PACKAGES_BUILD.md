@@ -108,7 +108,7 @@ Built-in targets are **implicit**, so a zero-config project builds with no
 
 | Target | Shape → action | Triple | Requires |
 |---|---|---|---|
-| `native` | `--native --check` (compile-check, no run) | host | rustc/cargo |
+| `native` | `--native --check` (compile-check, no run) | host | the host's C compiler |
 | `html` | `--html` (browser page) | `wasm32-unknown-unknown` | rustup `wasm32-unknown-unknown`; `wasm-opt` (soft) |
 | `wasi` | `--native-wasm` (WASI `.wasm`) | `wasm32-wasip2` | rustup `wasm32-wasip2` |
 
@@ -118,8 +118,8 @@ loft build html wasi    # build the named targets
 loft build path.loft    # a .loft positional overrides the entry
 ```
 
-The runtime wasm rlib each shape links is auto-built + isolated by Slice 1
-(`target/loft/<shape>/`), so `loft build html` needs no prior `make`.
+A wasm target is the program's C built by clang for WASI, so `loft build html`
+needs no prior `make`.
 
 A `[build]` section **overrides** built-ins or **adds** targets. The
 line-scanner manifest reader (`src/manifest.rs`) takes single-line arrays and a
@@ -237,8 +237,8 @@ loft install graphics
 
 # Use it — works on all targets
 loft my_program.loft           # interpreter: dlopen libgraphics
-loft --native my_program.loft  # native: link graphics_native.rlib
-loft --native-wasm out.wasm my_program.loft  # wasm: link wasm variant
+loft --native my_program.loft  # native: the graphics shim linked in
+loft --native-wasm out.wasm my_program.loft  # wasm: the shim built for WASI
 ```
 
 ### The three spellings of `loft install`
@@ -265,18 +265,16 @@ directory's — a package whose directory differs landed under a name no `use` c
 ```
 1. Locate package (local path, or future: registry)
 2. Read loft.toml
-3. If [native] section exists:
-   a. Check prebuilt/ for current target
-   b. If missing or stale: cargo build native/ for current target
-   c. Copy rlib to ~/.loft/lib/<package>/<target>/
+3. If [c] shim exists: build the shim (`cc`)
 4. Copy src/*.loft to ~/.loft/lib/<package>/src/
 5. Register in ~/.loft/lib/<package>/loft.toml
 ```
 
 A library's **compiled** form is not built here: it is its hosted C unit, which each loft
 release builds for every published library and lists in its registry row, and which a run
-builds itself where a C compiler is (C_BACKEND.md § A library as a hosted unit).  The
-`[native]` steps above are a Rust native part's, which leaves with the rustc writer (@PLN225).
+builds itself where a C compiler is (C_BACKEND.md § A library as a hosted unit).  A
+package's own Rust native part (`[library] native`, `[native] crate`) is refused at its
+declaration (@PLN225).
 
 ### What `loft my_program.loft` does (enhanced)
 
@@ -285,11 +283,10 @@ builds itself where a C compiler is (C_BACKEND.md § A library as a hosted unit)
 2. For each `use <pkg>`:
    a. Find <pkg>/loft.toml in lib search path
    b. Parse src/<entry>.loft
-   c. If [native] exists:
-      - Interpreter: queue rlib for dlopen after byte_code()
-      - Native: add --extern <pkg>_native=<rlib> to rustc
-      - WASM: add --extern <pkg>_native=<wasm_rlib> to rustc
-3. byte_code() — connects #native symbols to loaded functions
+   c. If [c] shim exists:
+      - Interpreter: build the shim to a shared library and dlopen it
+      - Native / WASM: compile the shim's sources with the program's C
+3. byte_code() — connects #c symbols to loaded functions
 4. execute()
 ```
 
@@ -299,9 +296,9 @@ builds itself where a C compiler is (C_BACKEND.md § A library as a hosted unit)
 
 | Feature | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
-| Pure loft code | ✓ bytecode | ✓ compiled Rust | ✓ compiled WASM | ✓ compiled WASM |
-| `#rust` inline (standard library only — @C87) | ✓ fill.rs dispatch | ✓ emitted inline | ✓ emitted inline | ✓ emitted inline |
-| `#native` external | ✓ dlopen rlib | ✓ linked rlib | ✓ linked wasm rlib | ✓ wasm.bridge crate (see below) |
-| File I/O | ✓ OS calls | ✓ OS calls | ✓ VirtFS bridge | ✗ embedded assets only |
-| OpenGL | ✓ glutin/gl | ✓ glutin/gl | ✗ WebGL (different API) | ✓ WebGL2 (via loft-gl-wasm.js) |
-| Threading | ✓ rayon | ✓ rayon | ✗ sequential | ✗ sequential |
+| Pure loft code | ✓ bytecode | ✓ compiled C | ✓ compiled WASM (C, clang) | ✓ compiled WASM (C, clang) |
+| `#rust` operator (standard library only — @C87) | ✓ fill.rs dispatch | ✓ the C's own operator | ✓ the C's own operator | ✓ the C's own operator |
+| `#c` binding over a `[c] shim` | ✓ dlopen the built shim | ✓ linked | ✓ linked (WASI) | ✓ linked; `LOFT_BROWSER` + the library's `host_js` |
+| File I/O | ✓ OS calls | ✓ OS calls | ✓ WASI | ✓ the page filesystem (WASI over `loft-fs.js`) |
+| OpenGL | ✓ the graphics shim | ✓ the graphics shim | ✗ no window | ✓ WebGL2 (via loft-gl-wasm.js) |
+| Threading | ✓ OS threads | ✓ OS threads | ✗ sequential | ✗ sequential (`--threads` refused) |

@@ -37,7 +37,7 @@ pub(crate) struct Entry {
 }
 
 /// The conversions the emitter writes where two widths meet.
-const CROSSINGS: [&str; 3] = ["loft_w64(", "loft_n32(", "(double) "];
+const CROSSINGS: [&str; 3] = ["loft_w64(cx, ", "loft_n32(cx, ", "(double) "];
 
 /// Is a value of `tp` held in 64 bits, and by whose choice?  `Some(true)`: its declaration
 /// asks for them (`i64`, `u32`, `f64`).  `Some(false)`: it is the plain `integer` no
@@ -160,12 +160,16 @@ fn wrapped_call(text: &[u8], after: usize) -> &str {
 
 /// Is `callee` one of the runtime's 64-bit OPERATORS — the checked `loft_add`, the wrapping
 /// `LOFT_PLAIN_ADD` — which compute what the program wrote and take no loft `integer` as a
-/// length or an index does?  Its `_at` form reports a fault at a source position.
+/// length or an index does?  Its `_at` form reports a fault at a source position, its `_r` form
+/// an overflow under `--dev-soft-halt`.
 fn is_wide_operator(callee: &str) -> bool {
     if callee.starts_with("LOFT_PLAIN_") {
         return true;
     }
-    let name = callee.strip_suffix("_at").unwrap_or(callee);
+    let name = callee
+        .strip_suffix("_at")
+        .or_else(|| callee.strip_suffix("_r"))
+        .unwrap_or(callee);
     matches!(
         name,
         "loft_add"
@@ -247,7 +251,12 @@ pub(crate) fn crossings(program: &str) -> BTreeMap<Entry, u32> {
                     function: function.to_string(),
                     class: class_of(callee),
                     what: if class_of(callee) == "value" {
-                        conv.trim_end_matches(['(', ' ']).to_string()
+                        // The conversion's own name: `loft_w64(cx, ` is `loft_w64`.
+                        conv.split('(')
+                            .next()
+                            .unwrap_or(conv)
+                            .trim_end()
+                            .to_string()
                     } else {
                         callee.to_string()
                     },
@@ -310,18 +319,18 @@ static const char *const names[] = { \"a (b\" };
 
 static int32_t n_show__fr(loft_ref v0_v, int64_t v1_key) {
     int32_t t1;
-    t1 = loft_n32(loft_vec_len(v0_v));
-    loft_format_long(&w, loft_w64(t1), 10, \"a ( in a text\", 2);
-    loft_format_float(&w, (double) v2_f, 0);
-    t2 = n_wide(loft_w64(t1));
-    if (v1_key < loft_w64(t1)) {
-        t3 = loft_add32(t1, loft_n32(v1_key));
+    t1 = loft_n32(cx, loft_vec_len(cx, v0_v));
+    loft_format_long(cx, &w, loft_w64(cx, t1), 10, \"a ( in a text\", 2);
+    loft_format_float(cx, &w, (double) v2_f, 0);
+    t2 = n_wide(loft_w64(cx, t1));
+    if (v1_key < loft_w64(cx, t1)) {
+        t3 = loft_add32(cx, t1, loft_n32(cx, v1_key));
     }
     return t1;
 }
 
 static void n_plain(int32_t v0_a) {
-    v1_b = loft_add32(v0_a, INT32_C(1));
+    v1_b = loft_add32(cx, v0_a, INT32_C(1));
 }
 ";
 

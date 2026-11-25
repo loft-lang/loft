@@ -194,17 +194,12 @@ fn driver_agreement(dump: &ModeRun, interp: &ModeRun, native: &ModeRun) -> Vec<S
     }
 }
 
-/// Whether the headless-WASM toolchain is present: the `wasm32-wasip2` rustup
-/// target AND `wasmtime` on PATH. When absent the sweep SKIPS the wasm leg (rather
-/// than failing), so a machine without the toolchain still runs the interp/native
-/// oracle; a wasm-capable runner (the nightly gate) exercises it. This leans on the
-/// @PLN100 build phase, which auto-builds the wasip2 loft-runtime rlib on first use.
+/// Whether the headless-WASM toolchain is present: a clang that links a WASI program (the
+/// C's wasm route) AND `wasmtime` on PATH. When absent the sweep SKIPS the wasm leg (rather
+/// than failing), so a machine without the toolchain still runs the interp/native oracle; a
+/// wasm-capable runner (the nightly gate) exercises it.
 fn wasm_toolchain_present() -> bool {
-    let target = loft::platform::process::harness_command("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-wasip2"))
-        .unwrap_or(false);
+    let target = loft::platform::wasm_c_toolchain().triple.is_some();
     let wasmtime = loft::platform::process::harness_command("wasmtime")
         .arg("--version")
         .output()
@@ -230,7 +225,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
     let stem = fa::file_stem(path).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("loft_oracle_{stem}_{}.wasm", std::process::id()));
     let compile = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--native-wasm")
         .arg(&out)
         .arg(path)

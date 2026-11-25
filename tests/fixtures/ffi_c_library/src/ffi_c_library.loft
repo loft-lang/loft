@@ -47,3 +47,10 @@ pub fn bag_items(b: Bag) -> vector<u8>;
 #native
 pub fn named_k(p: Named, k: integer) -> Named;
 #native
+
+// Two heap arguments of two stores (`Stores::bridge_args`): `bump` writes into its second, in
+// place; `bag_sum` reads a vector field of each of two records.
+pub fn bump(a: const vector<u8>, b: vector<u8>) -> integer;
+#native
+pub fn bag_sum(x: const Bag, y: const Bag) -> integer;
+#native

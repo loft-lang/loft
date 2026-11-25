@@ -35,14 +35,10 @@ fn which(cmd: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// Can this machine build a page?  `--html` builds through the C backend and clang (@PLN225),
+/// so the question is the C driver's own: does a WASI program link.
 fn wasm32_installed() -> bool {
-    loft::platform::process::harness_command("rustc")
-        .args(["--print", "target-list"])
-        .output()
-        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
-        && fa::exists(
-            repo_root().join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib"),
-        )
+    loft::platform::wasm_c_toolchain().triple.is_some()
 }
 
 /// Entries written to the fixture store (~4.5 MB). The size is load-bearing: a keyed
@@ -64,7 +60,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
         return;
     }
     if !wasm32_installed() {
-        eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
+        eprintln!("SKIP: no wasm32 C toolchain that links a WASI program");
         return;
     }
     if !fa::exists(loft_bin()) {
@@ -144,7 +140,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     let html = tmp.join("paged.html");
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",
@@ -257,7 +253,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
         return;
     }
     if !wasm32_installed() {
-        eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
+        eprintln!("SKIP: no wasm32 C toolchain that links a WASI program");
         return;
     }
     if !fa::exists(loft_bin()) {
@@ -333,7 +329,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     let html = tmp.join("paged_keys.html");
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",
@@ -440,7 +436,7 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
         return;
     }
     if !wasm32_installed() {
-        eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
+        eprintln!("SKIP: no wasm32 C toolchain that links a WASI program");
         return;
     }
     if !fa::exists(loft_bin()) {
@@ -576,7 +572,7 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
     let html = tmp.join(format!("{name}.html"));
     let status = loft::platform::process::harness_command(loft_bin())
         .args([
-            "--native-rust",
+            "--native",
             "--html",
             html.to_str().unwrap(),
             "--path",

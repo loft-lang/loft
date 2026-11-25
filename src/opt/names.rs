@@ -25,10 +25,9 @@ pub(crate) fn collect_calls(node: IrNode, data: &Data, calls: &mut HashSet<u32>)
         let args = node.call_args();
         calls.insert(d);
         // The parallel family passes its worker function as an integer literal that the
-        // codegen emitter (src/generation/ops/parallel.rs) resolves into a closure body
-        // calling the worker by name.  Detect it here so the worker is included in the
-        // reachable set — without this, the closure refers to a fn that never gets
-        // emitted and rustc fails with "cannot find function" (E0425).  WHICH argument is
+        // emitter resolves into a call of the worker by name.  Detect it here so the worker
+        // is included in the reachable set — without this, the call names a function that
+        // never gets emitted.  WHICH argument is
         // the one table `fnref::parallel_worker_arg`, shared with the value-record gate.
         if let Some((i, min)) = fnref::parallel_worker_arg(data.def(d).name())
             && args.len() >= min
@@ -417,9 +416,9 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
 pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definition) -> String {
     let name = def.name();
     // A body-less standard-library definition is never emitted: its calls link to the function
-    // of that bare name the runtime provides (`codegen_runtime::n_vector_sum_int`).  A library
-    // may define a free function of the same name (@C97), and only the definitions this crate
-    // EMITS share its flat namespace — renaming the runtime's call left it calling a symbol
+    // the runtime provides for that bare name (`c::native_c`).  A library may define a free
+    // function of the same name (@C97), and only the definitions this crate EMITS share its flat
+    // namespace — renaming the runtime's call left it calling a symbol
     // nothing defines (rustc E0425).
     let runtime_provided = *def.code() == crate::data::Value::Null
         && crate::file_access::is_stdlib_source(def.position().file.as_str());

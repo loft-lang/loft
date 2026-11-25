@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C
 
-//! Two per-function analyses both compiled writers read, moved here from
-//! `generation::hoist` unchanged so the C backend can name them without reaching up into the
-//! Rust writer: `@FR-R-RetAdopt`'s return-buffer adoption ([`ret_adopt`]) and @PLN157 § V-y's
+//! Two per-function analyses the C backend reads: `@FR-R-RetAdopt`'s return-buffer adoption ([`ret_adopt`]) and @PLN157 § V-y's
 //! literal-group coverage ([`complete_writes`]).
 
 use crate::data::{Data, Type, Value};
@@ -240,31 +238,6 @@ pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
     })
 }
 
-/// Does `callee` run `OpDatabase` on its own hidden return buffer (@PLN157 § V-j)?  That
-/// is the witness-promoted delivery shape: the reuse arm CLEARS the buffer's whole store,
-/// so a buffer such a callee receives must own its store — it cannot be placed.
-pub(crate) fn callee_reinits_buffer(data: &Data, callee: &crate::data::Definition) -> bool {
-    let Some(attr) = callee.hidden_return_buffer_attr() else {
-        return true; // no buffer attr: not a delivery this analysis understands
-    };
-    let bv = callee.variables().var(&callee.attributes()[attr].name);
-    if bv == u16::MAX {
-        return true;
-    }
-    let mut reinits = false;
-    callee.code().any_node(&mut |n| {
-        if let Value::Call(d, args) = n
-            && (*d as usize) < data.definitions.len()
-            && data.def(*d).name() == "OpDatabase"
-            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == bv)
-        {
-            reinits = true;
-        }
-        false
-    });
-    reinits
-}
-
 /// @PLN157 § V-y — what [`complete_writes`] admitted: `db_vars` are locals whose EVERY
 /// `OpDatabase` site heads a covering literal group (the emitter calls `OpDatabaseNP`);
 /// `mint_tps` are element types whose every `OpNewRecord` site in this function does
@@ -396,9 +369,6 @@ fn call_pair_covers(
 /// `return` of the buffer follows such a mint in its own block.  A recursive chain answers no
 /// past two levels.
 fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
-    thread_local! {
-        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    }
     let def = data.def(f);
     let Some(rb) = def
         .hidden_return_buffer_attr()
@@ -406,12 +376,12 @@ fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
     else {
         return false;
     };
-    if DEPTH.with(std::cell::Cell::get) >= 2 {
+    if data.buffer_complete_depth.with(|d| *d) >= 2 {
         return false;
     }
-    DEPTH.with(|d| d.set(d.get() + 1));
+    data.buffer_complete_depth.with(|d| *d += 1);
     let complete = complete_writes(data, stores, f).db_vars.contains(&rb);
-    DEPTH.with(|d| d.set(d.get() - 1));
+    data.buffer_complete_depth.with(|d| *d -= 1);
     if !complete {
         return false;
     }

@@ -1,9 +1,9 @@
 # Reproducible output
 
-One loft binary, given the same program, produces the same C, the same Rust and the same
-executable — built twice, and built from another directory.  The loft binary itself is
-reproducible too; that is [RELEASE_PUBLISH.md](RELEASE_PUBLISH.md)'s `repro-verify.sh`.  This
-page is about what loft PRODUCES.
+One loft binary, given the same program, produces the same C and the same executable — built
+twice, and built from another directory.  The loft binary itself is reproducible too; that is
+[RELEASE_PUBLISH.md](RELEASE_PUBLISH.md)'s `repro-verify.sh`.  This page is about what loft
+PRODUCES.
 
 The check is `scripts/repro-output.sh [--loft BIN] [PROGRAM_DIR [MAIN]]`: silent and exit 0
 when the C and the executables agree, otherwise it names what differs.  CI runs it in the C
@@ -22,8 +22,7 @@ source file is named from its root, in everything a build writes and in every ru
 | any other file (a library found elsewhere) | its path from its package's parent (the directory above its `loft.toml`), else its file name |
 | a name already relative | itself |
 
-The sites that apply it: the C writer (`Cx::source_name`), the Rust writer
-(`Output::source_path`), the parser where it makes a call site's `file` argument for an
+The sites that apply it: the C writer (`Cx::source_name`), the parser where it makes a call site's `file` argument for an
 `assert`, a `panic` or a field check (`Parser::site_file`), and the interpreter's fault
 rendering (`RuntimeError::render`).  Compile-time diagnostics keep the absolute path: they
 are written into nothing, and an editor opens the file from it.
@@ -41,8 +40,8 @@ When none holds it, the fault prints its location without the source line.
 
 ## What is not reproducible yet
 
-- A shipped rustc-native build (`--ship`) bakes the main file's absolute path
-  (`LOFT_MAIN_FILE`) to find `log.conf` beside the program.
+- A program with a `[c] shim` names the shim library by its absolute path (`loft_clibs`,
+  under the package's `native-auto/`); `repro-output.sh`'s program has no shim.
 - The debug tier (`#line` marks) names the C source it was written as, which carries the
   process id.
 - A `--native-wasm` build names its C source with the process id; whether the module records

@@ -1,4 +1,4 @@
-// @PLN157 — the record append outside a held header (`@FR-R-GroupPush`), the heap-owning
+// @PLN157 — the record append outside a held header, the heap-owning
 // element through a push header (`@FR-R-PushRec`'s heap clause) and the loop whose body
 // REBINDS a mover to a fresh buffer or element slot (`@FR-R-Mint`'s rebound clause).
 // Measured on the drawing library's `fronds`: every append there paid a `record_new`
@@ -7,7 +7,7 @@
 // Frond owns heap (excluded from the record push) — 102 → 70 µs per call with the three
 // clauses, hash exact.  The interpreter keeps the mint-group ops and is the oracle; every
 // cell prints its values so the two backends can be diffed, and asserts them.
-// `LOFT_NO_GROUP_PUSH=1`, `LOFT_NO_HEAP_RECORD_PUSH=1`, `LOFT_NO_REBOUND_MOVER=1`,
+// `LOFT_NO_HEAP_RECORD_PUSH=1`, `LOFT_NO_REBOUND_MOVER=1`,
 // `LOFT_NO_RECORD_PUSH=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
 //
 // Predictions (tests/group_push.rs pins them): g1 two group headers, no template;

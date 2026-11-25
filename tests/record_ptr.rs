@@ -8,7 +8,6 @@
 //! `LOFT_NO_RECORD_PTR=1` (and `LOFT_NO_VECTOR_BASE=1`, one rule) restores the store reads.
 //! The cell corpus (`tests/scripts/157-record-ptr.loft`) says the VALUES hold on both
 //! backends, in every switch state and under the falsifiers; this pins what is emitted.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -17,58 +16,15 @@ const CELLS: &str = "tests/scripts/157-record-ptr.loft";
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_RECORD_PTR")
         .env_remove("LOFT_NO_VECTOR_BASE")
-        .env_remove("LOFT_HOIST_VERIFY")
-        .env_remove("LOFT_NO_FIELD_HEADER");
+        .env_remove("LOFT_HOIST_VERIFY");
     for (k, v) in env {
         cmd.env(k, v);
     }
     cmd.output().expect("spawn loft")
-}
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    emit_src(CELLS, tag, env)
-}
-
-fn emit_src(cells: &str, tag: &str, env: &[(&str, &str)]) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(cells);
-    // One file per TEST: the tests run on threads of one process.
-    let out = std::env::temp_dir().join(format!("loft_record_ptr_{}_{tag}.rs", std::process::id()));
-    let status = loft(
-        &[
-            "--native-rust",
-            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
-            "--native-emit",
-            out.to_str().unwrap(),
-            src.to_str().unwrap(),
-        ],
-        env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
 }
 
 fn run_ok(args: &[&str], env: &[(&str, &str)]) {
@@ -112,120 +68,11 @@ fn the_cells_hold_on_both_backends_in_every_switch_state_under_the_falsifiers() 
     }
 }
 
-#[test]
-fn a_view_binds_its_address_and_reads_and_writes_go_through_it() {
-    let rust = emit("on", &[]);
-    let main = body(&rust, "n_main");
-    // r1, r2, r3 (two views), r5, r6's SECOND binding, r7 (its push grows ANOTHER store), r7b's
-    // mint window (`_elm_2`, the mint clause), r8 (nullable), r9, r10, r12's `e` (its copy
-    // `e2 = e` reads the fields), r13 and r16's three loop variables — sixteen addresses.
-    assert_eq!(
-        main.matches("//@FR-R-RecPtr record view address for")
-            .count(),
-        16,
-        "main should bind exactly its sixteen admitted views:\n{main}"
-    );
-    assert!(
-        main.contains("vector::rec_get::<i64>(__pa_"),
-        "an integer field read goes through the address:\n{main}"
-    );
-    assert!(
-        main.contains("vector::rec_get::<f32>(__pa_")
-            && main.contains("vector::rec_get::<f64>(__pa_"),
-        "r10's single and float reads go through the address:\n{main}"
-    );
-    assert!(
-        main.contains("vector::rec_set::<i64>(__pa_"),
-        "r2's write through the view is one store through the address:\n{main}"
-    );
-    // r5 — the callee's parameter is a TUPLE PARAMETER (`(R-ValueLocal)`, 2026-09-25), so
-    // the site reads the view's two fields through the address into the tuple it hands
-    // over — where the `__inv` twin took them as inputs read the same way before.
-    assert!(
-        main.contains("n_rp_ex(cell, (unsafe { vector::rec_get::<i64>(__pa_"),
-        "r5's call must read its tuple argument through the address:\n{main}"
-    );
-    // r4 — a field projection view, read and written; r11 — a view written beside an
-    // element write through the vector.
-    let r4 = body(&rust, "n_rp_r4");
-    assert!(
-        r4.contains("record view address for var_s4") && r4.contains("rec_set::<i64>("),
-        "the projection view binds its address and writes through it:\n{r4}"
-    );
-    let r11 = body(&rust, "n_rp_r11");
-    assert!(
-        r11.contains("record view address for var_e11") && r11.contains("rec_get::<i64>("),
-        "the element view beside another route's write binds its address:\n{r11}"
-    );
-}
-
-#[test]
-fn the_switches_restore_the_store_reads() {
-    for switch in ["LOFT_NO_RECORD_PTR", "LOFT_NO_VECTOR_BASE"] {
-        let rust = emit(switch, &[(switch, "1")]);
-        assert!(
-            !rust.contains("//@FR-R-RecPtr record view address for"),
-            "{switch}=1 must bind no record view address"
-        );
-        assert!(
-            !rust.contains("vector::rec_get::<") && !rust.contains("vector::rec_set::<"),
-            "{switch}=1 must read and write through the store again"
-        );
-        let main = body(&rust, "n_main");
-        // r5's tuple argument is read through the store again, field by field.
-        assert!(
-            main.contains("n_rp_ex(cell, ({{let db = (var_e); if db.rec == 0"),
-            "{switch}=1: r5 reads its tuple argument through the store:\n{main}"
-        );
-    }
-}
-
-#[test]
-fn the_declines_are_the_designed_ones() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let out = loft(
-        &[
-            "--native-rust",
-            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
-            "--native-emit",
-            loft::platform::null_sink(),
-            src.to_str().unwrap(),
-        ],
-        &[("LOFT_TRACE_RECPTR", "1")],
-    );
-    let trace = String::from_utf8_lossy(&out.stderr);
-    let lines: Vec<&str> = trace
-        .lines()
-        .filter(|l| l.starts_with("recptr: n_main declines `e"))
-        .collect();
-    // r6's first binding (rebound), r7b (a push into the viewed vector itself), r9's `e9`
-    // and r12's copy pair.
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.ends_with("the remainder rebinds the view")),
-        "r6's first binding must decline as a rebind:\n{trace}"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.ends_with("the remainder may grow a store")),
-        "r7b's push into the viewed vector must decline the view:\n{trace}"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("`e2`") && l.contains("frees a record before a use")),
-        "r12's copy is a fresh record released before a use of it:\n{trace}"
-    );
-}
-
-/// The nested clause's cells: a view's VECTOR field read through the view's address.
+/// A view's VECTOR field read: the cells.
 const NESTED: &str = "tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft";
 
-/// The nested cells answer their hand-computed values on both backends, with the clause on
-/// and off, under the falsifiers — `LOFT_HOIST_VERIFY=1` compares every header read through
-/// an address with the store's.
+/// The nested cells answer their hand-computed values on both backends, under the
+/// falsifiers.
 #[test]
 fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NESTED);
@@ -234,7 +81,6 @@ fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
         ("--interpret", vec![]),
         ("--native", vec![("LOFT_HOIST_VERIFY", "1")]),
         ("--native", vec![("LOFT_POISON", "1")]),
-        ("--native", vec![("LOFT_NO_FIELD_HEADER", "1")]),
     ] {
         let out = loft(&[backend, src], &env);
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -245,33 +91,4 @@ fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-}
-
-#[test]
-fn a_vector_field_of_a_view_reads_its_header_through_the_address() {
-    let rust = emit_src(NESTED, "nested", &[]);
-    // n1, n2, n3, n5: views whose only uses are vector-field reads take an address for them
-    // (two reads, or one under a held iteration); set_first: the element clause's write.
-    for f in ["n_n1", "n_n2", "n_n3", "n_n5", "n_set_first"] {
-        let b = body(&rust, f);
-        assert!(
-            b.contains("vector::field_header::<false>(__pa_"),
-            "{f} must read its view's vector field through the address:\n{b}"
-        );
-    }
-    assert!(
-        body(&rust, "n_set_first")
-            .contains("let (__er, __el) = { let __h = unsafe { vector::field_header::<false>("),
-        "the element write takes the field's record and length through the address"
-    );
-    assert!(
-        body(&rust, "n_n2").contains("stores.vec_get_hoisted_or_raise_runtime::<false>(")
-            && body(&rust, "n_n2").contains(", &__vh, &__vr,"),
-        "the raising element read takes the nested header"
-    );
-    let off = emit_src(NESTED, "nested_off", &[("LOFT_NO_FIELD_HEADER", "1")]);
-    assert!(
-        !off.contains("vector::field_header::<"),
-        "LOFT_NO_FIELD_HEADER=1 must resolve every vector field through the store"
-    );
 }

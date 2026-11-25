@@ -43,13 +43,13 @@
  * or the arena's entry directory — and the store given a new table generation
  * (`@FR-R-TableHandle`): a handle resolved before sees the change at its next use.  The only
  * writer of those fields (tests/table_handle.rs scans for another). */
-static void loft_h_set_header(loft_store_t *s, uint32_t claim, uint32_t field, uint32_t v) {
-    loft_set_u32(s, claim, field, v);
-    loft_h_reshaped(s);
+static void loft_h_set_header(loft_cx *cx, loft_store_t *s, uint32_t claim, uint32_t field, uint32_t v) {
+    loft_set_u32(cx, s, claim, field, v);
+    loft_h_reshaped(cx, s);
 }
 
 /* The floor of log2 `v` (0 for 0 and 1): every table header decode asks it. */
-static uint32_t loft_ilog2(uint32_t v) {
+static uint32_t loft_ilog2(loft_cx *cx, uint32_t v) {
 #if defined(__GNUC__) || defined(__clang__)
     return v ? 31u - (uint32_t) __builtin_clz(v) : 0;
 #else
@@ -59,166 +59,166 @@ static uint32_t loft_ilog2(uint32_t v) {
 #endif
 }
 
-static uint64_t loft_next_pow2(uint64_t v) {
+static uint64_t loft_next_pow2(loft_cx *cx, uint64_t v) {
     uint64_t p = 1;
     while (p < v) p <<= 1;
     return p;
 }
 
-static int loft_is_pow2(uint32_t v) { return v != 0 && (v & (v - 1)) == 0; }
+static int loft_is_pow2(loft_cx *cx, uint32_t v) { return v != 0 && (v & (v - 1)) == 0; }
 
 /* Store::record_words: a claimed record's size in words. */
-static uint32_t loft_rec_words(const loft_store_t *s, uint32_t rec) {
-    int32_t w = loft_st_i32(s, rec, 0);
+static uint32_t loft_rec_words(loft_cx *cx, const loft_store_t *s, uint32_t rec) {
+    int32_t w = loft_st_i32(cx, s, rec, 0);
     return w > 0 ? (uint32_t) w : 0;
 }
 
 /* Store::zero_fill: a record's payload, every byte past its header word. */
-static void loft_zero_fill(loft_store_t *s, uint32_t rec) {
-    memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) loft_rec_words(s, rec) * 8 - 4);
+static void loft_zero_fill(loft_cx *cx, loft_store_t *s, uint32_t rec) {
+    memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) loft_rec_words(cx, s, rec) * 8 - 4);
 }
 
 /* ── arena.rs ── */
 
-static uint32_t loft_ar_chunk_of(uint32_t i) {
-    if (i < LOFT_AR_CAP_START) return loft_ilog2(i / LOFT_AR_BASE + 1);
+static uint32_t loft_ar_chunk_of(loft_cx *cx, uint32_t i) {
+    if (i < LOFT_AR_CAP_START) return loft_ilog2(cx, i / LOFT_AR_BASE + 1);
     return LOFT_AR_CAP_CHUNK + 1 + (i - LOFT_AR_CAP_START) / LOFT_AR_CAP_SLOTS;
 }
 
-static uint32_t loft_ar_first_index_of(uint32_t k) {
+static uint32_t loft_ar_first_index_of(loft_cx *cx, uint32_t k) {
     if (k <= LOFT_AR_CAP_CHUNK) return LOFT_AR_BASE * ((1u << k) - 1);
     return LOFT_AR_CAP_START + (k - LOFT_AR_CAP_CHUNK - 1) * LOFT_AR_CAP_SLOTS;
 }
 
-static void loft_ar_locate(uint32_t index, uint32_t stride, uint32_t *k, uint32_t *off) {
+static void loft_ar_locate(loft_cx *cx, uint32_t index, uint32_t stride, uint32_t *k, uint32_t *off) {
     uint32_t i = index - 1;
-    *k = loft_ar_chunk_of(i);
-    *off = LOFT_AR_SLOT0 + (i - loft_ar_first_index_of(*k)) * stride;
+    *k = loft_ar_chunk_of(cx, i);
+    *off = LOFT_AR_SLOT0 + (i - loft_ar_first_index_of(cx, *k)) * stride;
 }
 
-static uint32_t loft_ar_chunk_slots(uint32_t k) {
+static uint32_t loft_ar_chunk_slots(loft_cx *cx, uint32_t k) {
     return k <= LOFT_AR_CAP_CHUNK ? LOFT_AR_BASE << k : LOFT_AR_CAP_SLOTS;
 }
 
-static uint32_t loft_ar_chunk_words(uint32_t k, uint32_t stride) {
-    return 1 + (loft_ar_chunk_slots(k) * stride + 7) / 8;
+static uint32_t loft_ar_chunk_words(loft_cx *cx, uint32_t k, uint32_t stride) {
+    return 1 + (loft_ar_chunk_slots(cx, k) * stride + 7) / 8;
 }
 
-static uint32_t loft_ar_dir_capacity(const loft_store_t *s, uint32_t dir) {
-    return dir == 0 ? 0 : (loft_rec_words(s, dir) - 1) * 2;
+static uint32_t loft_ar_dir_capacity(loft_cx *cx, const loft_store_t *s, uint32_t dir) {
+    return dir == 0 ? 0 : (loft_rec_words(cx, s, dir) - 1) * 2;
 }
 
-static uint32_t loft_ar_chunk_rec(loft_store_t *s, uint32_t dir, uint32_t k) {
-    if (dir == 0 || k >= loft_ar_dir_capacity(s, dir)) return 0;
-    return loft_u32(s, dir, LOFT_AR_DIR0 + 4 * k);
+static uint32_t loft_ar_chunk_rec(loft_cx *cx, loft_store_t *s, uint32_t dir, uint32_t k) {
+    if (dir == 0 || k >= loft_ar_dir_capacity(cx, s, dir)) return 0;
+    return loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * k);
 }
 
-static void loft_ar_set_chunk_rec(loft_store_t *s, uint32_t table, uint32_t k, uint32_t rec) {
-    uint32_t dir = loft_u32(s, table, LOFT_AR_DIR_FLD);
-    if (k >= loft_ar_dir_capacity(s, dir)) {
+static void loft_ar_set_chunk_rec(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t k, uint32_t rec) {
+    uint32_t dir = loft_u32(cx, s, table, LOFT_AR_DIR_FLD);
+    if (k >= loft_ar_dir_capacity(cx, s, dir)) {
         uint32_t m = k + 1 > 4 ? k + 1 : 4;
-        uint32_t fresh = loft_st_claim(s, 1 + (m + 1) / 2);
-        loft_zero_fill(s, fresh);
+        uint32_t fresh = loft_st_claim(cx, s, 1 + (m + 1) / 2);
+        loft_zero_fill(cx, s, fresh);
         if (dir != 0) {
-            uint32_t old = loft_ar_dir_capacity(s, dir);
-            for (uint32_t i = 0; i < old; i++) loft_set_u32(s, fresh, LOFT_AR_DIR0 + 4 * i, loft_u32(s, dir, LOFT_AR_DIR0 + 4 * i));
-            loft_st_delete(s, dir);
+            uint32_t old = loft_ar_dir_capacity(cx, s, dir);
+            for (uint32_t i = 0; i < old; i++) loft_set_u32(cx, s, fresh, LOFT_AR_DIR0 + 4 * i, loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * i));
+            loft_st_delete(cx, s, dir);
         }
-        loft_h_set_header(s, table, LOFT_AR_DIR_FLD, fresh);
+        loft_h_set_header(cx, s, table, LOFT_AR_DIR_FLD, fresh);
     }
-    loft_set_u32(s, loft_u32(s, table, LOFT_AR_DIR_FLD), LOFT_AR_DIR0 + 4 * k, rec);
+    loft_set_u32(cx, s, loft_u32(cx, s, table, LOFT_AR_DIR_FLD), LOFT_AR_DIR0 + 4 * k, rec);
 }
 
-static uint32_t loft_ar_ensure_chunk(loft_store_t *s, uint32_t table, uint32_t k, uint32_t stride, uint32_t owner) {
-    uint32_t existing = loft_ar_chunk_rec(s, loft_u32(s, table, LOFT_AR_DIR_FLD), k);
+static uint32_t loft_ar_ensure_chunk(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t k, uint32_t stride, uint32_t owner) {
+    uint32_t existing = loft_ar_chunk_rec(cx, s, loft_u32(cx, s, table, LOFT_AR_DIR_FLD), k);
     if (existing != 0) return existing;
-    uint32_t rec = loft_st_claim(s, loft_ar_chunk_words(k, stride));
-    loft_zero_fill(s, rec);
-    loft_set_u32(s, rec, LOFT_AR_OWNER_FLD, owner);
-    loft_ar_set_chunk_rec(s, table, k, rec);
+    uint32_t rec = loft_st_claim(cx, s, loft_ar_chunk_words(cx, k, stride));
+    loft_zero_fill(cx, s, rec);
+    loft_set_u32(cx, s, rec, LOFT_AR_OWNER_FLD, owner);
+    loft_ar_set_chunk_rec(cx, s, table, k, rec);
     return rec;
 }
 
 /* arena::alloc_at: a slot of `stride` bytes — a freed one first, its bytes cleared — as its
  * index, its chunk record and its offset there. */
-static uint32_t loft_ar_alloc_at(loft_store_t *s, uint32_t table, uint32_t stride, uint32_t owner, uint32_t *rec_out,
+static uint32_t loft_ar_alloc_at(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t stride, uint32_t owner, uint32_t *rec_out,
                                  uint32_t *off_out) {
-    uint32_t free_i = loft_u32(s, table, LOFT_AR_FREE_FLD), index, k, off;
+    uint32_t free_i = loft_u32(cx, s, table, LOFT_AR_FREE_FLD), index, k, off;
     if (free_i != 0) {
-        loft_ar_locate(free_i, stride, &k, &off);
-        uint32_t rec = loft_ar_chunk_rec(s, loft_u32(s, table, LOFT_AR_DIR_FLD), k);
-        loft_set_u32(s, table, LOFT_AR_FREE_FLD, loft_u32(s, rec, off));
+        loft_ar_locate(cx, free_i, stride, &k, &off);
+        uint32_t rec = loft_ar_chunk_rec(cx, s, loft_u32(cx, s, table, LOFT_AR_DIR_FLD), k);
+        loft_set_u32(cx, s, table, LOFT_AR_FREE_FLD, loft_u32(cx, s, rec, off));
         index = free_i;
     } else {
-        uint32_t next = loft_u32(s, table, LOFT_AR_NEXT_FLD);
+        uint32_t next = loft_u32(cx, s, table, LOFT_AR_NEXT_FLD);
         if (next < 1) next = 1;
-        loft_set_u32(s, table, LOFT_AR_NEXT_FLD, next + 1);
+        loft_set_u32(cx, s, table, LOFT_AR_NEXT_FLD, next + 1);
         index = next;
     }
-    loft_ar_locate(index, stride, &k, &off);
-    uint32_t rec = loft_ar_ensure_chunk(s, table, k, stride, owner);
+    loft_ar_locate(cx, index, stride, &k, &off);
+    uint32_t rec = loft_ar_ensure_chunk(cx, s, table, k, stride, owner);
     if (free_i != 0) {
-        for (uint32_t w = 0; w < stride / 4; w++) loft_set_u32(s, rec, off + 4 * w, 0);
+        for (uint32_t w = 0; w < stride / 4; w++) loft_set_u32(cx, s, rec, off + 4 * w, 0);
     }
     *rec_out = rec;
     *off_out = off;
     return index;
 }
 
-static void loft_ar_free(loft_store_t *s, uint32_t table, uint32_t index, uint32_t stride) {
+static void loft_ar_free(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t index, uint32_t stride) {
     uint32_t k, off;
     if (index == 0) return;
-    loft_ar_locate(index, stride, &k, &off);
-    uint32_t rec = loft_ar_chunk_rec(s, loft_u32(s, table, LOFT_AR_DIR_FLD), k);
+    loft_ar_locate(cx, index, stride, &k, &off);
+    uint32_t rec = loft_ar_chunk_rec(cx, s, loft_u32(cx, s, table, LOFT_AR_DIR_FLD), k);
     if (rec == 0) return;
-    loft_set_u32(s, rec, off, loft_u32(s, table, LOFT_AR_FREE_FLD));
-    loft_set_u32(s, table, LOFT_AR_FREE_FLD, index);
+    loft_set_u32(cx, s, rec, off, loft_u32(cx, s, table, LOFT_AR_FREE_FLD));
+    loft_set_u32(cx, s, table, LOFT_AR_FREE_FLD, index);
 }
 
 /* arena::index_of: the index of the slot at (rec, off), 0 when no chunk is that record. */
-static uint32_t loft_ar_index_of(loft_store_t *s, uint32_t table, uint32_t rec, uint32_t off, uint32_t stride) {
-    uint32_t dir = loft_u32(s, table, LOFT_AR_DIR_FLD);
-    uint32_t cap = loft_ar_dir_capacity(s, dir);
-    uint32_t next = loft_u32(s, table, LOFT_AR_NEXT_FLD);
+static uint32_t loft_ar_index_of(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t rec, uint32_t off, uint32_t stride) {
+    uint32_t dir = loft_u32(cx, s, table, LOFT_AR_DIR_FLD);
+    uint32_t cap = loft_ar_dir_capacity(cx, s, dir);
+    uint32_t next = loft_u32(cx, s, table, LOFT_AR_NEXT_FLD);
     uint32_t top = 0;
     if (next >= 2) {
-        top = loft_ar_chunk_of(next - 2) + 1;
+        top = loft_ar_chunk_of(cx, next - 2) + 1;
         if (top > cap) top = cap;
     }
     for (uint32_t k = top; k-- > 0;) {
-        if (loft_u32(s, dir, LOFT_AR_DIR0 + 4 * k) == rec) return loft_ar_first_index_of(k) + (off - LOFT_AR_SLOT0) / stride + 1;
+        if (loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * k) == rec) return loft_ar_first_index_of(cx, k) + (off - LOFT_AR_SLOT0) / stride + 1;
     }
     for (uint32_t k = top; k < cap; k++) {
-        if (loft_u32(s, dir, LOFT_AR_DIR0 + 4 * k) == rec) return loft_ar_first_index_of(k) + (off - LOFT_AR_SLOT0) / stride + 1;
+        if (loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * k) == rec) return loft_ar_first_index_of(cx, k) + (off - LOFT_AR_SLOT0) / stride + 1;
     }
     return 0;
 }
 
 /* arena::all_records, deleted: every chunk in directory order, then the directory. */
-static void loft_ar_release(loft_store_t *s, uint32_t table) {
-    uint32_t dir = loft_u32(s, table, LOFT_AR_DIR_FLD);
+static void loft_ar_release(loft_cx *cx, loft_store_t *s, uint32_t table) {
+    uint32_t dir = loft_u32(cx, s, table, LOFT_AR_DIR_FLD);
     if (dir == 0) return;
-    uint32_t cap = loft_ar_dir_capacity(s, dir);
+    uint32_t cap = loft_ar_dir_capacity(cx, s, dir);
     for (uint32_t k = 0; k < cap; k++) {
-        uint32_t r = loft_u32(s, dir, LOFT_AR_DIR0 + 4 * k);
-        if (r != 0) loft_st_delete(s, r);
+        uint32_t r = loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * k);
+        if (r != 0) loft_st_delete(cx, s, r);
     }
-    loft_st_delete(s, dir);
+    loft_st_delete(cx, s, dir);
 }
 
 /* ── hash.rs ── */
 
 typedef struct { uint32_t count, sb, stride; int inl; } loft_hhdr;
 
-static uint32_t loft_h_slots_in(uint32_t words, uint32_t sb) {
-    if (sb == 8) return words == 0 ? 0 : 1u << loft_ilog2(words);
+static uint32_t loft_h_slots_in(loft_cx *cx, uint32_t words, uint32_t sb) {
+    if (sb == 8) return words == 0 ? 0 : 1u << loft_ilog2(cx, words);
     return words * 2;
 }
 
-LOFT_HOT_INLINE loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
+LOFT_HOT_INLINE loft_hhdr loft_h_hdr(loft_cx *cx, loft_store_t *s, uint32_t claim) {
     loft_hhdr h;
-    uint32_t words = loft_rec_words(s, claim);
-    uint32_t flags = loft_u32(s, claim, LOFT_H_STRIDE_FLD);
+    uint32_t words = loft_rec_words(cx, s, claim);
+    uint32_t flags = loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD);
     words = words > LOFT_H_RESERVED ? words - LOFT_H_RESERVED : 0;
     h.stride = flags & LOFT_H_STRIDE_MASK;
     if (flags & LOFT_H_INLINE) {
@@ -227,313 +227,357 @@ LOFT_HOT_INLINE loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
         h.inl = 1;
     } else {
         h.sb = (flags & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
-        h.count = loft_h_slots_in(words, h.sb);
+        h.count = loft_h_slots_in(cx, words, h.sb);
         h.inl = 0;
     }
     return h;
 }
 
 /* OpSizeHash (hash::table_bytes): the bytes of a hash's full bucket table, holes included. */
-static int64_t loft_hash_table_bytes(loft_ref h) {
+static int64_t loft_hash_table_bytes(loft_cx *cx, loft_ref h) {
     if (h.store_nr == 0xFFFF || h.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(h);
-    uint32_t claim = loft_collection_rec(s, h.rec, h.pos);
+    loft_store_t *s = loft_store_of(cx, h);
+    uint32_t claim = loft_collection_rec(cx, s, h.rec, h.pos);
     if (claim == 0) return 0;
-    loft_hhdr hd = loft_h_hdr(s, claim);
+    loft_hhdr hd = loft_h_hdr(cx, s, claim);
     return (int64_t) (hd.inl ? hd.count * (8 + hd.stride) : hd.count * hd.sb);
 }
 
-static int loft_h_is_inline(loft_store_t *s, uint32_t claim) {
-    return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_INLINE) != 0;
+static int loft_h_is_inline(loft_cx *cx, loft_store_t *s, uint32_t claim) {
+    return (loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_INLINE) != 0;
 }
 
-LOFT_HOT_INLINE uint32_t loft_h_slot_bytes(loft_store_t *s, uint32_t claim) {
-    return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
+LOFT_HOT_INLINE uint32_t loft_h_slot_bytes(loft_cx *cx, loft_store_t *s, uint32_t claim) {
+    return (loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
 }
 
-static uint32_t loft_h_stride(loft_store_t *s, uint32_t claim) {
-    return loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_STRIDE_MASK;
+static uint32_t loft_h_stride(loft_cx *cx, loft_store_t *s, uint32_t claim) {
+    return loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_STRIDE_MASK;
 }
 
-static uint32_t loft_h_inline_count(uint32_t words, uint32_t stride) {
+static uint32_t loft_h_inline_count(loft_cx *cx, uint32_t words, uint32_t stride) {
     uint32_t n = (uint32_t) ((uint64_t) words * 8 / (8 + stride));
-    return n == 0 ? 0 : 1u << loft_ilog2(n);
+    return n == 0 ? 0 : 1u << loft_ilog2(cx, n);
 }
 
-static uint32_t loft_h_inline_words(uint32_t count, uint32_t stride) {
+static uint32_t loft_h_inline_words(loft_cx *cx, uint32_t count, uint32_t stride) {
     return LOFT_H_RESERVED + count * (8 + stride) / 8;
 }
 
-static uint32_t loft_h_ent0(uint32_t count) { return LOFT_H_BUCKET0 + count * 8; }
+static uint32_t loft_h_ent0(loft_cx *cx, uint32_t count) { return LOFT_H_BUCKET0 + count * 8; }
 
-LOFT_HOT_INLINE void loft_h_put_slot(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
-    loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * sb, index);
-    if (sb == 8) loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4, tag);
+LOFT_HOT_INLINE void loft_h_put_slot(loft_cx *cx, loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t index, uint32_t tag) {
+    loft_set_u32(cx, s, claim, LOFT_H_BUCKET0 + at * sb, index);
+    if (sb == 8) loft_set_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8 + 4, tag);
 }
 
-LOFT_HOT_INLINE int loft_h_tag_differs(loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
-    return sb == 8 && loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8 + 4) != want;
+LOFT_HOT_INLINE int loft_h_tag_differs(loft_cx *cx, loft_store_t *s, uint32_t claim, uint32_t sb, uint32_t at, uint32_t want) {
+    return sb == 8 && loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8 + 4) != want;
 }
 
 /* hash::stride_for: an entry's bytes, a whole number of words. */
-static uint32_t loft_h_stride_for(uint32_t size) {
+static uint32_t loft_h_stride_for(loft_cx *cx, uint32_t size) {
     if (size < 8) size = 8;
     return (size + 7) / 8 * 8;
 }
 
-static uint32_t loft_h_home(uint64_t digest, uint32_t count) {
+static uint32_t loft_h_home(loft_cx *cx, uint64_t digest, uint32_t count) {
     if (count == 0) return 0;
-    if (loft_is_pow2(count)) return (uint32_t) (digest & (uint64_t) (count - 1));
+    if (loft_is_pow2(cx, count)) return (uint32_t) (digest & (uint64_t) (count - 1));
     return (uint32_t) (digest % count);
 }
 
 /* `@FR-Col-Bucket`: a table is full at half load. */
-static int loft_h_is_full(uint32_t length, uint32_t elms) { return (uint64_t) length * 2 >= elms; }
+static int loft_h_is_full(loft_cx *cx, uint32_t length, uint32_t elms) { return (uint64_t) length * 2 >= elms; }
 
-static uint64_t loft_h_words_for(uint64_t count) { return count + LOFT_H_RESERVED + 1; }
+static uint64_t loft_h_words_for(loft_cx *cx, uint64_t count) { return count + LOFT_H_RESERVED + 1; }
 
-static uint64_t loft_h_room_for_buckets(uint64_t elms, uint32_t sb) {
-    return LOFT_H_RESERVED + loft_next_pow2(elms < 2 ? 2 : elms) * sb / 8;
+static uint64_t loft_h_room_for_buckets(loft_cx *cx, uint64_t elms, uint32_t sb) {
+    return LOFT_H_RESERVED + loft_next_pow2(cx, elms < 2 ? 2 : elms) * sb / 8;
 }
 
-static uint64_t loft_h_read_seed(loft_store_t *s, uint32_t claim) {
-    return (uint64_t) loft_u32(s, claim, LOFT_H_SEED_FLD) | (uint64_t) loft_u32(s, claim, LOFT_H_SEED_FLD + 4) << 32;
+static uint64_t loft_h_read_seed(loft_cx *cx, loft_store_t *s, uint32_t claim) {
+    return (uint64_t) loft_u32(cx, s, claim, LOFT_H_SEED_FLD) | (uint64_t) loft_u32(cx, s, claim, LOFT_H_SEED_FLD + 4) << 32;
 }
 
-static void loft_h_write_seed(loft_store_t *s, uint32_t claim, uint64_t seed) {
-    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
-    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
+static void loft_h_write_seed(loft_cx *cx, loft_store_t *s, uint32_t claim, uint64_t seed) {
+    loft_h_set_header(cx, s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
+    loft_h_set_header(cx, s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
 }
 
 /* hash::Entries: where a slot's entry lives. */
 typedef struct { uint16_t store_nr; uint32_t stride, dir, cap; int inl; uint32_t claim, ent0; } loft_hents;
 
-LOFT_HOT_INLINE loft_hents loft_h_entries(loft_store_t *s, uint32_t claim, uint16_t store_nr) {
+LOFT_HOT_INLINE loft_hents loft_h_entries(loft_cx *cx, loft_store_t *s, uint32_t claim, uint16_t store_nr) {
     loft_hents e;
-    loft_hhdr h = loft_h_hdr(s, claim);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
     e.store_nr = store_nr;
     e.stride = h.stride;
     e.inl = h.inl;
     if (h.inl) {
         e.dir = e.cap = 0;
         e.claim = claim;
-        e.ent0 = loft_h_ent0(h.count);
+        e.ent0 = loft_h_ent0(cx, h.count);
     } else {
-        e.dir = h.stride == 0 ? 0 : loft_u32(s, claim, LOFT_AR_DIR_FLD);
-        e.cap = loft_ar_dir_capacity(s, e.dir);
+        e.dir = h.stride == 0 ? 0 : loft_u32(cx, s, claim, LOFT_AR_DIR_FLD);
+        e.cap = loft_ar_dir_capacity(cx, s, e.dir);
         e.claim = e.ent0 = 0;
     }
     return e;
 }
 
-LOFT_HOT_INLINE void loft_h_at(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at(loft_cx *cx, const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t *rec, uint32_t *pos) {
     uint32_t k, off;
     if (e->stride == 0 || (slot & LOFT_H_SLOT_RECORD)) {
         *rec = slot & ~LOFT_H_SLOT_RECORD;
         *pos = 8;
         return;
     }
-    loft_ar_locate(slot, e->stride, &k, &off);
+    loft_ar_locate(cx, slot, e->stride, &k, &off);
     *rec = *pos = 0;
     if (k >= e->cap) return;
-    uint32_t r = loft_u32(s, e->dir, LOFT_AR_DIR0 + 4 * k);
+    uint32_t r = loft_u32(cx, s, e->dir, LOFT_AR_DIR0 + 4 * k);
     if (r == 0) return;
     *rec = r;
     *pos = off;
 }
 
-LOFT_HOT_INLINE void loft_h_at_bucket(const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
+LOFT_HOT_INLINE void loft_h_at_bucket(loft_cx *cx, const loft_hents *e, loft_store_t *s, uint32_t slot, uint32_t at, uint32_t *rec, uint32_t *pos) {
     if (e->inl) {
         *rec = e->claim;
         *pos = e->ent0 + at * e->stride;
     } else {
-        loft_h_at(e, s, slot, rec, pos);
+        loft_h_at(cx, e, s, slot, rec, pos);
     }
 }
 
-LOFT_HOT_INLINE loft_ref loft_h_entry(const loft_hents *e, loft_store_t *s, uint32_t slot) {
+LOFT_HOT_INLINE loft_ref loft_h_entry(loft_cx *cx, const loft_hents *e, loft_store_t *s, uint32_t slot) {
     loft_ref r = {0};
     r.store_nr = e->store_nr;
-    loft_h_at(e, s, slot, &r.rec, &r.pos);
+    loft_h_at(cx, e, s, slot, &r.rec, &r.pos);
     return r;
 }
 
-static int loft_h_names(const loft_hents *e, loft_store_t *s, uint32_t slot, loft_ref rec) {
+static int loft_h_names(loft_cx *cx, const loft_hents *e, loft_store_t *s, uint32_t slot, loft_ref rec) {
     uint32_t chunk, off;
     if (e->stride == 0 || (slot & LOFT_H_SLOT_RECORD)) return (slot & ~LOFT_H_SLOT_RECORD) == rec.rec;
-    loft_h_at(e, s, slot, &chunk, &off);
+    loft_h_at(cx, e, s, slot, &chunk, &off);
     return chunk == rec.rec && rec.pos >= LOFT_AR_SLOT0 &&
            (rec.pos - LOFT_AR_SLOT0) / e->stride == (off - LOFT_AR_SLOT0) / e->stride;
 }
 
 /* hash::slot_value: what a bucket holds for the entry `rec` — its arena index, or its record. */
-static uint32_t loft_h_slot_value(loft_store_t *s, uint32_t claim, loft_ref rec, uint32_t stride) {
+static uint32_t loft_h_slot_value(loft_cx *cx, loft_store_t *s, uint32_t claim, loft_ref rec, uint32_t stride) {
     if (stride != 0) {
-        uint32_t index = loft_ar_index_of(s, claim, rec.rec, rec.pos, stride);
+        uint32_t index = loft_ar_index_of(cx, s, claim, rec.rec, rec.pos, stride);
         if (index != 0) return index;
     }
     return rec.rec | LOFT_H_SLOT_RECORD;
 }
 
-static uint32_t loft_h_arena_table(loft_store_t *s, uint32_t sb, uint32_t stride) {
-    uint32_t claim = loft_st_claim(s, LOFT_H_RESERVED + 16 * sb / 8);
-    loft_zero_fill(s, claim);
-    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
+/* `@FR-Col-Layouts` — the layout a table made or rebuilt now takes is the writing build's
+ * policy, read once per context: `LOFT_NO_HASH_TAG` untagged 4-byte slots (hash::hash_tag),
+ * which implies `LOFT_NO_HASH_INLINE`, an owning table's entries in its arena
+ * (hash::hash_inline).  A reader reads every layout whatever the policy. */
+static void loft_h_policy(loft_cx *cx) {
+    if (cx->h_policy_read) return;
+    cx->h_policy_read = 1;
+    cx->h_untagged = getenv("LOFT_NO_HASH_TAG") != 0;
+    cx->h_no_inline = cx->h_untagged || getenv("LOFT_NO_HASH_INLINE") != 0;
+    cx->h_trace = getenv("LOFT_TRACE_HASH_LAYOUT") != 0;
+}
+
+/* hash::new_slot_bytes: the slot width a table made or rebuilt now takes. */
+static uint32_t loft_h_new_slot_bytes(loft_cx *cx) {
+    loft_h_policy(cx);
+    return cx->h_untagged ? LOFT_H_SLOT_BYTES : 8;
+}
+
+/* hash::trace_layout: `LOFT_TRACE_HASH_LAYOUT=1` names each table made, grown or demoted, its
+ * layout before and after, and the place that holds it. */
+static void loft_h_layout_name(loft_cx *cx, uint32_t f, char *out, size_t cap) {
+    const char *kind = (f & LOFT_H_INLINE) ? "inline" : (f & LOFT_H_TAGGED) ? "tagged" : "plain";
+    snprintf(out, cap, "%s%s", kind, (f & LOFT_H_STRIDE_MASK) == 0 ? " borrowing" : "");
+}
+
+static void loft_h_trace_layout(loft_cx *cx, const char *event, loft_ref c, int has_from, uint32_t from, uint32_t now) {
+    loft_h_policy(cx);
+    if (!cx->h_trace) return;
+    char was[32] = "", is[32];
+    if (has_from) {
+        loft_h_layout_name(cx, from, was, sizeof was - 4);
+        strcat(was, " -> ");
+    }
+    loft_h_layout_name(cx, now, is, sizeof is);
+    fprintf(stderr, "hash layout: %s %s%s at %u:%u+%u\n", event, was, is, (unsigned) c.store_nr, (unsigned) c.rec, (unsigned) c.pos);
+}
+
+static uint32_t loft_h_arena_table(loft_cx *cx, loft_store_t *s, uint32_t sb, uint32_t stride) {
+    uint32_t claim = loft_st_claim(cx, s, LOFT_H_RESERVED + 16 * sb / 8);
+    loft_zero_fill(cx, s, claim);
+    loft_h_set_header(cx, s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
     return claim;
 }
 
-static uint32_t loft_h_inline_flags(uint32_t stride, uint32_t count) {
-    return stride | LOFT_H_TAGGED | LOFT_H_INLINE | (loft_ilog2(count) << LOFT_H_COUNT_SHIFT);
+static uint32_t loft_h_inline_flags(loft_cx *cx, uint32_t stride, uint32_t count) {
+    return stride | LOFT_H_TAGGED | LOFT_H_INLINE | (loft_ilog2(cx, count) << LOFT_H_COUNT_SHIFT);
 }
 
 /* hash::zero_table: the slots and the entry area after them, every byte past the header words
  * — an entry's stride holds bytes no field writes, and an image carries the whole record
  * (`@C154`). */
-static void loft_h_zero_table(loft_store_t *s, uint32_t claim) {
+static void loft_h_zero_table(loft_cx *cx, loft_store_t *s, uint32_t claim) {
     memset(s->buf + (size_t) claim * 8 + LOFT_H_BUCKET0, 0,
-           (size_t) loft_rec_words(s, claim) * 8 - LOFT_H_BUCKET0);
+           (size_t) loft_rec_words(cx, s, claim) * 8 - LOFT_H_BUCKET0);
 }
 
-static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
-    uint32_t claim = loft_st_claim(s, loft_h_inline_words(count, stride));
-    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, 0);
-    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, 0);
-    loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, 0);
-    loft_set_u32(s, claim, LOFT_AR_FREE_FLD, 0);
-    loft_set_u32(s, claim, LOFT_AR_OWNER_FLD, owner);
-    loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, 1);
-    count = loft_h_inline_count(loft_rec_words(s, claim) - LOFT_H_RESERVED, stride);
-    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
-    loft_h_zero_table(s, claim);
+static uint32_t loft_h_inline_create(loft_cx *cx, loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
+    uint32_t claim = loft_st_claim(cx, s, loft_h_inline_words(cx, count, stride));
+    loft_h_set_header(cx, s, claim, LOFT_H_SEED_FLD, 0);
+    loft_h_set_header(cx, s, claim, LOFT_H_SEED_FLD + 4, 0);
+    loft_set_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD, 0);
+    loft_set_u32(cx, s, claim, LOFT_AR_FREE_FLD, 0);
+    loft_set_u32(cx, s, claim, LOFT_AR_OWNER_FLD, owner);
+    loft_set_u32(cx, s, claim, LOFT_AR_NEXT_FLD, 1);
+    count = loft_h_inline_count(cx, loft_rec_words(cx, s, claim) - LOFT_H_RESERVED, stride);
+    loft_h_set_header(cx, s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(cx, stride, count));
+    loft_h_zero_table(cx, s, claim);
     return claim;
 }
 
 /* hash::ensure_table: the collection's table, made on first use — inline when it owns its
  * entries (`@FR-Col-Inline`), with a fresh seed. */
-static uint32_t loft_h_ensure_table(loft_ref c, uint32_t stride) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t existing = loft_collection_rec(s, c.rec, c.pos);
+static uint32_t loft_h_ensure_table(loft_cx *cx, loft_ref c, uint32_t stride) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t existing = loft_collection_rec(cx, s, c.rec, c.pos);
     if (existing != 0) return existing;
-    uint32_t claim = stride != 0 ? loft_h_inline_create(s, 16, stride, c.rec) : loft_h_arena_table(s, 8, stride);
-    loft_h_write_seed(s, claim, loft_fresh_seed());
-    loft_set_u32(s, c.rec, c.pos, claim);
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint32_t claim = stride != 0 && !cx->h_no_inline ? loft_h_inline_create(cx, s, 16, stride, c.rec) : loft_h_arena_table(cx, s, sb, stride);
+    loft_h_write_seed(cx, s, claim, loft_fresh_seed(cx));
+    loft_set_u32(cx, s, c.rec, c.pos, claim);
+    loft_h_trace_layout(cx, "made", c, 0, 0, loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD));
     return claim;
 }
 
 /* hash::alloc_entry: a fresh entry's bytes — a staged record for an inline table (its bytes
  * move into the table when it is filed), else a slot of the arena. */
-static loft_ref loft_h_alloc_entry(loft_ref c, uint32_t stride, uint32_t owner) {
-    uint32_t claim = loft_h_ensure_table(c, stride);
-    loft_store_t *s = loft_store_of(c);
+static loft_ref loft_h_alloc_entry(loft_cx *cx, loft_ref c, uint32_t stride, uint32_t owner) {
+    uint32_t claim = loft_h_ensure_table(cx, c, stride);
+    loft_store_t *s = loft_store_of(cx, c);
     loft_ref e = {0};
     e.store_nr = c.store_nr;
-    if (loft_h_is_inline(s, claim)) {
-        e.rec = loft_st_claim(s, 1 + (stride + 7) / 8);
-        loft_zero_fill(s, e.rec);
-        loft_set_u32(s, e.rec, 4, LOFT_H_STAGE_MARK);
+    if (loft_h_is_inline(cx, s, claim)) {
+        e.rec = loft_st_claim(cx, s, 1 + (stride + 7) / 8);
+        loft_zero_fill(cx, s, e.rec);
+        loft_set_u32(cx, s, e.rec, 4, LOFT_H_STAGE_MARK);
         e.pos = 8;
         return e;
     }
-    (void) loft_ar_alloc_at(s, claim, stride, owner, &e.rec, &e.pos);
+    (void) loft_ar_alloc_at(cx, s, claim, stride, owner, &e.rec, &e.pos);
     return e;
 }
 
-static void loft_h_install_table(loft_ref c, uint32_t old_claim, uint32_t new_claim) {
-    loft_store_t *s = loft_store_of(c);
+static void loft_h_install_table(loft_cx *cx, loft_ref c, uint32_t old_claim, uint32_t new_claim) {
+    loft_store_t *s = loft_store_of(cx, c);
     /* The place names another table from here (`@FR-R-TableHandle`). */
-    loft_h_reshaped(s);
-    loft_set_u32(s, c.rec, c.pos, new_claim);
-    if (old_claim != 0) loft_st_delete(s, old_claim);
+    loft_h_reshaped(cx, s);
+    loft_set_u32(cx, s, c.rec, c.pos, new_claim);
+    if (old_claim != 0) {
+        loft_h_trace_layout(cx, "grown", c, 1, loft_u32(cx, s, old_claim, LOFT_H_STRIDE_FLD), loft_u32(cx, s, new_claim, LOFT_H_STRIDE_FLD));
+        loft_st_delete(cx, s, old_claim);
+    }
 }
 
 /* hash::hash_free_pos: the first empty bucket from the entry's home, and its tag. */
-static uint32_t loft_h_free_pos(loft_store_t *s, uint32_t claim, loft_ref rec, const loft_key *keys, int nk, uint32_t *tag) {
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_ref_digest(rec, keys, nk, loft_h_read_seed(s, claim));
-    uint32_t index = loft_h_home(hv, count);
+static uint32_t loft_h_free_pos(loft_cx *cx, loft_store_t *s, uint32_t claim, loft_ref rec, const loft_key *keys, int nk, uint32_t *tag) {
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_ref_digest(cx, rec, keys, nk, loft_h_read_seed(cx, s, claim));
+    uint32_t index = loft_h_home(cx, hv, count);
     for (uint32_t i = 0; i < count; i++) {
-        if (loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb) == 0) break;
+        if (loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb) == 0) break;
         if (++index >= count) index = 0;
     }
     *tag = (uint32_t) hv;
     return index;
 }
 
-static void loft_h_set(loft_store_t *s, uint32_t claim, uint32_t index, loft_ref rec, const loft_key *keys, int nk) {
-    uint32_t tag, at = loft_h_free_pos(s, claim, rec, keys, nk, &tag);
-    loft_h_put_slot(s, claim, loft_h_slot_bytes(s, claim), at, index, tag);
+static void loft_h_set(loft_cx *cx, loft_store_t *s, uint32_t claim, uint32_t index, loft_ref rec, const loft_key *keys, int nk) {
+    uint32_t tag, at = loft_h_free_pos(cx, s, claim, rec, keys, nk, &tag);
+    loft_h_put_slot(cx, s, claim, loft_h_slot_bytes(cx, s, claim), at, index, tag);
 }
 
 /* hash::rehash_into: every entry of `from` filed again in the empty `into`. */
-static void loft_h_rehash_into(loft_ref c, uint32_t from, uint32_t into, const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
-    loft_h_write_seed(s, into, loft_h_read_seed(s, from));
-    loft_hents ents = loft_h_entries(s, from, c.store_nr);
-    uint32_t width = loft_u32(s, into, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED;
-    loft_h_set_header(s, into, LOFT_AR_DIR_FLD, loft_u32(s, from, LOFT_AR_DIR_FLD));
-    loft_set_u32(s, into, LOFT_AR_NEXT_FLD, loft_u32(s, from, LOFT_AR_NEXT_FLD));
-    loft_set_u32(s, into, LOFT_AR_FREE_FLD, loft_u32(s, from, LOFT_AR_FREE_FLD));
-    loft_h_set_header(s, into, LOFT_H_STRIDE_FLD, loft_h_stride(s, from) | width);
-    uint32_t length = loft_u32(s, from, LOFT_H_LEN_FLD);
-    uint32_t count = loft_h_hdr(s, from).count, from_sb = loft_h_slot_bytes(s, from);
-    uint32_t into_count = loft_h_hdr(s, into).count, into_sb = loft_h_slot_bytes(s, into);
-    if (from_sb == 8 && loft_is_pow2(into_count)) {
+static void loft_h_rehash_into(loft_cx *cx, loft_ref c, uint32_t from, uint32_t into, const loft_key *keys, int nk) {
+    loft_store_t *s = loft_store_of(cx, c);
+    loft_h_write_seed(cx, s, into, loft_h_read_seed(cx, s, from));
+    loft_hents ents = loft_h_entries(cx, s, from, c.store_nr);
+    uint32_t width = loft_u32(cx, s, into, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED;
+    loft_h_set_header(cx, s, into, LOFT_AR_DIR_FLD, loft_u32(cx, s, from, LOFT_AR_DIR_FLD));
+    loft_set_u32(cx, s, into, LOFT_AR_NEXT_FLD, loft_u32(cx, s, from, LOFT_AR_NEXT_FLD));
+    loft_set_u32(cx, s, into, LOFT_AR_FREE_FLD, loft_u32(cx, s, from, LOFT_AR_FREE_FLD));
+    loft_h_set_header(cx, s, into, LOFT_H_STRIDE_FLD, loft_h_stride(cx, s, from) | width);
+    uint32_t length = loft_u32(cx, s, from, LOFT_H_LEN_FLD);
+    uint32_t count = loft_h_hdr(cx, s, from).count, from_sb = loft_h_slot_bytes(cx, s, from);
+    uint32_t into_count = loft_h_hdr(cx, s, into).count, into_sb = loft_h_slot_bytes(cx, s, into);
+    if (from_sb == 8 && loft_is_pow2(cx, into_count)) {
         /* A tag is the digest's low half, so it places the entry without reading its key. */
         uint32_t mask = into_count - 1;
         for (uint32_t i = 0; i < count; i++) {
-            uint32_t index = loft_u32(s, from, LOFT_H_BUCKET0 + 8 * i);
+            uint32_t index = loft_u32(cx, s, from, LOFT_H_BUCKET0 + 8 * i);
             if (index == 0) continue;
-            uint32_t tag = loft_u32(s, from, LOFT_H_BUCKET0 + 8 * i + 4);
+            uint32_t tag = loft_u32(cx, s, from, LOFT_H_BUCKET0 + 8 * i + 4);
             uint32_t at = tag & mask;
-            while (loft_u32(s, into, LOFT_H_BUCKET0 + at * into_sb) != 0) at = (at + 1) & mask;
-            loft_h_put_slot(s, into, into_sb, at, index, tag);
+            while (loft_u32(cx, s, into, LOFT_H_BUCKET0 + at * into_sb) != 0) at = (at + 1) & mask;
+            loft_h_put_slot(cx, s, into, into_sb, at, index, tag);
         }
     } else {
         for (uint32_t i = 0; i < count; i++) {
-            uint32_t index = loft_u32(s, from, LOFT_H_BUCKET0 + from_sb * i);
+            uint32_t index = loft_u32(cx, s, from, LOFT_H_BUCKET0 + from_sb * i);
             if (index == 0) continue;
-            loft_h_set(s, into, index, loft_h_entry(&ents, s, index), keys, nk);
+            loft_h_set(cx, s, into, index, loft_h_entry(cx, &ents, s, index), keys, nk);
         }
     }
-    loft_set_u32(s, into, LOFT_H_LEN_FLD, length);
+    loft_set_u32(cx, s, into, LOFT_H_LEN_FLD, length);
 }
 
 /* hash::grow_if_full: a table twice the buckets when this one is at half load, else 0. */
-static uint32_t loft_h_grow_if_full(loft_ref c, uint32_t claim, uint32_t length, const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t count = loft_h_hdr(s, claim).count;
-    if (!loft_h_is_full(length, count)) return 0;
-    uint64_t want = loft_h_room_for_buckets((uint64_t) count * 2, 8);
+static uint32_t loft_h_grow_if_full(loft_cx *cx, loft_ref c, uint32_t claim, uint32_t length, const loft_key *keys, int nk) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t count = loft_h_hdr(cx, s, claim).count;
+    if (!loft_h_is_full(cx, length, count)) return 0;
+    /* An untagged table is rebuilt tagged unless the policy writes untagged (`(Col-Tag)`). */
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint64_t want = loft_h_room_for_buckets(cx, (uint64_t) count * 2, sb);
     if (want > UINT32_MAX) return 0;
-    uint32_t grown = loft_st_claim(s, (uint32_t) want);
-    loft_zero_fill(s, grown);
-    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
-    loft_h_rehash_into(c, claim, grown, keys, nk);
-    loft_h_install_table(c, claim, grown);
+    uint32_t grown = loft_st_claim(cx, s, (uint32_t) want);
+    loft_zero_fill(cx, s, grown);
+    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, sb == 8 ? LOFT_H_TAGGED : 0);
+    loft_h_rehash_into(cx, c, claim, grown, keys, nk);
+    loft_h_install_table(cx, c, claim, grown);
     return grown;
 }
 
 /* hash::inline_rebuild: an inline table of `want` buckets, the live entries moved in by tag. */
-static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want) {
-    loft_store_t *s = loft_store_of(c);
-    loft_hhdr h = loft_h_hdr(s, claim);
-    uint32_t grown = loft_st_claim(s, loft_h_inline_words(want, h.stride));
+static uint32_t loft_h_inline_rebuild(loft_cx *cx, loft_ref c, uint32_t claim, uint32_t want) {
+    loft_store_t *s = loft_store_of(cx, c);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
+    uint32_t grown = loft_st_claim(cx, s, loft_h_inline_words(cx, want, h.stride));
     static const uint32_t kept[] = { LOFT_AR_OWNER_FLD, LOFT_H_SEED_FLD, LOFT_H_SEED_FLD + 4, LOFT_H_INLINE_LEN_FLD,
                                      LOFT_AR_NEXT_FLD };
-    for (int i = 0; i < 5; i++) loft_h_set_header(s, grown, kept[i], loft_u32(s, claim, kept[i]));
-    uint32_t new_count = loft_h_inline_count(loft_rec_words(s, grown) - LOFT_H_RESERVED, h.stride);
-    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
-    loft_set_u32(s, grown, LOFT_AR_FREE_FLD, 0);
-    loft_h_zero_table(s, grown);
-    uint32_t mask = new_count - 1, old0 = loft_h_ent0(h.count), new0 = loft_h_ent0(new_count);
+    for (int i = 0; i < 5; i++) loft_h_set_header(cx, s, grown, kept[i], loft_u32(cx, s, claim, kept[i]));
+    uint32_t new_count = loft_h_inline_count(cx, loft_rec_words(cx, s, grown) - LOFT_H_RESERVED, h.stride);
+    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(cx, h.stride, new_count));
+    loft_set_u32(cx, s, grown, LOFT_AR_FREE_FLD, 0);
+    loft_h_zero_table(cx, s, grown);
+    uint32_t mask = new_count - 1, old0 = loft_h_ent0(cx, h.count), new0 = loft_h_ent0(cx, new_count);
     for (uint32_t i = 0; i < h.count; i++) {
-        uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + i * 8);
+        uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + i * 8);
         if (seq == 0 || seq == LOFT_H_TOMB) continue;
-        uint32_t tag = loft_u32(s, claim, LOFT_H_BUCKET0 + i * 8 + 4);
+        uint32_t tag = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + i * 8 + 4);
         uint32_t at = tag & mask;
-        while (loft_u32(s, grown, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
-        loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8, seq);
-        loft_set_u32(s, grown, LOFT_H_BUCKET0 + at * 8 + 4, tag);
+        while (loft_u32(cx, s, grown, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
+        loft_set_u32(cx, s, grown, LOFT_H_BUCKET0 + at * 8, seq);
+        loft_set_u32(cx, s, grown, LOFT_H_BUCKET0 + at * 8 + 4, tag);
         /* The entry in 8-byte words where its stride allows: a fixed-size copy the compiler
          * inlines, where a variable-size memcpy was a libc call per entry. */
         uint8_t *to = s->buf + (size_t) grown * 8 + new0 + at * h.stride;
@@ -544,102 +588,103 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
             memcpy(to, from, h.stride);
         }
     }
-    loft_h_install_table(c, claim, grown);
+    loft_h_install_table(cx, c, claim, grown);
     return grown;
 }
 
 /* hash::inline_slot_for: the bucket an inline entry of `tag` goes to, the table grown first
  * when it is full (live entries and tombstones). */
-static uint32_t loft_h_inline_slot_for(loft_ref c, uint32_t claim, uint32_t tag, uint32_t *at_out) {
-    loft_store_t *s = loft_store_of(c);
-    loft_hhdr h = loft_h_hdr(s, claim);
-    uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
-    if (loft_h_is_full(used, h.count)) claim = loft_h_inline_rebuild(c, claim, h.count * LOFT_H_GROWTH);
-    uint32_t mask = loft_h_hdr(s, claim).count - 1;
+static uint32_t loft_h_inline_slot_for(loft_cx *cx, loft_ref c, uint32_t claim, uint32_t tag, uint32_t *at_out) {
+    loft_store_t *s = loft_store_of(cx, c);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
+    uint32_t used = loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(cx, s, claim, LOFT_AR_FREE_FLD);
+    if (loft_h_is_full(cx, used, h.count)) claim = loft_h_inline_rebuild(cx, c, claim, h.count * LOFT_H_GROWTH);
+    uint32_t mask = loft_h_hdr(cx, s, claim).count - 1;
     uint32_t at = tag & mask;
-    while (loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
+    while (loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8) != 0) at = (at + 1) & mask;
     *at_out = at;
     return claim;
 }
 
 /* hash::inline_file: bucket `at` takes the next insertion number; its entry's place answered. */
-static loft_ref loft_h_inline_file(loft_store_t *s, uint16_t store_nr, uint32_t claim, uint32_t at, uint32_t tag,
+static loft_ref loft_h_inline_file(loft_cx *cx, loft_store_t *s, uint16_t store_nr, uint32_t claim, uint32_t at, uint32_t tag,
                                    int zero) {
-    loft_hhdr h = loft_h_hdr(s, claim);
-    uint32_t seq = loft_u32(s, claim, LOFT_AR_NEXT_FLD);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
+    uint32_t seq = loft_u32(cx, s, claim, LOFT_AR_NEXT_FLD);
     if (seq < 1) seq = 1;
-    loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, seq + 1);
-    loft_h_put_slot(s, claim, 8, at, seq, tag);
-    loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + 1);
+    loft_set_u32(cx, s, claim, LOFT_AR_NEXT_FLD, seq + 1);
+    loft_h_put_slot(cx, s, claim, 8, at, seq, tag);
+    loft_set_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD, loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD) + 1);
     loft_ref e = {0};
     e.store_nr = store_nr;
     e.rec = claim;
-    e.pos = loft_h_ent0(h.count) + at * h.stride;
-    if (zero) loft_st_fresh(s, claim, e.pos, h.stride);
+    e.pos = loft_h_ent0(cx, h.count) + at * h.stride;
+    if (zero) loft_st_fresh(cx, s, claim, e.pos, h.stride);
     return e;
 }
 
-static loft_ref loft_h_add(loft_ref c, loft_ref rec, const loft_key *keys, int nk);
+static loft_ref loft_h_add(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys, int nk);
 
 /* hash::inline_demote: an inline table handed an entry it did not stage becomes an arena table,
  * every entry moved into an arena slot. */
-static void loft_h_inline_demote(loft_ref c, uint32_t claim, const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
-    loft_hhdr h = loft_h_hdr(s, claim);
-    uint32_t owner = loft_u32(s, claim, LOFT_AR_OWNER_FLD);
-    uint64_t seed = loft_h_read_seed(s, claim);
-    uint32_t table = loft_h_arena_table(s, 8, h.stride);
-    loft_h_write_seed(s, table, seed);
-    loft_set_u32(s, c.rec, c.pos, table);
-    uint32_t e0 = loft_h_ent0(h.count);
+static void loft_h_inline_demote(loft_cx *cx, loft_ref c, uint32_t claim, const loft_key *keys, int nk) {
+    loft_store_t *s = loft_store_of(cx, c);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
+    uint32_t owner = loft_u32(cx, s, claim, LOFT_AR_OWNER_FLD);
+    uint64_t seed = loft_h_read_seed(cx, s, claim);
+    uint32_t table = loft_h_arena_table(cx, s, loft_h_new_slot_bytes(cx), h.stride);
+    loft_h_write_seed(cx, s, table, seed);
+    loft_set_u32(cx, s, c.rec, c.pos, table);
+    loft_h_trace_layout(cx, "demoted", c, 1, loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD), loft_u32(cx, s, table, LOFT_H_STRIDE_FLD));
+    uint32_t e0 = loft_h_ent0(cx, h.count);
     uint8_t *bytes = (uint8_t *) malloc(h.stride ? h.stride : 1);
     if (!bytes) { fputs("loft: out of memory\n", stderr); abort(); }
     for (uint32_t at = 0; at < h.count; at++) {
-        uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
+        uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8);
         if (seq == 0 || seq == LOFT_H_TOMB) continue;
         memcpy(bytes, s->buf + (size_t) claim * 8 + e0 + at * h.stride, h.stride);
         loft_ref e = {0};
         e.store_nr = c.store_nr;
-        (void) loft_ar_alloc_at(s, loft_u32(s, c.rec, c.pos), h.stride, owner, &e.rec, &e.pos);
+        (void) loft_ar_alloc_at(cx, s, loft_u32(cx, s, c.rec, c.pos), h.stride, owner, &e.rec, &e.pos);
         memcpy(s->buf + (size_t) e.rec * 8 + e.pos, bytes, h.stride);
-        (void) loft_h_add(c, e, keys, nk);
+        (void) loft_h_add(cx, c, e, keys, nk);
     }
     free(bytes);
-    loft_st_delete(s, claim);
+    loft_st_delete(cx, s, claim);
 }
 
 /* hash::inline_add: a staged entry's bytes copied into its bucket and the staged record freed;
  * the entry's place in the table answered. */
-static loft_ref loft_h_inline_add(loft_ref c, uint32_t claim, loft_ref rec, const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
+static loft_ref loft_h_inline_add(loft_cx *cx, loft_ref c, uint32_t claim, loft_ref rec, const loft_key *keys, int nk) {
+    loft_store_t *s = loft_store_of(cx, c);
     int own_entry = rec.store_nr == c.store_nr && rec.rec == claim;
-    int staged = rec.store_nr == c.store_nr && rec.pos == 8 && loft_u32(loft_store_of(rec), rec.rec, 4) == LOFT_H_STAGE_MARK;
+    int staged = rec.store_nr == c.store_nr && rec.pos == 8 && loft_u32(cx, loft_store_of(cx, rec), rec.rec, 4) == LOFT_H_STAGE_MARK;
     if (!own_entry && !staged) {
-        loft_h_inline_demote(c, claim, keys, nk);
-        return loft_h_add(c, rec, keys, nk);
+        loft_h_inline_demote(cx, c, claim, keys, nk);
+        return loft_h_add(cx, c, rec, keys, nk);
     }
-    uint32_t tag = (uint32_t) loft_ref_digest(rec, keys, nk, loft_h_read_seed(s, claim)), at;
-    claim = loft_h_inline_slot_for(c, claim, tag, &at);
-    loft_ref placed = loft_h_inline_file(s, c.store_nr, claim, at, tag, 0);
-    uint32_t stride = loft_h_hdr(s, claim).stride;
-    memmove(s->buf + (size_t) placed.rec * 8 + placed.pos, loft_at(loft_store_of(rec), rec.rec, rec.pos), stride);
-    if (!own_entry) loft_st_delete(loft_store_of(rec), rec.rec);
+    uint32_t tag = (uint32_t) loft_ref_digest(cx, rec, keys, nk, loft_h_read_seed(cx, s, claim)), at;
+    claim = loft_h_inline_slot_for(cx, c, claim, tag, &at);
+    loft_ref placed = loft_h_inline_file(cx, s, c.store_nr, claim, at, tag, 0);
+    uint32_t stride = loft_h_hdr(cx, s, claim).stride;
+    memmove(s->buf + (size_t) placed.rec * 8 + placed.pos, loft_at(cx, loft_store_of(cx, rec), rec.rec, rec.pos), stride);
+    if (!own_entry) loft_st_delete(cx, loft_store_of(cx, rec), rec.rec);
     return placed;
 }
 
 /* hash::add: file `rec` under its key; where it lives afterwards answered (an inline table moves
  * a staged entry into itself). */
-static loft_ref loft_h_add(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim != 0 && loft_h_is_inline(s, claim)) return loft_h_inline_add(c, claim, rec, keys, nk);
-    if (claim == 0) claim = loft_h_ensure_table(c, 0);
-    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
-    uint32_t index = loft_h_slot_value(s, claim, rec, loft_h_stride(s, claim));
-    uint32_t grown = loft_h_grow_if_full(c, claim, length, keys, nk);
+static loft_ref loft_h_add(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim != 0 && loft_h_is_inline(cx, s, claim)) return loft_h_inline_add(cx, c, claim, rec, keys, nk);
+    if (claim == 0) claim = loft_h_ensure_table(cx, c, 0);
+    uint32_t length = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
+    uint32_t index = loft_h_slot_value(cx, s, claim, rec, loft_h_stride(cx, s, claim));
+    uint32_t grown = loft_h_grow_if_full(cx, c, claim, length, keys, nk);
     if (grown != 0) claim = grown;
-    loft_h_set(s, claim, index, rec, keys, nk);
-    loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+    loft_h_set(cx, s, claim, index, rec, keys, nk);
+    loft_set_u32(cx, s, claim, LOFT_H_LEN_FLD, length + 1);
     return rec;
 }
 
@@ -650,19 +695,19 @@ static loft_ref loft_h_add(loft_ref c, loft_ref rec, const loft_key *keys, int n
 #define LOFT_H_PRESENT 2
 typedef struct { int kind; uint32_t bucket, index, tag; loft_ref entry; } loft_hprobe;
 
-static loft_hprobe loft_h_probe_for_insert(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+static loft_hprobe loft_h_probe_for_insert(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
     loft_hprobe p;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     p.kind = LOFT_H_UNKNOWN;
-    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(s, claim)) return p;
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    uint32_t own = loft_h_slot_value(s, claim, rec, ents.stride);
-    uint64_t hv = loft_ref_digest(rec, keys, nk, loft_h_read_seed(s, claim));
-    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count);
+    if (claim == 0 || loft_rec_words(cx, s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(cx, s, claim)) return p;
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    uint32_t own = loft_h_slot_value(cx, s, claim, rec, ents.stride);
+    uint64_t hv = loft_ref_digest(cx, rec, keys, nk, loft_h_read_seed(cx, s, claim));
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(cx, hv, count);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * sb);
         if (slot == 0) {
             p.kind = LOFT_H_FREE;
             p.bucket = LOFT_H_BUCKET0 + at * sb;
@@ -671,9 +716,9 @@ static loft_hprobe loft_h_probe_for_insert(loft_ref c, loft_ref rec, const loft_
             return p;
         }
         if (slot == own) return p;
-        if (!loft_h_tag_differs(s, claim, sb, at, tag)) {
-            loft_ref entry = loft_h_entry(&ents, s, slot);
-            if (loft_key_cmp_refs(rec, entry, keys, nk) == 0) {
+        if (!loft_h_tag_differs(cx, s, claim, sb, at, tag)) {
+            loft_ref entry = loft_h_entry(cx, &ents, s, slot);
+            if (loft_key_cmp_refs(cx, rec, entry, keys, nk) == 0) {
                 p.kind = LOFT_H_PRESENT;
                 p.entry = entry;
                 p.bucket = LOFT_H_BUCKET0 + at * sb;
@@ -689,16 +734,16 @@ static loft_hprobe loft_h_probe_for_insert(loft_ref c, loft_ref rec, const loft_
 /* hash::add_at: file `rec` in the bucket a probe found free. */
 /* The add at the bucket a probe found free; answers where `rec` lives afterwards (an inline
  * table moves a staged entry into itself). */
-static loft_ref loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag,
+static loft_ref loft_h_add_at(loft_cx *cx, loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag,
                               const loft_key *keys, int nk) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (loft_h_is_inline(s, claim)) return loft_h_inline_add(c, claim, rec, keys, nk);
-    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (loft_h_is_inline(cx, s, claim)) return loft_h_inline_add(cx, c, claim, rec, keys, nk);
+    uint32_t length = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
 #ifdef LOFT_KEYED_VERIFY
     /* `add_at`'s check: the bucket the probe found free is the one the free-slot walk takes. */
     {
-        uint32_t t, walked = LOFT_H_BUCKET0 + loft_h_free_pos(s, claim, rec, keys, nk, &t) * loft_h_slot_bytes(s, claim);
+        uint32_t t, walked = LOFT_H_BUCKET0 + loft_h_free_pos(cx, s, claim, rec, keys, nk, &t) * loft_h_slot_bytes(cx, s, claim);
         if (walked != bucket) {
             fflush(stdout);
             fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert chose bucket %u where the free-slot walk chooses %u\n",
@@ -707,70 +752,71 @@ static loft_ref loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_
         }
     }
 #endif
-    uint32_t grown = loft_h_grow_if_full(c, claim, length, keys, nk);
+    uint32_t grown = loft_h_grow_if_full(cx, c, claim, length, keys, nk);
     if (grown != 0) {
-        loft_h_set(s, grown, index, rec, keys, nk);
-        loft_set_u32(s, grown, LOFT_H_LEN_FLD, length + 1);
+        loft_h_set(cx, s, grown, index, rec, keys, nk);
+        loft_set_u32(cx, s, grown, LOFT_H_LEN_FLD, length + 1);
         return rec;
     }
-    loft_set_u32(s, claim, bucket, index);
-    if (loft_h_slot_bytes(s, claim) == 8) loft_set_u32(s, claim, bucket + 4, tag);
-    loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+    loft_set_u32(cx, s, claim, bucket, index);
+    if (loft_h_slot_bytes(cx, s, claim) == 8) loft_set_u32(cx, s, claim, bucket + 4, tag);
+    loft_set_u32(cx, s, claim, LOFT_H_LEN_FLD, length + 1);
     return rec;
 }
 
 /* hash::replace_at: bucket `bucket` names `index` instead; what it named answered. */
-static uint32_t loft_h_replace_at(loft_ref c, uint32_t bucket, uint32_t index) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    uint32_t gone = loft_u32(s, claim, bucket);
-    loft_set_u32(s, claim, bucket, index);
+static uint32_t loft_h_replace_at(loft_cx *cx, loft_ref c, uint32_t bucket, uint32_t index) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    uint32_t gone = loft_u32(cx, s, claim, bucket);
+    loft_set_u32(cx, s, claim, bucket, index);
     return gone;
 }
 
 /* hash::reserve: buckets for `count` entries before they are filed. */
-static void loft_h_reserve(loft_ref c, int64_t count, uint32_t stride, const loft_key *keys, int nk) {
+static void loft_h_reserve(loft_cx *cx, loft_ref c, int64_t count, uint32_t stride, const loft_key *keys, int nk) {
     if (count < 0) return;
-    uint64_t need = (loft_h_words_for((uint64_t) count) - LOFT_H_RESERVED) * 2;
-    uint64_t words = loft_h_room_for_buckets(need, 8);
+    uint64_t need = (loft_h_words_for(cx, (uint64_t) count) - LOFT_H_RESERVED) * 2;
+    uint32_t sb = loft_h_new_slot_bytes(cx);
+    uint64_t words = loft_h_room_for_buckets(cx, need, sb);
     if (words > UINT32_MAX) return;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_h_ensure_table(c, stride);
-    uint64_t target = loft_next_pow2(need < 2 ? 2 : need);
-    if (loft_h_is_inline(s, claim)) {
-        if (loft_h_hdr(s, claim).count < target && target <= UINT32_MAX) (void) loft_h_inline_rebuild(c, claim, (uint32_t) target);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_h_ensure_table(cx, c, stride);
+    uint64_t target = loft_next_pow2(cx, need < 2 ? 2 : need);
+    if (loft_h_is_inline(cx, s, claim)) {
+        if (loft_h_hdr(cx, s, claim).count < target && target <= UINT32_MAX) (void) loft_h_inline_rebuild(cx, c, claim, (uint32_t) target);
         return;
     }
-    if (loft_h_hdr(s, claim).count >= target) return;
-    uint32_t grown = loft_st_claim(s, (uint32_t) words);
-    loft_zero_fill(s, grown);
-    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
-    loft_h_rehash_into(c, claim, grown, keys, nk);
-    loft_h_install_table(c, claim, grown);
+    if (loft_h_hdr(cx, s, claim).count >= target) return;
+    uint32_t grown = loft_st_claim(cx, s, (uint32_t) words);
+    loft_zero_fill(cx, s, grown);
+    loft_h_set_header(cx, s, grown, LOFT_H_STRIDE_FLD, sb == 8 ? LOFT_H_TAGGED : 0);
+    loft_h_rehash_into(cx, c, claim, grown, keys, nk);
+    loft_h_install_table(cx, c, claim, grown);
 }
 
 /* hash::find: the entry whose first `n` key parts equal `kv`, or the null reference. */
-static loft_ref loft_h_find(loft_ref c, const loft_key *keys, const loft_kv *kv, int n) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_kv_digest(kv, n, loft_h_read_seed(s, claim));
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count);
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+static loft_ref loft_h_find(loft_cx *cx, loft_ref c, const loft_key *keys, const loft_kv *kv, int n) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_kv_digest(cx, kv, n, loft_h_read_seed(cx, s, claim));
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, index, tag)) {
             loft_ref e = {0};
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
-            if (loft_key_cmp_val(kv, n, s, e.rec, e.pos, keys) == 0) return e;
+            loft_h_at_bucket(cx, &ents, s, slot, index, &e.rec, &e.pos);
+            if (loft_key_cmp_val(cx, kv, n, s, e.rec, e.pos, keys) == 0) return e;
         }
         if (++index >= count) index = 0;
     }
-    return loft_ref_null();
+    return loft_ref_null(cx);
 }
 
 /* `LOFT_KEYED_VERIFY` (OpGetHashLong's check): each typed lookup below is built as `<name>_walk`
@@ -778,8 +824,8 @@ static loft_ref loft_h_find(loft_ref c, const loft_key *keys, const loft_kv *kv,
  * the two disagree; without it the typed walk is the function itself, at no cost. */
 #ifdef LOFT_KEYED_VERIFY
 #define LOFT_H_TYPED(name) name##_walk
-static void loft_h_verify_typed(const char *what, loft_ref c, const loft_key *keys, const loft_kv *kv, int n, loft_ref found) {
-    loft_ref general = loft_h_find(c, keys, kv, n);
+static void loft_h_verify_typed(loft_cx *cx, const char *what, loft_ref c, const loft_key *keys, const loft_kv *kv, int n, loft_ref found) {
+    loft_ref general = loft_h_find(cx, c, keys, kv, n);
     if (general.rec != found.rec || (found.rec != 0 && general.pos != found.pos)) {
         fflush(stdout);
         fprintf(stderr, "LOFT_KEYED_VERIFY: the typed %s answers %u+%u where the general one answers %u+%u\n", what,
@@ -795,19 +841,19 @@ static void loft_h_verify_typed(const char *what, loft_ref c, const loft_key *ke
 /* `@FR-R-TypedKeyed` (hash::find_long): a hash whose ONE key is an 8-byte integer, looked up by
  * that integer — the general entry's digest, home bucket and walk to the first empty bucket, the
  * key compared in place instead of through a key value.  Every exit is `loft_h_find`'s. */
-static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, int64_t key) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    if (sb == 8 && !ents.inl && loft_is_pow2(count)) {
+static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_cx *cx, loft_ref c, const loft_key *keys, int64_t key) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_digest_i64(cx, loft_h_read_seed(cx, s, claim), key);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    if (sb == 8 && !ents.inl && loft_is_pow2(cx, count)) {
         /* A tagged table of arena or record entries: the slots read in place, the probe masked.
          * Nothing is written during the walk, so the slot pointer stays valid. */
-        const uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+        const uint8_t *b = loft_at(cx, s, claim, LOFT_H_BUCKET0);
         uint32_t mask = count - 1;
         for (uint32_t i = 0; i < count; i++, index = (index + 1) & mask) {
             uint32_t slot, t;
@@ -817,56 +863,56 @@ static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, 
             if (t != tag) continue;
             loft_ref e = { c.store_nr, 0, 0, 0 };
             int64_t have;
-            loft_h_at(&ents, s, slot, &e.rec, &e.pos);
+            loft_h_at(cx, &ents, s, slot, &e.rec, &e.pos);
             if (e.rec == 0) continue;
-            memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+            memcpy(&have, loft_at(cx, s, e.rec, e.pos + kpos), 8);
             if (have == key) return e;
         }
-        return loft_ref_null();
+        return loft_ref_null(cx);
     }
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, index, tag)) {
             loft_ref e = {0};
             int64_t have;
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
-                memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+                memcpy(&have, loft_at(cx, s, e.rec, e.pos + kpos), 8);
                 if (have == key) return e;
             }
         }
         if (++index >= count) index = 0;
     }
-    return loft_ref_null();
+    return loft_ref_null(cx);
 }
 
 /* `@FR-R-TypedKeyed`'s compound clause (hash::find_ints): two to four 8-byte integer key parts,
  * hashed as the general entry hashes them and compared part by part in place.  Inline with its
  * header readers: the part count is a constant at every call, so the compare unrolls and the
  * header decodes once (GCC kept the whole lookup out of line, -13 % on `reload_and_record`). */
-LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_digest_ints(loft_h_read_seed(s, claim), ks, n);
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count);
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_cx *cx, loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_digest_ints(cx, loft_h_read_seed(cx, s, claim), ks, n);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, index, tag)) {
             loft_ref e = {0};
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
                 int same = 1;
                 for (int k = 0; k < n && same; k++) {
                     int64_t have;
-                    memcpy(&have, loft_at(s, e.rec, e.pos + keys[k].pos), 8);
+                    memcpy(&have, loft_at(cx, s, e.rec, e.pos + keys[k].pos), 8);
                     same = have == ks[k];
                 }
                 if (same) return e;
@@ -874,7 +920,7 @@ LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_ref c, const loft_k
         }
         if (++index >= count) index = 0;
     }
-    return loft_ref_null();
+    return loft_ref_null(cx);
 }
 
 /* `@FR-R-KeyedEntry` (hash::entry_ints): the entry `c[k…] = T{…}` writes its fields into, for a
@@ -884,51 +930,51 @@ LOFT_HOT_INLINE loft_ref LOFT_H_TYPED(loft_h_find_ints)(loft_ref c, const loft_k
  * an element that owns no heap.  The null reference, with nothing changed, where the table
  * cannot be walked this way: no table yet, a table that borrows its entries, no empty bucket,
  * a locked store (the general insert's refusal to make). */
-static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED) return loft_ref_null();
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    if (ents.stride == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_digest_ints(loft_h_read_seed(s, claim), ks, n);
-    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count), bucket = 0;
+static loft_ref loft_h_entry_ints(loft_cx *cx, loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) <= LOFT_H_RESERVED) return loft_ref_null(cx);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    if (ents.stride == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_digest_ints(cx, loft_h_read_seed(cx, s, claim), ks, n);
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(cx, hv, count), bucket = 0;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * sb);
         if (slot == 0) {
             bucket = LOFT_H_BUCKET0 + at * sb;
             break;
         }
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, at, tag)) {
             loft_ref e = {0};
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, at, &e.rec, &e.pos);
             int same = e.rec != 0;
             for (int k = 0; k < n && same; k++) {
                 int64_t have;
-                memcpy(&have, loft_at(s, e.rec, e.pos + keys[k].pos), 8);
+                memcpy(&have, loft_at(cx, s, e.rec, e.pos + keys[k].pos), 8);
                 same = have == ks[k];
             }
             if (same) return e;
         }
         if (++at >= count) at = 0;
     }
-    if (bucket == 0 || s->read_only) return loft_ref_null();
+    if (bucket == 0 || s->read_only) return loft_ref_null(cx);
     loft_ref e = {0};
     if (ents.inl) {
         /* The probe ended on the bucket the inline walk would choose from the same home, unless
          * the table must grow first. */
         uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
-        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
-        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
-        e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
-        for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
+        uint32_t used = loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(cx, s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(cx, used, count)) claim = loft_h_inline_slot_for(cx, c, claim, tag, &iat);
+        e = loft_h_inline_file(cx, s, c.store_nr, claim, iat, tag, 1);
+        for (int k = 0; k < n; k++) memcpy(loft_at(cx, s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
         return e;
     }
     e.store_nr = c.store_nr;
-    uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
-    for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
-    loft_h_add_at(c, e, bucket, index, tag, keys, n);
+    uint32_t index = loft_ar_alloc_at(cx, s, claim, ents.stride, c.rec, &e.rec, &e.pos);
+    for (int k = 0; k < n; k++) memcpy(loft_at(cx, s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
+    loft_h_add_at(cx, c, e, bucket, index, tag, keys, n);
     return e;
 }
 
@@ -936,120 +982,120 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
  * key is a text — the entry already under `key`, or a fresh one with its key text written and
  * filed where the walk ended.  The digest and the compare are `loft_h_find_text`'s.  A key that
  * views this store is copied first: filing claims, and a claim may move the store's bytes. */
-static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED) return loft_ref_null();
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    if (ents.stride == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim), kpos = keys[0].pos;
-    loft_kv kv = loft_kv_text(key);
-    uint64_t hv = loft_kv_digest(&kv, 1, loft_h_read_seed(s, claim));
-    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count), bucket = 0;
+static loft_ref loft_h_entry_text(loft_cx *cx, loft_ref c, const loft_key *keys, loft_str key) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) <= LOFT_H_RESERVED) return loft_ref_null(cx);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    if (ents.stride == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim), kpos = keys[0].pos;
+    loft_kv kv = loft_kv_text(cx, key);
+    uint64_t hv = loft_kv_digest(cx, &kv, 1, loft_h_read_seed(cx, s, claim));
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(cx, hv, count), bucket = 0;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * sb);
         if (slot == 0) {
             bucket = LOFT_H_BUCKET0 + at * sb;
             break;
         }
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, at, tag)) {
             loft_ref e = {0};
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, at, &e.rec, &e.pos);
             if (e.rec != 0) {
-                loft_str have = loft_store_str(s, loft_u32(s, e.rec, e.pos + kpos));
-                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+                loft_str have = loft_store_str(cx, s, loft_u32(cx, s, e.rec, e.pos + kpos));
+                if (loft_str_eq(cx, have, key)) return e;
             }
         }
         if (++at >= count) at = 0;
     }
-    if (bucket == 0 || s->read_only) return loft_ref_null();
+    if (bucket == 0 || s->read_only) return loft_ref_null(cx);
     loft_text own = { 0, 0, 0 };
     if (key.len && key.p >= (const char *) s->buf && key.p < (const char *) s->buf + (size_t) s->size * 8) {
-        own = loft_text_own(key);
-        key = loft_view(&own);
+        own = loft_text_own(cx, key);
+        key = loft_view(cx, &own);
     }
     loft_ref e = {0};
     if (ents.inl) {
         /* The probe ended on the bucket the inline walk would choose from the same home, unless
          * the table must grow first. */
         uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
-        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
-        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
-        e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
-        loft_set_text(e, kpos, key);
+        uint32_t used = loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(cx, s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(cx, used, count)) claim = loft_h_inline_slot_for(cx, c, claim, tag, &iat);
+        e = loft_h_inline_file(cx, s, c.store_nr, claim, iat, tag, 1);
+        loft_set_text(cx, e, kpos, key);
     } else {
         e.store_nr = c.store_nr;
-        uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
-        loft_set_text(e, kpos, key);
-        loft_h_add_at(c, e, bucket, index, tag, keys, 1);
+        uint32_t index = loft_ar_alloc_at(cx, s, claim, ents.stride, c.rec, &e.rec, &e.pos);
+        loft_set_text(cx, e, kpos, key);
+        loft_h_add_at(cx, c, e, bucket, index, tag, keys, 1);
     }
-    loft_text_free(&own);
+    loft_text_free(cx, &own);
     return e;
 }
 
 /* `@FR-R-TypedKeyed`'s text clause (hash::find_str): one text key, hashed as the general entry
  * hashes a text part and compared against each entry's key text in place — equal exactly when
  * `loft_kv_cmp` says so: the same length and the same bytes. */
-static loft_ref LOFT_H_TYPED(loft_h_find_text)(loft_ref c, const loft_key *keys, loft_str key) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    loft_kv kv = loft_kv_text(key);
-    uint64_t hv = loft_kv_digest(&kv, 1, loft_h_read_seed(s, claim));
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+static loft_ref LOFT_H_TYPED(loft_h_find_text)(loft_cx *cx, loft_ref c, const loft_key *keys, loft_str key) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) == 0) return loft_ref_null(cx);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    loft_kv kv = loft_kv_text(cx, key);
+    uint64_t hv = loft_kv_digest(cx, &kv, 1, loft_h_read_seed(cx, s, claim));
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
-        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(cx, s, claim, sb, index, tag)) {
             loft_ref e = {0};
             e.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
-                loft_str have = loft_store_str(s, loft_u32(s, e.rec, e.pos + kpos));
-                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+                loft_str have = loft_store_str(cx, s, loft_u32(cx, s, e.rec, e.pos + kpos));
+                if (loft_str_eq(cx, have, key)) return e;
             }
         }
         if (++index >= count) index = 0;
     }
-    return loft_ref_null();
+    return loft_ref_null(cx);
 }
 
 #ifdef LOFT_KEYED_VERIFY
-static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
-    loft_ref found = loft_h_find_i64_walk(c, keys, key);
-    loft_kv kv = loft_kv_int(key);
-    loft_h_verify_typed("lookup", c, keys, &kv, 1, found);
+static loft_ref loft_h_find_i64(loft_cx *cx, loft_ref c, const loft_key *keys, int64_t key) {
+    loft_ref found = loft_h_find_i64_walk(cx, c, keys, key);
+    loft_kv kv = loft_kv_int(cx, key);
+    loft_h_verify_typed(cx, "lookup", c, keys, &kv, 1, found);
     return found;
 }
-static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
-    loft_ref found = loft_h_find_ints_walk(c, keys, n, ks);
+static loft_ref loft_h_find_ints(loft_cx *cx, loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    loft_ref found = loft_h_find_ints_walk(cx, c, keys, n, ks);
     loft_kv kv[4];
-    for (int i = 0; i < n && i < 4; i++) kv[i] = loft_kv_int(ks[i]);
-    loft_h_verify_typed("compound lookup", c, keys, kv, n < 4 ? n : 4, found);
+    for (int i = 0; i < n && i < 4; i++) kv[i] = loft_kv_int(cx, ks[i]);
+    loft_h_verify_typed(cx, "compound lookup", c, keys, kv, n < 4 ? n : 4, found);
     return found;
 }
-static loft_ref loft_h_find_text(loft_ref c, const loft_key *keys, loft_str key) {
-    loft_ref found = loft_h_find_text_walk(c, keys, key);
-    loft_kv kv = loft_kv_text(key);
-    loft_h_verify_typed("text lookup", c, keys, &kv, 1, found);
+static loft_ref loft_h_find_text(loft_cx *cx, loft_ref c, const loft_key *keys, loft_str key) {
+    loft_ref found = loft_h_find_text_walk(cx, c, keys, key);
+    loft_kv kv = loft_kv_text(cx, key);
+    loft_h_verify_typed(cx, "text lookup", c, keys, &kv, 1, found);
     return found;
 }
 #endif
 
 /* hash::hash_rec_pos: the bucket naming the entry `rec`, and what it holds; 0 when none does. */
-static int loft_h_rec_pos(loft_store_t *s, uint32_t claim, const loft_hents *ents, loft_ref rec, const loft_key *keys,
+static int loft_h_rec_pos(loft_cx *cx, loft_store_t *s, uint32_t claim, const loft_hents *ents, loft_ref rec, const loft_key *keys,
                           int nk, uint32_t *at, uint32_t *val) {
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_ref_digest(rec, keys, nk, loft_h_read_seed(s, claim));
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count);
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_ref_digest(cx, rec, keys, nk, loft_h_read_seed(cx, s, claim));
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t v = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t v = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (v == 0) return 0;
-        if (!loft_h_tag_differs(s, claim, sb, index, tag) && loft_h_names(ents, s, v, rec)) {
+        if (!loft_h_tag_differs(cx, s, claim, sb, index, tag) && loft_h_names(cx, ents, s, v, rec)) {
             *at = index;
             *val = v;
             return 1;
@@ -1060,100 +1106,100 @@ static int loft_h_rec_pos(loft_store_t *s, uint32_t claim, const loft_hents *ent
 }
 
 /* hash::inline_remove: the entry's bucket becomes a tombstone; its insertion number answered. */
-static uint32_t loft_h_inline_remove(loft_store_t *s, uint32_t claim, loft_ref rec) {
-    loft_hhdr h = loft_h_hdr(s, claim);
-    uint32_t base = loft_h_ent0(h.count);
+static uint32_t loft_h_inline_remove(loft_cx *cx, loft_store_t *s, uint32_t claim, loft_ref rec) {
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
+    uint32_t base = loft_h_ent0(cx, h.count);
     if (rec.rec != claim || rec.pos < base || h.stride == 0) return 0;
     uint32_t at = (rec.pos - base) / h.stride;
     if (at >= h.count) return 0;
-    uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
+    uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8);
     if (seq == 0 || seq == LOFT_H_TOMB) return 0;
-    loft_set_u32(s, claim, LOFT_H_BUCKET0 + at * 8, LOFT_H_TOMB);
-    uint32_t len = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD);
-    loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, len ? len - 1 : 0);
-    loft_set_u32(s, claim, LOFT_AR_FREE_FLD, loft_u32(s, claim, LOFT_AR_FREE_FLD) + 1);
+    loft_set_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8, LOFT_H_TOMB);
+    uint32_t len = loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD);
+    loft_set_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD, len ? len - 1 : 0);
+    loft_set_u32(cx, s, claim, LOFT_AR_FREE_FLD, loft_u32(cx, s, claim, LOFT_AR_FREE_FLD) + 1);
     return seq;
 }
 
-static uint32_t loft_h_remove_at(loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
+static uint32_t loft_h_remove_at(loft_cx *cx, loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
                                  int nk, uint32_t hole, uint32_t gone);
 
 /* hash::remove: the entry `rec` leaves the table, the probe run behind it shifted back into the
  * hole (`@FR-Col-Remove`); the bucket value that named it answered, 0 when none did. */
-static uint32_t loft_h_remove(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+static uint32_t loft_h_remove(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
     if (rec.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return 0;
-    if (loft_h_is_inline(s, claim)) return loft_h_inline_remove(s, claim, rec);
-    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+    if (loft_h_is_inline(cx, s, claim)) return loft_h_inline_remove(cx, s, claim, rec);
+    uint32_t length = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
     if (length == 0) return 0;
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
     uint32_t hole, gone;
-    if (!loft_h_rec_pos(s, claim, &ents, rec, keys, nk, &hole, &gone)) return 0;
-    return loft_h_remove_at(s, claim, &ents, keys, nk, hole, gone);
+    if (!loft_h_rec_pos(cx, s, claim, &ents, rec, keys, nk, &hole, &gone)) return 0;
+    return loft_h_remove_at(cx, s, claim, &ents, keys, nk, hole, gone);
 }
 
 /* hash::remove's second half: bucket `hole`, which holds `gone`, is emptied and the probe run
  * behind it shifted back into the hole (`@FR-Col-Remove`); `gone` answered. */
-static uint32_t loft_h_remove_at(loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
+static uint32_t loft_h_remove_at(loft_cx *cx, loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
                                  int nk, uint32_t hole, uint32_t gone) {
     loft_hents ents = *pents;
-    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
-    uint32_t count = loft_h_hdr(s, claim).count;
-    uint64_t seed = loft_h_read_seed(s, claim);
-    uint32_t sb = loft_h_slot_bytes(s, claim);
-    int by_tag = sb == 8 && loft_is_pow2(count);
-    loft_set_u32(s, claim, LOFT_H_BUCKET0 + hole * sb, 0);
+    uint32_t length = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
+    uint32_t count = loft_h_hdr(cx, s, claim).count;
+    uint64_t seed = loft_h_read_seed(cx, s, claim);
+    uint32_t sb = loft_h_slot_bytes(cx, s, claim);
+    int by_tag = sb == 8 && loft_is_pow2(cx, count);
+    loft_set_u32(cx, s, claim, LOFT_H_BUCKET0 + hole * sb, 0);
     uint32_t idx = hole + 1 >= count ? 0 : hole + 1;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t val = loft_u32(s, claim, LOFT_H_BUCKET0 + idx * sb);
+        uint32_t val = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + idx * sb);
         if (val == 0) break;
-        uint32_t tag = sb == 8 ? loft_u32(s, claim, LOFT_H_BUCKET0 + idx * 8 + 4) : 0;
-        uint32_t ideal = by_tag ? tag & (count - 1) : loft_h_home(loft_ref_digest(loft_h_entry(&ents, s, val), keys, nk, seed), count);
+        uint32_t tag = sb == 8 ? loft_u32(cx, s, claim, LOFT_H_BUCKET0 + idx * 8 + 4) : 0;
+        uint32_t ideal = by_tag ? tag & (count - 1) : loft_h_home(cx, loft_ref_digest(cx, loft_h_entry(cx, &ents, s, val), keys, nk, seed), count);
         uint32_t to_hole = hole >= ideal ? hole - ideal : hole + count - ideal;
         uint32_t to_idx = idx >= ideal ? idx - ideal : idx + count - ideal;
         if (to_hole < to_idx) {
-            loft_h_put_slot(s, claim, sb, hole, val, tag);
-            loft_set_u32(s, claim, LOFT_H_BUCKET0 + idx * sb, 0);
+            loft_h_put_slot(cx, s, claim, sb, hole, val, tag);
+            loft_set_u32(cx, s, claim, LOFT_H_BUCKET0 + idx * sb, 0);
             hole = idx;
         }
         idx = idx + 1 >= count ? 0 : idx + 1;
     }
-    loft_set_u32(s, claim, LOFT_H_LEN_FLD, length - 1);
+    loft_set_u32(cx, s, claim, LOFT_H_LEN_FLD, length - 1);
     return gone;
 }
 
 /* hash::free_slot: the arena slot a removal's bucket value named goes back to the arena. */
-static void loft_h_free_slot(loft_ref c, uint32_t slot) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || slot == 0 || (slot & LOFT_H_SLOT_RECORD) || loft_h_is_inline(s, claim)) return;
-    uint32_t width = loft_h_stride(s, claim);
-    if (width != 0) loft_ar_free(s, claim, slot, width);
+static void loft_h_free_slot(loft_cx *cx, loft_ref c, uint32_t slot) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || slot == 0 || (slot & LOFT_H_SLOT_RECORD) || loft_h_is_inline(cx, s, claim)) return;
+    uint32_t width = loft_h_stride(cx, s, claim);
+    if (width != 0) loft_ar_free(cx, s, claim, slot, width);
 }
 
 /* hash::free_entry: the entry `rec`'s storage goes back — a staged record, or its arena slot. */
-static void loft_h_free_entry(loft_ref c, loft_ref rec) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+static void loft_h_free_entry(loft_cx *cx, loft_ref c, loft_ref rec) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return;
-    if (loft_h_is_inline(s, claim)) {
-        if (rec.rec != claim) loft_st_delete(s, rec.rec);
+    if (loft_h_is_inline(cx, s, claim)) {
+        if (rec.rec != claim) loft_st_delete(cx, s, rec.rec);
         return;
     }
-    uint32_t width = loft_h_stride(s, claim);
+    uint32_t width = loft_h_stride(cx, s, claim);
     if (width == 0) return;
-    loft_ar_free(s, claim, loft_ar_index_of(s, claim, rec.rec, rec.pos, width), width);
+    loft_ar_free(cx, s, claim, loft_ar_index_of(cx, s, claim, rec.rec, rec.pos, width), width);
 }
 
-static int64_t loft_hash_len(loft_ref c) {
+static int64_t loft_hash_len(loft_cx *cx, loft_ref c) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return 0;
-    uint32_t flags = loft_u32(s, claim, LOFT_H_STRIDE_FLD);
-    return loft_u32(s, claim, (flags & LOFT_H_INLINE) ? LOFT_H_INLINE_LEN_FLD : LOFT_H_LEN_FLD);
+    uint32_t flags = loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD);
+    return loft_u32(cx, s, claim, (flags & LOFT_H_INLINE) ? LOFT_H_INLINE_LEN_FLD : LOFT_H_LEN_FLD);
 }
 
 /* hash::entries: every live entry, with whether the table's arena or inline slots hold it
@@ -1166,19 +1212,19 @@ static int loft_hent_by_seq(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-static loft_hent *loft_h_entries_of(loft_ref c, uint32_t *n) {
+static loft_hent *loft_h_entries_of(loft_cx *cx, loft_ref c, uint32_t *n) {
     *n = 0;
     if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return 0;
-    loft_hhdr h = loft_h_hdr(s, claim);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
     loft_hent *out = (loft_hent *) malloc(((size_t) h.count + 1) * sizeof *out);
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
     if (h.inl) {
-        uint32_t e0 = loft_h_ent0(h.count);
+        uint32_t e0 = loft_h_ent0(cx, h.count);
         for (uint32_t at = 0; at < h.count; at++) {
-            uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
+            uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8);
             if (seq == 0 || seq == LOFT_H_TOMB) continue;
             out[*n].e.store_nr = c.store_nr;
             out[*n].e.rec = claim;
@@ -1190,11 +1236,11 @@ static loft_hent *loft_h_entries_of(loft_ref c, uint32_t *n) {
         qsort(out, *n, sizeof *out, loft_hent_by_seq);
         return out;
     }
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
     for (uint32_t i = 0; i < h.count; i++) {
-        uint32_t index = loft_u32(s, claim, LOFT_H_BUCKET0 + i * h.sb);
+        uint32_t index = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + i * h.sb);
         if (index == 0) continue;
-        out[*n].e = loft_h_entry(&ents, s, index);
+        out[*n].e = loft_h_entry(cx, &ents, s, index);
         out[*n].seq = index;
         out[*n].ours = h.stride != 0 && (index & LOFT_H_SLOT_RECORD) == 0;
         (*n)++;
@@ -1203,14 +1249,14 @@ static loft_hent *loft_h_entries_of(loft_ref c, uint32_t *n) {
 }
 
 /* Entries put in key order (a merge sort: the keys are unique). */
-static void loft_sort_refs(loft_ref *a, loft_ref *tmp, uint32_t n, const loft_key *keys, int nk) {
+static void loft_sort_refs(loft_cx *cx, loft_ref *a, loft_ref *tmp, uint32_t n, const loft_key *keys, int nk) {
     if (n < 2) return;
     uint32_t h = n / 2;
-    loft_sort_refs(a, tmp, h, keys, nk);
-    loft_sort_refs(a + h, tmp, n - h, keys, nk);
+    loft_sort_refs(cx, a, tmp, h, keys, nk);
+    loft_sort_refs(cx, a + h, tmp, n - h, keys, nk);
     uint32_t i = 0, j = h, k = 0;
     while (i < h && j < n) {
-        if (loft_key_cmp_refs(a[j], a[i], keys, nk) < 0) tmp[k++] = a[j++];
+        if (loft_key_cmp_refs(cx, a[j], a[i], keys, nk) < 0) tmp[k++] = a[j++];
         else tmp[k++] = a[i++];
     }
     while (i < h) tmp[k++] = a[i++];
@@ -1232,18 +1278,18 @@ static int loft_hent_by_slot(const void *a, const void *b) { return loft_hent_by
  * text or float part. */
 typedef struct { int64_t k[4]; uint32_t pos; } loft_hkey;
 
-static int loft_hkey_lt(const loft_hkey *a, const loft_hkey *b, int nk) {
+static int loft_hkey_lt(loft_cx *cx, const loft_hkey *a, const loft_hkey *b, int nk) {
     for (int i = 0; i < nk; i++)
         if (a->k[i] != b->k[i]) return a->k[i] < b->k[i];
     return 0;
 }
 
-static void loft_hkey_sift(loft_hkey *a, size_t root, size_t n, int nk) {
+static void loft_hkey_sift(loft_cx *cx, loft_hkey *a, size_t root, size_t n, int nk) {
     for (;;) {
         size_t c = root * 2 + 1;
         if (c >= n) return;
-        if (c + 1 < n && loft_hkey_lt(&a[c], &a[c + 1], nk)) c++;
-        if (!loft_hkey_lt(&a[root], &a[c], nk)) return;
+        if (c + 1 < n && loft_hkey_lt(cx, &a[c], &a[c + 1], nk)) c++;
+        if (!loft_hkey_lt(cx, &a[root], &a[c], nk)) return;
         loft_hkey t = a[root]; a[root] = a[c]; a[c] = t;
         root = c;
     }
@@ -1251,25 +1297,25 @@ static void loft_hkey_sift(loft_hkey *a, size_t root, size_t n, int nk) {
 
 /* An introsort: quicksort on the median of three, insertion below 16, heapsort past the depth
  * a balanced split needs — so no input order makes it quadratic. */
-static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
+static void loft_hkey_sort(loft_cx *cx, loft_hkey *a, size_t n, int nk, int depth) {
     while (n > 16) {
         if (depth-- == 0) {
-            for (size_t i = n / 2; i-- > 0;) loft_hkey_sift(a, i, n, nk);
+            for (size_t i = n / 2; i-- > 0;) loft_hkey_sift(cx, a, i, n, nk);
             for (size_t e = n - 1; e > 0; e--) {
                 loft_hkey t = a[0]; a[0] = a[e]; a[e] = t;
-                loft_hkey_sift(a, 0, e, nk);
+                loft_hkey_sift(cx, a, 0, e, nk);
             }
             return;
         }
         size_t mid = n / 2;
-        if (loft_hkey_lt(&a[mid], &a[0], nk)) { loft_hkey t = a[mid]; a[mid] = a[0]; a[0] = t; }
-        if (loft_hkey_lt(&a[n - 1], &a[0], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[0]; a[0] = t; }
-        if (loft_hkey_lt(&a[n - 1], &a[mid], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[mid]; a[mid] = t; }
+        if (loft_hkey_lt(cx, &a[mid], &a[0], nk)) { loft_hkey t = a[mid]; a[mid] = a[0]; a[0] = t; }
+        if (loft_hkey_lt(cx, &a[n - 1], &a[0], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[0]; a[0] = t; }
+        if (loft_hkey_lt(cx, &a[n - 1], &a[mid], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[mid]; a[mid] = t; }
         loft_hkey pivot = a[mid];
         size_t i = 0, j = n - 1;
         for (;;) {
-            while (loft_hkey_lt(&a[i], &pivot, nk)) i++;
-            while (loft_hkey_lt(&pivot, &a[j], nk)) j--;
+            while (loft_hkey_lt(cx, &a[i], &pivot, nk)) i++;
+            while (loft_hkey_lt(cx, &pivot, &a[j], nk)) j--;
             if (i >= j) break;
             loft_hkey t = a[i]; a[i] = a[j]; a[j] = t;
             i++;
@@ -1278,18 +1324,18 @@ static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
         size_t left = j + 1;
         /* Recurse on the smaller side, loop on the larger: the stack stays logarithmic. */
         if (left < n - left) {
-            loft_hkey_sort(a, left, nk, depth);
+            loft_hkey_sort(cx, a, left, nk, depth);
             a += left;
             n -= left;
         } else {
-            loft_hkey_sort(a + left, n - left, nk, depth);
+            loft_hkey_sort(cx, a + left, n - left, nk, depth);
             n = left;
         }
     }
     for (size_t i = 1; i < n; i++) {
         loft_hkey t = a[i];
         size_t j = i;
-        while (j > 0 && loft_hkey_lt(&t, &a[j - 1], nk)) { a[j] = a[j - 1]; j--; }
+        while (j > 0 && loft_hkey_lt(cx, &t, &a[j - 1], nk)) { a[j] = a[j - 1]; j--; }
         a[j] = t;
     }
 }
@@ -1298,7 +1344,7 @@ static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
  * item where the key packs (`loft_hkey_pack`), a single compare per step and 16 bytes moved. */
 typedef struct { uint64_t k; uint32_t pos; } loft_hk1;
 
-static void loft_hk1_sift(loft_hk1 *a, size_t root, size_t n) {
+static void loft_hk1_sift(loft_cx *cx, loft_hk1 *a, size_t root, size_t n) {
     for (;;) {
         size_t c = root * 2 + 1;
         if (c >= n) return;
@@ -1310,13 +1356,13 @@ static void loft_hk1_sift(loft_hk1 *a, size_t root, size_t n) {
 }
 
 /* `loft_hkey_sort` over packed keys: the same introsort. */
-static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
+static void loft_hk1_sort(loft_cx *cx, loft_hk1 *a, size_t n, int depth) {
     while (n > 16) {
         if (depth-- == 0) {
-            for (size_t i = n / 2; i-- > 0;) loft_hk1_sift(a, i, n);
+            for (size_t i = n / 2; i-- > 0;) loft_hk1_sift(cx, a, i, n);
             for (size_t e = n - 1; e > 0; e--) {
                 loft_hk1 t = a[0]; a[0] = a[e]; a[e] = t;
-                loft_hk1_sift(a, 0, e);
+                loft_hk1_sift(cx, a, 0, e);
             }
             return;
         }
@@ -1336,11 +1382,11 @@ static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
         }
         size_t left = j + 1;
         if (left < n - left) {
-            loft_hk1_sort(a, left, depth);
+            loft_hk1_sort(cx, a, left, depth);
             a += left;
             n -= left;
         } else {
-            loft_hk1_sort(a + left, n - left, depth);
+            loft_hk1_sort(cx, a + left, n - left, depth);
             n = left;
         }
     }
@@ -1358,7 +1404,7 @@ static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
  * or 0 where the histograms would cost more than they save, the caller then sorting by
  * comparison.  The keys of a hash are distinct, so every ascending order of them is the one
  * order.  `tmp` holds `n` items; the answer is `a` or `tmp`. */
-static loft_hk1 *loft_hk1_radix(loft_hk1 *a, loft_hk1 *tmp, size_t n) {
+static loft_hk1 *loft_hk1_radix(loft_cx *cx, loft_hk1 *a, loft_hk1 *tmp, size_t n) {
     if (n < 2) return a;
     uint64_t diff = 0;
     for (size_t i = 1; i < n; i++) diff |= a[i].k ^ a[0].k;
@@ -1389,7 +1435,7 @@ static loft_hk1 *loft_hk1_radix(loft_hk1 *a, loft_hk1 *tmp, size_t n) {
 /* The key parts of `p` as one unsigned value in the same order — one part with its sign bit
  * flipped, two parts that each fit 32 bits flipped the same way and packed high and low — or 0
  * where they do not (a third part, a wider value, a null, which sorts first as INT64_MIN). */
-static int loft_hkey_pack(const loft_hkey *p, int nk, uint64_t *out) {
+static int loft_hkey_pack(loft_cx *cx, const loft_hkey *p, int nk, uint64_t *out) {
     if (nk == 1) {
         *out = (uint64_t) p->k[0] ^ UINT64_C(0x8000000000000000);
         return 1;
@@ -1401,22 +1447,22 @@ static int loft_hkey_pack(const loft_hkey *p, int nk, uint64_t *out) {
     return 0;
 }
 
-static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int nk, uint32_t *n) {
+static loft_ref *loft_hash_sorted_inline(loft_cx *cx, loft_ref c, const loft_key *keys, int nk, uint32_t *n) {
     if (nk < 1 || nk > 4 || c.store_nr == 0xFFFF || c.rec == 0) return 0;
     for (int i = 0; i < nk; i++) {
         int t = keys[i].type < 0 ? -keys[i].type : keys[i].type;
         if (t == 3 || t == 4 || t == 6) return 0;
     }
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return 0;
-    loft_hhdr h = loft_h_hdr(s, claim);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
     if (!h.inl) return 0;
     loft_hkey *pairs = (loft_hkey *) malloc(((size_t) h.count + 1) * sizeof *pairs);
     if (!pairs) { fputs("loft: out of memory\n", stderr); abort(); }
-    uint32_t e0 = loft_h_ent0(h.count), live = 0;
+    uint32_t e0 = loft_h_ent0(cx, h.count), live = 0;
     for (uint32_t at = 0; at < h.count; at++) {
-        uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
+        uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8);
         if (seq == 0 || seq == LOFT_H_TOMB) continue;
         loft_hkey *p = &pairs[live++];
         p->pos = e0 + at * h.stride;
@@ -1424,8 +1470,8 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
             /* An `integer` or `long` part is the 8 bytes where the key lies. */
             int t = keys[i].type < 0 ? -keys[i].type : keys[i].type;
             int64_t v;
-            if (t == 1 || t == 2) memcpy(&v, loft_at(s, claim, p->pos + keys[i].pos), 8);
-            else v = loft_key_get(s, claim, p->pos, &keys[i]).i;
+            if (t == 1 || t == 2) memcpy(&v, loft_at(cx, s, claim, p->pos + keys[i].pos), 8);
+            else v = loft_key_get(cx, s, claim, p->pos, &keys[i]).i;
             p->k[i] = keys[i].type < 0 ? ~v : v;
         }
     }
@@ -1436,16 +1482,16 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
     loft_hk1 *one = nk <= 2 ? (loft_hk1 *) malloc(((size_t) live + 1) * sizeof *one) : 0;
     int packed = one != 0;
     for (uint32_t i = 0; i < live && packed; i++) {
-        packed = loft_hkey_pack(&pairs[i], nk, &one[i].k);
+        packed = loft_hkey_pack(cx, &pairs[i], nk, &one[i].k);
         one[i].pos = pairs[i].pos;
     }
     /* Once packed, `pairs` is free: it holds `count + 1` items of more than twice the size. */
-    loft_hk1 *sorted = packed ? loft_hk1_radix(one, (loft_hk1 *) (void *) pairs, live) : 0;
+    loft_hk1 *sorted = packed ? loft_hk1_radix(cx, one, (loft_hk1 *) (void *) pairs, live) : 0;
     if (packed && !sorted) {
-        loft_hk1_sort(one, live, depth);
+        loft_hk1_sort(cx, one, live, depth);
         sorted = one;
     }
-    if (!packed) loft_hkey_sort(pairs, live, nk, depth);
+    if (!packed) loft_hkey_sort(cx, pairs, live, nk, depth);
     for (uint32_t i = 0; i < live; i++) {
         out[i].store_nr = c.store_nr;
         out[i].rec = claim;
@@ -1457,18 +1503,18 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
     return out;
 }
 
-static loft_ref *loft_hash_refs(loft_ref c, const loft_key *keys, int nk, int by_slot, uint32_t *n) {
+static loft_ref *loft_hash_refs(loft_cx *cx, loft_ref c, const loft_key *keys, int nk, int by_slot, uint32_t *n) {
     if (!by_slot) {
-        loft_ref *fast = loft_hash_sorted_inline(c, keys, nk, n);
+        loft_ref *fast = loft_hash_sorted_inline(cx, c, keys, nk, n);
         if (fast) return fast;
     }
-    loft_hent *all = loft_h_entries_of(c, n);
+    loft_hent *all = loft_h_entries_of(cx, c, n);
     loft_ref *out = (loft_ref *) malloc(((size_t) *n + 1) * 2 * sizeof *out);
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
     if (by_slot && *n) qsort(all, *n, sizeof *all, loft_hent_by_slot);
     for (uint32_t i = 0; i < *n; i++) out[i] = all[i].e;
     free(all);
-    if (!by_slot) loft_sort_refs(out, out + *n + 1, *n, keys, nk);
+    if (!by_slot) loft_sort_refs(cx, out, out + *n + 1, *n, keys, nk);
     return out;
 }
 
@@ -1477,54 +1523,54 @@ static loft_ref *loft_hash_refs(loft_ref c, const loft_key *keys, int nk, int by
 /* Stores::hash_entry: a fresh entry of a hash whose elements are `size` bytes — a record of its
  * own when the element type is `linked` (a sibling or a stored reference names it by record),
  * else the table's (`@FR-Col-Inline`).  Its bytes are unwritten (`@FR-H-Claim`). */
-static loft_ref loft_hash_entry(loft_ref c, uint32_t size, int linked) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+static loft_ref loft_hash_entry(loft_cx *cx, loft_ref c, uint32_t size, int linked) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
     if (linked) {
-        loft_store_t *s = loft_store_of(c);
-        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8, 0 };
-        loft_set_u32(s, e.rec, 4, c.rec);
+        loft_store_t *s = loft_store_of(cx, c);
+        loft_ref e = { c.store_nr, loft_st_claim(cx, s, 1 + (size + 7) / 8), 8, 0 };
+        loft_set_u32(cx, s, e.rec, 4, c.rec);
         return e;
     }
-    return loft_h_alloc_entry(c, loft_h_stride_for(size), c.rec);
+    return loft_h_alloc_entry(cx, c, loft_h_stride_for(cx, size), c.rec);
 }
 
-static int loft_hash_owns_entries(loft_ref c) {
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_u32(s, c.rec, c.pos);
-    return claim != 0 && claim != 0xFFFFFFFFu && loft_h_stride(s, claim) != 0;
+static int loft_hash_owns_entries(loft_cx *cx, loft_ref c) {
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_u32(cx, s, c.rec, c.pos);
+    return claim != 0 && claim != 0xFFFFFFFFu && loft_h_stride(cx, s, claim) != 0;
 }
 
-static void loft_forget_in_scratches(loft_ref c, loft_ref e);
+static void loft_forget_in_scratches(loft_cx *cx, loft_ref c, loft_ref e);
 
 /* Stores::unlink on a hash: out of every walk over it, then out of the table. */
-static uint32_t loft_hash_unlink(loft_ref c, loft_ref e, const loft_key *keys, int nk) {
-    loft_forget_in_scratches(c, e);
-    return loft_h_remove(c, e, keys, nk);
+static uint32_t loft_hash_unlink(loft_cx *cx, loft_ref c, loft_ref e, const loft_key *keys, int nk) {
+    loft_forget_in_scratches(cx, c, e);
+    return loft_h_remove(cx, c, e, keys, nk);
 }
 
 /* Stores::free_hash_entry: the entry's storage, through the bucket value the unlink answered
  * where there is one. */
-static void loft_free_hash_entry(loft_ref c, loft_ref e, uint32_t slot) {
-    if (slot == 0) loft_h_free_entry(c, e);
-    else loft_h_free_slot(c, slot);
+static void loft_free_hash_entry(loft_cx *cx, loft_ref c, loft_ref e, uint32_t slot) {
+    if (slot == 0) loft_h_free_entry(cx, c, e);
+    else loft_h_free_slot(cx, c, slot);
 }
 
 /* Stores::remove_owned on a hash: unlinked, then released — its claims and its storage.  With
  * `view` (a member that borrows its records, CLEAR_KEYED_VIEW) only unlinked. */
-static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
+static void loft_hash_remove(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys, int nk,
                              int view) {
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
-    if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
-    uint32_t slot = loft_hash_unlink(c, e, keys, nk);
+    if (LOFT_WRITE_REFUSED(loft_store_of(cx, c))) return;
+    uint32_t slot = loft_hash_unlink(cx, c, e, keys, nk);
     if (view) return;
-    if (loft_hash_owns_entries(c)) {
-        loft_remove_claims(T, elem, e);
-        loft_free_hash_entry(c, e, slot);
+    if (loft_hash_owns_entries(cx, c)) {
+        loft_remove_claims(cx, T, elem, e);
+        loft_free_hash_entry(cx, c, e, slot);
         return;
     }
     loft_ref rec = { e.store_nr, e.rec, 8, 0 };
-    loft_remove_claims(T, elem, rec);
-    loft_st_delete(loft_store_of(c), e.rec);
+    loft_remove_claims(cx, T, elem, rec);
+    loft_st_delete(cx, loft_store_of(cx, c), e.rec);
 }
 
 /* `@FR-R-TypedKeyed`'s removal clause: `h[k] = null` for a hash whose ONE key is an 8-byte integer
@@ -1534,55 +1580,55 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
  * a miss changes nothing, an inline table and a locked store take that route itself. */
 /* Entry `e`, whose bucket value was `slot`, has left the table: release it (`@FR-Col-Remove`).
  * Shared by the general removal and the table handle's. */
-LOFT_HOT_INLINE void loft_h_release_removed(const loft_tdesc *T, uint16_t elem, loft_ref c, int view, loft_ref e,
+LOFT_HOT_INLINE void loft_h_release_removed(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, int view, loft_ref e,
                                             uint32_t slot) {
     if (view) return;
-    if (loft_hash_owns_entries(c)) {
-        loft_remove_claims(T, elem, e);
-        loft_free_hash_entry(c, e, slot);
+    if (loft_hash_owns_entries(cx, c)) {
+        loft_remove_claims(cx, T, elem, e);
+        loft_free_hash_entry(cx, c, e, slot);
         return;
     }
     loft_ref rec = { e.store_nr, e.rec, 8, 0 };
-    loft_remove_claims(T, elem, rec);
-    loft_st_delete(loft_store_of(c), e.rec);
+    loft_remove_claims(cx, T, elem, rec);
+    loft_st_delete(cx, loft_store_of(cx, c), e.rec);
 }
 
 /* The typed removal's second half: entry `e`, found in bucket `index` holding `val`, leaves the
  * table and is released (`@FR-Col-Remove`). */
-LOFT_HOT_INLINE void loft_h_remove_found(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_store_t *s, uint32_t claim,
+LOFT_HOT_INLINE void loft_h_remove_found(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_store_t *s, uint32_t claim,
                                 const loft_hents *ents, const loft_key *keys, int nk, int view, loft_ref e,
                                 uint32_t index, uint32_t val) {
-    loft_forget_in_scratches(c, e);
-    uint32_t slot = loft_h_remove_at(s, claim, ents, keys, nk, index, val);
-    loft_h_release_removed(T, elem, c, view, e, slot);
+    loft_forget_in_scratches(cx, c, e);
+    uint32_t slot = loft_h_remove_at(cx, s, claim, ents, keys, nk, index, val);
+    loft_h_release_removed(cx, T, elem, c, view, e, slot);
 }
 
-static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key, const loft_key *keys,
+static void loft_hash_remove_i64(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key, const loft_key *keys,
                                  int nk, int view) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) == 0) return;
-    if (loft_h_is_inline(s, claim) || LOFT_WRITE_REFUSED(s) || loft_u32(s, claim, LOFT_H_LEN_FLD) == 0) {
-        loft_hash_remove(T, elem, c, loft_h_find_i64(c, keys, key), keys, nk, view);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) == 0) return;
+    if (loft_h_is_inline(cx, s, claim) || LOFT_WRITE_REFUSED(s) || loft_u32(cx, s, claim, LOFT_H_LEN_FLD) == 0) {
+        loft_hash_remove(cx, T, elem, c, loft_h_find_i64(cx, c, keys, key), keys, nk, view);
         return;
     }
-    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
-    uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
-    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    loft_ref e = loft_ref_null();
+    uint32_t count = loft_h_hdr(cx, s, claim).count, sb = loft_h_slot_bytes(cx, s, claim);
+    uint64_t hv = loft_digest_i64(cx, loft_h_read_seed(cx, s, claim), key);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(cx, hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    loft_ref e = loft_ref_null(cx);
     uint32_t val = 0;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
-        if (!loft_h_tag_differs(s, claim, sb, index, tag)) {
-            loft_ref f = loft_ref_null();
+        if (!loft_h_tag_differs(cx, s, claim, sb, index, tag)) {
+            loft_ref f = loft_ref_null(cx);
             int64_t have;
             f.store_nr = c.store_nr;
-            loft_h_at_bucket(&ents, s, slot, index, &f.rec, &f.pos);
+            loft_h_at_bucket(cx, &ents, s, slot, index, &f.rec, &f.pos);
             if (f.rec != 0) {
-                memcpy(&have, loft_at(s, f.rec, f.pos + kpos), 8);
+                memcpy(&have, loft_at(cx, s, f.rec, f.pos + kpos), 8);
                 if (have == key) {
                     e = f;
                     val = slot;
@@ -1594,7 +1640,7 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #ifdef LOFT_KEYED_VERIFY
     {
-        loft_ref want = loft_h_find_i64(c, keys, key);
+        loft_ref want = loft_h_find_i64(cx, c, keys, key);
         if (want.rec != e.rec || (e.rec != 0 && want.pos != e.pos)) {
             fflush(stdout);
             fprintf(stderr, "LOFT_KEYED_VERIFY: the typed removal found %u+%u where the lookup finds %u+%u\n",
@@ -1605,18 +1651,18 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #endif
     if (e.rec == 0) return;
-    loft_h_remove_found(T, elem, c, s, claim, &ents, keys, nk, view, e, index, val);
+    loft_h_remove_found(cx, T, elem, c, s, claim, &ents, keys, nk, view, e, index, val);
 }
 
 /* Stores::displace_keyed: the entry `existing` makes room for an insert under its key — unlinked,
  * and released unless a `secondary` member only borrows it.  Released as a removal releases it
  * (`loft_h_release_removed`): an entry with a record of its own goes through the store's removal,
  * which leaves the mark a stored reference reads as null (`@FR-H-Removed`). */
-static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref existing, const loft_key *keys,
+static void loft_hash_displace(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref existing, const loft_key *keys,
                                int nk, int secondary) {
-    uint32_t slot = loft_hash_unlink(c, existing, keys, nk);
+    uint32_t slot = loft_hash_unlink(cx, c, existing, keys, nk);
     if (secondary) return;
-    loft_h_release_removed(T, elem, c, 0, existing, slot);
+    loft_h_release_removed(cx, T, elem, c, 0, existing, slot);
 }
 
 /* Stores::insert_record on a hash (`@FR-Col-Insert`: latest insert wins): `rec` filed under its
@@ -1626,27 +1672,26 @@ static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, l
  * nothing: the entry itself.  An inline table copies a STAGED entry into itself and deletes the
  * stage, so the record handed to the insert is not always the entry afterwards.  Read by
  * `@FR-R-SameRead`'s filed clause, in the statement right after the insert. */
-static LOFT_TLS loft_ref loft_h_filed;
 
 /* The one-probe insert on a decoded table: `claim` of `count` (a power of two) tagged slots, its
  * `seed` and entries.  Shared by `loft_h_insert_int_fast` and the table handle's insert. */
-LOFT_HOT_INLINE int loft_h_insert_int_at(loft_ref c, loft_store_t *s, uint32_t claim, uint32_t count, uint64_t seed,
+LOFT_HOT_INLINE int loft_h_insert_int_at(loft_cx *cx, loft_ref c, loft_store_t *s, uint32_t claim, uint32_t count, uint64_t seed,
                                 const loft_hents *ents, loft_ref rec, const loft_key *keys) {
-    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
-    if (loft_h_is_full(length, count)) return 0;
-    uint32_t own = loft_h_slot_value(s, claim, rec, ents->stride), kpos = keys[0].pos, mask = count - 1;
+    uint32_t length = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
+    if (loft_h_is_full(cx, length, count)) return 0;
+    uint32_t own = loft_h_slot_value(cx, s, claim, rec, ents->stride), kpos = keys[0].pos, mask = count - 1;
     int64_t key;
-    memcpy(&key, loft_at(s, rec.rec, rec.pos + kpos), 8);
-    uint64_t hv = loft_digest_i64(seed, key);
+    memcpy(&key, loft_at(cx, s, rec.rec, rec.pos + kpos), 8);
+    uint64_t hv = loft_digest_i64(cx, seed, key);
     uint32_t tag = (uint32_t) hv, at = tag & mask;
-    uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+    uint8_t *b = loft_at(cx, s, claim, LOFT_H_BUCKET0);
     for (uint32_t i = 0; i < count; i++, at = (at + 1) & mask) {
         uint32_t slot, t;
         memcpy(&slot, b + (size_t) at * 8, 4);
         if (slot == 0) {
             memcpy(b + (size_t) at * 8, &own, 4);
             memcpy(b + (size_t) at * 8 + 4, &tag, 4);
-            loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+            loft_set_u32(cx, s, claim, LOFT_H_LEN_FLD, length + 1);
             return 1;
         }
         if (slot == own) return 0;
@@ -1654,16 +1699,16 @@ LOFT_HOT_INLINE int loft_h_insert_int_at(loft_ref c, loft_store_t *s, uint32_t c
         if (t != tag) continue;
         loft_ref e = { c.store_nr, 0, 0, 0 };
         int64_t have;
-        loft_h_at(ents, s, slot, &e.rec, &e.pos);
+        loft_h_at(cx, ents, s, slot, &e.rec, &e.pos);
         if (e.rec == 0) continue;
-        memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+        memcpy(&have, loft_at(cx, s, e.rec, e.pos + kpos), 8);
         if (have == key) return 0;
     }
     return 0;
 }
 
 /* The one integer key `keys` names, as the insert reads it: 1 for an 8-byte integer key. */
-static int loft_h_int_key(const loft_key *keys, int nk) {
+static int loft_h_int_key(loft_cx *cx, const loft_key *keys, int nk) {
     int kt = keys[0].type < 0 ? -keys[0].type : keys[0].type;
     return nk == 1 && (kt == 1 || kt == 2);
 }
@@ -1672,23 +1717,23 @@ static int loft_h_int_key(const loft_key *keys, int nk) {
  * integer key, the table not due to grow, and the key absent.  Filed exactly as the general path
  * files it (`loft_h_probe_for_insert`'s free bucket, then `loft_h_add_at` without a grow); 1 when
  * filed, 0 when the general path must decide (a duplicate, the record already filed, a grow). */
-static int loft_h_insert_int_fast(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
-    if (!loft_h_int_key(keys, nk) || rec.store_nr != c.store_nr) return 0;
-    loft_store_t *s = loft_store_of(c);
+static int loft_h_insert_int_fast(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+    if (!loft_h_int_key(cx, keys, nk) || rec.store_nr != c.store_nr) return 0;
+    loft_store_t *s = loft_store_of(cx, c);
     if (LOFT_WRITE_REFUSED(s)) return 0;
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(s, claim)) return 0;
-    uint32_t count = loft_h_hdr(s, claim).count;
-    if (loft_h_slot_bytes(s, claim) != 8 || !loft_is_pow2(count)) return 0;
-    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    return loft_h_insert_int_at(c, s, claim, count, loft_h_read_seed(s, claim), &ents, rec, keys);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(cx, s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(cx, s, claim)) return 0;
+    uint32_t count = loft_h_hdr(cx, s, claim).count;
+    if (loft_h_slot_bytes(cx, s, claim) != 8 || !loft_is_pow2(cx, count)) return 0;
+    loft_hents ents = loft_h_entries(cx, s, claim, c.store_nr);
+    return loft_h_insert_int_at(cx, c, s, claim, count, loft_h_read_seed(cx, s, claim), &ents, rec, keys);
 }
 
 /* Under LOFT_KEYED_VERIFY, the one-probe insert's check: the key now finds the record it filed. */
-static void loft_h_verify_filed(loft_ref c, loft_ref rec, const loft_key *keys) {
+static void loft_h_verify_filed(loft_cx *cx, loft_ref c, loft_ref rec, const loft_key *keys) {
 #ifdef LOFT_KEYED_VERIFY
-    loft_kv vk = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[0]);
-    loft_ref found = loft_h_find(c, keys, &vk, 1);
+    loft_kv vk = loft_key_get(cx, loft_store_of(cx, rec), rec.rec, rec.pos, &keys[0]);
+    loft_ref found = loft_h_find(cx, c, keys, &vk, 1);
     if (found.rec != rec.rec || found.pos != rec.pos) {
         fflush(stdout);
         fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert filed %u+%u where the lookup finds %u+%u\n",
@@ -1702,25 +1747,25 @@ static void loft_h_verify_filed(loft_ref c, loft_ref rec, const loft_key *keys) 
 #endif
 }
 
-static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
+static loft_ref loft_hash_insert(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
                                  int nk, int secondary) {
-    loft_h_filed = loft_ref_null();
-    if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null();
-    if (loft_h_insert_int_fast(c, rec, keys, nk)) {
-        loft_h_verify_filed(c, rec, keys);
+    cx->h_filed = loft_ref_null(cx);
+    if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null(cx);
+    if (loft_h_insert_int_fast(cx, c, rec, keys, nk)) {
+        loft_h_verify_filed(cx, c, rec, keys);
         /* The one-probe insert takes no inline table, so the record it filed is the entry. */
-        loft_h_filed = rec;
-        return loft_ref_null();
+        cx->h_filed = rec;
+        return loft_ref_null(cx);
     }
-    loft_hprobe p = loft_h_probe_for_insert(c, rec, keys, nk);
+    loft_hprobe p = loft_h_probe_for_insert(cx, c, rec, keys, nk);
 #ifdef LOFT_KEYED_VERIFY
     /* `Stores::verify_probe`: the probe's duplicate is the one the lookup `dedup_keyed` runs
      * finds, or none on both sides. */
     if (p.kind != LOFT_H_UNKNOWN) {
         loft_kv vk[8];
         int vn = nk > 8 ? 8 : nk;
-        for (int i = 0; i < vn; i++) vk[i] = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[i]);
-        loft_ref looked = loft_h_find(c, keys, vk, vn);
+        for (int i = 0; i < vn; i++) vk[i] = loft_key_get(cx, loft_store_of(cx, rec), rec.rec, rec.pos, &keys[i]);
+        loft_ref looked = loft_h_find(cx, c, keys, vk, vn);
         uint32_t lrec = looked.rec != 0 && (looked.rec != rec.rec || looked.pos != rec.pos) ? looked.rec : 0;
         uint32_t lpos = lrec ? looked.pos : 0;
         uint32_t wrec = p.kind == LOFT_H_PRESENT ? p.entry.rec : 0, wpos = wrec ? p.entry.pos : 0;
@@ -1733,28 +1778,28 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #endif
     if (p.kind == LOFT_H_FREE) {
-        loft_h_filed = loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
-        return loft_ref_null();
+        cx->h_filed = loft_h_add_at(cx, c, rec, p.bucket, p.index, p.tag, keys, nk);
+        return loft_ref_null(cx);
     }
     if (p.kind == LOFT_H_PRESENT) {
         /* The new entry takes the displaced one's bucket. */
-        loft_forget_in_scratches(c, p.entry);
-        uint32_t gone = loft_h_replace_at(c, p.bucket, p.index);
-        if (!secondary) loft_h_release_removed(T, elem, c, 0, p.entry, gone);
-        loft_h_filed = rec;
+        loft_forget_in_scratches(cx, c, p.entry);
+        uint32_t gone = loft_h_replace_at(cx, c, p.bucket, p.index);
+        if (!secondary) loft_h_release_removed(cx, T, elem, c, 0, p.entry, gone);
+        cx->h_filed = rec;
         return p.entry;
     }
     /* Stores::dedup_keyed: the entry under the key, displaced, then the add. */
     loft_kv key[8];
     int n = nk > 8 ? 8 : nk;
-    for (int i = 0; i < n; i++) key[i] = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[i]);
-    loft_ref existing = loft_h_find(c, keys, key, n);
-    loft_ref displaced = loft_ref_null();
+    for (int i = 0; i < n; i++) key[i] = loft_key_get(cx, loft_store_of(cx, rec), rec.rec, rec.pos, &keys[i]);
+    loft_ref existing = loft_h_find(cx, c, keys, key, n);
+    loft_ref displaced = loft_ref_null(cx);
     if (existing.rec != 0 && (existing.rec != rec.rec || existing.pos != rec.pos)) {
-        loft_hash_displace(T, elem, c, existing, keys, nk, secondary);
+        loft_hash_displace(cx, T, elem, c, existing, keys, nk, secondary);
         displaced = existing;
     }
-    loft_h_filed = loft_h_add(c, rec, keys, nk);
+    cx->h_filed = loft_h_add(cx, c, rec, keys, nk);
     return displaced;
 }
 
@@ -1781,38 +1826,38 @@ typedef struct {
 
 /* `h` resolved for place `c` now: covered (`ok`) when the table is a tagged arena or record
  * table of a power-of-two slot count. */
-LOFT_HOT_INLINE void loft_hh_resolve(loft_hh *h, loft_ref c) {
-    loft_store_t *s = loft_store_of(c);
+LOFT_HOT_INLINE void loft_hh_resolve(loft_cx *cx, loft_hh *h, loft_ref c) {
+    loft_store_t *s = loft_store_of(cx, c);
     h->nr = c.store_nr;
     h->rec = c.rec;
     h->pos = c.pos;
     h->gen = s->hgen;
-    h->claim = loft_collection_rec(s, c.rec, c.pos);
+    h->claim = loft_collection_rec(cx, s, c.rec, c.pos);
     h->ok = 0;
     if (h->claim == 0) return;
-    uint32_t words = loft_rec_words(s, h->claim), flags = loft_u32(s, h->claim, LOFT_H_STRIDE_FLD);
+    uint32_t words = loft_rec_words(cx, s, h->claim), flags = loft_u32(cx, s, h->claim, LOFT_H_STRIDE_FLD);
     if (words <= LOFT_H_RESERVED || !(flags & LOFT_H_TAGGED) || (flags & LOFT_H_INLINE)) return;
-    h->count = loft_h_hdr(s, h->claim).count;
-    if (!loft_is_pow2(h->count)) return;
+    h->count = loft_h_hdr(cx, s, h->claim).count;
+    if (!loft_is_pow2(cx, h->count)) return;
     h->mask = h->count - 1;
-    h->seed = loft_h_read_seed(s, h->claim);
-    h->ents = loft_h_entries(s, h->claim, c.store_nr);
+    h->seed = loft_h_read_seed(cx, s, h->claim);
+    h->ents = loft_h_entries(cx, s, h->claim, c.store_nr);
     h->ok = 1;
 }
 
 /* Does `h` still describe place `c`'s table: the same place, the store's table generation the
  * one it was resolved under, and the collection slot naming the same claim? */
-LOFT_HOT_INLINE int loft_hh_live(const loft_hh *h, loft_ref c) {
+LOFT_HOT_INLINE int loft_hh_live(loft_cx *cx, const loft_hh *h, loft_ref c) {
     if (h->nr != c.store_nr || h->rec != c.rec || h->pos != c.pos) return 0;
-    loft_store_t *s = &loft_stores[c.store_nr];
-    return s->hgen == h->gen && loft_collection_rec(s, c.rec, c.pos) == h->claim;
+    loft_store_t *s = &cx->stores[c.store_nr];
+    return s->hgen == h->gen && loft_collection_rec(cx, s, c.rec, c.pos) == h->claim;
 }
 
 #ifdef LOFT_KEYED_VERIFY
 /* A live handle is the table as a fresh resolve reads it, or the generation missed a change. */
-static void loft_hh_verify(const loft_hh *h, loft_ref c) {
+static void loft_hh_verify(loft_cx *cx, const loft_hh *h, loft_ref c) {
     loft_hh f = LOFT_HH_NONE;
-    loft_hh_resolve(&f, c);
+    loft_hh_resolve(cx, &f, c);
     if (f.ok != h->ok || f.claim != h->claim
         || (h->ok && (f.count != h->count || f.seed != h->seed || f.ents.stride != h->ents.stride
                       || f.ents.dir != h->ents.dir || f.ents.cap != h->ents.cap))) {
@@ -1827,33 +1872,33 @@ static void loft_hh_verify(const loft_hh *h, loft_ref c) {
 #endif
 
 /* The slow half of `loft_hh_ready`: `h` resolved for place `c` again, or `c` refused. */
-LOFT_HOT_INLINE int loft_hh_reready(loft_hh *h, loft_ref c) {
-    if (c.store_nr == 0xFFFF || c.rec == 0 || c.store_nr >= loft_nstores) return 0;
-    loft_hh_resolve(h, c);
+LOFT_HOT_INLINE int loft_hh_reready(loft_cx *cx, loft_hh *h, loft_ref c) {
+    if (c.store_nr == 0xFFFF || c.rec == 0 || c.store_nr >= cx->nstores) return 0;
+    loft_hh_resolve(cx, h, c);
     return h->ok;
 }
 
 /* 1 when `h` covers place `c`'s table now — resolved again first if it had gone stale.  The
  * empty handle names record 0xFFFFFFFF, which no place does, so it never passes the compare. */
-LOFT_HOT_INLINE int loft_hh_ready(loft_hh *h, loft_ref c) {
+LOFT_HOT_INLINE int loft_hh_ready(loft_cx *cx, loft_hh *h, loft_ref c) {
     if (h->nr == c.store_nr && h->rec == c.rec && h->pos == c.pos) {
-        loft_store_t *s = &loft_stores[c.store_nr];
-        if (s->hgen == h->gen && loft_collection_rec(s, c.rec, c.pos) == h->claim) {
+        loft_store_t *s = &cx->stores[c.store_nr];
+        if (s->hgen == h->gen && loft_collection_rec(cx, s, c.rec, c.pos) == h->claim) {
 #ifdef LOFT_KEYED_VERIFY
-            loft_hh_verify(h, c);
+            loft_hh_verify(cx, h, c);
 #endif
             return h->ok;
         }
     }
-    return loft_hh_reready(h, c);
+    return loft_hh_reready(cx, h, c);
 }
 
 /* The entry under integer `key` in `h`'s table, the null reference when absent; `*index` and
  * `*val` its bucket and the slot value there. */
-LOFT_HOT_INLINE loft_ref loft_hh_probe_i64(const loft_hh *h, loft_store_t *s, int64_t key, uint32_t kpos,
+LOFT_HOT_INLINE loft_ref loft_hh_probe_i64(loft_cx *cx, const loft_hh *h, loft_store_t *s, int64_t key, uint32_t kpos,
                                            uint32_t *index, uint32_t *val) {
-    uint32_t tag = (uint32_t) loft_digest_i64(h->seed, key), at = tag & h->mask;
-    const uint8_t *b = loft_at(s, h->claim, LOFT_H_BUCKET0);
+    uint32_t tag = (uint32_t) loft_digest_i64(cx, h->seed, key), at = tag & h->mask;
+    const uint8_t *b = loft_at(cx, s, h->claim, LOFT_H_BUCKET0);
     for (uint32_t i = 0; i < h->count; i++, at = (at + 1) & h->mask) {
         uint32_t slot, t;
         memcpy(&slot, b + (size_t) at * 8, 4);
@@ -1862,21 +1907,21 @@ LOFT_HOT_INLINE loft_ref loft_hh_probe_i64(const loft_hh *h, loft_store_t *s, in
         if (t != tag) continue;
         loft_ref e = { h->nr, 0, 0, 0 };
         int64_t have;
-        loft_h_at(&h->ents, s, slot, &e.rec, &e.pos);
+        loft_h_at(cx, &h->ents, s, slot, &e.rec, &e.pos);
         if (e.rec == 0) continue;
-        memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+        memcpy(&have, loft_at(cx, s, e.rec, e.pos + kpos), 8);
         if (have == key) {
             *index = at;
             *val = slot;
             return e;
         }
     }
-    return loft_ref_null();
+    return loft_ref_null(cx);
 }
 
 #ifdef LOFT_KEYED_VERIFY
-static void loft_hh_verify_found(const char *what, loft_ref c, const loft_key *keys, int64_t key, loft_ref e) {
-    loft_ref want = loft_h_find_i64(c, keys, key);
+static void loft_hh_verify_found(loft_cx *cx, const char *what, loft_ref c, const loft_key *keys, int64_t key, loft_ref e) {
+    loft_ref want = loft_h_find_i64(cx, c, keys, key);
     if (want.rec != e.rec || (e.rec != 0 && want.pos != e.pos)) {
         fflush(stdout);
         fprintf(stderr, "LOFT_KEYED_VERIFY: the handle's %s found %u+%u where the lookup finds %u+%u\n", what,
@@ -1887,28 +1932,28 @@ static void loft_hh_verify_found(const char *what, loft_ref c, const loft_key *k
 #endif
 
 /* `loft_h_find_i64` through handle `h`. */
-LOFT_HOT_INLINE loft_ref loft_hh_find_i64(loft_hh *h, loft_ref c, const loft_key *keys, int64_t key) {
-    if (!loft_hh_ready(h, c)) return loft_h_find_i64(c, keys, key);
+LOFT_HOT_INLINE loft_ref loft_hh_find_i64(loft_cx *cx, loft_hh *h, loft_ref c, const loft_key *keys, int64_t key) {
+    if (!loft_hh_ready(cx, h, c)) return loft_h_find_i64(cx, c, keys, key);
     uint32_t index, val;
-    loft_ref e = loft_hh_probe_i64(h, &loft_stores[c.store_nr], key, keys[0].pos, &index, &val);
+    loft_ref e = loft_hh_probe_i64(cx, h, &cx->stores[c.store_nr], key, keys[0].pos, &index, &val);
 #ifdef LOFT_KEYED_VERIFY
-    loft_hh_verify_found("lookup", c, keys, key, e);
+    loft_hh_verify_found(cx, "lookup", c, keys, key, e);
 #endif
     return e;
 }
 
 /* `loft_hash_len` through handle `h`. */
-LOFT_HOT_INLINE int64_t loft_hh_len(loft_hh *h, loft_ref c) {
-    if (!loft_hh_ready(h, c)) return loft_hash_len(c);
-    return loft_u32(&loft_stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
+LOFT_HOT_INLINE int64_t loft_hh_len(loft_cx *cx, loft_hh *h, loft_ref c) {
+    if (!loft_hh_ready(cx, h, c)) return loft_hash_len(cx, c);
+    return loft_u32(cx, &cx->stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
 }
 
 /* `loft_h_remove_at` on a ready handle's table (`@FR-Col-Remove`): bucket `hole` is emptied and
  * the probe run behind it shifted back by tag.  The handle is `ok` only for a tagged
  * power-of-two table, so every slot carries its tag and its home is `tag & mask`: the count,
  * seed and slot width the general removal decodes again are the handle's. */
-LOFT_HOT_INLINE void loft_hh_shift_out(const loft_hh *h, loft_store_t *s, uint32_t hole) {
-    uint8_t *b = loft_at(s, h->claim, LOFT_H_BUCKET0);
+LOFT_HOT_INLINE void loft_hh_shift_out(loft_cx *cx, const loft_hh *h, loft_store_t *s, uint32_t hole) {
+    uint8_t *b = loft_at(cx, s, h->claim, LOFT_H_BUCKET0);
     uint32_t m = h->mask, zero = 0;
     memcpy(b + (size_t) hole * 8, &zero, 4);
     for (uint32_t i = 0, idx = (hole + 1) & m; i < h->count; i++, idx = (idx + 1) & m) {
@@ -1924,56 +1969,56 @@ LOFT_HOT_INLINE void loft_hh_shift_out(const loft_hh *h, loft_store_t *s, uint32
             hole = idx;
         }
     }
-    loft_set_u32(s, h->claim, LOFT_H_LEN_FLD, loft_u32(s, h->claim, LOFT_H_LEN_FLD) - 1);
+    loft_set_u32(cx, s, h->claim, LOFT_H_LEN_FLD, loft_u32(cx, s, h->claim, LOFT_H_LEN_FLD) - 1);
 }
 
 /* `loft_hash_remove_i64` through handle `h`.  A removal changes no table's shape, so the handle
  * stays live after it. */
-LOFT_HOT_INLINE void loft_hh_remove_i64(loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key,
+LOFT_HOT_INLINE void loft_hh_remove_i64(loft_cx *cx, loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key,
                                const loft_key *keys, int nk, int view) {
-    if (!loft_hh_ready(h, c)) {
-        loft_hash_remove_i64(T, elem, c, key, keys, nk, view);
+    if (!loft_hh_ready(cx, h, c)) {
+        loft_hash_remove_i64(cx, T, elem, c, key, keys, nk, view);
         return;
     }
-    loft_store_t *s = &loft_stores[c.store_nr];
-    if (LOFT_WRITE_REFUSED(s) || loft_u32(s, h->claim, LOFT_H_LEN_FLD) == 0) {
-        loft_hash_remove_i64(T, elem, c, key, keys, nk, view);
+    loft_store_t *s = &cx->stores[c.store_nr];
+    if (LOFT_WRITE_REFUSED(s) || loft_u32(cx, s, h->claim, LOFT_H_LEN_FLD) == 0) {
+        loft_hash_remove_i64(cx, T, elem, c, key, keys, nk, view);
         return;
     }
     uint32_t index = 0, val = 0;
-    loft_ref e = loft_hh_probe_i64(h, s, key, keys[0].pos, &index, &val);
+    loft_ref e = loft_hh_probe_i64(cx, h, s, key, keys[0].pos, &index, &val);
 #ifdef LOFT_KEYED_VERIFY
-    loft_hh_verify_found("removal", c, keys, key, e);
+    loft_hh_verify_found(cx, "removal", c, keys, key, e);
 #endif
     if (e.rec == 0) return;
-    loft_forget_in_scratches(c, e);
-    loft_hh_shift_out(h, s, index);
-    loft_h_release_removed(T, elem, c, view, e, val);
+    loft_forget_in_scratches(cx, c, e);
+    loft_hh_shift_out(cx, h, s, index);
+    loft_h_release_removed(cx, T, elem, c, view, e, val);
 }
 
 /* `loft_hash_insert` through handle `h`: the one-probe insert on the handle's table, the general
  * insert for everything else (a growth there gives the store a new generation). */
-LOFT_HOT_INLINE loft_ref loft_hh_insert(loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec,
+LOFT_HOT_INLINE loft_ref loft_hh_insert(loft_cx *cx, loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec,
                                const loft_key *keys, int nk, int secondary) {
-    if (rec.rec != 0 && rec.store_nr == c.store_nr && loft_h_int_key(keys, nk) && loft_hh_ready(h, c)) {
-        loft_store_t *s = &loft_stores[c.store_nr];
+    if (rec.rec != 0 && rec.store_nr == c.store_nr && loft_h_int_key(cx, keys, nk) && loft_hh_ready(cx, h, c)) {
+        loft_store_t *s = &cx->stores[c.store_nr];
         loft_hents ents = h->ents;
-        if (!LOFT_WRITE_REFUSED(s) && loft_h_insert_int_at(c, s, h->claim, h->count, h->seed, &ents, rec, keys)) {
-            loft_h_verify_filed(c, rec, keys);
+        if (!LOFT_WRITE_REFUSED(s) && loft_h_insert_int_at(cx, c, s, h->claim, h->count, h->seed, &ents, rec, keys)) {
+            loft_h_verify_filed(cx, c, rec, keys);
             /* As `loft_hash_insert`'s one-probe path: no inline table, so `rec` is the entry. */
-            loft_h_filed = rec;
-            return loft_ref_null();
+            cx->h_filed = rec;
+            return loft_ref_null(cx);
         }
     }
-    return loft_hash_insert(T, elem, c, rec, keys, nk, secondary);
+    return loft_hash_insert(cx, T, elem, c, rec, keys, nk, secondary);
 }
 
 /* Stores::reserve_hash: buckets for `count` entries (`@PLN135` arc C). */
-static void loft_hash_reserve(const loft_tdesc *T, uint16_t tp, loft_ref c, int64_t count) {
+static void loft_hash_reserve(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref c, int64_t count) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return;
     const loft_tdesc *d = &T[tp];
-    uint32_t stride = T[d->elem].linked ? 0 : loft_h_stride_for(T[d->elem].size);
-    loft_h_reserve(c, count, stride, d->keys, d->nk);
+    uint32_t stride = T[d->elem].linked ? 0 : loft_h_stride_for(cx, T[d->elem].size);
+    loft_h_reserve(cx, c, count, stride, d->keys, d->nk);
 }
 
 /* Stores::copy_claims_hash_body: the destination emptied, sized for every entry, and each entry
@@ -1991,22 +2036,22 @@ static int loft_lref_by_place(const void *a, const void *b) {
     return x->pos < y->pos ? -1 : x->pos > y->pos;
 }
 
-static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
+static void loft_hash_copy_claims(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
     const loft_tdesc *d = &T[tp];
-    loft_store_t *fs = loft_store_of(from);
-    uint32_t cur = loft_u32(fs, from.rec, from.pos);
+    loft_store_t *fs = loft_store_of(cx, from);
+    uint32_t cur = loft_u32(cx, fs, from.rec, from.pos);
     /* An absent collection is copied absent (`copy_absent_collection`). */
-    loft_set_u32(loft_store_of(to), to.rec, to.pos, cur == 0xFFFFFFFFu ? cur : 0);
+    loft_set_u32(cx, loft_store_of(cx, to), to.rec, to.pos, cur == 0xFFFFFFFFu ? cur : 0);
     if (cur == 0 || cur == 0xFFFFFFFFu) return;
-    int owned = loft_h_stride(fs, cur) != 0, inl = loft_h_is_inline(fs, cur);
+    int owned = loft_h_stride(cx, fs, cur) != 0, inl = loft_h_is_inline(cx, fs, cur);
     uint32_t n, kept = 0;
-    loft_hent *all = loft_h_entries_of(from, &n);
+    loft_hent *all = loft_h_entries_of(cx, from, &n);
     for (uint32_t i = 0; i < n; i++) {
         if (owned && !all[i].ours) continue;
         all[kept++] = all[i];
     }
     if (!inl && kept) qsort(all, kept, sizeof *all, loft_ref_by_place);
-    loft_hash_reserve(T, tp, to, kept);
+    loft_hash_reserve(cx, T, tp, to, kept);
     uint32_t size = T[d->elem].size;
     /* A LINKED entry is a record of its own, and claims made in the source's order need not
      * ascend: the allocator puts each where it fits best (`@FR-H-Exact`).  So every record is
@@ -2017,14 +2062,14 @@ static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref fro
     if (linked && kept) {
         recs = (loft_ref *) malloc((size_t) kept * sizeof *recs);
         if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (uint32_t i = 0; i < kept; i++) recs[i] = loft_hash_entry(to, size, 1);
+        for (uint32_t i = 0; i < kept; i++) recs[i] = loft_hash_entry(cx, to, size, 1);
         qsort(recs, kept, sizeof *recs, loft_lref_by_place);
     }
     for (uint32_t i = 0; i < kept; i++) {
-        loft_ref e = linked ? recs[i] : loft_hash_entry(to, size, 0);
-        loft_copy_bytes(e, 0, all[i].e, 0, size);
-        loft_copy_claims(T, d->elem, all[i].e, e);
-        (void) loft_h_add(to, e, d->keys, d->nk);
+        loft_ref e = linked ? recs[i] : loft_hash_entry(cx, to, size, 0);
+        loft_copy_bytes(cx, e, 0, all[i].e, 0, size);
+        loft_copy_claims(cx, T, d->elem, all[i].e, e);
+        (void) loft_h_add(cx, to, e, d->keys, d->nk);
     }
     free(recs);
     free(all);
@@ -2033,29 +2078,29 @@ static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref fro
 /* Stores::remove_claims on a hash field: every entry it owns released, then its storage — the
  * arena's chunks, the table — and the field emptied.  A `borrowed` view releases its own
  * storage only (`borrowed_spine`). */
-static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
-    loft_store_t *s = loft_store_of(r);
-    uint32_t cur = loft_u32(s, r.rec, r.pos);
+static void loft_hash_remove_claims(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
+    loft_store_t *s = loft_store_of(cx, r);
+    uint32_t cur = loft_u32(cx, s, r.rec, r.pos);
     const loft_tdesc *d = &T[tp];
     if (cur == 0xFFFFFFFFu || cur == 0) {
-        loft_set_u32(s, r.rec, r.pos, 0);
+        loft_set_u32(cx, s, r.rec, r.pos, 0);
         return;
     }
-    int owned = loft_h_stride(s, cur) != 0;
+    int owned = loft_h_stride(cx, s, cur) != 0;
     /* release_plain_hash: entries that own nothing go back with the table's own storage. */
     if (!borrowed && !(owned && !T[d->elem].owns_heap)) {
         uint32_t n;
-        loft_hent *all = loft_h_entries_of(r, &n);
+        loft_hent *all = loft_h_entries_of(cx, r, &n);
         for (uint32_t i = 0; i < n; i++) {
             if (owned && !all[i].ours) continue;
-            loft_remove_claims(T, d->elem, all[i].e);
-            if (!all[i].ours) loft_st_delete(s, all[i].e.rec);
+            loft_remove_claims(cx, T, d->elem, all[i].e);
+            if (!all[i].ours) loft_st_delete(cx, s, all[i].e.rec);
         }
         free(all);
     }
-    if (owned && !loft_h_is_inline(s, cur)) loft_ar_release(s, cur);
-    loft_st_delete(s, cur);
-    loft_set_u32(s, r.rec, r.pos, 0);
+    if (owned && !loft_h_is_inline(cx, s, cur)) loft_ar_release(cx, s, cur);
+    loft_st_delete(cx, s, cur);
+    loft_set_u32(cx, s, r.rec, r.pos, 0);
 }
 
 /* ── iteration scratches (Stores::build_ref_scratch / build_rec_scratch, vector::step_ordered)
@@ -2066,170 +2111,163 @@ static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r
  * collection mid-walk reads 0 there (`forget_in_scratches`, loft#1710), which a step passes. */
 #define LOFT_SCRATCH_MARK 0x5C4A0000u
 
-typedef struct { loft_ref source, scratch; } loft_live_scratch;
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-static LOFT_TLS loft_live_scratch *loft_scratches = 0;
-static LOFT_TLS int loft_nscratches = 0, loft_scratch_cap = 0;
+typedef struct loft_live_scratch { loft_ref source, scratch; } loft_live_scratch;
 
-static void loft_forget_in_scratches(loft_ref c, loft_ref e) {
-    for (int i = 0; i < loft_nscratches; i++) {
-        loft_live_scratch *w = &loft_scratches[i];
+static void loft_forget_in_scratches(loft_cx *cx, loft_ref c, loft_ref e) {
+    for (int i = 0; i < cx->nscratches; i++) {
+        loft_live_scratch *w = &cx->scratches[i];
         if (w->source.store_nr != c.store_nr || w->source.rec != c.rec || w->source.pos != c.pos) continue;
-        loft_store_t *s = loft_store_of(w->scratch);
-        uint32_t vec = loft_u32(s, w->scratch.rec, 4), len = loft_u32(s, vec, 4);
-        uint32_t width = loft_u32(s, w->scratch.rec, 12) & 0xFFFFu;
+        loft_store_t *s = loft_store_of(cx, w->scratch);
+        uint32_t vec = loft_u32(cx, s, w->scratch.rec, 4), len = loft_u32(cx, s, vec, 4);
+        uint32_t width = loft_u32(cx, s, w->scratch.rec, 12) & 0xFFFFu;
         for (uint32_t j = 0; j < len; j++) {
-            if (loft_u32(s, vec, 8 + j * width) == e.rec && (width == 4 || loft_u32(s, vec, 12 + j * 8) == e.pos))
-                loft_set_u32(s, vec, 8 + j * width, 0);
+            if (loft_u32(cx, s, vec, 8 + j * width) == e.rec && (width == 4 || loft_u32(cx, s, vec, 12 + j * 8) == e.pos))
+                loft_set_u32(cx, s, vec, 8 + j * width, 0);
         }
     }
 }
 
 /* The snapshot of `n` elements `width` bytes each — (record, offset) pairs, or record numbers. */
-static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *recs, uint32_t n, uint32_t width) {
-    loft_store_t *s = loft_store_of(c);
+static loft_ref loft_scratch_of(loft_cx *cx, loft_ref c, const loft_ref *e, const uint32_t *recs, uint32_t n, uint32_t width) {
+    loft_store_t *s = loft_store_of(cx, c);
     /* `build_rec_scratch`: a read-only (an exposed) source cannot take a claim, so its snapshot
      * gets a writable store of its own, freed with it. */
     uint16_t home = c.store_nr;
     if (s->read_only) {
-        loft_ref fresh = loft_ref_null();
-        loft_database(&fresh, 1);
+        loft_ref fresh = loft_ref_null(cx);
+        loft_database(cx, &fresh, 1);
         home = fresh.store_nr;
-        s = &loft_stores[home];
+        s = &cx->stores[home];
     }
     uint32_t words = (n * width + 8 + 7) / 8;
-    uint32_t vec = loft_st_claim(s, words < 1 ? 1 : words);
-    uint32_t header = loft_st_claim(s, 2);
-    loft_set_u32(s, vec, 4, n);
+    uint32_t vec = loft_st_claim(cx, s, words < 1 ? 1 : words);
+    uint32_t header = loft_st_claim(cx, s, 2);
+    loft_set_u32(cx, s, vec, 4, n);
     for (uint32_t i = 0; i < n; i++) {
         if (width == 4) {
-            loft_set_u32(s, vec, 8 + i * 4, recs[i]);
+            loft_set_u32(cx, s, vec, 8 + i * 4, recs[i]);
         } else {
-            loft_set_u32(s, vec, 8 + i * 8, e[i].rec);
-            loft_set_u32(s, vec, 12 + i * 8, e[i].pos);
+            loft_set_u32(cx, s, vec, 8 + i * 8, e[i].rec);
+            loft_set_u32(cx, s, vec, 12 + i * 8, e[i].pos);
         }
     }
-    loft_set_u32(s, header, 4, vec);
-    loft_set_u32(s, header, 8, c.store_nr);
-    loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
+    loft_set_u32(cx, s, header, 4, vec);
+    loft_set_u32(cx, s, header, 8, c.store_nr);
+    loft_set_u32(cx, s, header, 12, LOFT_SCRATCH_MARK | width);
     loft_ref x = { home, header, 4, 0 };
-    if (loft_nscratches == loft_scratch_cap) {
-        loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
-        loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
-        if (!loft_scratches) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->nscratches == cx->scratch_cap) {
+        cx->scratch_cap = cx->scratch_cap ? cx->scratch_cap * 2 : 8;
+        cx->scratches = (loft_live_scratch *) realloc(cx->scratches, (size_t) cx->scratch_cap * sizeof *cx->scratches);
+        if (!cx->scratches) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_scratches[loft_nscratches].source = c;
-    loft_scratches[loft_nscratches].scratch = x;
-    loft_nscratches++;
+    cx->scratches[cx->nscratches].source = c;
+    cx->scratches[cx->nscratches].scratch = x;
+    cx->nscratches++;
     return x;
 }
 
-static loft_ref loft_ref_scratch(loft_ref c, const loft_ref *e, uint32_t n) { return loft_scratch_of(c, e, 0, n, 8); }
+static loft_ref loft_ref_scratch(loft_cx *cx, loft_ref c, const loft_ref *e, uint32_t n) { return loft_scratch_of(cx, c, e, 0, n, 8); }
 
-static loft_ref loft_rec_scratch(loft_ref c, const uint32_t *recs, uint32_t n) { return loft_scratch_of(c, 0, recs, n, 4); }
+static loft_ref loft_rec_scratch(loft_cx *cx, loft_ref c, const uint32_t *recs, uint32_t n) { return loft_scratch_of(cx, c, 0, recs, n, 4); }
 
 /* n_hash_sorted / n_hash_unsorted (Stores::build_hash_sorted_vec / build_hash_unsorted_vec):
  * the walk's snapshot, in key order or in slot order. */
-static loft_ref loft_hash_walk(loft_ref c, const loft_key *keys, int nk, int by_slot) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+static loft_ref loft_hash_walk(loft_cx *cx, loft_ref c, const loft_key *keys, int nk, int by_slot) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
     uint32_t n;
-    loft_ref *e = loft_hash_refs(c, keys, nk, by_slot, &n);
-    loft_ref x = loft_ref_scratch(c, e, n);
+    loft_ref *e = loft_hash_refs(cx, c, keys, nk, by_slot, &n);
+    loft_ref x = loft_ref_scratch(cx, c, e, n);
     free(e);
     return x;
 }
 
-static loft_ref loft_hash_sorted(loft_ref c, const loft_key *keys, int nk) { return loft_hash_walk(c, keys, nk, 0); }
+static loft_ref loft_hash_sorted(loft_cx *cx, loft_ref c, const loft_key *keys, int nk) { return loft_hash_walk(cx, c, keys, nk, 0); }
 
 /* hash::holds_records: does the table hold a store RECORD as an entry (a linked type's, or one
  * handed in already built)?  Its slot value is a record number, which follows the allocator. */
-static int loft_h_holds_records(loft_ref c) {
+static int loft_h_holds_records(loft_cx *cx, loft_ref c) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(c);
-    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    loft_store_t *s = loft_store_of(cx, c);
+    uint32_t claim = loft_collection_rec(cx, s, c.rec, c.pos);
     if (claim == 0) return 0;
-    loft_hhdr h = loft_h_hdr(s, claim);
+    loft_hhdr h = loft_h_hdr(cx, s, claim);
     if (h.inl) return 0;
     if (h.stride == 0) return 1;
     for (uint32_t i = 0; i < h.count; i++)
-        if (loft_u32(s, claim, LOFT_H_BUCKET0 + i * h.sb) & LOFT_H_SLOT_RECORD) return 1;
+        if (loft_u32(cx, s, claim, LOFT_H_BUCKET0 + i * h.sb) & LOFT_H_SLOT_RECORD) return 1;
     return 0;
 }
 
 /* Stores::build_hash_unsorted_vec: slot order, or key order for a table holding store records
  * (`@FR-Col-Unordered`). */
-static loft_ref loft_hash_unsorted(loft_ref c, const loft_key *keys, int nk) {
-    return loft_hash_walk(c, keys, nk, !loft_h_holds_records(c));
+static loft_ref loft_hash_unsorted(loft_cx *cx, loft_ref c, const loft_key *keys, int nk) {
+    return loft_hash_walk(cx, c, keys, nk, !loft_h_holds_records(cx, c));
 }
 
 /* OpFreeScratch (Stores::free_iteration_scratch): the snapshot's two records go back. */
-static void loft_free_scratch(loft_ref x) {
+static void loft_free_scratch(loft_cx *cx, loft_ref x) {
     if (x.store_nr == 0xFFFF || x.rec <= 1) return;
-    for (int i = 0; i < loft_nscratches; i++) {
-        if (loft_scratches[i].scratch.store_nr != x.store_nr || loft_scratches[i].scratch.rec != x.rec) continue;
-        loft_scratches[i] = loft_scratches[--loft_nscratches];
+    for (int i = 0; i < cx->nscratches; i++) {
+        if (cx->scratches[i].scratch.store_nr != x.store_nr || cx->scratches[i].scratch.rec != x.rec) continue;
+        cx->scratches[i] = cx->scratches[--cx->nscratches];
         break;
     }
-    loft_store_t *s = loft_store_of(x);
-    if (!s->live || loft_st_i32(s, x.rec, 0) < 2 || (loft_u32(s, x.rec, 12) & 0xFFFF0000u) != 0x5C4A0000u) return;
-    uint32_t vec = loft_u32(s, x.rec, 4);
+    loft_store_t *s = loft_store_of(cx, x);
+    if (!s->live || loft_st_i32(cx, s, x.rec, 0) < 2 || (loft_u32(cx, s, x.rec, 12) & 0xFFFF0000u) != 0x5C4A0000u) return;
+    uint32_t vec = loft_u32(cx, s, x.rec, 4);
     /* A snapshot in a store of its own goes with it. */
-    if (loft_u32(s, x.rec, 8) != x.store_nr) {
+    if (loft_u32(cx, s, x.rec, 8) != x.store_nr) {
         loft_ref whole = { x.store_nr, 1, 8, 0 };
-        loft_free_ref(whole);
+        loft_free_ref(cx, whole);
         return;
     }
-    loft_st_delete(s, x.rec);
-    if (vec != x.rec && vec != 0) loft_st_delete(s, vec);
+    loft_st_delete(cx, s, x.rec);
+    if (vec != x.rec && vec != 0) loft_st_delete(cx, s, vec);
 }
 
 /* ── walks ──
  * A walk's state is the range of positions still to visit, [lo, hi): a forward step takes lo,
  * a reverse one hi - 1. */
 
-static int64_t loft_iter_range(uint32_t lo, uint32_t hi) {
+static int64_t loft_iter_range(loft_cx *cx, uint32_t lo, uint32_t hi) {
     if (hi < lo) hi = lo;
     return (int64_t) (((uint64_t) hi << 32) | lo);
 }
 
 /* The position the walk visits next, or -1 when it is done. */
-static int64_t loft_iter_next(int64_t *state, int reverse) {
+static int64_t loft_iter_next(loft_cx *cx, int64_t *state, int reverse) {
     uint64_t st = (uint64_t) *state;
     uint32_t lo = (uint32_t) st, hi = (uint32_t) (st >> 32);
     if (lo >= hi) return -1;
     int64_t at;
     if (reverse) { hi--; at = hi; }
     else { at = lo; lo++; }
-    *state = loft_iter_range(lo, hi);
+    *state = loft_iter_range(cx, lo, hi);
     return at;
 }
 
 /* OpIterate over a walk's snapshot (on 4, loft_ref_scratch): every pair. */
-static int64_t loft_scratch_iterate(loft_ref x) {
+static int64_t loft_scratch_iterate(loft_cx *cx, loft_ref x) {
     if (x.store_nr == 0xFFFF || x.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(x);
-    return loft_iter_range(0, loft_u32(s, loft_u32(s, x.rec, 4), 4));
+    loft_store_t *s = loft_store_of(cx, x);
+    return loft_iter_range(cx, 0, loft_u32(cx, s, loft_u32(cx, s, x.rec, 4), 4));
 }
 
 /* OpStep over a snapshot (vector::step_ordered): the next entry still in the collection, in
  * the entries' store. */
-static loft_ref loft_scratch_step(int64_t *state, loft_ref x, int reverse) {
-    if (x.store_nr == 0xFFFF || x.rec == 0) return loft_ref_null();
+static loft_ref loft_scratch_step(loft_cx *cx, int64_t *state, loft_ref x, int reverse) {
+    if (x.store_nr == 0xFFFF || x.rec == 0) return loft_ref_null(cx);
     for (;;) {
-        int64_t at = loft_iter_next(state, reverse);
-        if (at < 0) return loft_ref_null();
-        loft_store_t *s = loft_store_of(x);
-        uint32_t vec = loft_u32(s, x.rec, 4), width = loft_u32(s, x.rec, 12) & 0xFFFFu;
-        uint32_t r = loft_u32(s, vec, 8 + (uint32_t) at * width);
+        int64_t at = loft_iter_next(cx, state, reverse);
+        if (at < 0) return loft_ref_null(cx);
+        loft_store_t *s = loft_store_of(cx, x);
+        uint32_t vec = loft_u32(cx, s, x.rec, 4), width = loft_u32(cx, s, x.rec, 12) & 0xFFFFu;
+        uint32_t r = loft_u32(cx, s, vec, 8 + (uint32_t) at * width);
         if (r == 0) continue;
         loft_ref e = {0};
-        e.store_nr = (uint16_t) loft_u32(s, x.rec, 8);
+        e.store_nr = (uint16_t) loft_u32(cx, s, x.rec, 8);
         e.rec = r;
-        e.pos = width == 8 ? loft_u32(s, vec, 12 + (uint32_t) at * 8) : 8;
+        e.pos = width == 8 ? loft_u32(cx, s, vec, 12 + (uint32_t) at * 8) : 8;
         return e;
     }
 }

@@ -14,11 +14,6 @@ pub mod compile {
     pub use crate::compile::{byte_code, byte_code_with_store, close_program, show_code};
 }
 
-/// The standard library's compiled bodies, routed at start-up.
-pub mod compiled_stdlib {
-    pub use crate::compiled_stdlib::{mark, names};
-}
-
 /// Breakpoints, stepping and watches.
 pub mod debugger {
     pub use crate::debugger::{BreakHit, INTERRUPT, STOPPED_BY_INTERRUPT, StepMode, WatchHit};
@@ -26,13 +21,10 @@ pub mod debugger {
 
 /// Native extensions: loading a library's compiled functions and wiring them to calls.
 pub mod extensions {
-    #[cfg(feature = "registry")]
-    pub use crate::extensions::prebuild_installed_natives;
     pub use crate::extensions::{
-        auto_build_native, auto_build_native_target, browser_target, c_target, current_lib_idx,
-        load_all, native_target_root, platform_lib_name, preload_native_libs,
-        reachable_unimplemented_natives, resolve_native_impl_symbols, resolve_native_lib,
-        set_browser_target, set_c_target, wire_native_fns, wire_native_fns_for,
+        browser_target, c_target, load_all, native_target_root, platform_lib_name,
+        preload_native_libs, reachable_unimplemented_natives, resolve_native_impl_symbols,
+        resolve_native_lib, set_browser_target, set_c_target, wire_native_fns, wire_native_fns_for,
         wire_shared_native_fns,
     };
 }
@@ -44,6 +36,8 @@ pub mod introspect {
 
 /// Live code replacement in a running program.
 pub mod live_dispatch {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::live_dispatch::arm_interp_control;
     pub use crate::live_dispatch::wasm_host_log;
 }
 
@@ -66,7 +60,7 @@ pub mod profiler {
 /// The bytecode machine: its state, execution and run-time values.
 pub mod state {
     pub use crate::state::{
-        HostRetKind, HostReturn, LocalState, STRING_NULL, State, WorkerArg, text_leak_violations,
+        HostRetKind, HostReturn, LocalState, State, WorkerArg, text_leak_violations,
         text_timeline_summary,
     };
     pub(crate) use crate::state::{loft_float_literal, loft_text_literal};

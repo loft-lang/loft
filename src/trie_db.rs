@@ -95,11 +95,11 @@ pub(crate) fn tree_bytes(b: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Owned(out)
 }
 
-/// Is this a NULL key?  A null text reads as `STRING_NULL` (`(L-Null-Text)`), and a null key
+/// Is this a NULL key (`(L-Null-Text)`, `text_null::is_null_bytes`)?  A null key
 /// is filed in the tree's [`rt::SLOT`] instead of the tree: first in a walk, found by an
 /// exact lookup, and in no prefix slice — a null text begins with nothing (`@FR-E-NullArg`).
 fn is_null_key(b: &[u8]) -> bool {
-    b == crate::store::STRING_NULL.as_bytes()
+    crate::text_null::is_null_bytes(b)
 }
 
 /// The record in the null slot of `tree`, `0` when none (or no tree).
@@ -1263,9 +1263,9 @@ mod pages {
 
         /// One query's node reads and its results, in one recording window.
         fn query_touch(&self, pre: &str) -> (BTreeSet<u32>, Vec<u32>) {
-            rt::touch_begin();
+            rt::touch_begin(&self.store);
             let hits = self.query(pre);
-            (rt::touch_end(), hits)
+            (rt::touch_end(&self.store), hits)
         }
     }
 

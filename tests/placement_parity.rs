@@ -883,27 +883,23 @@ fn a_placed_library_sees_the_same_working_directory() {
     assert_indistinguishable("a relative path from a placed library", &inproc, &placed);
 }
 
-/// @PLN119 arc C — the @PLN94 ownership oracle over a placed program.
+/// @PLN119 arc C — the store records' lifetime report over a placed program.
 ///
 /// **Read what this proves carefully, because the obvious reading is wrong.**
-/// The oracle runs inside `scopes::check`, which happens BEFORE placement marks
-/// anything, so it sees byte-identical IR under both placements. Requiring the
-/// two to agree would therefore be an oracle agreeing with itself — the shape
-/// the plan's own method warns about. That is why arc C's ownership content is
-/// the delivery-lens cross-check (`a_return_that_borrows_its_argument_is_not_placed`)
-/// and not this.
+/// The report runs at the program's close, which reads the same IR under both
+/// placements, so requiring the two to agree would be a check agreeing with
+/// itself.  That is why arc C's ownership content is the delivery-lens
+/// cross-check (`a_return_that_borrows_its_argument_is_not_placed`) and not this.
 ///
-/// What this DOES pin is worth having anyway, and it is two things:
+/// What this DOES pin is worth having anyway:
 ///
-/// * the oracle is clean over a program that uses a placed library at all — a
-///   future change to marking that left the consumer's IR ownership-inconsistent
-///   would fire here;
-/// * under `process` the oracle runs in TWO processes over two programs, because
-///   the worker parses and checks the library itself. Placement therefore gets
-///   MORE ownership checking than in-process, not less, and both have to be
-///   clean.
+/// * the report is clean over a program that uses a placed library at all — a
+///   future change to marking that left the consumer's store lifetimes
+///   inconsistent would fire here;
+/// * under `process` the worker compiles the library itself, so both programs'
+///   reports have to be clean.
 #[test]
-fn the_ownership_oracle_is_clean_over_a_placed_program() {
+fn the_lifetime_report_is_clean_over_a_placed_program() {
     let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
                    \x20   out: vector<P> = [];\n\
@@ -926,7 +922,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
                     \x20   p = make_p(3);\n\
                     \x20   println(\"o {sum_v(v)} {bump(p)} {p.x}\");\n\
                     }\n";
-    let root = scratch("oracle");
+    let root = scratch("lifetime");
     let consumer_path = root.join("consumer.loft");
     fa::write(&consumer_path, consumer).expect("write consumer");
     for mode in ["inproc", "process"] {
@@ -938,22 +934,22 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
             .arg(&consumer_path)
             .env("LOFT_TIMEOUT", "60")
             .env("LOFT_NO_NATIVE_LIBS", "1")
-            .env("LOFT_OWN_ORACLE", "check")
+            .env("LOFT_LIFETIME_CHECK", "-")
             .output()
             .expect("failed to invoke loft");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("OWN-CHECK"),
-            "the oracle did not run under {mode} — this test would pass on \
+            stderr.lines().any(|l| l.starts_with("# ")),
+            "the lifetime report did not run under {mode} — this test would pass on \
              silence: {stderr}"
         );
         let red: Vec<&str> = stderr
             .lines()
-            .filter(|l| l.contains("OWN-CHECK") && !l.contains(" 0 RED") && !l.contains("clean"))
+            .filter(|l| !l.starts_with('#') && l.matches('\t').count() >= 5)
             .collect();
         assert!(
             red.is_empty(),
-            "the ownership oracle reported findings under {mode}: {red:?}"
+            "the lifetime report found problems under {mode}: {red:?}"
         );
         assert_eq!(
             out.status.code(),

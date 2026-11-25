@@ -35,8 +35,8 @@ fn run(args: &[&str], prog: &Path) -> (bool, String) {
     )
 }
 
-fn rustc_available() -> bool {
-    loft::platform::process::harness_command("rustc")
+fn cc_available() -> bool {
+    loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok()
@@ -49,7 +49,7 @@ fn assert_both(prog: &Path, want: &str) {
         out.contains(want),
         "interpret missing {want:?}; got {out:?}"
     );
-    if rustc_available() {
+    if cc_available() {
         let (ok, out) = run(&["--native"], prog);
         assert!(ok, "native run failed; stdout={out:?}");
         assert!(out.contains(want), "native missing {want:?}; got {out:?}");

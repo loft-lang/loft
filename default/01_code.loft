@@ -186,7 +186,7 @@ fn OpConstFalse() -> boolean;
 // null stays a null.  The word itself would be a present text no reader can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
 #cold
-#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"\\0\"}} else {{\"false\"}}"
+#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{crate::text_null::null_str()}} else {{\"false\"}}"
 #loft"s.push_bool_text(v1);"
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
@@ -1104,12 +1104,12 @@ fn OpConstText(_value: const text) -> text;
 #rust"s.string_from_code();"
 #loft"s.string_from_code(); #arm guard(sp <= top - 8): tmp0 = crt::peek_u8(cbase, ip); crt::stack_str_held(stk, sp, cbase, ip + 1, tmp0); ip += tmp0 + 1; sp += 16;"
 fn OpConvTextFromNull() -> text;
-#rust"Str::new(crate::state::STRING_NULL)"
+#rust"Str::null()"
 #loft"s.push_null_text();"
 // @FR-L-Null-Text — the absent text is stored as the `STRING_NULL` bytes, and a reader tests
 // the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> __word;
-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
+#rust"{{ let __t = @v1; if crate::text_null::is_null(__t) {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
 #loft"if v1 == null {{ 0 }} else {{ len(v1!) }} #arm crt::view_length(stk, v1_pos)"
 /// Number of characters (Unicode code points) in the text — the human
 /// count, as in every mainstream language. For a byte length (bounds checks, the
@@ -1122,7 +1122,7 @@ pub fn len(self: text) -> integer {
 // @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
 fn OpSizeText(v1: text) -> __word;
 #cold
-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
+#rust"{{ let __t = @v1; if crate::text_null::is_null(__t) {{ 0 }} else {{ __t.len() as i64 }} }}"
 #loft"if v1 == null {{ 0 }} else {{ v1!.size() }} #arm crt::view_size(stk, v1_pos)"
 /// Number of bytes in the text. This is the bound for byte-positioned
 /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
@@ -1140,7 +1140,7 @@ pub fn len(self: character) -> integer {
 #pure
 
 fn OpConvBoolFromText(v1: text) -> boolean;
-#rust"@v1 != crate::state::STRING_NULL"
+#rust"!crate::text_null::is_null(@v1)"
 #loft"v1 != null #arm crt::view_some(stk, v1_pos)"
 // Plan-04 Phase B: positional init-op; writes an empty String at
 // the frame slot `stack_pos - pos`.  Does not advance the eval stack.
@@ -1226,7 +1226,7 @@ fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 // The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
-#rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
+#rust"if @v1 == 0 || @v1 == 255 {{Str::null()}} else {{Str::new(s.database.enum_val(@enum_tp, @v1))}}"
 #loft"s.push_enum_text(v1, enum_tp);"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
@@ -1448,7 +1448,7 @@ fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_short(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT, v1.store_nr, v1.rec, v1.pos, fld, min) }}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
-#rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
+#rust"{{let db = @v1; if db.rec == 0 {{ Str::null() }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
 #loft"s.put_field_text(v1, fld); #arm if v1.rec == 0 {{ crt::stack_str_null(stk, sp); }} else {{ crt::stack_str_of_field(stk, sp, v1.store_nr, v1.rec, v1.pos, fld); }} sp += 16;"
 fn OpSetInt(v1: reference, fld: const u16, val: __word);
 #rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
@@ -1531,7 +1531,7 @@ fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
 #loft"if v1.rec == 0 {{ null }} else {{ crt::get_w(crt::W_SHORT_RAW, v1.store_nr, v1.rec, v1.pos, fld, min) ?? (65535 + min) }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
-#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#rust"{{let db = @v1; let s_val = crate::text_null::own(@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::set_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }} #arm if v1.rec != 0 {{ crt::set_text_view(v1.store_nr, v1.rec, v1.pos, fld, stk, val_pos, false); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
 // the slot already holds 0 or a text block it owns, so the block is written over when `t`
@@ -1539,7 +1539,7 @@ fn OpSetText(v1: reference, fld: const u16, val: text);
 // INITIALISING write — a record literal into a fresh, possibly unfilled record — and never
 // reads the slot, because there it can hold bytes that are not a block.
 fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
-#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#rust"{{let db = @v1; let s_val = crate::text_null::own(@val); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 #loft"if v1.rec != 0 {{ crt::refill_text(v1.store_nr, v1.rec, v1.pos, fld, val); }} else {{ s.raise_recoverable(\"a write to an absent record was dropped\"); }}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
@@ -2056,7 +2056,7 @@ pub fn log_fatal(message: text, file: text, line: integer) io#append;
 #impure(host_io)
 fn OpPrint(v1: text) io#append;
 #cold
-#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\ncrate::codegen_runtime::print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
+#rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nstores.print_or_host(@v1);\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::host_print::host_print(@v1);\n#[cfg(feature = \"wasm\")]\nstores.print_or_host(@v1);"
 #loft"print(v1 ?? \"\");"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.
@@ -2076,7 +2076,7 @@ pub fn println(v1: text) io#append {
 /// / progress / summary lines from machine-readable stdout
 /// (JSON, structured data piped to downstream consumers).
 pub fn eprint(v1: text) io#append;
-#rust"crate::codegen_runtime::host_eprint(@v1)"
+#rust"crate::host_print::host_eprint(@v1)"
 #impure(host_io)
 
 /// Writes v followed by a newline to standard ERROR.
@@ -2210,14 +2210,14 @@ fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds
 // null into the slot; otherwise deep-copies like OpCopyRecord.  Interpreter-only —
-// the native backend handles the same case inline in `generation::dispatch`.
+// the C backend emits its own bind inline.
 fn OpCopyRefOrNull(src: reference, pos: const u16, tp: const u16);
 // @PLN85 — bind a `??`-join call return into an owned slot with a runtime
 // arg-aliasing guard.  `witness` is the argument the return may borrow (the
 // ownership oracle's resolved base); `src` is the call result.  Adopts `src` when
 // it is fresh (the owned arm); deep-copies into a fresh store at `pos` when `src`
 // aliases `witness` (the borrow arm) so the append's source-free hits the copy.
-// Interpreter-only — the native backend does the same inline in `generation::dispatch`.
+// Interpreter-only — the C backend does the same inline (`c::body`).
 fn OpBindOrCopy(witness: reference, src: reference, pos: const u16, tp: const u16);
 fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
 #cold
@@ -2287,7 +2287,7 @@ type trie;
 // after `type spatial` so the parameter type resolves.
 fn OpLengthSpatial(r: spatial) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
+#rust"i64::from(crate::radix_db::count(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in a spatial (radix / Morton tree) collection.
 pub fn len(self: const spatial) -> integer {
@@ -2296,7 +2296,7 @@ pub fn len(self: const spatial) -> integer {
 #pure
 fn OpSizeSpatial(r: spatial) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+#rust"i64::from(crate::radix_db::table_bytes(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a spatial index: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
@@ -2309,7 +2309,7 @@ pub fn size(self: const spatial) -> integer {
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
+#rust"i64::from(crate::trie_db::count(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 2)"
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
@@ -2318,7 +2318,7 @@ pub fn len(self: const trie) -> integer {
 #pure
 fn OpSizeTrie(r: trie) -> __word;
 #cold
-#rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+#rust"i64::from(crate::trie_db::table_bytes(&@r, &s.database.allocations))"
 #loft"crt::index_len(r.store_nr, r.rec, r.pos, 3)"
 /// The byte footprint of a trie: its tree's node array, room included.
 /// Allocation-local, as `size` of a hash: the element records are not counted.  0 for

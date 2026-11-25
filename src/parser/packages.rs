@@ -96,7 +96,12 @@ impl Parser {
     /// The entry file of a dependency declared by PATH — `dep = { path = "…" }` relative to
     /// the manifest's directory `d`, or the project's `lib/<dep>` — read from the package's
     /// own manifest and touching nothing else; `None` for a registry dependency.
-    pub(super) fn dep_entry_by_path(d: &std::path::Path, dep: &str, value: &str) -> Option<String> {
+    pub(super) fn dep_entry_by_path(
+        &self,
+        d: &std::path::Path,
+        dep: &str,
+        value: &str,
+    ) -> Option<String> {
         let root = match crate::manifest::extract_path_dep(value) {
             Some(path) => d.join(path),
             None => d.join("lib").join(dep),
@@ -105,7 +110,7 @@ impl Parser {
         if !crate::file_access::exists(&toml) {
             return None;
         }
-        let man = crate::manifest::read_manifest(&toml.to_string_lossy())?;
+        let man = self.read_manifest(&toml.to_string_lossy())?;
         let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
         let entry = root.join(entry);
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
@@ -127,13 +132,8 @@ impl Parser {
         if crate::manifest::extract_path_dep(value).is_some() {
             return None;
         }
-        if let Ok(Some(lock)) = crate::lockfile::read_lockfile(&d.join("loft.lock"))
-            && let Some(pin) = lock.packages.iter().find(|p| p.name == dep)
-        {
-            let root = crate::registry_index::cache_dir().join(format!("{dep}-{}", pin.version));
-            if crate::file_access::exists(root.join("loft.toml")) {
-                return Some(root);
-            }
+        if let Some(root) = Self::locked_dep_root(d, dep, value) {
+            return Some(root);
         }
         let constraints: Vec<String> = crate::manifest::extract_version_req(value)
             .map(|v| vec![v.to_string()])
@@ -159,12 +159,58 @@ impl Parser {
         None
     }
 
+    /// `@C173` — the cached copy of registry dependency `dep` that the lock in `d` pins, when
+    /// it pins one and the copy is there: what a pinned `use` loads, ahead of a same-named
+    /// directory beside the project.  `None` for a path dependency.
+    #[cfg(feature = "registry")]
+    pub(super) fn locked_dep_root(
+        d: &std::path::Path,
+        dep: &str,
+        value: &str,
+    ) -> Option<std::path::PathBuf> {
+        if crate::manifest::extract_path_dep(value).is_some() {
+            return None;
+        }
+        let lock = crate::lockfile::read_lockfile(&d.join("loft.lock")).ok()??;
+        let pin = lock.packages.iter().find(|p| p.name == dep)?;
+        let root = crate::registry_index::cache_dir().join(format!("{dep}-{}", pin.version));
+        crate::file_access::exists(root.join("loft.toml")).then_some(root)
+    }
+
+    #[cfg(not(feature = "registry"))]
+    pub(super) fn locked_dep_root(
+        _d: &std::path::Path,
+        _dep: &str,
+        _value: &str,
+    ) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    /// Read and parse the `loft.toml` at `path` ([`crate::manifest::read_manifest`]), keeping
+    /// what its lexer could not read for [`Self::report_manifest_errors`].  A manifest is read
+    /// from some twenty places of the parse, most of which can only skip what they cannot
+    /// use; reported once the dependencies are resolved, a malformed `loft.toml` reads as
+    /// itself rather than as whatever it failed to declare (a type of the dependency whose
+    /// path it garbled reading as "Undefined type").
+    pub(super) fn read_manifest(&self, path: &str) -> Option<crate::manifest::Manifest> {
+        let m = crate::manifest::read_manifest(path)?;
+        let mut pending = self.manifest_errors.borrow_mut();
+        for e in &m.errors {
+            if !pending.contains(e) {
+                pending.push(e.clone());
+            }
+        }
+        drop(pending);
+        Some(m)
+    }
+
     /// Report the manifests read since the last call that the lexer could not read
-    /// ([`crate::manifest::take_manifest_errors`]), each once per parse, at the manifest's own
-    /// line.  Kept, such a string is a value with `?` where the author's characters were — a
-    /// Windows path's `\a` — and the run then fails on what it should have declared.
+    /// ([`Self::read_manifest`]), each once per parse, at the manifest's own line.  Kept, such
+    /// a string is a value with `?` where the author's characters were — a Windows path's
+    /// `\a` — and the run then fails on what it should have declared.
     pub(super) fn report_manifest_errors(&mut self) {
-        for e in crate::manifest::take_manifest_errors() {
+        let pending = self.manifest_errors.take();
+        for e in pending {
             if self.reported_manifest_errors.contains(&e) {
                 continue;
             }
@@ -181,7 +227,7 @@ impl Parser {
     pub(super) fn lib_path(&mut self, id: &str) -> String {
         // Under the `wasm` feature, VIRT_FS wins over filesystem lookups.
         #[cfg(feature = "wasm")]
-        if crate::wasm::virt_fs_get(&format!("{id}.loft")).is_some() {
+        if self.lexer.page_file(&format!("{id}.loft")).is_some() {
             return format!("{id}.loft");
         }
 
@@ -217,7 +263,7 @@ impl Parser {
         // The rule the guard is for is a stray same-named MODULE FILE (`use server` in a
         // package that also has `server.loft`); a nested package the manifest points at
         // is the opposite case, and it is named by exactly the path being exempted here.
-        let dep_root = Self::declared_path_dep_root(id, cur_dir);
+        let dep_root = self.declared_path_dep_root(id, cur_dir);
         let blocked = |candidate: &str| {
             let cand = std::path::Path::new(candidate);
             let cand = crate::file_access::plain_canonical(cand);
@@ -231,26 +277,60 @@ impl Parser {
                 .is_some_and(|root| cand.starts_with(root))
         };
 
-        let mut f = Self::probe_project_lib(id);
+        // `@C173` — which copy a name loads: what this run says, then what the project
+        // declares, then what merely lies in a directory.
+        //   0. the importing package's own name;
+        //   1. a `--lib` directory of this command line — unless the name is a module beside
+        //      the importing file, which a flag never rebinds;
+        //   2. a `{ path = … }` dependency, a module beside the importing file, the lock's pin;
+        //   3. for a name nothing pins, everything else as before: the working directory's
+        //      and the script's `lib/`, sibling packages, the import directories, `LOFT_LIB`,
+        //      `~/.loft/lib`, the registry.  A pinned name skips them, so a same-named file
+        //      in a directory never replaces the version the lock records.
+        if self.program_scope.is_none() {
+            let entry = self.program_entry.map(crate::lexer::FileName::as_str);
+            self.program_scope = Some(crate::resolution_scope::resolution_scope(
+                entry.unwrap_or(&cur_script),
+            ));
+        }
+        let scope = self
+            .program_scope
+            .clone()
+            .unwrap_or(crate::resolution_scope::ResolutionScope::Bare);
+        let pin = self.pin_for(id, &scope, &cur_script);
+        let mut f = String::new();
         self.probe_own_package(id, cur_dir, &mut f);
+        if !file_exists(&f) && !Self::module_beside(id, cur_dir) {
+            self.probe_flag_lib_dirs(id, &mut f);
+            if file_exists(&f) {
+                self.lib_flag_overrides(id, &f, cur_dir, pin.as_deref());
+            }
+        }
+        self.probe_manifest_path_dep(id, cur_dir, &mut f);
+        self.probe_root_path_dep(id, &cur_script, &mut f);
         if blocked(&f) {
-            f = format!("{id}.loft");
+            f.clear();
+        }
+        if pin.is_some() {
+            self.resolve_pinned(id, cur_dir, &cur_script, &scope, &mut f, &blocked);
+            return f;
+        }
+        if !file_exists(&f) {
+            f = Self::probe_project_lib(id);
         }
         Self::probe_dir_lib(id, cur_dir, &mut f);
         Self::probe_dir_lib(id, base_dir, &mut f);
         if blocked(&f) {
-            f = format!("{id}.loft");
+            f.clear();
         }
-        self.probe_manifest_path_dep(id, cur_dir, &mut f);
-        self.probe_root_path_dep(id, &cur_script, &mut f);
         self.probe_sibling_package(id, cur_dir, &mut f);
         Self::probe_script_sibling_dir(id, &cur_script, &mut f);
         if blocked(&f) {
-            f = format!("{id}.loft");
+            f.clear();
         }
         self.probe_cmdline_lib_dirs(id, &mut f);
         if blocked(&f) {
-            f = format!("{id}.loft");
+            f.clear();
         }
         self.probe_cmdline_lib_dirs_manifest(id, &mut f);
         Self::probe_loft_lib_flat(id, &mut f);
@@ -263,114 +343,148 @@ impl Parser {
         // network about its own name on every run.
         Self::probe_cur_dir_flat(id, cur_dir, &mut f);
         if blocked(&f) {
-            f = format!("{id}.loft");
+            f.clear();
         }
         // loft#968 — everything above resolves from something the project SAYS: a path it
-        // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
-        // follows resolves from the registry, which is a property of the BOX.  So this is
-        // the one line where the two can be told apart.
-        let mut named_by_the_project = file_exists(&f);
-        // @PLN143 arc B — the scope is a property of the PROGRAM, so it is answered ONCE,
-        // here, and handed to each probe that needs it.  Re-deriving it inside a probe
-        // would put the old three-sites-must-agree brittleness back with one extra step
-        // between it and the reader.
-        if self.program_scope.is_none() {
-            let entry = self.program_entry.map(crate::lexer::FileName::as_str);
-            self.program_scope = Some(crate::resolution_scope::resolution_scope(
-                entry.unwrap_or(&cur_script),
-            ));
-        }
-        let scope = self
-            .program_scope
-            .clone()
-            .unwrap_or(crate::resolution_scope::ResolutionScope::Bare);
-        // A sidecar pin belongs on the project's side of that line: `loft pin <script>`
-        // wrote it FOR this script, so it is a declaration the author made — even though
-        // what it resolves to is a package in the registry cache.
-        if self.probe_governing_lock(id, &mut f, &cur_script, &scope)
-            && matches!(
-                scope,
-                crate::resolution_scope::ResolutionScope::PinnedScript(_)
-            )
-        {
-            named_by_the_project = true;
-        }
+        // declares, a `--lib` directory it was given.  What follows resolves from the
+        // registry, which is a property of the BOX.  So this is the one line where the two
+        // can be told apart.
+        let named_by_the_project = file_exists(&f);
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
         self.probe_cache_newest(id, &mut f, &cur_script, &scope);
         if !named_by_the_project && file_exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
         Self::probe_base_dir_flat(id, base_dir, &mut f);
-        if blocked(&f) {
+        if blocked(&f) || f.is_empty() {
             f = format!("{id}.loft");
         }
-        self.lib_flag_outranked(id, &f);
         f
     }
 
-    /// loft#1352 — a `--lib` directory provides `<id>`, and the `use` resolved elsewhere:
-    /// say so.
-    ///
-    /// Resolution is first-wins, and a project-local `lib/`, a declared dependency and the
-    /// script's own directory are all probed before the flag, so the flag never reaches a
-    /// name one of those also provides.  That precedence may well be right — an
-    /// intra-package `use` must not be hijackable by a stray flag — and this reports it
-    /// rather than moving it.  The cost of the silence was a MEASUREMENT: three runs of a
-    /// patched library copy passed through `--lib <copy>` from the repository root, and
-    /// every one scored the unmodified tree, because `lib/` beside the working directory
-    /// answered first and nothing said the flag had lost.
-    ///
-    /// `advice`, not `warning`: the program computes what the language promises for the
-    /// file it resolved.  What is wrong is the operator's belief about WHICH file, and the
-    /// cure is at the command line — run from a directory without a `lib/`, or put the
-    /// override where the resolution looks first.  Both layouts a `--lib` directory can
-    /// carry are checked, the flat `<dir>/<id>.loft` and the packaged
-    /// `<dir>/<id>/src/<id>.loft`, and a flag directory the winner lies INSIDE is not a
-    /// loss.  One report per id; `LOFT_NO_LIB_OUTRANKED` silences it.
-    pub(super) fn lib_flag_outranked(&mut self, id: &str, resolved: &str) {
-        if self.lib_dirs.is_empty() || std::env::var_os("LOFT_NO_LIB_OUTRANKED").is_some() {
-            return;
+    /// `@C173` — the rest of [`Self::lib_path`] for a name the lock pins, after the explicit
+    /// and path-declared copies: a module beside the importing file, then the pin.  Nothing
+    /// that merely lies in a directory answers.
+    fn resolve_pinned(
+        &mut self,
+        id: &str,
+        cur_dir: &str,
+        cur_script: &str,
+        scope: &crate::resolution_scope::ResolutionScope,
+        f: &mut String,
+        blocked: &dyn Fn(&str) -> bool,
+    ) {
+        Self::probe_cur_dir_flat(id, Self::beside_dir(cur_dir), f);
+        if blocked(f) {
+            f.clear();
         }
-        if !file_exists(resolved) {
-            return;
+        let named_by_the_project = file_exists(f);
+        self.probe_governing_lock(id, f, cur_script, scope);
+        self.probe_auto_install(id, f, cur_script, scope);
+        self.probe_cache_newest(id, f, cur_script, scope);
+        // A sidecar pin is a declaration the author made FOR this script (`loft pin`); a
+        // project lock records what the manifest resolved, so a name it pins that the
+        // manifest never declares is still the box's, not the project's (loft#968).
+        if !named_by_the_project
+            && file_exists(f)
+            && !matches!(
+                scope,
+                crate::resolution_scope::ResolutionScope::PinnedScript(_)
+            )
+        {
+            self.undeclared_registry_dep(id, cur_script);
         }
-        let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
-        let winner = canon(resolved);
-        let lib_dirs = self.lib_dirs.clone();
-        let Some((dir, provided)) = lib_dirs.iter().find_map(|l| {
+        // Nothing that lies in a directory answers for a pinned name, not even the
+        // working directory's `<id>.loft` a not-found path would name.
+        if !file_exists(f) {
+            f.clear();
+        }
+    }
+
+    /// `@C173` — the version the governing lock pins `id` to, while no declaration in force
+    /// has moved away from it; `None` for a name nothing pins, and always without the
+    /// registry (a lock pins a registry version).
+    #[cfg(feature = "registry")]
+    fn pin_for(
+        &mut self,
+        id: &str,
+        scope: &crate::resolution_scope::ResolutionScope,
+        cur_script: &str,
+    ) -> Option<String> {
+        self.lock_pin_in_force(id, scope, cur_script)
+    }
+
+    #[cfg(not(feature = "registry"))]
+    #[allow(clippy::unused_self)]
+    fn pin_for(
+        &mut self,
+        _id: &str,
+        _scope: &crate::resolution_scope::ResolutionScope,
+        _cur_script: &str,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Whether `<cur_dir>/<id>.loft` exists: a module of the importing file's own source,
+    /// which a `--lib` directory never rebinds.
+    fn module_beside(id: &str, cur_dir: &str) -> bool {
+        file_exists(&format!(
+            "{}{}{id}.loft",
+            Self::beside_dir(cur_dir),
+            sep_str()
+        ))
+    }
+
+    /// The importing file's directory, `.` for a file named without one (a script run from
+    /// its own directory).
+    fn beside_dir(cur_dir: &str) -> &str {
+        if cur_dir.is_empty() { "." } else { cur_dir }
+    }
+
+    /// `@C173` — the `--lib` directories of this command line, both layouts: the flat
+    /// `<dir>/<id>.loft` and the packaged `<dir>/<id>/src/<id>.loft`, each directory in the
+    /// order given.
+    fn probe_flag_lib_dirs(&mut self, id: &str, f: &mut String) {
+        let flags = self.flag_lib_dirs.clone();
+        for l in &flags {
             let flat = format!("{l}{}{id}.loft", sep_str());
-            let packaged = format!("{l}{0}{id}{0}src{0}{id}.loft", sep_str());
-            let provided = [flat, packaged]
-                .into_iter()
-                .find(|c| crate::file_access::exists(c))?;
-            if winner.starts_with(canon(l)) {
-                return None;
+            if crate::file_access::exists(&flat) {
+                f.clone_from(&flat);
+                self.register_manifest_in_ancestors(&flat);
+                return;
             }
-            Some((l.clone(), provided))
-        }) else {
-            return;
+            if let Some(entry) = self.lib_path_manifest(l, id) {
+                *f = entry;
+                return;
+            }
+        }
+    }
+
+    /// `@C173` — a `--lib` directory answered for a name the project pins or declares by
+    /// path: say once which copy runs, so a patched library is never mistaken for the
+    /// released one.
+    ///
+    /// `advice`: the program runs the copy it was told to run.  Nothing is said for a name
+    /// nothing else would have answered — then the flag replaced nothing.  One note per name;
+    /// `LOFT_NO_LIB_OVERRIDE` silences it.
+    fn lib_flag_overrides(&mut self, id: &str, used: &str, cur_dir: &str, pin: Option<&str>) {
+        let declared = self.declared_path_dep_root(id, cur_dir);
+        let instead = match (pin, declared) {
+            (Some(v), _) => format!("the pinned {id} {v}"),
+            (None, Some(root)) => format!("the declared `{}`", root.display()),
+            (None, None) => return,
         };
-        if !self.lib_outranked_reported.insert(id.to_string()) {
+        if std::env::var_os("LOFT_NO_LIB_OVERRIDE").is_some()
+            || !self.lib_override_reported.insert(id.to_string())
+        {
             return;
         }
         diagnostic!(
             self.lexer,
             Level::Advice,
-            code = "lib-flag-outranked",
-            "`use {id}` resolved to `{resolved}`; `--lib {dir}` also provides it (`{provided}`) \
-             and was not consulted — a project-local `lib/`, a declared dependency and the \
-             script's own directory are searched before the flag"
+            code = "lib-flag-override",
+            "`use {id}` runs `{used}` from `--lib`, not {instead}"
         );
-        self.lexer.fix_last(crate::diagnostics::Fix {
-            kind: crate::diagnostics::FixKind::Mechanical,
-            title: "run from a directory without a `lib/` that provides this name, or put the \
-                    override where the resolution looks first"
-                .to_string(),
-            condition: None,
-            edit: None,
-            concept: "packages",
-            concept_ref: "@F55",
-        });
     }
 
     /// loft#968 — `use <pkg>` resolved a registry package the project's manifest never
@@ -405,8 +519,7 @@ impl Parser {
             return;
         };
         let manifest_path = root.join("loft.toml");
-        let Some(manifest) = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-        else {
+        let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) else {
             return;
         };
         if manifest.dependencies.iter().any(|(name, _)| name == id) {
@@ -479,9 +592,7 @@ impl Parser {
         while let Some(dir) = search {
             let manifest_path = dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                if let Some(manifest) =
-                    crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-                {
+                if let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) {
                     let deps: std::collections::HashSet<String> = manifest
                         .dependencies
                         .iter()
@@ -514,9 +625,7 @@ impl Parser {
             let mut map = std::collections::HashMap::new();
             if let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) {
                 let manifest_path = root.join("loft.toml");
-                if let Some(manifest) =
-                    crate::manifest::read_manifest(&manifest_path.to_string_lossy())
-                {
+                if let Some(manifest) = self.read_manifest(&manifest_path.to_string_lossy()) {
                     for (name, value) in manifest.dependencies {
                         if let Some(req) = crate::manifest::extract_version_req(&value) {
                             map.insert(name, req.to_string());
@@ -563,7 +672,7 @@ impl Parser {
         };
         let root = std::path::PathBuf::from(root);
         let manifest_path = root.join("loft.toml");
-        let Some(m) = manifest::read_manifest(&manifest_path.to_string_lossy()) else {
+        let Some(m) = self.read_manifest(&manifest_path.to_string_lossy()) else {
             return;
         };
         if m.name.as_deref() != Some(id) {
@@ -605,7 +714,11 @@ impl Parser {
     /// in-tree path dep as a file shadowing the dependency it IS (loft#963).  Walks to
     /// the same manifest [`Self::probe_manifest_path_dep`] resolves against, so the
     /// exemption and the resolution cannot name different directories.
-    pub(super) fn declared_path_dep_root(id: &str, cur_dir: &str) -> Option<std::path::PathBuf> {
+    pub(super) fn declared_path_dep_root(
+        &self,
+        id: &str,
+        cur_dir: &str,
+    ) -> Option<std::path::PathBuf> {
         if cur_dir.is_empty() {
             return None;
         }
@@ -613,7 +726,8 @@ impl Parser {
         loop {
             let manifest_path = search_dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                let rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
+                let rel = self
+                    .read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
                             (name == id)
@@ -637,7 +751,8 @@ impl Parser {
         loop {
             let manifest_path = search_dir.join("loft.toml");
             if crate::file_access::exists(&manifest_path) {
-                let dep_rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
+                let dep_rel = self
+                    .read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
                             (name == id)
@@ -650,7 +765,7 @@ impl Parser {
                     let pkg_root = search_dir.join(rel);
                     let dep_manifest = pkg_root.join("loft.toml");
                     let entry = crate::file_access::exists(&dep_manifest)
-                        .then(|| crate::manifest::read_manifest(&dep_manifest.to_string_lossy()))
+                        .then(|| self.read_manifest(&dep_manifest.to_string_lossy()))
                         .flatten()
                         .and_then(|m| m.entry)
                         .unwrap_or_else(|| format!("src{}{id}.loft", sep_str()));
@@ -695,7 +810,7 @@ impl Parser {
         let root_dir = root.to_string_lossy().to_string();
         self.probe_manifest_path_dep(id, &root_dir, f);
         if file_exists(f)
-            && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
+            && let Some(pkg_root) = self.declared_path_dep_root(id, &root_dir)
         {
             self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
         }
@@ -713,12 +828,12 @@ impl Parser {
         cur_script: &str,
         pkg_root: &std::path::Path,
     ) {
-        let Some(range) = Self::declaring_range(cur_script, id) else {
+        let Some(range) = self.declaring_range(cur_script, id) else {
             return;
         };
-        let Some(version) =
-            crate::manifest::read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
-                .and_then(|m| m.version)
+        let Some(version) = self
+            .read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
+            .and_then(|m| m.version)
         else {
             return;
         };
@@ -726,7 +841,7 @@ impl Parser {
             return;
         }
         let importer = crate::resolution_scope::project_root(cur_script)
-            .and_then(|r| crate::manifest::read_manifest(&r.join("loft.toml").to_string_lossy()))
+            .and_then(|r| self.read_manifest(&r.join("loft.toml").to_string_lossy()))
             .and_then(|m| m.name)
             .unwrap_or_else(|| cur_script.to_string());
         diagnostic!(
@@ -1018,7 +1133,7 @@ impl Parser {
             crate::install::constraint_for(Some(&pinned), declared.as_deref()).as_deref()
                 == Some(pinned.as_str())
         };
-        (stands(self.root_dep_constraint(id)) && stands(Self::declaring_range(cur_script, id)))
+        (stands(self.root_dep_constraint(id)) && stands(self.declaring_range(cur_script, id)))
             .then_some(pinned.clone())
     }
 
@@ -1124,7 +1239,7 @@ impl Parser {
         let pin = crate::install::use_constraint(
             pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
-            Self::declaring_range(cur_script, id).as_deref(),
+            self.declaring_range(cur_script, id).as_deref(),
         );
         let line = self.library_api_line(id, cur_script, scope);
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts, line.as_deref())
@@ -1309,7 +1424,7 @@ impl Parser {
         // The package whose file says `use id` declared a range for it, and that holds in
         // every scope: a cached library used from a bare script is bound by its own
         // `[dependencies]` all the same (loft#1687).
-        if let Some(own) = Self::declaring_range(cur_script, id)
+        if let Some(own) = self.declaring_range(cur_script, id)
             && !constraints.contains(&own)
         {
             constraints.push(own);
@@ -1385,7 +1500,7 @@ impl Parser {
         if project_chose {
             return None;
         }
-        Self::declaring_range(cur_script, id)
+        self.declaring_range(cur_script, id)
             .and_then(|range| crate::registry_index::api_line_floor(&range))
     }
 
@@ -1393,9 +1508,9 @@ impl Parser {
     /// `[dependencies]` — `None` when there is no such package, no such entry, or the entry
     /// is a pure path dependency (resolved by path, never from the registry cache).
     #[cfg(feature = "registry")]
-    pub(super) fn declaring_range(cur_script: &str, id: &str) -> Option<String> {
+    pub(super) fn declaring_range(&self, cur_script: &str, id: &str) -> Option<String> {
         let root = crate::resolution_scope::project_root(cur_script)?;
-        let m = crate::manifest::read_manifest(&root.join("loft.toml").to_string_lossy())?;
+        let m = self.read_manifest(&root.join("loft.toml").to_string_lossy())?;
         let (_, value) = m.dependencies.iter().find(|(n, _)| n == id)?;
         crate::manifest::extract_version_req(value).map(str::to_string)
     }
@@ -1485,7 +1600,7 @@ impl Parser {
         manifest_path: &std::path::Path,
         pkg_dir: &std::path::Path,
     ) {
-        let Some(m) = manifest::read_manifest(manifest_path.to_str().unwrap_or("")) else {
+        let Some(m) = self.read_manifest(manifest_path.to_str().unwrap_or("")) else {
             return;
         };
         let id = m
@@ -1693,7 +1808,7 @@ impl Parser {
         };
         let (entry, manifest) = if crate::file_access::exists(&manifest_pb) {
             let manifest_path = manifest_pb.to_string_lossy().into_owned();
-            let m = manifest::read_manifest(&manifest_path)?;
+            let m = self.read_manifest(&manifest_path)?;
             if !self.loft_floor_holds(id, &m) {
                 return None;
             }

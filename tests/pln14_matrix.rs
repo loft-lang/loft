@@ -356,8 +356,11 @@ fn calibration_guard_catches_an_unreadable_root() {
         }, // in range but record 0
     ];
     for root in unreadable {
-        let fired =
-            std::panic::catch_unwind(|| assert_readable(&root, &state, "<synthetic>")).is_err();
+        // The guard only reads the state, so what it holds is sound after its panic.
+        let fired = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_readable(&root, &state, "<synthetic>");
+        }))
+        .is_err();
         assert!(fired, "the calibration guard did NOT fire on root {root:?}");
     }
 }

@@ -7,7 +7,7 @@
 //! a minimal shell (the file's source + a **Run** button + a **Program** console); the
 //! shell opens a WebSocket and drives the *same* protocol the `--rpc` stdio server does —
 //! one JSON request per text frame, one engine method per request ([`crate::rpc::handle`]).
-//! Program `print` rides the same capture sink as `--rpc` ([`crate::rpc::print_or_capture`])
+//! Program `print` rides the same capture as `--rpc` ([`crate::repl::ReplSession::capture_begin`])
 //! and streams back as `output` events, so it never collides with the protocol traffic.
 //!
 //! The transport is the only new thing here: the engine, the protocol, and the message
@@ -53,15 +53,24 @@ pub fn run_serve(
     // logging, not stream corruption — and the per-request `catch_unwind` already turns it
     // into a `terminated` event for the browser.  (A global hook would also leak across the
     // process, e.g. hiding panic messages in a parallel test run.)
-    crate::platform::capture_begin();
-    eprintln!("loft debug --serve: open http://127.0.0.1:{port}/ in a browser");
+    session.capture_begin();
+    // `@C172` — the page and its socket answer only a request that names this run's token.
+    if crate::debug_token::token().is_none() {
+        return Err(std::io::Error::other(
+            "no random source to draw the session's token from",
+        ));
+    }
+    eprintln!(
+        "loft debug --serve: open http://127.0.0.1:{port}/{} in a browser",
+        crate::debug_token::query()
+    );
     for conn in crate::net_profile::accepting(&listener, "serve/accept") {
         let Ok(stream) = conn else { continue };
         // A bad connection (malformed request, abrupt close) must not take the server
         // down — drop it and keep serving.
         let _ = serve_connection(&stream, &mut session, &shell, port);
     }
-    crate::platform::capture_end();
+    session.capture_end();
     Ok(())
 }
 
@@ -110,7 +119,9 @@ fn serve_connection(
             }
         }
     }
-    if !addressed_here || (is_upgrade && foreign_origin) {
+    // `@C172` — and only one that names this run's token: every process on the machine can
+    // reach a loopback port, whatever account runs it.
+    if !addressed_here || (is_upgrade && foreign_origin) || !crate::debug_token::admits(&path) {
         http_respond(stream, "403 Forbidden", "text/plain", b"forbidden")?;
     } else if is_upgrade && let Some(key) = ws_key {
         let accept = ws_accept_key(&key);
@@ -121,7 +132,7 @@ fn serve_connection(
         let mut s = stream;
         crate::net_profile::time("serve/upgrade_write", None, || s.write_all(resp.as_bytes()))?;
         ws_protocol_loop(reader, stream, session)?;
-    } else if path == "/" {
+    } else if path.split('?').next() == Some("/") {
         http_respond(
             stream,
             "200 OK",
@@ -599,7 +610,7 @@ function setGamePauseUi() { $("gresume").disabled = !gamePaused; }
 function gameVarsOff() { if (!paused) { $("dbg").hidden = true; $("dbgfn").textContent = ""; renderVars([]); } }
 function gdial() {
   if (gws) { try { gws.close(); } catch {} }
-  gws = new WebSocket("ws://127.0.0.1:" + gport + "/ws");
+  gws = new WebSocket("ws://127.0.0.1:" + gport + "/ws" + location.search);   // the game holds this page's token
   gws.onopen = () => {
     reattach = 0; $("gdbg").hidden = false;
     gstat(gameSwapped ? "swapped — debug reattached" : "debug ready");
@@ -731,7 +742,7 @@ function gameClick() {
   });
 }
 function connect() {
-  ws = new WebSocket("ws://" + location.host + "/ws");
+  ws = new WebSocket("ws://" + location.host + "/ws" + location.search);   // the token the page was opened with
   ws.onopen = () => { $("status").textContent = "connected"; send("launch", {file: FILE}); send("compile", {file: FILE}); };
   ws.onclose = () => { $("status").textContent = "disconnected"; };
   ws.onerror = () => { $("status").textContent = "error"; };

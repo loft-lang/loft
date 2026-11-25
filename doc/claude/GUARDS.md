@@ -54,7 +54,7 @@ directions is satisfied by a half-working router.
 
 A flake is diagnosed by **what the failing environment RAN**, not how busy it was: synthetic
 load (busy loops, many startups) is preemptible and reproduces nothing, while being scheduled
-beside `rustc` subprocesses is what blows a timing budget.  Try one re-run first — two runs of
+beside compiler subprocesses is what blows a timing budget.  Try one re-run first — two runs of
 one binary disagreeing is the cheapest proof of a flake.  Then **delete the race rather than
 widen the margin**: `thread::sleep` guarantees a minimum, so a longer sleep only moves the
 failure rate.  Sequence the steps deterministically (drive the second event from inside the
@@ -173,7 +173,7 @@ refused before anything builds.
 
 **The control builds are cached and pruned.**  Each ref costs about 2 GB under
 `~/.cache/loft-falsify/<ref>` and `<ref>-target` — on disk, never in `TMPDIR` (often a RAM
-tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside the
+tmpfs; a control is a full debug `target/`) — beside the
 `head-target-<checkout>` above (one per checkout: shared, a sibling's run rebuilt it from its
 own tree between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4)
 most recently used controls are kept.
@@ -208,8 +208,7 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 A bug is filed and fixed only when main has it ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)),
 so while a fix is unmerged, main IS the build without it — for every guard on the branch at
 once.  `make install-main` installs `origin/main` into `~/.local`: from main's daily build when
-it can (`scripts/install_main_ci.sh` — the binary with the runtime library `--native` links,
-taken only when this machine's rustc is the one that built it), else built in a persistent
+it can (`scripts/install_main_ci.sh` — the release binary of this host's leg), else built in a persistent
 worktree (`make install-main-build`; `LOFT_MAIN_TREE`, default `~/.cache/loft-main`) where
 after main moves only what changed is rebuilt; `make falsify GUARD=<file>` without `REF` (`falsify.sh <guard> --installed [<loft>]`)
 then scores the guard against that binary with no build at all.  A ref control costs a full
@@ -246,8 +245,8 @@ it APPLIES.  A receipt the code moved out from under is cured at PR time, on a r
 each join: `.github/workflows/receipts.yml` (`scripts/receipts_ci.py`) re-applies every stale
 patch by a clean three-way merge, re-scores it with `falsify.sh --patch` — under every
 `LOFT_X=value` its receipt's **ARMED** label names, so a receipt that needs a switch is scored
-the way it was recorded (`FALSIFY_NATIVE=rust` there scores the native half on the rustc leg,
-for a defect only that writer has) — and then runs
+the way it was recorded (`FALSIFY_NATIVE=rust` there is refused: the rustc writer is gone, and
+such a guard is falsified again on the C leg or the interpreter) — and then runs
 `doc_hygiene::every_patch_receipt_still_applies` (ignored per commit for that reason).  A
 dispatch on the branch commits the refreshed patches back (`scripts/derive-ci.sh --workflow
 receipts.yml`); the PR's own run fails only on a WILD SWING — a guard its patch fails to
@@ -273,15 +272,13 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   so the patch is that commit's source diff reversed.  It stays runnable only while the tree
   still resembles the fix, and `falsify.sh` exits 3 when it no longer applies — detected, where
   a dangling sha reports nothing.  A patch that no longer applies still RECORDS the defect.
-- **A patch never carries the generated standard library.**  `src/compiled_stdlib_gen.rs` is
-  generated from the tree it sits in, so a copy in a patch conflicts on every `default/` change.
-  `falsify.sh` writes no hunk of it — a first line `# regenerate: src/compiled_stdlib_gen.rs`
-  records that the fix moved the file — and all three readers skip a hunk of it that an older
-  patch still holds (`falsify.sh --patch`, `receipts_ci.py`,
-  `doc_hygiene::every_patch_receipt_still_applies`).  A control whose patch names the file
-  builds its own: `scripts/compiled_stdlib_stub.rs` in its place, a build, the control's own
-  generator, a second build.  The stub alone is not a control: it interprets every stdlib body
-  where this tree runs the compiled one, and a leak or `kt=` channel can move on that alone.
+- **A hunk of retired source is skipped.**  `tests/falsified_retired_paths.txt` lists the source
+  that is gone (the generated compiled stdlib, the rustc writer); all three readers leave those
+  hunks out (`falsify.sh --patch`, `receipts_ci.py`,
+  `doc_hygiene::every_patch_receipt_still_applies`).  A receipt whose EVERY hunk is retired would
+  apply as nothing and score nothing, so it is not kept: the patch and its guard's
+  `@falsified-by:` block are deleted, and the `@falsified-at:` control stays as the record.  The
+  guard itself still runs on the backends it names.
 - **Its channels must agree with the ref control's.**  A reverted commit that fixed two things
   reintroduces two, and a receipt moving the WRONG channel looks like proof.  So each patch
   receipt is re-scored, and recorded only when its channel signature matches; otherwise the
@@ -504,9 +501,9 @@ Each is one rule; the measured incident behind it is in
 - **A predicate needs a reachable negative.**  One that cannot be false in your program cannot
   be wrong in a way anything notices (`document.fonts.check()` answers *true* for a family
   nothing declares, which inverted the browser text bridge's font check).
-- **After arranging an absence, ASSERT the absence** (`command -v rustc` in the same
+- **After arranging an absence, ASSERT the absence** (`command -v cc` in the same
   environment) before scoring anything on it.  A missing toolchain does not fail `--native` at
-  all: it prints *"rustc not found … running interpreted instead"* and exits 0.
+  all: it prints *"no C compiler … running interpreted instead"* and exits 0.
 - **Test a control's cleanliness the way you test a failure** — perturb something the fact
   should not depend on (an unrelated local, a reorder, a rename).  A cell can be clean for no
   reason, and then the axis it establishes is fiction (loft#1201).
@@ -646,10 +643,6 @@ Each is one rule; the measured incident behind it is in
 - **A `--lib <dir>` override is DROPPED when the cwd has its own `lib/`** (first-wins,
   `parser/mod.rs::lib_path`).  Prove the flag is honoured by pointing it at a copy that CANNOT
   run; work from a directory without `lib/` (loft#1352, loft#930, loft#963).
-- **An ad-hoc `--native` run LINKS `libloft.rlib`, which `cargo build --bin loft` does not
-  rebuild.**  The two backends then "agree" because one is not being tested.  Run
-  `make check-rlib` before treating any ad-hoc native result as evidence; iterate with
-  `cargo build --release --lib --bin loft`.
 - **A stale test binary masks a diagnostic-message change.**  Run the affected binary from a
   build you watched relink, or `cargo clean -p loft` first.
 - **A temp probe named after a HASH of its source shares a truncation window** with every test

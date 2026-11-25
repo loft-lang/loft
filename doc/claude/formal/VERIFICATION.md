@@ -92,11 +92,9 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   REASSIGNMENT, after the new value is computed and before anything after the statement; a
   CONTAINER's death through the cascade).  *Gate: `tests/ownership_drop_gate.rs` — 223 generated
   cells on both backends, scored on the release itself (TESTING.md § The drop gate).*  The
-  free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and
-  `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) ask whether a FREE is sound, and each is
-  clean on a program that loses or doubles a hook — Check D read `clean — 0 RED` over the
-  loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
-  in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  The gate's
+  free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and the store
+  records' free checks ask whether a FREE is sound, and each is clean on a program that loses
+  or doubles a hook.  A drop has no safe direction to err in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  The gate's
   baselines are not open defects: their cells run with the lease refusals off, and every one is a
   copy `(H-Copy-Refuse)` or `(H-Spent)` refuses by default
   (`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`).  A cell the rules permit that
@@ -155,8 +153,9 @@ oracle — which is the argument for this section existing.
   `test_the_callee_returns_the_other_parameter` cell is what distinguishes "the result may be the
   destination's store" from "the callee borrows something".*
 - ☐ **O-Override** — no free derived from ownership is emitted for a never-free binding, in any of
-  a free's five spellings.  *Guard: Check D (`LOFT_OWN_ORACLE=check`) — the one rule here that HAS
-  a gate, and it is free-side only, which is the asymmetry the `H-Drop` row above records.*
+  a free's five spellings.  *Guard: the store records report the store such a free ends twice or
+  leaves (`tests/ownership_oracle.rs` injects one) — the one rule here that HAS a gate, and it is
+  free-side only, which is the asymmetry the `H-Drop` row above records.*
 
 ## iteration.md
 
@@ -171,15 +170,11 @@ oracle — which is the argument for this section existing.
 
 ## coroutines.md
 
-- ✓/edge **G-Call / G-Next laziness** — STRAIGHT-LINE yields are lazy on BOTH backends
-  (`a g1 b g2`). A loop body of MORE than one statement is lazy on interp, EAGER on native — a
-  DECIDED EDGE (rustc restriction, CL-9, [loft#836](https://github.com/loft-lang/loft/issues/836)),
-  NOT a bug. The edge is one STATEMENT wide, not one construct wide: `for x in it { yield x }` is
-  lazy on native too (the `YieldFrom` segment), verified over a 1e9 range. *Guard:
-  `oracle/26-coroutine-laziness` (straight-line).* A record yielded from an EAGER loop body is
-  a per-yield SNAPSHOT, so a read sees the value at the yield on both backends; a write through
-  the consumer's binding lands in the copy where the interpreter's live frame would take it —
-  the same edge one row deeper, not a second one. *Guard: `tests/scripts/1356-…`.*
+- ✓ **G-Call / G-Next laziness** — every `yield` hands control to the consumer before the next
+  generator statement runs, on BOTH backends, in a loop body as in straight-line code
+  ([COROUTINE_LAZY_YIELDS.md](../COROUTINE_LAZY_YIELDS.md)). *Guards: `oracle/26-coroutine-laziness`,
+  the `G-Next` cells in `loft-suite/rules/coroutines/`.*  A record yielded from a loop body is
+  the value at the yield. *Guard: `1356-…`.*
 - ✓ **G-Next values / G-Done** — one value per advance (sum 30); exhaustion (take-first-2 ⇒ 1),
   both backends. Nested CALL between yields works too. *Guard: oracle `12`.*
 - ✓ **G-YieldDepth** — a nested non-yielding call across a suspension ✓
@@ -293,9 +288,7 @@ sweep is green.
   now.  `yield from` shipped and is `(G-Delegate)`.
 
 **Still open after verification (not testable-to-close — they need action, not probes):**
-1. **CL-9 / the coroutine decided edge** — native eager loop yields. Removal DESIGN written
-   ([COROUTINE_LAZY_YIELDS.md § lazy loop yields](../COROUTINE_LAZY_YIELDS.md)); needs the build.
-2. **D-op-1 / D-op-2** — the differential-oracle meta-deviations; open BY DESIGN. "More testing" =
+1. **D-op-1 / D-op-2** — the differential-oracle meta-deviations; open BY DESIGN. "More testing" =
    growing the corpus, which this worklist did (3 new programs) and which continues.
 
 (**D-clo-2** — the stored-short-lambda→`map` crash — was on this list; CLOSED 2026-07-04 with a

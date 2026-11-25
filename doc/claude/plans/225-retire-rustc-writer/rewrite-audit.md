@@ -75,3 +75,35 @@ or C code is deleted, two exact comparisons hold on the whole corpus:
 
 A rule that fails either check is not writer-only after all, and moves to the keep list with
 the measurement that put it there.
+
+## What the check found (R5)
+
+**Check 1** holds for all 22: over the whole corpus (2858 programs emitting C with
+`LOFT_REWRITE_CENSUS_FN`) the `c` phase admits none of them, while `R-Base` is admitted 2303
+times in 603 programs.  But four rules apply in the C under ANOTHER census name, or decide
+something the C reads, which only check 2 sees.
+
+**Check 2** — per group, every corpus program's emitted C (`--emit-c`) and its interpreter
+bytecode (`loft introspect`) hashed before and after, and the per-function rewrite census
+compared: 3246 programs, 2857 of them emitting C.
+
+**Removed (18), every program's C and bytecode identical** (the only differing files are
+cells whose header comments were rewritten, and their original sources emit identical C and
+bytecode on both binaries): `R-Leaf`, `R-LitDiv`, `R-LeafChain`, `R-TextClear`,
+`R-RebindBuffer`, `R-FoldCompare`, `R-StreamWalk`, `R-ViewReturn`, `R-MoveAppend`,
+`R-GroupPush`, `R-FaultFlag`, `R-RefillBuffer`, `R-RefillText`, `R-Header/kept`,
+`R-Header/function`, `R-RecPtr/nested`, `R-RecPtr/index`, and the bare `R-BoundedNest` (the
+guarded nest).  Their definitions are in `formal/rewrites-history.md` § Retired with the
+rustc writer.
+
+**Kept (4)** — removing the decision moves the C:
+
+| Rule | What the C reads | Measured |
+|---|---|---|
+| `R-LitHoist` | its buffer claim in `opt::buffer_owner`: a buffer it owns is not `(R-LoopBuffer)`'s | the claim alone removed moves the C and the bytecode of 3 programs: loft-suite `R-LitHoist/157-literal-hoist.loft`, `O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft`, `tests/scripts/157-group-push.loft` |
+| `R-FnRefValue` | `Cx::value_records` takes no value-record plan when a fn-ref group is admitted | `LOFT_NO_FNREF_VALUE=1` (no site listed) moves the C of loft-suite `R-ValueLocal/a-value-local-is-materialised-wherever-a-representation-is-owed.loft` |
+| `R-PushFill/record` | the C's own record clause (`FnWriter::window_loop` over `push_window::mint_loop`), counted as `R-PushFill` | the clause switched off moves the C of 95 programs (30 under `tests/`, 65 in the suite) |
+| `R-Refresh` | the C's growth refresh and keep-range clause (counted as `R-Refresh/keep-header`) | `LOFT_NO_KEEP_RANGE_REFRESH=1` moves the C of 4 programs, among them loft-suite `R-Refresh/1014-keep-range-refresh.loft` |
+
+`R-BoundedNest`'s reduction clause stays as well: the scope pass applies it as a loop kernel
+(`R-BoundedNest/kernel`, `loop_kernel_rewrite`); its definition is narrowed to that clause.

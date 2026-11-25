@@ -1888,7 +1888,7 @@ pub fn elision_plans(d_nr: u32, code: &Value, function: &Function, data: &Data) 
 //
 // This classification is consumed by DEFAULT-ON codegen: `ownership_of` (below) is
 // the one fact every own-vs-borrow site reads instead of re-deriving — interp
-// `state/codegen.rs`, native `generation/dispatch.rs`, gated `join_own_enabled`. The
+// `state/codegen.rs`, native `c/body.rs`, gated `join_own_enabled`. The
 // `ownership_*` tests + the @PLN89 differential oracle validate it. Design study:
 // `doc/claude/plans/85-store-lifetime-retirement/over-free-class-study.md`
 // (§ Three chokepoints).
@@ -2506,7 +2506,7 @@ impl<'a> Ownership<'a> {
         let defs = span_round_defs(self.data, d_nr).unwrap_or_else(|| {
             let mut defs = Defs::default();
             collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
-            std::rc::Rc::new(defs)
+            std::sync::Arc::new(defs)
         });
         // @FR-O-Oracle — the answer must be a function of the VALUE, never of who asked.
         // The in-flight var set belongs to the function whose body is being walked: a slot
@@ -2641,8 +2641,8 @@ impl<'a> Ownership<'a> {
                 // local minted once and then rebound to a call that may hand back its own
                 // argument (`c = M {…}; c = cond(c, 3)`) or to a capture read `Owned`, the
                 // one verdict that licenses a free, where the flow-sensitive shadow read
-                // `Join`/`Borrowed`; Check A's fact-disagree on 1017b/1326/1331 was that
-                // shortcut, not the shadow (@FR-O-Oracle, QUALITY-history.md B7r).
+                // `Join`/`Borrowed`; the two derivations' disagreement on 1017b/1326/1331 was
+                // that shortcut, not the shadow (@FR-O-Oracle, QUALITY-history.md B7r).
                 let minted = defs.db_vars.contains(v);
                 // A definition that binds NO STORE — `x = null` — says nothing about what
                 // `x` may own on its other definitions and is left out of the join, exactly
@@ -3591,8 +3591,8 @@ fn view_roots(data: &Data, arg: &Value, join_arm_buffers: bool) -> Option<Vec<u1
     // and leaves a bare local unwrapped, which is why `pick(q, …)` was clean while
     // `pick(b.s, …)` leaked. Reading through it is safe because the bracket is emitted
     // from the SLOT list this returns — neither backend matches the argument value
-    // again (`state/codegen.rs` builds its own `Var`, `generation/dispatch.rs` renders
-    // `var_<name>`), so a span can never reach the emit.
+    // again (`state/codegen.rs` builds its own `Var`, the C renders the slot's local), so a
+    // span can never reach the emit.
     match arg.unspan() {
         Value::Var(v) => Some(vec![*v]),
         Value::Null => Some(Vec::new()),
@@ -3711,7 +3711,7 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// What blocks them is a disagreement one layer down, and it is `@FR-O-Proxy`'s named
 /// hazard in the ALLOCATE direction: the interpreter's materialise arm
 /// (`state/codegen.rs`, @PLN130 F1) fires on the deps PROXY — empty deps plus
-/// [`crate::generation::container_element_base`] — while the free sweep reads the ORACLE.
+/// [`projection_container_var`] — while the free sweep reads the ORACLE.
 /// A `par` body's element bind is typed without a dep and classifies `Borrowed`, so it sits
 /// in the gap: adding the spellings makes the arm allocate a store the sweep then declines
 /// to free. Measured on `loft-suite/attic/scripts/1040-generic-par-worker-in-generic-fn.loft` — three
@@ -3728,13 +3728,12 @@ pub fn bracket_can_name(data: &Data, arg: &Value) -> bool {
 /// and are excluded, because they GROW that store rather than read it — a chain rooted at one
 /// is a construction, and the readers below ask which container an existing view came out of.
 ///
-/// One list, four readers, because the alternative is measured rather than hypothetical: a
+/// One list, many readers, because the alternative is measured rather than hypothetical: a
 /// list SHORT by `OpGetRecord` left `pick(h[k], …)` without a witness, so the caller kept the
 /// conservative never-free answer and leaked one record per call at every keyed kind (hash /
-/// sorted / index, both backends).  The four readers are this bracket's
-/// [`view_root_slots`], the parser's `Parser::projection_root_mut` (which inline container
-/// needs a name), `scopes::base_container_var` and `generation::container_element_base` (@PLN130
-/// F2 — which container a view reads out of).  They ask different questions of the same shape;
+/// sorted / index, both backends).  Among them are this bracket's [`view_root_slots`], the
+/// parser's `Parser::projection_root_mut` (which inline container needs a name) and
+/// [`projection_container_var`] (@PLN130 F2 — which container a view reads out of).  They ask different questions of the same shape;
 /// keeping the shape in one place is what stops the answers drifting apart.
 ///
 /// `OpRefFromChildRec` is the child record a struct field names — an out-of-line field's value
@@ -3772,11 +3771,9 @@ pub fn is_projection_op(data: &Data, d_nr: u32) -> bool {
 /// `tests/scripts/85-store-lifetime-return-field-of-local`.  Every caller then leaves the
 /// binding exactly as it is rather than guessing.
 ///
-/// Two readers had this loop byte-for-byte — `scopes::base_container_var` and
-/// `generation::container_element_base`, each documented as "mirroring" the other — and the
-/// mirror is what the peel above had to be written into twice to work at all: the walk that
-/// NAMES a view to materialise and the emitter that COPIES it must agree, or the compiler
-/// reports a copy it did not make.
+/// The walk that NAMES a view to materialise (`scopes::base_container_var`) and the lowering
+/// that COPIES it (`bind_lowering::first_arm`) both read this one loop: they must agree, or
+/// the compiler reports a copy it did not make.
 #[must_use]
 pub fn projection_container_var(data: &Data, value: &Value) -> Option<u16> {
     projection_container_place(data, value).map(|(v, _)| v)
@@ -5403,12 +5400,9 @@ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
 }
 
-/// The one function whose [`function_defs`] may be reused, and the value once asked.
-type DefsMemoSlot = Option<(usize, u32, Option<std::rc::Rc<Defs>>)>;
-
-std::thread_local! {
-    static DEFS_MEMO: std::cell::RefCell<DefsMemoSlot> = const { std::cell::RefCell::new(None) };
-}
+/// The one function whose [`function_defs`] may be reused, and the value once asked; kept in
+/// its program's `Data` (`Data::defs_memo`), set only inside a [`DefsMemoScope`].
+pub(crate) type DefsMemo = (u32, Option<std::sync::Arc<Defs>>);
 
 /// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
 /// the first [`ownership_of`] about it and reused for every later one (loft#1697).
@@ -5416,26 +5410,14 @@ std::thread_local! {
 /// `ownership_of` re-derives the whole function's definitions per question, and the native
 /// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
 /// square of its size: a 1 500-function program spent 2 s in codegen where it had spent
-/// 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
-/// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
-/// the emission of a single function — keyed by this `Data` and this function, and it restores
-/// whatever it replaced when dropped, so a nested span leaves the outer one intact.
-#[must_use]
-pub(crate) struct DefsMemoScope {
-    prev: DefsMemoSlot,
-}
+/// 33 ms.  The memo is held only inside this span, because the scope pass REWRITES bodies
+/// (the reason given on `function_defs`): it is entered where nothing rewrites one — the
+/// emission of a single function — for this `Data` and this function, and it restores whatever
+/// it replaced when dropped, so a nested span leaves the outer one intact.
+pub(crate) type DefsMemoScope = crate::data::ScopedSpan;
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = DEFS_MEMO.with(|m| m.replace(Some((key, d_nr, None))));
-    DefsMemoScope { prev }
-}
-
-impl Drop for DefsMemoScope {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        DEFS_MEMO.with(|m| *m.borrow_mut() = prev);
-    }
+    data.defs_memo.open::<DefsMemo>((d_nr, None))
 }
 
 /// The callee facts every ownership question in one span shares: per function, the round's
@@ -5450,56 +5432,30 @@ impl Drop for DefsMemoScope {
 /// cold minute there (loft#2620).  A class is shared only when its derivation met no
 /// recursion cut above its own frame ([`Ownership::return_ownership`]): such a class is the
 /// one a question about that function alone derives.
-struct SpanMemo {
-    key: usize,
-    round_defs: HashMap<u32, std::rc::Rc<Defs>>,
+pub(crate) struct SpanMemo {
+    round_defs: HashMap<u32, std::sync::Arc<Defs>>,
     ret: HashMap<u32, Own>,
 }
 
-std::thread_local! {
-    static SPAN_MEMO: std::cell::RefCell<Option<SpanMemo>> = const { std::cell::RefCell::new(None) };
-}
-
-#[must_use]
-pub(crate) struct OwnershipMemoScope {
-    prev: Option<SpanMemo>,
-}
+pub(crate) type OwnershipMemoScope = crate::data::ScopedSpan;
 
 /// Open a span in which no body of `data` changes: see [`SpanMemo`].  Restores whatever span
 /// it replaced when dropped, so a nested one leaves the outer one intact.
 pub(crate) fn ownership_memo_scope(data: &Data) -> OwnershipMemoScope {
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = SPAN_MEMO.with(|m| {
-        m.replace(Some(SpanMemo {
-            key,
-            round_defs: HashMap::default(),
-            ret: HashMap::default(),
-        }))
-    });
-    OwnershipMemoScope { prev }
-}
-
-impl Drop for OwnershipMemoScope {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        SPAN_MEMO.with(|m| *m.borrow_mut() = prev);
-    }
-}
-
-fn span_return_class(data: &Data, d_nr: u32) -> Option<Own> {
-    let key = std::ptr::from_ref(data) as usize;
-    SPAN_MEMO.with(|m| match &*m.borrow() {
-        Some(s) if s.key == key => s.ret.get(&d_nr).copied(),
-        _ => None,
+    data.span_memo.open(SpanMemo {
+        round_defs: HashMap::default(),
+        ret: HashMap::default(),
     })
 }
 
+fn span_return_class(data: &Data, d_nr: u32) -> Option<Own> {
+    data.span_memo
+        .with(|m: Option<&mut SpanMemo>| m.as_ref()?.ret.get(&d_nr).copied())
+}
+
 fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
-    let key = std::ptr::from_ref(data) as usize;
-    SPAN_MEMO.with(|m| {
-        if let Some(s) = &mut *m.borrow_mut()
-            && s.key == key
-        {
+    data.span_memo.with(|m: Option<&mut SpanMemo>| {
+        if let Some(s) = m {
             s.ret.insert(d_nr, class);
         }
     });
@@ -5507,22 +5463,18 @@ fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
 
 /// The round's definitions walk of `d_nr` ([`collect_defs`] over its body), from the open
 /// span, computed there on first use; `None` with no span open for this `Data`.
-fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
-    let key = std::ptr::from_ref(data) as usize;
-    let open = SPAN_MEMO.with(|m| match &*m.borrow() {
-        Some(s) if s.key == key => Some(s.round_defs.get(&d_nr).cloned()),
-        _ => None,
-    })?;
+fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
+    let open = data
+        .span_memo
+        .with(|m: Option<&mut SpanMemo>| Some(m.as_ref()?.round_defs.get(&d_nr).cloned()))?;
     if let Some(defs) = open {
         return Some(defs);
     }
     let mut defs = Defs::default();
     collect_defs(&data.def(d_nr).code, &FillOps::of(data), &mut defs);
-    let defs = std::rc::Rc::new(defs);
-    SPAN_MEMO.with(|m| {
-        if let Some(s) = &mut *m.borrow_mut()
-            && s.key == key
-        {
+    let defs = std::sync::Arc::new(defs);
+    data.span_memo.with(|m: Option<&mut SpanMemo>| {
+        if let Some(s) = m {
             s.round_defs.insert(d_nr, defs.clone());
         }
     });
@@ -5531,19 +5483,17 @@ fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
 
 /// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
 /// `Data` and this function is open; `None` otherwise.
-fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
-    let key = std::ptr::from_ref(data) as usize;
-    let open = DEFS_MEMO.with(|m| match &*m.borrow() {
-        Some((k, n, got)) if *k == key && *n == d_nr => Some(got.clone()),
+fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
+    let open = data.defs_memo.with(|m: Option<&mut DefsMemo>| match m {
+        Some((n, got)) if *n == d_nr => Some(got.clone()),
         _ => None,
     })?;
     if let Some(defs) = open {
         return Some(defs);
     }
-    let defs = std::rc::Rc::new(function_defs(data, d_nr));
-    DEFS_MEMO.with(|m| {
-        if let Some((k, n, got)) = &mut *m.borrow_mut()
-            && *k == key
+    let defs = std::sync::Arc::new(function_defs(data, d_nr));
+    data.defs_memo.with(|m: Option<&mut DefsMemo>| {
+        if let Some((n, got)) = m
             && *n == d_nr
         {
             *got = Some(defs.clone());
@@ -6071,7 +6021,7 @@ pub fn drop_copy_census(
         return;
     }
     if census {
-        crate::copy_manifest::clear_lease();
+        crate::copy_manifest::clear_lease(data);
     }
     let mut sites = 0;
     if data.any_release() {
@@ -6110,7 +6060,7 @@ pub fn drop_copy_census(
             // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
             // where it was without a copy — a line the rules judge like any other bind.
             let func = cx.func;
-            for (var, line) in crate::copy_manifest::self_binds(d_nr) {
+            for (var, line) in crate::copy_manifest::self_binds(data, d_nr) {
                 if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
                     continue;
                 }
@@ -6131,7 +6081,7 @@ pub fn drop_copy_census(
             }
             // A whole-value bind the borrow elision deleted is a copy the line WROTE: the
             // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
-            for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
+            for (var, src) in crate::copy_manifest::elided_copies(data, d_nr) {
                 if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
                     continue;
                 }
@@ -6414,9 +6364,9 @@ impl Census<'_> {
             other => place_root(other, self.data),
         };
         if let Some(v) = root {
-            crate::copy_manifest::note_lease_site(self.d_nr, v);
+            crate::copy_manifest::note_lease_site(self.data, self.d_nr, v);
             if self.frame.is_buffer(v) {
-                crate::copy_manifest::note_lease_return(self.d_nr);
+                crate::copy_manifest::note_lease_return(self.data, self.d_nr);
             }
         }
     }
@@ -6488,7 +6438,7 @@ impl Census<'_> {
                         };
                         let tp = self.data.display_type_name(self.func.tp(hold));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
-                        crate::copy_manifest::note_lease_return(self.d_nr);
+                        crate::copy_manifest::note_lease_return(self.data, self.d_nr);
                         whole = Some(root);
                     }
                 }
@@ -6634,7 +6584,7 @@ impl Census<'_> {
                     .base()
                     .heap_def_nr()
                     .map(|d| (node.clone(), Value::Var(*v), d));
-                crate::copy_manifest::note_lease_site(self.d_nr, *v);
+                crate::copy_manifest::note_lease_site(self.data, self.d_nr, *v);
                 self.emit(kind, &tp, &[*src], &into, (Some(&lease), &liveness), false);
             }
             // A join whose arm is a variable as it is (`a = a ?? mk(122)`) places that variable
@@ -6700,7 +6650,7 @@ impl Census<'_> {
                     if let Some((rhs, v)) = self.rhs_of
                         && std::ptr::eq(rhs, node)
                     {
-                        crate::copy_manifest::note_lease_site(self.d_nr, v);
+                        crate::copy_manifest::note_lease_site(self.data, self.d_nr, v);
                     }
                     whole = Some(root);
                 } else if let Some((rhs, v)) = self.rhs_of
@@ -6733,7 +6683,7 @@ impl Census<'_> {
             // caller's copy of the result copies.
             Value::Return(value) => {
                 if let Some(returned) = self.returned.clone() {
-                    crate::copy_manifest::note_lease_return(self.d_nr);
+                    crate::copy_manifest::note_lease_return(self.data, self.d_nr);
                     if let Some(refusal) = self.frame.return_refusal(value) {
                         let var = refusal.var();
                         let lease = Lease::Refuse(refusal);
@@ -11341,15 +11291,10 @@ pub fn debug_dead_store_dump(
 /// graph, from the bodies as the scope pass receives them — the twin of
 /// `parser::closures::param_writes_summary` (loft#2620): one answer per function, not one per
 /// asking function and the order it walked the graph in.
-#[must_use]
-pub(crate) struct WrittenParamsSummary {
-    prev: Option<(usize, HashMap<u32, HashSet<u16>>)>,
-}
+pub(crate) type WrittenParamsSummary = crate::data::ScopedSpan;
 
-std::thread_local! {
-    static WRITTEN_PARAMS: std::cell::RefCell<Option<(usize, HashMap<u32, HashSet<u16>>)>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// Per function, the parameters it writes through (`Data::written_params`).
+pub(crate) type WrittenParams = HashMap<u32, HashSet<u16>>;
 
 pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
     // Per function: its own write-through parameters, and the (callee, position, parameter)
@@ -11400,29 +11345,20 @@ pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
             break;
         }
     }
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = WRITTEN_PARAMS.with(|m| m.replace(Some((key, cur))));
-    WrittenParamsSummary { prev }
-}
-
-impl Drop for WrittenParamsSummary {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        WRITTEN_PARAMS.with(|m| *m.borrow_mut() = prev);
-    }
+    data.written_params.open(cur)
 }
 
 fn summarised_written_params(data: &Data, callee: u32) -> Option<HashSet<u16>> {
-    let key = std::ptr::from_ref(data) as usize;
-    WRITTEN_PARAMS.with(|m| match &*m.borrow() {
-        Some((k, map)) if *k == key => match map.get(&callee) {
-            Some(w) => Some(w.clone()),
-            // A native (no loft body) writes nothing a walk could read: `callee_written_params`
-            // answers it empty, and so does the summary.  A body made after the summary was
-            // taken is walked as before.
-            None if *data.def(callee).code() == Value::Null => Some(HashSet::default()),
-            None => None,
-        },
-        _ => None,
-    })
+    data.written_params
+        .with(|m: Option<&mut WrittenParams>| match m {
+            Some(map) => match map.get(&callee) {
+                Some(w) => Some(w.clone()),
+                // A native (no loft body) writes nothing a walk could read: `callee_written_params`
+                // answers it empty, and so does the summary.  A body made after the summary was
+                // taken is walked as before.
+                None if *data.def(callee).code() == Value::Null => Some(HashSet::default()),
+                None => None,
+            },
+            _ => None,
+        })
 }

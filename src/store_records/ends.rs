@@ -218,6 +218,10 @@ impl Run<'_> {
                 format!("`{name}` may be the caller's store, and {how} releases it"),
             );
         }
+        // A record a parameter's slot names (`Pt::Slot`) is judged where it is ANSWERED, at the
+        // caller (`Summary::Slot`), not at a free here: what owns a field's value — a record a
+        // stored reference names, a generator handle a hand-off flag guards — is not one fact
+        // these records know.
         if report && params.len() == 1 && how != "OpFreeText" && matches!(params[0], Pt::Param(_)) {
             let name = self.var_name(v);
             self.find(
@@ -335,7 +339,7 @@ impl Run<'_> {
             .copied()
             .filter(|p| {
                 matches!(p, Pt::Store(_))
-                    || (matches!(p, Pt::Param(_)) && self.is_closure_record(w))
+                    || (matches!(p, Pt::Param(_) | Pt::Slot(..)) && self.is_closure_record(w))
             })
             .collect();
         let held = Val {
@@ -521,7 +525,9 @@ impl Run<'_> {
             let offs = self.cascade_frees(r);
             let relayed = m.iter().any(|(o, v)| {
                 offs.as_ref().is_none_or(|f| f.contains(o))
-                    && v.pts.iter().any(|p| matches!(p, Pt::Param(_)))
+                    && v.pts
+                        .iter()
+                        .any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)))
             });
             if relayed {
                 let name = self.var_name(w);

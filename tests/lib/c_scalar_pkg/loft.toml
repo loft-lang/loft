@@ -1,0 +1,14 @@
+[package]
+name    = "c_scalar_pkg"
+version = "0.1.0"
+loft    = ">=0.1"
+
+[library]
+entry  = "src/c_scalar_pkg.loft"
+
+# A package with a native part in C: three functions in `c/c_scalar.c`, bound by `#c`.
+# Minimal on purpose, so it exercises the link of a library's own C into a program
+# (`#link static` / `#link dynamic`, the Windows DLL staging) and the ABI oracle of a negative
+# return, without the marshalling a larger library needs.
+[c]
+shim = "c/c_scalar.c"

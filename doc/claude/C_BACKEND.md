@@ -5,8 +5,9 @@
 # The C backend
 
 `src/c/` writes a loft program as C11 that `cc` builds into a standalone executable.  It is the
-second compiled target beside the Rust writer (`src/generation/`), and it exists to prove that
-the compiler's lowering is backend-neutral (@PLN200 B5): it reads the same IR, the same
+one compiled backend beside the interpreter (`@C170`): every compiled target — `--native`,
+`--native-wasm`, `--html`, `--native-android` and a library's hosted unit — is built from its C.
+It keeps the compiler's lowering backend-neutral (@PLN200 B5): it reads the same IR, the same
 analyses (`use_analysis`, `scopes`) and the same store layouts as the bytecode writer, and it
 edits none of them.  A program the backend does not carry yet is refused by name; it never
 writes C that answers differently from the interpreter.
@@ -17,12 +18,10 @@ writes C that answers differently from the interpreter.
 loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache the binary in
                                    #   .loft/cache/native-c-<key>, run it (exit 2 on a refusal);
                                    #   --ship is -O3, --native-debug -O0 -g,
-                                   #   --native-emit [out.c] writes the C; plain --native means this
-                                   #   (--native-rust takes rustc); LOFT_KEEP_NATIVE_C=1 keeps the .c
-                                   #   one program builds to the same C and executable anywhere:
-                                   #   REPRODUCIBLE_OUTPUT.md, scripts/repro-output.sh
-loft --native-android app.apk prog.loft  # the C built as an Android app by the NDK's clang (the
-                                   #   default; --native-rust takes the rustc writer instead)
+                                   #   --native-emit [out.c] writes the C; plain --native means this;
+                                   #   LOFT_KEEP_NATIVE_C=1 keeps the .c; one program builds to
+                                   #   the same C and executable anywhere: REPRODUCIBLE_OUTPUT.md
+loft --native-android app.apk prog.loft  # the C built as an Android app by the NDK's clang
 LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra instead of -w and
                                    #   print the warnings; =strict makes each an error, =all also
                                    #   reports the runtime's helpers a unit does not call (a pragma
@@ -91,14 +90,10 @@ record; the interpreter opens it at start, so only a program that never logs dif
 result hash to be the Rust twin's — a disagreement fails the run — and reports its time over the
 twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator writes the
 release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
-wrap defined, for exactly the operators the Rust probe changes) — the ship tier's ceiling, as the
-Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
+wrap defined) — the ship tier's ceiling ([bench/README.md](../../bench/README.md) § The C lanes).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
-it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy — kept
-in `target/release/`, beside the `libloft.rlib` a library's native part is built against: a copy
-elsewhere fails the interpreter side of every program that uses one, which the sweep reports as
-`differ` (the same holds for `bench/stats.py --loft`).  It
+it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy (the same holds for `bench/stats.py --loft`).  It
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
 refusals by reason, each with the programs it refused (five, or all of them under `--all`; the
 full list in `refused.tsv` beside the run's directories) — that ranking is the work list.  Each program gets a directory of its own
@@ -126,16 +121,15 @@ libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the
 built for the host.
 
 **The browser page** (`--native-c --html`, @PLN203 C6).  The C writes the module and the one
-`--html` page builder hosts it, as it hosts the Rust writer's: fonts, `[[embed]]` files, library
+`--html` page builder hosts it: fonts, `[[embed]]` files, library
 `host_js`, the import stubs, `wasm-opt --asyncify`.  Three things make the module fit that page.
-A library native the page supplies is a `loft_gl` import under its symbol, with the signature the
-Rust writer declares — one contract, `src/host_imports.rs`, both writers read
-(`c::browser_import_native`); one with no import, a text or heap answer, is refused at build as
-the Rust writer refuses it.  The program starts from the exported `loft_start`
+A library native the page supplies is a `loft_gl` import under its symbol, with the signature
+`src/host_imports.rs` declares — one contract
+(`c::browser_import_native`); one with no import, a text or heap answer, is refused at build.  The program starts from the exported `loft_start`
 (`c::emit_browser_program`), which runs the libc's constructors once and flushes what it
 printed, since a page never calls WASI's `_start`; beside it the unit reserves its own asyncify
-save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`), as the
-Rust writer's does — the page's controller never picks an address.  And a unit that binds no lazy collection is
+save region and exports where it is (`loft_asyncify_data` / `_size` / `_ok`) — the page's
+controller never picks an address.  And a unit that binds no lazy collection is
 built without setjmp (`LOFT_NO_JUMPS`, `LOFT_JMP_BUF`/`LOFT_LONGJMP` in `loft_rt.h`), so without
 wasm's exception handling, which asyncify cannot carry.  The page answers the WASI libc with
 `doc/loft-wasi.js` — output into the page, clocks, randomness, and files over the page
@@ -216,12 +210,18 @@ Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the 
 overflow is undefined).  The runtime and the generator write these macros and never a raw
 builtin or attribute.
 
-The unit's floor is C11, for one feature: `_Thread_local`, which the threads that run `par`
-workers and `parallel` arms keep their runtime state in (`LOFT_TLS`).  The threads themselves
-are the host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and
-the runtime uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit
-compiled as C99, which has no thread-local storage, runs on one thread: `par` rows and
-`parallel` arms in order.
+No state is a thread-local (@PLN226).  What a thread of the program keeps of its own — its
+store table, frames, fault and test jumps, held texts, text pool and scratch — is its **store
+context**, `struct loft_cx` (`loft_cx.h`), which every runtime function and every emitted
+function takes first as `cx`.  The main thread's is
+`loft_main_cx`; a `par` worker's or `parallel` arm's is made by the thread that starts it
+(`loft_par_job_init`: its table a copy of the caller's, the caller's stores read-only in it),
+and `loft_cx_end` releases what it holds when the worker ends.  A hosted unit keeps one per
+interpreter `Stores` that calls it (`HostedTable::cx_of`), a component (`libloft_net`) one of its
+own per caller context (`loft_cx_make_v1`, handed to each symbol first).  The threads are the
+host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and the runtime
+uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit builds as C99 too
+and runs `par` on threads.
 
 The OS beyond ISO C — a monotonic clock, a path's kind and size, directories, truncate, fsync — is
 POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO_POSIX` builds
@@ -316,7 +316,9 @@ temporary is declared at the top of its function.
 An owned temporary an expression makes is freed when its statement ends — and statements
 written inside an expression (a compound, a result buffer) free only their own temporaries,
 because the enclosing expression's are still to be read.  The epilogue frees every text the
-function holds.  The null text is the one byte `"\0"`, as in the interpreter.
+function holds.  The null text is an identity, never a content (`@FR-L-Null-Text`): a view
+with no pointer, an owned text with a pointer and neither length nor room — `loft_text.h`
+holds the tests, as `text_null` does in the interpreter.
 
 **Stores.**  `loft_rt.h` ports the store model the IR addresses: a store is an array of 8-byte
 words, a record a run of words whose first word is its claimed size, a reference names a store,
@@ -372,19 +374,19 @@ local before it.  Each held access carries
 `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_CALLEE_INPUTS=1` writes no twin,
 `LOFT_NO_DISTINCT_VERSION=1` no second copy, `LOFT_NO_DISTINCT_GROWTH=1` keeps no base under
 growth, `LOFT_NO_RECORD_PUSH=1` binds no push header and `LOFT_NO_SCALAR_HOIST=1` holds no
-scalar, as for the Rust writer; `tests/c_emit.rs`
+scalar; `tests/c_emit.rs`
 (`a_loop_holds_its_callees_headers_and_rederives_a_base_under_growth`) counts each form against
 hand-computed values under `LOFT_VERIFY` and AddressSanitizer.
 
 **Adopted return buffers.**  A vector-returning function whose result local is delivered
-through the hidden return buffer builds in that buffer (`@FR-R-RetAdopt`): the C reads the Rust
-writer's own analysis, `generation::hoist::ret_adopt`.  The local's bind is the buffer — minted
+through the hidden return buffer builds in that buffer (`@FR-R-RetAdopt`): the C reads the analysis
+`opt::ret_adopt::ret_adopt`.  The local's bind is the buffer — minted
 as its witness would have been when the caller offered none, emptied when it did — the witness
 store is never minted, and the exit's clear-and-append copy emits nothing.  The held vectors
 above stay sound beside it: the verdict knows the adopted local as the buffer (`StoreFacts`'
 `adopted`), and a parameter's vector is held across the buffer's growth only in the versioned
-copy, whose entry tested the stores apart.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
-Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
+copy, whose entry tested the stores apart.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies;
+`tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
 
 **A clear before a mint.**  A vector buffer cleared (`OpClearVector(x)`) directly before it is
 minted again as a vector wrapper is not cleared: the mint empties the vector and releases what
@@ -392,8 +394,8 @@ its elements owned (`@FR-H-KeepRoom`'s prologue clause, `FnWriter::clear_before_
 buffer a live generator frame names keeps its clear.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes
 every clear.
 
-**Push windows.**  A counted push loop the Rust writer's admission passes
-(`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
+**Push windows.**  A counted push loop the admission passes
+(`opt::push_window::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
 reserves its pushes once and opens a `loft_win` on the vector — element 0's address, the length
 reached, the room — and every push of that path is a compare, a store and a bump; a record mint
 takes the window's next slot.  The record's length is written back at the loop's exit, and the
@@ -541,7 +543,8 @@ by each backend with every reader — the interpreter, the C, `--native` — on 
 collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
 
 **Paged loads.**  The working-set loaders read an image a page at a time (`loft_paged.h`, the
-port of `paged_reader.rs`): a 64 KiB page is read from the file when a walk first touches it,
+port of `paged_reader.rs`): a 64 KiB page (`LOFT_PAGE_BYTES` names another size) is read
+from the file when a walk first touches it,
 a byte past the end reads as 0, and a size or a count is trusted only as far as the record that
 holds it (`@FR-S-Paged`), so a malformed image answers and never faults.  A hash entry is found
 by the port of `find_hash_entry`, a sorted range by its binary search; a trie or a spatial walk
@@ -555,6 +558,8 @@ interpreter does.  An `http(s)://` image is read the same way, a page per `Range
 (`HttpRangeProvider`'s port: sized by a `bytes=0-0` probe, its signature read before anything
 else, a host that ignores `Range` read through to the page) and gated by its fetched sidecar;
 the Rust provider's concurrent batches are not ported, so each page is one round trip.
+`LOFT_LOADER_STATS=1` prints each loader's `bytes_fetched` and `requests`, as the interpreter's
+loaders do.
 `tests/c_emit.rs` crosses every
 loader with every writer and reader, and
 `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
@@ -649,8 +654,8 @@ its claim word negated, so a stored reference to it reads null (`@FR-H-Removed`)
 records a `clear()` or a kept range drops from a vector of shared records.
 
 **The evaluation-stack tail.**  `[value, frees…, return null]` returns the value: the scopes
-pass leaves it on the bytecode's stack for `OpReturn`.  The C captures it into a temporary, as
-the Rust writer does (`detect_ref_tail_capture`).
+pass leaves it on the bytecode's stack for `OpReturn`.  The C captures it into a temporary
+(`FnWriter::tail_capture`).
 
 **Tests.**  A failed `assert` in a test returns to the test `main` (`setjmp`/`longjmp`), which
 prints `FAIL <name>` and exits 1 when any test failed.  A test annotated `@EXPECT_FAIL` passes
@@ -660,7 +665,7 @@ only by failing with one of its messages — the annotations are read by the sam
 ## A library as a hosted unit
 
 A `use`d library runs under the interpreter as a **hosted unit** — the default: its functions compiled through
-this writer into a shared library that works on the interpreter's own stores, with no rustc
+this writer into a shared library that works on the interpreter's own stores
 (@PLN206; design in `plans/206-one-store-model/p3-p4-design.md` and `p5-design.md`).  A store
 is one `#[repr(C)]` layout on both sides (`Store` begins with `loft_store_t`), so the unit reads
 and writes the records the interpreter holds; a store's birth and death go through the
@@ -672,11 +677,11 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
   or by the first run that adopts the library.  A release ships each published library's unit
   for each platform (`scripts/release-lib-artifacts.sh`, P6), which `loft install` fetches, so a
   machine with no C compiler runs it compiled.  With no C compiler and no unit, the library
-  interprets.  No rustc takes part: a library never resolves to a rustc-built artifact
+  interprets.  A library never resolves to a Rust-built artifact
   (`tests/lib_rustc_free.rs`).  A `[c] shim` package needs a C compiler for its shim on any
-  backend; a `[native] component` is a C library the unit calls.  A function that calls a
-  Rust-only native (a hand-written `[library] native` cdylib) is not carried, and its library
-  interprets with that cdylib loaded.  The unit lands in the package's `native-auto/` under a
+  backend; a `[native] component` is a C library the unit calls.  A package's own Rust
+  native library (`[library] native`, `[native] crate`) is refused where its manifest is read
+  (@PLN225).  The unit lands in the package's `native-auto/` under a
   name that carries the loft binary, the library's sources and the build switches; any program
   run by that loft adopts it, whichever built it, and the directory keeps the newest eight.
 - **Generated from the library alone** (`native_artifact::parse_library_alone`, the program
@@ -743,6 +748,13 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
    `sanitizer`.
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
+
+**Port, never reinvent (owner).**  The C carries loft's design, not a new one: a counter, a
+cache, a fallback or a gate the C needs is the one the interpreter already has, ported.  A mechanism made up for the C is, in almost every case, a
+regression.  Where loft's own design is the flaw — a thread-local, a reference count — the
+cure is that design's fix on every backend, never a C variant of it: thread-locals and
+reference counts hide bugs and are almost never needed (@PLN226: per-thread state is a field
+of the `Stores` a worker is handed).
 
 **Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
 a keyed lookup that misses on a bound collection fetches that one key through the paged
@@ -821,8 +833,8 @@ in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) i
 the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and refuses the unit
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_rt.h` carries web's byte builder and reader (`pack_*`,
-`byte_at`): a per-thread buffer in the program, where the component call cost a crossing and a
-dynamic thread-local lookup per byte.  A `main(args: vector<text>)` is called with the program's
+`byte_at`): a buffer in the store context, where the component call cost a crossing per
+byte.  A `main(args: vector<text>)` is called with the program's
 arguments (`loft_arguments()`), as the interpreter calls it.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
 `lib/git` (`git_query`).  The web, server and ssh libraries' natives are not the runtime's:
@@ -843,7 +855,13 @@ build touches the ready file — or rolls back.  `swap_world` restores a handed-
 through `store_load`, so a changed layout converts (`loft_upgrade.h`); its call site supplies
 the world type's sidecar and JSON render (`swap_world_call`).  The live tier — a flip, a live
 edit, a breakpoint's eval — runs the interpreter inside the program, which a C build has not
-got: `live_flip` answers false, and the edit loop runs interpreted.  All of it on every host
+got: `live_flip` answers false, and the edit loop runs interpreted.  A development game moves
+between the two with its world (`engine_host::swap_start`'s comment): `swap fast` from the
+interpreter into the shipped build `rebuild fast` made (`--ship`; refused for a semantics
+build, whose speed is not the one a game ships at), `swap dev` from the C back to the program
+interpreted again (`loft_sw_dev_next`: the driver, `--interpret`, the libraries and the source
+from `LOFT_LIVE_*`); a build at full speed carries `LOFT_LIVE_SHIP=1`, so its own rebuilds stay
+shipped (`tests/engine_host_kernel.rs` `a_dev_game_switches_to_full_speed_and_back`).  All of it on every host
 with sockets (`loft_sock.h`: POSIX and Windows), the swap and the rebuild on POSIX only; a
 Windows listener does not share its port, as `platform::bind_tcp_handover` binds there.  The kernel closes its sockets at exit, as the Rust kernel's drop does: Windows resets a
 socket a process leaves open, discarding what the peer had not read
@@ -874,7 +892,7 @@ of known hosts is kept: which key is the right one is the program's to know.  `L
 Two instruments, for two questions:
 
 - **The interactions** — `tests/ssh_natives.rs` runs `tests/fixtures/ssh_natives/interact.loft`
-  on the interpreter, the Rust writer and the C against `test_sshd.c`, a small server built on
+  on the interpreter and the C against `test_sshd.c`, a small server built on
   the client's own packet layer: a refused password, the pty size and a resize, the 256 byte
   values, 3 000 000 bytes past the client's window, 200 000 bytes through an 8 KiB window, the
   exit, and every call on a closed handle a no-op.  It agrees with the client by construction,
@@ -923,16 +941,16 @@ not need it, with the reason).  Every row has its verdict; no **port** is open. 
 | the live rebuild's world check (`LOFT_CHECK_WORLD`) | R | — a step of the `loft` driver, not of the runtime: it refuses a build the running world cannot be converted into before any code is generated, for every backend | **covered** (by the driver) — it exists for live rebuild, whose C form is the live-reload row's | — |
 | zero-on-claim switch (`LOFT_ZERO_CLAIM`) | R | no claim zeroes, on either runtime (D17, closed in [STORE_MODEL-history.md](STORE_MODEL-history.md)) | **covered** | `LOFT_POISON_CLAIM`, the falsifier the verify compares by |
 | schema-id strictness (`LOFT_STRICT_SCHEMA_IDS`) | R | the type table is a static array the emitter writes (`static const loft_tdesc loft_types[…]`) | **drop** (decided): the start-up replay it guards does not exist in a C unit | — |
-| the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **ported** (D19c): the runner hands its test ceiling to every compiled child, both writers | `tests/store_memory_limit.rs` `the_default_ceiling_reaches_a_compiled_test` |
+| the store-memory ceiling (`LOFT_STORE_LIMIT`, every test run) | R | `LOFT_MEMORY_LIMIT` | **ported** (D19c): the runner hands its test ceiling to every compiled child | `tests/store_memory_limit.rs` `the_default_ceiling_reaches_a_compiled_test` |
 | store watch, lock backtrace (`LOFT_WATCH_STORE`, `LOFT_LOCK_BT`) | O | `LOFT_STRICT_STORES` (the free that killed a store), `LOFT_LEAK_SITES` (the site that made a kept one) | **drop** (decided): no C defect of P3–P7 needed it; the two named answer what a watch was read for | — |
 | leak sites (`LOFT_LEAK_SITES`) | O | `-DLOFT_LEAK_SITES` (the driver's build under the variable): each store remembers the function, file and line it was made at (`loft_note_site`, the frames kept), and the leak report groups the stores left by site and type, most first — a file and line where the interpreter names a pc | **ported** | `tests/c_emit.rs` `a_leak_site_c_build_names_where_a_kept_store_was_made` |
 | store log, tags, allocation report (`LOFT_STORE_LOG`, `LOFT_STORE_TAG`, `LOFT_ALLOC_REPORT`) | O | `LOFT_ALLOC_TRACE`, `LOFT_NATIVE_LEAK_CHECK` | **drop** (decided): the allocation trace and the leak report, sites included, answer what these were read for | — |
-| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, inline hash, …) are their own rows when a C defect needs them | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
+| allocator policy switches — the allocator's own (`LOFT_NO_PARK`, `NO_LAZY_FREE`, `NO_TOMBSTONE`, `NO_FREE_FOOTER`, `NO_WILD_BUMP`, `NO_CARVE_IN_PLACE`, `NO_WILDERNESS`) | E | `-DLOFT_NO_PARK` … `-DLOFT_NO_WILDERNESS` in `loft_store.h`, each the policy turned off as `Store` turns it off | **ported**, all seven: the allocator differential runs once per switch with `Store` under the variable and the C under the define, byte for byte (`NO_WILD_BUMP` lays out the same bytes by construction — a fast path to the block the best fit takes); `NO_WILDERNESS` keeps the tail in the tree and a fresh store untracked, its first claim the chain walk (`loft_claim_scan`), as `Store` does.  The runtime's other `LOFT_NO_*` policies (exact copy claim, compaction on load, clear release, prefill image, …) are their own rows when a C defect needs them; the hash layout policy (`LOFT_NO_HASH_TAG`, `LOFT_NO_HASH_INLINE`, `LOFT_TRACE_HASH_LAYOUT`, `@FR-Col-Layouts`) is ported (`loft_h_policy`, `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_others_in_one_store`) | `tests/c_emit.rs` `a_store_allocator_switch_answers_alike_on_both_runtimes` |
 | the live debugger (`loft debug`, `--rpc`) | O | the C debug tier's `#line` markers: the loft file and line of every C line in the binary's debug information, for gdb, lldb, a profiler and a backtrace (`emit_program_with_source_lines`, DEBUG.md § A C build in gdb or lldb) | **covered** (owner, decided): the full debugger is the interpreter's, for development, as live editing is; a bug only the C build shows is debugged on its binary by loft line | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table` |
 | live reload / live dispatch (`LOFT_LIVE_RELOAD`, `LOFT_LIVE_FLIP`, the engine host's `flip`) | E | — the C engine host answers `flip false` | **covered** (owner, decided): changing a running program needs the interpreter, so live editing is the interpreter's — development runs with it around, as the full debugger already does, with the libraries running as C inside it (P4) | — |
 | the live build swap and background rebuild (`swap_world`, `swap_start`, `rebuild_*`, the channel's `rebuild` / `swap`) | E | carried on POSIX hosts (`loft_engine.h`), every incarnation a C build | **carried** (owner, asked for) — `tests/engine_host_kernel.rs` `s5_c_*`, the listener, connector and local roles | — |
-| the profilers (`make profile`, `LOFT_NATIVE_CHECKPOINTS`) | E | time: any native profiler (perf, Instruments) through the debug tier's loft lines; `bench/portal/c_profile.py` per routine (Linux).  Heap by line: the interpreter's `LOFT_ALLOC_SITES`, whose allocations the C build matches event for event or by a named C-only rewrite (`scripts/c_alloc_diff.py`); a C build's own kept stores by site (`LOFT_LEAK_SITES`) | **covered** | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table`; `c_alloc_diff.py --self-test` |
-| wasm and browser targets (`--native-wasm`, `--html`, built through rustc) | — | C to wasm through clang (@PLN203) | **covered** by @PLN203 | @PLN203's browser lane |
+| the profilers (`make profile`) | E | time: any native profiler (perf, Instruments) through the debug tier's loft lines; `bench/portal/c_profile.py` per routine (Linux).  Heap by line: the interpreter's `LOFT_ALLOC_SITES`, whose allocations the C build matches event for event or by a named C-only rewrite (`scripts/c_alloc_diff.py`); a C build's own kept stores by site (`LOFT_LEAK_SITES`) | **covered** | `tests/c_emit.rs` `the_c_debug_build_names_loft_lines_in_its_line_table`; `c_alloc_diff.py --self-test` |
+| wasm and browser targets (`--native-wasm`, `--html`) | — | C to wasm through clang (@PLN203) | **covered** by @PLN203 | @PLN203's browser lane |
 | the ship and lean tiers (`--ship`, `--lean`) | E | the `cship` lane | **covered** | `bench/stats.py --lanes c,cship`, the perf portal's `cship` column |
-| native rewrites the C writer does not apply | E | the C writer's own `R-` rules | **drop** (decided, owner): a rewrite only the rustc writer applies is removed with it, not ported ([plans/225 rewrite-audit](plans/225-retire-rustc-writer/rewrite-audit.md)) | — |
+| native rewrites the C writer does not apply | E | the C writer's own `R-` rules | **drop** (decided, owner): the rules only the retired rustc writer applied went with it, not ported ([formal/rewrites-history.md § Retired with the rustc writer](formal/rewrites-history.md#retired-with-the-rustc-writer-pln225-r5)) | — |
 | mmap-backed stores (`@FR-S-Mapped`) | E | `loft_mapped.h`: `loft_st_open_mapped`, growth and the cut with the file, unmapped on release (POSIX, Windows) | **ported** (D23) | `tests/c_emit.rs` `a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes` |

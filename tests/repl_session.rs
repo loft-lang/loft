@@ -1462,13 +1462,55 @@ fn file_debugger_without_lib_dirs_cannot_resolve_the_library() {
 /// file ran clean under `--interpret`).
 #[test]
 fn file_debugger_can_call_into_a_native_library() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lib");
-    let lib_dirs = vec![dir.to_string_lossy().into_owned()];
+    // The fixture's C as a component (`[native] component`): a package's own Rust native
+    // library is refused (@PLN225).  It goes where loft looks for a development build's
+    // components, `<binary>/../components/` (`components::dirs`), so this test sets no
+    // environment variable under the other tests of the process.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let libs = std::env::temp_dir().join(format!("loft_e3b_native_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&libs);
+    let pkg = libs.join("ffi_c_library");
+    let fixture = root.join("tests/fixtures/ffi_c_library");
+    fa::create_dir_all(pkg.join("src")).expect("the package directory");
+    fa::copy(fixture.join("loft.toml"), pkg.join("loft.toml")).expect("copy the manifest");
+    fa::copy(
+        fixture.join("src/ffi_c_library.loft"),
+        pkg.join("src/ffi_c_library.loft"),
+    )
+    .expect("copy the source");
+    let components = std::env::current_exe()
+        .ok()
+        .and_then(|e| fa::try_plain_canonical(e.as_path()))
+        .and_then(|e| {
+            e.parent()
+                .and_then(std::path::Path::parent)
+                .map(|p| p.join("components"))
+        })
+        .expect("the test binary's directory");
+    fa::create_dir_all(&components).expect("the components directory");
+    let built = loft::platform::process::harness_command("cc")
+        .args(["-shared", "-fPIC", "-O2", "-I"])
+        .arg(root.join("loft-ffi/include"))
+        .arg(fixture.join("native/ffi_c_library.c"))
+        .arg("-o")
+        .arg(components.join(loft::native_build::platform_lib_name("loft_ffi_c_library")))
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !built {
+        eprintln!("skip: no cc builds the fixture's C");
+        let _ = fa::remove_dir_all(&libs);
+        return;
+    }
+    loft::cache::write_native_artifact_fingerprint(
+        &components,
+        loft::cache::loft_ffi_fingerprint(),
+    );
+    let lib_dirs = vec![libs.to_string_lossy().into_owned()];
 
     let path = fa::with_extension(tmp_session("filedebug_native"), "loft");
     fa::write(
         &path,
-        "use native_pkg::*;\nfn main() {\n  v = ext_add_one(41);\n  \
+        "use ffi_c_library;\nfn main() {\n  v = ffi_c_library::add(40, 2);\n  \
          assert(v == 42, \"native call under the debugger\")\n}\n",
     )
     .expect("write temp program");
@@ -1493,6 +1535,8 @@ fn file_debugger_can_call_into_a_native_library() {
         "the run must complete past the native call: {text}"
     );
     let _ = fa::remove_file(&path);
+    let _ = fa::remove_dir_all(&libs);
+    let _ = fa::remove_dir_all(&components);
 }
 
 /// @PLN120 B — a breakpoint condition has THREE outcomes, not two.
@@ -2013,11 +2057,7 @@ fn a_nullable_local_evaluates_at_a_paused_frame() {
         ("vt", "\"hi\"", "present text"),
         ("vp", "P{a:1,b:\"x\"}", "present struct"),
         ("ve", "Col.Green", "present value enum"),
-        (
-            "et",
-            "\"\"",
-            "an EMPTY text is a value, not the STRING_NULL handle",
-        ),
+        ("et", "\"\"", "an EMPTY text is a value, not the null text"),
         (
             "fi",
             "-9223372036854775807",

@@ -107,7 +107,7 @@ mod spawns_sh {
     fn a_started_program_and_its_tree_under_the_emulated_windows_host() {
         run_on("--interpret", "start.loft", "windows");
         // The C runtime does not emulate the Windows host yet (`windows_rules.rs`).
-        run_on("--native-rust", "start.loft", "windows");
+        run_on("--native", "start.loft", "windows");
         run_on("--interpret", "../tests-unix/tree.loft", "windows");
     }
 
@@ -144,11 +144,10 @@ mod spawns_sh {
         // @PLN203 C-gap: a twin port uses library versions whose natives are a Rust crate,
         // which the C does not load — the twins run with LOFT_NATIVE_BACKEND=rust until then.
         cmd.arg(root.join("scripts/script_twins.sh"))
-            .env("LOFT_NATIVE_BACKEND", "rust")
             .current_dir(&root)
             .env("PATH", path)
             .env("LOFT_TIMEOUT", "300");
-        if !have("rustc") {
+        if !have("cc") {
             cmd.arg("--interpret");
         }
         let out = cmd.output().expect("run scripts/script_twins.sh");

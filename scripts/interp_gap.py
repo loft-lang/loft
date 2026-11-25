@@ -6,9 +6,8 @@
     scripts/interp_gap.py                        # every bench lane: time both backends, census both
     scripts/interp_gap.py --only 14,16           # some lanes
     scripts/interp_gap.py --package <clone>/drawing=drawing   # a library's own bench as well
-    scripts/interp_gap.py --timing old.tsv       # reuse a `stats.py --lanes native,interp --tsv` run
+    scripts/interp_gap.py --timing old.tsv       # reuse a `stats.py --lanes c,interp --tsv` run
     scripts/interp_gap.py --no-timing            # the censuses only (seconds, no ratio column)
-    scripts/interp_gap.py --writer c             # against the C writer: its rewrites, its lane
 
 A REPORT, run by hand, never a gate (`make interp-gap`).
 
@@ -20,7 +19,7 @@ header walk, the interpreter still pays for it.  Moving the rule into the IR pha
 pass, where R-Place, R-VecCopy, R-ByteCopy already live — gives it to both backends.  This tool
 ranks the candidates by evidence:
 
-1. TIME — `bench/stats.py --lanes native,interp`: the interp/native ratio per routine.
+1. TIME — `bench/stats.py --lanes c,interp`: the interp/C ratio per routine.
 2. WHAT THE INTERPRETER DOES — `LOFT_OP_CENSUS` (src/op_census.rs): every operator the
    interpreter executes, keyed by the routine (the line of `main` it ran under) and the
    function, with the bytes it moved through the store's block routes (copy / relocate / text).
@@ -28,9 +27,8 @@ ranks the candidates by evidence:
    these in registers), `store` (field and element reads and writes), `records` (records,
    vectors and texts built, copied, appended, freed), `control`, `compute`.
 3. WHAT THE COMPILED CODE DOES INSTEAD — `LOFT_REWRITE_CENSUS_FN` (src/rewrite_census.rs): each
-   rewrite admission with the function and the PHASE it was decided in, from the emission of
-   `--writer` (`native`, the rustc writer, by default; `c`, the C writer).  That writer's phase
-   is writer-only; `ir` and `parse` already reach both backends and are listed apart; `interp`
+   rewrite admission with the function and the PHASE it was decided in, from the C writer's
+   emission.  That writer's phase is writer-only; `ir` and `parse` already reach both backends and are listed apart; `interp`
    (the interpreter's own generator) is neither.  Each rule's applied-by comes from the phase
    table (`bench/portal/rule_phases.tsv`, `scripts/rule_phases.py`).  Every `use`d library is
    emitted into the program (`LOFT_NO_NATIVE_LIBS=1`), so its functions are credited by name,
@@ -63,9 +61,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# The shipped tier's rustc arguments, the list loft compiles in.
-RELEASE_ARGS = [x.strip() for x in (ROOT / "src" / "native_release_args.txt").read_text(encoding="utf-8").splitlines()
-                if x.strip() and not x.strip().startswith("#")]
 BENCH = ROOT / "bench"
 
 FAMILIES = [
@@ -84,10 +79,10 @@ FAMILIES = [
 FAMILY_RE = [(f, re.compile(r)) for f, r in FAMILIES]
 FAMILY_ORDER = ["frame", "store", "records", "control", "compute"]
 sys.path.insert(0, str(ROOT / "scripts"))
-from rewrite_census import WRITERS, rust_writer_env  # noqa: E402  (each writer's flags; its env)
+from rewrite_census import WRITERS  # noqa: E402  (each writer's flags)
 import rule_phases  # noqa: E402  (the measured applied-by of each rule)
 # `--writer` → its census phase, its stats.py lane and its name in the report.
-WRITER = {"native": ("native", "native", "native"), "c": ("c", "c", "C")}
+WRITER = {"c": ("c", "c", "C")}
 
 
 def family(op):
@@ -193,39 +188,14 @@ def store_by_routine(tsv, stdout):
     return out
 
 
-def native_store(census_loft, prog, n, timeout):
-    """The same program built with --native against the census rlib, run with
-    LOFT_STORE_CENSUS: its store work per routine, or an error line."""
-    name, cwd, _src, argv = prog
-    lib = Path(census_loft).parent
-    if cwd != ROOT:
-        return None, "a library package's native build needs its dependencies — interpreter column only"
-    with tempfile.TemporaryDirectory() as tmp:
-        rs, exe, store = Path(tmp) / "p.rs", Path(tmp) / "p", Path(tmp) / "store.tsv"
-        p = run([census_loft, "--native-rust", "--native-emit", str(rs), "--lean", *argv], cwd, {}, timeout)
-        if p.returncode != 0 or not rs.exists():
-            return None, "native emit failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
-        p = run(["rustc", *RELEASE_ARGS, "--edition=2024",
-                 "--extern", f"loft={lib}/libloft.rlib", "-L", f"{lib}/deps", "-o", str(exe), str(rs)],
-                cwd, {}, timeout)
-        if p.returncode != 0:
-            return None, "native build failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
-        p = run([str(exe), "--n", str(n)], cwd, {"LOFT_STORE_CENSUS": str(store)}, timeout)
-        if p.returncode != 0 or not store.exists():
-            return None, "native run failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
-        return store_by_routine(store.read_text(), p.stdout), None
-
-
-def rewrite_census(loft, prog, timeout, writer="native"):
+def rewrite_census(loft, prog, timeout, writer="c"):
     """(phase, function, rule) → admissions, from one emission by `writer`."""
     name, cwd, _src, argv = prog
-    ext, flags = WRITERS["rust" if writer == "native" else writer]
+    ext, flags = WRITERS[writer]
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "rw.tsv"
-        # Not `run`: the writer is named by its flag, so `LOFT_NATIVE_BACKEND` (which `make ci`
-        # exports) must not reach the emission — it turns `--native-emit` into the C writer.
         p = subprocess.run([loft, *flags(Path(tmp) / f"out{ext}"), *argv], cwd=cwd,
-                           env={**rust_writer_env(), "LOFT_REWRITE_CENSUS_FN": str(tsv),
+                           env={**os.environ, "LOFT_REWRITE_CENSUS_FN": str(tsv),
                                 "LOFT_NO_NATIVE_LIBS": "1"},
                            capture_output=True, text=True, timeout=timeout)
         if p.returncode != 0 or not tsv.exists():
@@ -330,7 +300,7 @@ def fmt_bytes(b):
         b /= 1024
 
 
-def analyse(prog, census, printed, rw, writer="native"):
+def analyse(prog, census, printed, rw, writer="c"):
     """One program → a list of routine records."""
     name, _cwd, src, _argv = prog
     reg = regions(src, printed)
@@ -353,7 +323,7 @@ def analyse(prog, census, printed, rw, writer="native"):
         # name no function, so no routine's ops weigh them.
         if phase == "interp" or not fn:
             continue
-        if phase in ("c", "native"):
+        if phase == "c":
             if phase == own:
                 native[fn][rule] = n
         else:
@@ -479,7 +449,7 @@ def store_section(recs):
     return md
 
 
-def port_candidates(recs, w="native"):
+def port_candidates(recs, w="c"):
     """Per writer rule: the routines and functions it fires in, weighed by the interpreter
     time those functions carry, beside the phases that apply it (the phase table)."""
     by_rule = defaultdict(lambda: dict(weight=0.0, share=0.0, routines=set(), fns=set(), sites=0))
@@ -603,9 +573,9 @@ def main():
     ap.add_argument("--functions", type=int, default=8, help="functions listed per routine")
     ap.add_argument("--out", default=str(ROOT / "target" / "interp-gap" / "report.md"))
     ap.add_argument("--timeout", type=int, default=900)
-    ap.add_argument("--writer", choices=sorted(WRITER), default="native",
+    ap.add_argument("--writer", choices=sorted(WRITER), default="c",
                     help="the compiled writer the interpreter is set against: its rewrite census and "
-                         "its stats.py lane (native = rustc, c = the C writer)")
+                         "its stats.py lane (the C writer)")
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", str(ROOT / "target" / "release" / "loft")),
                     help="the binary the TIMING runs (an ordinary release build)")
     ap.add_argument("--census-loft", default=str(ROOT / "target" / "op-census" / "release" / "loft"),
@@ -617,16 +587,6 @@ def main():
     if not os.access(a.census_loft, os.X_OK):
         sys.exit(f"interp_gap: no census binary at {a.census_loft} — `cargo build --release --bin loft "
                  "--features op-census --target-dir target/op-census` (or run `make interp-gap`)")
-    rlib = Path(a.loft).parent / "libloft.rlib"
-    if not (a.timing or a.no_timing):
-        # The native lane links this rlib, and building the binary never rebuilds it: a stale
-        # one measures an older runtime, a missing one fails every native build.  Current
-        # means what `make check-rlib` means: nothing under src/ or Cargo.toml is newer.
-        built = rlib.stat().st_mtime if rlib.exists() else 0
-        newer = [f for f in [ROOT / "Cargo.toml", *(ROOT / "src").rglob("*")] if f.is_file() and f.stat().st_mtime > built]
-        if newer:
-            sys.exit(f"interp_gap: {rlib} is {'older than ' + str(newer[0].relative_to(ROOT)) if built else 'missing'}"
-                     " — `cargo build --release --lib` (or run `make interp-gap`)")
     only = [w.strip() for w in a.only.split(",") if w.strip()]
     progs = programs(only, a.package, a.no_suite)
     if not progs:
@@ -639,8 +599,9 @@ def main():
     def both(prog):
         census, printed, store_i, err = op_census(a.census_loft, prog, a.n, a.timeout)
         rw, rerr = rewrite_census(a.census_loft, prog, a.timeout, a.writer)
-        # The compiled store census is the rustc build's (it links the census rlib).
-        store_n, serr = native_store(a.census_loft, prog, a.n, a.timeout) if a.writer == "native" else (None, None)
+        # The compiled store census was the rustc build's, which linked the census rlib; the C
+        # unit carries no store census, so the column is the interpreter's alone.
+        store_n, serr = None, None
         return prog, census, printed, err, rw, rerr, (store_i or {}, store_n or {}, serr)
 
     with ThreadPoolExecutor(max_workers=2) as pool:

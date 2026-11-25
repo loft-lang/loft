@@ -9,101 +9,6 @@
 //! for each question, low in the layering so the toolchain, the cache and the platform code ask
 //! it as the native writer does.
 
-/// What a crate-metadata header says about the compile that wrote it: the crate's metadata
-/// hash (format 11 on; `None` before it) and the rustc version string.  Read from the `rust`
-/// blob rustc writes at the head of every `lib.rmeta` and `.rmeta`: the magic and a format
-/// version, the offsets, from format 11 the 16-byte hash, then the version as a
-/// length-prefixed string.
-#[derive(PartialEq, Eq, Debug)]
-pub(crate) struct MetaHeader {
-    pub(crate) hash: Option<[u8; 16]>,
-    pub(crate) rustc: String,
-}
-
-pub(crate) fn meta_header_of_blob(blob: &[u8]) -> Option<MetaHeader> {
-    const MAGIC: &[u8] = b"rust\0\0\0";
-    let at = blob.windows(MAGIC.len()).position(|w| w == MAGIC)?;
-    let format = *blob.get(at + 7)?;
-    // Format 10 puts the version string right after the root offset; 11 adds a second
-    // offset and the hash before it.
-    let len_at = at + if format >= 11 { 40 } else { 16 };
-    let hash = if format >= 11 {
-        Some(blob.get(at + 24..at + 40)?.try_into().ok()?)
-    } else {
-        None
-    };
-    let len = usize::from(*blob.get(len_at)?);
-    let rustc = std::str::from_utf8(blob.get(len_at + 1..len_at + 1 + len)?).ok()?;
-    rustc.starts_with("rustc ").then(|| MetaHeader {
-        hash,
-        rustc: rustc.to_string(),
-    })
-}
-
-/// The metadata header of an `.rmeta` file: its first few KiB, never the whole file (the full
-/// metadata of loft's own crate is tens of MB).
-pub(crate) fn rmeta_meta_header(rmeta: &std::path::Path) -> Option<MetaHeader> {
-    use std::io::Read;
-    let mut head = Vec::with_capacity(4096);
-    crate::file_access::open(rmeta)
-        .ok()?
-        .take(4096)
-        .read_to_end(&mut head)
-        .ok()?;
-    meta_header_of_blob(&head)
-}
-
-/// The metadata header of an rlib's `lib.rmeta` member.  The archive is walked by SEEKING past
-/// each member — a stable rlib opens with a symbol table of several MB, and the rlib itself is
-/// tens of MB — and only the member's first few KiB are read.
-pub(crate) fn rlib_meta_header(rlib: &std::path::Path) -> Option<MetaHeader> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = crate::file_access::open(rlib).ok()?;
-    let mut magic = [0u8; 8];
-    f.read_exact(&mut magic).ok()?;
-    if &magic != b"!<arch>\n" {
-        return None;
-    }
-    let mut header = [0u8; 60];
-    while f.read_exact(&mut header).is_ok() {
-        let name = std::str::from_utf8(&header[0..16]).ok()?.trim_end();
-        let size: u64 = std::str::from_utf8(&header[48..58])
-            .ok()?
-            .trim_end()
-            .parse()
-            .ok()?;
-        if name.strip_suffix('/').unwrap_or(name) == "lib.rmeta" {
-            let mut head = Vec::with_capacity(4096);
-            f.take(size.min(4096)).read_to_end(&mut head).ok()?;
-            return meta_header_of_blob(&head);
-        }
-        f.seek(SeekFrom::Current(i64::try_from(size + size % 2).ok()?))
-            .ok()?;
-    }
-    None
-}
-
-/// Was this rlib written by a rustc OTHER than the one that will compile against it?  `false`
-/// whenever either side is unknown, so an unreadable header keeps the old choice.
-pub(crate) fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
-    match (rlib_meta_header(rlib), crate::cache::rustc_version()) {
-        (Some(h), Some(current)) => h.rustc != current,
-        _ => false,
-    }
-}
-
-/// Is `<profile>/deps/` debris: the profile's uplifted `libloft.rlib` is a per-unit output (a
-/// hard link into `build/<crate>/<hash>/out/`), so the per-unit layout built it and a `deps/`
-/// beside it was left by an older cargo or toolchain (loft#2033)?
-#[must_use]
-pub fn classic_deps_is_debris(profile_dir: &std::path::Path) -> bool {
-    let rlib = profile_dir.join("libloft.rlib");
-    crate::file_access::exists(&rlib)
-        && per_unit_dep_dirs(profile_dir)
-            .iter()
-            .any(|d| crate::file_access::same_file_identity(d.join("libloft.rlib"), &rlib))
-}
-
 /// The dependency search dir for a [`loft_lib_dir`] result: `lib_dir` itself
 /// when it already IS `deps/` (the preferred deps-first resolution, #304/#307),
 /// else `lib_dir/deps`.  Appending "deps" unconditionally yields an invalid
@@ -252,13 +157,6 @@ pub fn runtime_profile_dir(exe_dir: &std::path::Path) -> std::path::PathBuf {
     exe_dir.to_path_buf()
 }
 
-/// [`runtime_profile_dir`] of the running binary.
-#[must_use]
-pub fn current_runtime_profile_dir() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    Some(runtime_profile_dir(exe.parent()?))
-}
-
 /// Make `<profile>/libloft.rlib` the runtime the last build produced, as a cargo uplift does.
 ///
 /// Every lookup links the rlib at `<profile>/libloft.rlib` (and its `.rmeta` beside it), and
@@ -292,8 +190,10 @@ pub fn refresh_runtime_uplift(profile: &std::path::Path) {
     let Some(unit_rlib) = newest else {
         return;
     };
+    // The times first: `same_file` compares content when the two are not one link, which reads
+    // both rlibs (tens of MB) — every run of a tree whose uplift is a copy paid that at start.
     if crate::file_access::exists(&uplifted)
-        && (same_file(&unit_rlib, &uplifted) || modified(&unit_rlib) <= modified(&uplifted))
+        && (modified(&unit_rlib) <= modified(&uplifted) || same_file(&unit_rlib, &uplifted))
     {
         return;
     }

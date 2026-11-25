@@ -1,7 +1,8 @@
 # @PLN117 — the browser-threading gates, run where they cannot rot.
 #
-# `par` on Web Worker threads is proven by five HEADLESS BROWSER gates
-# (tests/wasm/*.sh).  They need what a normal CI job does not have: a nightly
+# `par` on Web Worker threads is proven by four HEADLESS BROWSER gates on the
+# wasm-bindgen bundle (tests/wasm/par-*.sh); two more check `loft --html` pages
+# (html-thread-proof, html-unavailable-builtin).  They need what a normal CI job does not have: a nightly
 # toolchain with rust-src (the threaded build rebuilds std with wasm atomics),
 # a threaded wasm bundle, a COOP/COEP host, and a real chromium.  That is why
 # they live in their own workflow instead of ci.yml.
@@ -10,7 +11,7 @@
 #   - nightly at 05:00 UTC — clear of the 03:00 daily CI matrix and the 04:00
 #     miri run.  This is the real safety net: it covers every change, including
 #     ones to files the path filter below does not list (src/state/mod.rs,
-#     src/generation/, src/main.rs — all touched constantly, all too broad to
+#     src/c/, src/main.rs — all touched constantly, all too broad to
 #     put on a per-PR trigger for a ~40-minute job).
 #   - per PR / push-to-main, but only when the diff touches the threading
 #     surface itself, where the feedback is worth the wall-clock.
@@ -72,10 +73,6 @@ permissions:
 env:
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
   PYTHONUTF8: '1'
-  # The threaded `--html` bundle these gates read is the rustc writer's (the nightly std with
-  # atomics, `make wasm-mt`); `--html` alone builds through the C since @PLN203 C9, so the
-  # workflow names the writer it tests.
-  LOFT_NATIVE_BACKEND: rust
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   CARGO_NET_RETRY: "10"
@@ -87,8 +84,8 @@ jobs:
     # @windows-exempt: platform-free — runs in a headless browser, which is the platform under test
     name: par on Web Workers
     runs-on: ubuntu-latest
-    # Two std rebuilds with atomics (the wasm-bindgen bundle, then the --html
-    # sysroot) dominate; the five gates themselves are minutes.
+    # The std rebuild with atomics for the wasm-bindgen bundle dominates; the
+    # gates themselves are minutes.
     timeout-minutes: 90
 
     # CALIBRATION.  A GitHub runner has 4 vCPUs against this project's 24-core
@@ -168,6 +165,29 @@ jobs:
       # binaryen: `loft --html` needs wasm-opt to inject asyncify.
       - name: Install mold + binaryen
         run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
+      # `--html` builds through the C and clang for wasm32-wasi (@PLN203 C6), as
+      # html-thread-proof.sh and html-unavailable-builtin.sh do; without it those two refuse at
+      # the build, so a missing package fails at this step instead.
+      - name: Install the C backend's wasm toolchain
+        run: >
+          timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
+          clang lld wasi-libc libclang-rt-dev-wasm32
+
+      # A page that runs `par` on Web Workers links against wasi-sdk's wasm32-wasip1-threads
+      # libc (decision C3, doc/claude/plans/227-par-on-c-pages.md), which Ubuntu's wasi-libc
+      # lacks, and with the clang of the same wasi-sdk release: an older clang can fail to link
+      # that libc, and the page is then built unthreaded.  The key follows the Makefile's
+      # WASI_SDK_VERSION.
+      - name: Cache wasi-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/.loft/toolchains/wasi-sdk
+          key: wasi-sdk-34-x86_64-linux
+      - name: Install wasi-sdk
+        run: |
+          timeout 900 make wasi-sdk
+          echo "LOFT_WASM_CC=$HOME/.loft/toolchains/wasi-sdk/bin/clang" >> "$GITHUB_ENV"
+          echo "WASI_SDK_PATH=$HOME/.loft/toolchains/wasi-sdk" >> "$GITHUB_ENV"
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
@@ -220,7 +240,7 @@ jobs:
       - name: Build the threaded wasm bundle
         run: make wasm-mt
 
-      - name: Run the five gates
+      - name: Run the gates
         run: scripts/par_gates.sh --ci
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'

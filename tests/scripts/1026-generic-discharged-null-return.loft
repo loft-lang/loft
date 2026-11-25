@@ -10,7 +10,7 @@
 // `OpAppendText` after a `Value::Null` that pushes nothing — the append read whatever the
 // eval stack held under it.  Silent without `LOFT_POISON`, a SIGSEGV with it.  `set_var` now
 // emits the slot's typed null there, which is what `--native` already wrote for the same IR
-// (`STRING_NULL.to_string()`), so the two backends store one value.
+// (the null text), so the two backends store one value.
 //
 // **The leak.**  `parse_block` promotes a value-yielding `if`/`match` text tail per ARM into
 // an accumulator that `text_return` delivers through the caller's hidden `&text` buffer

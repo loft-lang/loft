@@ -223,15 +223,15 @@ target, silently; a value-range proof is portable by construction.
 each member is what a field of its type is, and a `&` link names a member as it names a field.
 It may live on the stack.  Stored, it packs like any record, largest alignment first, which
 changes neither a member's name (`t.0` stays the written first member) nor the text a tuple
-prints as.  A native representation — a Rust tuple of native types in rustc's
+prints as.  A native representation — a struct of native types in the compiled target's own
 order — is an optimisation derived from the record layout, kept only where no program can tell
 it apart.  FOREIGN data — any structure whose bytes loft does not own: a native library's text,
 record, tuple or vector, a mapped file — presents as an ordinary loft type that is value-const
 (`const T`, declared by its producer).  It is read in place, whole or in parts, without a copy;
 a `&` link to a part is a read-only view; every write is a compile-time error whose cure is a
 copy (`c = t.0 + "!"`).  **Why.** One layout for a tuple wherever it lives leaves nothing to
-special-case in a link, a copy or a release, and rustc still gets its own representation where
-it is unobservable.  A library's string read without being copied into loft's structure is the
+special-case in a link, a copy or a release, and a compiled target still gets its own
+representation where it is unobservable.  A library's string read without being copied into loft's structure is the
 point of foreign data, and making it value-const reuses a check loft already has, at compile
 time, instead of a runtime refusal (@C80).
 
@@ -337,3 +337,23 @@ spelling for that.  Decided 2026-10-30 (owner).
 `loft-suite/rules/types/N-Present/`.
 **Catalogue:** @F96 (the discharges) · `formal/types.md` `(N-Default)`.
 
+## C171 — A null text is an identity, never a content
+
+**Decision.** A `text` is absent or a byte string, and a byte string may hold NUL bytes anywhere:
+`""` and `"\0"` are present values.  Absence is spelled by identity in every representation — the
+unset handle in a store, a view with no pointer, the Rust null static (`text_null::NULL_TEXT`), a
+C owned text with a pointer and neither length nor room — never by bytes, so `text` reserves no
+writable value, unlike the scalars of [@C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen).
+An image whose sidecar predates version 3 may hold a null as a record of one NUL byte, and every
+loader reads it as null.
+**Why.** A content spelling is a value a program can write: a lone NUL read from input nulled
+every text built from it, in every place it was held, on both backends.  An identity costs no
+width — a slot holds a handle, a view a pointer — and leaves the digest and key order of stored
+tables as they were, so old images keep their nulls and their lookups.
+**Revisit when.** No trigger recorded.  Decided 2026-11-21 (owner) — [record](DESIGN_DECISIONS-history.md#c171--a-null-text-is-an-identity-never-a-content).
+**Holds at:** `@C171` — `./scripts/idx tag:@C171`: `src/text_null.rs` (the Rust homes), the C
+runtime's `loft_str_is_null` / `loft_text_is_null` (`src/c/loft_text.h`), `Store::text_is_null`
+and `Store::legacy_nul` (stored); `formal/layout.md` `(L-Null-Text)`; guards the null-text matrix
+`loft-suite/rules/layout/L-Null-Text/null-text-through-*.loft` and
+`tests/store_upgrade.rs::cell_an_image_holding_the_nul_record_reads_null`.
+**Catalogue:** @F1 (null / Optional); `formal/layout.md` `(L-Null-Text)`.

@@ -124,10 +124,10 @@ impl FnWriter<'_> {
             let i = self.expr(idx, ind)?;
             // `@FR-E-Report` — the unguarded read reports an index naming no element.
             let code = if nullable {
-                format!("loft_apv_get(&loft_apv{v}, {})", as_int(i)?)
+                format!("loft_apv_get(cx, &loft_apv{v}, {})", as_int(i)?)
             } else {
                 format!(
-                    "loft_apv_get_at(&loft_apv{v}, {}, {})",
+                    "loft_apv_get_at(cx, &loft_apv{v}, {}, {})",
                     as_int(i)?,
                     self.site()
                 )
@@ -141,7 +141,7 @@ impl FnWriter<'_> {
             self.line(
                 ind,
                 &format!(
-                    "loft_apv_set_at(&loft_apv{v}, {}, {}, {});",
+                    "loft_apv_set_at(cx, &loft_apv{v}, {}, {}, {});",
                     as_int(i)?,
                     as_float(y)?,
                     self.site()
@@ -155,7 +155,7 @@ impl FnWriter<'_> {
             let y = self.expr(val, ind)?;
             self.line(
                 ind,
-                &format!("loft_apv_push(&loft_apv{v}, {});", as_float(y)?),
+                &format!("loft_apv_push(cx, &loft_apv{v}, {});", as_float(y)?),
             );
             return Ok(Some(E::new("((void) 0)", K::Void)));
         }
@@ -165,7 +165,7 @@ impl FnWriter<'_> {
             return Ok(Some(match op {
                 "len" => E::new(format!("((int64_t) loft_apv{v}.n)"), K::Int),
                 "clear" => {
-                    self.line(ind, &format!("loft_apv_clear(&loft_apv{v});"));
+                    self.line(ind, &format!("loft_apv_clear(cx, &loft_apv{v});"));
                     E::new("((void) 0)", K::Void)
                 }
                 _ => E::new("((void) 0)", K::Void),
@@ -187,12 +187,12 @@ impl FnWriter<'_> {
         if let Some((v, _)) = crate::empty_slot::buffer_init(self.cx.data, x)
             && self.apv_vec(v)
         {
-            self.line(ind, &format!("loft_apv_clear(&loft_apv{v});"));
+            self.line(ind, &format!("loft_apv_clear(cx, &loft_apv{v});"));
             return true;
         }
         match x.unspan() {
             Value::Set(v, _) if self.apv_vec(*v) => {
-                self.line(ind, &format!("loft_apv_clear(&loft_apv{v});"));
+                self.line(ind, &format!("loft_apv_clear(cx, &loft_apv{v});"));
                 true
             }
             Value::Set(v, _) if self.apv.companions.contains(v) => true,
@@ -343,7 +343,7 @@ impl FnWriter<'_> {
         let buf = self.apr_buf(owner).ok_or("an element of no apart value")?;
         self.line(
             ind,
-            &format!("loft_apo{var} = loft_apr_push(&{buf}[{k}], {esize}u);"),
+            &format!("loft_apo{var} = loft_apr_push(cx, &{buf}[{k}], {esize}u);"),
         );
         Ok(true)
     }
@@ -441,7 +441,7 @@ impl FnWriter<'_> {
                 self.line(
                     ind,
                     &format!(
-                        "loft_apart_write_fresh({d}, {buf}, {slots}, {sizes}, {}); /* @FR-R-Apart boundary */",
+                        "loft_apart_write_fresh(cx, {d}, {buf}, {slots}, {sizes}, {}); /* @FR-R-Apart boundary */",
                         layout.fields.len()
                     ),
                 );
@@ -470,7 +470,7 @@ impl FnWriter<'_> {
         let buf = self.apr_buf(*p)?;
         let (slots, _) = parts(layout);
         Some(format!(
-            "loft_rotate_from_parts({vec}, {buf}, {slots}, {}, {size}u, INT64_C({k}), {plan_c}, {count})",
+            "loft_rotate_from_parts(cx, {vec}, {buf}, {slots}, {}, {size}u, INT64_C({k}), {plan_c}, {count})",
             layout.fields.len()
         ))
     }

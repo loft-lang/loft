@@ -108,7 +108,7 @@ against.
                 integer / long      decimal digits            null (i64::MIN)  → "null"
                 float / single      shortest round-trip form (F-Float-Text)  null (NaN) → "null"
                 boolean             "true" / "false"          null (0xFF)      → "null"
-                text                the characters as-is      null (STRING_NULL) → "null"
+                text                the characters as-is      null (no text)    → "null"
                 character           the single codepoint      null (0)         → ""  (nothing)
                 enum                the variant name          null (0xFF disc) → "null"
                 vector              "[e₀,e₁,…]"  (compact, elements rendered by F-Render)

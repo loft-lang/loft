@@ -38,8 +38,8 @@ fn main() {
   h = acme.people[3];
   println("keyed={h.name} resident_after={acme.people.len()}");
 
-  // A wrapper with TWO keyed fields cannot say which collection a bare
-  // reference names, and refuses rather than guessing.
+  // A wrapper with TWO keyed fields: the reference names its field, so the
+  // query fills that collection, on both backends.
   t = TwoKeyed { a: [], b: [] };
   store_bind_lazy(t.a, target);
   println("ambiguous={store_lazy_query(t.a, "1=1")} why_empty={store_lazy_error(t.a) == ""}");

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A vector FIELD of a record view — `c.items` where `c` is a loop variable or `c = v[i]?` —
-// answers its length and its elements as the store holds them (`@FR-R-RecPtr`'s nested
-// clause: under a held view address the field's vector record and length are read through
-// that address, `vector::field_header`).  Each cell reads lengths, in-range elements (the
-// nullable `?` read and the raising read), out-of-range and negative indexes, an empty and
+// answers its length and its elements as the store holds them, read through the view.  Each
+// cell reads lengths, in-range elements (the nullable `?` read and the raising read),
+// out-of-range and negative indexes, an empty and
 // an absent field, a field reached through an inline sub-record, and writes a value record
 // into an element; the sums are hand-computed.  Both backends.
 //

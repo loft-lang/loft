@@ -11,8 +11,8 @@
 // O(dirty) rebuild (`crystal_incr_*`).  No server, no HTML — one native
 // window.
 //
-// All screen<->world math uses the LIVE window size (`gl_window_width/height`,
-// the same physical-pixel space as `gl_mouse_*`), so the palette stays
+// All screen<->world math uses the LIVE window size (`w.width()/height()`,
+// the same physical-pixel space as the mouse events), so the palette stays
 // anchored to the real bottom edge and stays clickable even when the window
 // manager resizes the window (title bar, DPI, partial fit).
 //
@@ -89,10 +89,12 @@ fn screen_mvp(sw: float, sh: float) -> vector<float> {
 
 // Mouse pixel → world ground (XZ) — the exact inverse of `topdown_mvp`.
 fn pick_world_x(mx: float, cam_x: float, sw: float, aspect: float) -> float {
-  (2.0 * mx / sw - 1.0) * VIEW_HALF * aspect + cam_x
+  ux = 2.0 * mx / sw ?? 1.0;   // a zero-width window: the centre
+  (ux - 1.0) * VIEW_HALF * aspect + cam_x
 }
 fn pick_world_z(my: float, cam_z: float, sh: float) -> float {
-  (0.0 - (1.0 - 2.0 * my / sh)) * VIEW_HALF + cam_z
+  uy = 2.0 * my / sh ?? 1.0;
+  (0.0 - (1.0 - uy)) * VIEW_HALF + cam_z
 }
 
 // Which palette swatch (1..9) is under the pointer, or 0 if not on the UI.
@@ -135,6 +137,25 @@ fn build_picker_verts(active: integer, pick_y0: float) -> vector<single> {
   pv
 }
 
+// Put `verts` (stride 10) on the GPU as `held`'s one mesh: uploaded the first
+// time, its buffer refilled after.  No vertices leaves it as it was; the
+// caller then draws nothing.
+fn hold(w: Window, held: &vector<GpuMesh>, verts: const vector<single>) {
+  if len(verts) == 0 { return; }
+  if len(held) == 0 {
+    held += [w.upload(verts, 10)];
+    return;
+  }
+  m = held[0];
+  m.update(verts);
+}
+
+// Draw `held`'s mesh, when it has vertices to show (`n`).
+fn show(w: Window, shader: Shader, held: const vector<GpuMesh>, n: integer) {
+  if n == 0 { return; }
+  for m in held { m.draw(w, shader); }
+}
+
 // The single crystal-edit entry point — mutates only the CrystalIncr engine.
 fn apply_edit(cryst: &CrystalIncr, x: integer, y: integer, color: integer, erase: boolean) {
   if erase {
@@ -142,6 +163,10 @@ fn apply_edit(cryst: &CrystalIncr, x: integer, y: integer, color: integer, erase
   } else {
     crystal_incr_paint(cryst, x, y, color);
   }
+}
+
+fn no_window() {
+  println("crystal_editor: could not create window");
 }
 
 fn main() {
@@ -154,16 +179,13 @@ fn main() {
     else if ce_arg == "--screenshot" { want_shot = true; }
   }
 
-  if !graphics::gl_create_window(WIN_W, WIN_H, "Crystal Editor — stand-alone") {
-    println("crystal_editor: could not create window");
-    return;
-  }
-  shader = graphics::gl_create_shader(CE_VERT, CE_FRAG);
+  w = open_window(WIN_W, WIN_H, "Crystal Editor — stand-alone") ?? return no_window();
+  shader = w.shader(CE_VERT, CE_FRAG) ?? return no_window();
   // Flat 2D painter's-order view: blend on, depth OFF so each layer paints
   // over the previous (everything is at z=0).
-  graphics::gl_disable(graphics::GL_DEPTH_TEST);
-  graphics::gl_enable(graphics::GL_BLEND);
-  graphics::gl_blend_func(graphics::BLEND_SRC_ALPHA, graphics::BLEND_ONE_MINUS_SRC_ALPHA);
+  w.disable(GL_DEPTH_TEST);
+  w.enable(GL_BLEND);
+  w.blend(BLEND_SRC_ALPHA, BLEND_ONE_MINUS_SRC_ALPHA);
 
   state = CrystalState{ main_x: [], main_y: [], main_d: [], birth_tick: [] };
   cryst = crystal_incr_new(CellSnap{ xs: [], ys: [], colors: [] },
@@ -177,36 +199,38 @@ fn main() {
 
   tick = 0;
   cur_color = 1;
-  prev_btn = 0;
   edits = 0;
   cam_x = 0.0; cam_z = 0.0;
   tgt_x = 0.0; tgt_z = 0.0;
 
-  crystal_vao = -1; crystal_n = 0;
-  ground_vao = -1; ground_n = 0;
-  picker_vao = -1; picker_n = 0;
+  // Each layer is at most one mesh, its buffer refilled when the layer changes.
+  crystal_mesh: vector<GpuMesh> = []; crystal_n = 0;
+  ground_mesh: vector<GpuMesh> = []; ground_n = 0;
+  picker_mesh: vector<GpuMesh> = []; picker_n = 0;
   dirty = false;
   picker_dirty = true;
-  last_picker_y0 = 0.0 - 1.0;     // rebuild the palette VAO if the anchor moves
+  last_picker_y0 = 0.0 - 1.0;     // rebuild the palette mesh if the anchor moves
 
   println("crystal_editor: pick a colour (bottom-left palette), click/tap to paint, right-click erases.  Close to quit.");
 
-  while graphics::gl_poll_events() {
+  while w.poll() {
     tick += 1;
     edited = false;
 
-    // ── Live window metrics (physical px, same space as gl_mouse_*) ──
-    fb_w = graphics::gl_window_width();
-    fb_h = graphics::gl_window_height();
+    // ── Live window metrics (physical px, same space as the mouse) ──
+    fb_w = w.width();
+    fb_h = w.height();
     if fb_w <= 0 { fb_w = WIN_W; }
     if fb_h <= 0 { fb_h = WIN_H; }
     sw = fb_w as float;
     sh = fb_h as float;
-    aspect = sw / sh;
+    aspect = sw / sh ?? 1.0;   // sh > 0: the fallback above
     pick_y0 = sh - PICK_SW - PICK_MARGIN;
     if pick_y0 != last_picker_y0 { picker_dirty = true; last_picker_y0 = pick_y0; }
 
     // ── Input ─────────────────────────────────────────────────────
+    // Read every frame, so what arrived never waits for a later one.
+    events = w.events();
     if smoke {
       if tick == 1 { cur_color = 2; apply_edit(cryst, 1, 0, cur_color, false); gx += [1]; gy += [0]; gc += [cur_color]; tgt_x = cell_wx(1, 0); tgt_z = cell_wz(0); edited = true; }
       if tick == 2 { cur_color = 3; apply_edit(cryst, -1, 0, cur_color, false); gx += [-1]; gy += [0]; gc += [cur_color]; tgt_x = cell_wx(-1, 0); tgt_z = cell_wz(0); edited = true; }
@@ -216,39 +240,37 @@ fn main() {
       if tick == 6 { cur_color = 7; apply_edit(cryst, -1, -1, cur_color, false); gx += [-1]; gy += [-1]; gc += [cur_color]; tgt_x = cell_wx(-1, -1); tgt_z = cell_wz(-1); edited = true; }
       if tick == 7 { cur_color = 8; apply_edit(cryst, 0, 0, cur_color, false); gx += [0]; gy += [0]; gc += [cur_color]; tgt_x = cell_wx(0, 0); tgt_z = cell_wz(0); edited = true; picker_dirty = true; }
     } else {
-      btn = graphics::gl_mouse_button();
-      if btn != 0 && prev_btn == 0 {                  // click DOWN edge
-        mxp = graphics::gl_mouse_x();
-        myp = graphics::gl_mouse_y();
-        pc = picker_hit(mxp, myp, pick_y0);
-        if pc != 0 {
-          cur_color = pc;                              // selected a colour — never paints
-          picker_dirty = true;
-        } else {
-          hx = hex_at_world(pick_world_x(mxp, cam_x, sw, aspect), pick_world_z(myp, cam_z, sh));
-          erase = (btn & 2) != 0;                      // right button (native: L=1, R=2, M=4)
-          apply_edit(cryst, hx.0, hx.1, cur_color, erase);
-          if erase {
-            ngx: vector<integer> = []; ngy: vector<integer> = []; ngc: vector<integer> = [];
-            for ge_i in 0..len(gx) {
-              if !((gx[ge_i] ?? 0) == hx.0 && (gy[ge_i] ?? 0) == hx.1) {
-                ngx += [gx[ge_i] ?? 0]; ngy += [gy[ge_i] ?? 0]; ngc += [gc[ge_i] ?? 0];
-              }
-            }
-            gx = ngx; gy = ngy; gc = ngc;
+      for ev in events {
+        if ev is MouseDown { button, x, y } {          // a click's DOWN edge
+          pc = picker_hit(x, y, pick_y0);
+          if pc != 0 {
+            cur_color = pc;                            // selected a colour — never paints
+            picker_dirty = true;
           } else {
-            found = false;
-            for gu_i in 0..len(gx) {
-              if (gx[gu_i] ?? 0) == hx.0 && (gy[gu_i] ?? 0) == hx.1 { gc[gu_i] = cur_color; found = true; }
+            hx = hex_at_world(pick_world_x(x, cam_x, sw, aspect), pick_world_z(y, cam_z, sh));
+            erase = (button & 2) != 0;                 // right button (L=1, R=2, M=4)
+            apply_edit(cryst, hx.0, hx.1, cur_color, erase);
+            if erase {
+              ngx: vector<integer> = []; ngy: vector<integer> = []; ngc: vector<integer> = [];
+              for ge_i in 0..len(gx) {
+                if !((gx[ge_i] ?? 0) == hx.0 && (gy[ge_i] ?? 0) == hx.1) {
+                  ngx += [gx[ge_i] ?? 0]; ngy += [gy[ge_i] ?? 0]; ngc += [gc[ge_i] ?? 0];
+                }
+              }
+              gx = ngx; gy = ngy; gc = ngc;
+            } else {
+              found = false;
+              for gu_i in 0..len(gx) {
+                if (gx[gu_i] ?? 0) == hx.0 && (gy[gu_i] ?? 0) == hx.1 { gc[gu_i] = cur_color; found = true; }
+              }
+              if !found { gx += [hx.0]; gy += [hx.1]; gc += [cur_color]; }
             }
-            if !found { gx += [hx.0]; gy += [hx.1]; gc += [cur_color]; }
+            tgt_x = cell_wx(hx.0, hx.1);
+            tgt_z = cell_wz(hx.1);
+            edited = true;
           }
-          tgt_x = cell_wx(hx.0, hx.1);
-          tgt_z = cell_wz(hx.1);
-          edited = true;
         }
       }
-      prev_btn = btn;
     }
     if edited { edits += 1; dirty = true; }
 
@@ -261,41 +283,37 @@ fn main() {
     if dirty {
       crystal_incr_rebuild(cryst, state, tick);
       cverts = crystal_mesh_to_beams(crystal_incr_full_mesh(cryst), 3.0);
-      if crystal_vao >= 0 { graphics::gl_delete_vao(crystal_vao); crystal_vao = -1; }
-      crystal_n = 0;
-      if len(cverts) > 0 { crystal_vao = graphics::gl_upload_vertices(cverts, 10); crystal_n = len(cverts) / 10; }
+      hold(w, crystal_mesh, cverts);
+      crystal_n = len(cverts) / 10;
 
       gverts = ground_hexes_to_verts(CellSnap{ xs: gx, ys: gy, colors: gc }, GROUND_ALPHA as single);
-      if ground_vao >= 0 { graphics::gl_delete_vao(ground_vao); ground_vao = -1; }
-      ground_n = 0;
-      if len(gverts) > 0 { ground_vao = graphics::gl_upload_vertices(gverts, 10); ground_n = len(gverts) / 10; }
+      hold(w, ground_mesh, gverts);
+      ground_n = len(gverts) / 10;
       dirty = false;
     }
     if dirty == false && picker_dirty {
       pverts = build_picker_verts(cur_color, pick_y0);
-      if picker_vao >= 0 { graphics::gl_delete_vao(picker_vao); picker_vao = -1; }
-      picker_n = 0;
-      if len(pverts) > 0 { picker_vao = graphics::gl_upload_vertices(pverts, 10); picker_n = len(pverts) / 10; }
+      hold(w, picker_mesh, pverts);
+      picker_n = len(pverts) / 10;
       picker_dirty = false;
     }
 
     // ── Render: ground (faint) → crystals → palette overlay ───────
-    graphics::gl_clear(0x0a0a14);
-    graphics::gl_use_shader(shader);
-    graphics::gl_set_uniform_mat4(shader, "uMVP", world_mvp);
-    if ground_vao >= 0 { graphics::gl_draw_mode(ground_vao, ground_n, graphics::DRAW_TRIANGLES); }
-    if crystal_vao >= 0 { graphics::gl_draw_mode(crystal_vao, crystal_n, graphics::DRAW_TRIANGLES); }
-    graphics::gl_set_uniform_mat4(shader, "uMVP", screen_mvp(sw, sh));
-    if picker_vao >= 0 { graphics::gl_draw_mode(picker_vao, picker_n, graphics::DRAW_TRIANGLES); }
+    w.clear(rgb(10, 10, 20));
+    shader.set_mat4("uMVP", world_mvp);
+    show(w, shader, ground_mesh, ground_n);
+    show(w, shader, crystal_mesh, crystal_n);
+    shader.set_mat4("uMVP", screen_mvp(sw, sh));
+    show(w, shader, picker_mesh, picker_n);
 
     if smoke && tick >= 40 {
-      graphics::gl_screenshot(fb_w, fb_h, shot_path);
+      w.capture().save_png(shot_path);
       println("crystal_editor: smoke ok — {edits} edits, {len(gx)} ground hexes, window {fb_w}x{fb_h}; wrote {shot_path}");
       break;
     }
 
-    graphics::gl_swap_buffers();
+    w.swap();
   }
 
-  graphics::gl_destroy_window();
+  w.close();
 }

@@ -185,7 +185,9 @@ pub(super) fn retain_shared_handles(
     database: &crate::database::Stores,
 ) {
     let retain = data.def_nr("OpCoroutineRetain");
-    if retain == u32::MAX {
+    // `LOFT_NO_HANDLE_RETAIN=1`: no second holder takes a hold — its free releases the
+    // source's frame (the store records read it as the caller's store freed).
+    if retain == u32::MAX || crate::env_once!(std::env::var_os("LOFT_NO_HANDLE_RETAIN").is_some()) {
         return;
     }
     let cx = RetainCx {

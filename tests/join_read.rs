@@ -9,45 +9,10 @@
 //! show: that the pre-eval collector and the emitter agree.  The collector lifts every `Block`
 //! argument into a `let _pre_N`, so an emitter arm it did not know about would compile, pass
 //! every value test and never fire.
-use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-join-read.loft";
-
-/// Per function: `(join reads, joins lifted into a `let _pre_N`)`.
-const EXPECTED: &[(&str, usize, usize)] = &[
-    // No join in the loop: `for i in 0..len(v)` over records with a body that cannot resize
-    // `v` drops the `?`'s discharge in the IR (`@FR-R-InRange`), so the read is a plain load.
-    // The two lifted joins are `v[99]?.x` AFTER the loop, where no header is held.
-    // `LOFT_NO_IN_RANGE=1` gives (1, 2).
-    ("n_j1", 0, 2),
-    // All three in range of their own loops: `@FR-R-InRange` drops each join in the IR
-    // (`LOFT_NO_IN_RANGE=1` gives (3, 0)).
-    ("n_j2", 0, 0),
-    ("n_j3", 3, 0),
-    // A negative index: the load is emitted, its range test refuses, the join answers.
-    ("n_j4", 1, 0),
-    // Three joins in one short-circuit condition, over a FIELD path.
-    ("n_j6_count", 3, 0),
-    // The loop pushes to ANOTHER store (`@FR-R-Base`'s growth clause): the base is held and
-    // the join is served through it, its fallback arm running for the two indexes past
-    // the end.
-    ("n_j7", 1, 0),
-    // No loop, no header.
-    ("n_j8", 0, 4),
-    ("n_j9", 1, 0),
-    ("n_j10", 1, 0),
-    // A computed index would be evaluated twice on the fallback path: the join is kept.
-    ("n_j11", 0, 1),
-    // A callee of a loop: its join's absent arm mints a discharge buffer, which the callee
-    // admission reads as a store write — no twin, no header, both joins general.  Pinned at
-    // zero ON PURPOSE: when that admission widens this row moves, and the twin path is then
-    // owed the verification it has never had.
-    ("n_j12_at", 0, 2),
-    ("n_j12_scan", 0, 0),
-];
 
 const SWITCHES: [&str; 5] = [
     "LOFT_NO_JOIN_READ",
@@ -72,59 +37,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    // One file per TEST: the tests run on threads of one process.
-    let out = std::env::temp_dir().join(format!("loft_join_read_{}_{tag}.rs", std::process::id()));
-    let status = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells().to_str().unwrap(),
-        ],
-        env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-/// The joins the pre-eval collector LIFTED in `text`: exactly `let _pre_<digits> = { //ncc_`.
-/// Exact on purpose — the fallback arm this rewrite emits is `let __jr: DbRef = { //ncc_…`,
-/// which a looser ` = { //ncc_` would count as lifted.
-fn lifted_joins(text: &str) -> usize {
-    text.match_indices("let _pre_")
-        .filter(|(at, m)| {
-            let rest = &text[at + m.len()..];
-            let digits = rest.chars().take_while(char::is_ascii_digit).count();
-            digits > 0 && rest[digits..].starts_with(" = { //ncc_")
-        })
-        .count()
-}
-
-fn counts(rust: &str) -> HashMap<String, (usize, usize)> {
-    let mut map: HashMap<String, (usize, usize)> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        let row = map.entry(current.clone()).or_default();
-        row.0 += line.matches("/*@FR-R-Base join read*/").count();
-        row.1 += lifted_joins(line);
-    }
-    map
 }
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
@@ -170,67 +82,4 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
             );
         }
     }
-}
-
-#[test]
-fn each_cell_emits_exactly_the_forms_predicted() {
-    let got = counts(&emit("on", &[]));
-    for (name, reads, lifted) in EXPECTED {
-        assert_eq!(
-            got.get(*name).copied().unwrap_or_default(),
-            (*reads, *lifted),
-            "{name}: (join reads, joins lifted into a `let _pre_N`)"
-        );
-    }
-}
-
-#[test]
-fn a_folded_join_is_written_once_and_only_in_the_fallback_arm() {
-    // The collector and the emitter ask ONE recogniser.  Were they to disagree, the join
-    // would be lifted AND folded — run on every pass and then run again off the fast path.
-    let rust = emit("once", &[]);
-    let start = rust.find("\nfn n_j3(").expect("n_j3 was emitted");
-    let rest = &rust[start + 1..];
-    let j3 = &rest[..rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3)];
-    assert_eq!(
-        j3.matches("vector::elem_field_at::<").count(),
-        3,
-        "three fields, three loads:\n{j3}"
-    );
-    assert_eq!(
-        j3.matches("None => { let __jr: DbRef = { //ncc_").count(),
-        3,
-        "each join stands in its own fallback arm:\n{j3}"
-    );
-    assert_eq!(
-        lifted_joins(j3),
-        0,
-        "no join of j3 is lifted out of its read:\n{j3}"
-    );
-}
-
-#[test]
-fn the_switch_restores_the_join_on_every_pass() {
-    let rust = emit("off", &[("LOFT_NO_JOIN_READ", "1")]);
-    assert!(
-        !rust.contains("elem_field_at::<") && !rust.contains("FR-R-Base join read"),
-        "LOFT_NO_JOIN_READ=1 folds no join anywhere"
-    );
-    let got = counts(&rust);
-    assert_eq!(
-        got.get("n_j3").copied().unwrap_or_default(),
-        (0, 3),
-        "n_j3's three joins are lifted again"
-    );
-}
-
-#[test]
-fn the_verify_form_checks_the_header_and_the_base_at_every_join_read() {
-    let rust = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
-    assert!(
-        rust.contains("vector::elem_field_at::<i64, true>(")
-            && rust.contains("vector::elem_field_at::<f64, true>(")
-            && rust.contains("vector::elem_field_at::<f32, true>("),
-        "LOFT_HOIST_VERIFY=1 emits the checking form for each scalar kind"
-    );
 }

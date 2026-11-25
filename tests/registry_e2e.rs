@@ -1597,14 +1597,10 @@ fn a_release_published_since_the_index_was_cached_is_installed() {
     );
 }
 
-/// `loft install` names a toolchain need only for a package that builds Rust code.
-///
-/// The prebuilt-status line was written for every installed package, so a library that is
-/// loft alone (`script`) was reported as "no prebuilt published — builds from source on
-/// first use (needs rustc)", a need it does not have.  A package that declares a native
-/// library stem keeps the line.
+/// `loft install` says at install that a package with a native library of its own in Rust is
+/// not usable (@PLN225), and says nothing of a toolchain for a package that is loft alone.
 #[test]
-fn install_reports_a_rustc_need_only_for_a_native_package() {
+fn install_reports_a_refused_native_library_only_for_a_package_with_one() {
     let tmp = tmpdir("install_native_line");
     let home_dir = tmpdir("install_native_line_home");
     let pure = publish_versions(&tmp, "purepkg", &["0.1.0"], "");
@@ -1643,8 +1639,9 @@ fn install_reports_a_rustc_need_only_for_a_native_package() {
         native_report
             .surface
             .iter()
-            .any(|l| l.starts_with("nativepkg 0.1.0:") && l.contains("prebuilt")),
-        "a native package still says whether it needs a toolchain: {:?}",
+            .any(|l| l.starts_with("nativepkg 0.1.0: not usable")
+                && l.contains(loft::manifest::RUST_NATIVE_REFUSED)),
+        "a package with its own Rust native library is reported refused: {:?}",
         native_report.surface
     );
 }

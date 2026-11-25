@@ -184,6 +184,12 @@ shapes/README.md
 imaging/README.md
 web/README.md
 web/src/web.loft
+# --- the Rust native part is refused ------------------------------------------
+# A package's own Rust native library no longer loads; these snapshot manifests drop the
+# declaration so the fixtures load, until each package's release carries a C part.
+graphics/loft.toml
+web/loft.toml
+imaging/loft.toml
 # --- @PLN110 len/size flip + formatter + Android support -------------------------
 # These fixtures are deliberately AHEAD of their pinned tags and must stay that way:
 # re-syncing would revert working code and break the suite.  Three causes, all real:

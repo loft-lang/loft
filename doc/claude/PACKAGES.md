@@ -2,7 +2,7 @@
 # Library Package Format
 
 Design for a unified packaging format that supports pure-loft libraries,
-native Rust extensions, and WASM targets — with OpenGL as the driving
+libraries with a native part in C, and WASM targets — with OpenGL as the driving
 use case.
 
 The timeline behind this doc (the original phase plan) is in [PACKAGES-history.md](PACKAGES-history.md).
@@ -20,7 +20,6 @@ The timeline behind this doc (the original phase plan) is in [PACKAGES-history.m
 - [Auto-marshalling dispatch (interpreter, legacy path)](PACKAGES_NATIVE_API.md#auto-marshalling-dispatch-interpreter-legacy-path)
 - [loft-ffi helper crate](PACKAGES_NATIVE_API.md#loft-ffi-helper-crate)
 - [Store allocation from native code](PACKAGES_NATIVE_API.md#store-allocation-from-native-code)
-- [Code generation: `loft generate`](PACKAGES_NATIVE_API.md#code-generation-loft-generate)
 - [Key source files](PACKAGES_NATIVE_API.md#key-source-files)
 - [Package test suite](PACKAGES_BUILD.md#package-test-suite)
 - [Build pipeline](PACKAGES_BUILD.md#build-pipeline)
@@ -33,16 +32,19 @@ The timeline behind this doc (the original phase plan) is in [PACKAGES-history.m
 
 ## Goals
 
-1. A single package can contain loft source, native Rust code, and
+1. A single package can contain loft source, a native part in C, and
    pre-compiled WASM — consumers don't choose; the runtime picks the
    right variant for the target.
 2. `use graphics;` in a loft program works identically whether running
    via the interpreter, `--native`, or `--native-wasm`.
 3. OpenGL/WebGL bindings ship as a package, not as built-in stdlib.
-4. Package authors write Rust once; the build system produces native
-   and WASM artifacts from the same source.
-5. Native code is Rust linking against `libloft.rlib`.  A C library is reached
-   through a `#c` binding (@PLN24, below), never through C code in the package.
+4. Package authors write the native part once, in C; loft builds it for every target
+   from the same source.
+5. A package's native part is C: the sources listed under `[c] shim`, bound by `#c`
+   declarations ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).  A package's own
+   native library in Rust (`[library] native`, `[native] crate`, `[native.functions]`,
+   `[native.wasm]`) is refused where the manifest is read, naming that cure
+   (`manifest::RUST_NATIVE_REFUSED`, @PLN225; guard `tests/native_loader.rs`).
 
 ---
 
@@ -55,8 +57,8 @@ The timeline behind this doc (the original phase plan) is in [PACKAGES-history.m
 | `#native "symbol"` annotation | **Parsed** — bytecode dispatch NOT connected |
 | `extensions.rs` cdylib loader | **Designed** — feature-gated, not integrated |
 | WASM virtual filesystem | **JS side done** — Rust stubs return early |
-| Native codegen (`--native`) | **Working** — generates Rust, compiles with rustc |
-| WASM codegen (`--native-wasm`) | **Working** — targets wasm32-wasip2 |
+| Native codegen (`--native`) | **Working** — writes C, compiles with the host's C compiler |
+| WASM codegen (`--native-wasm`) | **Working** — the same C, built by clang for WASI |
 
 The gap: no package can currently ship native code that works across
 interpreter, native, and WASM targets from a single source.
@@ -76,33 +78,16 @@ graphics/
 │   ├── draw.loft             # test_* functions for draw module
 │   ├── math.loft             # test_* functions for math module
 │   └── integration.loft      # cross-module integration tests
-├── native/
-│   ├── Cargo.toml            # Rust crate for native functions
-│   ├── src/
-│   │   └── lib.rs            # implements #[loft_fn] functions
-│   └── build.rs              # optional build script
-└── prebuilt/                 # optional: pre-compiled artifacts (@PLN21)
-    ├── x86_64-unknown-linux-gnu/
-    │   ├── libloft_graphics_native.so   # cdylib — dlopen'd, NOT linked
-    │   └── .loft-build-fp               # the loft-ffi fp it was built against
-    ├── aarch64-apple-darwin/
-    │   ├── libloft_graphics_native.dylib
-    │   └── .loft-build-fp
-    └── wasm32-wasip2/
-        └── libgraphics.wasm             # wasm rlib (codegen-linked, not dlopen)
+└── c/
+    └── graphics.c            # the native part: C99 loft builds with `cc`
 ```
 
 **Rules:**
 - `src/` is mandatory — every package has at least one `.loft` file
-- `native/` is optional — only if the package has Rust-implemented functions
-- `prebuilt/` is optional — avoids requiring Rust toolchain on consumer machine.
-  The NATIVE prebuilt is the **cdylib** (`.so`/`.dylib`/`.dll`), NOT an `.rlib`: it is
-  `dlopen`'d over the loft-ffi C-ABI, so it is rustc-version-independent (an `.rlib` is
-  SVH-locked to its rustc — E0514). Each per-triple dir carries a `.loft-build-fp`
-  sidecar (the `loft-ffi` fingerprint it was built against); loft loads it only when
-  that matches `cache::loft_ffi_fingerprint()` (@PLN21 Phase 1).
-- `[native] runtime-libs` / `build-deps` (@PLN21 Phase 2) declare the package's system
-  shared libs (validation + install hint) and dev packages (source-build diagnostics).
+- `c/` is optional — only if the package has a native part; its sources are listed under
+  `[c] shim` and loft builds them (`loft new --native <name>` scaffolds one)
+- `[native] runtime-libs` (@PLN21 Phase 2) declares the system shared libs a component's
+  library needs (validation + install hint).
 - The primary `.loft` file (`src/graphics.loft`) declares the public API
   including `#native` function signatures
 
@@ -184,40 +169,21 @@ builders = ["set"]          # the one declared half: the free `pub fn`s a consum
                             # entry file does not declare as a free `pub fn` is
                             # dropped, with a warning at `loft publish`.
 
+[c]
+# The package's native part: C99 sources loft builds with `cc` (and `clang` for the wasm
+# targets), bound by the `#c` declarations in src/ (PACKAGES_C_BINDING.md).
+shim = "c/graphics.c"
+
 [native]
-# Rust crate in native/ — compiled to rlib (interpreter/native) or
-# wasm (WASM target) at install time or first use.
-crate = "native"
 # OR the natives are a COMPONENT loft ships beside its binary: a prebuilt C
 # library behind loft-ffi's C ABI (`loft-ffi/include/loft_ffi.h`), found in
 # <prefix>/lib/loft/components/ (`src/components.rs` has the search order;
 # `make components` builds them in a loft tree).  Nothing is compiled when it
 # is used, and a missing component is refused by name on every backend.
-# component = "net"         # libloft_net: the web and server libraries' HTTP,
-#                           # TLS and WebSockets, client and server
-
-# Functions implemented in Rust.  Keys are loft function names;
-# values are Rust symbol paths.  The loft compiler verifies signatures
-# match between the .loft declaration and the Rust implementation.
-[native.functions]
-save_png = "graphics_native::save_png"
-load_font = "graphics_native::load_font"
-glyph_metrics = "graphics_native::glyph_metrics"
-gl_create_window = "graphics_native::gl::create_window"
-gl_swap_buffers = "graphics_native::gl::swap_buffers"
-
-[native.wasm]
-# WASM-specific overrides: some functions have different implementations
-# in WASM (WebGL instead of OpenGL, Canvas2D instead of pixel buffer).
-gl_create_window = "graphics_native::webgl::create_canvas"
-gl_swap_buffers = "graphics_native::webgl::flush_canvas"
-
-[native.dependencies]
-# Additional crate dependencies the native code needs.
-# These are added to the native/Cargo.toml [dependencies] section.
-glutin = "0.32"
-fontdue = "0.9"
-png = "0.17"
+component = "net"           # libloft_net: the web and server libraries' HTTP,
+                            # TLS and WebSockets, client and server
+# A native library of the package's own — `[library] native`, `[native] crate`,
+# `[native.functions]`, `[native.wasm]` — is refused: write the native part in C.
 
 # @PLN146 F5 — a font this package draws with, and where each target gets it.
 # One entry per family; a library's entries reach a consumer's page too.
@@ -299,33 +265,39 @@ pub fn transform(canvas: Canvas, mat: math.Mat4) -> Canvas {
 
 ### Resolution order
 
-When the compiler encounters `use math;` it searches:
+When the compiler encounters `use math;` it takes the first copy it finds, by one rule
+(`@C173`): **what this run says, then what the project declares, then what merely lies in a
+directory.**
 
-1. **Local `src/`** — sibling files in the same package.  Inside a package, its own
-   `[package] name` binds its own entry, whatever its directory is called — a package is
-   identified by its manifest, not its path (`tests/own_package_resolution.rs`).  Every
-   spelling of a test run (`loft test`, `--tests <dir>`, one file) puts the package's
-   source directory on the import path.  For a script outside any package, a flat
-   `<name>.loft` in the script's own directory is this step, so it outranks a
-   same-named registry package
-2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
+1. **The package's own name** — inside a package, its own `[package] name` binds its own
+   entry, whatever its directory is called; a package is identified by its manifest, not its
+   path (`tests/own_package_resolution.rs`).
+2. **`--lib` on this command line** — the explicit override: a library can always be run from
+   your own copy to debug or fix it.  It outranks everything below, the pin included, and
+   `advice[lib-flag-override]` says which copy runs when it replaces a pinned or declared one.
+   The one exception is a module beside the importing file (`helper.loft` next to the file
+   that says `use helper`): that is the file's own source, and resolves as before.
+3. **What the project declares** — a `[dependencies]` `path = "..."` entry (the importing
    package's, then the **root project's**, so a path the root declares answers a `use`
-   anywhere in the program, however deep (`tests/transitive_binding.rs`)
-3. **Package lib directories** — `~/.loft/lib/math/`, project `lib/math/`
-4. **`--lib` CLI flag** — explicit search directories
-5. **`LOFT_LIB` environment variable**
+   anywhere in the program, however deep — `tests/transitive_binding.rs`), then a module
+   beside the importing file, then the version the lock pins (`loft.lock`, or a script's
+   `<script>.loft.lock` from `loft pin`).
+4. **Everything else, for a name nothing pins** — a `lib/` in the working directory or beside
+   the script, a flat `<name>.loft` there, sibling packages, `~/.loft/lib/`, the `LOFT_LIB`
+   directories, the registry.  A **pinned** name skips these: a same-named file that merely
+   lies in a directory never replaces the version the lock records.
+
+The rule is `tests/lib_flag_override.rs`.  To work on a pinned library for longer than one
+run, `loft develop` (below) declares your copy as a path dependency.
 
 A package loads once, so the copy chosen is the program's; every package that `use`s it
 must accept it.  The importing package's own range is checked against that copy wherever it
 was chosen — at its first `use` or a later one — and a copy outside it is refused, naming
-both declarations, rather than loaded anyway.
+both declarations, rather than loaded anyway.  If the dependency has its own `loft.toml`, its
+version is checked against the requirement; which installed version a lock file selects is
+[LIBRARY_AUTHORING.md § Troubleshooting](LIBRARY_AUTHORING.md).
 
-The first match wins, and a project `lib/` outranks `--lib`
-(`advice[lib-flag-outranked]` says so when it happens).  If the dependency has its own
-`loft.toml`, its version is checked against the requirement; which installed version a
-lock file selects is [LIBRARY_AUTHORING.md § Troubleshooting](LIBRARY_AUTHORING.md).
-
-⚠ **Step 3's project half needs a project.** The directory form `lib/math/` is read
+⚠ **A `lib/` directory's package form needs a project.** The directory form `lib/math/` is read
 through `lib_path_manifest`, which runs over the directories a program NAMED — a
 `--lib` argument, a `LOFT_LIB` entry, `~/.loft/lib/`, a path dependency, a sibling
 package.  A bare script's own `lib/` is not one of those: it is probed flat, so
@@ -496,26 +468,9 @@ any source is parsed.
 
 ### Native dependency propagation
 
-When package A depends on package B, and both have `[native]` sections,
-the build system must link both rlibs:
-
-```
-graphics/native/ depends on math/native/  (Rust crate dependency)
-```
-
-This is expressed in `graphics/native/Cargo.toml`:
-
-```toml
-[dependencies]
-math_native = { path = "../../math/native" }
-```
-
-The loft build system passes both `--extern` flags to rustc:
-```bash
-rustc --extern math_native=.../libmath_native.rlib \
-      --extern graphics_native=.../libgraphics_native.rlib \
-      generated_program.rs
-```
+Each package's C part is built on its own.  A shim that includes a header of another
+package names that package under `[dependencies]` and includes it as
+`#include "<dep>/<header>.h"` ([PACKAGES_C_BINDING.md § Declaring the library](PACKAGES_C_BINDING.md)).
 
 ### Lock file
 
@@ -553,6 +508,30 @@ rule.  So:
   loads whatever order `[dependencies]` lists.  A declaration no dependency can accept is
   refused at install, naming both sides.
 
+### Developing a library you use (`loft develop`)
+
+A pinned library loads only from its pin, so working on one is an explicit step, and
+`loft develop` is that step:
+
+```sh
+loft develop crypto                 # a copy of the version in use, in lib/crypto
+loft develop crypto --path ../loft-libs-core/crypto   # or your own checkout of it
+loft develop                        # what this project develops
+loft develop --done crypto          # back to what the manifest said before
+```
+
+It rewrites the library's `[dependencies]` line to a path dependency that keeps its version
+and records what the line was:
+
+```toml
+crypto = { path = "lib/crypto", version = "0.5.0" }  # loft develop: was "0.5.0"
+```
+
+A path dependency outranks the pin, so the copy runs, and its own `use`s of other libraries
+resolve as before.  `--done` restores the line exactly (removing it when the library was only
+used through another one) and leaves the copy where it is.  For one run, `--lib <dir>` does the
+same without touching the project.
+
 ---
 
 ## Function binding model
@@ -575,108 +554,18 @@ pub fn clear(self: Canvas, color: integer) {
   }
 }
 
-// Native: implemented in Rust, declared with #native
-pub fn save_png(self: const Canvas, path: text);
-#native "save_png"
-
-pub fn load_font(path: text) -> integer;
-#native "load_font"
+// Native: implemented in C (c/graphics.c), bound with #c
+pub fn save_png(self: const Canvas, path: text) -> boolean;
+#c "gr_save_png" "int(const void*, int64_t, int64_t, const char*, int64_t)"
 ```
 
-### Implementation in Rust
+### Implementation in C
 
-A native function is a plain `extern "C"` fn using the `loft-ffi` ABI types,
-annotated with **`#[loft_native]`**.  The macro reads the fn's *real Rust
-signature* and generates a uniform marshal bridge (`<fn>__loft_bridge`) — you
-write **no** marshalling code (plan-25 FFI generated-dispatch):
-
-```rust
-// native/src/lib.rs
-use loft_ffi::{LoftRef, LoftStore};
-use loft_ffi_macros::loft_native;
-
-/// .loft decl:  fn save_png(self: const Image, path: text) -> boolean;
-#[loft_native]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn n_save_png(
-    store: LoftStore,                      // present when any arg is a ref/vector
-    image: LoftRef,                        // a struct / vector arg
-    path_ptr: *const u8, path_len: usize,  // a `text` arg → ptr + len
-) -> bool {
-    let path = unsafe { loft_ffi::text(path_ptr, path_len) };
-    let w = unsafe { store.get_long(image.rec, image.pos, WIDTH) };
-    // … encode the PNG; return success
-    true
-}
-```
-
-**Type mapping** — loft declaration → the impl's real Rust parameter:
-
-| Loft type | Rust parameter | Notes |
-|---|---|---|
-| `integer` | `i64` | 64-bit; the bridge casts the cell to the impl width |
-| `i32` / `u16` / `u8` / … | the same narrow Rust int | the **impl** picks the width — the bridge casts `as <type>` |
-| `float` / `single` | `f64` / `f32` | |
-| `boolean` | `bool` | |
-| `text` | `*const u8, usize` | one loft arg → **two** Rust params (`loft_ffi::text(ptr,len)` → `&str`) |
-| `vector<T>` / a struct | `LoftRef` | read via `store.vector_*` / field offsets; needs `store: LoftStore` first |
-
-Returns map the same way: `text` → `LoftStr` (build with `loft_ffi::ret(s)`),
-`vector`/struct → `LoftRef`, scalars by value.  A nullable `integer` return
-uses the `i64::MIN` sentinel — the bridge preserves `i32::MIN → i64::MIN` for
-narrow-int returns automatically.
-
-`LoftStore` is the first parameter **only** when the fn touches a ref/vector
-(the interpreter passes the store of the first ref arg, with allocation
-callbacks for ref/vector returns).
-
-The **direct C binding, `#c`** (@PLN24) — a C library reached without a Rust bridge — is in [PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md).
-
----
-
-### Registration — zero boilerplate
-
-You do **not** hand-maintain a register list.  A `build.rs` source-scans the
-package's `.loft` for `#native` annotations and generates both the function
-register and the bridge register:
-
-```rust
-// native/build.rs
-fn main() {
-    loft_ffi_build::generate_register_from_loft_with_bridges("../src");
-}
-```
-
-```toml
-# native/Cargo.toml
-[lib]
-crate-type = ["cdylib", "rlib"]   # cdylib → --interpret dlopen; rlib → --native link
-
-[dependencies]
-loft-ffi        = "0.1"
-loft-ffi-macros = "0.1"           # the #[loft_native] proc-macro
-
-[build-dependencies]
-loft-ffi-build  = "0.2"           # the #native source-scanner
-```
-
-Adding a function is then a single edit: write the `.loft` declaration with a
-bare `#native`, write the `#[loft_native]` Rust impl — the register + bridge
-lists regenerate automatically.  No manifest, no drift.  (The legacy
-`loft.toml [native.functions]` table and `generate_register_from_loft` — the
-no-bridge variant — predate this and are retained only for un-migrated libs.)
-
-**Write the CLEAN binding: let the `#native` symbol be the implementing fn's own
-name.**  The generator only emits `"S" => S__loft_bridge`, so following it gives
-you that for free.  A hand-written list can instead point `"S"` at a
-differently-named fn, and then `S` is just a binding id with some *other* export
-sitting under it — which is how loft#907 shipped: `graphics` kept an older raw
-`(ptr, count)` fn under each `#native` name and loft's real
-`(LoftStore, LoftRef)` entry point at `n_<x>`, so ten functions bound the wrong
-one under `--native` and answered without complaining.  loft now resolves through
-your registration on both backends (NATIVE_ARTIFACT_IDENTITY.md § Which symbol a `#native` binding
-links), so a remap is no longer *wrong* — but it still costs you every consumer
-whose cdylib loft cannot load, and it is free to avoid.
+The native part is C: the sources under `[c] shim`, each function bound by a `#c`
+declaration that names its C symbol and C signature.  The binding rules, the type mapping
+and the targets are in [PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md).  A `#native`
+declaration is served by a component loft ships (`[native] component`) or by loft itself;
+a package's own Rust implementation of one is refused.
 
 **Mark a native `#pure` when its value is its only effect** — the answer depends on the
 arguments alone, it writes nothing, reads no clock, file or entropy, always returns and reports
@@ -686,64 +575,6 @@ wrappers each make the call (a validate-then-use pair decodes once; `formal/rewr
 § `(R-PureReuse)`, the shared-call clause).  A wrong `#pure` is a wrong program: a call loft
 merges or moves ahead of a test must not have been observable.  Leave it off a random source,
 a clock, I/O, and anything that can fail loudly.
-
-### Three execution paths
-
-| Path | How native functions run |
-|---|---|
-| **Interpreter** | dlopen the cdylib → call the generated `<fn>__loft_bridge` (the uniform `LoftBridgeFn`) via the interpreter's bridge registry.  Libraries not yet built with `#[loft_native]` fall back to the legacy raw-ptr `dispatch_call` arms. |
-| **`--native`** | Generated Rust calls the real typed fn directly (rlib linked via `--extern …`), **zero marshal** — the perf path; unaffected by the bridge layer |
-| **WASM** | Generated Rust calls the WASM variant (`prebuilt/wasm32-wasip2/` or compiled in-situ) |
-
-### Signature verification
-
-The loft compiler checks the `.loft` declaration's parameter count + types are
-compatible with the bound symbol.  The Rust impl's signature is **authoritative
-for widths** — `#[loft_native]` reads it directly — so a loft `integer`
-declared in `.loft` but impl'd as `i32` marshals correctly with no loft-core
-change (this is the @P370 lesson the macro encodes).
-
-### Complete example — a 3-function library
-
-```loft
-// src/mathx.loft
-pub fn gcd(a: integer, b: integer) -> integer;   #native
-pub fn hex(self: integer) -> text;               #native
-pub fn rgb_lum(pixels: vector<integer>) -> integer;  #native
-```
-
-```rust
-// native/src/lib.rs
-use loft_ffi::{LoftRef, LoftStore, LoftStr};
-use loft_ffi_macros::loft_native;
-
-#[loft_native]
-#[unsafe(no_mangle)]
-pub extern "C" fn n_gcd(mut a: i64, mut b: i64) -> i64 {
-    while b != 0 { (a, b) = (b, a % b); }
-    a.abs()
-}
-
-#[loft_native]
-#[unsafe(no_mangle)]
-pub extern "C" fn n_hex(v: i64) -> LoftStr {
-    loft_ffi::ret(format!("{v:#x}"))
-}
-
-#[loft_native]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn n_rgb_lum(store: LoftStore, pixels: LoftRef) -> i64 {
-    let len = unsafe { store.vector_len(&pixels) };
-    let p = unsafe { store.vector_data_ptr(&pixels) } as *const i64;
-    let mut sum = 0i64;
-    for i in 0..len { sum += unsafe { *p.add(i as usize) }; }
-    if len == 0 { 0 } else { sum / len as i64 }
-}
-```
-
-With the `build.rs` + `Cargo.toml` above, `loft --interpret prog.loft` (dlopen
-+ bridge) and `loft --native prog.loft` (direct link) both just work — no
-register list, no marshal glue.
 
 ---
 
@@ -780,12 +611,7 @@ extensions::load_all(state, pending_libs)    # dlopen cdylibs + auto-marshal
 state.execute_argv("main", ...)              # run
 ```
 
-### Auto-build
-
-If a cdylib is not found but `native/Cargo.toml` exists, the interpreter
-runs `cargo build --release` automatically via `auto_build_native()`.
-
-#### An artifact is stale when any source it CONTAINS is newer (loft#777)
+### An auto-native artifact is stale when any source it CONTAINS is newer
 
 An auto-native cdylib is not just its own package: `emit_program` emits the
 export set **and its transitive dependencies**, so `hex_editor`'s cdylib holds a
@@ -795,7 +621,7 @@ is dlopened first wins the lookup.
 
 So the freshness question has to span every package that contributed code, not
 just the one that owns the artifact (`source_newer_than` /
-`source_content_hash`, `src/native_lib.rs`, take a *set* of package dirs — the
+`source_content_hash`, `src/opt/native_key.rs`, take a *set* of package dirs — the
 run path passes `pending_native`).  Asking only about the owner reported a
 dependent as fresh after its **dependency** was edited: the edited library
 rebuilt correctly, the dependent kept serving its stale inlined copy, and it won.
@@ -810,21 +636,20 @@ Two things made it expensive to see, and both are worth remembering:
   A small consumer that `use`s the edited library directly was always right.
   Size was a proxy for *graph shape*.
 - **The compile is fresh while the execution is stale.**  A syntax error in the
-  edited library still fails startup, and the *generated* `.rs` beside the stale
+  edited library still fails startup, and the *generated* source beside the stale
   `.so` shows the NEW code — so every "is it being re-read?" check passes.  The
   discriminator is `LOFT_NO_NATIVE_LIBS=1`: same run, same program, and the
   interpreter answers differently from the cdylib.
 
 The wider question costs one `stat` walk over the loaded packages (under a
-millisecond for a ten-package tree, against a `rustc` invocation).  It does mean
+millisecond for a ten-package tree, against a compile).  It does mean
 a dependency edit makes every dependent stale — which is the honest answer, since
 the dependent really does contain the edited code — and `dev-interpret-on-edit`
-still keeps `rustc` out of the loop until editing settles.
+still keeps the compiler out of the loop until editing settles.
 
-**An auto-built cdylib links its OWN copy of libloft, so every `static` in loft exists once
-per linkage unit.** A fact reached through a `#rust` body is compiled into whichever unit
-calls it — the main binary, or `native-auto/libloft_auto_<pkg>.so` — so a process-global
-table filled by the program is EMPTY from inside the package: `c_library_available` answered
+**An auto-built library links its OWN copy of loft's runtime, so every `static` in it exists
+once per linkage unit** — the main binary, or `native-auto/libloft_auto_<pkg>.so` — so a
+process-global table filled by the program is EMPTY from inside the package: `c_library_available` answered
 true from the program and false from the package that declared the library, on one run, with
 both backends green. "Agrees on `--interpret` and `--native`" is two configurations of three,
 and a counter fed in one copy and drained in the other wraps (loft#862). Keep such facts in
@@ -897,22 +722,21 @@ manifests, `loft package`/`install`/`search`/`info`, `loft.lock`, Ed25519
 index signing, and a bootstrapped 3-key trust root —
 **13 libraries are live in [loft-lang/registry](https://github.com/loft-lang/registry)**
 and `loft install <name>` resolves + verifies + extracts them.  What remains is
-the native-prebuilt **distribution** glue, a release to activate the trust root,
+a release to activate the trust root,
 and the library-extraction arc.  The finished rows are in
 [PACKAGES-history.md](PACKAGES-history.md).
 
 | Item | Status |
 |---|---|
-| **PKG.PREBUILT** (@PLN21) — native prebuilts, no rustc to *use* a lib | **Superseded for compiled libraries:** a library's compiled form is its hosted C unit, which each loft release builds for every published library (`scripts/release-lib-artifacts.sh`) and its registry row lists (@PLN206 P6); the Rust cdylib producer is removed.  The consumer `fetch_prebuilt` still loads a hand-written cdylib (`[library] native`) that a version's `binaries[<triple>]` names. |
+| **PKG.PREBUILT** (@PLN21) — native prebuilts, no rustc to *use* a lib | **Superseded:** a library's compiled form is its hosted C unit, which each loft release builds for every published library (`scripts/release-lib-artifacts.sh`) and its registry row lists (@PLN206 P6).  A package's own prebuilt native library is not fetched or loaded (@PLN225); a version's `binaries` names only the loft toolchain's own builds (self-update). |
 | **PKG.EXTRACT** — move `lib/*/` to per-family GitHub repos | **In progress.** Libraries already live in `loft-lang/loft-libs-*` + published; the prerequisite arc (drain library `#native` code out of the compiler crate) is active — [`lib_plans/12-library-extraction/`](lib_plans/12-library-extraction). |
 | **PKG.STUB** — generated API stubs + `loft api` | **SHIPPED** (stubs on install/update/pin, `loft api [name]`, `tests/api_discovery.rs`).  Remaining: parser-walk upgrade shared with [API_SURFACE.md](API_SURFACE.md) `api-lint`. |
-| **PKG.FOREIGN-HOST** — a host hands a frame over as a FOREIGN store (@PLN174's tail) | **Open, a design pick.** The library side is built: a cdylib answers its buffer with no copy (`LoftStore::foreign_vector_from_owned`, loft-ffi 0.1.2) and cbor reads a frame's payloads as spans (−11 % on `check_request` over a foreign frame, `alloc-temp.md` § F6).  What is left is WHICH host produces pluginabi's frame that way — the engine's plugin channel in Rust through that bridge, or the browser through a typed array (`BROWSER_INTEROP.md`, the plan's F7) — and its cells are `174-foreign-bridge.loft`'s under the target's parity gate. |
+| **PKG.FOREIGN-HOST** — a host hands a frame over as a FOREIGN store (@PLN174's tail) | **Open, a design pick.** cbor reads a frame's payloads as spans (−11 % on `check_request` over a foreign frame, `alloc-temp.md` § F6).  What is left is WHICH host produces pluginabi's frame as a foreign store — the engine's plugin channel or the browser through a typed array (`BROWSER_INTEROP.md`, the plan's F7) — and its cells.  The Rust library bridge (`LoftStore::foreign_vector_from_owned`) and its fixture went with a package's own Rust native library (@PLN225). |
 | **PKG.CNAME** — a `[c]` library named ONCE, by identity | **Design only, not built** — [plans/24-c-abi-binding/LIBRARY_NAMING.md](plans/24-c-abi-binding/LIBRARY_NAMING.md).  Today a manifest names a library by its Linux ELF filename and every consumer recovers the identity by string surgery; four measured failures came out of that, each currently carrying its own local workaround (`-l:<file>` for the link stem, `host_lib_variants` for the probe, "at most one optional library per package" for symbol attribution).  **Trigger: the fifth one** — a new platform, or any consumer that has to re-derive a spelling from a filename. |
 
 **Remaining, in order:**
 1. **Cut a loft release** — activates the embedded trust root (PKG.SIGN); until then deployed loft has an empty trust root and ignores signatures.
-2. **Prebuilt distribution glue** (PKG.PREBUILT) — on a library tag, the producer attaches per-triple cdylibs to the GitHub release (`gh release upload`), then the registry `index.json` gains a `binaries[<triple>] = {url, sha256, loft_ffi_fp}` entry (signed via `registry-sign.sh`); add the submit-CI gates + a manylinux glibc baseline.  See [plans/21 § Phase 4b / Open](plans/21-prebuilt-native-libs/README.md).
-3. **PKG.EXTRACT** — continue draining the compiler crate + per-library moves via [`lib_plans/12-library-extraction/`](lib_plans/12-library-extraction).
+2. **PKG.EXTRACT** — continue draining the compiler crate + per-library moves via [`lib_plans/12-library-extraction/`](lib_plans/12-library-extraction).
 
 ---
 
@@ -938,9 +762,9 @@ R1–R9). For authoring and submitting a library see
 
 # External Library Support
 
-The package format, the native-extension binding model, discovery and
+The package format, the native binding model, discovery and
 loading, the `loft-ffi` helper crate, store allocation from native code,
-`loft generate`, and the per-target build pipeline are all documented in
+and the per-target build pipeline are all documented in
 the [Library Package Format](#library-package-format) section above.
 
 The execution arc for moving the in-tree `lib/*/` packages out into

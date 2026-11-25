@@ -4,8 +4,7 @@
 """Regenerate every derived artefact that is a pure function of the tree.
 
 Runs the `regen` commands of each `scripts/derived_artefacts.json` entry marked `"ci": true`,
-in the registry's order (the compiled stdlib first: what follows measures the build it makes),
-then that entry's `check` when the regen moved a file.  Prints one line per command as it ends, with its seconds, and one per
+in the registry's order, then that entry's `check` when the regen moved a file.  Prints one line per command as it ends, with its seconds, and one per
 artefact with the files that moved; on a runner the per-artefact seconds also go to the job
 summary, so a slow derive names the step that made it slow.  A ratchet
 (an entry with a `pin`, or one that needs a decision when it moves) never carries `ci`, so

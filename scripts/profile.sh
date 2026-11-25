@@ -44,12 +44,12 @@
 #   pins its sha; `make speed` measures it).
 #
 #   THE BUILD IS NOT THE RUN.  loft's default backend is the COMPILER: `loft
-#   prog.loft` generates Rust, shells out to rustc, and runs the binary it built.
-#   perf follows forks, so recording that command records the BUILD — rustc, LLVM
-#   and lld take the whole top of the profile, and the few samples that ARE the
+#   prog.loft` generates C, shells out to the C compiler, and runs the binary it built.
+#   perf follows forks, so recording that command records the BUILD — the compiler
+#   and the linker take the whole top of the profile, and the few samples that ARE the
 #   program come back as bare hex because the binary is stripped.  A native run is
 #   therefore built once unprofiled (`--no-warm` opts out) and profiled with
-#   `--native-debug`, and what is left of rustc is reported.
+#   `--native-debug`, and what is left of the compiler is reported.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -85,15 +85,15 @@ OUT="${LOFT_PROFILE_DIR:-${TMPDIR:-/tmp}}/loft-profile"
 mkdir -p "$OUT"
 DATA="$OUT/perf.data"
 
-# ── is this a native run, i.e. one that rustc has to build first? ─────────────
+# ── is this a native run, i.e. one that the C compiler has to build first? ────
 #
 # Every loft subcommand is the FIRST positional token (`src/main.rs`: "every
 # subcommand is the FIRST positional, never a later one"), so a plain program run
 # is exactly "the first positional is a .loft path" — minus the modes that stop
-# before rustc is ever reached.  The value-taking options are stepped over so
+# before the C compiler is ever reached.  The value-taking options are stepped over so
 # their argument is not mistaken for the script.
 #
-# Getting this wrong is not silent: the rustc-share guard after recording says so.
+# Getting this wrong is not silent: the build-share guard after recording says so.
 
 # Set before the warm-up, not just before recording: the warm-up only warms the
 # right build if it runs in the same environment as the run it is warming for.
@@ -213,7 +213,7 @@ if [ "$NATIVE" = 1 ]; then
 
   if [ -n "${LOFT_NATIVE_NO_CACHE:-}" ]; then
     echo "note: LOFT_NATIVE_NO_CACHE is set, so the build cannot be cached —" >&2
-    echo "      rustc will compile inside the sampled window." >&2
+    echo "      the C compiler will run inside the sampled window." >&2
   elif [ "$WARM" = 1 ]; then
     # One unprofiled run to get rustc's work into the binary cache, so recording
     # covers the program rather than the compiler.  It really does run the
@@ -303,14 +303,14 @@ BUILD_PCT=$(perf report -i "$DATA" --stdio --no-children -g none --sort comm --p
     END { printf "%.0f", s + 0 }')
 if [ "${BUILD_PCT:-0}" -ge 20 ] 2>/dev/null; then
   echo
-  echo "⚠  ${BUILD_PCT}% of this profile is the BUILD (rustc / LLVM / lld), not your program." >&2
+  echo "⚠  ${BUILD_PCT}% of this profile is the BUILD (the C compiler and linker), not your program." >&2
   if [ "$RUNS_PROGRAM" = 0 ] && [ "$NATIVE" = 0 ]; then
     # `--check` alone is not a front-end-only run: the DEFAULT backend is the
     # compiler, so `check_only` falls through the native pipeline and rustc
     # compiles the program it will not run.  Naming the missing flag beats
     # repeating the generic advice, which does not apply here.
     echo "   \`--check\` still goes through the native backend — the default backend IS the" >&2
-    echo "   compiler, so rustc builds a binary it then does not run. Add --interpret" >&2
+    echo "   compiler, so the C compiler builds a binary it then does not run. Add --interpret" >&2
     echo "   (\`-- --interpret --check p.loft\`) to profile loft's front end alone." >&2
   else
     echo "   The native binary was compiled inside the sampled window. Drop --no-warm," >&2

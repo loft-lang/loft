@@ -363,6 +363,7 @@ pub mod host_store;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod ledger;
+pub mod lifetime_check;
 pub mod literal_append;
 pub mod literal_host;
 pub mod loop_kernel_rewrite;
@@ -383,6 +384,7 @@ pub mod resolution_scope;
 pub mod return_field;
 pub mod rewrite_census;
 pub mod same_read;
+pub mod scope_check;
 pub mod scopes;
 pub mod self_replace;
 pub mod shared_call;
@@ -411,11 +413,11 @@ pub mod trace;
 pub mod btree;
 pub mod c_libs;
 pub mod call_frames;
-pub mod codegen_runtime;
 pub mod const_literal;
+pub mod coroutine_host;
 pub mod fnref;
 pub mod gen_facts;
-pub mod generation;
+pub mod host_print;
 pub mod ir_shape;
 pub mod loop_shape;
 pub mod native_bind;
@@ -437,12 +439,12 @@ mod png_store;
 pub mod profiler;
 pub mod radix_db;
 mod radix_tree;
-pub mod runtime_abi;
 pub mod rust_spelling;
 mod spatial;
 pub mod store;
 pub mod store_budget;
 pub mod text_calls;
+pub mod text_null;
 pub mod trie_db;
 pub mod type_schema;
 mod typedef;
@@ -452,6 +454,7 @@ pub mod const_eval;
 pub mod coroutine_layout;
 pub mod create;
 pub mod fill;
+pub mod fs_ops;
 pub mod par_facts;
 pub mod par_pool;
 pub mod parallel;
@@ -460,6 +463,7 @@ pub mod platform;
 pub mod state;
 
 pub mod compile;
+pub mod debug_token;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
@@ -494,6 +498,7 @@ pub use extensions::native_call;
 // @PLN53 F1/F2 — raw-source fuzz oracle + keyed-container generator; available
 // under cargo-fuzz (the `fuzzing` feature) and under `cargo test`.
 pub mod compiled_stdlib;
+pub mod develop;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzz_keyed;
 #[cfg(any(test, feature = "fuzzing"))]
@@ -514,7 +519,6 @@ pub mod manifest;
 pub mod native_adopt;
 pub mod native_artifact;
 pub mod native_gate;
-pub mod native_lib;
 #[cfg(feature = "registry")]
 pub mod package;
 pub mod package_layout;
@@ -538,10 +542,8 @@ pub mod ship_tier;
 /// @PLN229 — the name a source file is printed and written under (reproducible builds).
 pub mod source_name;
 mod stack;
-pub mod stdlib_codegen;
 pub mod store_guard;
 pub mod timeout;
-pub mod toolchain;
 pub mod triggers;
 pub mod verify_self;
 

@@ -71,9 +71,16 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 .map(|(_, op)| op)
                 .collect();
         }
+        // A shared variable is live across top-level operators of the body, so the body's scope
+        // is the one that encloses every use (`@FR-B-Scope`); its first lift's may be a block's.
+        let body_scope = match def.code.unspan() {
+            Value::Block(bl) => bl.scope,
+            _ => 0,
+        };
         for &(from, to) in &plan.renames {
             def.code.renumber_frame_var(from, to);
             def.variables.renumber_frame_in_types(from, to);
+            def.variables.move_scope(to, body_scope);
         }
         def.variables.reset_intervals();
         crate::scopes::compute_function_intervals(data, d);

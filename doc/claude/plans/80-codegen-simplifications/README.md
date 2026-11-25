@@ -23,7 +23,7 @@ tier table follows.
 
 | Tier | Phases | State |
 |---|---|---|
-| **1** — Correctness + cleanup | 01 (walker audit) + 02 (forwarding-smoke retire) | **SHIPPED 2026-05-02** on branch `plan-12-codegen-simplifications` (commits `c0c27e5` + `d446e5d`).  Reference for the walker-unspan convention lives in [NATIVE.md § Walker convention](../../NATIVE.md#walker-convention--always-unspan-before-matching-value).  The forwarding-smoke retirement is a one-time cleanup; the residual recipe stays in [NATIVE.md § Forwarding-first recipe](../../NATIVE.md#forwarding-first-recipe-verify-before-writing-real-emission). |
+| **1** — Correctness + cleanup | 01 (walker audit) + 02 (forwarding-smoke retire) | **SHIPPED 2026-05-02** on branch `plan-12-codegen-simplifications` (commits `c0c27e5` + `d446e5d`).  Reference for the walker-unspan convention lives in [NATIVE.md § Walker convention](../../NATIVE-history.md#walker-convention--always-unspan-before-matching-value).  The forwarding-smoke retirement is a one-time cleanup; the residual recipe stays in [NATIVE.md § Forwarding-first recipe](../../NATIVE-history.md#forwarding-first-recipe-verify-before-writing-real-emission). |
 | **2** — Structural cleanup | 03 (format/append dispatch arms) + 04 (free/record dispatch arms) + 05 (`narrow_int_cast` split) | **DEFERRED.**  Phase 6 file relocated to [`../13-rust-template-migration/`](../81-rust-template-migration) (its parent). |
 | **3** — Deep refactor | (template migration) | **DEFERRED to @PLN81** — see [`../13-rust-template-migration/`](../81-rust-template-migration). |
 
@@ -88,7 +88,7 @@ counts: 540/540 issues, 43/43 threading, 35/35 threading_chars,
 `pre_eval_walkers_unspan`).
 
 The forwarding-first recipe itself stays valid — see
-[NATIVE.md § Forwarding-first recipe](../../NATIVE.md#forwarding-first-recipe-verify-before-writing-real-emission)
+[NATIVE.md § Forwarding-first recipe](../../NATIVE-history.md#forwarding-first-recipe-verify-before-writing-real-emission)
 for the residual one-shot pattern (write the forwarding emitter
 inline as a verification one-shot when adding a new Op, then
 swap in real logic).
@@ -178,9 +178,9 @@ any regression aborts the commit.
 
 ## See also
 
-- [NATIVE.md § Walker convention](../../NATIVE.md#walker-convention--always-unspan-before-matching-value)
+- [NATIVE.md § Walker convention](../../NATIVE-history.md#walker-convention--always-unspan-before-matching-value)
   — the Tier 1 phase-01 convention extracted as contributor reference
-- [NATIVE.md § Forwarding-first recipe](../../NATIVE.md#forwarding-first-recipe-verify-before-writing-real-emission)
+- [NATIVE.md § Forwarding-first recipe](../../NATIVE-history.md#forwarding-first-recipe-verify-before-writing-real-emission)
   — the residual recipe after Tier 1 phase-02 retirement
 - [`../../finished/09-native-runtime-rewrite/`](../finished/09-native-runtime-rewrite)
   — parent plan whose audit surfaced these simplifications
