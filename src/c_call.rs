@@ -446,7 +446,12 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
             );
         };
         let s = c_text(raw);
-        crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &s);
+        crate::text_null::put(
+            stores
+                .store_mut(&dest)
+                .addr_mut::<String>(dest.rec, dest.pos),
+            &s,
+        );
         return;
     }
     // The declared width is what makes this right; read raw, a negative `int`

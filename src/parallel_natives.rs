@@ -586,7 +586,9 @@ fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
             .expect("parallel_buf_get_text: par_text_buffer_stack is empty");
         crate::text_null::own(&buf[idx as usize])
     };
-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+    let out = stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos);
     // A worker's null answer stays null (`@FR-L-Null-Text`): a clone or a push would make it "".
     if crate::text_null::is_null(&s_owned) {
         crate::text_null::set_null(out);

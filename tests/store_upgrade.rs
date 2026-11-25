@@ -2337,8 +2337,11 @@ fn main() {
     let dir = cell_dir("nul_record");
     for name in ["root.store", "root.store.dschema"] {
         let to = name.replacen("root", "a", 1);
-        loft::file_access::write(dir.join(to), loft::file_access::read(images.join(name)).unwrap())
-            .unwrap();
+        loft::file_access::write(
+            dir.join(to),
+            loft::file_access::read(images.join(name)).unwrap(),
+        )
+        .unwrap();
     }
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let before = store_bytes(&dir);
@@ -2346,7 +2349,10 @@ fn main() {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
-        assert!(code == 0 && out == expect, "{mode:?}: ({code})\n{out}\n{err}");
+        assert!(
+            code == 0 && out == expect,
+            "{mode:?}: ({code})\n{out}\n{err}"
+        );
     }
     assert!(store_bytes(&dir) == before, "reading the image changed it");
     let _ = loft::file_access::remove_dir_all(&dir);

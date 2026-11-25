@@ -45,7 +45,6 @@ fn dev_soft_halt_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
 
-
 /// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
 /// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
 /// `State`'s fields: each operator receives them as arguments and returns them, so no op
@@ -8910,7 +8909,11 @@ impl State {
                 let t = &mut self.call_back_text;
                 t.clear();
                 t.push_str(s.str());
-                ret.text_ptr = if s.is_null() { std::ptr::null() } else { t.as_ptr() };
+                ret.text_ptr = if s.is_null() {
+                    std::ptr::null()
+                } else {
+                    t.as_ptr()
+                };
                 ret.text_len = t.len();
             }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,

@@ -6829,7 +6829,9 @@ impl Stores {
             return Self::conversion_took(done, url, "store_load_url");
         }
         let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
-        let legacy_nul = sidecar.as_deref().is_some_and(crate::schema_sidecar::nul_is_null);
+        let legacy_nul = sidecar
+            .as_deref()
+            .is_some_and(crate::schema_sidecar::nul_is_null);
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url", legacy_nul)
     }
 
@@ -6867,8 +6869,17 @@ impl Stores {
             return Self::conversion_took(done, url, "store_load_url_trusted");
         }
         let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
-        let legacy_nul = sidecar.as_deref().is_some_and(crate::schema_sidecar::nul_is_null);
-        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted", legacy_nul)
+        let legacy_nul = sidecar
+            .as_deref()
+            .is_some_and(crate::schema_sidecar::nul_is_null);
+        self.load_bytes_from(
+            slot,
+            &bytes,
+            recorded,
+            url,
+            "store_load_url_trusted",
+            legacy_nul,
+        )
     }
 
     /// @PLN97 arc G Phase 2 — load a store IMAGE from a local file that may be

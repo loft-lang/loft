@@ -539,10 +539,7 @@ fn float_cmp(v1: f64, v2: f64) -> Ordering {
 /// a byte compare put it after `""` (loft#2237).
 #[inline]
 fn text_key_cmp(a: &str, b: &str) -> Ordering {
-    let (an, bn) = (
-        crate::text_null::is_null(a),
-        crate::text_null::is_null(b),
-    );
+    let (an, bn) = (crate::text_null::is_null(a), crate::text_null::is_null(b));
     if an || bn {
         return bn.cmp(&an);
     }
@@ -4933,7 +4930,9 @@ fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHash
         1 => hasher.write_i64(s.get_int(r.rec, p)),
         2 => hasher.write_i64(s.get_long(r.rec, p)),
         3 | 4 => (),
-        6 => hasher.write_str(crate::text_null::digest_text(s.get_str(s.get_u32_raw(r.rec, p)))),
+        6 => hasher.write_str(crate::text_null::digest_text(
+            s.get_str(s.get_u32_raw(r.rec, p)),
+        )),
         // Narrow-integer key storage (Parts::Int / IntRaw / Short / ShortRaw / Byte).
         // Each yields an i64 view so the hash matches `get_key`'s
         // Content::Long(i64) reconstruction at the lookup site.

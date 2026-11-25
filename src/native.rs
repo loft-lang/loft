@@ -930,7 +930,12 @@ fn n_env_variable_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_name = stores.get::<Str>(stack);
     let value = stores.os_variable(v_name.str());
-    crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &value);
+    crate::text_null::put(
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos),
+        &value,
+    );
 }
 
 // Reads all program input as one text: stdin on native/WASI, the JS host on
@@ -1059,7 +1064,9 @@ fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
     let v_with = stores.get::<Str>(stack);
     let v_value = stores.get::<Str>(stack);
     let v_self = stores.get::<Str>(stack);
-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+    let out = stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos);
     // `@FR-E-NullArg` — a null text answers null.
     if v_self.is_null() {
         crate::text_null::set_null(out);
@@ -1071,7 +1078,9 @@ fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
 fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_self = stores.get::<Str>(stack);
-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+    let out = stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos);
     // `@FR-E-NullArg` — a null text answers null.
     if v_self.is_null() {
         crate::text_null::set_null(out);
@@ -1083,7 +1092,9 @@ fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
 fn t_4text_to_uppercase_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_self = stores.get::<Str>(stack);
-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+    let out = stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos);
     // `@FR-E-NullArg` — a null text answers null.
     if v_self.is_null() {
         crate::text_null::set_null(out);
@@ -3270,7 +3281,12 @@ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
     } else {
         crate::text_null::null_string()
     };
-    crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &out);
+    crate::text_null::put(
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos),
+        &out,
+    );
 }
 
 fn n_as_number(stores: &mut Stores, stack: &mut DbRef) {

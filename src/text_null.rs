@@ -69,7 +69,11 @@ pub fn put(dst: &mut String, s: &str) {
 #[inline]
 #[must_use]
 pub fn own(s: &str) -> String {
-    if is_null(s) { null_string() } else { s.to_owned() }
+    if is_null(s) {
+        null_string()
+    } else {
+        s.to_owned()
+    }
 }
 
 /// Is `s` the null text?
