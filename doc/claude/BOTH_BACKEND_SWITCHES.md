@@ -413,6 +413,12 @@ record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.
 literal rebinding an enum local or a return buffer on a work reference again, and so also
 turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
 
+**`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
+hold for a generator handle a second holder takes while its source keeps one
+(`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
+releases the source's frame.  The store records read that free as the caller's store
+released (`wrong-end`; a `match` over an iterator parameter, `tests/scripts/35p-…`).
+
 **`LOFT_NO_CAPREBIND_MINT=1`** (`@FR-L-CapRebind`, default-ON, parse time and scope pass, BOTH
 backends) lets a rebind of a captured vector local that reads the local itself (`a = a + [3]`,
 `a = a[0..1]`) work in the local's store again, and drops the detach that keeps a loop pass's

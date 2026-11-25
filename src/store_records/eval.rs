@@ -570,6 +570,23 @@ impl Run<'_> {
             }
             return Some((s, Val::null()));
         }
+        // `(G-Hold)`: a local bound to a retained handle (`x = OpCoroutineRetain(g)`) holds the
+        // frame on a hold of its own, which its free gives back — not the store `g` names (a
+        // `match` over an iterator parameter, `scopes::handles`).  A retain handed straight to
+        // a call is the callee's hold, read as its argument.
+        if let Value::Call(d, args) = val.unspan()
+            && data.def(*d).name() == "OpCoroutineRetain"
+        {
+            let (mut s, _) = self.args(args, st)?;
+            let site = self.site(node, Origin::Call(*d));
+            let k = Self::fresh(&mut s, site);
+            let value = Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+            self.bind(&mut s, x, &value);
+            return Some((s, Val::null()));
+        }
         if self
             .first_sets
             .contains(&(std::ptr::from_ref(node) as usize))
