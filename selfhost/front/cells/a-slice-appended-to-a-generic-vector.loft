@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `out += v[from..len(v)]` in a generic function — the slice copied into `out`
+// element by element in the shape `v += [x]` writes one, which each instance re-lowers at its
+// bound type (`@FR-G-Mono`).
+// Prints: [5,6] ["b","c"] 9
+
+struct P { x: integer }
+fn tail<T>(v: vector<T>, from: integer) -> vector<T> { out: vector<T> = []; out += v[from..len(v)]; out }
+fn main() {
+  m: vector<integer> = [4, 5, 6];
+  t: vector<text> = ["a", "b", "c"];
+  p: vector<P> = [P { x: 1 }, P { x: 9 }];
+  q = tail(p, 1);
+  println("{tail(m, 1)} {tail(t, 1)} {q[0].x}");
+}
