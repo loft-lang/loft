@@ -221,11 +221,11 @@ fn return_candidates(e: el::El, vars: el_vars::Vars, ctx: Ctx, rv: integer, inne
   }
   // A returned value this port lowered into a block of its own — a call chained through the
   // buffer (`one_buffer_chain`: `{ __ref_1 = f(__ref_1); __ref_1 }`) — offers what its type
-  // borrows, as Rust's value at that site does.  (A record literal's `Object` block takes no
-  // verdict there.)
+  // borrows, as Rust's value at that site does.  (A literal — a record's `Object` block, a
+  // vector's `Vector` block, `return []`, a unit variant's `EnumUnitLit` — takes no verdict.)
   if inner != null {
     ib = el_ir::unspan(inner!);
-    bdeps = match ib { NdBlock { block } => if block[0].name != "Object" { [for d in el_types::deps(block[0].result[0] ?? ir::TyVoid) if d >= 0 && d < len(vars.vars) { d }] } else { [] }, _ => [] };
+    bdeps = match ib { NdBlock { block } => if block[0].name != "Object" && block[0].name != "Vector" && block[0].name != "EnumUnitLit" { [for d in el_types::deps(block[0].result[0] ?? ir::TyVoid) if d >= 0 && d < len(vars.vars) { d }] } else { [] }, _ => [] };
     if len(bdeps) > 0 {
       return bdeps;
     }
