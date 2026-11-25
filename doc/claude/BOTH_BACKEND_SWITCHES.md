@@ -458,6 +458,10 @@ inline keyed `??` chain through two different variables (`ch(f() ?? dn ?? d)`), 
 lift compared with one variable only: the store the call answered then leaks
 (`heap/H-Free/2648-…`).
 
+**`LOFT_NO_NCC_SUBJECT_ROOT=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the lift of an
+inline keyed `??` chain whose middle arm is a field (`ch(f() ?? ob.m ?? d)`) handed to a loft
+function: the store the call answered then leaks (`heap/H-Free/2649-…`).
+
 **`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
 literal's argument-block locals to the enclosing scope only for a vector literal: a struct
 literal's vector field then leaves its element records at a scope no emitted code opens, which
