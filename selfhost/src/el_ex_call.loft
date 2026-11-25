@@ -767,10 +767,11 @@ pub fn resolve_order_stubs(e: el::El, vars: el_vars::Vars, n: ir::Node, h: integ
 }
 
 // `is_rewritable_append_target`: the bound types a parametric vector write is rewritten for —
-// a plain scalar, a text, a plain enum, a record or a vector.
+// a plain scalar, a nullable one (its own instance, `i_8integer?_…`, written as the scalar, its
+// null the scalar's sentinel), a text, a plain enum, a record or a vector.
 pub fn writes_carried(e: el::El, bound: ir::TypeT) -> boolean {
   b = el_types::base(bound);
-  if bound is TyOptional {
+  if bound is TyOptional && !el_convert::plain_scalar(b) {
     return false;
   }
   plain_enum = match b { TyEnum { n: _, is_ref } => !is_ref, _ => false };
@@ -2262,9 +2263,10 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           tp = ir::TyNever;
         }
         stack = el_vars::tp(vars, var) is TyRefVar;
-        vector_row_def(e, tp, string_end(e, last));
-        append_spec(e, list, var, x.code, tp, stack, f!);
+        // (Registered where this hole ends — before the text after it — not at the string's end.)
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+        vector_row_def(e, tp, string_end(e, after));
+        append_spec(e, list, var, x.code, tp, stack, f!);
         s = text_part(e, after);
         if s != "" {
           list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: s }])];

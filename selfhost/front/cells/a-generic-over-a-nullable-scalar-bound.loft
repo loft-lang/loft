@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a generic over a nullable scalar bound (`integer?`, `float?`, `boolean?`) is an
+// instance of its own, its vector writes re-lowered as the scalar's — a null element copied as
+// its sentinel.
+// Prints: [null,3] [2.5,null] [true]
+
+fn tail<T>(v: vector<T>, from: integer) -> vector<T> { out: vector<T> = []; out += v[from..len(v)]; out }
+fn main() {
+  n: vector<integer?> = [1, null, 3];
+  f: vector<float?> = [1.0, 2.5, null];
+  b: vector<boolean?> = [false, true];
+  println("{tail(n, 1)} {tail(f, 1)} {tail(b, 1)}");
+}
