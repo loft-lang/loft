@@ -195,6 +195,12 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+A stored reference's holder is rooted through field AND element reads (`b.hs[i].r = …`): an
+element of a parameter's collection is the caller's record, so a reference written there naming
+a record this frame releases is read by the caller after its end
+(`LOFT_RECORDS_NO_ELEMENT_HOLDER=1` follows field reads only).  A refusal cell
+(`@EXPECT_ERROR`) never reaches the program's close under `--tests`, so `own_sweep.py` cannot
+score it; the compile-only report (`LOFT_LIFETIME_CHECK` with `--emit-image`) does.
 A copy the code generator makes into a local lands in the store that local already names where
 that one is live, and is minted only where the local is null (`alloc_record_at`), so a loop's
 copy into one local is one store across its passes, as `OpDatabase`'s is

@@ -1622,6 +1622,28 @@ impl Run<'_> {
         }
     }
 
+    /// The variable a stored reference's HOLDER is rooted at, through field reads and element
+    /// reads (`b.hs[i].r = …`): an element of a parameter's collection is the caller's record
+    /// as the parameter is, and keeps the reference past this frame (`@FR-H-RefHome`).
+    /// `LOFT_RECORDS_NO_ELEMENT_HOLDER=1` follows field reads only.
+    pub(super) fn holder_root(&self, place: Option<&Value>) -> Option<u16> {
+        match place?.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::Call(op, args) if *op == self.ops.get_field => self.holder_root(args.first()),
+            Value::Call(op, args)
+                if matches!(
+                    self.data.def(*op).name(),
+                    "OpGetVector" | "OpGetVectorNullable"
+                ) && !crate::env_once!(
+                    std::env::var_os("LOFT_RECORDS_NO_ELEMENT_HOLDER").is_some()
+                ) =>
+            {
+                self.holder_root(args.first())
+            }
+            _ => None,
+        }
+    }
+
     /// The variable a value block hands back as its tail (`{#Object __ref_p2_N = …;
     /// __ref_p2_N}`): a copy that frees such a source releases that variable's store.
     pub(super) fn tail_var(v: &Value) -> Option<u16> {

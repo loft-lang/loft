@@ -1069,7 +1069,7 @@ impl Run<'_> {
                     Self::hand_on(&mut s, &handed);
                     // The holder is the variable the place is rooted at: a field of it, or a
                     // struct enum's variant inline in it, is written there too (loft#2612).
-                    if let Some(h) = Self::root_var(args.first(), ops.get_field) {
+                    if let Some(h) = self.holder_root(args.first()) {
                         uncover_all(&mut s, &pointed);
                         s.points.entry(h).or_default().extend(pointed);
                     }
