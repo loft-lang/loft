@@ -610,6 +610,29 @@ pub fn fn_record_def(e: el::El, pos: ir::Position) -> integer {
 // `x = v` / `x op= v` in a lambda where `x` is a capture held as a plain field of its closure
 // record (no cell): the field set from the value, a compound reading the field first.  Null
 // where the target is no such capture.
+// The record a shared capture's pointer names, where `n` reads one in the lambda being
+// elaborated (`OpGetDbRef(__closure, pos)`), or -1.
+pub fn capture_record_at(e: el::El, n: ir::Node) -> integer {
+  if e.closure_var < 0 || e.closure_rec < 0 {
+    return -1;
+  }
+  match el_ir::unspan(n) {
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name != "OpGetDbRef" || len(ga) != 2 || el_ir::unspan(ga[0]!) != ir::NdVar { n: e.closure_var } {
+        return -1;
+      }
+      pos = match el_ir::unspan(ga[1]!) { NdInt { n: pn } => pn, _ => -1 };
+      for a in el::def(e, e.closure_rec).attributes {
+        if field_position(e, e.closure_rec, a.name) == pos {
+          return match el_types::base(a.typedef[0] ?? ir::TyVoid) { TyReference { n: rn, dep: rdp } => if len(rdp) > 0 && el::def(e, rn).def_type == el::DT_STRUCT { rn } else { -1 }, _ => -1 };
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
 // `p = S { … }` in a lambda where `p` is a SHARED record capture (a pointer field of the closure
 // record): the literal is built into the record the field points at, field by field
 // (`literal_into_place` on `OpGetDbRef(__closure, pos)`).  Second pass only; null otherwise.
