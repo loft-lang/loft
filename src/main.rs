@@ -474,6 +474,9 @@ fn print_help() {
     println!("                                install .        — install THIS package into");
     println!("                                                   ~/.loft/lib/ for global use");
     println!("                                install /p       — install the package at /p");
+    println!("  develop <name> [--path <dir>] work on a library the project uses: a copy in");
+    println!("                                lib/<name> (or your checkout) that outranks its pin");
+    println!("                                develop --done <name> — back to the pinned version");
     println!("  pin <script.loft>             pin every registry library the script uses");
     println!("                                writes <script>.loft.lock next to the script;");
     println!("                                subsequent runs use the pinned versions");
@@ -7367,6 +7370,9 @@ fn main() {
     let mut path_given = false;
     let mut project: Option<String> = None;
     let mut lib_dirs: Vec<String> = Vec::new();
+    // `@C173` — the `--lib` directories alone: the explicit override `use` resolution ranks
+    // first.  `lib_dirs` gathers implicit ones too (a package's `src/`, its parent).
+    let mut flag_lib_dirs: Vec<String> = Vec::new();
     let mut log_conf: Option<String> = None;
     let mut production = false;
     let mut generate_log_config: Option<Option<String>> = None;
@@ -7565,6 +7571,7 @@ fn main() {
             i += 1;
         } else if a == "--lib" {
             lib_dirs.push(argv[i].clone());
+            flag_lib_dirs.push(file_access::plain_canonical_str(&argv[i]));
             i += 1;
         } else if a == "--log-conf" {
             log_conf = Some(argv[i].clone());
@@ -8739,6 +8746,9 @@ fn main() {
                 );
                 std::process::exit(1);
             }
+        } else if a == "develop" {
+            // `@C173` — a library the project uses, switched to an editable copy and back.
+            std::process::exit(loft::develop::run(&argv[i..]));
         } else if a == "pin" {
             // @PLAN12 Phase 6.6 — write a sidecar lockfile next to
             // a script so subsequent runs use pinned versions
@@ -8914,12 +8924,14 @@ fn main() {
                     let context = loft::native_artifact::LibraryContext {
                         default_dir: default_dir.clone(),
                         lib_dirs: lib_dirs.clone(),
+                        flag_lib_dirs: flag_lib_dirs.clone(),
                         scope_entry: None,
                     };
                     let alone = match loft::native_artifact::parse_library_alone(
                         &pkg_str,
                         &default_dir,
                         &context.lib_dirs,
+                        &context.flag_lib_dirs,
                         None,
                     ) {
                         Ok(a) => a,
@@ -9286,6 +9298,7 @@ fn main() {
             no_warnings,
             deny_warnings,
             &lib_dirs,
+            &flag_lib_dirs,
             project.as_deref(),
             if native_mode {
                 test_runner::TestBackend::NativeC
@@ -9387,6 +9400,7 @@ fn main() {
         .collect();
     let mut p = parser::Parser::new();
     p.lib_dirs = lib_dirs;
+    p.flag_lib_dirs.clone_from(&flag_lib_dirs);
     // @PLN199 A2 — the functions `compiled_stdlib::mark` will route below, under the same
     // condition, named to the parser before it reads a call to one.
     if !native_mode && html_out.is_none() {
@@ -10054,6 +10068,7 @@ fn main() {
         // from the library alone).
         let lib_context = loft::native_artifact::LibraryContext {
             default_dir: default_str.clone(),
+            flag_lib_dirs: p.flag_lib_dirs.clone(),
             lib_dirs: p.lib_dirs.clone(),
             scope_entry: Some(abs_file.clone()),
         };

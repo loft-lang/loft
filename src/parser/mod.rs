@@ -806,6 +806,13 @@ pub struct Parser {
     context: u32,
     /// Extra library directories for 'use' resolution (from --lib / --project flags)
     pub lib_dirs: Vec<String>,
+    /// `@C173` — the `--lib` directories THIS run was given, the explicit override: a name
+    /// one of them provides outranks a pin and a declaration (`packages::lib_path`).  The
+    /// rest of `lib_dirs` is implicit (a package's own `src/`, its parent for siblings).
+    pub flag_lib_dirs: Vec<String>,
+    /// The names already reported as taken from a `--lib` directory over a pin or a
+    /// declaration: one note per name.
+    pub(crate) lib_override_reported: std::collections::HashSet<String>,
     /// The library short-name of the file being parsed, when that file is a
     /// package entry — so a self-qualified call (`graphics::color_r(..)` inside
     /// `src/graphics.loft`) resolves to the definitions already in hand.
@@ -885,9 +892,6 @@ pub struct Parser {
     /// there can read.
     #[cfg(feature = "registry")]
     undeclared_reported: std::collections::HashSet<String>,
-    /// The `use` ids already reported by [`Parser::lib_flag_outranked`] — one advice per
-    /// id, for the same reason and with the same non-travel rule as `undeclared_reported`.
-    lib_outranked_reported: std::collections::HashSet<String>,
     /// What an auto-install already answered this run: `id -> Some(version)`, or `None`
     /// for a name the registry does not carry.  @PLN143 — a bare `use` is decided by
     /// `probe_auto_install` on EVERY parse pass now that no lockfile pins it, and asking
@@ -2312,6 +2316,8 @@ impl Parser {
             vars: Function::new("", "none"),
             line: 0,
             lib_dirs: Vec::new(),
+            flag_lib_dirs: Vec::new(),
+            lib_override_reported: std::collections::HashSet::new(),
             own_lib: None,
             pending_native_libs: Vec::new(),
             native_lib_regs: Vec::new(),
@@ -2327,7 +2333,6 @@ impl Parser {
             use_paths: std::collections::HashMap::new(),
             #[cfg(feature = "registry")]
             undeclared_reported: std::collections::HashSet::new(),
-            lib_outranked_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             auto_installed: std::collections::HashMap::new(),
             #[cfg(feature = "registry")]

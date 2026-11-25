@@ -193,7 +193,7 @@ lease_refuse	4.1
 leaving_free	23.8
 ledger	4.7
 lib	78.7
-lib_flag_outranked	0.7
+lib_flag_override	0.7
 lib_git	2.6
 lib_process	80.7
 library_only_build	1.7

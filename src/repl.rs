@@ -1911,6 +1911,9 @@ impl ReplSession {
     pub fn open(ctx: &ResolutionContext) -> std::io::Result<Self> {
         let mut session = Self::new(&ctx.stdlib_dir)?;
         session.parser.lib_dirs.clone_from(&ctx.lib_dirs);
+        // `@C173` — a debug session's import directories are the ones it was given with
+        // `--lib`: the explicit override.
+        session.parser.flag_lib_dirs.clone_from(&ctx.lib_dirs);
         session.context = ctx.clone();
         Ok(session)
     }
@@ -2302,7 +2305,9 @@ impl ReplSession {
         // Both callers (the file-run debugger and the rpc/serve `launch`) want a *fresh* whole-
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
+        let flag_lib_dirs = std::mem::take(&mut self.parser.flag_lib_dirs);
         self.parser = Parser::open_program(&self.stdlib_dir, &lib_dirs)?;
+        self.parser.flag_lib_dirs = flag_lib_dirs;
         let loaded = self.load_program_str(&src, path);
         // `@PLN206 P7a` — the libraries run compiled, as in a plain run; a routine the
         // debugger wants runs interpreted (`Debugger::wants`).
@@ -2398,6 +2403,7 @@ impl ReplSession {
         // Parsed against again after compiling: no whole-program signature rewrite.
         parser.data.open_world = true;
         parser.lib_dirs.clone_from(&self.parser.lib_dirs);
+        parser.flag_lib_dirs.clone_from(&self.parser.flag_lib_dirs);
         for d in extra_lib_dirs {
             if !parser.lib_dirs.contains(d) {
                 parser.lib_dirs.push(d.clone());

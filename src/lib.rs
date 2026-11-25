@@ -498,6 +498,7 @@ pub use extensions::native_call;
 // @PLN53 F1/F2 — raw-source fuzz oracle + keyed-container generator; available
 // under cargo-fuzz (the `fuzzing` feature) and under `cargo test`.
 pub mod compiled_stdlib;
+pub mod develop;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzz_keyed;
 #[cfg(any(test, feature = "fuzzing"))]
