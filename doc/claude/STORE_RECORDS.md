@@ -195,6 +195,10 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+A copy the code generator makes into a local lands in the store that local already names where
+that one is live, and is minted only where the local is null (`alloc_record_at`), so a loop's
+copy into one local is one store across its passes, as `OpDatabase`'s is
+(`LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints every copy).
 A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@FR-H-RefHome`) is
 gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
 `r` names an ended generation from there, and writing it into a field is a use after its end —

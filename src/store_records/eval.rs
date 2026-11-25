@@ -334,8 +334,36 @@ impl Run<'_> {
     }
 
     /// A fresh store at this assignment, the variable's own: a copy the code generator makes.
+    /// The copy lands in the store the variable already names where that one is live — the
+    /// runtime re-initialises it in place (`alloc_record_at`, as `OpDatabase` does) and mints
+    /// only where the variable is null — so a loop's copy into one local is one store, not one
+    /// per pass (loft-suite O-Borrow/2338's `looped`).  `LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints
+    /// every copy.
     pub(super) fn copied(&mut self, st: &mut State, node: &Value) -> Val {
         let site = self.site(node, Origin::Copy);
+        // A loop's head joins the null of the first pass with the store an earlier pass copied
+        // in here: the null path mints that same store and the others re-initialise it, so the
+        // copy names this site's current store, as `OpDatabase`'s loop case does.
+        if let Value::Set(x, _) = node.unspan()
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_COPY_IN_PLACE").is_some())
+        {
+            let cur = Self::pts(st, *x);
+            let here = SKey { site, older: false };
+            if cur.contains(&Pt::Store(here))
+                && cur.iter().all(|p| match p {
+                    Pt::Null => true,
+                    Pt::Store(k) => k.site == site,
+                    _ => false,
+                })
+                && info_of(st, here).has(LIVE)
+                && !info_of(st, here).has(ENDED)
+            {
+                return Val {
+                    pts: [Pt::Store(here)].into(),
+                    corr: [here].into(),
+                };
+            }
+        }
         let k = Self::fresh(st, site);
         Val {
             pts: [Pt::Store(k)].into(),
