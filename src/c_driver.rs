@@ -1101,6 +1101,94 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
     out
 }
 
+/// @PLN229 B1 — a split build (`LOFT_C_SPLIT=1`): each unit of `text` (`loft::c::SPLIT_UNIT`
+/// lines) written beside `src_dir`'s source and compiled to an object on its own — the shared one
+/// owning the runtime's state (`LOFT_SPLIT_OWN`), every other using it (`LOFT_SPLIT_USE`) — as
+/// many at once as the machine has cores, then the objects linked into `binary`.  No whole-program
+/// optimisation (`-flto`): it would undo what compiling apart saves.  Answers the first unit's
+/// compile that fails, else the link's.  gcc and clang only (`Dialect::Gnu`).
+fn split_build(
+    cc: &str,
+    flags: &[String],
+    src_dir: &std::path::Path,
+    text: &str,
+    binary: &std::path::Path,
+    link_args: &[String],
+) -> std::io::Result<loft::platform::process::Ran> {
+    let flags: Vec<String> = flags
+        .iter()
+        .filter(|f| !f.starts_with("-flto"))
+        .cloned()
+        .collect();
+    let units: Vec<&str> = text
+        .split(loft::c::SPLIT_UNIT)
+        .filter(|u| !u.is_empty())
+        .collect();
+    let mut jobs = Vec::with_capacity(units.len());
+    for (i, unit) in units.iter().enumerate() {
+        let body = unit.split_once("*/\n").map_or(*unit, |(_, b)| b);
+        let c = src_dir.join(format!("unit{i}.c"));
+        let o = src_dir.join(format!("unit{i}.o"));
+        fa::write(&c, body)?;
+        let role = if i == 0 {
+            "-DLOFT_SPLIT_OWN"
+        } else {
+            "-DLOFT_SPLIT_USE"
+        };
+        jobs.push((c, o, role));
+    }
+    let width = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    for batch in jobs.chunks(width) {
+        let ran: Vec<std::io::Result<loft::platform::process::Ran>> = std::thread::scope(|s| {
+            let hs: Vec<_> = batch
+                .iter()
+                .map(|(c, o, role)| {
+                    let flags = &flags;
+                    s.spawn(move || {
+                        let mut cmd = cc_spawn(cc);
+                        cmd.push_args(flags)
+                            .push_arg(*role)
+                            .push_arg("-c")
+                            .push_arg(c);
+                        cmd.push_arg("-o").push_arg(o);
+                        run_cc(&mut cmd)
+                    })
+                })
+                .collect();
+            hs.into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(std::io::Error::other("a compile thread panicked")))
+                })
+                .collect()
+        });
+        for r in ran {
+            let r = r?;
+            if !r.status.success() {
+                return Ok(r);
+            }
+        }
+    }
+    let mut cmd = cc_spawn(cc);
+    cmd.push_args(&flags);
+    for (_, o, _) in &jobs {
+        cmd.push_arg(o);
+    }
+    cmd.push_arg("-o").push_arg(binary);
+    cmd.push_args(link_args);
+    cmd.push_arg("-lm");
+    cmd.push_args(loft::platform::c_system_link_libs());
+    cmd.push_args(loft::platform::c_main_stack_args(false));
+    let out = run_cc(&mut cmd);
+    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
+        for (c, o, _) in &jobs {
+            let _ = fa::remove_file(c);
+            let _ = fa::remove_file(o);
+        }
+    }
+    out
+}
+
 /// The compiler's command building `src` into `binary`, in its own dialect: gcc's links the
 /// libraries after the objects, where it resolves them; `cl` is told where its object goes,
 /// which it writes into the working directory otherwise.
@@ -1283,8 +1371,12 @@ pub(crate) fn build(
     fa::write(&src, &*text)
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
-    let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
-    let out = run_cc(&mut cmd);
+    let out = if text.contains(loft::c::SPLIT_UNIT) && dialect(&cc) == Dialect::Gnu {
+        split_build(&cc, &flags, &src_dir, &text, &binary, &link_args)
+    } else {
+        let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
+        run_cc(&mut cmd)
+    };
     let _ = fa::remove_file(&obj);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {

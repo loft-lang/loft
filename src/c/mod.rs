@@ -32,6 +32,7 @@ mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
+mod units;
 mod wide_ledger;
 
 use crate::data::{Data, DefType, Type, Value};
@@ -2358,13 +2359,23 @@ fn emit_unit_with(
             }
         }
     }
+    let split = split_units_asked(hosted.is_some() || shape.browser || shape.wasm);
     for &d in &fns {
         let (sig, body) = function(&cx, d, 0).map_err(|why| Refusal {
             function: data.def(d).original_name().clone(),
             why,
         })?;
         let _ = writeln!(protos, "{sig};");
-        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+        if split {
+            // @PLN229 B1: each function's body goes to the unit of the file it is declared in.
+            let _ = write!(
+                bodies,
+                "\n{SPLIT_FN}{}*/\n{sig} {{\n{body}}}\n{SPLIT_FN_END}\n",
+                data.def(d).position.file.as_str()
+            );
+        } else {
+            let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+        }
     }
     // The place twins the functions call, and the ones those call in turn.
     let mut written = 0;
@@ -2425,6 +2436,9 @@ fn emit_unit_with(
     }
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
+    if split {
+        out.push_str(SPLIT_SHARED);
+    }
     out.push_str(&dispatch);
     // The closure release only where something calls it: a unit with no function value
     // holding a closure writes none.
@@ -2489,6 +2503,24 @@ fn emit_unit_with(
     }
     Ok(out)
 }
+
+/// @PLN229 B1 — the opt-in split build (`LOFT_C_SPLIT=1`): one C unit per source file, compiled
+/// apart and linked.  For a development pass of a large program: no inlining between files and no
+/// whole-program optimisation, so it is never the shipped tier (`--ship` keeps one unit), nor a
+/// hosted unit, a page or a wasm module.
+fn split_units_asked(other_kind: bool) -> bool {
+    !other_kind
+        && !crate::ship_tier::shipped_units()
+        && crate::env_once!(std::env::var("LOFT_C_SPLIT").is_ok_and(|v| v != "0"))
+}
+
+/// Where the split build's shared part starts (`units::into_units`).
+pub(crate) const SPLIT_SHARED: &str = "\n/*@LOFT_SPLIT_SHARED*/\n";
+/// The head and the end of one function's body in a unit to be split: the head names its file.
+pub(crate) const SPLIT_FN: &str = "/*@LOFT_SPLIT_FN ";
+pub(crate) const SPLIT_FN_END: &str = "/*@LOFT_SPLIT_FN_END*/";
+/// The line each unit of a split build starts with, as the C driver reads it (`c_driver`).
+pub const SPLIT_UNIT: &str = "/*@LOFT_UNIT ";
 
 /// `LOFT_TRACE_TABLES=1` — the unit's type tables as the bodies registered them: the copy
 /// table's types, the described ones, whether the code names the table at all, the default
@@ -3395,7 +3427,10 @@ fn emit_program_counted(
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
-    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
+    let out = tidy::drop_unnamed(&out, RUNTIME_END);
+    // @PLN229 B1: the split build's units are cut last, from the finished unit — after `main` is
+    // added and what nothing names is dropped, both of which read the program as one unit.
+    Ok(units::into_units(&out, RUNTIME_END))
 }
 
 /// The program's `main` and the C statement that calls it, as the interpreter's
