@@ -212,6 +212,13 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   rec = place_root(e, holder);
   local = holder is NdVar;
   pd = el_ex_place::record_place_def(e, vars, holder);
+  // (A shared capture's record, `OpGetDbRef(__closure, pos)`: rooted at the closure record,
+  // typed by the record the capture points at.)
+  cpd = el_ex_closure::capture_record_at(e, holder);
+  if cpd >= 0 {
+    rec = e.closure_var;
+    pd = cpd;
+  }
   if !e.first_pass && (rec < 0 || pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
     hk = match el_ir::unspan(holder) { NdCall { def_nr } => el::def(e, def_nr).name, NdVar { n: _ } => "a local", NdNull => "no holder", _ => "a value" };
     el::refuse(e, "an append to a collection that is not a field of a record: {hk} of {type_kind(el_ex_place::place_type(e, vars, holder))}");
