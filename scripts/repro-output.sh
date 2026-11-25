@@ -20,7 +20,7 @@ if [ "${1:-}" = "--loft" ]; then loft=$2; shift 2; fi
 src=${1:-}
 main=${2:-main.loft}
 work=$(mktemp -d "${TMPDIR:-/tmp}/loft-repro-XXXXXX")
-trap 'rm -rf "$work"' EXIT
+[ -n "${REPRO_KEEP:-}" ] && echo "repro-output: kept $work" || trap 'rm -rf "$work"' EXIT
 
 if [ -z "$src" ]; then
     src="$work/program"
