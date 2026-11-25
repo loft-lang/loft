@@ -7486,8 +7486,8 @@ impl Parser {
         let tp = self.vars.tp(v);
         // A text local promotes to a HIDDEN RefVar(Text) out-param buffer.
         // @PLN25 DN1 (#487 / 449): `.base()` peel — an `Optional(Text)` local
-        // shares `Text`'s sentinel storage (a null `text?` IS `STRING_NULL` in
-        // the same slot), so it hoists to the SAME hidden buffer.  Without the
+        // shares `Text`'s storage (a null `text?` is the null text in the same
+        // slot), so it hoists to the SAME hidden buffer.  Without the
         // peel it fell to the plain-VALUE promotion below and call sites
         // pushed a `null` placeholder into a frame laid out for a work buffer
         // (`realloc(): invalid next size` in the multiplayer/ws consumers).

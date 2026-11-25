@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The null text: the one home for how Rust code spells an absent `text` and asks whether a
-//! text is absent (`@FR-L-Null-Text`).
+//! text is absent (`@FR-L-Null-Text`, `@C171`).
 //!
 //! Every place that MAKES a null text takes it from [`null_str`] (or [`Str::null`] for a view),
 //! and every place that ASKS goes through [`is_null`] (or [`Str::is_null`]), so how absence is

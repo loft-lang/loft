@@ -45,7 +45,6 @@ fn dev_soft_halt_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
 
-pub use crate::store::STRING_NULL;
 
 /// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
 /// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
@@ -290,7 +289,7 @@ impl Yielded {
 
 impl State {
     /// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
-    /// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+    /// the null text when the generator is exhausted, which drops what it held.
     pub(crate) fn hold_native_text_yield(&mut self, gen_ref: DbRef, text: String) -> Str {
         if crate::text_null::is_null(&text) {
             self.release_native_text_yield(gen_ref);
@@ -2770,8 +2769,7 @@ impl State {
         match value_size {
             4 => self.put_stack(i32::MIN), // integer null sentinel
             8 => self.put_stack(i64::MIN), // long null sentinel
-            // Text Str sentinel: use STRING_NULL ("\0") so that the ptr is non-null
-            // and conv_bool_from_text / append_text / str() don't crash on ptr=0.
+            // The null text as a view (`Str::null`).
             v if v == std::mem::size_of::<Str>() as u32 => {
                 self.put_stack(Str::null());
             }
@@ -2813,7 +2811,7 @@ impl State {
             }
             let ptr_val = u64::from_ne_bytes(locals_bytes[off..off + 8].try_into().unwrap());
             if ptr_val == 0 {
-                continue; // null / STRING_NULL — not store-backed
+                continue; // the null text, or no text: not store-backed
             }
             for (store_idx, store) in self.database.allocations.iter().enumerate() {
                 if !store.live || store_idx as u16 == self.stack_cur.store_nr {

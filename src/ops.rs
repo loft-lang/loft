@@ -211,11 +211,9 @@ pub fn to_char(val: i32) -> char {
 
 #[inline]
 pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
-    // @PLN10 — render the text null sentinel ("\0") as `null`, mirroring
-    // `format_long`'s `i64::MIN → null`.  A loft text equal to `STRING_NULL`
-    // IS null (the content-based null model — `conv_bool_from_text`), so the
-    // substitution is consistent with `?? ` / `!`.  The interpreter's
-    // `OpFormatText` routes text interpolation through this fn.
+    // @PLN10 — render the null text as `null`, mirroring `format_long`'s `i64::MIN → null`,
+    // so the substitution is consistent with `??` / `!`.  The interpreter's `OpFormatText`
+    // routes text interpolation through this fn.
     let val = if crate::text_null::is_null(val) {
         "null"
     } else {
@@ -733,10 +731,9 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
 /// provenances.  @P347.
 ///
 /// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
-/// home both backends call, rather than at each operator site.
+/// included: `null < v` is true, `v < null` false, `null < null` false — `null < ""` too, which a
+/// byte compare cannot say (loft#1924).  Asked here, the one home both backends call, rather
+/// than at each operator site.
 #[inline]
 #[must_use]
 pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {

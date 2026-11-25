@@ -2293,7 +2293,7 @@ fn cell_a_qualified_type_whose_field_changed_is_still_refused() {
     }
 }
 
-/// `@FR-L-Null-Text` × `@FR-S-Format` — an image written while a null text was stored as a
+/// `@FR-L-Null-Text` × `@FR-S-Format`, `@C171` — an image written while a null text was stored as a
 /// record holding one NUL byte still reads every such slot as null.  The image is
 /// `tests/golden/images/null-text-n0` (`tests/golden/images/null-text.loft`): a nullable and a
 /// plain field, a nested field, a vector element and a hash, sorted and index key, each null,

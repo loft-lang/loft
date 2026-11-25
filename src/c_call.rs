@@ -518,8 +518,8 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 /// twin of this in `output_c_direct_call`) — a text return that differed between
 /// them would be exactly the divergence arc C was built to stop:
 ///
-/// - **NULL is loft null.** text-null is CONTENT-based (`STRING_NULL`), so the
-///   record carries it and `??` / `!` / `match` read it as null.
+/// - **NULL is loft null** (`text_null::null_string`), so `??` / `!` / `match` read it as
+///   null.
 /// - **The bytes end at the first NUL**, because that is what `char *` means. A
 ///   loft text carries a length and can hold an interior NUL; a C string cannot,
 ///   so the crossing truncates there rather than inventing a length.

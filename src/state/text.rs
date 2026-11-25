@@ -307,11 +307,9 @@ impl State {
         let off = pos - size_ptr() as u16;
         // The destination's address and capacity, taken through a borrow that ENDS here — see
         // `aliased_source` for why the copy must not be taken through a live `&mut`.
-        // @PLN25 slice (c): a null `text?` accumulator (the STRING_NULL sentinel) IGNORES the
-        // append, so `s += x` on a null `s` stays null (propagate — nulls stay visible, never
-        // swept into "\0x"). A non-null text is never the sentinel, so this never fires for it.
-        // DN1-gated so gate-OFF (the legacy nullable model, where a plain text can still be
-        // STRING_NULL) keeps its byte-identical append behaviour.
+        // @PLN25 slice (c): a null `text?` accumulator IGNORES the append, so `s += x` on a
+        // null `s` stays null (`@FR-E-NullArg`).  DN1-gated so gate-OFF (the legacy nullable
+        // model, where a plain text can still be null) keeps its append behaviour.
         let (dst_at, dst_cap, is_null) = {
             let d = self.string_mut(off);
             (
@@ -460,8 +458,7 @@ impl State {
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let off = pos - size_ptr() as u16;
         // Same order as `append_text`: decide and copy before the `&mut` exists.  And the same
-        // null rule: a `&text?` whose text is null (the STRING_NULL sentinel) ignores the
-        // append and stays null; a non-null text is never the sentinel.
+        // null rule: a `&text?` whose text is null ignores the append and stays null.
         let (dst_at, dst_cap, is_null) = {
             let d = self.string_ref_mut(off);
             (

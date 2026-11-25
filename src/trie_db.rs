@@ -95,7 +95,7 @@ pub(crate) fn tree_bytes(b: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Owned(out)
 }
 
-/// Is this a NULL key?  A null text reads as `STRING_NULL` (`(L-Null-Text)`), and a null key
+/// Is this a NULL key (`(L-Null-Text)`, `text_null::is_null_bytes`)?  A null key
 /// is filed in the tree's [`rt::SLOT`] instead of the tree: first in a walk, found by an
 /// exact lookup, and in no prefix slice — a null text begins with nothing (`@FR-E-NullArg`).
 fn is_null_key(b: &[u8]) -> bool {

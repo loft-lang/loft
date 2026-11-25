@@ -5231,3 +5231,18 @@ through the C backend instead of rustc (@C71's mechanism changes, not its model)
 
 **2026-11-24.**  The retirement is done: the entry's decision says the writer IS retired and
 names the refusals, and its **Holds at** names the sites and the guard that landed with the plan.
+
+## C171 — A null text is an identity, never a content
+
+**Question.** A text that is exactly one NUL byte read as the null text: absence was spelled as
+that content, in flight and stored, so `"a\0b"[1..2] == null` held and a concatenation with it
+went null, on both backends.  Four ways out: null as the unset handle only (A), a sentinel no
+valid text can equal (B, `0xFF`, which a byte-buffer text can hold), a null bit beside the handle
+(C, a wider slot), or keeping the rule and documenting it (D).
+
+**Decision (owner, 2026-11-21).** A, extended: null is an identity, never a content, on every
+representation — stored as the unset handle, in flight a pointer no text has.  Old images are read
+through their sidecar version rather than converted.
+
+**Revisit trigger.** As the entry states.
+

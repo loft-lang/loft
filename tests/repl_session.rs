@@ -2060,7 +2060,7 @@ fn a_nullable_local_evaluates_at_a_paused_frame() {
         (
             "et",
             "\"\"",
-            "an EMPTY text is a value, not the STRING_NULL handle",
+            "an EMPTY text is a value, not the null text",
         ),
         (
             "fi",

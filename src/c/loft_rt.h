@@ -8,8 +8,8 @@
  *   integers   int64_t; INT64_MIN is null; an operand that is null, an overflow and a
  *              division by zero give null (ops::op_add_long and its peers).
  *   booleans   uint8_t where stored (0, 1, 255 = null); 0/1 in a condition.
- *   text       loft_text owns a byte buffer; loft_str borrows one.  The one-byte text "\0"
- *              is null (store::STRING_NULL), rendered as `null`.
+ *   text       loft_text owns a byte buffer; loft_str borrows one.  The null text is an
+ *              identity, never a content (loft_text.h, `@FR-L-Null-Text`), rendered as `null`.
  *
  * C99: <stdint.h>, declarations where they are used.  No allocation failure is survivable
  * here: one aborts the program, as the Rust runtime's does. */

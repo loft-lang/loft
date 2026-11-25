@@ -146,7 +146,7 @@ it may place blocks differently, but it must write each kind of block the same w
 
 ```
   (S-Sidecar) beside an image at <path> lies its sidecar <path>.dschema, UTF-8 lines:
-                LOFT-DSCHEMA v2
+                LOFT-DSCHEMA v3
                 hash=<u64, decimal>
                 [root=<the root type's name>]
                 [slot=<u16: the store number the image's own references name>]
@@ -161,7 +161,10 @@ it may place blocks differently, but it must write each kind of block the same w
               `group=`) are carried for the reader and are not part of the identity.  A sidecar
               with none of root, slot, version and facts is written in the v1 form: the same
               text without those lines and without the facts fence.  A project baseline adds a
-              --sources-- section after the facts (layout.md L-Upgrade-Source).
+              --sources-- section after the facts (layout.md L-Upgrade-Source).  v3 says the
+              image stores a null text only as the unset handle; a v1 or v2 image may hold one
+              as a record of one NUL byte, which every loader reads as null (layout.md
+              L-Null-Text).  A reader refuses a version above its own.
   (S-Format)  every byte this chapter defines for a keyed kind belongs to that kind's PLACEMENT
               TOKEN (src/placement.rs: hash, index, spatial, trie), rendered into the kind's
               line of the layout dump, so it is part of the identity.  A change to anything a

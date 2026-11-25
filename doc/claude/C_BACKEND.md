@@ -315,7 +315,9 @@ temporary is declared at the top of its function.
 An owned temporary an expression makes is freed when its statement ends — and statements
 written inside an expression (a compound, a result buffer) free only their own temporaries,
 because the enclosing expression's are still to be read.  The epilogue frees every text the
-function holds.  The null text is the one byte `"\0"`, as in the interpreter.
+function holds.  The null text is an identity, never a content (`@FR-L-Null-Text`): a view
+with no pointer, an owned text with a pointer and neither length nor room — `loft_text.h`
+holds the tests, as `text_null` does in the interpreter.
 
 **Stores.**  `loft_rt.h` ports the store model the IR addresses: a store is an array of 8-byte
 words, a record a run of words whose first word is its claimed size, a reference names a store,

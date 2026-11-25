@@ -1375,9 +1375,8 @@ fn render_capture(
                 format!("'{c}'")
             })
         }
-        // Text nullity is CONTENT-based (`Store::text_is_null`): the `STRING_NULL` NUL
-        // byte IS the absence, and quoting it renders a literal that looks like a
-        // one-character string — worse than declining, because it claims a value.
+        // The null text renders as `null`, asked of the view (`@FR-L-Null-Text`): its bytes,
+        // `""`, are an empty text's too, and quoting them would claim a value.
         Type::Text(_) => {
             let v = state.get_stack::<crate::keys::Str>();
             let s = v.str().to_string();

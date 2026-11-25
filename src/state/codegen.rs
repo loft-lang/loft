@@ -6613,7 +6613,7 @@ impl State {
         // the put-op below pops the slot's full width: `OpAppendText` then read whatever the
         // eval stack happened to hold under it.  Give it the slot's typed null instead, the
         // same repair `gen_dest_call_args` makes for an omitted argument and the same value
-        // `--native` already writes for this IR (`STRING_NULL.to_string()`), so the two
+        // `--native` already writes for this IR (the null text), so the two
         // backends store one value rather than disagreeing.  `gen_set_first_at_tos` guards
         // the same hazard by returning early; this is the reassignment/append half.
         //

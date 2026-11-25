@@ -47,12 +47,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 
-/// The text null: a loft `text` that holds no value is this one NUL byte, and
-/// [`Store::text_is_null`] reads nullity from the content.  The interpreter, the runtime
-/// emitted programs link and every store reader share it; `crate::state` re-exports it
-/// under the path emitted Rust names (`loft::state::STRING_NULL`).
-pub const STRING_NULL: &str = "\0";
-
 #[allow(dead_code)]
 static A: System = System;
 /// The first word of every store and image (`@FR-S-Frame`): a reader refuses a file without it.
@@ -6168,19 +6162,13 @@ impl Store {
 
     /// True when the `text` slot at `(rec, pos)` holds NULL.
     ///
-    /// @FR-L-Null-Text — an absent text has TWO byte-level spellings and they are one
-    /// absence: an **unset handle** (str_rec 0, the `nullref` sentinel `(L-Null)` names)
-    /// and an **allocated record holding the `STRING_NULL` (`"\0"`) bytes**, which is what
-    /// a written `null` and every native text-null produce.  Testing the handle alone reads
-    /// the second spelling as a present, one-character string — and telling `null` from `""`
-    /// is the distinction the whole reading exists for.
-    ///
-    /// The CONTENT test is the total one: [`Store::get_str`] maps an unset or out-of-range
-    /// handle onto `STRING_NULL` too, so it subsumes the pointer test rather than sitting
-    /// beside it.  This is the one home every reader asks — `Stores::is_null` (which decides
-    /// whether a struct field is omitted), the format walk (which decides how it renders) and
-    /// the native reader — so a render and an omission cannot disagree about whether a value
-    /// is there.
+    /// @FR-L-Null-Text — a stored null text is the **unset handle** (str_rec 0, the `nullref`
+    /// sentinel `(L-Null)` names), never a record; in an image from before sidecar version 3 a
+    /// record of one NUL byte is null as well ([`Store::legacy_nul`]).  [`Store::get_str`]
+    /// answers the null text for both, so asking its answer is the whole test.  This is the
+    /// one home every reader asks — `Stores::is_null` (which decides whether a struct field is
+    /// omitted), the format walk (which decides how it renders) and the native reader — so a
+    /// render and an omission cannot disagree about whether a value is there.
     ///
     /// An empty string is NOT null: `""` is an allocated record whose content is `""`, a
     /// present value that must survive a save→load round trip (@P375).

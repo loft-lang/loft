@@ -2631,8 +2631,8 @@ Site `FnWriter::version_unswitch`.
                  the loop iterates the pieces of T as slices, in the order and with
                  the content `split` answers (none for an empty text; otherwise one
                  per separator plus the trailing piece, empty when T ends in a
-                 separator; a NULL text is its sentinel's one character and answers
-                 itself as its only piece), and binds each to `p` exactly as the element
+                 separator; a NULL text answers no pieces, as `(L-Null-Text)` gives
+                 it no characters), and binds each to `p` exactly as the element
                  read did, so `p` is still the loop's own text.  T is evaluated
                  ONCE, where the call stood.  A plain text PARAMETER the function
                  never writes is borrowed for the loop; every other T — a local, a

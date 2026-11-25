@@ -41,6 +41,7 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C156](DESIGN_DECISIONS_VALUES.md#c156--every-float-text-conversion-rounds-correctly-an-exact-tie-to-the-even-digit) — Every float-text conversion rounds correctly, an exact tie to the even digit
 - [C159](DESIGN_DECISIONS_VALUES.md#c159--a-field-that-would-contain-its-host-is-laid-out-out-of-line-with-an-inline-fields-values) — A field that would contain its host is laid out out of line, with an inline field's values
 - [C160](DESIGN_DECISIONS_VALUES.md#c160--e-discharges-a-τ-with-no-default-the-value-or-a-halt-that-names-it) — `e!` discharges a `τ?` with no default: the value, or a halt that names it
+- [C171](DESIGN_DECISIONS_VALUES.md#c171--a-null-text-is-an-identity-never-a-content) — A null text is an identity, never a content
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 

@@ -4341,15 +4341,11 @@ impl Stores {
     fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
-                // text — P220: discriminate null source from empty-string
-                // source.  `get_str(0)` returns `STRING_NULL` ("\0"), so the
-                // old `s.is_empty()` check never fired for a null source
-                // (s would be "\0", not "") — but it DID fire for a
-                // genuinely empty `""` source, writing 0 (the null
-                // sentinel) into the destination and silently
-                // re-classifying the value as null.  Result: a `""`
-                // element copied through this path read back as `null`.
-                // Discriminate on the source `cur` instead.
+                // text — P220: the unset handle is the null text and an
+                // allocated `""` is a present one, so the copy discriminates on
+                // the source handle, never on the bytes (a `""` must not read
+                // back as null).  A NUL record of an image from before sidecar
+                // v3 reads as null through `get_str` and lands as 0 (`set_str`).
                 let store = self.store(rec);
                 let cur = store.get_u32_raw(rec.rec, rec.pos);
                 if cur == 0 {

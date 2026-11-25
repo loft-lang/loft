@@ -376,9 +376,8 @@ impl Parser {
     ///
     /// Two facts end the walk, and they are genuinely different:
     ///
-    /// * the text is null — loft's null text IS the one-byte NUL string
-    ///   (`STRING_NULL`), for which `size` still answers 1.  A null text holds
-    ///   no characters, so it must yield none.
+    /// * the text is null — a null text holds no characters, so it must yield
+    ///   none (`@FR-L-Null-Text`).
     /// * the saved position (`index_var`, where the character just read
     ///   started) has reached the byte length.
     ///

@@ -2136,10 +2136,9 @@ fn reflect_field_at(
                 (i64::from(v), 0.0, 0, v == 0)
             }
             Some(LayoutNode::Base(BaseKind::Text)) => {
-                // @FR-L-Null-Text — text-null is CONTENT-based, and `Store::text_is_null`
-                // is its one home (an unset handle and an allocated `STRING_NULL` record are
-                // one absence).  Testing the pointer alone reads a null as the empty string,
-                // and telling `null` from `""` is the distinction this reading exists for.
+                // @FR-L-Null-Text — `Store::text_is_null` is the stored null's one home (the
+                // unset handle, and a NUL record in an image from before sidecar v3).  Telling
+                // `null` from `""` is the distinction this reading exists for.
                 let r = store.get_u32_raw(value.rec, at);
                 let null = store.text_is_null(value.rec, at);
                 (0, 0.0, if null { 0 } else { r }, null)
