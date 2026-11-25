@@ -434,6 +434,16 @@ admits a function whose value-struct answer names a parameter into the tuple rew
 body's copy of that parameter then has no owner and leaks once per call
 (`rewrites/R-ValueRecord/2641-…`).
 
+**`LOFT_NO_NCC_LOCAL_ARM_WITNESS=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the
+lift of an inline keyed `??` whose borrowed arm is one variable or a projection of it
+(`ch(maybe(c) ?? d)`, `?? o.m`): the store the call answered on a present pass is then owned by
+nothing (`heap/H-Free/2643-…`).
+
+**`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
+literal's argument-block locals to the enclosing scope only for a vector literal: a struct
+literal's vector field then leaves its element records at a scope no emitted code opens, which
+the store records read as `out-of-scope`.
+
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
 (`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free

@@ -544,6 +544,65 @@ impl Scopes<'_> {
         })
     }
 
+    /// The one variable whose store a borrowed arm of this `ncc` block answers, where every
+    /// other arm yields a store the frame owns (`Own::Owned`): `f() ?? d`, `f() ?? o.m`,
+    /// `f() ?? vs[1].m` — a projection lives in its root's store, so the root is the base.
+    /// Lifted with it, the temp is freed only where its store is not the base's
+    /// (`OpFreeRefIfDistinct(__lift_N, d)`, @FR-O-Oracle's identity reading of a `Join`): the
+    /// subject's store on the arm that took it, nothing on the arm that answered the base.
+    /// Borrowed arms rooted in two variables have no single base to compare with, and a
+    /// subject the oracle does not read as owned (`pick(c, d) ?? e` hands back `d`) may be
+    /// another variable's store: both answer `None`, the conservative no-lift.
+    fn ncc_single_local_arm(&self, bl: &Block, data: &Data) -> Option<u16> {
+        // Owned by the ownership oracle's reading (`@FR-O-Oracle`), not by naming no variable:
+        // a call that hands back its argument (`pick(c, d) ?? e`) names none and is a borrow.
+        let owned = |v: &Value| {
+            matches!(
+                crate::use_analysis::ownership_of(data, self.d_nr, v),
+                crate::use_analysis::Own::Owned
+            )
+        };
+        let last = bl.operators.last()?;
+        let subject = bl.operators.iter().find_map(|op| match op.unspan() {
+            Value::Set(v, val) if !matches!(val.unspan(), Value::Null) => Some((*v, val.as_ref())),
+            _ => None,
+        })?;
+        let mut arms: Vec<&Value> = Vec::new();
+        Self::ncc_tail_arms(last, &mut arms);
+        if arms.len() < 2 {
+            return None;
+        }
+        let mut base = None;
+        for a in arms {
+            match a.unspan() {
+                Value::Var(v) if *v == subject.0 => {
+                    if !owned(subject.1) {
+                        return None;
+                    }
+                }
+                Value::Var(v) => {
+                    if base.is_some_and(|b| b != *v) {
+                        return None;
+                    }
+                    base = Some(*v);
+                }
+                other => {
+                    if !owned(other) {
+                        let roots = crate::use_analysis::view_root_slots(data, other)?;
+                        let [r] = roots.as_slice() else {
+                            return None;
+                        };
+                        if base.is_some_and(|b| b != *r) {
+                            return None;
+                        }
+                        base = Some(*r);
+                    }
+                }
+            }
+        }
+        base
+    }
+
     /// The literal-backing accumulators (`__kvb_N`, `__vdb_N`,
     /// [`crate::variables::owns_literal_backing_store`]) an `ncc` block's arms end in: an arm
     /// that builds a literal yields its accumulator as the block's tail.
@@ -713,6 +772,24 @@ impl Scopes<'_> {
             && Self::ncc_arms_are_all_owned(bl, data)
         {
             return Some(bl.result.without_deps());
+        }
+        // …and one whose only borrowed arm is a bare local (`ch(maybe(c) ?? d)`): lifted with
+        // that local as its base, so the scope's free compares stores — the subject's store
+        // freed where it was taken, `d` untouched where it was answered.  Not lifting left the
+        // taken subject owned by nothing, one store per evaluation (loft#2643).
+        // `LOFT_NO_NCC_LOCAL_ARM_WITNESS=1` declines it.
+        if let Value::Block(bl) = val.unspan()
+            && bl.name == "ncc"
+            && crate::parser::vectors::is_keyed(&bl.result)
+            && !subject_is_call_ref
+            && crate::keys::lift_join_witness_enabled()
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LOCAL_ARM_WITNESS").is_some())
+            && let Some(base) = self.ncc_single_local_arm(bl, data)
+        {
+            // The witness reaches the scope's free through the next `new_lift_var`, as the
+            // fn-ref route's does; the dep keeps the pre-Set free away on a loop's next pass.
+            self.pending_join_witness.set(base);
+            return Some(bl.result.with_deps(&Self::lift_deps(base)));
         }
         // @P297 — a USER struct-returning call (`n_*` with a body) passed
         // directly as a call argument is wrapped in `Value::Span` by
