@@ -197,7 +197,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Counter)` | `R-Counter` ir, c |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | not counted — unbuilt: src/lower plans the regions; no backend emits them, the rustc writer having been the one that did |
+| `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c |
