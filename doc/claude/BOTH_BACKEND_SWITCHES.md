@@ -459,8 +459,13 @@ lift compared with one variable only: the store the call answered then leaks
 (`heap/H-Free/2648-…`).
 
 **`LOFT_NO_NCC_SUBJECT_ROOT=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the lift of an
-inline keyed `??` chain whose middle arm is a field (`ch(f() ?? ob.m ?? d)`) handed to a loft
-function: the store the call answered then leaks (`heap/H-Free/2649-…`).
+inline keyed `??` chain whose middle arm is a field (`ch(f() ?? ob.m ?? d)`, a `for` over it): the
+store the call answered then leaks (`heap/H-Free/2649-…`).
+
+**`LOFT_NO_NCC_ARM_OWNER_BASE=1`** (`@FR-H-FreeTwice`, scope pass, BOTH backends) reads a `??`
+default the parser gave its own buffer (`join-arm-owner`) as a store the lift owns: where it is
+taken (`for r in on.m ?? mk(2)` with `on.m` absent) the lift frees it and the buffer frees it
+again (`heap/H-Free/2650-…`).
 
 **`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
 literal's argument-block locals to the enclosing scope only for a vector literal: a struct

@@ -5,6 +5,7 @@
 #            or a prelude helper is missing) | needs-axis (it turns on something the tool
 #            does not vary) | outside (not about evaluating an operand)
 #   missing  what the tables or the tool lacked for it
+2650	fits-now	rd-coal-coll-absent	coll-call	-	leak	The double free the lift would add (a buffered default freed twice) is this cell's; the leak it cures is a chain under a `for`, which the matrix does not build (two `??` in one slot).
 2649	needs-axis	an argument of a loft function, inside a loop	a `??` chain of a call, a field and a variable	axis: two operands (a field and a variable in one chain)	leak	The consumer decides: beside a `for` the same chain is the `for`'s (#2650).
 2648	needs-axis	an argument of a call, inside a loop	a `??` chain of a call and two different variables	axis: two operands (two borrowed variables in one chain)	leak	Values agree; only the leak channel sees it, one store per pass that takes the call.
 2647	fits-rows	an argument of a call, inside a loop	a chain of two `??` over calls answering an absent-or-fresh keyed collection, ending in a variable	prelude helper (a call answering `KIND?`)	leak	A double free, not a value: the plain run aborts; the bound twin is clean.

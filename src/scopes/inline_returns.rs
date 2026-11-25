@@ -572,22 +572,7 @@ impl Scopes<'_> {
     /// free then guarded against every one (loft#2648; `LOFT_NO_NCC_MULTI_WITNESS=1` declines
     /// them), and a subject the oracle does not read as owned (`pick(c, d) ?? e` hands back
     /// `d`) may be another variable's store: `None`, the conservative no-lift.
-    /// Does `outer_call` only BORROW the value it is handed?  A loft-defined function with a body
-    /// does (`@FR-F-ParamHeap`: a parameter is a view the callee never releases), so a lift beside
-    /// it is the value's one owner.  A native — the `for` desugaring's `hash_sorted` among them —
-    /// may own what it iterates, and a lift beside it freed that store a second time.
-    fn consumer_borrows(data: &Data, outer_call: u32) -> bool {
-        outer_call != u32::MAX
-            && data.def(outer_call).is_loft_defined()
-            && !matches!(data.def(outer_call).code(), Value::Null)
-    }
-
-    fn ncc_local_arm_bases(
-        &self,
-        bl: &Block,
-        data: &Data,
-        consumer_borrows: bool,
-    ) -> Option<Vec<u16>> {
+    fn ncc_local_arm_bases(&self, bl: &Block, data: &Data) -> Option<Vec<u16>> {
         // Owned by the ownership oracle's reading (`@FR-O-Oracle`), not by naming no variable:
         // a call that hands back its argument (`pick(c, d) ?? e`) names none and is a borrow.
         let owned = |v: &Value| {
@@ -617,9 +602,8 @@ impl Scopes<'_> {
                     continue;
                 }
                 // A projection subject (`ob.m ?? d`) lives in its root's store, as a projection
-                // default does — one more base, where the consumer only borrows (loft#2649).
-                if consumer_borrows
-                    && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_SUBJECT_ROOT").is_some())
+                // default does — one more base (loft#2649).
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_SUBJECT_ROOT").is_some())
                     && let Some(roots) = crate::use_analysis::view_root_slots(data, a)
                     && let [r] = roots.as_slice()
                 {
@@ -634,6 +618,20 @@ impl Scopes<'_> {
                 Value::Var(v) => {
                     if !bases.contains(v) {
                         bases.push(*v);
+                    }
+                }
+                // A default the parser gave its own buffer (`join-arm-owner`, `materialise_owned_call`)
+                // is that buffer's store, which frees itself: one more base, so the lift never
+                // frees it a second time (`h.ws[9].items ?? mk(c)`, loft#2650).
+                Value::Block(jb)
+                    if jb.name == "join-arm-owner"
+                        && !crate::env_once!(
+                            std::env::var_os("LOFT_NO_NCC_ARM_OWNER_BASE").is_some()
+                        )
+                        && let Some(Value::Var(w)) = jb.operators.last().map(Value::unspan) =>
+                {
+                    if !bases.contains(w) {
+                        bases.push(*w);
                     }
                 }
                 other => {
@@ -834,8 +832,7 @@ impl Scopes<'_> {
             && !subject_is_call_ref
             && crate::keys::lift_join_witness_enabled()
             && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LOCAL_ARM_WITNESS").is_some())
-            && let Some(bases) =
-                self.ncc_local_arm_bases(bl, data, Self::consumer_borrows(data, outer_call))
+            && let Some(bases) = self.ncc_local_arm_bases(bl, data)
         {
             // The witness reaches the scope's free through the next `new_lift_var`, as the
             // fn-ref route's does; the dep keeps the pre-Set free away on a loop's next pass.
