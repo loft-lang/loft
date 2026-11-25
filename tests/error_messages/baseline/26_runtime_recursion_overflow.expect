@@ -12,3 +12,4 @@ error: call stack overflow — exceeded 10000 stack frames
         fn bomb()
         fn bomb()
         … (9995 more frames)
+help: a call that is the last thing its function does runs as a loop and needs no frame; a walk over deep data keeps the work still to do in a vector and loops over it

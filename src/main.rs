@@ -4316,7 +4316,9 @@ fn exec_native_binary(
         if let Some(data) = data {
             native_utils::explain_windows_startup_failure(run_status, binary, data);
         }
-        std::process::exit(run_status.code().unwrap_or(1));
+        let code = native_utils::report_crash(run_status, abs_file)
+            .unwrap_or_else(|| run_status.code().unwrap_or(1));
+        std::process::exit(code);
     }
 }
 
