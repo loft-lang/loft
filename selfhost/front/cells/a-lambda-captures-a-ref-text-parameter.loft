@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lambda capturing a `&text` parameter copies the text the link names when the
+// closure is built (`OpSetText(___clos_1, 0, s)`, field `s: text`), so a later append through
+// the link is not seen by the closure.
+// Prints: ab! abz
+
+fn cr_text(s: &text) -> text {
+  g = fn() -> text { s + "!" };
+  s += "z";
+  g()
+}
+
+fn main() { s = "ab"; r = cr_text(s); println("{r} {s}"); }
