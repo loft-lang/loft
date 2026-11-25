@@ -1678,12 +1678,18 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     },
     _ => {}
   }
-  if lo_n == null || hi_n == null {
+  // (`lo..`, an open range, counts to the largest integer, inclusive — the walk stops at it rather
+  // than stepping past it, `i#index == max` tested first.)
+  open = lo_n != null && hi_n == null;
+  if lo_n == null || (hi_n == null && !open) {
     el::refuse(e, "a range that is open, inclusive or starts at no literal");
     return null;
   }
+  if open {
+    incl = true;
+  }
   l = el_ex_assign::expression(e, vars, lo_n!);
-  h = el_ex_assign::expression(e, vars, hi_n!);
+  h = if open { ex(ir::NdLong { n: 9223372036854775807 }, ir::TyInteger { spec: wide_spec() }) } else { el_ex_assign::expression(e, vars, hi_n!) };
   if (!el_types::is_unknown(l.tp) && !(el_types::base(l.tp) is TyInteger)) || (!el_types::is_unknown(h.tp) && !(el_types::base(h.tp) is TyInteger)) {
     el::refuse(e, "a range over this type: {type_kind(l.tp)}");
     return null;
@@ -1693,6 +1699,10 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   // in `_range_start_N` / `_range_end_N`.
   lc = el_convert::const_int(e, l.code);
   hc = el_convert::const_int(e, h.code);
+  // (An open range from a computed start holds its end too, `_range_end_N = i64::MAX`.)
+  if open && lc == null {
+    hc = null;
+  }
   prelude: vector<ir::Node> = [];
   lo_node = if lc != null { el_ex_vector::int_node(lc!) } else { l.code };
   hi_node = if hc != null { el_ex_vector::int_node(hc!) } else { h.code };
@@ -1726,7 +1736,10 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
       }
       guard += [el_ir::v_if(s_null, el_ir::v_set(rs, if wide_start { ir::NdLong { n: past } } else { ir::NdInt { n: past } }), ir::NdNull)];
     } else {
-      empty = el_ir::v_block([el_ir::v_set(rs, ir::NdInt { n: 1 }), el_ir::v_set(re, ir::NdInt { n: 0 })], ir::TyVoid, "empty range");
+      // (Each written at its bound's width: a 64-bit start or end takes a long literal.)
+      ls_wide = match el_types::base(l.tp) { TyInteger { spec: lws } => lws.max > 2147483647, _ => false };
+      le_wide = match el_types::base(h.tp) { TyInteger { spec: hws } => hws.max > 2147483647, _ => false };
+      empty = el_ir::v_block([el_ir::v_set(rs, if ls_wide { ir::NdLong { n: 1 } } else { ir::NdInt { n: 1 } }), el_ir::v_set(re, if le_wide { ir::NdLong { n: 0 } } else { ir::NdInt { n: 0 } })], ir::TyVoid, "empty range");
       guard += [el_ir::v_if(s_null, empty, ir::NdNull)];
       guard += [el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: re }])]), empty, ir::NdNull)];
     }
@@ -1762,7 +1775,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   plain = lc != null && lc! >= 0 && lo_node is NdInt;
   cmp = if incl { "OpLtInt" } else { "OpLeInt" };
   ls: vector<ir::Node> = [];
-  if incl && hc == null {
+  if incl && (hc == null || open) {
     ls += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, hi_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
   }
   counter = el_ir::cl(e, "OpConvIntFromNull", []);

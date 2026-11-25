@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `for i in 1.. { … }` counts to the largest integer, inclusive, the walk stopping at
+// it (`i#index == max` tested first) rather than stepping past it; a computed start holds the
+// end too (`_range_end_N`), its empty-range reset written at the bounds' width.
+// Prints: 8 / 1
+
+fn first_square_over(limit: integer) -> integer {
+  for i in 1.. { if i * i > limit { return i; } }
+  0
+}
+fn main() {
+  println("{first_square_over(50)}");
+  big = 3000000000;
+  n = 0;
+  for i in big.. { if i > big + 1 { break; } n += i - big; }
+  println("{n}");
+}
