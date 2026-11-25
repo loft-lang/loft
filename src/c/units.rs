@@ -5,7 +5,8 @@
 //!
 //! The writer writes the unit it always writes, with each function's body marked with the file
 //! it is declared in (`SPLIT_FN`) and the start of what no file owns marked (`SPLIT_SHARED`).
-//! This cuts it: every unit starts with the same head (the runtime, the types, every prototype),
+//! This cuts it: every unit starts with the same head (the runtime, the types, the prototypes the
+//! head itself needs) and then the prototypes its own functions call,
 //! one shared unit carries what no file owns (the dispatchers, the drop cascades, the generated
 //! twins, the tables, `main`) and every file gets a unit with its own functions.
 //!
@@ -71,6 +72,15 @@ fn give_linkage(text: &str, defined: &HashSet<String>, prototypes: bool) -> Stri
     out
 }
 
+/// Every identifier `text` holds — a token of letters, digits and `_` not starting with a digit.
+/// Strings and comments are not skipped: a name only they mention brings a prototype the unit does
+/// not need, which costs nothing but its line.
+fn identifiers(text: &str) -> HashSet<&str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|t| !t.is_empty() && !t.starts_with(|c: char| c.is_ascii_digit()))
+        .collect()
+}
+
 /// The written `unit` as the units of a split build, each starting with a
 /// `SPLIT_UNIT <name>*/` line: the shared unit first, then one per file in a fixed order.
 /// `runtime_end` closes the runtime in the head: nothing before it is rewritten.  A unit with no
@@ -116,18 +126,46 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
         }
     }
     let runtime_at = head.find(runtime_end).map_or(0, |a| a + runtime_end.len());
-    let head = format!(
-        "{}{}",
-        &head[..runtime_at],
-        give_linkage(&head[runtime_at..], &defined, true)
-    );
+    let after = give_linkage(&head[runtime_at..], &defined, true);
+    // The prototypes of the units' functions leave the head: each unit gets those its body names
+    // (`own_prototypes`), so a unit's text changes only with what it calls.  One the head's own
+    // code names (a table naming a function) stays in the head, for every unit.
+    let mut moved: Vec<(String, String)> = Vec::new();
+    let mut kept = String::with_capacity(after.len());
+    for line in after.split_inclusive('\n') {
+        let proto = !is_definition(line)
+            && line.trim_end().ends_with(';')
+            && function_name(line).is_some_and(|n| defined.contains(n));
+        if proto {
+            moved.push((function_name(line).unwrap_or_default().to_string(), line.to_string()));
+        } else {
+            kept.push_str(line);
+        }
+    }
+    let head_names = identifiers(&kept);
+    let mut stay = String::new();
+    moved.retain(|(n, line)| {
+        let named = head_names.contains(n.as_str());
+        if named {
+            stay.push_str(line);
+        }
+        !named
+    });
+    let head = format!("{}{stay}{kept}", &head[..runtime_at]);
     let mut out = String::new();
     let mut put = |name: &str, body: &str| {
+        let body = give_linkage(body, &defined, false);
+        let names = identifiers(&body);
         out.push_str(SPLIT_UNIT);
         out.push_str(name);
         out.push_str("*/\n");
         out.push_str(&head);
-        out.push_str(&give_linkage(body, &defined, false));
+        for (n, line) in &moved {
+            if names.contains(n.as_str()) {
+                out.push_str(line);
+            }
+        }
+        out.push_str(&body);
     };
     put("shared", &shared);
     for (i, body) in files.values().enumerate() {
@@ -168,10 +206,11 @@ mod tests {
             parts[2].contains("int64_t n_b(void) {")
                 && !parts[2].contains("inline int64_t n_b(void) {")
         );
-        // the head's prototypes lose their storage too, everywhere
-        assert!(parts.iter().all(
-            |p| p.contains("\nint64_t n_b(void);") && !p.contains("static inline int64_t n_b")
-        ));
+        // a prototype goes, without its storage, to the units whose functions name it: `n_b` to
+        // the file calling it and the file defining it, not to the shared unit, which calls `n_a`
+        assert!(parts[1].contains("\nint64_t n_b(void);") && parts[2].contains("\nint64_t n_b(void);"));
+        assert!(!parts[0].contains("n_b(void);") && parts[0].contains("\nint64_t n_a(void);"));
+        assert!(parts.iter().all(|p| !p.contains("static inline int64_t n_b")));
         // the runtime before the end mark is untouched
         assert!(parts.iter().all(|p| p.contains("RT\nEND\n")));
     }
