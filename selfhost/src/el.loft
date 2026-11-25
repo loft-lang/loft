@@ -887,8 +887,8 @@ pub fn lambda_take(el: El, root: text) -> integer {
 
 // `Parser::site_file` / `source_name::name` (@PLN229): the name a call site's file argument
 // gives its source, the same wherever the sources lie — a relative name as it is; a
-// standard-library file `default/<rest>`; a file beneath the program entry's directory its
-// path from there; any other its path from its package's parent (the directory above the
+// standard-library file `default/<rest>`; a file beneath the program's directory
+// (`program_dir`) its path from there; any other its path from its package's parent (the directory above the
 // nearest `loft.toml`), else its file name.  The standard library's directory is its first
 // definition's file's.
 pub fn site_file(el: El, file: text) -> text {
@@ -905,7 +905,7 @@ pub fn site_file(el: El, file: text) -> text {
   if sr != "" {
     return "default/{sr}";
   }
-  mr = beneath(file, dir_of(el.entry));
+  mr = beneath(file, program_dir(el.entry));
   if mr != "" {
     return mr;
   }
@@ -921,6 +921,19 @@ pub fn site_file(el: El, file: text) -> text {
     d = if d == "/" { "" } else { dir_of(d) };
   }
   file[dir_end(file) + 1..]
+}
+
+// `source_name::program_dir`: the directory a program's files are named from — the nearest
+// directory above the entry holding a `loft.toml` (its project root), else the entry's own.
+fn program_dir(entry: text) -> text {
+  d = dir_of(entry);
+  while d != "" {
+    if exists("{d}/loft.toml") {
+      return d;
+    }
+    d = if d == "/" { "" } else { dir_of(d) };
+  }
+  dir_of(entry)
 }
 
 // `Path::parent`: everything before the last `/` (`/` for a file at the root), "" for none.
