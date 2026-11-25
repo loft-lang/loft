@@ -5987,5 +5987,7 @@ fn emit_tests_shaped(
         .rfind("\nint main(int argc, char **argv) {")
         .unwrap_or(out.len());
     out.insert_str(at, &format!("\n{wrappers}"));
-    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
+    // What nothing names is not written; then the split build's units, cut last (B1).
+    let out = tidy::drop_unnamed(&out, RUNTIME_END);
+    Ok(units::into_units(&out, RUNTIME_END))
 }
