@@ -2870,6 +2870,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
       _ => {}
     }
   }
+  // (`subject_unresolved`: the arms were read for what they mint, but the match answers nothing
+  // on this pass — an empty block typed `Unknown`, so no arm's value reaches a tail.)
+  if e.first_pass && el_types::is_unknown(st) && !scalar_subject && !enum_subject && sd < 0 {
+    return ex(el_ir::v_block([], ir::TyVoid, "unresolved match"), ir::TyUnknown { n: 0 });
+  }
   // `reconvert_null_tuple_arms` (loft#1682): every arm of an open tuple join is converted to the
   // join it settled on — an earlier arm's `null` member included.
   if tuple_joined {
