@@ -255,6 +255,9 @@ fn lane(ret: ir::TypeT) -> Lane {
     },
     TyFloat => Lane { queue: "n_parallel_queue", get: "n_parallel_buf_get_float", drop: "n_parallel_buf_drop", label: "", size: 8 },
     TyText { dep: _ } => Lane { queue: "n_parallel_queue_text", get: "n_parallel_buf_get_text", drop: "n_parallel_buf_drop_text", label: " text", size: 0 },
+    // (`route_ref_queue`, `is_dbref`: a record answer is queued as its reference, the row size
+    // unknown to the caller.)
+    TyReference { n: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
     _ => none
   }
 }

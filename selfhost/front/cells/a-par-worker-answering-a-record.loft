@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` worker answering a record rides the ref lane (`route_ref_queue`):
+// `n_parallel_queue_ref` with the row size unknown (-1), each result read as
+// `n_parallel_buf_get_ref(idx)`, the buffer dropped by `n_parallel_buf_drop_ref`.
+// Prints: p0 q2 p4 q6
+
+struct Pt { name: text, x: integer }
+fn mk(i: integer) -> Pt { Pt { name: if i % 2 == 0 { "p" } else { "q" }, x: i * 2 } }
+fn main() {
+  b = "";
+  for i in 0..4 par(r = mk(i), 2) { b += "{r.name}{r.x} "; }
+  println(b.trim());
+}
