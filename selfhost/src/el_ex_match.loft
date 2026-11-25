@@ -2647,6 +2647,31 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           aliases = cap_names + va!.aliases;
           alts = va!.alts;
           fcond = va!.fcond;
+        } else if e.first_pass && el_types::is_unknown(st) {
+          // (`subject_unresolved`: on the first pass a subject whose enum is not typed yet still
+          // has its arms read — each variant pattern's field binds its `_mv_<name>_N` at
+          // `Unknown` (`mark_blind_capture`), so the body that names it is read too.)
+          for bpn in pats {
+            match e.p.nodes[bpn] {
+              PName { fields: bfs } => {
+                for bf in bfs {
+                  match e.p.nodes[bf] {
+                    PFieldPat { name: bfn, pat: bfp } => {
+                      bnm = if bfp != null { el_ex_pattern::rename_of(e, bfp!) } else { bfn };
+                      if bnm != "" {
+                        bmv = el_vars::create_unique(vars, "mv_{bnm}", ir::TyUnknown { n: 0 });
+                        el_vars::set_defined(vars, bmv);
+                        aliases += [el_vars::VarName { name: bnm, nr: el_vars::var(vars, bnm) }];
+                        el_vars::set_name(vars, bnm, bmv);
+                      }
+                    },
+                    _ => {}
+                  }
+                }
+              },
+              _ => {}
+            }
+          }
         } else if scalar_subject && len(pats) == 1 && el_ex_pattern::binding_name(e, pats[0]!) != "" {
           // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
           // (`binding_arm`: `n#N = _match_subj_N`, then the body).
