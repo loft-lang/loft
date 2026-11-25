@@ -369,7 +369,7 @@ when reproducibility matters.
 | Function | Description |
 |----------|-------------|
 | `rand(lo: integer, hi: integer) -> integer` | Returns a uniformly distributed random integer in `[lo, hi]` (inclusive). Returns null if `lo > hi` or either bound is null. |
-| `rand_seed(seed: integer)` | Seeds the thread-local RNG. Same seed always produces the same sequence. |
+| `rand_seed(seed: integer)` | Seeds the shared generator (one per process). Same seed always produces the same sequence. |
 | `rand_indices(n: integer) -> vector<integer>` | Returns a vector of `n` integers `[0, 1, ..., n-1]` in a random order. Empty when `n ≤ 0`. Useful for random iteration or sampling without replacement. |
 
 **Example — pick 3 distinct items at random:**

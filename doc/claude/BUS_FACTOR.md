@@ -15,7 +15,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 Look at loft from the outside and one conclusion seems obvious. It is a solo-built,
 ambitious systems project: a statically-typed language with a tree-walking interpreter
-**and** a native (`rustc`) backend, a store-based heap, an ownership model, a
+**and** a native (C) backend, a store-based heap, an ownership model, a
 cross-target package system. Deep, interlocking parts; one person steering. So the
 **bus factor** must be high — if that one person stops, the project dies. For almost
 every solo project, that reasoning is correct.

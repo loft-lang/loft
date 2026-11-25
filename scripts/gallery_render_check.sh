@@ -113,6 +113,22 @@ assert="(function(){
 
 failed=0
 for key in $keys; do
+	# A game built into a page of its own (its GALLERY_LIST entry's `page`) runs there, so the
+	# page is what is checked: drawn, with a clean console.  Its own words are tests/html_render.rs's.
+	page=$(grep -oE "key: \"$key\"[^}]*page: \"[^\"]+\"" doc/gallery-examples.js | sed 's/.*page: "\(.*\)"/\1/')
+	if [ -n "$page" ]; then
+		out=$(node "$harness" "http://127.0.0.1:$port/$page" --wait-ms 15000 \
+			--canvas '#c' --canvas-min-colors 20 2>&1)
+		rc=$?
+		if [ "$rc" = 2 ]; then
+			echo "    SKIP: $key — $(printf '%s' "$out" | head -1)"
+		elif [ "$rc" != 0 ]; then
+			echo "    FAIL: $key's page $page does not render"
+			printf '%s\n' "$out" | head -80 | sed 's/^/      /'
+			failed=$((failed + 1))
+		fi
+		continue
+	fi
 	url="http://127.0.0.1:$port/gallery-run.html?example=$key&autorun=1"
 	# THREE questions, and each catches what the others cannot.
 	#   --ready/--assert : did the page, or the program, report a refusal?

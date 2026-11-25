@@ -53,9 +53,9 @@ const io = {
 const stubs = new Proxy({ loft_io: new Proxy(io, { get: (t, k) => (k in t ? t[k] : () => 0) }) }, { get: (t, k) => (k in t ? t[k] : new Proxy({}, { get: () => () => 0 })) });
 const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm), stubs);
 mem = inst.exports.memory;
-inst.exports.loft_debug_start();
+const dbg = inst.exports.loft_debug_start();
 client.send('D!:iam alice');
-const pump = setInterval(() => inst.exports.loft_debug_pump(), 25);
+const pump = setInterval(() => inst.exports.loft_debug_pump(dbg), 25);
 
 const got = [];
 const agent = new WebSocket(URL);

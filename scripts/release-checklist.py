@@ -1594,10 +1594,9 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "Performance pass — loft AND its libraries, routines pull their weight",
             "make speed; per library: python3 bench/compare.py   # the drawing library's "
             "bench/ is the model (loft#1426); @PLN158 adopts it as the standard",
-            "the BAR is gated elsewhere and this pass does not gate it twice: "
-            "`scripts/native_ratio.sh` fails a ratio over `bench/ratio_oracle.tsv` in `make "
-            "ci`, and an open `D-perf-*` deviation blocks through `A-deviations` — so this is "
-            "the READ of what is left over the bar and why.  "
+            "the BAR is read by `bench/stats.py` (the C ship lane against the Rust twin, the "
+            "perf portal), and an open `D-perf-*` deviation blocks through `A-deviations` — so "
+            "this is the READ of what is left over the bar and why.  "
             "The formal contract is formal/performance.md (Perf-Like / Perf-Weight / "
             "Perf-Twin / Perf-Cure): every routine within the bar of its industry-language reference "
             "twin, hashes agreeing across lanes (lanes that disagree are not one "

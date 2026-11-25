@@ -2847,7 +2847,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // A fn-ref LOCAL is returned as it is, its closure record with it.  (A lambda built in the
     // `return` itself is not carried: a closure answering a text names its block after its
     // capture, and a call answering it borrows `[32772]`.)
-    if result is TyFunction && v.tp is TyFunction && el_ir::unspan(v.code) is NdVar {
+    // (So is a named function, a value of its definition number: `return add5;`.)
+    if result is TyFunction && v.tp is TyFunction && (el_ir::unspan(v.code) is NdVar || el_ir::unspan(v.code) is NdFnRef || el_ir::unspan(v.code) is NdInt) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {

@@ -25,7 +25,8 @@ function readLoftValue(mem, storeBase, desc, typeId, rec, pos) {
   const view = new DataView(mem.buffer);
   const nodes = desc.nodes;
   const sizeOf = (id) => (desc.sizes && desc.sizes[id] != null ? +desc.sizes[id] : 0);
-  const dec = new TextDecoder();
+  // A threaded page's memory is shared, which a plain TextDecoder refuses (`loftTextDecoder`).
+  const dec = typeof loftTextDecoder === 'function' ? loftTextDecoder() : new TextDecoder();
 
   function read(typeId, rec, pos) {
     const node = nodes[typeId];

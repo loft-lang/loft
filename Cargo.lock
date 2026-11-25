@@ -622,6 +622,7 @@ dependencies = [
  "ed25519-dalek",
  "find-msvc-tools",
  "flate2",
+ "getrandom 0.2.17",
  "js-sys",
  "libc",
  "libloading",

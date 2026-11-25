@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` worker answering a boolean, a `u8` or a character rides the narrow lane
+// (`narrow_route_for`): rows of 1 or 4 bytes read back by `n_parallel_buf_get_narrow(idx, width,
+// signed)`, a boolean through `OpNeInt(_, 0)` with its row byte 255 the null, a character
+// through `OpConvCharacterFromInt`.
+// Prints: 2 10 3
+
+fn odd(i: integer) -> boolean { i % 2 == 1 }
+fn low(i: integer) -> u8 { i & 255 }
+fn ch(i: integer) -> character { if i > 1 { 'b' } else { 'a' } }
+fn main() {
+  v = [1, 2, 3, 4];
+  n = 0;
+  for x in v par(r = odd(x), 2) { if r { n += 1; } }
+  s = 0;
+  for x in v par(q = low(x), 2) { s += q; }
+  c = 0;
+  for x in v par(k = ch(x), 2) { if k == 'b' { c += 1; } }
+  println("{n} {s} {c}");
+}

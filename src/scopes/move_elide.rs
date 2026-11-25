@@ -50,7 +50,7 @@ pub(super) fn elide_borrows(data: &mut Data, fresh: &[u32]) {
         for p in plans {
             // The elision deletes a copy the line wrote; the copy-lease rules still judge it.
             if let Value::Var(src) = p.source.unspan() {
-                crate::copy_manifest::note_elided_copy(d_nr, p.var, *src);
+                crate::copy_manifest::note_elided_copy(data, d_nr, p.var, *src);
             }
             for &e in &p.borrowers {
                 data.definitions[d_nr as usize]

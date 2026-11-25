@@ -728,7 +728,9 @@ scripts/claim.py mine              # what THIS checkout holds and has pushed no 
   limit, is read as a cause to find (its annotations), not a flake to re-run.  The sweep covers
   every workflow, not only CI: the post-merge phase (each workflow that ran on `main`'s latest
   merge commit, `gh run list --commit <sha>`) and each scheduled workflow's latest run on
-  `main`, the weekly ones included.  It also reads each job's
+  `main`, the weekly ones included — and beyond loft: the open PR's runs and the latest runs of
+  the `loft-libs-*` and `loft-suite` repos, whose reds this stream fixes too (a library's
+  through its own branch and PR).  It also reads each job's
   `Flaky test (passed only on retry)` annotations, on that run and on main's push runs: a pass
   on retry is a finding, and the race is deleted as [GUARDS.md](GUARDS.md) § A fixed delay is
   not synchronisation describes (sequence the steps, never widen the margin), so a green run

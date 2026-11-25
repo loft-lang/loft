@@ -167,8 +167,26 @@ impl Run<'_> {
         }
     }
 
+    /// The stores a copy's source names: a variable's, a tuple member's — and a member of a
+    /// nested tuple held whole (`_tuphold_1 = t.0`, then `_tuphold_1.0`), which has no member of
+    /// its own here, every store its holder names.
+    pub(super) fn copy_source_pts(st: &State, src: &Value) -> Pts {
+        match src.unspan() {
+            Value::TupleGet(t, _) if Self::named_var(st, src).is_none() => Self::pts(st, *t),
+            _ => Self::named_var(st, src).map_or_else(Pts::new, |v| Self::pts(st, v)),
+        }
+    }
+
+    /// The code generator emits no `OpFreeRef` of a never-free variable
+    /// (`Codegen::generate_call`, S34), including one a move made never-free.
+    pub(super) fn free_not_emitted(&self, x: u16) -> bool {
+        x < MEMBER_BASE
+            && (self.data.def(self.d_nr).variables.is_skip_free(x) || self.moved_away.contains(&x))
+    }
+
     pub(super) fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
+        self.hook_skipped(d, args, &st);
 
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
@@ -186,12 +204,7 @@ impl Run<'_> {
                 return st;
             }
             if let Some(x) = args.first().and_then(|a| Self::named_var(&st, a)) {
-                // The code generator emits no `OpFreeRef` of a never-free variable
-                // (`Codegen::generate_call`, S34), including one a move made never-free.
-                let dropped = name == "OpFreeRef"
-                    && x < MEMBER_BASE
-                    && (self.data.def(self.d_nr).variables.is_skip_free(x)
-                        || self.moved_away.contains(&x));
+                let dropped = name == "OpFreeRef" && self.free_not_emitted(x);
                 // A text free of a tuple member releases the text in it; a nested member's
                 // record stores (`u.2` of `(s, w, (h, w))`) are their work-refs' to free.
                 let text_of_member = d == ops.text_free && x >= MEMBER_BASE;
@@ -223,7 +236,7 @@ impl Run<'_> {
                     && xp
                         .iter()
                         .all(|p| *p == Pt::Null || (!matches!(p, Pt::Unknown) && wp.contains(p)))
-                    && xp.iter().any(|p| matches!(p, Pt::Param(_)));
+                    && xp.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)));
                 if declines {
                     // Nothing ends: the caller's store stays the caller's.
                 } else if shared.is_empty() {
@@ -303,6 +316,193 @@ impl Run<'_> {
         (s, Val { pts, corr })
     }
 
+    /// `OpDatabase(x)` on a store `x` still names re-initialises it in place, so a record built
+    /// inside it (`r = OpPlaceRecord(x, …)`, [`State::placed`]) is gone: `r` names an ended
+    /// generation of the store from here, and a use of it is a use after its end
+    /// (`@FR-H-RefHome`, loft#2621: a holder re-minted in a loop cleared the record its field
+    /// was about to name).  `LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live.
+    pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
+        let placed: Vec<u16> = st
+            .placed
+            .iter()
+            .filter(|(_, h)| *h == x)
+            .map(|(r, _)| *r)
+            .collect();
+        for k in Self::stores_of(kept) {
+            let gone: Vec<u16> = placed
+                .iter()
+                .copied()
+                .filter(|r| Self::pts(st, *r).contains(&Pt::Store(k)))
+                .collect();
+            if gone.is_empty() {
+                continue;
+            }
+            let old = SKey {
+                site: k.site,
+                older: true,
+            };
+            let part = SInfo {
+                status: ENDED,
+                ended: gone.iter().copied().collect(),
+                stale: Some(gone.iter().copied().collect()),
+                ..Default::default()
+            };
+            let merged = match st.stores.get(&old) {
+                Some(o) => join_info(o, &part),
+                None => part,
+            };
+            st.stores.insert(old, merged);
+            self.reminted.insert(old);
+            let by = format!("the re-mint OpDatabase({})", self.var_name(x));
+            let line = self.line;
+            self.end_lines.entry(old).or_insert((line, by));
+            for r in gone {
+                if let Some(p) = st.vars.get_mut(&r) {
+                    p.remove(&Pt::Store(k));
+                    p.insert(Pt::Store(old));
+                }
+                st.placed.retain(|(v, _)| *v != r);
+            }
+        }
+    }
+
+    /// `(H-Lease)`, `(H-DropOnce)`: a drop hook run on a variable whose value this path has
+    /// handed on (its hand-off flag `__hoff_<v>` written true: the value moved into another
+    /// structure, which drops it) runs the hook a second time for one value (loft#2552: a
+    /// `return` path's release that lost the flag's guard).  The path's hooks are recorded here
+    /// too, for the other lease checks.  `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
+    pub(super) fn handed_off_drop(&mut self, d: u32, args: &[Value], st: &mut State) {
+        if !self.data.is_drop_function(d) || !super::lease_on() {
+            return;
+        }
+        let Some(v) = Self::first_var(args, 0) else {
+            return;
+        };
+        let unless = self
+            .distinct_guards
+            .iter()
+            .rev()
+            .find(|(g, _)| *g == v)
+            .map(|(_, w)| *w);
+        // A hook on a store whose lease a code-generator copy took runs it a second time for
+        // one value: the copy's own release runs it too (`(H-Lease)`, loft#2552's copy arm).
+        let twice = Self::stores_of(&Self::pts(st, v))
+            .into_iter()
+            .find_map(|k| {
+                let c = *st.lease_copied.get(&k)?;
+                (info_of(st, k).has(LIVE) && unless != Some(c) && c != v).then_some(c)
+            });
+        if let Some(c) = twice {
+            let (name, copy) = (self.var_name(v), self.var_name(c));
+            self.find(
+                "copied-lease",
+                u32::MAX,
+                format!(
+                    "`{copy}` is a copy the code generator makes of `{name}`'s value, which owns a \
+                     droppable and declares no OpCopy, and {} runs its drop hook on `{name}` too: \
+                     one value, two drops",
+                    self.data.def(d).name()
+                ),
+            );
+        }
+        for k in Self::stores_of(&Self::pts(st, v)) {
+            if let Some(w) = unless {
+                st.dropped_unless.insert((k, w));
+            } else {
+                st.dropped.insert(k);
+                st.dropped_must.insert(k);
+            }
+        }
+        let function = &self.data.def(self.d_nr).variables;
+        let flag = function.var(&format!("__hoff_{}", function.name(v)));
+        if flag == u16::MAX || st.flags.get(&flag) != Some(&true) {
+            return;
+        }
+        let name = self.var_name(v);
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!(
+                "`{name}`'s value was handed on, and {} runs its drop hook again: one value, two \
+                 drops",
+                self.data.def(d).name()
+            ),
+        );
+    }
+
+    /// `@FR-H-Drop`: a record whose type owns a droppable is released with its hook — the hook
+    /// (or its cascade) runs, then the store goes.  An `OpFreeRef` of such a variable on a store
+    /// no path here ran the hook on releases the resource's record without running it
+    /// (loft#2552: a fallback literal freed beside a chain arm, its hook dropped with the guard
+    /// around it).  Not inside a drop function: its own frees are the cascade.
+    /// `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
+    pub(super) fn hook_skipped(&mut self, d: u32, args: &[Value], st: &State) {
+        if self.data.def(d).name() != "OpFreeRef"
+            || !self.data.any_drop_hook()
+            || self.data.is_drop_function(self.d_nr)
+            || !super::lease_on()
+        {
+            return;
+        }
+        let Some(v) = Self::first_var(args, 0) else {
+            return;
+        };
+        // A free the code generator does not emit releases nothing.
+        if self.free_not_emitted(v) {
+            return;
+        }
+        let function = &self.data.def(self.d_nr).variables;
+        let tp = function.tp(v).clone();
+        // A type with no release function (a closure record that only borrows its captures)
+        // holds no lease: its drop site runs nothing.
+        let Some(def) = tp.heap_def_nr() else {
+            return;
+        };
+        if !self.data.type_owns_droppable_anywhere(&tp)
+            || self.data.drop_cascade_nr(def) == u32::MAX
+        {
+            return;
+        }
+        // A value handed on (its hand-off flag may be true here) is freed bare: its lease went
+        // with it to the structure that took it.
+        let flag = function.var(&format!("__hoff_{}", function.name(v)));
+        if flag != u16::MAX && st.flags.get(&flag) != Some(&false) {
+            return;
+        }
+        let stores = Self::stores_of(&Self::pts(st, v));
+        let live: Vec<SKey> = stores
+            .iter()
+            .copied()
+            .filter(|k| info_of(st, *k).has(LIVE) && !info_of(st, *k).has(HANDED))
+            .collect();
+        if live.is_empty()
+            || live
+                .iter()
+                .any(|k| st.dropped.contains(k) || st.dropped_unless.iter().any(|(d, _)| d == k))
+        {
+            return;
+        }
+        let name = self.var_name(v);
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!("`{name}` is released by OpFreeRef without its drop hook: the resource leaks"),
+        );
+    }
+
+    /// What the slot at `off` of the record `w` holds names, as this frame's records know it:
+    /// a capture slot's store, or a reference this frame wrote into the holder (`a.next = b`).
+    pub(super) fn slot_names_at(st: &State, w: u16, off: Option<i32>) -> Pts {
+        let mut h = Self::held_by_record(st, w, off);
+        h.extend(st.points.get(&w).into_iter().flatten().copied());
+        h
+    }
+
+    /// [`Self::slot_names_at`] at a known offset: what a callee's `Slot` answer names here.
+    pub(super) fn slot_names(st: &State, w: u16, off: i32) -> Pts {
+        Self::slot_names_at(st, w, Some(off))
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one branch per op family the records give a meaning to"
@@ -315,6 +515,45 @@ impl Run<'_> {
         st: State,
     ) -> Option<(State, Val)> {
         let ops = self.ops;
+        let mut st = st;
+        self.handed_off_drop(d, args, &mut st);
+        // An append moves the source's elements, and their lease with them, into the
+        // destination (a tuple member's move, `OpAppendVector(_tupcopy_N, t.0)`): the source's
+        // wrapper is freed bare after it.
+        if self.data.def(d).name() == "OpAppendVector"
+            && let Some(src) = args.get(1)
+        {
+            for k in Self::stores_of(&Self::copy_source_pts(&st, src)) {
+                st.dropped.insert(k);
+            }
+        }
+        if d == ops.copy_record
+            && let Some(src) = args.first()
+        {
+            // A record copy moves the source's lease to the copy: the displacement before a
+            // rebind (`OpCopyRecord(x, __disp_N)`, `x` re-minted after it) and a tuple member's
+            // fill (`OpCopyRecord(t.0, __ref_p2_N)`, the source freed bare) both run the hook
+            // on the copy alone.
+            let from = Self::stores_of(&Self::copy_source_pts(&st, src));
+            for k in &from {
+                st.dropped.insert(*k);
+            }
+            // The destination holds new content, with a lease of its own — or the lease a
+            // code-generator copy already took, carried on (a displacement of that copy's
+            // source still names it).
+            let carried = from.iter().find_map(|k| st.lease_copied.get(k).copied());
+            if let Some(dst) = Self::first_var(args, 1) {
+                for k in Self::stores_of(&Self::pts(&st, dst)) {
+                    st.dropped.remove(&k);
+                    st.dropped_must.remove(&k);
+                    st.dropped_unless.retain(|(d, _)| *d != k);
+                    st.lease_copied.remove(&k);
+                    if let Some(c) = carried {
+                        st.lease_copied.insert(k, c);
+                    }
+                }
+            }
+        }
         // `@FR-R-HostStore`: a result its function drops is released by record — its store whole
         // where that is not the answer's, as `OpFreeRefIfDistinct(rec, answer)` frees it; a record
         // of the answer's store goes and the store lives on.
@@ -361,7 +600,9 @@ impl Run<'_> {
                 let wp = Self::pts(&st, w);
                 let kept: Pts = Self::pts(&st, x)
                     .into_iter()
-                    .filter(|p| matches!(p, Pt::Store(_) | Pt::Param(_)) && wp.contains(p))
+                    .filter(|p| {
+                        matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..)) && wp.contains(p)
+                    })
                     .chain(std::iter::once(Pt::Null))
                     .collect();
                 for (k, info) in &mut st.stores {
@@ -485,7 +726,7 @@ impl Run<'_> {
                 .iter()
                 .copied()
                 .filter(|p| match p {
-                    Pt::Param(_) => true,
+                    Pt::Param(_) | Pt::Slot(..) => true,
                     // A store this frame handed on (written back through a `&` parameter,
                     // into a field) still exists: the slot naming it is re-initialised in place.
                     Pt::Store(k) => {
@@ -496,6 +737,14 @@ impl Run<'_> {
                 })
                 .collect();
             let mut st = st;
+            self.remint_ends_placed(&mut st, x, &kept);
+            // A re-minted store holds new content, with a lease of its own.
+            for k in Self::stores_of(&kept) {
+                st.dropped.remove(&k);
+                st.dropped_must.remove(&k);
+                st.dropped_unless.retain(|(d, _)| *d != k);
+                st.lease_copied.remove(&k);
+            }
             // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
             // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in
             // place on the first paths and minted on the others, `x` names a live store from
@@ -708,7 +957,10 @@ impl Run<'_> {
                 .map(|v| v.pts.clone())
                 .into_iter()
                 .chain(self.protected.iter().map(|p| Self::pts(&s, *p)))
-                .flat_map(|pts| pts.into_iter().filter(|p| matches!(p, Pt::Param(_))))
+                .flat_map(|pts| {
+                    pts.into_iter()
+                        .filter(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)))
+                })
                 .collect();
             let src_pts = x.map_or_else(
                 || vals.get(src).map(|v| v.pts.clone()).unwrap_or_default(),
@@ -716,7 +968,7 @@ impl Run<'_> {
             );
             if src_pts
                 .iter()
-                .any(|p| matches!(p, Pt::Param(_)) && !kept_params.contains(p))
+                .any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)) && !kept_params.contains(p))
                 && !crate::env_once!(
                     std::env::var_os("LOFT_RECORDS_NO_PARAM_SOURCE_FREE").is_some()
                 )
@@ -817,6 +1069,19 @@ impl Run<'_> {
                 }
             }
         }
+        // A copy's source computed by its argument (a literal built in a work reference and
+        // copied into a field, `OpCopyRecord({ …; __ref_p2_3 }, o.inner.h)`) names its store
+        // only once evaluated: its lease moves to the copy as a variable's does (`call`).
+        if d == ops.copy_record
+            && args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Block(_) | Value::Insert(_)))
+            && let Some(v) = vals.first()
+        {
+            for k in Self::stores_of(&v.pts) {
+                s.dropped.insert(k);
+            }
+        }
         // `OpCopyRecord(src, dst, tp)` copies the record's reference fields: a closure record
         // displaced into a copy (`__disp_N`, a captured type with a drop hook) leaves the stores
         // its slots name to the copy, whose cascade then releases them.
@@ -863,7 +1128,7 @@ impl Run<'_> {
             && !value
                 .pts
                 .iter()
-                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Unknown))
+                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..) | Pt::Unknown))
             && let Some(w) = Self::first_var(args, 0)
             && let Some(off) = Self::const_offset(args.get(1))
         {
@@ -879,6 +1144,37 @@ impl Run<'_> {
                     }
                 }
             }
+        }
+        // A reference to a record a re-mint wiped, written into a field: every read of that
+        // field from here finds the store re-initialised under it (loft#2621).
+        if d == ops.set_dbref
+            && let Some(value) = vals.get(2)
+            && !value.pts.is_empty()
+            && value.pts.iter().all(|p| match p {
+                Pt::Store(k) => self.reminted.contains(k) && !info_of(&s, *k).has(LIVE),
+                _ => false,
+            })
+        {
+            let what = Self::first_var(args, 2).map_or_else(
+                || "a record".to_string(),
+                |w| format!("`{}`", self.var_name(w)),
+            );
+            let host = Self::first_var(args, 0).map_or_else(
+                || "a record".to_string(),
+                |h| format!("`{}`", self.var_name(h)),
+            );
+            let ended_at = Self::stores_of(&value.pts)
+                .first()
+                .map(|k| self.ended_note(*k))
+                .unwrap_or_default();
+            self.find(
+                "use-after-end",
+                u32::MAX,
+                format!(
+                    "{what} is written into a field of {host} after the store it was built in \
+                     was re-initialised: the field names a wiped record{ended_at}"
+                ),
+            );
         }
         if d == ops.set_dbref
             && let Some(value) = vals.get(2)
@@ -937,13 +1233,20 @@ impl Run<'_> {
                     // …or a compiler temporary the function frees: a stored reference only points
                     // (`@FR-H-RefHome`), and the temporary is the record's home.
                     let freed_temps = &self.freed_temps;
+                    // `(G-Hold)`: a generator handle written into a field is that holder's own
+                    // hold, released by its cascade — the variable that held it gives it up.
+                    let handle = Self::first_var(args, 2).is_some_and(|v| {
+                        v < function.count()
+                            && matches!(function.tp(v).base(), crate::data::Type::Iterator(..))
+                    });
                     let owned_elsewhere = |k: &SKey| {
                         host.contains(k)
-                            || info_of(&s, *k).live.iter().any(|w| {
-                                *w < function.count()
-                                    && (!function.is_compiler_generated(*w)
-                                        || freed_temps.contains(w))
-                            })
+                            || (!handle
+                                && info_of(&s, *k).live.iter().any(|w| {
+                                    *w < function.count()
+                                        && (!function.is_compiler_generated(*w)
+                                            || freed_temps.contains(w))
+                                }))
                     };
                     let handed = Val {
                         pts: value
@@ -969,7 +1272,7 @@ impl Run<'_> {
                     Self::hand_on(&mut s, &handed);
                     // The holder is the variable the place is rooted at: a field of it, or a
                     // struct enum's variant inline in it, is written there too (loft#2612).
-                    if let Some(h) = Self::root_var(args.first(), ops.get_field) {
+                    if let Some(h) = self.holder_root(args.first()) {
                         uncover_all(&mut s, &pointed);
                         s.points.entry(h).or_default().extend(pointed);
                     }
@@ -1016,32 +1319,44 @@ impl Run<'_> {
                 // than the record holding it (`cur = cur.next`): what the records know that
                 // slot holds, or nothing they follow.
                 let held = match Self::first_var(args, 0) {
-                    Some(w) => {
-                        let mut h = Self::held_by_record(&s, w, Self::const_offset(args.get(1)));
-                        // A reference this frame wrote into the holder (`a.next = b`).
-                        h.extend(s.points.get(&w).into_iter().flatten().copied());
-                        h
-                    }
+                    Some(w) => Self::slot_names_at(&s, w, Self::const_offset(args.get(1))),
                     None => Pts::new(),
                 };
-                // loft#2504 — a slot of the lambda's own closure record (its hidden
-                // `__closure` parameter) holds a store its caller's record owns: a capture
-                // read out of it, and relayed into a record this frame builds, is the
-                // caller's store, never this function's to end.  Asked of `__closure` alone:
-                // a drop cascade's `self` is a parameter too, and ending what it holds is its
-                // job.  `LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` leaves the read unknown.
+                // A slot of a record the CALLER brought in names a store the caller reaches
+                // through it: never this function's to end or to hand back as fresh.  loft#2504
+                // — the lambda's own closure record (its hidden `__closure` parameter): a capture
+                // read out of it and relayed into a record this frame builds;
+                // `LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` leaves that read unknown.  loft#2511 —
+                // any other parameter (`h.link ?? S { … }` answered to the caller, who then
+                // released the holder's record): `LOFT_RECORDS_NO_STORED_REF_PARAM=1` leaves it
+                // unknown.  Not in a drop function: a cascade's `self` is a parameter too, and
+                // ending what it holds is its job.
                 let relayed = Self::first_var(args, 0).filter(|&w| {
                     let frame = &self.data.def(self.d_nr).variables;
-                    frame.is_argument(w) && frame.name(w) == "__closure"
+                    frame.is_argument(w)
+                        && (if frame.name(w) == "__closure" {
+                            !crate::env_once!(
+                                std::env::var_os("LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM").is_some()
+                            )
+                        } else {
+                            !self.data.is_drop_function(self.d_nr)
+                                && !crate::env_once!(
+                                    std::env::var_os("LOFT_RECORDS_NO_STORED_REF_PARAM").is_some()
+                                )
+                        })
                 });
                 if held.is_empty()
                     && let Some(w) = relayed
-                    && !crate::env_once!(
-                        std::env::var_os("LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM").is_some()
-                    )
                 {
+                    // The closure's slot is followed as the closure record itself, the way its
+                    // captures are relayed; another holder's slot names a record of its own.
+                    let frame = &self.data.def(self.d_nr).variables;
+                    let pt = match Self::const_offset(args.get(1)) {
+                        Some(off) if frame.name(w) != "__closure" => Pt::Slot(w, off),
+                        _ => Pt::Param(w),
+                    };
                     Val {
-                        pts: [Pt::Param(w)].into(),
+                        pts: [pt].into(),
                         corr: BTreeSet::new(),
                     }
                 } else if held.is_empty() {
@@ -1191,7 +1506,7 @@ impl Run<'_> {
                     !v.pts.is_empty()
                         && v.pts
                             .iter()
-                            .all(|p| matches!(p, Pt::Store(_) | Pt::Param(_)))
+                            .all(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..)))
                 }) =>
             {
                 let v = &vals[i as usize];
@@ -1219,6 +1534,45 @@ impl Run<'_> {
                     corr.insert(minted);
                 }
                 Val { pts, corr }
+            }
+            // The record the argument's slot names, as this frame's records know that slot: the
+            // caller's, borrowed — or nothing followed where the slot is not known here.
+            Summary::Slot(i, off) => {
+                let held = Self::first_var(args, i as usize)
+                    .map(|w| Self::slot_names(&s, w, off))
+                    .unwrap_or_default();
+                if held.is_empty() {
+                    Val::unknown()
+                } else {
+                    Val {
+                        pts: held,
+                        corr: BTreeSet::new(),
+                    }
+                }
+            }
+            // Fresh on some paths, that record on others: a runtime join's witness is the
+            // HOLDER, whose store the record is not in, so the join adopts it (`join_adopts_held`).
+            Summary::JoinSlot(i, off) => {
+                let mut pts = Self::first_var(args, i as usize)
+                    .map(|w| Self::slot_names(&s, w, off))
+                    .unwrap_or_default();
+                if pts.is_empty() {
+                    pts.insert(Pt::Unknown);
+                }
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                if let Some(info) = s.stores.get_mut(&k) {
+                    info.status = LIVE | ABSENT;
+                }
+                pts.remove(&Pt::Null);
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
+                pts.insert(Pt::Store(k));
+                Val {
+                    pts,
+                    corr: [k].into(),
+                }
             }
             Summary::Join(i) | Summary::Buf(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);

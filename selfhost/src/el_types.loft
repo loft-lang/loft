@@ -221,6 +221,18 @@ pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
 // A vector — at any depth of nesting — of a narrow integer (`vector<i32>`,
 // `vector<vector<u8>>`): its rows are its own, built from the content, never the library's
 // full-width ones a name lookup finds.
+// `t` with an ADOPTED stub — the `Unknown(stub)` a forward reference left, the definition its
+// declaration has since taken over (`note_stub_adopted`) — read as the type it became, at any
+// depth of a vector or a `?`.  Pass 1 compares a field declared before its struct this way.
+pub fn adopted(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyUnknown { n } => if n > 0 && e.adopted.contains(n) && len(el::def(e, n).returned) > 0 && !(el::def(e, n).returned[0]! is TyUnknown) { el::def(e, n).returned[0]! } else { t },
+    TyVector { inner, dep } => ir::TyVector { inner: adopted(e, inner), dep: dep },
+    TyOptional { inner } => ir::TyOptional { inner: adopted(e, inner) },
+    _ => t
+  }
+}
+
 pub fn narrow_vector(t: ir::TypeT) -> boolean {
   match t {
     TyVector { inner } => match inner {

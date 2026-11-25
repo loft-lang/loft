@@ -574,7 +574,7 @@ fn n_parallel_queue_text(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 /// @PLN10 Phase 1 — destination-passing variant of `n_parallel_buf_get_text`.
-/// Always-non-null (clones an owned `String` from the par text buffer).
+/// Copies the worker's answer out of the par text buffer; a null answer stays null.
 /// Routed by `is_text_dest_native`.
 fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
@@ -584,12 +584,17 @@ fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
             .par_text_buffer_stack
             .last()
             .expect("parallel_buf_get_text: par_text_buffer_stack is empty");
-        buf[idx as usize].clone()
+        crate::text_null::own(&buf[idx as usize])
     };
-    stores
+    let out = stores
         .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&s_owned);
+        .addr_mut::<String>(dest.rec, dest.pos);
+    // A worker's null answer stays null (`@FR-L-Null-Text`): a clone or a push would make it "".
+    if crate::text_null::is_null(&s_owned) {
+        crate::text_null::set_null(out);
+    } else {
+        out.push_str(&s_owned);
+    }
 }
 
 /// Plan-06 spine step 8c — pop the active par text buffer.  Called

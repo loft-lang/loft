@@ -246,11 +246,6 @@ pub(crate) fn tuple_param_vars(data: &Data, d: u32, params: &TupleParams) -> Has
 /// `FnRef` node) missed a lambda that reached a dispatch through a typed variable alone.
 /// The gate now reads the arm set from `fnref::dispatch_arms`, the emitter's own home for
 /// that question, and declines every arm.
-///
-/// The library integration the opt-in phase existed for is closed: a cdylib bridge now
-/// MATERIALISES the tuple into the destination record it already owns
-/// (`native_lib::shared_bridge_wrapper`), so the C boundary keeps its record contract
-/// while loft-to-loft calls inside the library take the value path.
 pub(crate) fn value_record_disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| std::env::var("LOFT_NO_VALUE_RECORD").is_ok_and(|v| v != "0"))

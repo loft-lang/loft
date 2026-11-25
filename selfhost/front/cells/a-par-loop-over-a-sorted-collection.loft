@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` loop over a sorted local copies its records into `___par_mat_N`
+// (`materialise_keyed_for_par`: the store, `___par_mat_idx_N` and its `#iter_state`, the
+// element `___par_mat_e_N`, each record appended through `___par_mat_t_N`) and runs over that,
+// the wrapper's field typed as the element borrowing the collection.
+// Prints: 80
+
+struct Rec { k: integer, v: integer }
+fn rdbl(r: Rec) -> integer { r.v * 2 }
+fn main() {
+  s: sorted<Rec[k]> = [];
+  s += [Rec { k: 3, v: 30 }, Rec { k: 1, v: 10 }];
+  t = 0;
+  for x in s par(r = rdbl(x), 2) { t += r; }
+  println("{t}");
+}

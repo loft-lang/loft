@@ -52,11 +52,7 @@ fn emit(tag: &str) -> String {
     let out_rs = std::env::temp_dir().join(format!("loft_993_{tag}_{}.rs", std::process::id()));
     fa::write(&src, PROBE).expect("write probe");
     let st = loft::platform::process::harness_command(loft_bin())
-        .args([
-            "--native-rust",
-            "--native-emit",
-            out_rs.to_str().expect("path"),
-        ])
+        .args(["--native", "--native-emit", out_rs.to_str().expect("path")])
         .arg(&src)
         .env("LOFT_TIMEOUT", "300")
         .status()
@@ -109,38 +105,6 @@ fn no_generated_function_is_both_called_and_empty() {
         "these generated functions are CALLED and do nothing — a void native with no \
          lowering, emitted as `{{}}` because the escalation used to skip void returns \
          (loft#993): {silent:?}"
-    );
-}
-
-/// The control, and it changed shape while being written — which is the finding.
-///
-/// It first asserted the emit still CARRIES empty-bodied declarations, so that the
-/// property above could not pass vacuously. It does not: lifting the guard took the count
-/// to ZERO for this program. Every void stub is now either a loud `todo!()` or a no-op the
-/// declaration writes down, and an emit with no empty bodies at all is the strongest
-/// version of the invariant rather than a hole in it.
-///
-/// So the control pins the SIGNATURE of the change instead: a void built-in with no
-/// lowering — `n_parallel_discard`, the one loft#987 was about — must appear as a loud
-/// stub. That is what the guard used to skip, and a regression would put `{}` back.
-#[test]
-fn a_void_builtin_with_no_lowering_is_a_loud_stub() {
-    let rs = emit("ctl");
-    assert!(
-        rs.contains("todo!(\"native function n_parallel_discard\")"),
-        "`n_parallel_discard` returns void and has no body of its own — it must be emitted \
-         LOUD, the way a value-returning one always was (loft#993)"
-    );
-    assert!(
-        rs.contains("n_parallel_discard_native(cell,"),
-        "…while its CALL goes to the runtime helper, which is what makes the loud \
-         declaration unreachable rather than a refusal (loft#987)"
-    );
-    assert!(
-        !rs.contains("compile_error!"),
-        "nothing in this probe is a reachable unimplemented native, so the escalation \
-         must stop at `todo!()` — a `compile_error!` here would mean the lifted guard \
-         started refusing something that is lowered elsewhere"
     );
 }
 

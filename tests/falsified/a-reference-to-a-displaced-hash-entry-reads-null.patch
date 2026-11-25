@@ -1,7 +1,7 @@
 diff --git a/src/c/loft_hash.h b/src/c/loft_hash.h
 --- a/src/c/loft_hash.h
 +++ b/src/c/loft_hash.h
-@@ -1609,14 +1609,13 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
+@@ -1609,14 +1609,13 @@
  }
  
  /* Stores::displace_keyed: the entry `existing` makes room for an insert under its key — unlinked,
@@ -9,32 +9,32 @@ diff --git a/src/c/loft_hash.h b/src/c/loft_hash.h
 - * (`loft_h_release_removed`): an entry with a record of its own goes through the store's removal,
 - * which leaves the mark a stored reference reads as null (`@FR-H-Removed`). */
 + * and released unless a `secondary` member only borrows it. */
- static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref existing, const loft_key *keys,
+ static void loft_hash_displace(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref existing, const loft_key *keys,
                                 int nk, int secondary) {
-     uint32_t slot = loft_hash_unlink(c, existing, keys, nk);
+     uint32_t slot = loft_hash_unlink(cx, c, existing, keys, nk);
      if (secondary) return;
--    loft_h_release_removed(T, elem, c, 0, existing, slot);
-+    loft_remove_claims(T, elem, existing);
-+    loft_free_hash_entry(c, existing, slot);
+-    loft_h_release_removed(cx, T, elem, c, 0, existing, slot);
++    loft_remove_claims(cx, T, elem, existing);
++    loft_free_hash_entry(cx, c, existing, slot);
  }
  
  /* Stores::insert_record on a hash (`@FR-Col-Insert`: latest insert wins): `rec` filed under its
-@@ -1740,7 +1739,10 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
+@@ -1739,7 +1738,10 @@
          /* The new entry takes the displaced one's bucket. */
-         loft_forget_in_scratches(c, p.entry);
-         uint32_t gone = loft_h_replace_at(c, p.bucket, p.index);
--        if (!secondary) loft_h_release_removed(T, elem, c, 0, p.entry, gone);
+         loft_forget_in_scratches(cx, c, p.entry);
+         uint32_t gone = loft_h_replace_at(cx, c, p.bucket, p.index);
+-        if (!secondary) loft_h_release_removed(cx, T, elem, c, 0, p.entry, gone);
 +        if (!secondary) {
-+            loft_remove_claims(T, elem, p.entry);
-+            loft_free_hash_entry(c, p.entry, gone);
++            loft_remove_claims(cx, T, elem, p.entry);
++            loft_free_hash_entry(cx, c, p.entry, gone);
 +        }
-         loft_h_filed = rec;
+         cx->h_filed = rec;
          return p.entry;
      }
 diff --git a/src/database/search.rs b/src/database/search.rs
 --- a/src/database/search.rs
 +++ b/src/database/search.rs
-@@ -896,34 +896,6 @@ impl Stores {
+@@ -896,34 +896,6 @@
          None
      }
  
@@ -69,7 +69,7 @@ diff --git a/src/database/search.rs b/src/database/search.rs
      /// Release a hash entry the unlink just named: through the bucket value it answered
      /// where there is one, and by looking the entry up (`hash::free_entry`) where the table
      /// did not hold it — which keeps an entry that was allocated but never filed from
-@@ -953,10 +925,10 @@ impl Stores {
+@@ -953,10 +925,10 @@
      ) {
          let slot = self.unlink(data, existing, db);
          if !secondary {
@@ -85,7 +85,7 @@ diff --git a/src/database/search.rs b/src/database/search.rs
 diff --git a/src/database/structures.rs b/src/database/structures.rs
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -1542,7 +1542,8 @@ impl Stores {
+@@ -1570,7 +1570,8 @@
                          self.forget_in_scratches(data, &existing);
                          let gone = hash::replace_at(data, bucket, index, &mut self.allocations);
                          if !secondary {

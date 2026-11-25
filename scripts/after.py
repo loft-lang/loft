@@ -300,8 +300,6 @@ def plan(mode, paths, base, want_tests, pr=False, fresh=False):
                           md or rs or loft, "A"))
     if md or stdlib:
         steps.append(Step("doc drift", "scripts/check_doc_drift.sh -q", md or stdlib, "A"))
-    if stdlib or src:
-        steps.append(Step("compiled stdlib", "python3 scripts/compiled_stdlib_fresh.py", stdlib or src, "A"))
     # Phase B — one cargo at a time.
     if rs or stdlib:
         steps.append(Step("build", "cargo build -q --bin loft " + " ".join(PROBE), rs or stdlib, "B"))
@@ -441,12 +439,6 @@ def main():
                 s.ok, s.out = False, "not run: the previous reds still fail (`--fresh` runs everything)"
                 print(line(s))
                 continue
-            if s.name == "tests":
-                # The native harness links the release rlib (`make check-rlib`); a stale one
-                # fails those tests with a message shaped like a code defect.
-                ok, out, _ = sh("make -s check-rlib")
-                if not ok:
-                    print("  note  check-rlib: " + out.strip().splitlines()[-1][:100])
             if s.needs == "bin" and not BIN.exists():
                 s.ok, s.out = False, f"no binary at {BIN} — nothing changed that builds it; run `cargo build --bin loft`"
                 print(line(s))

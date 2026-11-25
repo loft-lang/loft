@@ -3,7 +3,7 @@
 // @falsified-by: tests/falsified/c87-a-rust-template-outside-the-stdlib-names-native.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
 //
 // @C87 — `#rust` / `#iterator` are the standard library's own Rust templates; everything
-// else binds Rust with `#native` and a native crate.
+// else binds its native part in C, with `#c` and a `[c] shim`.
 //
 // Outside `default/` both annotations were a bare `Syntax error: unexpected '#'`, on every
 // backend, while C87, the loft-library skill and PACKAGES.md all offered `#rust` as a library
@@ -11,7 +11,7 @@
 // names the route that works.  A program's own file and a library's are parsed alike here
 // (`!self.default`), so one file pins both.
 //
-// @EXPECT_ERROR: #rust is the standard library's own Rust template, not a library route; bind Rust with a bare `#native`
+// @EXPECT_ERROR: #rust is the standard library's own Rust template, not a library route; a library's native part is C
 // @EXPECT_ERROR: #iterator is the standard library's own Rust template, not a library route
 
 fn clamp01(x: float) -> float;

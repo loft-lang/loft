@@ -205,7 +205,7 @@ fn frame_kinds(def: &crate::data::Definition) -> Option<Vec<Kind>> {
     def.attributes()
         .iter()
         .map(|a| {
-            if crate::native_lib::is_text_work_buffer(&a.typedef) {
+            if crate::native_gate::is_text_work_buffer(&a.typedef) {
                 Some(Kind::WorkBuf)
             } else if a.work_buffer {
                 // `@FR-R-WorkBuffer` — a callee's scratch vector: neither a value the
@@ -278,7 +278,7 @@ struct Registry {
 /// The functions of the library at `pkg_dir` that arc A can route, marked with
 /// their dispatch symbol.
 ///
-/// Mirrors `native_lib::library_export_set` — a top-level, user-named, `pub`
+/// Mirrors `opt::native_key::library_export_set` — a top-level, user-named, `pub`
 /// function whose source file sits under the package — and applies the wire's
 /// own type gate instead of the shared-store one. **Call before `byte_code`.**
 ///
@@ -514,7 +514,7 @@ fn same_record(a: &DbRef, b: &DbRef) -> bool {
 /// cross, write the answer back.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
-    let lib_idx = crate::interp::extensions::current_lib_idx();
+    let lib_idx = stores.lib_idx;
     let mut guard = PLACEMENT
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

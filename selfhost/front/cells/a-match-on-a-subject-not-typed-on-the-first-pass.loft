@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `match` whose subject pass 1 cannot type (an element of a recursive enum's
+// vector field) still has its arms read there: each variant field binds its `_mv_<name>_N` at
+// `Unknown` (`mark_blind_capture`), so the body's `return "{value}"` makes its work text the
+// return buffer on pass 1 as Rust's does.
+// Prints: a|
+
+enum K { KNone, KText { value: text }, KList { items: vector<E> } }
+struct E { key: K }
+fn get(m: K, k: text) -> text {
+  match m {
+    KList { items } => {
+      for e in items {
+        match e.key {
+          KText { value } => { if value == k { return "{value}"; } },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return "";
+}
+fn main() { m = KList { items: [E { key: KText { value: "a" } }, E { key: KNone }] }; println("{get(m, "a")}|{get(m, "z")}"); }

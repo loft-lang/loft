@@ -46,15 +46,27 @@ impl Run {
     fn source_key(&self) -> &str {
         self.marker("native_source_key=")
     }
-    /// The generated-Rust-keyed binary cache's verdict (absent on a source-key hit, which
-    /// never reaches it).
+    /// The binary cache's verdict (absent on a source-key hit, which never reaches it): the C
+    /// build's `[loft-timing] binary-c <name> cache=` line, or the rustc build's
+    /// `native_binary_cache=` marker.
     fn binary_cache(&self) -> &str {
+        if let Some(l) = self.stderr.lines().find(|l| l.contains("binary-c "))
+            && let Some(at) = l.find("cache=")
+        {
+            let rest = &l[at + "cache=".len()..];
+            return &rest[..rest.find(' ').unwrap_or(rest.len())];
+        }
         self.marker("native_binary_cache=")
     }
-    /// Did this run launch `rustc` to ask its version?  A run that executes a cached binary
-    /// or interprets must not: the launch costs more than the rest of a warm start.
+    /// Did this run launch the compiler?  A run that executes a cached binary or interprets
+    /// must not: the launch costs more than the rest of a warm start.  The C build says so
+    /// with its `binary-c … cache=miss` line, the rustc build with its probe (`rustc_probe=`).
     fn probed_rustc(&self) -> bool {
         self.stderr.contains("rustc_probe=")
+            || self
+                .stderr
+                .lines()
+                .any(|l| l.contains("binary-c") && l.contains("cache=miss"))
     }
     fn marker(&self, key: &str) -> &str {
         let Some(at) = self.stderr.find(key) else {
@@ -78,7 +90,6 @@ fn run_with(root: &Path, script: &Path, args: &[&str], env: &[(&str, &str)]) -> 
     // The source key is the rustc writer's fast path (`--native` builds through the C by
     // default, @PLN203 C9), so the cells ask for that writer by name.
     cmd.env_remove("LOFT_NO_CACHE")
-        .env("LOFT_NATIVE_BACKEND", "rust")
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("LOFT_TIMING", "1")
         .env("LOFT_TIMEOUT", "300");
@@ -472,7 +483,8 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
 
 /// The same program at a second path in the same directory is the same binary: a
 /// test/semantics build holds no path in its code (the driver passes it at run time), so
-/// the second run compiles nothing, and the failure it reports still names ITS OWN file.
+/// the second run compiles nothing (the C, which writes the path into its unit, builds the
+/// second path's own binary), and the failure it reports still names ITS OWN file.
 /// Both halves matter: sharing the binary while reporting the first file's path would
 /// be a wrong answer served from the cache.
 // approved exemption: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
@@ -505,16 +517,16 @@ fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
         "the first path leaked into the second run: {}",
         rb.stderr
     );
-    assert_eq!(
-        rb.binary_cache(),
-        "hit",
-        "the same program at another path compiles nothing: {}",
+    // A build that holds no path is one binary for both paths.  The C writes the source path
+    // into the unit (its assert and frame sites), so there the second path is a binary of its
+    // own; the half that keeps the answer right — each run names its own file — holds either
+    // way.
+    let binaries = cached_binaries_of(&root).len();
+    assert!(
+        (rb.binary_cache() == "hit" && binaries == 1)
+            || (rb.binary_cache() == "miss" && binaries == 2),
+        "the second path is the first's binary, or a binary of its own ({binaries} cached): {}",
         rb.stderr
-    );
-    assert_eq!(
-        cached_binaries_of(&root).len(),
-        1,
-        "one binary for both paths"
     );
     let _ = fa::remove_dir_all(&root);
 }

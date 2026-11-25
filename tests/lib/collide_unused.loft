@@ -1,9 +1,0 @@
-// @PLN26 phase 1 — `use`s BOTH collide_a + collide_b (which export the same
-// `#native "collide_shared"`) but never CALLS the colliding fn.  The reachability
-// scope must NOT reject this: the symbol is unused, so there is no real collision.
-use collide_a;
-use collide_b;
-
-fn main() {
-  print("no native call")
-}

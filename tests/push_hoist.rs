@@ -10,45 +10,15 @@
 //! (`LOFT_NO_PUSH_HOIST=1`), which is what makes it red on the build before the unit and on
 //! one that lost it.  Read off `--native-emit`.
 use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-q-hoisted-push-cells.loft";
 
-/// `(function, push headers bound, hoisted pushes emitted, plain headers bound)` — the
-/// predictions written beside the cells.
-const EXPECTED: &[(&str, usize, usize, usize)] = &[
-    ("n_c1", 0, 0, 0), // the two constant-fill comprehensions are `[x; n]` repeat literals
-    // since the field fill (2026-09-17, `LOFT_NO_FIELD_FILL`): no push loop is emitted at all
-    ("n_c2", 1, 1, 1), // out pushed, xs read: two owners, both hoisted
-    ("n_c3", 1, 1, 0), // the value READS the pushed vector: since § V-w the read rides a
-    // pre-push TEMP instead of a per-iteration whole-vector copy, so the loop hoists —
-    // the tail read serves from the push header and the accumulator is linear
-    ("n_c4", 2, 2, 0),   // two pushed locals
-    ("n_c5", 1, 1, 0),   // a view root, alone: admitted
-    ("n_c6", 1, 1, 0),   // v pushed; the view w is dropped from the hoist (a runtime read)
-    ("n_c7", 1, 1, 1), // the outer loop holds out's push header and rows' header; the inner re-uses
-    ("n_c8", 0, 0, 0), // the pushed root is rebound
-    ("n_fill", 1, 1, 0), // c9: a parameter's field, alone: admitted
-    ("n_c10", 1, 1, 0), // the growth ladder
-    ("n_c11", 3, 3, 1), // integer, boolean and character pushes: all three fusable kinds, one header each; the read-only loop over b keeps its plain header
-    ("n_c12", 1, 1, 1), // a push beside an in-place write to another owned local
-    ("n_c13", 1, 1, 0), // a callee reads the length through the runtime
-    ("n_c14", 1, 1, 0), // len(v) after the push reads the header
-    ("n_c15", 1, 1, 0), // the element just pushed, read back through the header
-    ("n_c16", 1, 1, 0), // an empty vector: the first push takes the growth step
-    ("n_c17", 1, 1, 1), // two owners
-    ("n_c18", 0, 0, 0), // a record append beside the push blocks the loop
-];
-
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -70,55 +40,8 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     fa::read_to_string(out).expect("read the emitted Rust")
 }
 
-/// Per emitted function: `(push headers, hoisted pushes, plain headers)`.
-fn counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
-    let mut map: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-            continue;
-        }
-        let e = map.entry(current.clone()).or_default();
-        if line.contains("V-q push header") {
-            e.0 += 1;
-        }
-        // A push through the held header, by either route: the header push, or a push
-        // through a WINDOW opened on that header (`@FR-R-PushFill`'s window clause — which of
-        // the two a loop takes is `tests/push_window.rs`'s to pin, not this table's).
-        if line.contains("push_hoisted::<") || line.contains("push_windowed::<") {
-            e.1 += 1;
-        }
-        if line.contains("vector::vec_header(") {
-            e.2 += 1;
-        }
-    }
-    map
-}
-
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-#[test]
-fn each_loop_earns_exactly_the_push_header_predicted() {
-    let out = std::env::temp_dir().join("loft_push_hoist_on.rs");
-    let got = counts(&emit(&cells(), &out, &[]));
-    for (name, push_headers, pushes, headers) in EXPECTED {
-        let (ph, p, h) = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(
-            (ph, p, h),
-            (*push_headers, *pushes, *headers),
-            "{name}: (push headers, hoisted pushes, plain headers)"
-        );
-    }
-    let _ = fa::remove_file(&out);
 }
 
 #[test]

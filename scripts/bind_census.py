@@ -5,15 +5,14 @@
 for the same assignment, tallied over a set of programs.
 
 Every writer names the arm it lowers an assignment with — the interpreter under
-`LOFT_TRACE_BIND`, the C writer under `LOFT_TRACE_BIND_C`, the rustc writer under
-`LOFT_TRACE_BIND_NATIVE` — one row per assignment, `function⇥variable⇥first|re⇥L<line>⇥… arm`.
+`LOFT_TRACE_BIND` and the C writer under `LOFT_TRACE_BIND_C` — one row per assignment, `function⇥variable⇥first|re⇥L<line>⇥… arm`.
 This runs each program once per writer, pairs the rows by site (function, variable, source line,
 k-th assignment there) and counts the arm pairs. An interpreter arm met with more than one C arm, or
 the other way round, is a place where the two writers decide differently for what the IR says is the
 same assignment — where a store-lifetime defect of one backend lives.
 
     scripts/bind_census.py --loft target/debug/loft --suite ../loft-suite [--jobs 8]
-        [--writer c|native] [--out census.tsv] [--cells file-with-paths]
+        [--writer c] [--out census.tsv] [--cells file-with-paths]
 
 Prints the pair table, most frequent first, and the disagreeing interpreter arms; `--out`
 writes every paired row (cell, function, variable, L<line>#k, interpreter arm, writer arm).
@@ -30,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 # An arm is its lowering's name and its facts, joined by this separator (not a path).
 ARM_SEP = "/"
 
-WRITER_ENV = {"c": ("--native-c", "LOFT_TRACE_BIND_C"), "native": ("--native", "LOFT_TRACE_BIND_NATIVE")}
+WRITER_ENV = {"c": ("--native-c", "LOFT_TRACE_BIND_C")}
 
 
 def rows(path):

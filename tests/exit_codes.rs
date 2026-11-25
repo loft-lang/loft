@@ -231,7 +231,8 @@ fn unresolved_native_warns_at_load_not_at_call() {
         "program body must still run; stdout: {stdout}"
     );
     assert!(
-        stderr.contains("did not load") && stderr.contains("loft_ghost_nonexistent_symbol"),
+        stderr.contains("no native library provides")
+            && stderr.contains("loft_ghost_nonexistent_symbol"),
         "expected a load-time diagnostic naming the unresolved symbol; stderr: {stderr}"
     );
 }
@@ -401,16 +402,22 @@ fn issue684_subcommand_still_works_as_first_positional() {
 // ── W1.1: --html produces a self-contained HTML file ──────────────────────
 
 /// W1.1: `--html` must produce a valid HTML file with embedded WASM.
-/// Requires the `wasm32-unknown-unknown` rustup target — skipped in CI
-/// environments where the target is not installed.
+/// Requires the C's wasm toolchain (a clang that links a WASI program) — skipped where
+/// there is none.
 #[test]
 fn w1_1_html_export_produces_file() {
+    // `--html` builds through the C and clang for wasm32 (@C170): a host without that
+    // toolchain has no page to make.
+    if loft::platform::wasm_c_toolchain().triple.is_none() {
+        eprintln!("SKIP: no wasm32 C toolchain (clang with a WASI sysroot)");
+        return;
+    }
     let dir = std::env::temp_dir();
     let src = dir.join("loft_w1_1_test.loft");
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
     let result = loft::platform::process::harness_command(loft_bin())
-        .arg("--native-rust")
+        .arg("--native")
         .arg("--html")
         .arg(&out)
         .arg(&src)
@@ -420,10 +427,6 @@ fn w1_1_html_export_produces_file() {
     let _ = fa::remove_file(&src);
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
-    if stderr.contains("wasm32-unknown-unknown") && stderr.contains("not be installed") {
-        eprintln!("SKIP: wasm32-unknown-unknown target not installed");
-        return;
-    }
     assert!(
         result.status.success(),
         "expected --html to succeed; stdout={stdout:?}; stderr={stderr:?}"
@@ -889,116 +892,6 @@ fn p166_content_on_text_file_no_warning() {
     assert!(
         !stderr.contains("non-UTF-8 bytes"),
         "text file should not trigger the P166 warning; got stderr={stderr:?}"
-    );
-}
-
-/// DX-source-map — the native-codegen emitter writes
-/// `// loft:<file>:<line>` comments above each function header and
-/// each statement so rustc errors on the generated Rust code map
-/// back to the originating loft source.
-#[test]
-fn native_emit_includes_loft_source_map() {
-    let dir = std::env::temp_dir();
-    let script_path = dir.join("loft_source_map_demo.loft");
-    let script = "fn add(a: integer, b: integer) -> integer { a + b }\n\
-                  fn main() { x = add(1, 2); println(\"{x}\") }\n";
-    fa::write(&script_path, script).expect("write temp script");
-
-    let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--introspect")
-        .arg("--show-rust")
-        .arg(&script_path)
-        .current_dir(workspace_root())
-        .output()
-        .expect("failed to invoke loft binary");
-    let _ = fa::remove_file(&script_path);
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "introspect should succeed");
-    // Loft's source-map emission canonicalizes paths.  On Windows
-    // canonicalize() returns the `\\?\` UNC form; on Linux/macOS
-    // it returns the absolute path with symlinks resolved.  Match
-    // the test's expectation against the same canonical form.  A
-    // simple `.display()` form fails on Windows because the test's
-    // path lacks the UNC prefix.
-    let canonical = fa::try_plain_canonical(&script_path).unwrap_or_else(|| script_path.clone());
-    let path_str = canonical.display().to_string();
-    // Function-header comment maps to the .loft source line.  It heads the item, so it
-    // sits above the function's attributes (`#[inline]`, `#[inline(never)]`), not between
-    // them and the `fn`.  The path is matched canonical or by its stem suffix, which is
-    // robust to canonical path variations across platforms.
-    let header_of = |fn_head: &str| -> Option<String> {
-        let lines: Vec<&str> = stdout.lines().collect();
-        let at = lines
-            .iter()
-            .position(|l| l.trim_start().starts_with(fn_head))?;
-        lines[..at]
-            .iter()
-            .rev()
-            .map(|l| l.trim())
-            .find(|l| !l.starts_with("#["))
-            .map(str::to_string)
-    };
-    for (fn_head, line) in [("fn n_add(", 1), ("fn n_main(", 2)] {
-        let header = header_of(fn_head);
-        let canonical_hit =
-            header.as_deref() == Some(format!("// loft:{path_str}:{line}").as_str());
-        let stem_hit = header.as_deref().is_some_and(|h| {
-            h.starts_with("// loft:") && h.ends_with(&format!("loft_source_map_demo.loft:{line}"))
-        });
-        assert!(
-            canonical_hit || stem_hit,
-            "expected source-map header `// loft:…:{line}` above {fn_head} (past its attributes); \
-             found {header:?} in {stdout}"
-        );
-    }
-}
-
-/// P196: tuple struct field whose element is a fn-ref must project
-/// `.0` from the runtime `(u32, DbRef)` tuple before the OpSetInt4
-/// `as i32` cast.  Regression guard: a Var-of-fn-ref-tuple source
-/// (which can't be folded to `Value::Int(d_nr)` at parse time)
-/// must emit `(i64::from((var.0).0))` — i.e. project u32 d_nr from
-/// the tuple-element's `(u32, DbRef)` shape and widen for the
-/// template's null-check.  Without the fix the codegen substitutes
-/// `var.0 as i32` directly, which rustc rejects with E0605 (non-
-/// primitive cast on tuple type) and E0308 on the matching null
-/// check `var.0 == i64::MIN`.
-#[test]
-fn p196_native_codegen_projects_fn_ref_d_nr() {
-    let dir = std::env::temp_dir();
-    let script_path = dir.join("loft_p196_codegen.loft");
-    let script = "struct Pair { v: (fn(integer) -> integer, integer) }\n\
-                  fn p_dbl(x: integer) -> integer { x + x }\n\
-                  fn build(f: fn(integer) -> integer, n: integer) -> (fn(integer) -> integer, integer) { (f, n) }\n\
-                  fn main() { pp = build(p_dbl, 21); p = Pair { v: pp }; }\n";
-    fa::write(&script_path, script).expect("write temp script");
-
-    let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--introspect")
-        .arg("--show-rust")
-        .arg(&script_path)
-        .current_dir(workspace_root())
-        .output()
-        .expect("failed to invoke loft binary");
-    let _ = fa::remove_file(&script_path);
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "introspect should succeed");
-    // Fix invariant: every set_i32_raw emitted for the fn-ref tuple
-    // element widens via `i64::from(...)` of the projected `.0` —
-    // not a bare `var.0 as i32` (which rustc rejects on tuple type).
-    // The tuple is read where it lives (loft#1594: `pp` itself, no
-    // `__ref_1` copy of it), so the projection names `var_pp`.
-    assert!(
-        stdout.contains("i64::from((var_pp.0).0)"),
-        "expected fn-ref d_nr projection `i64::from((var_pp.0).0)`; got:\n{stdout}"
-    );
-    // And the buggy bare `var_pp.0 == i64::MIN` shape must be gone —
-    // it would compare a `(u32, DbRef)` tuple to an i64.
-    assert!(
-        !stdout.contains("(var_pp.0) == i64::MIN"),
-        "fn-ref tuple field should not be compared to i64::MIN as a bare tuple; got:\n{stdout}"
     );
 }
 
@@ -1671,126 +1564,65 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-/// @C102 — with no usable `rustc`, a RELEASE binary falls back to the interpreter and says
-/// nothing; the explanation prints when native was asked for (`--native`), and in a SOURCE
-/// CHECKOUT, where the toolchain is expected; `LOFT_REQUIRE_NATIVE=1` makes any fallback an
-/// error naming the reason.
-///
-/// Both shapes are measured: the test's own binary sits in a checkout, and a copy beside a
-/// copied `default/` in a temp directory is the release bundle's shape.  `PATH` is an empty
-/// directory, so `rustc` is not found, and the program cache is off so the run cannot hit a
-/// binary compiled earlier.  A checkout without rustc used to ATTEMPT a runtime rebuild —
-/// "native runtime out of date … rebuilding it with your rustc" and then "could not run
-/// cargo" — where nothing could be rebuilt.
+/// @C102 — no C compiler never stops a run: `--native` interprets instead and says why (native
+/// was asked for), with the program's own answer; `LOFT_REQUIRE_NATIVE=1` turns the fallback into
+/// a refusal.  `PATH` is an empty directory and `CC`/`LOFT_CC` are unset.
 #[test]
-// @PLN203 rust-writer: a missing rustc is the Rust writer's fallback (@C102); the C's is c_driver's
-fn a_missing_rustc_falls_back_quietly_except_where_asked() {
-    let tmp = std::env::temp_dir().join(format!("loft_c102_{}", std::process::id()));
+fn a_missing_c_compiler_falls_back_to_the_interpreter_unless_native_is_required() {
+    let tmp = std::env::temp_dir().join(format!("loft_c102_fb_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
     let empty = tmp.join("empty");
-    let bundle = tmp.join("bundle");
     fa::create_dir_all(&empty).expect("empty PATH dir");
-    fa::create_dir_all(bundle.join("default")).expect("bundle dir");
-    let bundled = bundle.join("loft");
-    fa::copy(loft_bin(), &bundled).expect("copy the binary");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for entry in fa::read_dir(root.join("default")).expect("default/") {
-        if fa::is_file(&entry) {
-            fa::copy(
-                &entry,
-                bundle.join("default").join(entry.os_name().expect("entry")),
-            )
-            .expect("copy default/");
-        }
-    }
     let prog = tmp.join("p.loft");
-    fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
-    let run = |bin: &std::path::Path, native: bool, require: bool| {
-        let mut c = loft::platform::process::harness_command(bin);
-        c.env("LOFT_NATIVE_BACKEND", "rust");
-        if native {
-            c.arg("--native-rust");
-        }
-        c.arg(&prog)
-            .env("PATH", &empty)
+    fa::write(&prog, "fn main() { println(\"answer {6 * 7}\"); }\n").expect("program");
+    let run = |require: bool| {
+        let mut c = loft::platform::process::harness_command(loft_bin());
+        c.arg("--native")
+            .arg(&prog)
+            .current_dir(&tmp)
+            .env("PATH", empty.as_os_str())
+            .env_remove("CC")
+            // A compiler that does not exist, named: an unset LOFT_CC makes Windows look for MSVC's
+            // `cl` past PATH, and find it.
+            .env("LOFT_CC", "loft-no-such-c-compiler")
             .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_TIMEOUT", "120")
-            .env_remove("LOFT_REQUIRE_NATIVE");
+            .env("LOFT_TIMEOUT", "120");
         if require {
             c.env("LOFT_REQUIRE_NATIVE", "1");
         }
-        let out = c.output().expect("run loft");
-        (
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )
+        c.output().expect("run loft")
     };
-    let checkout = loft_bin();
-    let ran = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
-        assert_eq!(*code, Some(0), "{cell}: exit\n{err}");
-        assert_eq!(
-            out, "hello 42\n",
-            "{cell}: the program ran interpreted\n{err}"
-        );
-        assert!(
-            !err.contains("Rebuilding"),
-            "{cell}: nothing to rebuild with\n{err}"
-        );
-    };
-    let refused = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
-        assert_eq!(*code, Some(1), "{cell}: exit\n{err}");
-        assert!(out.is_empty(), "{cell}: nothing ran\n{out}");
-        assert!(
-            err.contains("LOFT_REQUIRE_NATIVE is set") && err.contains("(rustc not found)"),
-            "{cell}: the refusal names the reason\n{err}"
-        );
-        assert!(
-            !err.contains("running interpreted"),
-            "{cell}: it is not running\n{err}"
-        );
-    };
-
-    let r = run(&bundled, false, false);
-    ran("bundle", &r);
-    assert!(r.2.is_empty(), "a release binary says nothing: {:?}", r.2);
-    let r = run(&bundled, true, false);
-    ran("bundle --native", &r);
+    let out = run(false);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
     assert!(
-        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
-        "{}",
-        r.2
+        out.status.success() && stdout.contains("answer 42"),
+        "--native without a C compiler still answers\n{stdout}{stderr}"
     );
-    refused("bundle REQUIRE", &run(&bundled, false, true));
-
-    let r = run(&checkout, false, false);
-    ran("checkout", &r);
-    assert_eq!(
-        r.2,
-        "loft: rustc not found — native runs need a Rust toolchain on PATH; running \
-         interpreted instead.\n",
-        "a checkout explains itself, once"
-    );
-    let r = run(&checkout, true, false);
-    ran("checkout --native", &r);
     assert!(
-        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
-        "{}",
-        r.2
+        stderr.contains("running interpreted instead"),
+        "--native asked for native, so the fallback says why\n{stderr}"
     );
-    refused("checkout REQUIRE", &run(&checkout, false, true));
+    let required = run(true);
+    assert!(
+        !required.status.success(),
+        "LOFT_REQUIRE_NATIVE=1 refuses the fallback\n{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
     let _ = fa::remove_dir_all(&tmp);
 }
 
-/// @C102 — the moments that belong to a developer name a missing `rustc`, while a program run
-/// stays silent (the test above): `loft --version` says which toolchain native would use, the
-/// `loft test` summary names what would let it exercise native (not `loft test --native`,
-/// which cannot help there), and `loft new --native` lists it in its next steps.  `PATH` is
-/// an empty directory, so `rustc` is not found.  The control cells run where this machine has
-/// a `rustc` on its real `PATH` — each must then NOT name the missing tool, or a message that
-/// always prints would pass.
+/// @C102 — the moments that belong to a developer name a missing C compiler, while a program
+/// run stays silent (the test above): `loft --version` says which toolchain native would use,
+/// and the `loft test` summary names what would let it exercise native (not `loft test
+/// --native`, which cannot help there); `loft new --native` scaffolds a C part and adds no
+/// toolchain line.  `PATH` is an empty directory and `CC`/`LOFT_CC` are unset, so no C compiler
+/// runs.  The control cells run where this machine has one on its real `PATH` — each must then
+/// NOT name the missing tool, or a message that always prints would pass.
 #[test]
-fn a_missing_rustc_is_named_where_the_developer_looks() {
+fn a_missing_c_compiler_is_named_where_the_developer_looks() {
     let tmp = std::env::temp_dir().join(format!("loft_c102_dev_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
     let empty = tmp.join("empty");
@@ -1803,24 +1635,31 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
     )
     .expect("test file");
     let real_path = std::env::var_os("PATH").unwrap_or_default();
-    let have_rustc = loft::platform::process::harness_command("rustc")
+    let have_cc = loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
-    let run = |args: &[&str], cwd: &std::path::Path, no_rustc: bool| {
+    let run = |args: &[&str], cwd: &std::path::Path, no_cc: bool| {
         let mut c = loft::platform::process::harness_command(loft_bin());
         c.args(args)
             .current_dir(cwd)
             .env(
                 "PATH",
-                if no_rustc {
+                if no_cc {
                     empty.as_os_str()
                 } else {
                     real_path.as_os_str()
                 },
             )
+            .env_remove("CC")
+            .env_remove("LOFT_CC")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TIMEOUT", "120");
+        if no_cc {
+            // A compiler that does not exist, named: an unset LOFT_CC makes Windows look for
+            // MSVC's `cl` past PATH, and find it.
+            c.env("LOFT_CC", "loft-no-such-c-compiler");
+        }
         let out = c.output().expect("run loft");
         format!(
             "{}{}",
@@ -1828,7 +1667,7 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
             String::from_utf8_lossy(&out.stderr)
         )
     };
-    let hint = loft::native_lib::NO_RUSTC;
+    let hint = "no C compiler";
 
     let version = run(&["--version"], &tmp, true);
     let mut lines = version.lines();
@@ -1836,10 +1675,11 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
         lines.next().is_some_and(|l| l.starts_with("loft ")),
         "--version: the first line is still the version alone\n{version}"
     );
-    assert_eq!(
-        lines.next(),
-        Some(format!("native: {hint}").as_str()),
-        "--version: the second line names the missing rustc\n{version}"
+    assert!(
+        lines
+            .next()
+            .is_some_and(|l| l.starts_with("native: ") && l.contains(hint)),
+        "--version: the second line names the missing C compiler\n{version}"
     );
 
     let suite_s = suite.to_str().expect("utf-8 temp path");
@@ -1847,38 +1687,29 @@ fn a_missing_rustc_is_named_where_the_developer_looks() {
     assert!(
         tested.contains(&format!("native not exercised: {hint}"))
             && !tested.contains("loft test --native"),
-        "loft test: the summary names the missing rustc, not a command that cannot help\n{tested}"
+        "loft test: the summary names the missing C compiler, not a command that cannot help\n{tested}"
     );
 
+    // `loft new --native` scaffolds a C part; its next steps add no toolchain line.
     let created = run(&["new", "--native", "c102lib"], &tmp, true);
     assert!(
-        created.contains(&format!("# native/ is Rust: {hint}")),
-        "loft new --native: the next steps name the missing rustc\n{created}"
-    );
-    let plain = run(&["new", "c102plain"], &tmp, true);
-    assert!(
-        plain.contains("Next steps:") && !plain.contains(hint),
-        "loft new without --native has no Rust to build: no rustc line\n{plain}"
+        created.contains("c/c102lib.c") && !created.contains(hint),
+        "loft new --native: a C part, and no toolchain line\n{created}"
     );
 
-    if have_rustc {
+    if have_cc {
         let version = run(&["--version"], &tmp, false);
         assert!(
             version
                 .lines()
                 .nth(1)
-                .is_some_and(|l| l.starts_with("native: rustc ")),
-            "control: with rustc, --version names it\n{version}"
+                .is_some_and(|l| l.starts_with("native: ") && !l.contains(hint)),
+            "control: with a C compiler, --version names it\n{version}"
         );
         let tested = run(&["--tests", suite_s], &tmp, false);
         assert!(
             tested.contains("native not exercised: loft test --native") && !tested.contains(hint),
-            "control: with rustc, the summary points at loft test --native\n{tested}"
-        );
-        let created = run(&["new", "--native", "c102lib2"], &tmp, false);
-        assert!(
-            created.contains("Next steps:") && !created.contains(hint),
-            "control: with rustc, loft new --native has nothing to add\n{created}"
+            "control: with a C compiler, the summary points at loft test --native\n{tested}"
         );
     }
     let _ = fa::remove_dir_all(&tmp);
@@ -1899,7 +1730,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     fa::write(
         lib.join("loft.toml"),
         "[package]\nname = \"noimpl\"\nversion = \"0.1.0\"\n\n\
-         [library]\nentry = \"src/noimpl.loft\"\nnative = \"loft_noimpl\"\n",
+         [library]\nentry = \"src/noimpl.loft\"\n",
     )
     .expect("manifest");
     fa::write(
@@ -1936,7 +1767,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
         "names the function:\n{err}"
     );
     assert!(
-        err.contains("native library 'noimpl'"),
+        err.contains("#native function(s) of 'noimpl'"),
         "names the library:\n{err}"
     );
     let (code, out, err) = run("uncalled", "  println(\"fine\");");

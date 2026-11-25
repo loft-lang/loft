@@ -15,6 +15,9 @@
   function loftWasiHostImports(imports, ctrl, getMem) {
     const view = () => new DataView(getMem().buffer);
     const bytes = (ptr, len) => new Uint8Array(getMem().buffer, ptr, len);
+    // A copy of `len` bytes at `ptr`: a threaded page's memory is shared, and `TextDecoder` and
+    // `crypto.getRandomValues` refuse a view onto shared memory.
+    const copyOf = (ptr, len) => bytes(ptr, len).slice();
     const decs = { 1: new TextDecoder(), 2: new TextDecoder() };
     const enc = new TextEncoder();
     const dec = new TextDecoder();
@@ -52,7 +55,7 @@
     const ROOT = 3; // the one preopened directory, `/`
     const fds = new Map(); // fd -> { path, dir, pos, write }
     let nextFd = ROOT + 1;
-    const pathAt = (ptr, len) => dec.decode(bytes(ptr, len));
+    const pathAt = (ptr, len) => dec.decode(copyOf(ptr, len));
     const under = (dirfd, ptr, len) => {
       const base = dirfd === ROOT ? '/' : fds.get(dirfd)?.path;
       if (base === undefined) return null;
@@ -75,10 +78,12 @@
         const v = view();
         let total = 0;
         const f = fds.get(fd);
+        // What the pool's workers printed comes first: it was printed before this (`loft-thread.js`).
+        if ((fd === 1 || fd === 2) && globalThis.loftWorkerDrain) globalThis.loftWorkerDrain();
         for (let i = 0; i < n; i++) {
           const p = v.getUint32(iovs + 8 * i, true);
           const l = v.getUint32(iovs + 8 * i + 4, true);
-          if (fd === 1 || fd === 2) write(fd, decs[fd].decode(bytes(p, l), { stream: true }));
+          if (fd === 1 || fd === 2) write(fd, decs[fd].decode(copyOf(p, l), { stream: true }));
           else if (f && !f.dir && f.write) {
             const old = pageFS.read(f.path) || new Uint8Array(0);
             const out = new Uint8Array(Math.max(old.length, f.pos + l));
@@ -314,7 +319,7 @@
       clock_time_get(id, precision, t) {
         const ns = id === 0
           ? BigInt(Date.now()) * 1000000n
-          : BigInt(Math.round(performance.now() * 1e6));
+          : BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
         view().setBigUint64(t, ns, true);
         return 0;
       },
@@ -323,12 +328,16 @@
         return 0;
       },
       random_get(p, l) {
-        crypto.getRandomValues(bytes(p, l));
+        const b = new Uint8Array(l);
+        crypto.getRandomValues(b);
+        bytes(p, l).set(b);
         return 0;
       },
       sched_yield() { return 0; },
       poll_oneoff() { return NOSYS; },
     };
+    // A pool worker's output reaches the page through here (`loft-thread.js`).
+    globalThis.loftWriteOut = write;
     // Any other WASI function the libc links answers "not supported", so the module
     // instantiates whatever its libc imports.
     const own = imports.wasi_snapshot_preview1 || {};

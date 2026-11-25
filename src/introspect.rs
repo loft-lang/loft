@@ -29,7 +29,6 @@ use std::io::{BufWriter, Write};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
     Bytecode,
-    Rust,
     Slots,
     /// Per-function variable types with dependency tracking — useful
     /// for diagnosing lifetime / dep-propagation bugs (e.g. P197
@@ -61,7 +60,6 @@ pub struct Options {
     /// Per-section output paths.  When unset, the section writes to
     /// the shared stdout sink with a `=== bytecode ===`-style header.
     pub bytecode_out: Option<String>,
-    pub rust_out: Option<String>,
     pub slots_out: Option<String>,
     pub types_out: Option<String>,
     /// When set, capture all (non-redirected) section output to a
@@ -101,15 +99,7 @@ pub struct Options {
     /// Path prefix to the loft installation (`--path` flag).  Empty
     /// means "binary directory" — same default as `loft <file>`.
     pub install_dir: String,
-    /// Writes the Rust section.  The driver hands in the native generator's
-    /// (`generation::introspect_rust`), so this module names no backend; `None` leaves the
-    /// section empty.
-    pub rust: Option<RustSection>,
 }
-
-/// Writes the Rust a compiled target emits for definitions `0..end_def`.
-pub type RustSection =
-    fn(&mut dyn Write, &Data, &crate::database::Stores, u32) -> std::io::Result<()>;
 
 impl Options {
     /// Default introspect options — all three sections, no filter,
@@ -119,7 +109,6 @@ impl Options {
         Self {
             sections: Vec::new(),
             bytecode_out: None,
-            rust_out: None,
             slots_out: None,
             types_out: None,
             diff_against: None,
@@ -131,7 +120,6 @@ impl Options {
             all_fns: false,
             lib_dirs: Vec::new(),
             install_dir: String::new(),
-            rust: None,
         }
     }
 
@@ -238,21 +226,6 @@ pub fn emit_all(
             emit_bytecode(&mut writer, state, data, opts)?;
         }
     }
-    if opts.includes(Section::Rust) {
-        if let Some(path) = opts.rust_out.as_deref() {
-            let mut writer = BufWriter::new(crate::file_access::create(path)?);
-            emit_rust(opts, &mut writer, data, &state.database, end_def)?;
-        } else if diff_mode {
-            writeln!(buffer)?;
-            writeln!(buffer, "=== rust ===")?;
-            emit_rust(opts, &mut buffer, data, &state.database, end_def)?;
-        } else {
-            let mut writer = stdout.lock();
-            writeln!(writer)?;
-            writeln!(writer, "=== rust ===")?;
-            emit_rust(opts, &mut writer, data, &state.database, end_def)?;
-        }
-    }
     if opts.includes(Section::Slots) {
         if let Some(path) = opts.slots_out.as_deref() {
             let mut writer = BufWriter::new(crate::file_access::create(path)?);
@@ -340,11 +313,6 @@ fn emit_json(
         let mut buf = Vec::new();
         emit_bytecode(&mut buf, state, data, opts)?;
         fields.push(("bytecode".to_string(), 0, as_str(buf)));
-    }
-    if opts.includes(Section::Rust) {
-        let mut buf = Vec::new();
-        emit_rust(opts, &mut buf, data, &state.database, end_def)?;
-        fields.push(("rust".to_string(), 0, as_str(buf)));
     }
     if opts.includes(Section::Slots) {
         let mut buf = Vec::new();
@@ -490,14 +458,14 @@ fn emit_bytecode(
         // Match the slots/types sections: restrict to user functions.
         // show_code already skips `default/`, but compiler-synthesized
         // runtime helpers (`i_parse_*`) carry an empty position and a
-        // non-`n_` name, so they'd otherwise leak in.  List the user
-        // `n_` functions explicitly (show_functions is a substring
-        // include-list); empty = no user functions = empty section.
+        // non-`n_` name, so they'd otherwise leak in.  List the user's
+        // `n_` functions and `t_` methods explicitly (show_functions is a
+        // substring include-list); empty = no user functions = empty section.
         let user_fns: Vec<String> = (0..data.definitions())
             .filter_map(|d| {
                 let def = data.def(d);
                 (def.def_type == DefType::Function
-                    && def.name.starts_with("n_")
+                    && (def.name.starts_with("n_") || def.name.starts_with("t_"))
                     && !def.name.starts_with("n___lambda_")
                     && !crate::compile::is_default_file(def.position.file.as_str()))
                 .then(|| def.name.clone())
@@ -508,17 +476,6 @@ fn emit_bytecode(
     state
         .dump_bytecode(w, &config, data)
         .map_err(|e| std::io::Error::other(format!("dump_bytecode: {e}")))
-}
-
-fn emit_rust(
-    opts: &Options,
-    w: &mut dyn Write,
-    data: &Data,
-    stores: &crate::database::Stores,
-    end_def: u32,
-) -> std::io::Result<()> {
-    opts.rust
-        .map_or(Ok(()), |section| section(w, data, stores, end_def))
 }
 
 fn emit_slots(w: &mut dyn Write, data: &Data, end_def: u32, opts: &Options) -> std::io::Result<()> {

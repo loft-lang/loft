@@ -3,22 +3,8 @@ name = "imaging"
 version = "0.1.0"
 loft = ">=0.8"
 
+# Local patch (@PLN225): the pinned tag declares a Rust native part (`[library] native`,
+# `[native] crate`), which loft no longer builds or loads — a package declaring one is
+# refused.  The snapshot keeps its loft source; its `#native` functions have no library.
 [library]
 entry = "src/imaging.loft"
-native = "loft_imaging"
-
-# Declares the COMPILE-time native crate so `--native` links the rlib
-# (`add_native_extern_flags`), not just the runtime dylib above.
-# Without it `loft --native test` fails with P269
-# "no implementation in any registered native crate".
-[native]
-crate = "loft-imaging"
-
-# NOTE — the in-monorepo `lib/imaging/` also carries a `[wasm.bridge]`
-# section + `wasm/` Rust bridge crate.  That bridge depends on the
-# unpublished `loft` crate (`{ path = "../../.." }`), which cannot
-# work in a chunk repo.  Stage A ships imaging WITHOUT the bridge —
-# `--html` consumers of imaging are not viable until a `loft-host-ffi`
-# crate is published to crates.io and the bridge is rewritten against
-# it.  No current monorepo consumer uses imaging via `--html`, so
-# this is a deferred follow-up, not a regression.

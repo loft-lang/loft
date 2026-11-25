@@ -943,6 +943,7 @@ impl Function {
         self.capture_builds = Some(builds);
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn capture_builds(&self) -> Option<&CaptureBuilds> {
         self.capture_builds.as_ref()
     }
@@ -953,6 +954,7 @@ impl Function {
 
     /// Does an owning local's rebinds and free release this literal buffer's store, so the
     /// free emitter gave the buffer no exit free (`Scopes::pair_literal_buffers`)?
+    #[cfg(debug_assertions)]
     pub(crate) fn adopter_released(&self, v: u16) -> bool {
         self.adopter_released.contains(&v)
     }
@@ -1992,7 +1994,7 @@ impl Function {
     /// alive, so this was an `@FR-O-NoDiverge` divergence as well as a wrong answer.
     ///
     /// Two channels answer "which link names this local": a HEAP link's own dep list, read
-    /// the way `generation::hoist::link_targets` reads it, and — for a SCALAR link, which
+    /// the way `opt::body_writes::link_targets` reads it, and — for a SCALAR link, which
     /// carries no dep — `Variable::amp_linked_by`, recorded on the target at the `&` bind.
     /// The walk is transitive and runs to a fixpoint, because a link may name a link.  It
     /// only ever EXTENDS a range, so a local nothing links to is untouched and ordinary slot
@@ -3478,7 +3480,7 @@ impl Function {
     /// loft#1616 — record that `var_nr`, a local the author declared `text?`, is now the
     /// hidden `&text` work buffer `text_return` promoted it to.  `@FR-N-Shape`: the promotion
     /// changes the local's CHANNEL and never its nullability, so a `null` stored into it stays
-    /// legal — it is `STRING_NULL` in the buffer's own slot.  Only a nullable local is marked:
+    /// legal — it is the null text in the buffer's own slot.  Only a nullable local is marked:
     /// a buffer promoted from a non-null `text` keeps `@FR-N-Store`'s refusal of `null`.
     pub fn mark_nullable_text_buffer(&mut self, var_nr: u16) {
         if matches!(self.tp(var_nr), Type::Optional(_)) {
@@ -3929,7 +3931,7 @@ impl Function {
             // @PLN25 DN1: peel an `Optional` source — `&text ← text?` is the hoisted
             // work-buffer local (control.rs return-deps hoist) re-assigned from a
             // nullable call result; `Optional(τ)` shares `τ`'s sentinel storage, so the
-            // buffer carries the null (`STRING_NULL`) without a type change.
+            // buffer carries the null text without a type change.
             // loft#1372 — and the other direction, `&τ? ← τ`: the link's SLOT is what a write
             // through it has to fit, and whether that slot may be absent is `@FR-N-Store`'s
             // question, asked where the value lands, not a RETYPE of the link.  Both sides
@@ -3940,7 +3942,7 @@ impl Function {
             // loft#1616 — and a bare `null` into the hidden work buffer a `text?` local was
             // promoted to (`a: text? = null; return a ?? "d"`).  `@FR-N-Shape`: the `?` is a
             // marker over τ's own storage and never selects a road, so the nullable local takes
-            // the same promotion as its dense twin and its null is `STRING_NULL` in the same
+            // the same promotion as its dense twin and its null is the null text in the same
             // slot.  An author's `&text`, and a buffer promoted from a non-null `text`, keep
             // `@FR-N-Store`'s refusal (`fn g(s: &text) { s = null; }`).
             if let Type::RefVar(in_tp) = var_tp
@@ -5803,21 +5805,17 @@ impl Function {
     /// capture-time `DbRef`, @FR-L-CapHeap); and the assignment is not a DETACH, which
     /// displaces a store without claiming to have owned it (`is_null_sentinel_detach`).
     ///
-    /// Enforces @FR-O-NoDiverge: this was two predicates, `state/codegen.rs`'s `owned_ref` and
-    /// `generation/dispatch.rs`'s `owned_ref_reassign`, each carrying the other's list
-    /// "verbatim" by hand — and each time one gained a kind or a veto the other had to be found
-    /// and taught it (the keyed kinds, the vector destination, the override veto, the detach:
-    /// four such rounds are in their history).  What stays per backend is only what IS per
+    /// Enforces @FR-O-NoDiverge: one predicate for `state/codegen.rs`'s `owned_ref` and the C's
+    /// `displacing_rebind`, rather than two lists kept in step by hand.  What stays per backend is only what IS per
     /// backend: the interpreter excludes the hidden buffer ARGUMENT (the caller owns that
-    /// store), native asks that the Rust local be already declared, that the right-hand side
-    /// produce a store, and that a retbuf-attr local carry an entry-buffer witness.
+    /// store), native asks that the right-hand side produce a store, and that a retbuf-attr local carry an entry-buffer witness.
     #[must_use]
     pub fn owns_displaced_store(&self, v: u16, value: &Value, data: &Data) -> bool {
         // A bare `null` is a pass's LET-GO, never a user's write (`a = null` reaches the IR as
         // `OpNullRefSentinel()`): the local hands its record on — `(R-HostStore)` writes it
         // after `OpAdoptChildRec` gave the record to a field — and displaces nothing it owns.
-        // The C and Rust emitters free only on a store-producing right-hand side, so this is
-        // the interpreter agreeing with them (`@FR-O-NoDiverge`).  `LOFT_NULL_LETGO_FREES=1`
+        // The C emitter frees only on a store-producing right-hand side, so this is the
+        // interpreter agreeing with it (`@FR-O-NoDiverge`).  `LOFT_NULL_LETGO_FREES=1`
         // reads it as a rebind again, which restores the re-free of a store already let go.
         (!matches!(value.unspan(), Value::Null) || crate::keys::null_letgo_frees())
             && self.owns_its_binding(v, value, data)
@@ -5935,8 +5933,8 @@ impl Function {
     /// spellings (`OpSets::frees`), from the scope-exit sweep, a transition free, a pre-`Set`
     /// free or a move alike?  Its contract is that sentence, and nothing weaker; the one
     /// admissible free of a marked binding is the release its marking pass PLACES itself, on
-    /// a consumption fact ([`Self::is_staged_text_temp`]), and `ownership_cfg`'s Check D
-    /// reports every other.
+    /// a consumption fact ([`Self::is_staged_text_temp`]); the store records report what
+    /// any other releases.
     ///
     /// Enforces @FR-O-Override — the never-free veto.
     ///
@@ -6061,7 +6059,7 @@ impl Function {
     /// pass chose: the ncc-orphan pass right after the consuming statement, the return delivery
     /// once the bytes have moved into the caller's buffer.  @FR-O-Override names this as the ONE
     /// admissible free of a never-free binding — a release placed on a CONSUMPTION fact, never
-    /// on the ownership proxy — and `ownership_cfg`'s Check D admits exactly this predicate.
+    /// on the ownership proxy.
     /// Both facts are required, as in [`Self::is_overwritten_view`]: the PREFIX says which pass
     /// staged it, and `skip_free` that the pass did mark it.
     #[must_use]
@@ -6347,13 +6345,13 @@ impl Function {
                 continue;
             }
             if let Some(var) = self.variables.get(v as usize) {
-                let cleared = [
-                    ("-user_named", var.user_named),
-                    ("-user_appended", var.user_appended),
-                    ("-value_const", var.value_const),
-                ];
-                for (flag, was_set) in cleared {
-                    if was_set {
+                // The names and the flags in two lists: a code scanner taints a tuple whole by
+                // a field named like a user name (`user_named`, a boolean), and then reports
+                // the printed flag name as a logged secret.
+                let names = ["-user_named", "-user_appended", "-value_const"];
+                let was_set = [var.user_named, var.user_appended, var.value_const];
+                for (flag, set) in names.into_iter().zip(was_set) {
+                    if set {
                         self.trace_flag(flag, v);
                     }
                 }
@@ -6409,7 +6407,7 @@ impl Function {
     ///
     /// Deliberately a separate predicate from [`owns_store`](Self::owns_store) rather
     /// than a widening of it.  `owns_store` answers who owes the FREE and is shared with
-    /// `generation::dispatch` so parser and codegen cannot drift (loft#664); changing what
+    /// the C backend (`c::body::generator`) so parser and codegen cannot drift (loft#664); changing what
     /// it means changes the free path.  This one asks only whether in-place REUSE is
     /// licensed, and the two answers differ for exactly one population: a captured heap
     /// local still owns its store, so `owns_store` is true, while a closure record built

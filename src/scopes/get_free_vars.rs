@@ -65,7 +65,7 @@ fn outer_tuple_backings(
 }
 
 /// @PLN94 TEST-ONLY: the var name whose scope-exit free `get_free_vars` drops (injecting a genuine
-/// leak, the `check-leak` true-positive gate), or `None`. Cached — ONE env read per process, so the
+/// leak, the store records' true-positive gate, `tests/ownership_oracle.rs`), or `None`. Cached — ONE env read per process, so the
 /// production (unset) path pays nothing per-free. Never set outside tests.
 fn inject_drop_free() -> Option<&'static str> {
     use std::sync::OnceLock;
@@ -76,7 +76,7 @@ fn inject_drop_free() -> Option<&'static str> {
 
 /// @PLN94 TEST-ONLY: the BORROWED var name whose scope-exit free `get_free_vars` is forced to emit
 /// (injecting a genuine OVER-free — an unconditional `OpFreeRef` of a dep-carrying view), the
-/// over-free-check (`run_over_free_check`) true-positive gate, or `None`. Cached like
+/// store records' re-free true-positive gate, or `None`. Cached like
 /// [`inject_drop_free`]; the production (unset) path pays nothing. Never set outside tests.
 fn inject_free_borrowed() -> Option<&'static str> {
     use std::sync::OnceLock;
@@ -87,9 +87,10 @@ fn inject_free_borrowed() -> Option<&'static str> {
 
 /// @FR-O-Override TEST-ONLY: the NEVER-FREE var name for which `get_free_vars` emits a
 /// witness-guarded free against ITSELF — `OpFreeRefIfDistinct(v, v)`, a run-time no-op (one store on
-/// both sides) that the IR nevertheless NAMES as a free of a never-free binding, which
-/// `ownership_cfg`'s Check D must report.  The check's true-positive gate; cached like
-/// [`inject_drop_free`]; never set outside tests.
+/// both sides) that the IR nevertheless NAMES as a free of a never-free binding — and the work
+/// reference beside it is then freed only where it is not `v`'s, so its store leaks, which the
+/// store records must report.  Their true-positive gate; cached like [`inject_drop_free`];
+/// never set outside tests.
 fn inject_free_skipfree() -> Option<&'static str> {
     use std::sync::OnceLock;
     static V: OnceLock<Option<String>> = OnceLock::new();
@@ -1043,7 +1044,7 @@ impl Scopes<'_> {
                     } else if inject_drop_free() == Some(function.name(v)) {
                         // @PLN94 TEST-ONLY positive control (never set in production; one cached env
                         // read/process): drop the scope-exit free for the NAMED owned var, injecting
-                        // a genuine leak. The `check-leak` scan must go RED on it — the true-positive
+                        // a genuine leak. The store records must report it — the true-positive
                         // gate. Mirrors LOFT_NO_A1B / LOFT_STORE_GUARD_INJECT.
                     } else if let Some(c) =
                         join_capture_witness(data, function, &self.capture_build_backing, v)

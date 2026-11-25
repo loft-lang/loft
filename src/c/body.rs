@@ -12,6 +12,8 @@ mod apart;
 mod apart_value;
 mod chain;
 pub(crate) mod cold;
+pub(crate) mod decode_structure;
+mod decode_view;
 mod deferred;
 mod files;
 mod generator;
@@ -260,6 +262,12 @@ pub(crate) struct FnWriter<'a> {
     /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
     /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
     field_view: bool,
+    /// `@FR-R-DecodeView`: this body's part of the plan — a `__dv` twin's or a root's
+    /// (`decode_view.rs`) — and the statement its lazy holder is writing as itself.
+    dv: Option<decode_view::DvBody>,
+    dv_bypass: usize,
+    /// `@FR-R-DecodeView`'s structure clause: this body's positional mode (`decode_structure.rs`).
+    ps: Option<decode_structure::PsBody>,
     /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
@@ -909,6 +917,9 @@ impl<'a> FnWriter<'a> {
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
+            dv: None,
+            dv_bypass: 0,
+            ps: None,
             nk_skip: None,
             ap_buf: None,
             ap_views: std::collections::HashSet::new(),
@@ -1118,7 +1129,7 @@ impl<'a> FnWriter<'a> {
     /// `reserve_push_run`), and admission keeps the twin from reading its buffer, so no header
     /// is ever held for one.
     fn lean(&self) -> bool {
-        self.tr.is_some()
+        self.tr.is_some() || self.ps_lean()
     }
 
     /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
@@ -1226,7 +1237,7 @@ impl<'a> FnWriter<'a> {
             .filter(|l| {
                 let t = l.trim();
                 !t.is_empty()
-                    && !l.contains("loft_frame_site(")
+                    && !l.contains("loft_frame_site(cx, ")
                     && !t.starts_with("#line ")
                     && (braces || !matches!(t, "}" | "{" | "};" | "} else {"))
             })
@@ -1320,6 +1331,7 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "    {d}");
         }
         let arms = (!self.arm_fns.is_empty()).then(|| self.arm_functions(&out));
+        let closures = self.ps.is_some().then(|| self.ps_closure_functions(&out));
         let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
@@ -1332,9 +1344,9 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
         self.cold_finish(&out)?;
-        // The arms' functions land only with the body that calls them: a body the writer
-        // declines is written again, and its arms with it.
-        if let Some((decls, bodies)) = arms {
+        // The arms' functions, and a walk's closures, land only with the body that calls them:
+        // a body the writer declines is written again, and its arms with it.
+        for (decls, bodies) in arms.into_iter().chain(closures) {
             self.cx.gen_decls.borrow_mut().push_str(&decls);
             self.cx.gen_bodies.borrow_mut().push_str(&bodies);
         }
@@ -1343,8 +1355,8 @@ impl<'a> FnWriter<'a> {
 
     /// `@FR-R-WorkPark`: a frame's work texts — the `__work…` texts the parser builds a text into, owned by
     /// this frame — keep their room between its calls: each is taken from a slot of its own
-    /// (per function and thread) at entry, empty, and parked there at each release instead of
-    /// freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;
+    /// (per function, a static the main thread owns: a `par` worker takes and parks nothing) at
+    /// entry, empty, and parked there at each release instead of freed.  Taking empties the slot, so a recursive frame takes nothing and frees its own;
     /// a taken text is an empty text, as a fresh one is.  `LOFT_NO_WORK_PARK=1` frees them.
     fn park_work_texts(&self, mut out: String) -> String {
         if crate::env_once!(std::env::var("LOFT_NO_WORK_PARK").is_ok_and(|v| v != "0"))
@@ -1370,13 +1382,13 @@ impl<'a> FnWriter<'a> {
             out = out.replacen(
                 &decl,
                 &format!(
-                    "    static LOFT_TLS loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(&{slot});\n"
+                    "    static loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(cx, &{slot});\n"
                 ),
                 1,
             );
             out = out.replace(
-                &format!("loft_text_free(&{name});"),
-                &format!("loft_wpark_put(&{slot}, &{name});"),
+                &format!("loft_text_free(cx, &{name});"),
+                &format!("loft_wpark_put(cx, &{slot}, &{name});"),
             );
             n += 1;
         }
@@ -1418,27 +1430,31 @@ impl<'a> FnWriter<'a> {
                     Some(f) => format!("({f} ? LOFT_NULL : {})", w.var(vv)),
                     None => w.var(vv),
                 };
-                let none = "loft_ho_nostr(), loft_ref_null()";
+                let none = "loft_ho_nostr(cx), loft_ref_null(cx)";
                 let put = match w.shapes[v] {
                     CType::Int | CType::Int32 | CType::Char => {
-                        format!("loft_ho_put({name}, 0, (loft_word) {var}, {none});")
+                        format!("loft_ho_put(cx, {name}, 0, (loft_word) {var}, {none});")
                     }
                     CType::Float => format!(
-                        "{{ double b0 = {var}; int64_t b; memcpy(&b, &b0, 8); loft_ho_put({name}, 1, b, {none}); }}"
+                        "{{ double b0 = {var}; int64_t b; memcpy(&b, &b0, 8); loft_ho_put(cx, {name}, 1, b, {none}); }}"
                     ),
                     CType::Single => format!(
-                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put({name}, 5, (loft_word) b, {none}); }}"
+                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put(cx, {name}, 5, (loft_word) b, {none}); }}"
                     ),
                     CType::Bool | CType::Enum => {
-                        format!("loft_ho_put({name}, 4, (loft_word) {var}, {none});")
+                        format!("loft_ho_put(cx, {name}, 4, (loft_word) {var}, {none});")
                     }
                     CType::Text if w.params[v] || w.borrowed[v] => {
-                        format!("loft_ho_put({name}, 2, 0, {var}, loft_ref_null());")
+                        format!("loft_ho_put(cx, {name}, 2, 0, {var}, loft_ref_null(cx));")
                     }
                     CType::Text => {
-                        format!("loft_ho_put({name}, 2, 0, loft_view(&{var}), loft_ref_null());")
+                        format!(
+                            "loft_ho_put(cx, {name}, 2, 0, loft_view(cx, &{var}), loft_ref_null(cx));"
+                        )
                     }
-                    CType::Ref => format!("loft_ho_put({name}, 3, 0, loft_ho_nostr(), {var});"),
+                    CType::Ref => {
+                        format!("loft_ho_put(cx, {name}, 3, 0, loft_ho_nostr(cx), {var});")
+                    }
                     _ => continue,
                 };
                 puts.push_str(&put);
@@ -1473,7 +1489,7 @@ impl<'a> FnWriter<'a> {
             let puts = puts_for(self, &flags);
             let _ = write!(
                 out,
-                "/*LOFT_SP*/ if (LOFT_UNLIKELY(loft_pause_asked())) {{ {puts}if (loft_ho_commit({key}, {scope}u)) {ret} }} /*LOFT_PS*/"
+                "/*LOFT_SP*/ if (LOFT_UNLIKELY(loft_pause_asked(cx))) {{ {puts}if (loft_ho_commit(cx, {key}, {scope}u)) {ret} }} /*LOFT_PS*/"
             );
             left = &tail[end + 2..];
         }
@@ -1489,7 +1505,7 @@ impl<'a> FnWriter<'a> {
         // @PLN219 — a `&S` parameter whose `S` is held out of line points at a slot cell, which
         // may name a field: read through the test.  Written only by `link_rebind`.
         if self.links[v as usize] && self.cx.data.slot_link_def(self.vars.tp(v)).is_some() {
-            format!("loft_slot_read(*{name})")
+            format!("loft_slot_read(cx, *{name})")
         } else if self.links[v as usize] || self.vr_ptr[v as usize] {
             format!("(*{name})")
         } else {
@@ -1571,7 +1587,7 @@ impl<'a> FnWriter<'a> {
     fn flush(&mut self, ind: usize) {
         self.pending_work.clear();
         for t in std::mem::take(&mut self.pending) {
-            self.line(ind, &format!("loft_text_free(&{t});"));
+            self.line(ind, &format!("loft_text_free(cx, &{t});"));
         }
     }
 
@@ -1588,7 +1604,7 @@ impl<'a> FnWriter<'a> {
             .map(|(_, c, _)| c.clone())
             .collect();
         for c in gone {
-            self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
+            self.line(ind, &format!("loft_fcur_release(cx, &{c}, {c}p);"));
         }
     }
 
@@ -1605,7 +1621,7 @@ impl<'a> FnWriter<'a> {
         self.release_holds(0, ind);
         let tabs: Vec<u16> = self.split_tabs.keys().copied().collect();
         for v in tabs {
-            self.line(ind, &format!("loft_stab_free(&st{v});"));
+            self.line(ind, &format!("loft_stab_free(cx, &st{v});"));
         }
         self.line(ind, EPILOGUE_MARK);
     }
@@ -1634,7 +1650,7 @@ impl<'a> FnWriter<'a> {
                     {
                         let _ = writeln!(out, "{d}");
                     }
-                    let _ = writeln!(out, "{indent}loft_text_free(&{t});");
+                    let _ = writeln!(out, "{indent}loft_text_free(cx, &{t});");
                 }
                 continue;
             }
@@ -1765,8 +1781,8 @@ impl<'a> FnWriter<'a> {
                 let e = self.nested(|w| w.expr(&expr, ind))?;
                 let h = format!("h{}", self.decls.len() + 1);
                 self.decls
-                    .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
-                self.line(ind, &format!("{h} = loft_vh_of({});", as_ref(e)?));
+                    .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0, 0 }};"));
+                self.line(ind, &format!("{h} = loft_vh_of(cx, {});", as_ref(e)?));
                 if self.pending_grown.contains(&path) {
                     self.grown_headers.insert(h.clone());
                 }
@@ -1954,7 +1970,10 @@ impl<'a> FnWriter<'a> {
             self.decls.push(format!(
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
-            self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            self.line(
+                ind,
+                &format!("{h} = loft_ph_of(cx, {}, {size});", as_ref(e)?),
+            );
             // @decline-owed: a loop with a store write that is no in-place set, fusable scalar
             //   push to a pure path or admitted mint, or with a fn-ref call, a `yield` or a
             //   parallel block (`blocks_header_hoist`); a pushed root the body rebinds; beside
@@ -1980,7 +1999,10 @@ impl<'a> FnWriter<'a> {
             self.decls.push(format!(
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
-            self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            self.line(
+                ind,
+                &format!("{h} = loft_ph_of(cx, {}, {size});", as_ref(e)?),
+            );
             crate::rewrite_census::fired("R-PushRec", 1);
             frame.push((path, h, size, false));
         }
@@ -2065,10 +2087,13 @@ impl<'a> FnWriter<'a> {
         let val = self.expr(fp.val, ind)?;
         Ok(Some(match fp.op {
             "OpPushInt" => ("loft_ph_put8", format!("(uint64_t) {}", as_int(val)?)),
-            "OpPushFloat" => ("loft_ph_put8", format!("loft_f64_bits({})", as_float(val)?)),
+            "OpPushFloat" => (
+                "loft_ph_put8",
+                format!("loft_f64_bits(cx, {})", as_float(val)?),
+            ),
             "OpPushSingle" => (
                 "loft_ph_put4",
-                format!("loft_f32_bits({})", as_single(val)?),
+                format!("loft_f32_bits(cx, {})", as_single(val)?),
             ),
             "OpPushInt4" => ("loft_ph_put4", i4_bits(val)?),
             "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
@@ -2081,7 +2106,7 @@ impl<'a> FnWriter<'a> {
                 )?;
                 (
                     "loft_ph_put1",
-                    format!("loft_byte_raw({min}, {})", as_int(val)?),
+                    format!("loft_byte_raw(cx, {min}, {})", as_int(val)?),
                 )
             }
             _ => return Ok(None),
@@ -2118,7 +2143,7 @@ impl<'a> FnWriter<'a> {
             let count = Self::literal(count, "count")?;
             let size = Self::literal(size, "element size")?;
             return Ok(Some(E::new(
-                format!("loft_ph_prealloc(&{h}, {count}, {size})"),
+                format!("loft_ph_prealloc(cx, &{h}, {count}, {size})"),
                 K::Void,
             )));
         }
@@ -2140,7 +2165,7 @@ impl<'a> FnWriter<'a> {
             };
             return Ok(Some(E::new(
                 format!(
-                    "(LOFT_PROVED({same}({h}, {size}), {}), {put}(&{h}, {bits}))",
+                    "(LOFT_PROVED({same}(cx, {h}, {size}), {}), {put}(cx, &{h}, {bits}))",
                     c_string(&proof_at)
                 ),
                 K::Void,
@@ -2157,7 +2182,7 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         };
         if name == "OpFinishRecord" {
-            return Ok(Some(E::new(format!("loft_ph_finish(&{h})"), K::Void)));
+            return Ok(Some(E::new(format!("loft_ph_finish(cx, &{h})"), K::Void)));
         }
         let elem = self.cx.stores.content(t.vector_tp);
         let ptp = u16::try_from(Self::literal(&args[1], "type")?)
@@ -2167,13 +2192,13 @@ impl<'a> FnWriter<'a> {
         self.line(
             ind,
             &format!(
-                "{e} = (LOFT_PROVED(loft_ph_same({h}, {size}), {}), loft_ph_new(&{h}, {size}));",
+                "{e} = (LOFT_PROVED(loft_ph_same(cx, {h}, {size}), {}), loft_ph_new(cx, &{h}, {size}));",
                 c_string(&proof_at)
             ),
         );
         if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
             let (image, n) = self.cx.default_image(elem);
-            self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
+            self.line(ind, &format!("loft_fill(cx, {e}, {image}, {n});"));
         }
         Ok(Some(E::new(e, K::Ref)))
     }
@@ -2478,28 +2503,28 @@ impl<'a> FnWriter<'a> {
         let hi = as_int(hi)?;
         let lo = match p.next_var {
             Some(nx) => self.var(nx),
-            None => format!("loft_add({}, INT64_C(1))", self.var(p.index_var)),
+            None => format!("loft_add(cx, {}, INT64_C(1))", self.var(p.index_var)),
         };
         let incl = u8::from(p.inclusive);
         self.flush(ind);
         self.line(
             ind,
             &format!(
-                "loft_vec_reserve_more({pv}, loft_mul(loft_add(loft_sub({hi}, {lo}), INT64_C({incl})), INT64_C({})), {});",
+                "loft_vec_reserve_more(cx, {pv}, loft_mul(cx, loft_add(cx, loft_sub(cx, {hi}, {lo}), INT64_C({incl})), INT64_C({})), {});",
                 p.pushes, p.size
             ),
         );
-        self.line(ind, &format!("{w} = loft_win_of({pv}, {});", p.size));
+        self.line(ind, &format!("{w} = loft_win_of(cx, {pv}, {});", p.size));
         self.windows.push((p.path, w, pv, p.size));
         Ok(true)
     }
 
-    /// `@FR-R-PushFill`'s HASH CLAUSE, as native's `hash_reserve`: a counted loop inserting
+    /// `@FR-R-PushFill`'s HASH CLAUSE (@C150): a counted loop inserting
     /// records into one hash local (`hoist::hash_fill_loop`) reserves its table for
     /// `len(h) + inserts × trip count` before it runs, so the fill never rehashes on the way.
     /// A reservation is capacity only: length, entries and order are the plain fill's.  An
     /// absent hash, a count that does not fit and an empty range reserve nothing.
-    /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing, as on native.
+    /// `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_HASH_RESERVE=1` reserve nothing.
     fn hash_reserve(&mut self, lp: &Block, ind: usize) -> Result<(), String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         if self.gen_elem.is_some()
@@ -2516,7 +2541,7 @@ impl<'a> FnWriter<'a> {
         let hi = as_int(self.expr(hi, ind)?)?;
         let lo = match hf.next {
             Some(nx) => self.var(nx),
-            None => format!("loft_add({}, INT64_C(1))", self.var(hf.index)),
+            None => format!("loft_add(cx, {}, INT64_C(1))", self.var(hf.index)),
         };
         let incl = u8::from(hf.inclusive);
         let h = self.var(hf.hash);
@@ -2527,7 +2552,7 @@ impl<'a> FnWriter<'a> {
         self.line(
             ind,
             &format!(
-                "{{ int64_t pn = loft_add(loft_sub({hi}, {lo}), INT64_C({incl})); if (pn > 0 && pn != LOFT_NULL && {h}.store_nr != 0xFFFF && {h}.rec != 0) loft_hash_reserve(loft_types, {}, {h}, loft_add(loft_hash_len({h}), loft_mul(pn, INT64_C({})))); }}",
+                "{{ int64_t pn = loft_add(cx, loft_sub(cx, {hi}, {lo}), INT64_C({incl})); if (pn > 0 && pn != LOFT_NULL && {h}.store_nr != 0xFFFF && {h}.rec != 0) loft_hash_reserve(cx, loft_types, {}, {h}, loft_add(cx, loft_hash_len(cx, {h}), loft_mul(cx, pn, INT64_C({})))); }}",
                 hf.tp, hf.per_pass
             ),
         );
@@ -2592,7 +2617,7 @@ impl<'a> FnWriter<'a> {
         let v = self.expr(&vector, ind)?;
         self.line(ind, &format!("{pv} = {};", as_ref(v)?));
         self.flush(ind);
-        self.line(ind, &format!("{w} = loft_win_of({pv}, {size});"));
+        self.line(ind, &format!("{w} = loft_win_of(cx, {pv}, {size});"));
         crate::rewrite_census::fired("R-PushFill", 1);
         self.windows.push((path, w, pv, size));
         Ok(true)
@@ -2683,7 +2708,7 @@ impl<'a> FnWriter<'a> {
     fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
         let sub = self.fresh_default_tp(args)?;
         let (image, n) = self.cx.default_image(sub);
-        Some(format!("loft_fill({dst}, {image}, {n});"))
+        Some(format!("loft_fill(cx, {dst}, {image}, {n});"))
     }
 
     /// The type whose default image a null source writes into this copy's destination, or
@@ -2736,7 +2761,7 @@ impl<'a> FnWriter<'a> {
             let count = Self::literal(count, "count")?;
             let size = Self::literal(size, "element size")?;
             return Ok(Some(E::new(
-                format!("loft_win_prealloc(&{w}, {pv}, {count}, {size})"),
+                format!("loft_win_prealloc(cx, &{w}, {pv}, {count}, {size})"),
                 K::Void,
             )));
         }
@@ -2747,7 +2772,7 @@ impl<'a> FnWriter<'a> {
         {
             if name == "OpFinishRecord" {
                 return Ok(Some(E::new(
-                    format!("loft_win_finish(&{w}, {pv}, {size})"),
+                    format!("loft_win_finish(cx, &{w}, {pv}, {size})"),
                     K::Void,
                 )));
             }
@@ -2759,13 +2784,13 @@ impl<'a> FnWriter<'a> {
             self.line(
                 ind,
                 &format!(
-                    "{e} = (LOFT_PROVED(loft_win_same({w}, {pv}, {size}), {}), loft_win_slot(&{w}, {pv}, {size}));",
+                    "{e} = (LOFT_PROVED(loft_win_same(cx, {w}, {pv}, {size}), {}), loft_win_slot(cx, &{w}, {pv}, {size}));",
                     c_string(&site)
                 ),
             );
             if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                 let (image, n) = self.cx.default_image(elem);
-                self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
+                self.line(ind, &format!("loft_fill(cx, {e}, {image}, {n});"));
             }
             return Ok(Some(E::new(e, K::Ref)));
         }
@@ -2780,11 +2805,11 @@ impl<'a> FnWriter<'a> {
             "OpPushInt" => ("loft_win_put8", format!("(uint64_t) {}", as_int(val)?)),
             "OpPushFloat" => (
                 "loft_win_put8",
-                format!("loft_f64_bits({})", as_float(val)?),
+                format!("loft_f64_bits(cx, {})", as_float(val)?),
             ),
             "OpPushSingle" => (
                 "loft_win_put4",
-                format!("loft_f32_bits({})", as_single(val)?),
+                format!("loft_f32_bits(cx, {})", as_single(val)?),
             ),
             "OpPushInt4" => ("loft_win_put4", i4_bits(val)?),
             "OpPushCharacter" => ("loft_win_put4", as_char(val)?),
@@ -2797,7 +2822,7 @@ impl<'a> FnWriter<'a> {
                 )?;
                 (
                     "loft_win_put1",
-                    format!("loft_byte_raw({min}, {})", as_int(val)?),
+                    format!("loft_byte_raw(cx, {min}, {})", as_int(val)?),
                 )
             }
             _ => return Ok(None),
@@ -2805,7 +2830,7 @@ impl<'a> FnWriter<'a> {
         let site = format!("{}:{w}", data.def(self.d).original_name());
         Ok(Some(E::new(
             format!(
-                "(LOFT_PROVED(loft_win_same({w}, {pv}, {}), {}), {put}(&{w}, {pv}, {bits}))",
+                "(LOFT_PROVED(loft_win_same(cx, {w}, {pv}, {}), {}), {put}(cx, &{w}, {pv}, {bits}))",
                 fp.size,
                 c_string(&site)
             ),
@@ -2820,7 +2845,7 @@ impl<'a> FnWriter<'a> {
             Some(place) => {
                 let site = format!("{}:{held}", self.cx.data.def(self.d).original_name());
                 format!(
-                    "LOFT_PROVED(loft_vh_same({held}, {place}), {})",
+                    "LOFT_PROVED(loft_vh_same(cx, {held}, {place}), {})",
                     c_string(&site)
                 )
             }
@@ -2836,7 +2861,7 @@ impl<'a> FnWriter<'a> {
                 let Value::Int(fld) = a[1].unspan() else {
                     return None;
                 };
-                Some(format!("loft_field({}, {fld})", self.place_of(&a[0])?))
+                Some(format!("loft_field(cx, {}, {fld})", self.place_of(&a[0])?))
             }
             _ => None,
         }
@@ -2860,7 +2885,7 @@ impl<'a> FnWriter<'a> {
                 if *base {
                     h.clone()
                 } else {
-                    format!("loft_vh_fresh({h})")
+                    format!("loft_vh_fresh(cx, {h})")
                 }
             })
     }
@@ -2879,7 +2904,7 @@ impl<'a> FnWriter<'a> {
         }
         let path = crate::opt::writes::vector_path(self.cx.data, v)?;
         let (h, _) = self.push_head(&path)?;
-        Some(format!("loft_ph_vh(&{h})"))
+        Some(format!("loft_ph_vh(cx, &{h})"))
     }
 
     /// The reader of a field at a known address (`loft_pa_*`) for a store getter: a narrow
@@ -2956,7 +2981,7 @@ impl<'a> FnWriter<'a> {
                     //   held vector
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
-                        format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
+                        format!("({proof}, loft_vh_at_ref(cx, {h}, {size}, {i}))"),
                         K::Ref,
                     )));
                 }
@@ -2966,7 +2991,7 @@ impl<'a> FnWriter<'a> {
                     let i = as_wint(i)?;
                     let proof = self.held_proof(v, &h);
                     return Ok(Some(E::new(
-                        format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
+                        format!("({proof}, loft_vh_at_ref(cx, {h}, {size}, {i}))"),
                         K::Ref,
                     )));
                 }
@@ -2978,7 +3003,7 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
-                    format!("({proof}, loft_vh_get{at}{nn}({h}, {size}, {i}{tail}))"),
+                    format!("({proof}, loft_vh_get{at}{nn}(cx, {h}, {size}, {i}{tail}))"),
                     K::Ref,
                 )))
             }
@@ -3005,7 +3030,7 @@ impl<'a> FnWriter<'a> {
                     let proof = self.held_proof(vec, &held);
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
-                        format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
+                        format!("({proof}, {f}(cx, {held}, {size}, {i}, {fld}))"),
                         k,
                     )));
                 }
@@ -3027,7 +3052,7 @@ impl<'a> FnWriter<'a> {
                     let i = as_wint(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
-                        format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
+                        format!("({proof}, {f}(cx, {held}, {size}, {i}, {fld}))"),
                         k,
                     )));
                 }
@@ -3042,7 +3067,7 @@ impl<'a> FnWriter<'a> {
                     let (at, tail) = at(report);
                     return Ok(Some(E::new(
                         format!(
-                            "({proof}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{at}({held}, {size}, {i}, {fld}{tail}))"
+                            "({proof}, {fits} ? {raw}(cx, {held}, {size}, {i}, {fld}) : {checked}{at}(cx, {held}, {size}, {i}, {fld}{tail}))"
                         ),
                         k,
                     )));
@@ -3064,18 +3089,18 @@ impl<'a> FnWriter<'a> {
                 if at.is_empty()
                     && nn.is_empty()
                     && let Some(ph) = held
-                        .strip_prefix("loft_ph_vh(&")
+                        .strip_prefix("loft_ph_vh(cx, &")
                         .and_then(|r| r.strip_suffix(')'))
                 {
                     let f = f.replacen("loft_vh_", "loft_ph_", 1);
                     crate::rewrite_census::fired("R-Push/read", 1);
                     return Ok(Some(E::new(
-                        format!("({proof}, {f}(&{ph}, {size}, {index}, {fld}))"),
+                        format!("({proof}, {f}(cx, &{ph}, {size}, {index}, {fld}))"),
                         k,
                     )));
                 }
                 Ok(Some(E::new(
-                    format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
+                    format!("({proof}, {f}{at}{nn}(cx, {held}, {size}, {index}, {fld}{tail}))"),
                     k,
                 )))
             }
@@ -3106,11 +3131,11 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(vec, &held);
                 let addr = if let Some(i) = self.counter_index(idx, &held) {
                     crate::rewrite_census::fired("R-Base/counter", 1);
-                    format!("loft_vh_at_addr({held}, {size}, {i})")
+                    format!("loft_vh_at_addr(cx, {held}, {size}, {i})")
                 } else if self.version_raw(args) {
                     // `@FR-R-Version`'s fast twin: the leaf's precondition proved the index.
                     let index = as_wint(self.expr(idx, ind)?)?;
-                    format!("loft_vh_at_addr({held}, {size}, {index})")
+                    format!("loft_vh_at_addr(cx, {held}, {size}, {index})")
                 } else {
                     let index = self.expr(idx, ind)?;
                     let guard = self.guard_index(idx);
@@ -3120,16 +3145,16 @@ impl<'a> FnWriter<'a> {
                     };
                     let (at, tail) = at(report);
                     if guard == Some(true) {
-                        format!("loft_vh_at_addr({held}, {size}, {index})")
+                        format!("loft_vh_at_addr(cx, {held}, {size}, {index})")
                     } else {
-                        format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})")
+                        format!("loft_vh_addr{at}{nn}(cx, {held}, {size}, {index}{tail})")
                     }
                 };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
-                    format!("{f}({addr}, {fld}, {min})")
+                    format!("{f}(cx, {addr}, {fld}, {min})")
                 } else {
-                    format!("{f}({addr}, {fld})")
+                    format!("{f}(cx, {addr}, {fld})")
                 };
                 crate::rewrite_census::fired("R-Header/narrow", 1);
                 Ok(Some(E::new(format!("({proof}, {call})"), k)))
@@ -3184,7 +3209,7 @@ impl<'a> FnWriter<'a> {
                     let index = as_wint(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
-                        format!("({proof}, {put}({held}, {size}, {index}, {fld}, {value}))"),
+                        format!("({proof}, {put}(cx, {held}, {size}, {index}, {fld}, {value}))"),
                         K::Void,
                     )));
                 }
@@ -3197,7 +3222,7 @@ impl<'a> FnWriter<'a> {
                 };
                 Ok(Some(E::new(
                     format!(
-                        "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
+                        "({proof}, {f}{at}{nn}(cx, {held}, {size}, {index}, {fld}, {value}{tail}))"
                     ),
                     K::Void,
                 )))
@@ -3237,7 +3262,10 @@ impl<'a> FnWriter<'a> {
             // `@FR-R-BufferReturn`: a null answer is the null text in the caller's buffer.
             (CType::Void, Some(v)) if self.work_ret.is_some() && is_null_text(self.cx.data, v) => {
                 let w = self.text_dest(&Value::Var(self.work_ret.unwrap_or_default()))?;
-                self.line(ind, &format!("loft_text_set(&{w}, loft_null_text());"));
+                self.line(
+                    ind,
+                    &format!("loft_text_set(cx, &{w}, loft_null_text(cx));"),
+                );
                 self.epilogue(ind);
                 self.line(ind, "return;");
             }
@@ -3357,6 +3385,11 @@ impl<'a> FnWriter<'a> {
     /// `ops`, since it stays bound while the value is written.
     fn stmts_upto(&mut self, all: &[Value], end: usize, ind: usize) -> Result<(), String> {
         let ops = &all[..end];
+        // `@FR-R-DecodeView`'s structure clause: a positional body is its statements one by
+        // one — no run of them is rewritten as a whole, so each meets the clause's hooks.
+        if self.ps.is_some() {
+            return ops.iter().try_for_each(|o| self.stmt(o, ind));
+        }
         let mut i = 0;
         // The end of the push run a reservation was made for (`reserve_push_run`), and whether
         // a header frame is open for it.
@@ -3540,7 +3573,10 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         }
         let v = as_ref(self.expr(first.vector, ind)?)?;
-        let reserve = format!("loft_vec_reserve_run({v}, INT64_C({k}), {});", first.size);
+        let reserve = format!(
+            "loft_vec_reserve_run(cx, {v}, INT64_C({k}), {});",
+            first.size
+        );
         // The header clause: values computed from scalars and operators cannot move the store,
         // and the run's one growth is the reservation above — so its pushes write through one
         // header and its held record address (`loft_ph_putb*`), the growth step left as the
@@ -3561,11 +3597,11 @@ impl<'a> FnWriter<'a> {
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             let size = first.size;
-            self.line(ind, &format!("{h} = loft_ph_of({v}, {size});"));
+            self.line(ind, &format!("{h} = loft_ph_of(cx, {v}, {size});"));
             self.line(
                 ind,
                 &format!(
-                    "if (LOFT_UNLIKELY({h}.cap < {k} || {h}.len > {h}.cap - {k})) {h} = loft_ph_reserved({h}, INT64_C({k}), {size});"
+                    "if (LOFT_UNLIKELY({h}.cap < {k} || {h}.len > {h}.cap - {k})) {h} = loft_ph_reserved(cx, {h}, INT64_C({k}), {size});"
                 ),
             );
             self.push_heads
@@ -3662,12 +3698,15 @@ impl<'a> FnWriter<'a> {
         let proof_at = format!("{}:{h}", data.def(self.d).original_name());
         self.line(
             ind,
-            &format!("LOFT_PROVED({same}({h}, {size}), {});", c_string(&proof_at)),
+            &format!(
+                "LOFT_PROVED({same}(cx, {h}, {size}), {});",
+                c_string(&proof_at)
+            ),
         );
         self.line(
             ind,
             &format!(
-                "{run_put}_run(&{h}, {}, (const {}[]) {{ {} }});",
+                "{run_put}_run(cx, &{h}, {}, (const {}[]) {{ {} }});",
                 temps.len(),
                 Self::put_bits_type(put),
                 temps.join(", ")
@@ -3723,13 +3762,13 @@ impl<'a> FnWriter<'a> {
         });
         let h = format!("h{}", self.decls.len() + 1);
         self.decls
-            .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
+            .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0, 0 }};"));
         let base = if let Some((src, base)) = held {
             self.line(ind, &format!("{h} = {src};"));
             base
         } else {
             let var = self.var(d);
-            self.line(ind, &format!("{h} = loft_vh_of({var});"));
+            self.line(ind, &format!("{h} = loft_vh_of(cx, {var});"));
             true
         };
         self.headers.push(vec![(path, h, base)]);
@@ -3794,7 +3833,7 @@ impl<'a> FnWriter<'a> {
             self.decls.push(format!("uint8_t *{pa} = 0;"));
             self.decls.push(format!("int {pl} = 0;"));
             let rec = self.var(p);
-            self.line(1, &format!("{pa} = loft_rec_ptr({rec});"));
+            self.line(1, &format!("{pa} = loft_rec_ptr(cx, {rec});"));
             let writes = stmts.iter().any(|op| {
                 op.any_node(&mut |n| {
                     matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
@@ -3805,7 +3844,7 @@ impl<'a> FnWriter<'a> {
                 })
             });
             if writes {
-                self.line(1, &format!("{pl} = loft_rec_locked({rec});"));
+                self.line(1, &format!("{pl} = loft_rec_locked(cx, {rec});"));
             }
             if trace {
                 eprintln!(
@@ -3923,7 +3962,7 @@ impl<'a> FnWriter<'a> {
             })
         });
         if writes {
-            self.line(ind, &format!("{pl} = loft_rec_locked({rec});"));
+            self.line(ind, &format!("{pl} = loft_rec_locked(cx, {rec});"));
         }
         crate::rewrite_census::fired("R-RecPtr", 1);
         if text {
@@ -4264,7 +4303,7 @@ impl<'a> FnWriter<'a> {
                 {
                     crate::rewrite_census::fired("R-Base/grid", 1);
                     return Some(format!(
-                        "loft_grid_fits({held}, {}, {})",
+                        "loft_grid_fits(cx, {held}, {}, {})",
                         c_of(h)?,
                         c_of(w)?
                     ));
@@ -4360,18 +4399,18 @@ impl<'a> FnWriter<'a> {
     /// discharge's minted default); the address is the same either way, `LOFT_VERIFY` checks.
     fn record_ptr_line(&mut self, op: &Value, r: u16, pa: &str, rec: &str, ind: usize) {
         let Some((held, size, idx, ncc, raw)) = self.held_element_bind(op) else {
-            self.line(ind, &format!("{pa} = loft_rec_ptr({rec});"));
+            self.line(ind, &format!("{pa} = loft_rec_ptr(cx, {rec});"));
             return;
         };
         let addr = if raw {
-            format!("loft_vh_at_addr({held}, {size}, {idx})")
+            format!("loft_vh_at_addr(cx, {held}, {size}, {idx})")
         } else {
-            format!("loft_vh_addr({held}, {size}, {idx})")
+            format!("loft_vh_addr(cx, {held}, {size}, {idx})")
         };
         match ncc {
             Some(ncc) => self.line(
                 ind,
-                &format!("if (LOFT_LIKELY({ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr({rec});"),
+                &format!("if (LOFT_LIKELY({ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr(cx, {rec});"),
             ),
             None => self.line(ind, &format!("{pa} = {addr};")),
         }
@@ -4383,7 +4422,7 @@ impl<'a> FnWriter<'a> {
         self.line(
             ind,
             &format!(
-                "LOFT_PROVED({pa} == loft_rec_ptr({rec}), {});",
+                "LOFT_PROVED({pa} == loft_rec_ptr(cx, {rec}), {});",
                 c_string(&proof_site)
             ),
         );
@@ -4429,7 +4468,7 @@ impl<'a> FnWriter<'a> {
                     if crate::keys::width32_all()
                         && self.shapes[*index as usize] != CType::Int32 =>
                 {
-                    (format!("loft_n32({})", self.var(*index)), false)
+                    (format!("loft_n32(cx, {})", self.var(*index)), false)
                 }
                 (Value::Var(index), None) => (self.var(*index), false),
                 _ => return None,
@@ -4519,9 +4558,9 @@ impl<'a> FnWriter<'a> {
             let (f, k) = Self::pa_reader(name).ok_or("a read with no address reader")?;
             if args.len() == 3 {
                 let min = c_long(Self::literal(&args[2], "minimum")?);
-                return Ok(Some(E::new(format!("{f}({pa}, {off}, {min})"), k)));
+                return Ok(Some(E::new(format!("{f}(cx, {pa}, {off}, {min})"), k)));
             }
-            return Ok(Some(E::new(format!("{f}({pa}, {off})"), k)));
+            return Ok(Some(E::new(format!("{f}(cx, {pa}, {off})"), k)));
         }
         let val = self.expr(&args[2], ind)?;
         let (ty, val) = match name {
@@ -4540,7 +4579,7 @@ impl<'a> FnWriter<'a> {
         let root = self.var(root);
         Ok(Some(E::new(
             format!(
-                "loft_pa_set_at({pa}, {pl}, {off}, &{t}, sizeof({ty}), {root}, {})",
+                "loft_pa_set_at(cx, {pa}, {pl}, {off}, &{t}, sizeof({ty}), {root}, {})",
                 self.site()
             ),
             K::Void,
@@ -4569,14 +4608,17 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         }
         let off = Self::literal(fld, "field")?;
-        let read = format!("loft_pa_text({pa}, {off}, {}.store_nr)", self.var(*root));
+        let read = format!(
+            "loft_pa_text(cx, {pa}, {off}, {}.store_nr)",
+            self.var(*root)
+        );
         crate::rewrite_census::fired("R-RecPtr/text", 1);
         if std::mem::take(&mut self.field_view) {
             return Ok(Some(E::new(read, K::View)));
         }
         let t = self.temp(CType::Text);
-        self.line(ind, &format!("loft_text_free(&{t});"));
-        self.line(ind, &format!("{t} = loft_text_own({read});"));
+        self.line(ind, &format!("loft_text_free(cx, &{t});"));
+        self.line(ind, &format!("{t} = loft_text_own(cx, {read});"));
         Ok(Some(self.held(t, CType::Text)))
     }
 
@@ -4711,7 +4753,7 @@ impl<'a> FnWriter<'a> {
             let src = self.expr(site.src, ind)?;
             let src = as_ref(src)?;
             format!(
-                "loft_rotate_into({vec}, {src}, {elem_size}u, INT64_C({}), {plan_c}, {count})",
+                "loft_rotate_into(cx, {vec}, {src}, {elem_size}u, INT64_C({}), {plan_c}, {count})",
                 site.k
             )
         };
@@ -4739,13 +4781,13 @@ impl<'a> FnWriter<'a> {
             CType::Int => format!("{target} = LOFT_NULL;"),
             CType::Int32 => format!("{target} = LOFT_NULL32;"),
             CType::Bool => format!("{target} = LOFT_BOOL_NULL;"),
-            CType::Text => format!("loft_text_set(&{target}, loft_null_text());"),
-            CType::Ref => format!("{target} = loft_ref_null();"),
+            CType::Text => format!("loft_text_set(cx, &{target}, loft_null_text(cx));"),
+            CType::Ref => format!("{target} = loft_ref_null(cx);"),
             CType::Enum => format!("{target} = 255;"),
             CType::Float => format!("{target} = (double) NAN;"),
             CType::Single => format!("{target} = (float) NAN;"),
             CType::Char => format!("{target} = 0;"),
-            CType::Fn => format!("{target} = loft_fn_of(LOFT_NULL);"),
+            CType::Fn => format!("{target} = loft_fn_of(cx, LOFT_NULL);"),
             CType::Tr(_) | CType::TrVec => format!("{target} = 0;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
@@ -4764,7 +4806,7 @@ impl<'a> FnWriter<'a> {
         if let Value::Line(n) = v.unspan() {
             self.cur_line = *n;
             if self.cx.trace_sites && *n != 0 {
-                self.line(ind, &format!("loft_frame_site({n});"));
+                self.line(ind, &format!("loft_frame_site(cx, {n});"));
             }
             // A debugger's line table (`Cx::source_lines`): the statements that follow are this
             // loft line's.  A directive starts its own line; `statement_count` passes over it.
@@ -4785,7 +4827,7 @@ impl<'a> FnWriter<'a> {
             )
             && crate::opt::frame_calls::calls_a_frame(self.cx.data, v)
         {
-            self.line(ind, &format!("loft_frame_site({});", self.cur_line));
+            self.line(ind, &format!("loft_frame_site(cx, {});", self.cur_line));
         }
     }
 
@@ -4836,7 +4878,7 @@ impl<'a> FnWriter<'a> {
     /// A program write (`OpSet*`) as its `_at` setter: `f(args…, file, line)`.
     fn set_at(&self, f: &str, args: &[String]) -> E {
         E::new(
-            format!("{f}({}, {})", args.join(", "), self.site()),
+            format!("{f}(cx, {}, {})", args.join(", "), self.site()),
             K::Void,
         )
     }
@@ -5027,7 +5069,7 @@ impl<'a> FnWriter<'a> {
             let r = self.expr(d, ind + 1)?;
             self.line(
                 ind + 1,
-                &format!("loft_remove_claims(loft_types, {vt}, {});", as_ref(r)?),
+                &format!("loft_remove_claims(cx, loft_types, {vt}, {});", as_ref(r)?),
             );
         }
         self.stmt(level.else_v, ind + 1)?;
@@ -5101,6 +5143,14 @@ impl<'a> FnWriter<'a> {
 
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
+            return Ok(());
+        }
+        // `@FR-R-DecodeView`'s structure clause: a statement over positions.
+        if self.ps.is_some() && self.ps_stmt(v, ind)? {
+            return Ok(());
+        }
+        // `@FR-R-DecodeView`: a span local's holder, placed on its slice guard's fallback only.
+        if self.dv.is_some() && self.dv_stmt(v, ind)? {
             return Ok(());
         }
         // `@FR-R-SameRead`'s filed clause: what the previous statement filed reaches this one
@@ -5248,7 +5298,7 @@ impl<'a> FnWriter<'a> {
             .collect();
         for h in held {
             let v = self.var(var);
-            self.line(ind, &format!("{h} = loft_vh_of({v});"));
+            self.line(ind, &format!("{h} = loft_vh_of(cx, {v});"));
         }
     }
 
@@ -5278,7 +5328,7 @@ impl<'a> FnWriter<'a> {
                 .collect();
             for h in held {
                 let v = self.var(x);
-                self.line(ind, &format!("{h} = loft_vh_of({v});"));
+                self.line(ind, &format!("{h} = loft_vh_of(cx, {v});"));
             }
         }
     }
@@ -5359,7 +5409,7 @@ impl<'a> FnWriter<'a> {
         kept.sort_unstable();
         // `@FR-R-FnRefBuffer`'s frame clause: a function value's kept record store is parked
         // between calls of this function — taken before the loop, parked after it — so the
-        // target fills one store per thread rather than one per call.
+        // target fills one store rather than one per call.
         let d = self.d;
         let park = move |v: u16| -> String { format!("loft_park{d}_{v}") };
         let parked: Vec<u16> =
@@ -5375,10 +5425,9 @@ impl<'a> FnWriter<'a> {
             };
         for &v in &parked {
             let (var, slot) = (self.var(v), park(v));
-            self.decls.push(format!(
-                "static LOFT_TLS loft_ref {slot} = {{ 0xFFFF, 0, 0, 0 }};"
-            ));
-            self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
+            self.decls
+                .push(format!("static loft_ref {slot} = {{ 0xFFFF, 0, 0, 0 }};"));
+            self.line(ind, &format!("loft_park_take(cx, &{slot}, &{var});"));
         }
         if !parked.is_empty() {
             // @decline-owed: a binding that is an argument or carries an owner or entry
@@ -5395,9 +5444,9 @@ impl<'a> FnWriter<'a> {
             let var = self.var(v);
             if parked.contains(&v) {
                 let slot = park(v);
-                self.line(ind, &format!("loft_park_put(&{slot}, &{var});"));
+                self.line(ind, &format!("loft_park_put(cx, &{slot}, &{var});"));
             } else {
-                self.line(ind, &format!("loft_free_var(&{var});"));
+                self.line(ind, &format!("loft_free_var(cx, &{var});"));
             }
         }
         Ok(())
@@ -5518,14 +5567,14 @@ impl<'a> FnWriter<'a> {
                 .ap_loop_windows
                 .pop()
                 .expect("the window this loop opened");
-            self.line(ind, &format!("loft_win_sync({w});"));
+            self.line(ind, &format!("loft_win_sync(cx, {w});"));
         }
         for _ in 0..text_windows {
             let (_, place, w) = self
                 .text_windows
                 .pop()
                 .expect("the window this loop opened");
-            self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
+            self.line(ind, &format!("loft_tw_sync(cx, &{w}, &{place});"));
         }
         self.in_range.truncate(in_range_at.0);
         self.in_range_lens.truncate(in_range_at.1);
@@ -5542,19 +5591,19 @@ impl<'a> FnWriter<'a> {
             let (path, w, _, _) = self.windows.pop().expect("the window this loop opened");
             match self.window_parents.remove(&w) {
                 Some(parent) => self.line(ind, &format!("{parent} = {w};")),
-                None => self.line(ind, &format!("loft_win_sync({w});")),
+                None => self.line(ind, &format!("loft_win_sync(cx, {w});")),
             }
             // `@FR-R-Refresh`: an enclosing loop's push header on the same path did not see the
             // window's reservation or its pushes — the record may have moved and the length
             // grew — so it is derived again here, where the window gave the path back.
             if let Some((h, size)) = self.push_head(&path) {
-                self.line(ind, &format!("{h} = loft_ph_of({h}.v, {size});"));
+                self.line(ind, &format!("{h} = loft_ph_of(cx, {h}.v, {size});"));
             }
         }
         if held_file {
             // The loop's own end; its other exits gave the cursor back where they leave.
             let (_, c, _) = self.file_holds.pop().expect("the cursor this loop holds");
-            self.line(ind, &format!("loft_fcur_release(&{c}, {c}p);"));
+            self.line(ind, &format!("loft_fcur_release(cx, &{c}, {c}p);"));
         }
         Ok(())
     }
@@ -5621,7 +5670,7 @@ impl<'a> FnWriter<'a> {
             let w = format!("loft_aw{}", self.decls.len());
             self.decls.push(format!("loft_win {w};"));
             let xv = self.var(x);
-            self.line(ind, &format!("{w} = loft_win_of({xv}, {size});"));
+            self.line(ind, &format!("{w} = loft_win_of(cx, {xv}, {size});"));
             self.ap_loop_windows.push((x, w));
             crate::rewrite_census::fired("R-AppendTwin/loop-window", 1);
             opened += 1;
@@ -5698,7 +5747,7 @@ impl<'a> FnWriter<'a> {
             };
             let w = format!("loft_tw{}", self.decls.len());
             self.decls.push(format!("loft_tw {w};"));
-            self.line(ind, &format!("{w} = loft_tw_of(&{place});"));
+            self.line(ind, &format!("{w} = loft_tw_of(cx, &{place});"));
             self.text_windows.push((x, place, w));
             crate::rewrite_census::fired("R-PushFill/text", 1);
             opened += 1;
@@ -5759,20 +5808,20 @@ impl<'a> FnWriter<'a> {
             self.line(
                 ind,
                 &format!(
-                    "int64_t flhi_{s} = loft_fill_guard_end({hi}, {incl}, {n}, {base}); int64_t fllo_{s} = {lo};"
+                    "int64_t flhi_{s} = loft_fill_guard_end(cx, {hi}, {incl}, {n}, {base}); int64_t fllo_{s} = {lo};"
                 ),
             );
             self.line(
                 ind,
                 &format!(
-                    "int fill_{s} = loft_fill_span(flhi_{s}, fllo_{s}) >= {} && {func}({hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */",
+                    "int fill_{s} = loft_fill_span(cx, flhi_{s}, fllo_{s}) >= {} && {func}(cx, {hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */",
                     crate::opt::hoist::FILL_MIN_SPAN
                 ),
             );
         } else {
             self.line(
                 ind,
-                &format!("int fill_{s} = {func}({hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */"),
+                &format!("int fill_{s} = {func}(cx, {hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */"),
             );
         }
         Ok(Some(format!("fill_{s}")))
@@ -6287,10 +6336,10 @@ impl<'a> FnWriter<'a> {
                         .join(" || ")
                 ),
             );
-            self.line(ind + 1, &format!("{name} = loft_ref_null();"));
+            self.line(ind + 1, &format!("{name} = loft_ref_null(cx);"));
             self.line(
                 ind + 1,
-                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"),
             );
             self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
             if rebind_owned {
@@ -6305,7 +6354,7 @@ impl<'a> FnWriter<'a> {
                 }
                 self.line(
                     ind,
-                    &format!("if ({}) loft_free_ref({old});", keep.join(" && ")),
+                    &format!("if ({}) loft_free_ref(cx, {old});", keep.join(" && ")),
                 );
             }
             self.flush(ind);
@@ -6326,7 +6375,7 @@ impl<'a> FnWriter<'a> {
         let witnessed = self.vars.owner_witness(var).is_some();
         if (first && witnessed) || (!first && !self.vars.owns_displaced_store(var, x, self.cx.data))
         {
-            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(ind, &format!("{name} = loft_ref_null(cx);"));
         }
     }
 
@@ -6380,7 +6429,10 @@ impl<'a> FnWriter<'a> {
             let name = var_name(self.vars.name(var), var);
             self.line(
                 ind,
-                &format!("loft_slot_move(loft_types, {tp}, {name}, {});", as_ref(e)?),
+                &format!(
+                    "loft_slot_move(cx, loft_types, {tp}, {name}, {});",
+                    as_ref(e)?
+                ),
             );
             self.flush(ind);
             return Ok(());
@@ -6393,12 +6445,12 @@ impl<'a> FnWriter<'a> {
             self.line(
                 ind,
                 &format!(
-                    "loft_slot_write(loft_types, {tp}, &{raw}, {r}, {});",
+                    "loft_slot_write(cx, loft_types, {tp}, &{raw}, {r}, {});",
                     u8::from(owned)
                 ),
             );
             if displaces {
-                self.line(ind, &format!("loft_free_displaced({old}, {raw});"));
+                self.line(ind, &format!("loft_free_displaced(cx, {old}, {raw});"));
             }
             self.flush(ind);
             return Ok(());
@@ -6408,7 +6460,7 @@ impl<'a> FnWriter<'a> {
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
             self.line(ind, &format!("{name} = {r};"));
-            self.line(ind, &format!("loft_free_displaced({old}, {name});"));
+            self.line(ind, &format!("loft_free_displaced(cx, {old}, {name});"));
         } else {
             self.line(ind, &format!("{name} = {r};"));
         }
@@ -6442,13 +6494,28 @@ impl<'a> FnWriter<'a> {
             && self.lazy_vector(r, "OpGetVectorNullable").is_none()
             && !matches!(r.unspan(), Value::Call(_, ra) if ra.first().is_some_and(|v| self.split_tab_of(v).is_some()))
         {
+            // `@FR-R-DecodeView`'s structure clause: a text leaf of a position.
+            if self.ps.is_some() {
+                self.field_view = true;
+                let e = self.ps_operator(*d, args, ind);
+                self.field_view = false;
+                if let Some(e) = e? {
+                    let view = as_view(e)?;
+                    return self.borrowed_assign(var, x, &view, ind);
+                }
+            }
+            let span = self.dv_text_spare(r, fld);
             let fld = Self::literal(fld, "field")?;
             let before = self.pending.len();
             let r = self.expr(r, ind)?;
             if self.pending.len() != before {
                 return Err("a borrowed text would view a temporary".into());
             }
-            let view = format!("loft_get_text({}, {fld})", as_ref(r)?);
+            // `@FR-R-DecodeView`: a span text field views the frame's bytes.
+            let view = match span {
+                Some(spare) => format!("loft_dv_text(cx, {}, {fld}, {spare})", as_ref(r)?),
+                None => format!("loft_get_text(cx, {}, {fld})", as_ref(r)?),
+            };
             return self.borrowed_assign(var, x, &view, ind);
         }
         let before = self.pending.len();
@@ -6492,7 +6559,7 @@ impl<'a> FnWriter<'a> {
         self.line(
             ind,
             &format!(
-                "{{ loft_str lt = {view}; if ({}) {name} = lt; else {{ loft_text_set(&loft_own{var}, lt); {name} = loft_view(&loft_own{var}); }} }}",
+                "{{ loft_str lt = {view}; if ({}) {name} = lt; else {{ loft_text_set(cx, &loft_own{var}, lt); {name} = loft_view(cx, &loft_own{var}); }} }}",
                 tests.join(" && ")
             ),
         );
@@ -6522,7 +6589,7 @@ impl<'a> FnWriter<'a> {
             ("OpGetText", [elem, _]) => {
                 let vec = self.lazy_vector(elem, "OpGetVectorNullable")?;
                 Some(E::new(
-                    format!("loft_ls_next(&ls{vec}, &lsd{vec})"),
+                    format!("loft_ls_next(cx, &ls{vec}, &lsd{vec})"),
                     K::View,
                 ))
             }
@@ -6560,7 +6627,7 @@ impl<'a> FnWriter<'a> {
         self.line(
             ind,
             &format!(
-                "loft_stab_fill(&st{var}, {view}, {}u);",
+                "loft_stab_fill(cx, &st{var}, {view}, {}u);",
                 u32::from(tab.separator)
             ),
         );
@@ -6618,9 +6685,13 @@ impl<'a> FnWriter<'a> {
                 // `@FR-E-Report` — the unguarded read reports an index naming no part
                 // (`split_table_get_or_raise`).
                 let code = if report {
-                    format!("loft_stab_get_at(&st{t}, {}, {})", as_int(i)?, self.site())
+                    format!(
+                        "loft_stab_get_at(cx, &st{t}, {}, {})",
+                        as_int(i)?,
+                        self.site()
+                    )
                 } else {
-                    format!("loft_stab_get(&st{t}, {})", as_int(i)?)
+                    format!("loft_stab_get(cx, &st{t}, {})", as_int(i)?)
                 };
                 Ok(Some(E::new(code, K::View)))
             }
@@ -6670,13 +6741,13 @@ impl<'a> FnWriter<'a> {
         let e = self.expr(src, ind)?;
         let view = as_view(e)?;
         if in_place {
-            self.line(ind, &format!("ls{var} = loft_ls_of({view}, {sep}u);"));
+            self.line(ind, &format!("ls{var} = loft_ls_of(cx, {view}, {sep}u);"));
         } else {
             let own = self.temp(CType::Text);
-            self.line(ind, &format!("loft_text_set(&{own}, {view});"));
+            self.line(ind, &format!("loft_text_set(cx, &{own}, {view});"));
             self.line(
                 ind,
-                &format!("ls{var} = loft_ls_of(loft_view(&{own}), {sep}u);"),
+                &format!("ls{var} = loft_ls_of(cx, loft_view(cx, &{own}), {sep}u);"),
             );
         }
         self.line(ind, &format!("lsd{var} = 0;"));
@@ -6876,7 +6947,7 @@ impl<'a> FnWriter<'a> {
             // and Rust writers already decline there.  `LOFT_C_NULL_FREES_ENTRY=1` frees it.
             let null_keeps_entry = match self.vars.entry_witness(var) {
                 Some(witness) if !crate::keys::c_null_frees_entry() => format!(
-                    "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {}.store_nr) {name} = loft_ref_null(); else ",
+                    "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {}.store_nr) {name} = loft_ref_null(cx); else ",
                     self.var(witness)
                 ),
                 _ => String::new(),
@@ -6921,17 +6992,17 @@ impl<'a> FnWriter<'a> {
                     self.line(
                         ind,
                         &format!(
-                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind(loft_types, {bytes}, {r}, &{name}))) {{ \
-                             loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
-                             if ({keep}) loft_free_ref({r}); }}"
+                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind(cx, loft_types, {bytes}, {r}, &{name}))) {{ \
+                             loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); \
+                             if ({keep}) loft_free_ref(cx, {r}); }}"
                         ),
                     );
                 } else {
                     self.line(
                         ind,
                         &format!(
-                            "{null_keeps_entry}{{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
-                             if ({keep}) loft_free_ref({r}); }}"
+                            "{null_keeps_entry}{{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); \
+                             if ({keep}) loft_free_ref(cx, {r}); }}"
                         ),
                     );
                 }
@@ -6939,7 +7010,7 @@ impl<'a> FnWriter<'a> {
                 self.line(
                     ind,
                     &format!(
-                        "{null_keeps_entry}loft_bind_copy(loft_types, {bytes}, &{name}, {r});"
+                        "{null_keeps_entry}loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"
                     ),
                 );
             }
@@ -6970,7 +7041,7 @@ impl<'a> FnWriter<'a> {
             self.fresh_unless_owned(var, x, first, &name, ind);
             self.line(
                 ind,
-                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"),
             );
             self.flush(ind);
             return Ok(());
@@ -6986,14 +7057,14 @@ impl<'a> FnWriter<'a> {
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
             self.line(ind, &format!("{old} = {name};"));
-            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(ind, &format!("{name} = loft_ref_null(cx);"));
             self.line(
                 ind,
-                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"),
             );
             self.line(
                 ind,
-                &format!("if ({old}.store_nr != 0xFFFF) loft_free_ref({old});"),
+                &format!("if ({old}.store_nr != 0xFFFF) loft_free_ref(cx, {old});"),
             );
             self.flush(ind);
             return Ok(());
@@ -7015,7 +7086,7 @@ impl<'a> FnWriter<'a> {
             self.fresh_unless_owned(var, x, first, &name, ind);
             self.line(
                 ind,
-                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {src});"),
+                &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {src});"),
             );
             return Ok(());
         }
@@ -7093,7 +7164,7 @@ impl<'a> FnWriter<'a> {
         self.null_into(&absent, c, ind);
         let e = self.expr(x, ind)?;
         Ok(Some(format!(
-            "({} *) loft_place({}, &{absent})",
+            "({} *) loft_place(cx, {}, &{absent})",
             held(c),
             as_ref(e)?
         )))
@@ -7143,10 +7214,10 @@ impl<'a> FnWriter<'a> {
         let size = self.cx.stores.enum_parent_size(known);
         self.cx.describe_type(known);
         let name = self.var(var);
-        self.line(ind, &format!("{name} = loft_ref_null();"));
+        self.line(ind, &format!("{name} = loft_ref_null(cx);"));
         self.line(
             ind,
-            &format!("loft_database_typed(&{name}, {size}, {known});"),
+            &format!("loft_database_typed(cx, &{name}, {size}, {known});"),
         );
     }
 
@@ -7155,7 +7226,7 @@ impl<'a> FnWriter<'a> {
     fn keyed_null(&mut self, var: u16, first: bool, ind: usize) {
         let name = self.var(var);
         if first {
-            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(ind, &format!("{name} = loft_ref_null(cx);"));
         }
         if !(self.vars.is_inline_ref(var) || self.vars.is_overwritten_view(var)) {
             // The store is minted AS the collection type, as `gen_keyed_null`'s `OpDatabase`
@@ -7164,9 +7235,12 @@ impl<'a> FnWriter<'a> {
                 Some(tp) => {
                     let size = self.cx.stores.enum_parent_size(tp);
                     self.cx.describe_type(tp);
-                    self.line(ind, &format!("loft_database_typed(&{name}, {size}, {tp});"));
+                    self.line(
+                        ind,
+                        &format!("loft_database_typed(cx, &{name}, {size}, {tp});"),
+                    );
                 }
-                None => self.line(ind, &format!("loft_database(&{name}, 8);")),
+                None => self.line(ind, &format!("loft_database(cx, &{name}, 8);")),
             }
         }
     }
@@ -7203,7 +7277,7 @@ impl<'a> FnWriter<'a> {
         );
         let clos = format!("{}.clos", self.var(*fv));
         self.line(ind, &format!("{dst} = {name};"));
-        self.line(ind, &format!("{since} = (int64_t) loft_stores_allocated;"));
+        self.line(ind, &format!("{since} = (int64_t) cx->stores_allocated;"));
         // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
         // an answer in that store is the binding already.
         let in_place = self.lr.fnref_bufs.contains(&var) && self.lr_kept(var);
@@ -7225,17 +7299,17 @@ impl<'a> FnWriter<'a> {
         }
         self.line(
             ind,
-            &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
+            &format!("if (loft_fnref_minted(cx, {src}, (uint64_t) {since}, {clos})) {{"),
         );
         // The binding is the adopted store's one owner (`cr_fnref_adopt`).
-        self.line(ind + 1, &format!("loft_fnref_adopt({src});"));
+        self.line(ind + 1, &format!("loft_fnref_adopt(cx, {src});"));
         // A parameter's displaced store is the caller's (a promoted return buffer the caller
         // pools, `@FR-R-Reuse`): the adopt only rebinds it, as `State::bind_fn_ref_result` does.
         if !witnessed && !self.params[var as usize] {
             self.line(
                 ind + 1,
                 &format!(
-                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr) loft_free_ref({dst});"
+                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr) loft_free_ref(cx, {dst});"
                 ),
             );
         } else if !witnessed && let Some(w) = self.vars.entry_witness(var) {
@@ -7245,7 +7319,7 @@ impl<'a> FnWriter<'a> {
             self.line(
                 ind + 1,
                 &format!(
-                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr && {dst}.store_nr != {}.store_nr) loft_free_ref({dst});",
+                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr && {dst}.store_nr != {}.store_nr) loft_free_ref(cx, {dst});",
                     self.var(w)
                 ),
             );
@@ -7253,15 +7327,15 @@ impl<'a> FnWriter<'a> {
         self.line(ind + 1, &format!("{name} = {src};"));
         self.line(ind, "} else {");
         if witnessed && !first {
-            self.line(ind + 1, &format!("{name} = loft_ref_null();"));
+            self.line(ind + 1, &format!("{name} = loft_ref_null(cx);"));
         }
         self.line(
             ind + 1,
-            &format!("loft_database_typed(&{name}, {size}, {tp});"),
+            &format!("loft_database_typed(cx, &{name}, {size}, {tp});"),
         );
         self.line(
             ind + 1,
-            &format!("loft_copy_record(loft_types, {tp}, {src}, {name}, 4);"),
+            &format!("loft_copy_record(cx, loft_types, {tp}, {src}, {name}, 4);"),
         );
         self.line(ind, "}");
         self.flush(ind);
@@ -7324,7 +7398,7 @@ impl<'a> FnWriter<'a> {
         if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
             let _ = write!(keep, " && {old}.store_nr != {}.store_nr", self.var(buf));
         }
-        self.line(ind, &format!("if ({keep}) loft_free_ref({old});"));
+        self.line(ind, &format!("if ({keep}) loft_free_ref(cx, {old});"));
         self.flush(ind);
         Ok(true)
     }
@@ -7459,9 +7533,9 @@ impl<'a> FnWriter<'a> {
             //   (`clear_releases_nothing`): each takes the plain length reset; at run time, a
             //   store whose root is not the one-field vector wrapper keeps the reset
             crate::rewrite_census::fired("H-ClearRelease/plain", 1);
-            format!("loft_vec_clear({buf})")
+            format!("loft_vec_clear(cx, {buf})")
         } else {
-            format!("loft_vec_clear_release(loft_types, loft_ntypes, {buf})")
+            format!("loft_vec_clear_release(cx, loft_types, loft_ntypes, {buf})")
         };
         self.line(
             ind,
@@ -7505,6 +7579,11 @@ impl<'a> FnWriter<'a> {
         c: CType,
         ind: usize,
     ) -> Result<(), String> {
+        // `@FR-R-DecodeView`'s structure clause: a return over positions in value position is
+        // written as the statement it is.
+        if self.ps.is_some() && self.ps_stmt(v, ind)? {
+            return Ok(());
+        }
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -7557,7 +7636,7 @@ impl<'a> FnWriter<'a> {
                 self.line(
                     ind,
                     &format!(
-                        "{target} = loft_fn_make({}, {});",
+                        "{target} = loft_fn_make(cx, {}, {});",
                         as_int(d)?,
                         as_ref(clos)?
                     ),
@@ -7621,7 +7700,7 @@ impl<'a> FnWriter<'a> {
                 if c == CType::Text
                     && let Some(t) = self.pending_text_temp(&e.code)
                 {
-                    self.line(ind, &format!("loft_text_move(&{target}, &{t});"));
+                    self.line(ind, &format!("loft_text_move(cx, &{target}, &{t});"));
                     return Ok(());
                 }
                 // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer;
@@ -7629,12 +7708,12 @@ impl<'a> FnWriter<'a> {
                 if c == CType::Text
                     && let Some(w) = e
                         .code
-                        .strip_prefix("loft_view(&")
+                        .strip_prefix("loft_view(cx, &")
                         .and_then(|r| r.strip_suffix(')'))
                     && self.pending_work.iter().any(|p| p == w)
                     && w != target
                 {
-                    self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    self.line(ind, &format!("loft_text_move(cx, &{target}, &{w});"));
                     // @decline-owed: a callee with more than one `&text` parameter, or a
                     //   `return` or tail that is not the buffer, a block ending in it or the
                     //   null text (`answers_work`); a signature the twin does not take
@@ -7645,7 +7724,7 @@ impl<'a> FnWriter<'a> {
                     return Ok(());
                 }
                 let s = match c {
-                    CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
+                    CType::Text => format!("loft_text_set(cx, &{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
                     c => {
                         // An arm that keeps the value (`lo = if lo < 0 { lo + n } else { lo }`)
@@ -7672,7 +7751,7 @@ impl<'a> FnWriter<'a> {
         self.tuple_text_leaves(target, id, &mut old);
         let mut frees = String::new();
         for t in &old {
-            let _ = write!(frees, " loft_text_free(&{t});");
+            let _ = write!(frees, " loft_text_free(cx, &{t});");
         }
         let value = as_shape(self.cx, e, c)?;
         self.line(
@@ -7772,7 +7851,10 @@ impl<'a> FnWriter<'a> {
     /// member at any depth (its texts the destination's own), anything else assigned.
     pub(super) fn copy_member(&mut self, from: &str, to: &str, c: CType, ind: usize) {
         match c {
-            CType::Text => self.line(ind, &format!("loft_text_set(&{to}, loft_view(&{from}));")),
+            CType::Text => self.line(
+                ind,
+                &format!("loft_text_set(cx, &{to}, loft_view(cx, &{from}));"),
+            ),
             CType::Tuple(id) => {
                 for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.copy_member(&format!("{from}.f{j}"), &format!("{to}.f{j}"), e, ind);
@@ -7985,15 +8067,15 @@ impl<'a> FnWriter<'a> {
             Value::Boolean(b) => Ok(E::new(if *b { "1" } else { "0" }, K::Cond)),
             Value::Enum(v, _) => Ok(E::new(format!("(uint8_t) {v}"), K::Enum)),
             Value::Float(f) => Ok(E::new(
-                format!("loft_f64(UINT64_C({:#x}))", f.to_bits()),
+                format!("loft_f64(cx, UINT64_C({:#x}))", f.to_bits()),
                 K::Float,
             )),
             Value::Single(f) => Ok(E::new(
-                format!("loft_f32(UINT32_C({:#x}))", f.to_bits()),
+                format!("loft_f32(cx, UINT32_C({:#x}))", f.to_bits()),
                 K::Single,
             )),
             Value::Text(s) => Ok(E::new(
-                format!("loft_lit({}, {})", c_string(s), s.len()),
+                format!("loft_lit(cx, {}, {})", c_string(s), s.len()),
                 K::View,
             )),
             // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and
@@ -8023,7 +8105,7 @@ impl<'a> FnWriter<'a> {
                 let name = self.var(*var);
                 Ok(match self.shapes[*var as usize] {
                     CType::Text if self.text_held(*var) => {
-                        E::new(format!("loft_view(&{name})"), K::View)
+                        E::new(format!("loft_view(cx, &{name})"), K::View)
                     }
                     CType::Void => return Err("a void variable".into()),
                     c => E::new(name, kind_of(c)),
@@ -8033,11 +8115,19 @@ impl<'a> FnWriter<'a> {
                 let c = self.shape_of(&Value::TupleGet(*var, *i))?;
                 let place = format!("{}.f{i}", self.var(*var));
                 if c == CType::Text {
-                    return Ok(E::new(format!("loft_view(&{place})"), K::View));
+                    return Ok(E::new(format!("loft_view(cx, &{place})"), K::View));
                 }
                 Ok(E::new(place, kind_of(c)))
             }
             Value::Call(d, args) => {
+                // `@FR-R-DecodeView`'s structure clause: a read of a position.
+                if let Some(e) = self.ps_operator(*d, args, ind)? {
+                    return Ok(e);
+                }
+                // `@FR-R-DecodeView`: a span field's write, a span text's read.
+                if let Some(e) = self.dv_operator(*d, args, ind)? {
+                    return Ok(e);
+                }
                 // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
                 if let Some(e) = self.apv_operator(self.cx.data.def(*d).name(), v, args, ind)? {
                     return Ok(e);
@@ -8057,7 +8147,7 @@ impl<'a> FnWriter<'a> {
                     Ok(E::new(f, K::Fn))
                 } else {
                     Ok(E::new(
-                        format!("loft_fn_make(INT64_C({d}), {})", self.var(*clos)),
+                        format!("loft_fn_make(cx, INT64_C({d}), {})", self.var(*clos)),
                         K::Fn,
                     ))
                 }
@@ -8244,7 +8334,7 @@ impl<'a> FnWriter<'a> {
     /// text temporary this statement made ([`Self::held`]) — a value nothing else names, which a
     /// text target may take by a move.  `None` under `LOFT_NO_C_TEXT_MOVE=1`.
     fn pending_text_temp(&self, code: &str) -> Option<String> {
-        let t = code.strip_prefix("loft_view(&")?.strip_suffix(')')?;
+        let t = code.strip_prefix("loft_view(cx, &")?.strip_suffix(')')?;
         if !self.pending.iter().any(|p| p == t)
             || !self.temps.iter().any(|(n, c)| n == t && *c == CType::Text)
             || std::env::var("LOFT_NO_C_TEXT_MOVE").is_ok_and(|v| v != "0")
@@ -8259,7 +8349,7 @@ impl<'a> FnWriter<'a> {
         match c {
             CType::Text => {
                 self.pending.push(t.clone());
-                E::new(format!("loft_view(&{t})"), K::View)
+                E::new(format!("loft_view(cx, &{t})"), K::View)
             }
             CType::Void => E::new("(void) 0", K::Void),
             c => E::new(t, kind_of(c)),
@@ -8395,7 +8485,7 @@ impl<'a> FnWriter<'a> {
         };
         if later_writes && reads_local && value.kind == K::View {
             let temp = self.temp(CType::Text);
-            self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
+            self.line(ind, &format!("loft_text_set(cx, &{temp}, {});", value.code));
             return Ok(self.held(temp, CType::Text));
         }
         let simple = match operand.unspan() {
@@ -8525,7 +8615,7 @@ impl<'a> FnWriter<'a> {
         if route == "n_env_variables" {
             // The element is the stdlib's `EnvVariable`, sized from this program's table.
             let size = self.cx.stores.size(self.cx.stores.name("EnvVariable"));
-            return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
+            return Ok(E::new(format!("loft_env_variables(cx, {size})"), K::Ref));
         }
         let callee = def.original_name();
         // `@FR-R-ValueRecord` — an admitted callee answers its struct and takes no buffer; a
@@ -8678,6 +8768,11 @@ impl<'a> FnWriter<'a> {
             if self.apr_twin_call(d, args) {
                 mask |= super::APR_BIT;
             }
+            // `@FR-R-DecodeView`: a region function called from a twin or a root is its `__dv`
+            // twin, with whatever other variant this call takes.
+            if self.dv_call(d) {
+                mask |= super::DV_BIT;
+            }
         }
         let tr_named = tr_name.is_some();
         let name = if let Some(n) = tr_name {
@@ -8747,7 +8842,7 @@ impl<'a> FnWriter<'a> {
             _ if callee_fast => {
                 cx.request_twin(d, mask | super::VF_BIT);
                 let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
-                format!("{fast}({})", xs.join(", "))
+                format!("{fast}({})", super::cx_args(&xs))
             }
             // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
             Some(flag)
@@ -8755,19 +8850,21 @@ impl<'a> FnWriter<'a> {
             {
                 cx.request_twin(d, mask | super::VF_BIT);
                 let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
-                let xs = xs.join(", ");
+                let xs = super::cx_args(&xs);
                 if self.versions_hold.contains(flag) {
                     format!("{fast}({xs})")
                 } else {
                     format!("({flag} ? {fast}({xs}) : {name}({xs}))")
                 }
             }
-            _ => format!("{name}({})", xs.join(", ")),
+            _ => format!("{name}({})", super::cx_args(&xs)),
         };
         if let Some((w, x, size)) = fresh {
             let t = self.temp(CType::Ref);
             return Ok(E::new(
-                format!("({w} = loft_win_of({x}, {size}), {t} = {call}, loft_win_sync({w}), {t})"),
+                format!(
+                    "({w} = loft_win_of(cx, {x}, {size}), {t} = {call}, loft_win_sync(cx, {w}), {t})"
+                ),
                 K::Ref,
             ));
         }
@@ -8791,19 +8888,19 @@ impl<'a> FnWriter<'a> {
             && xs.get(p).is_some_and(|x| plain_place(x))
             && let Some(twin) = cx.work_twin(d)
         {
-            self.line(ind, &format!("{twin}({});", xs.join(", ")));
+            self.line(ind, &format!("{twin}({});", super::cx_args(&xs)));
             crate::rewrite_census::fired("R-BufferReturn", 1);
             if call_site_buffer(&args[p])
                 && let Some(w) = xs[p].strip_prefix('&')
             {
                 self.pending_work.push(w.to_string());
             }
-            return Ok(E::new(format!("loft_view({})", xs[p]), K::View));
+            return Ok(E::new(format!("loft_view(cx, {})", xs[p]), K::View));
         }
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_free(&{t});"));
+                self.line(ind, &format!("loft_text_free(cx, &{t});"));
                 self.line(ind, &format!("{t} = {call};"));
                 self.held(t, CType::Text)
             }
@@ -9001,7 +9098,7 @@ impl<'a> FnWriter<'a> {
                 // A bare null takes the parameter's shape.
                 Value::Null if shapes[i] != CType::Void => {
                     xs[i] = match shapes[i] {
-                        CType::Text => "loft_null_text()".into(),
+                        CType::Text => "loft_null_text(cx)".into(),
                         c => format!("(({}) {})", held(c), self.cx.initial(c)),
                     };
                 }
@@ -9078,14 +9175,14 @@ impl<'a> FnWriter<'a> {
         let call = if let Some(b) = buf {
             cx.fn_sigs_buf.borrow_mut().insert(sig);
             list.push(b);
-            format!("loft_call{sig}b({})", list.join(", "))
+            format!("loft_call{sig}b(cx, {})", list.join(", "))
         } else {
-            format!("loft_call{sig}({})", list.join(", "))
+            format!("loft_call{sig}(cx, {})", list.join(", "))
         };
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_free(&{t});"));
+                self.line(ind, &format!("loft_text_free(cx, &{t});"));
                 self.line(ind, &format!("{t} = {call};"));
                 self.held(t, CType::Text)
             }
@@ -9343,9 +9440,14 @@ impl<'a> FnWriter<'a> {
         }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
-            "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
-            "OpMinInt" | "OpMinLong" | "OpMinIntNullable" => Some("loft_sub"),
-            "OpMulInt" | "OpMulLong" | "OpMulIntNullable" => Some("loft_mul"),
+            // `@FR-E-Report` — the undefended forms surface an overflow under
+            // `--dev-soft-halt`; the `Nullable` forms, the operand of `??`, say nothing.
+            "OpAddInt" | "OpAddLong" => Some("loft_add_r"),
+            "OpMinInt" | "OpMinLong" => Some("loft_sub_r"),
+            "OpMulInt" | "OpMulLong" => Some("loft_mul_r"),
+            "OpAddIntNullable" => Some("loft_add"),
+            "OpMinIntNullable" => Some("loft_sub"),
+            "OpMulIntNullable" => Some("loft_mul"),
             // `@FR-E-Report` — the unguarded division reports a zero divisor; its `Nullable`
             // twin, the operand of `??`, says nothing.
             "OpDivInt" | "OpDivLong" => Some("loft_div_at"),
@@ -9367,7 +9469,7 @@ impl<'a> FnWriter<'a> {
                 String::new()
             };
             return Ok(E::new(
-                format!("{f}({}, {}{site})", as_int(a)?, as_int(b)?),
+                format!("{f}(cx, {}, {}{site})", as_int(a)?, as_int(b)?),
                 K::Int,
             ));
         }
@@ -9421,7 +9523,7 @@ impl<'a> FnWriter<'a> {
         {
             let a = self.expr(a, ind)?;
             return Ok(E::new(
-                format!("loft_s2i32_at({}, {})", as_single(a)?, self.site()),
+                format!("loft_s2i32_at(cx, {}, {})", as_single(a)?, self.site()),
                 K::Int32,
             ));
         }
@@ -9450,13 +9552,17 @@ impl<'a> FnWriter<'a> {
                 };
                 if a.kind == K::Int32 && b.kind == K::Int32 {
                     return Ok(E::new(
-                        format!("{op32}{at}({}, {}{site})", a.code, b.code),
+                        format!("{op32}{at}(cx, {}, {}{site})", a.code, b.code),
                         K::Int32,
                     ));
                 }
                 let wide = &op32[..op32.len() - 2];
                 return Ok(E::new(
-                    format!("loft_n32({wide}{at}({}, {}{site}))", as_int(a)?, as_int(b)?),
+                    format!(
+                        "loft_n32(cx, {wide}{at}(cx, {}, {}{site}))",
+                        as_int(a)?,
+                        as_int(b)?
+                    ),
                     K::Int32,
                 ));
             }
@@ -9464,7 +9570,7 @@ impl<'a> FnWriter<'a> {
         let e = self.expr(x, ind)?;
         if super::no_c_int32() {
             return Ok(E::new(
-                format!("loft_w64(loft_n32({}))", as_int(e)?),
+                format!("loft_w64(cx, loft_n32(cx, {}))", as_int(e)?),
                 K::Int,
             ));
         }
@@ -9744,9 +9850,8 @@ impl<'a> FnWriter<'a> {
 
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
     /// integer operator or a float compare — the processor's wrapping arithmetic, each wrap defined
-    /// (`loft_wrap_*` in `loft_rt.h`) — for exactly the operators and operand shapes
-    /// `generation::ops::int_arith::probe_form` gives the Rust generator, so the C and Rust
-    /// ship lanes measure the same tier.  The `Nullable` forms and the null test keep their
+    /// (`loft_wrap_*` in `loft_rt.h`) — for the operators that are fault sites
+    /// (`opt::ledger_sites::SiteOps`).  The `Nullable` forms and the null test keep their
     /// checks: they are the language's null semantics, not fault protection.  A MEASUREMENT
     /// instrument (@C129), never a build anyone ships.
     fn probe_operator(
@@ -9799,7 +9904,7 @@ impl<'a> FnWriter<'a> {
             ("OpMinSingleInt", 1) => {
                 let a = self.one(name, args, ind)?;
                 return Ok(Some(E::new(
-                    format!("loft_wrap_neg({})", as_int(a)?),
+                    format!("loft_wrap_neg(cx, {})", as_int(a)?),
                     K::Int,
                 )));
             }
@@ -9808,7 +9913,7 @@ impl<'a> FnWriter<'a> {
         let (a, b) = self.two(name, args, ind)?;
         let (a, b) = (as_int(a)?, as_int(b)?);
         let text = if form.starts_with("loft_") {
-            format!("{form}({a}, {b})")
+            format!("{form}(cx, {a}, {b})")
         } else {
             format!("(({a}) {form} ({b}))")
         };
@@ -9834,7 +9939,7 @@ impl<'a> FnWriter<'a> {
                 let (a, b) = self.text_two(name, args, ind)?;
                 let neg = if name == "OpNeText" { "!" } else { "" };
                 Ok(E::new(
-                    format!("{neg}loft_str_eq({}, {})", as_view(a)?, as_view(b)?),
+                    format!("{neg}loft_str_eq(cx, {}, {})", as_view(a)?, as_view(b)?),
                     K::Cond,
                 ))
             }
@@ -9846,7 +9951,7 @@ impl<'a> FnWriter<'a> {
                     "loft_text_le"
                 };
                 Ok(E::new(
-                    format!("{f}({}, {})", as_view(a)?, as_view(b)?),
+                    format!("{f}(cx, {}, {})", as_view(a)?, as_view(b)?),
                     K::Cond,
                 ))
             }
@@ -9872,14 +9977,14 @@ impl<'a> FnWriter<'a> {
                     self.nested(|wr| rest.iter().try_for_each(|o| wr.stmt(o, ind)))?;
                     let val = self.expr(&Value::Var(w), ind)?;
                     return Ok(E::new(
-                        format!("loft_text_concat(&{dest}, {})", as_view(val)?),
+                        format!("loft_text_concat(cx, &{dest}, {})", as_view(val)?),
                         K::Void,
                     ));
                 }
                 let [val] = <[E; 1]>::try_from(self.text_reads(std::slice::from_ref(val), ind)?)
                     .map_err(|_| "OpAppendText without its value".to_string())?;
                 Ok(E::new(
-                    format!("loft_text_concat(&{dest}, {})", as_view(val)?),
+                    format!("loft_text_concat(cx, &{dest}, {})", as_view(val)?),
                     K::Void,
                 ))
             }
@@ -9895,7 +10000,7 @@ impl<'a> FnWriter<'a> {
                 let (val, width) = self.text_two(name, &[val, width], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_format_text(&{dest}, {}, {}, {dir}, {token})",
+                        "loft_format_text(cx, &{dest}, {}, {}, {dir}, {token})",
                         as_view(val)?,
                         as_int(width)?
                     ),
@@ -9917,7 +10022,7 @@ impl<'a> FnWriter<'a> {
                     self.tuple_text_leaves(&format!("{}.f{i}", self.var(*var)), *inner, &mut frees);
                     let code = frees
                         .iter()
-                        .map(|t| format!("loft_text_free(&{t})"))
+                        .map(|t| format!("loft_text_free(cx, &{t})"))
                         .collect::<Vec<_>>()
                         .join(", ");
                     return Ok(E::new(
@@ -9935,18 +10040,18 @@ impl<'a> FnWriter<'a> {
                     && self.borrowed[*v as usize]
                 {
                     if self.tested.contains_key(v) {
-                        return Ok(E::new(format!("loft_text_free(&loft_own{v})"), K::Void));
+                        return Ok(E::new(format!("loft_text_free(cx, &loft_own{v})"), K::Void));
                     }
                     return Ok(E::new("((void) 0)", K::Void));
                 }
                 let dest = self.text_dest(dest)?;
-                Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
+                Ok(E::new(format!("loft_text_free(cx, &{dest})"), K::Void))
             }
             "OpPrint" => {
                 let es = self.text_reads(args, ind)?;
                 let [a] = <[E; 1]>::try_from(es)
                     .map_err(|_| "OpPrint without one operand".to_string())?;
-                Ok(E::new(format!("loft_print({})", as_view(a)?), K::Void))
+                Ok(E::new(format!("loft_print(cx, {})", as_view(a)?), K::Void))
             }
             _ => self.scalar_operator(name, args, ind),
         }
@@ -9983,7 +10088,7 @@ impl<'a> FnWriter<'a> {
         };
         Ok(E::new(
             format!(
-                "{f}(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
+                "{f}(cx, &{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
                 val,
                 as_int(width)?,
                 u8::from(*plus),
@@ -10016,7 +10121,7 @@ impl<'a> FnWriter<'a> {
                 let val = self.expr(val, ind)?;
                 return Ok(Some(E::new(
                     format!(
-                        "loft_struct_from_jsonvalue(loft_ptypes, {}, {tp})",
+                        "loft_struct_from_jsonvalue(cx, loft_ptypes, {}, {tp})",
                         as_ref(val)?
                     ),
                     K::Ref,
@@ -10031,7 +10136,7 @@ impl<'a> FnWriter<'a> {
         self.cx.show_type(tp)?;
         let val = self.expr(val, ind)?;
         let t = self.temp(CType::Text);
-        self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(ind, &format!("loft_text_free(cx, &{t});"));
         let call = self.cx.show_top_call(
             tp,
             &format!("&{t}"),
@@ -10072,7 +10177,7 @@ impl<'a> FnWriter<'a> {
                     "loft_text_size"
                 };
                 // @PLN217 — a text's length and size are counts: the build's integer.
-                Ok(E::new(format!("{f}({})", as_view(a)?), wint()))
+                Ok(E::new(format!("{f}(cx, {})", as_view(a)?), wint()))
             }
             "OpRangeDefault" => {
                 let [v, lo, hi, dflt] = args else {
@@ -10084,7 +10189,7 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_range_default_at({}, {}, {}, {}, {})",
+                        "loft_range_default_at(cx, {}, {}, {}, {}, {})",
                         as_int(v)?,
                         c_long(lo),
                         c_long(hi),
@@ -10098,7 +10203,7 @@ impl<'a> FnWriter<'a> {
                 let es = self.args(args, ind)?;
                 let [a] =
                     <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
-                Ok(E::new(format!("loft_neg({})", as_int(a)?), K::Int))
+                Ok(E::new(format!("loft_neg(cx, {})", as_int(a)?), K::Int))
             }
             "OpConvBoolFromInt" | "OpConvBoolFromLong" => {
                 let es = self.args(args, ind)?;
@@ -10142,7 +10247,7 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, &format!("{t} = {};", as_enum(v)?));
                 Ok(E::new(
                     format!(
-                        "({t} == 0 || {t} == 255 ? loft_null_text() : loft_lit({names}[{t}], strlen({names}[{t}])))"
+                        "({t} == 0 || {t} == 255 ? loft_null_text(cx) : loft_lit(cx, {names}[{t}], strlen({names}[{t}])))"
                     ),
                     K::View,
                 ))
@@ -10166,7 +10271,10 @@ impl<'a> FnWriter<'a> {
                 self.cx.parse_type(tp)?;
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
-                    format!("loft_record_from_text(loft_ptypes, {}, {tp})", as_view(v)?),
+                    format!(
+                        "loft_record_from_text(cx, loft_ptypes, {}, {tp})",
+                        as_view(v)?
+                    ),
                     K::Ref,
                 ))
             }
@@ -10181,7 +10289,7 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_enum_of_text({names}, sizeof {names} / sizeof *{names}, {})",
+                        "loft_enum_of_text(cx, {names}, sizeof {names} / sizeof *{names}, {})",
                         as_view(v)?
                     ),
                     K::Enum,
@@ -10244,7 +10352,7 @@ impl<'a> FnWriter<'a> {
             let (a, b) = self.two(name, args, ind)?;
             let site = self.site();
             return Ok(E::new(
-                format!("{f}({}, {}, {site})", conv(a)?, conv(b)?),
+                format!("{f}(cx, {}, {}, {site})", conv(a)?, conv(b)?),
                 k,
             ));
         }
@@ -10256,14 +10364,14 @@ impl<'a> FnWriter<'a> {
         if let Some((_, single, f)) = CALL2.iter().find(|(n, _, _)| *n == name) {
             let (k, conv) = shape(*single);
             let (a, b) = self.two(name, args, ind)?;
-            return Ok(E::new(format!("{f}({}, {})", conv(a)?, conv(b)?), k));
+            return Ok(E::new(super::call_c(f, &[conv(a)?, conv(b)?]), k));
         }
         if let Some((_, single, f, neg)) = CMP.iter().find(|(n, _, _, _)| *n == name) {
             let (_, conv) = shape(*single);
             let (a, b) = self.two(name, args, ind)?;
             let neg = if *neg { "!" } else { "" };
             return Ok(E::new(
-                format!("{neg}{f}({}, {})", conv(a)?, conv(b)?),
+                format!("{neg}{}", super::call_c(f, &[conv(a)?, conv(b)?])),
                 K::Cond,
             ));
         }
@@ -10277,7 +10385,7 @@ impl<'a> FnWriter<'a> {
         if let Some((single, f)) = unary {
             let (k, conv) = shape(single);
             let a = self.one(name, args, ind)?;
-            return Ok(E::new(format!("({f}({}))", conv(a)?), k));
+            return Ok(E::new(format!("({})", super::call_c(f, &[conv(a)?])), k));
         }
         self.float_conversion(name, args, ind)
     }
@@ -10299,11 +10407,15 @@ impl<'a> FnWriter<'a> {
                 "OpSingleBits" => as_single(a)?,
                 _ => as_int(a)?,
             };
-            Ok(E::new(format!("{f}({a})"), k))
+            Ok(E::new(format!("{f}(cx, {a})"), k))
         })())
     }
 
     /// The conversions to and from floats, their math functions and their fields.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a routing table, one row per float native"
+    )]
     fn float_conversion(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.float_bits(name, args, ind) {
             return e;
@@ -10313,27 +10425,31 @@ impl<'a> FnWriter<'a> {
             ("OpConvSingleFromNull", []) => Ok(E::new("(float) NAN", K::Single)),
             ("OpConvFloatFromInt" | "OpConvFloatFromLong", [_]) => {
                 let a = self.one(name, args, ind)?;
-                Ok(E::new(format!("loft_i2f({})", as_int(a)?), K::Float))
+                Ok(E::new(format!("loft_i2f(cx, {})", as_int(a)?), K::Float))
             }
             ("OpConvSingleFromInt", [_]) => {
                 let a = self.one(name, args, ind)?;
                 // @PLN217 — an integer held in 32 bits converts in 32 bits.
                 if a.kind == K::Int32 {
-                    return Ok(E::new(format!("loft_i2s32({})", a.code), K::Single));
+                    return Ok(E::new(format!("loft_i2s32(cx, {})", a.code), K::Single));
                 }
-                Ok(E::new(format!("loft_i2s({})", as_int(a)?), K::Single))
+                Ok(E::new(format!("loft_i2s(cx, {})", as_int(a)?), K::Single))
             }
             ("OpCastIntFromFloat", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_f2i_at({}, {})", as_float(a)?, self.site()),
+                    format!("loft_f2i_at(cx, {}, {})", as_float(a)?, self.site()),
                     K::Int,
                 ))
             }
             ("OpCastIntFromSingle", [_]) => {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_f2i_at((double) {}, {})", as_single(a)?, self.site()),
+                    format!(
+                        "loft_f2i_at(cx, (double) {}, {})",
+                        as_single(a)?,
+                        self.site()
+                    ),
                     K::Int,
                 ))
             }
@@ -10361,9 +10477,12 @@ impl<'a> FnWriter<'a> {
                 let id = Self::literal(id, "math function")?;
                 let a = self.expr(v, ind)?;
                 Ok(if name.ends_with("Single") {
-                    E::new(format!("loft_math1s({id}, {})", as_single(a)?), K::Single)
+                    E::new(
+                        format!("loft_math1s(cx, {id}, {})", as_single(a)?),
+                        K::Single,
+                    )
                 } else {
-                    E::new(format!("loft_math1({id}, {})", as_float(a)?), K::Float)
+                    E::new(format!("loft_math1(cx, {id}, {})", as_float(a)?), K::Float)
                 })
             }
             ("OpMathFunc2Float" | "OpMathFunc2Single", [id, a, b]) => {
@@ -10371,12 +10490,16 @@ impl<'a> FnWriter<'a> {
                 let (a, b) = self.two(name, &[a, b], ind)?;
                 Ok(if name.ends_with("Single") {
                     E::new(
-                        format!("loft_math2s({id}, {}, {})", as_single(a)?, as_single(b)?),
+                        format!(
+                            "loft_math2s(cx, {id}, {}, {})",
+                            as_single(a)?,
+                            as_single(b)?
+                        ),
                         K::Single,
                     )
                 } else {
                     E::new(
-                        format!("loft_math2({id}, {}, {})", as_float(a)?, as_float(b)?),
+                        format!("loft_math2(cx, {id}, {}, {})", as_float(a)?, as_float(b)?),
                         K::Float,
                     )
                 })
@@ -10397,7 +10520,7 @@ impl<'a> FnWriter<'a> {
                 };
                 Ok(E::new(
                     format!(
-                        "loft_format_float(&{dest}, {val}, {}, {}, {token}, {}, (int) {}, {single})",
+                        "loft_format_float(cx, &{dest}, {val}, {}, {}, {token}, {}, (int) {}, {single})",
                         as_int(width)?,
                         as_int(prec)?,
                         u8::from(*plus),
@@ -10433,24 +10556,32 @@ impl<'a> FnWriter<'a> {
             // release.  One built here is also freed through its own record variable first,
             // and a store already free stays as it is (`loft_free_ref`).
             ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => Ok(E::new(
-                format!("loft_free_var(&{}.clos)", self.var(*v)),
+                format!("loft_free_var(cx, &{}.clos)", self.var(*v)),
                 K::Void,
             )),
             // A variable's free resets it to the sentinel, as native's does: the next pass's
             // pre-build free of it is then a no-op instead of a release of a reused slot.
-            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => {
-                Ok(E::new(format!("loft_free_var(&{})", self.var(*v)), K::Void))
-            }
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => Ok(E::new(
+                format!("loft_free_var(cx, &{})", self.var(*v)),
+                K::Void,
+            )),
             ("OpFreeRef", [r]) => {
                 let r = self.expr(r, ind)?;
-                Ok(E::new(format!("loft_free_ref({})", as_ref(r)?), K::Void))
+                Ok(E::new(
+                    format!("loft_free_ref(cx, {})", as_ref(r)?),
+                    K::Void,
+                ))
             }
             ("OpFreeRefIfDistinct", [Value::Var(v), w])
                 if self.shapes[*v as usize] == CType::Ref =>
             {
                 let w = self.expr(w, ind)?;
                 Ok(E::new(
-                    format!("loft_free_var_distinct(&{}, {})", self.var(*v), as_ref(w)?),
+                    format!(
+                        "loft_free_var_distinct(cx, &{}, {})",
+                        self.var(*v),
+                        as_ref(w)?
+                    ),
                     K::Void,
                 ))
             }
@@ -10460,7 +10591,7 @@ impl<'a> FnWriter<'a> {
             ("OpFreeRefIfDistinct" | "OpFreeRefOrHandUp", [_, _]) => {
                 let (p, w) = self.two(name, args, ind)?;
                 Ok(E::new(
-                    format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
+                    format!("loft_free_displaced(cx, {}, {})", as_ref(p)?, as_ref(w)?),
                     K::Void,
                 ))
             }
@@ -10516,7 +10647,7 @@ impl<'a> FnWriter<'a> {
                 crate::rewrite_census::fired("R-SliceArg", 1);
                 Ok(Some(E::new(
                     format!(
-                        "loft_slice_take(loft_types, &{}, {size}, {tp})",
+                        "loft_slice_take(cx, loft_types, &{}, {size}, {tp})",
                         self.var(*var)
                     ),
                     K::Void,
@@ -10546,12 +10677,12 @@ impl<'a> FnWriter<'a> {
             self.cx.name_types();
             self.room_minted.insert(v, tp);
             return Ok(E::new(
-                format!("loft_database_room(loft_types, loft_ntypes, &{var}, {size}, {tp})"),
+                format!("loft_database_room(cx, loft_types, loft_ntypes, &{var}, {size}, {tp})"),
                 K::Void,
             ));
         }
         Ok(E::new(
-            format!("loft_database_typed(&{var}, {size}, {tp})"),
+            format!("loft_database_typed(cx, &{var}, {size}, {tp})"),
             K::Void,
         ))
     }
@@ -10581,7 +10712,7 @@ impl<'a> FnWriter<'a> {
                     .map_err(|_| "a byte append without its operands".to_string())?;
                 Ok(Some(E::new(
                     format!(
-                        "loft_win_text(&(*loft_apw), {pv}, {}, {}, {})",
+                        "loft_win_text(cx, &(*loft_apw), {pv}, {}, {}, {})",
                         as_view(t)?,
                         as_int(lo)?,
                         as_int(hi)?
@@ -10592,7 +10723,10 @@ impl<'a> FnWriter<'a> {
             ("OpAppendVector", [_, src, _]) => {
                 let e = self.expr(src, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_win_vec(&(*loft_apw), {pv}, {}, {size})", as_ref(e)?),
+                    format!(
+                        "loft_win_vec(cx, &(*loft_apw), {pv}, {}, {size})",
+                        as_ref(e)?
+                    ),
                     K::Void,
                 )))
             }
@@ -10606,7 +10740,7 @@ impl<'a> FnWriter<'a> {
                     .map_err(|_| "a slice without its operands".to_string())?;
                 Ok(Some(E::new(
                     format!(
-                        "loft_win_slice(&(*loft_apw), {pv}, {}, {}, {}, {size})",
+                        "loft_win_slice(cx, &(*loft_apw), {pv}, {}, {}, {}, {size})",
                         as_ref(src)?,
                         as_int(lo)?,
                         as_int(hi)?
@@ -10688,7 +10822,7 @@ impl<'a> FnWriter<'a> {
                     K::Cond,
                 ))
             }
-            ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null(cx)", K::Ref)),
             ("OpConvBoolFromRef", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("({}.rec != 0)", as_ref(r)?), K::Cond))
@@ -10698,7 +10832,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_get_int({}, {fld})", as_ref(r)?),
+                    format!("loft_get_int(cx, {}, {fld})", as_ref(r)?),
                     K::Int,
                 ))
             }
@@ -10724,13 +10858,13 @@ impl<'a> FnWriter<'a> {
                     Some(size) => {
                         crate::rewrite_census::fired("R-FlatCopy", 1);
                         format!(
-                            "loft_copy_flat(loft_types, {tp}, {s}, {d}, {free}, {size}, {at_site})"
+                            "loft_copy_flat(cx, loft_types, {tp}, {s}, {d}, {free}, {size}, {at_site})"
                         )
                     }
                     None if at => format!(
-                        "loft_copy_record_at(loft_types, {tp}, {s}, {d}, {free}, {at_site})"
+                        "loft_copy_record_at(cx, loft_types, {tp}, {s}, {d}, {free}, {at_site})"
                     ),
-                    None => format!("loft_copy_record(loft_types, {tp}, {s}, {d}, {free})"),
+                    None => format!("loft_copy_record(cx, loft_types, {tp}, {s}, {d}, {free})"),
                 };
                 // A copy into a field of an element being built, or into a fresh struct whose
                 // default is not zero bytes: its null arm is the default.
@@ -10756,7 +10890,10 @@ impl<'a> FnWriter<'a> {
             ("OpGetField", [r, fld, _] | [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
-                Ok(E::new(format!("loft_field({}, {fld})", as_ref(r)?), K::Ref))
+                Ok(E::new(
+                    format!("loft_field(cx, {}, {fld})", as_ref(r)?),
+                    K::Ref,
+                ))
             }
             _ => self.ref_operator(name, args, ind),
         }
@@ -10787,7 +10924,7 @@ impl<'a> FnWriter<'a> {
         let (holder, home) = self.two(name, &[holder, home], ind)?;
         Ok(E::new(
             format!(
-                "loft_evacuate(loft_types, {tp}, {}, {fld}, {}, {size}, {image}, {n}, {})",
+                "loft_evacuate(cx, loft_types, {tp}, {}, {fld}, {}, {size}, {image}, {n}, {})",
                 as_ref(holder)?,
                 as_ref(home)?,
                 u8::from(foreign)
@@ -10816,7 +10953,11 @@ impl<'a> FnWriter<'a> {
             "loft_move_field"
         };
         Ok(E::new(
-            format!("{f}(loft_types, {tp}, {}, {})", as_ref(src)?, as_ref(dst)?),
+            format!(
+                "{f}(cx, loft_types, {tp}, {}, {})",
+                as_ref(src)?,
+                as_ref(dst)?
+            ),
             K::Void,
         ))
     }
@@ -10842,19 +10983,19 @@ impl<'a> FnWriter<'a> {
         Ok(if name == "OpPrependVector" {
             E::new(
                 format!(
-                    "loft_vec_prepend(loft_types, {tp}, {v}, {other}, {})",
+                    "loft_vec_prepend(cx, loft_types, {tp}, {v}, {other}, {})",
                     i32::from(linked)
                 ),
                 K::Bool,
             )
         } else if linked {
             E::new(
-                format!("loft_vec_add_array(loft_types, {tp}, {v}, {other})"),
+                format!("loft_vec_add_array(cx, loft_types, {tp}, {v}, {other})"),
                 K::Void,
             )
         } else {
             E::new(
-                format!("loft_vec_add(loft_types, {tp}, {v}, {other})"),
+                format!("loft_vec_add(cx, loft_types, {tp}, {v}, {other})"),
                 K::Void,
             )
         })
@@ -10871,7 +11012,7 @@ impl<'a> FnWriter<'a> {
         } else {
             "loft_drop_leave"
         };
-        Ok(E::new(format!("{f}({}, {tp})", as_ref(r)?), K::Void))
+        Ok(E::new(format!("{f}(cx, {}, {tp})", as_ref(r)?), K::Void))
     }
 
     fn ref_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
@@ -10885,7 +11026,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_get_dbref({}, {fld})", as_ref(r)?),
+                    format!("loft_get_dbref(cx, {}, {fld})", as_ref(r)?),
                     K::Ref,
                 ))
             }
@@ -10900,7 +11041,7 @@ impl<'a> FnWriter<'a> {
             // The closure record releases what it captured, running the captured values'
             // drop hooks (`State::drop_fn_ref`).
             ("OpDropFnRef", [Value::Var(f)]) if self.shapes[*f as usize] == CType::Fn => Ok(
-                E::new(format!("loft_drop_closure({})", self.var(*f)), K::Void),
+                E::new(format!("loft_drop_closure(cx, {})", self.var(*f)), K::Void),
             ),
             ("OpPutRef", [Value::Var(v), x]) => {
                 let x = self.expr(x, ind)?;
@@ -10919,7 +11060,7 @@ impl<'a> FnWriter<'a> {
                 let neg = if name == "OpNeContent" { "!" } else { "" };
                 Ok(E::new(
                     format!(
-                        "{neg}loft_eq_content({}, {}, {})",
+                        "{neg}loft_eq_content(cx, {}, {}, {})",
                         super::Cx::eq_fn(tp),
                         as_ref(a)?,
                         as_ref(b)?
@@ -10943,7 +11084,7 @@ impl<'a> FnWriter<'a> {
                 let host = self.expr(host, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_place_record({}, {tp}, {size}, {image}, {n}, {})",
+                        "loft_place_record(cx, {}, {tp}, {size}, {image}, {n}, {})",
                         as_ref(host)?,
                         u8::from(foreign)
                     ),
@@ -10957,14 +11098,17 @@ impl<'a> FnWriter<'a> {
                 self.cx.copy_type(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_free_record_in(loft_types, {tp}, {})", as_ref(r)?),
+                    format!("loft_free_record_in(cx, loft_types, {tp}, {})", as_ref(r)?),
                     K::Void,
                 ))
             }
             ("OpDropEnter" | "OpDropLeave", [r, tp]) => self.drop_bracket(name, r, tp, ind),
             ("OpStoreLive", [r]) => {
                 let r = self.expr(r, ind)?;
-                Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
+                Ok(E::new(
+                    format!("loft_store_live(cx, {})", as_ref(r)?),
+                    K::Cond,
+                ))
             }
             ("OpDistinctStore", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
@@ -10984,7 +11128,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_get_enum({}, {fld})", as_ref(r)?),
+                    format!("loft_get_enum(cx, {}, {fld})", as_ref(r)?),
                     K::Enum,
                 ))
             }
@@ -11011,13 +11155,16 @@ impl<'a> FnWriter<'a> {
                         self.line(ind, &format!("{t} = {code};"));
                         t
                     };
-                    return Ok(E::new(format!("loft_get_text({at}, {fld})"), K::View));
+                    return Ok(E::new(format!("loft_get_text(cx, {at}, {fld})"), K::View));
                 }
                 let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_free(&{t});"));
+                self.line(ind, &format!("loft_text_free(cx, &{t});"));
                 self.line(
                     ind,
-                    &format!("{t} = loft_text_own(loft_get_text({}, {fld}));", as_ref(r)?),
+                    &format!(
+                        "{t} = loft_text_own(cx, loft_get_text(cx, {}, {fld}));",
+                        as_ref(r)?
+                    ),
                 );
                 Ok(self.held(t, CType::Text))
             }
@@ -11039,7 +11186,7 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_get_single", K::Single)
                 };
-                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), k))
+                Ok(E::new(format!("{f}(cx, {}, {fld})", as_ref(r)?), k))
             }
             ("OpSetFloat" | "OpSetSingle", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -11054,7 +11201,7 @@ impl<'a> FnWriter<'a> {
             ("OpPushBoolean", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
-                    format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_bool(val)?),
+                    format!("loft_vec_push_byte(cx, {}, {})", as_ref(v)?, as_bool(val)?),
                     K::Void,
                 ))
             }
@@ -11065,7 +11212,7 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vec_push_single", as_single(val)?)
                 };
-                Ok(E::new(format!("{f}({}, {x})", as_ref(v)?), K::Void))
+                Ok(E::new(format!("{f}(cx, {}, {x})", as_ref(v)?), K::Void))
             }
             _ => self.narrow_operator(name, args, ind),
         }
@@ -11089,7 +11236,7 @@ impl<'a> FnWriter<'a> {
                 };
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("{f}({}, {fld}, {})", as_ref(r)?, c_long(min)),
+                    format!("{f}(cx, {}, {fld}, {})", as_ref(r)?, c_long(min)),
                     K::Int,
                 ))
             }
@@ -11117,7 +11264,7 @@ impl<'a> FnWriter<'a> {
                     "OpGetInt4Raw" => ("loft_get_int4_raw", K::Int),
                     _ => ("loft_get_int4_full", K::Int),
                 };
-                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), k))
+                Ok(E::new(format!("{f}(cx, {}, {fld})", as_ref(r)?), k))
             }
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -11135,7 +11282,7 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vec_push_int4", as_int(val)?)
                 };
-                Ok(E::new(format!("{f}({}, {val})", as_ref(v)?), K::Void))
+                Ok(E::new(format!("{f}(cx, {}, {val})", as_ref(v)?), K::Void))
             }
             ("OpSizeVector", [v, stride]) => {
                 let stride = Self::literal(stride, "stride")?;
@@ -11148,7 +11295,7 @@ impl<'a> FnWriter<'a> {
                     ""
                 };
                 Ok(E::new(
-                    format!("({wide}loft_vec_len({}) * {stride})", as_ref(v)?),
+                    format!("({wide}loft_vec_len(cx, {}) * {stride})", as_ref(v)?),
                     K::Int,
                 ))
             }
@@ -11156,7 +11303,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("{}.clos", self.var(*f)), K::Ref))
             }
             ("OpInitRefSentinel", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => Ok(
-                E::new(format!("{} = loft_ref_null()", self.var(*v)), K::Void),
+                E::new(format!("{} = loft_ref_null(cx)", self.var(*v)), K::Void),
             ),
             _ => self.vector_operator(name, args, ind),
         }
@@ -11222,12 +11369,12 @@ impl<'a> FnWriter<'a> {
                 );
             };
             return Ok((
-                format!("loft_field({parent}, {pos})"),
+                format!("loft_field(cx, {parent}, {pos})"),
                 c,
                 Coll::Group(parent, members),
             ));
         }
-        let place = format!("loft_field({data}, {pos})");
+        let place = format!("loft_field(cx, {data}, {pos})");
         if let Some(Parts::Vector(c)) = stores.types.get(vtp as usize).map(|t| &t.parts) {
             return Ok((place, *c, Coll::Vector));
         }
@@ -11249,7 +11396,7 @@ impl<'a> FnWriter<'a> {
                 }
                 let size = self.cx.stores.size(elem);
                 let t = self.temp(CType::Ref);
-                self.line(ind, &format!("{t} = loft_vec_append({v}, {size});"));
+                self.line(ind, &format!("{t} = loft_vec_append(cx, {v}, {size});"));
                 // `@FR-R-FieldAppend`: the plain vector's own append, its field resolved here;
                 // a field number of `u16::MAX` is the bare clause (`v += [x]`).
                 let bare =
@@ -11266,7 +11413,7 @@ impl<'a> FnWriter<'a> {
                     .map_err(|_| "a type number out of range")?;
                 if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                     let (image, n) = self.cx.default_image(elem);
-                    self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                    self.line(ind, &format!("loft_fill(cx, {t}, {image}, {n});"));
                 }
                 Ok(E::new(t, K::Ref))
             }
@@ -11285,14 +11432,17 @@ impl<'a> FnWriter<'a> {
             ("OpClearVector", [v]) if self.clear_releases_nothing(v) => {
                 let v = self.expr(v, ind)?;
                 crate::rewrite_census::fired("H-ClearRelease/plain", 1);
-                Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
+                Ok(E::new(
+                    format!("loft_vec_clear(cx, {})", as_ref(v)?),
+                    K::Void,
+                ))
             }
             ("OpClearVector", [v]) => {
                 self.cx.name_types();
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_clear_release(loft_types, loft_ntypes, {})",
+                        "loft_vec_clear_release(cx, loft_types, loft_ntypes, {})",
                         as_ref(v)?
                     ),
                     K::Void,
@@ -11300,28 +11450,28 @@ impl<'a> FnWriter<'a> {
             }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), wint()))
+                Ok(E::new(format!("loft_vec_len(cx, {})", as_ref(v)?), wint()))
             }
             ("OpPreAllocVector", [v, count, size]) => {
                 let count = Self::literal(count, "count")?;
                 let size = Self::literal(size, "element size")?;
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
-                    format!("loft_vec_prealloc({}, {count}, {size})", as_ref(v)?),
+                    format!("loft_vec_prealloc(cx, {}, {count}, {size})", as_ref(v)?),
                     K::Void,
                 ))
             }
             ("OpPushEnum", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
-                    format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_enum(val)?),
+                    format!("loft_vec_push_byte(cx, {}, {})", as_ref(v)?, as_enum(val)?),
                     K::Void,
                 ))
             }
             ("OpPushInt", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
-                    format!("loft_vec_push_int({}, {})", as_ref(v)?, as_int(val)?),
+                    format!("loft_vec_push_int(cx, {}, {})", as_ref(v)?, as_int(val)?),
                     K::Void,
                 ))
             }
@@ -11365,7 +11515,7 @@ impl<'a> FnWriter<'a> {
             }
             Coll::Vector => {}
         }
-        Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
+        Ok(E::new(format!("loft_vec_finish(cx, {v})"), K::Void))
     }
 
     /// `v[i]`: the element's reference, an unguarded read (`OpGetVector`) reporting an index
@@ -11387,7 +11537,7 @@ impl<'a> FnWriter<'a> {
         } else {
             ("loft_vec_get", as_int(idx)?)
         };
-        let c = format!("{f}{at}({}, {size}, {idx}{t})", as_ref(v)?);
+        let c = format!("{f}{at}(cx, {}, {size}, {idx}{t})", as_ref(v)?);
         Ok(E::new(c, K::Ref))
     }
 
@@ -11397,13 +11547,16 @@ impl<'a> FnWriter<'a> {
             ("OpConvCharacterFromInt", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(
-                    format!("loft_char_of_at({}, {})", as_int(v)?, self.site()),
+                    format!("loft_char_of_at(cx, {}, {})", as_int(v)?, self.site()),
                     K::Char,
                 ))
             }
             ("OpConvIntFromCharacter", [c]) => {
                 let c = self.expr(c, ind)?;
-                Ok(E::new(format!("loft_char_int({})", as_char(c)?), K::Int))
+                Ok(E::new(
+                    format!("loft_char_int(cx, {})", as_char(c)?),
+                    K::Int,
+                ))
             }
             ("OpConvBoolFromCharacter", [c]) => {
                 let c = self.expr(c, ind)?;
@@ -11411,7 +11564,10 @@ impl<'a> FnWriter<'a> {
             }
             ("OpLengthCharacter", [c]) => {
                 let c = self.expr(c, ind)?;
-                Ok(E::new(format!("loft_char_len({})", as_char(c)?), K::Int))
+                Ok(E::new(
+                    format!("loft_char_len(cx, {})", as_char(c)?),
+                    K::Int,
+                ))
             }
             ("OpTextCharacter" | "OpTextCharacterNullable", [_, _]) => {
                 let (t, i) = self.two(name, args, ind)?;
@@ -11422,7 +11578,11 @@ impl<'a> FnWriter<'a> {
                     ("", String::new())
                 };
                 Ok(E::new(
-                    format!("loft_text_char{at}({}, {}{site})", as_view(t)?, as_int(i)?),
+                    format!(
+                        "loft_text_char{at}(cx, {}, {}{site})",
+                        as_view(t)?,
+                        as_int(i)?
+                    ),
                     K::Char,
                 ))
             }
@@ -11434,14 +11594,14 @@ impl<'a> FnWriter<'a> {
                 {
                     let c = self.expr(c, ind)?;
                     return Ok(E::new(
-                        format!("loft_tw_push(&{w}, &{place}, {})", as_char(c)?),
+                        format!("loft_tw_push(cx, &{w}, &{place}, {})", as_char(c)?),
                         K::Void,
                     ));
                 }
                 let dest = self.text_dest(dest)?;
                 let c = self.expr(c, ind)?;
                 Ok(E::new(
-                    format!("loft_push_code(&{dest}, {})", as_char(c)?),
+                    format!("loft_push_code(cx, &{dest}, {})", as_char(c)?),
                     K::Void,
                 ))
             }
@@ -11449,7 +11609,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_get_char({}, {fld})", as_ref(r)?),
+                    format!("loft_get_char(cx, {}, {fld})", as_ref(r)?),
                     K::Char,
                 ))
             }
@@ -11464,7 +11624,7 @@ impl<'a> FnWriter<'a> {
             ("OpPushCharacter", [v, c]) => {
                 let (v, c) = self.two(name, &[v, c], ind)?;
                 Ok(E::new(
-                    format!("loft_vec_push_char({}, {})", as_ref(v)?, as_char(c)?),
+                    format!("loft_vec_push_char(cx, {}, {})", as_ref(v)?, as_char(c)?),
                     K::Void,
                 ))
             }
@@ -11501,7 +11661,7 @@ impl<'a> FnWriter<'a> {
             <[E; 4]>::try_from(es).map_err(|_| "a slice without four operands".to_string())?;
         Ok(E::new(
             format!(
-                "{func}({}, {}, {}, {}, {size})",
+                "{func}(cx, {}, {}, {}, {}, {size})",
                 as_ref(v)?,
                 as_ref(src)?,
                 as_int(lo)?,
@@ -11518,7 +11678,7 @@ impl<'a> FnWriter<'a> {
         let (v, idx) = self.two("OpRemoveVector", &[v, idx], ind)?;
         Ok(E::new(
             format!(
-                "loft_vec_remove_linked(loft_types, {tp}, {}, {})",
+                "loft_vec_remove_linked(cx, loft_types, {tp}, {}, {})",
                 as_ref(v)?,
                 as_int(idx)?
             ),
@@ -11546,7 +11706,7 @@ impl<'a> FnWriter<'a> {
         let (v, other) = self.two(name, &[v, other], ind)?;
         Ok(E::new(
             format!(
-                "loft_vec_adopt(loft_types, {tp}, {}, {})",
+                "loft_vec_adopt(cx, loft_types, {tp}, {}, {})",
                 as_ref(v)?,
                 as_ref(other)?
             ),
@@ -11581,7 +11741,7 @@ impl<'a> FnWriter<'a> {
                 };
                 Ok(E::new(
                     format!(
-                        "{f}(loft_types, {nt}{tp}, {}, {})",
+                        "{f}(cx, loft_types, {nt}{tp}, {}, {})",
                         as_ref(v)?,
                         as_ref(other)?
                     ),
@@ -11604,7 +11764,7 @@ impl<'a> FnWriter<'a> {
                     self.cx.describe_type(tp);
                     return Ok(E::new(
                         format!(
-                            "loft_vec_remove_at(loft_types, {tp}, {}, {})",
+                            "loft_vec_remove_at(cx, loft_types, {tp}, {}, {})",
                             as_ref(v)?,
                             as_int(idx)?
                         ),
@@ -11612,7 +11772,11 @@ impl<'a> FnWriter<'a> {
                     ));
                 }
                 Ok(E::new(
-                    format!("loft_vec_remove({}, {size}, {})", as_ref(v)?, as_int(idx)?),
+                    format!(
+                        "loft_vec_remove(cx, {}, {size}, {})",
+                        as_ref(v)?,
+                        as_int(idx)?
+                    ),
                     K::Cond,
                 ))
             }
@@ -11627,7 +11791,7 @@ impl<'a> FnWriter<'a> {
                 let (v, count) = self.two(name, &[v, count], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_append_copy(loft_types, {ctp}, {}, {})",
+                        "loft_vec_append_copy(cx, loft_types, {ctp}, {}, {})",
                         as_ref(v)?,
                         as_int(count)?
                     ),
@@ -11657,7 +11821,11 @@ impl<'a> FnWriter<'a> {
                 self.cx.copy_type(tp)?;
                 let (dst, src) = self.two(name, &[dst, src], ind)?;
                 Ok(E::new(
-                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(dst)?, as_ref(src)?),
+                    format!(
+                        "{f}(cx, loft_types, {tp}, {}, {})",
+                        as_ref(dst)?,
+                        as_ref(src)?
+                    ),
                     K::Void,
                 ))
             }
@@ -11680,7 +11848,7 @@ impl<'a> FnWriter<'a> {
                 let [v, lo, hi] = <[E; 3]>::try_from(es)
                     .map_err(|_| "a range without three operands".to_string())?;
                 let keep = format!(
-                    "loft_keep_vector_range(loft_types, {tp}, {}, {size}, {}, {})",
+                    "loft_keep_vector_range(cx, loft_types, {tp}, {}, {size}, {}, {})",
                     as_ref(v)?,
                     as_int(lo)?,
                     as_int(hi)?
@@ -11688,7 +11856,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(
                     match held {
                         Some((h, hs)) => {
-                            format!("((void) ({keep}, {h} = loft_ph_of({h}.v, {hs})))")
+                            format!("((void) ({keep}, {h} = loft_ph_of(cx, {h}.v, {hs})))")
                         }
                         None => keep,
                     },
@@ -11709,14 +11877,14 @@ impl<'a> FnWriter<'a> {
         self.cx.copy_type(tp)?;
         let r = self.expr(r, ind)?;
         let r = as_ref(r)?;
-        let walk = format!("loft_remove_claims(loft_types, {tp}, {r})");
+        let walk = format!("loft_remove_claims(cx, loft_types, {tp}, {r})");
         if raw & crate::keys::POOL_RESET == 0 {
             return Ok(E::new(walk, K::Void));
         }
         let size = self.cx.stores.enum_parent_size(tp);
         let (image, n) = self.cx.default_image(tp);
         Ok(E::new(
-            format!("if (!loft_reset_pool_root({r}, {tp}, {size}, {image}, {n})) {walk}"),
+            format!("if (!loft_reset_pool_root(cx, {r}, {tp}, {size}, {image}, {n})) {walk}"),
             K::Void,
         ))
     }
@@ -11727,7 +11895,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_get_bool({}, {fld})", as_ref(r)?),
+                    format!("loft_get_bool(cx, {}, {fld})", as_ref(r)?),
                     K::Bool,
                 ))
             }
@@ -11744,7 +11912,7 @@ impl<'a> FnWriter<'a> {
                 let (v, val) = self.two(name, &[v, val], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_vec_push_byte({}, loft_byte_raw({min}, {}))",
+                        "loft_vec_push_byte(cx, {}, loft_byte_raw(cx, {min}, {}))",
                         as_ref(v)?,
                         as_int(val)?
                     ),
@@ -11753,31 +11921,34 @@ impl<'a> FnWriter<'a> {
             }
             ("OpVectorIsNull", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_absent({})", as_ref(v)?), K::Cond))
+                Ok(E::new(
+                    format!("loft_vec_absent(cx, {})", as_ref(v)?),
+                    K::Cond,
+                ))
             }
             ("OpLengthSorted", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), wint()))
+                Ok(E::new(format!("loft_vec_len(cx, {})", as_ref(v)?), wint()))
             }
             ("OpEqRef" | "OpNeRef", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
                 let neg = if name == "OpNeRef" { "!" } else { "" };
                 Ok(E::new(
-                    format!("{neg}loft_ref_eq({}, {})", as_ref(a)?, as_ref(b)?),
+                    format!("{neg}loft_ref_eq(cx, {}, {})", as_ref(a)?, as_ref(b)?),
                     K::Cond,
                 ))
             }
             ("OpClear", [r, tp]) => self.clear_op(r, tp, ind),
             ("OpClearText", [dest]) => {
                 let dest = self.text_dest(dest)?;
-                Ok(E::new(format!("{dest}.len = 0"), K::Void))
+                Ok(E::new(format!("loft_text_clear(cx, &{dest})"), K::Void))
             }
-            ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text()", K::View)),
+            ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text(cx)", K::View)),
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),
             ("OpCastIntFromText" | "OpCastLongFromText", [t]) => {
                 let t = self.expr(t, ind)?;
                 Ok(E::new(
-                    format!("loft_int_of_text_at({}, {})", as_view(t)?, self.site()),
+                    format!("loft_int_of_text_at(cx, {}, {})", as_view(t)?, self.site()),
                     K::Int,
                 ))
             }
@@ -11787,7 +11958,7 @@ impl<'a> FnWriter<'a> {
                     .map_err(|_| "OpGetTextSub without three operands".to_string())?;
                 Ok(E::new(
                     format!(
-                        "loft_text_sub({}, {}, {})",
+                        "loft_text_sub(cx, {}, {}, {})",
                         as_view(t)?,
                         as_int(from)?,
                         as_int(till)?
@@ -11799,12 +11970,15 @@ impl<'a> FnWriter<'a> {
             _ if name.contains("Character") => self.char_operator(name, args, ind),
             ("OpCastTextFromBool", [b]) => {
                 let b = self.expr(b, ind)?;
-                Ok(E::new(format!("loft_bool_text({})", as_bool(b)?), K::View))
+                Ok(E::new(
+                    format!("loft_bool_text(cx, {})", as_bool(b)?),
+                    K::View,
+                ))
             }
             ("OpConvBoolFromText", [t]) => {
                 let t = self.expr(t, ind)?;
                 Ok(E::new(
-                    format!("(!loft_str_is_null({}))", as_view(t)?),
+                    format!("(!loft_str_is_null(cx, {}))", as_view(t)?),
                     K::Cond,
                 ))
             }
@@ -11837,7 +12011,7 @@ fn as_int(e: E) -> Result<String, String> {
     match e.kind {
         K::Int => Ok(e.code),
         // @PLN204 — a 32-bit integer read as a 64-bit one: its null stays null.
-        K::Int32 => Ok(format!("loft_w64({})", e.code)),
+        K::Int32 => Ok(format!("loft_w64(cx, {})", e.code)),
         // The slot the bytecode writes is the integer's: a character's code point, a
         // boolean's byte, a function value's definition number (`FnRefDnr`).
         K::Char | K::Bool => Ok(format!("((int64_t) ({}))", e.code)),
@@ -11905,7 +12079,7 @@ fn as_char(e: E) -> Result<String, String> {
         // integer null is the character null, 0).
         K::Int => Ok(format!("((uint32_t) ({}))", e.code)),
         // `INT32_MIN`, the 32-bit null, is the character null too: 0.
-        K::Int32 => Ok(format!("((uint32_t) loft_w64({}))", e.code)),
+        K::Int32 => Ok(format!("((uint32_t) loft_w64(cx, {}))", e.code)),
         k => Err(format!("a character expected, a {k:?} found")),
     }
 }
@@ -11967,7 +12141,7 @@ fn as_view(e: E) -> Result<String, String> {
 fn as_int32(e: E) -> Result<String, String> {
     match e.kind {
         K::Int32 => Ok(e.code),
-        _ => Ok(format!("loft_n32({})", as_int(e)?)),
+        _ => Ok(format!("loft_n32(cx, {})", as_int(e)?)),
     }
 }
 
@@ -11982,7 +12156,7 @@ fn i4_bits(e: E) -> Result<String, String> {
     if e.kind == K::Int32 {
         Ok(format!("(uint32_t) {}", e.code))
     } else {
-        Ok(format!("loft_i4_bits({})", as_int(e)?))
+        Ok(format!("loft_i4_bits(cx, {})", as_int(e)?))
     }
 }
 

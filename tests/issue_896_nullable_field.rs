@@ -36,8 +36,8 @@ fn run(args: &[&str], prog: &Path) -> (bool, String) {
     )
 }
 
-fn rustc_available() -> bool {
-    loft::platform::process::harness_command("rustc")
+fn cc_available() -> bool {
+    loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok()
@@ -61,7 +61,7 @@ fn assert_both(name: &str, body: &str, want: &str) {
     assert!(ok, "{name}: interpret run failed; output={out:?}");
     let got = out.lines().next().unwrap_or_default();
     assert_eq!(got, want, "{name}: interpret");
-    if rustc_available() {
+    if cc_available() {
         let (ok, out) = run(&["--native"], &prog);
         assert!(ok, "{name}: native run failed; output={out:?}");
         let got = out.lines().next().unwrap_or_default();
@@ -226,7 +226,7 @@ fn a_text_payload_survives_clear_and_reuse() {
         }";
     let prog = probe("w1", body);
     for args in [vec!["--interpret"], vec!["--native"]] {
-        if args[0] == "--native" && !rustc_available() {
+        if args[0] == "--native" && !cc_available() {
             continue;
         }
         let (ok, out) = run(&args, &prog);
@@ -270,7 +270,7 @@ fn a_copy_carries_presence_in_both_states() {
     );
     let prog = probe("w3", &body);
     for args in [vec!["--interpret"], vec!["--native"]] {
-        if args[0] == "--native" && !rustc_available() {
+        if args[0] == "--native" && !cc_available() {
             continue;
         }
         let (ok, out) = run(&args, &prog);
@@ -299,7 +299,7 @@ fn presence_survives_a_call_in_both_directions() {
     );
     let prog = probe("w4", &body);
     for args in [vec!["--interpret"], vec!["--native"]] {
-        if args[0] == "--native" && !rustc_available() {
+        if args[0] == "--native" && !cc_available() {
             continue;
         }
         let (ok, out) = run(&args, &prog);
@@ -329,7 +329,7 @@ fn a_nullable_field_nests_inside_a_nullable_payload() {
         }";
     let prog = probe("w7", body);
     for args in [vec!["--interpret"], vec!["--native"]] {
-        if args[0] == "--native" && !rustc_available() {
+        if args[0] == "--native" && !cc_available() {
             continue;
         }
         let (ok, out) = run(&args, &prog);

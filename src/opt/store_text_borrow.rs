@@ -3,9 +3,8 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-TextBorrow`'s store-read clause — the text variables that BORROW a text read out of
-//! a parameter's store instead of copying it.  Here, in `opt`, because both compiled writers
-//! ask it (the Rust writer and the C backend); moved from `generation::hoist`, which
-//! re-exports it.
+//! a parameter's store instead of copying it.  Here, in `opt`, with the other analyses the C
+//! backend asks.
 
 use crate::data::{Data, Type, Value};
 use crate::ir_shape::{as_var, call_named};

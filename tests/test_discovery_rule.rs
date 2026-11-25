@@ -135,7 +135,7 @@ fn a_file_with_no_test_underscore_keeps_arity() {
 /// suite would read as a wrong answer.
 #[test]
 fn the_native_entry_point_runs_the_same_set() {
-    if !rustc_available() {
+    if !cc_available() {
         eprintln!("SKIP the_native_entry_point_runs_the_same_set: no rustc");
         return;
     }
@@ -156,8 +156,8 @@ fn the_native_entry_point_runs_the_same_set() {
     }
 }
 
-fn rustc_available() -> bool {
-    loft::platform::process::harness_command("rustc")
+fn cc_available() -> bool {
+    loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())

@@ -10,8 +10,7 @@
 //! result is gone when it returns.  So the buffer is a hidden work-buffer parameter, as a
 //! non-escaping vector local is (`work_buffer.rs`): the caller's frame keeps the store
 //! across the function's activations, the transitive clause carries it on to the frame
-//! that loops, and a callee that refills a live buffer (`@FR-R-RefillBuffer`,
-//! `@FR-R-RefillText`'s collection clause) finds the previous call's elements in it.
+//! that loops.
 //!
 //! The read walk IS the escape proof: a view of the buffer that is only read cannot be
 //! copied, moved, adopted or returned, so nothing of the store outlives the activation.
@@ -33,10 +32,8 @@ impl Parser {
     ///
     /// A work-ref this frame mints for a callee's hidden VECTOR return buffer, whose result
     /// is only read where it stands (`admit_result_ref`), becomes a hidden work-buffer
-    /// parameter: the caller's frame keeps the store across this function's activations, so
-    /// a callee that refills a live buffer (`@FR-R-RefillBuffer`, `@FR-R-RefillText`'s
-    /// collection clause) finds the previous call's elements where a store minted per
-    /// activation handed it an empty one.  Handed the null sentinel the function takes the
+    /// parameter: the caller's frame keeps the store across this function's activations
+    /// instead of minting one per activation.  Handed the null sentinel the function takes the
     /// rebound-parameter road at entry, as `promote_one` writes it: an entry witness, a store
     /// of its own, released at exit against the witness.
     ///

@@ -172,8 +172,8 @@ sequentially on the main thread — no concurrent store access.
 ### Description
 
 If a worker function writes to a field of its locked cloned input store in a
-release build, the write is silently discarded into a thread-local 256-byte
-dummy buffer.  The worker's computation may then observe stale or wrong data and
+release build, the write is silently discarded into the store's own scratch
+(`Store::discard`).  The worker's computation may then observe stale or wrong data and
 return incorrect results **with no error or panic**.
 
 The auto-locking of `const` arguments is currently guarded by
@@ -341,7 +341,7 @@ a slot that `free == false`.
 
 The existing `LOFT_STORE_LOG` env-var logs alloc/free events.  Add a
 `debug_assert` in `free_named` that verifies the freed slot equals `self.max - 1`
-(strict LIFO), and emit the full alloc/free trace to a thread-local buffer on
+(strict LIFO), and emit the full alloc/free trace to a buffer of the `Stores` on
 violation so the error message shows which store broke ordering.
 
 **M4-b — Replace LIFO scan with a free-bitmap**

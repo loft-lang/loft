@@ -7,7 +7,6 @@
 #![allow(unused_imports)] // Module used from main(), not from test builds.
 
 use crate::data::{Data, DefType, Type};
-use crate::generation;
 use crate::log_config::LogConfig;
 use crate::logger;
 use crate::native_utils;
@@ -221,10 +220,11 @@ fn leading_use_region(source: &str) -> Option<String> {
 fn build_test_base(
     default_dir: &str,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     base_file: &str,
     use_region: &str,
 ) -> Option<Box<TestBase>> {
-    let built = build_test_base_inner(default_dir, lib_dirs, base_file, use_region);
+    let built = build_test_base_inner(default_dir, lib_dirs, flag_lib_dirs, base_file, use_region);
     // `LOFT_TEST_BASE_REPORT=1` — say whether the sharing engaged, and for which
     // libraries.  Off by default and on stderr: a run has nothing to report here,
     // and a suite that got slower is the only reason to ask.  It is also what
@@ -262,11 +262,13 @@ fn stdlib_dir_of(default_dir: &str) -> String {
 fn build_test_base_inner(
     default_dir: &str,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     base_file: &str,
     use_region: &str,
 ) -> Option<Box<TestBase>> {
     let mut p = Parser::new();
     p.lib_dirs = lib_dirs.to_vec();
+    p.flag_lib_dirs = flag_lib_dirs.to_vec();
     let stdlib_dir = stdlib_dir_of(default_dir);
     if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir)
         && p.parse_stdlib(&stdlib_dir).is_err()
@@ -603,9 +605,7 @@ fn parse_args_annotation(s: &str, ann: &mut Annotations) {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TestBackend {
     Interpreter,
-    /// `--native`: the Rust writer and rustc.
-    NativeRust,
-    /// `--native-c` / `LOFT_NATIVE_BACKEND=c`: the C backend and the host's C compiler.
+    /// `--native`: the C backend and the host's C compiler.
     NativeC,
 }
 
@@ -617,6 +617,7 @@ pub(crate) fn run_tests(
     no_warnings: bool,
     deny_warnings: bool,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     project: Option<&str>,
     backend: TestBackend,
     extra_native_libs: &[String],
@@ -972,23 +973,6 @@ pub(crate) fn run_tests(
             .to_string()
     });
 
-    // In native mode, ensure libloft.rlib exists and is up to date.
-    // `cargo run --bin loft` rebuilds the binary but may skip the library
-    // target, leaving native tests linking against stale code.
-    // Detect this by comparing source mtimes against the rlib and rebuild
-    // automatically when needed.  A C run links no Rust runtime (@PLN203 C5).
-    if native_mode && !native_c {
-        native_utils::ensure_rlib_fresh();
-        if native_utils::loft_lib_dir().is_none() {
-            std::panic::set_hook(prev_hook);
-            println!(
-                "loft: --native requires libloft.rlib; \
-                 run `cargo build --lib` first"
-            );
-            return 1;
-        }
-    }
-
     // loft#860 — `--native` compiles each test to Rust, so there is no dispatch loop
     // to sample and no loft call stack to sample it over.  Said once, up front, because
     // the alternative is a run that accepts the variable and ends without a report —
@@ -1104,6 +1088,8 @@ pub(crate) fn run_tests(
             // Build parser with CLI lib_dirs + @ARGS lib dirs.
             let mut p = Parser::new();
             p.lib_dirs = lib_dirs.to_vec();
+            // `@C173` — a `--lib` given to `loft test` outranks a pin, as in a run.
+            p.flag_lib_dirs = flag_lib_dirs.to_vec();
             if let Some(ref pl) = project_lib {
                 p.lib_dirs.insert(0, pl.clone());
             }
@@ -1164,7 +1150,13 @@ pub(crate) fn run_tests(
                                 .to_string_lossy()
                                 .into_owned();
                             let (libs, region) = slot.key();
-                            let built = build_test_base(default_dir, libs, &base_file, region);
+                            let built = build_test_base(
+                                default_dir,
+                                libs,
+                                flag_lib_dirs,
+                                &base_file,
+                                region,
+                            );
                             slot.insert(BaseSlot::Shared(built));
                         }
                         if let BaseSlot::Shared(Some(base)) = slot.get() {
@@ -1276,9 +1268,9 @@ pub(crate) fn run_tests(
             // else.
             let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if has_errors {
-                loft::copy_manifest::clear_materialised_views();
+                loft::copy_manifest::clear_materialised_views(&p.data);
             } else {
-                loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
+                loft::copy_manifest::drain_written_back_views(&p.data, &mut p.diagnostics);
                 loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             }
             if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {
@@ -1673,13 +1665,14 @@ pub(crate) fn run_tests(
             // Deliberately NOT the wrap harness's rule ("if `main` exists, only `main`
             // runs") — see TESTING.md § `tests/wrap.rs` — shared runner for docs and scripts tests.  That one answers a different
             // question: the harness drives whole SCRIPTS, where `main` is the program.
-            if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
-                test_fns.retain(|(_, n)| n.starts_with("test_"));
-            }
-
-            // Apply function name filter (from "file.loft::name" syntax).
+            //
+            // A filter (`file.loft::name`, `file.loft::{a,b}`) names exactly what runs, so it
+            // replaces that narrowing rather than applying after it: `file.loft::main` runs
+            // `main` even beside tests, and a harness can ask for the set it chose.
             if let Some(ref filter) = fn_filter {
                 test_fns.retain(|(_, name)| filter.iter().any(|f| name == f));
+            } else if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
+                test_fns.retain(|(_, n)| n.starts_with("test_"));
             }
 
             if test_fns.is_empty() {
@@ -1767,497 +1760,6 @@ pub(crate) fn run_tests(
                             dir_pass += 1;
                         } else {
                             dir_fail += 1;
-                        }
-                    }
-                } else {
-                    // Generate Rust source.
-                    let end_def = native_data.definitions();
-                    let main_nr = native_data.def_nr("n_main");
-                    // loft#1010 — the file's own `main` is the crate's entry point only when
-                    // this run means to CALL it.  It used to be enough that `n_main` existed:
-                    // the generated binary then ran `main` and nothing else, exited 0, and the
-                    // harness reported every `test_*` as passed WITHOUT running one.  A test
-                    // asserting `1 == 2` beside a `main` was green on `--native` and red on the
-                    // interpreter — a false green, which is the one failure mode a test runner
-                    // may not have.
-                    //
-                    // `native_fns` is the authority on what this run calls (loft#1010 narrows it
-                    // to `test_*` whenever the file names any).  When `main` is not in it, the
-                    // harness supplies the crate's `main` below and the generator's own bootstrap
-                    // is suppressed — the path #621 already built for a package whose `src/`
-                    // entry also carries an `n_main`.
-                    let has_main = main_nr < end_def
-                        && native_data.def(main_nr).name == "n_main"
-                        && native_fns.iter().any(|(_, n)| n == "main");
-                    let entry_defs: Vec<u32> = if has_main {
-                        vec![main_nr]
-                    } else {
-                        native_fns.iter().map(|(d, _)| *d).collect()
-                    };
-                    let gen_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let mut buf: Vec<u8> = Vec::new();
-                        let mut out = generation::Output::new(&native_data, &native_db);
-                        // Host-native backend: C-ABI cdylib link (NATIVE_ARTIFACT_IDENTITY.md § Resolution).
-                        out.native_cabi = native_utils::native_cabi_enabled();
-                        // As the standalone native compile: the program binds at start every
-                        // library it does not link into itself — the packages' under a dynamic
-                        // link, and under a static one the C libraries packages ship with no
-                        // archive to link in.  Tied to `native_cabi`, a static test binary left
-                        // those libraries' `#c` symbols as undefined `extern "C"` references.
-                        out.native_bind = true;
-                        // #621 — when this harness supplies the crate's `main`
-                        // below, suppress the generator's own bootstrap.
-                        // `output_native_reachable` emits one whenever ANY
-                        // definition is named `n_main`, and that scan is not
-                        // source-scoped: a tested package whose `src/` entry is
-                        // also a runnable CLI contributes an `n_main`, so both
-                        // mains landed in one crate (rustc E0428) and every test
-                        // in an 11-of-48-packages shape was untestable natively.
-                        // `has_main` (source-scoped) is the right authority for
-                        // whose entry point this is — the TEST FILE's, if any.
-                        if has_main {
-                            out.output_native_reachable(&mut buf, start_def, end_def, &entry_defs)
-                                .expect("native codegen write");
-                        } else {
-                            out.output_native_no_bootstrap(
-                                &mut buf,
-                                start_def,
-                                end_def,
-                                &entry_defs,
-                            )
-                            .expect("native codegen write");
-                        }
-                        // output_native_reachable emits fn main() when n_main
-                        // exists.  For test-only files (no n_main) we generate
-                        // a main() that calls each test function.
-                        if !has_main {
-                            use std::io::Write;
-                            // P199 — wrap Stores in UnsafeCell so the new
-                            // ABI's `&UnsafeCell<Stores>` parameter type is
-                            // satisfied by the entry call.
-                            writeln!(buf, "\nfn main() {{").unwrap();
-                            // The store-memory ceiling the runner hands down (below).
-                            writeln!(buf, "    loft::store_budget::apply_env_limit_if_set();")
-                                .unwrap();
-                            writeln!(
-                                buf,
-                                "    let cell = std::cell::UnsafeCell::new(Stores::new());"
-                            )
-                            .unwrap();
-                            // #255: anchor file I/O at the TEST file's directory
-                            // (handed down by the runner via LOFT_SOURCE_DIR) so
-                            // `file()` / `source_dir()` resolve against the test's
-                            // assets — matching the interpreter and the standalone
-                            // `--native` main.  A fresh `Stores::new()` otherwise
-                            // has an empty `source_dir` anchor → resolve_path falls
-                            // back to passthrough (the process cwd / scratch dir),
-                            // so a relative `file("asset")` missed under --native
-                            // while passing under the interpreter.
-                            //
-                            // The anchor MODE is the program's own, not a constant:
-                            // a `#cwd` file asks for cwd-relative paths, and baking
-                            // `true` here compiled it as though it had never written
-                            // the directive.  `source_dir` is set either way — it is
-                            // what the `source_dir()` built-in answers, and
-                            // `resolve_path` ignores it when the mode is cwd.
-                            writeln!(
-                                buf,
-                                "    {{ let s: &mut Stores = unsafe {{ &mut *cell.get() }}; s.source_dir = Stores::source_dir_native(); s.program_relative = {}; }}",
-                                clean_db.program_relative
-                            )
-                            .unwrap();
-                            writeln!(buf, "    init(&cell);").unwrap();
-                            // The harness names ONE test per run (its first argument), so a
-                            // failure is attributed to the test that failed and every test
-                            // starts from fresh stores, as it does on the interpreter.  With
-                            // no argument the binary runs them all.
-                            writeln!(buf, "    let only = std::env::args().nth(1);").unwrap();
-                            for (_, name) in &native_fns {
-                                writeln!(
-                                    buf,
-                                    "    if only.as_deref().is_none_or(|n| n == \"{name}\") {{ n_{name}(&cell); }}"
-                                )
-                                .unwrap();
-                            }
-                            writeln!(buf, "}}").unwrap();
-                        }
-                        buf
-                    }));
-                    let buf = match gen_result {
-                        Ok(b) => b,
-                        Err(payload) => {
-                            let msg = panic_message(&*payload);
-                            for (_, fn_name) in &native_fns {
-                                file_result.tests.push((
-                                    fn_name.clone(),
-                                    false,
-                                    Some(format!("native codegen panic: {msg}")),
-                                ));
-                                dir_fail += 1;
-                            }
-                            // Skip compile+run phases.
-                            Vec::new()
-                        }
-                    };
-                    if !buf.is_empty() {
-                        let stem = fa::file_stem(&abs_file)
-                            .unwrap_or_default()
-                            .replace('-', "_");
-                        // The scratch directory is shared by every process on the box —
-                        // every test binary of a gate, and every checkout's gate — and one
-                        // file is often compiled several times at once with DIFFERENT
-                        // emissions (`keyed_fast_paths` runs `158-keyed-fast-paths` under
-                        // each `LOFT_KEYED_VERIFY` setting).  So nothing is written at a
-                        // shared path while another process may read it: the source and the
-                        // binary are built in this process's own directory, and the binary
-                        // is PUBLISHED under its cache key by an atomic rename.  A shared
-                        // per-stem name let one process rewrite the source another was
-                        // compiling (`unexpected closing delimiter`), truncate the binary
-                        // another was linking (`ld terminated with signal 7`), or hand it a
-                        // program built against another checkout's rlib (`undefined hidden
-                        // symbol`) — loft#1626.  Equal keys mean equal programs, so a
-                        // published binary is never replaced by a different one.
-                        let scratch = crate::platform::scratch_dir();
-                        let lib_dir = native_utils::loft_lib_dir();
-                        // Keyed without the program's own path, which this build reads at
-                        // run time (`native_utils::path_free_key_source`).
-                        let key = native_utils::native_cache_key(
-                            &native_utils::path_free_key_source(&buf, &native_data, false),
-                            lib_dir.as_deref(),
-                            Some(&native_data),
-                        );
-                        let binary =
-                            scratch.join(format!("loft_test_native_{stem}_{key:016x}_bin"));
-                        let work = crate::platform::build_scratch_dir("test_native");
-                        let tmp_rs = work.join(format!("loft_test_native_{stem}.rs"));
-                        let tmp_bin = work.join(format!("loft_test_native_{stem}_bin"));
-                        let cached = fa::exists(&binary);
-                        if !cached {
-                            let _ = fa::write(&tmp_rs, &buf);
-                        }
-
-                        // Layer 2: never start a compile that could overflow a
-                        // RAM-backed tmpfs (reclaims loft's own stale artefacts
-                        // first).  Warn + proceed; rustc surfaces a real ENOSPC
-                        // if it genuinely can't write.
-                        if !cached && !crate::platform::native_compile_space_ok(&scratch) {
-                            eprintln!(
-                                "loft: warning — low space in {} (set LOFT_TMPFS_MIN_FREE_MB to tune)",
-                                scratch.display()
-                            );
-                        }
-                        let compile_ok = if cached {
-                            crate::platform::timing_record("fixture", &stem, true, None);
-                            true
-                        } else {
-                            // Compile with rustc.
-                            let mut cmd = Spawn::new(Program::search("rustc"));
-                            // Keep rustc's own intermediates in the loft
-                            // scratch dir too, so the whole native compile
-                            // stays off a small `/tmp` tmpfs.
-                            cmd.push_env("TMPDIR", &scratch)
-                                .push_arg("--edition=2024")
-                                .push_arg("-C")
-                                .push_arg("debuginfo=0")
-                                .push_arg("-C")
-                                .push_arg("opt-level=0")
-                                .push_arg("-o")
-                                .push_arg(&tmp_bin)
-                                .push_arg(&tmp_rs);
-                            crate::native_utils::add_main_stack_flags(&mut cmd);
-                            // Layer 1: strip the linked binary (~36MB → ~1MB;
-                            // the bulk is debug info from libloft.rlib + std,
-                            // useless to a run-and-check test).  Opt out with
-                            // LOFT_NATIVE_KEEP_SYMBOLS=1 when debugging a crash.
-                            if crate::platform::native_strip_symbols() {
-                                cmd.push_arg("-C").push_arg("strip=symbols");
-                            }
-                            // @P389: each native package's rlib carries its own
-                            // copy of `loft_register_v1` (synthesized by the
-                            // `loft_ffi::loft_register!` macro for the cdylib's
-                            // dlopen registration path).  When a test file pulls
-                            // TWO OR MORE native packages into the SAME binary
-                            // (e.g. `use server; use web;` driving an HTTP
-                            // round-trip), `ld` errors with `duplicate symbol:
-                            // loft_register_v1`.  The binary never calls that
-                            // symbol — it inlines `loft_<crate>::n_…` directly —
-                            // so the duplicates are functionally harmless; tell
-                            // the linker to keep the first definition and skip
-                            // the rest.  This mirrors the identical mitigation on
-                            // the standalone `--native` path in `main.rs`; this
-                            // path (the `--tests --native` / `loft test` runner)
-                            // built its own rustc command and never got it, so
-                            // single-package smokes passed but any genuine
-                            // two-native-package test failed at the link step.
-                            // macOS ld64 rejects `--allow-multiple-definition`
-                            // and MSVC `link.exe` ignores it with a `LNK4044`
-                            // per occurrence, so skip it on both (matching
-                            // main.rs).
-                            if !native_data.native_packages.is_empty() {
-                                cmd.push_args(crate::platform::allow_multiple_definition_arg());
-                            }
-                            if let Some(ref ld) = lib_dir {
-                                cmd.push_args(loft::native_lib::loft_extern_args(
-                                    &ld.join("libloft.rlib"),
-                                ));
-                                for d in native_utils::dep_search_dirs(ld) {
-                                    cmd.push_arg("-L").push_arg(d);
-                                }
-                                // Propagate `-L native=` for every build-script
-                                // `OUT_DIR` that bundles a native lib — the G2
-                                // mitigation main.rs already has on the standalone
-                                // path.  windows-targets ships `windows.0.XX.0.lib`
-                                // inside its OUT_DIR; without these the Windows link
-                                // fails `LNK1181: cannot open input file
-                                // 'windows.0.XX.0.lib'`.  Native packages that pull
-                                // windows-targets via their OWN deps masked this (the
-                                // rlib branch of `add_native_extern_flags` harvests
-                                // the PACKAGE's OUT_DIRs), but a dependency-free
-                                // `[native] crate` package brings none — so the test
-                                // path needs loft's own OUT_DIRs too.
-                                for out_dir in native_utils::build_script_native_lib_dirs(ld) {
-                                    cmd.push_arg("-L")
-                                        .push_arg(format!("native={}", out_dir.display()));
-                                }
-                                // The C-ABI native consumer names `loft_ffi` types
-                                // (LoftStore/LoftRef/LoftStr) in its `extern "C"`
-                                // decls, so loft's own `loft_ffi` rlib must be on
-                                // the command (mirrors the standalone native
-                                // compile in main.rs).  Pick the copy `libloft` was
-                                // built against, not the first in dir order — two
-                                // copies in `deps/` else collide on StableCrateId
-                                // (see `native_lib::loft_ffi_for_libloft`).
-                                if let Some(ffi) = loft::native_lib::loft_ffi_for_libloft(
-                                    &ld.join("libloft.rlib"),
-                                    &native_utils::dep_search_dirs(ld),
-                                ) {
-                                    cmd.push_arg("--extern")
-                                        .push_arg(format!("loft_ffi={}", ffi.display()));
-                                }
-                            }
-                            // LibCI: link each package's `#native` crate so tests
-                            // for native-backed libraries (graphics, crypto, …)
-                            // compile under --native — mirrors the standalone +
-                            // WASM native compiles, which already call this.
-                            let loft_deps = lib_dir
-                                .as_ref()
-                                .map(|d| native_utils::dep_search_dirs(d))
-                                .unwrap_or_default();
-                            native_utils::add_native_extern_flags(
-                                &mut cmd,
-                                &native_data,
-                                None,
-                                &loft_deps,
-                            );
-                            // And the C libraries the `#c` bindings resolve against, as the
-                            // standalone native compile links them.  Without this a STATIC
-                            // link (`LOFT_NATIVE_CABI=0`) had nothing to bind at start and
-                            // left every `#c` symbol undefined.
-                            native_utils::add_c_library_flags(&mut cmd, &native_data);
-                            let rustc_start = std::time::Instant::now();
-                            let compile_result = cmd.run(b"");
-                            crate::platform::timing_record(
-                                "fixture",
-                                &stem,
-                                false,
-                                Some(rustc_start.elapsed().as_secs_f64()),
-                            );
-                            let ok = compile_result
-                                .as_ref()
-                                .map(|o| o.status.success())
-                                .unwrap_or(false);
-                            let ok = ok
-                                && (fa::rename(&tmp_bin, &binary).is_ok() || fa::exists(&binary));
-                            if !ok {
-                                let stderr_msg = compile_result.as_ref().ok().map_or_else(
-                                    || "rustc not found".to_string(),
-                                    |o| {
-                                        let s = String::from_utf8_lossy(&o.stderr);
-                                        let err = s
-                                            .lines()
-                                            .find(|l| l.starts_with("error"))
-                                            .unwrap_or("(unknown)");
-                                        // Append linker-detail lines so a link failure
-                                        // NAMES its cause instead of just "exit code:
-                                        // 1181" / "exit status: 1" — the first `error:`
-                                        // line alone hid it.
-                                        //
-                                        // The first three markers are the WINDOWS shapes
-                                        // and were the whole list until 2026-09-23, when
-                                        // `keyed_fast_paths` went red inside three
-                                        // different agents' gates on this box and green
-                                        // standalone in all three.  Every one of us called
-                                        // it environmental without evidence, because a
-                                        // UNIX `cc` failure names its cause in
-                                        // `collect2:` / `ld:` lines that match none of the
-                                        // three — so the report said only that linking
-                                        // failed.  An OOM kill during parallel linking and
-                                        // a full disk are the two this box actually
-                                        // produces, and both are one line away from being
-                                        // self-evident.
-                                        let detail: Vec<&str> = s
-                                            .lines()
-                                            .filter(|l| {
-                                                l.contains("LNK")
-                                                    || l.contains("cannot open")
-                                                    || l.contains("undefined")
-                                                    || l.contains("collect2")
-                                                    || l.contains("ld:")
-                                                    || l.contains("ld returned")
-                                                    || l.contains("No space left")
-                                                    || l.contains("Killed")
-                                                    || l.contains("terminated with signal")
-                                            })
-                                            .take(4)
-                                            .collect();
-                                        if detail.is_empty() {
-                                            err.to_string()
-                                        } else {
-                                            format!("{err} | {}", detail.join(" | "))
-                                        }
-                                    },
-                                );
-                                let _ = fa::remove_file(&tmp_bin);
-                                for (_, fn_name) in &native_fns {
-                                    file_result.tests.push((
-                                        fn_name.clone(),
-                                        false,
-                                        Some(format!("native compile: {stderr_msg}")),
-                                    ));
-                                    dir_fail += 1;
-                                }
-                            }
-                            ok
-                        };
-
-                        if compile_ok {
-                            // Run the compiled binary.  Hand down the source
-                            // anchor — the TEST file's OWN directory — so
-                            // `source_dir()` and program-relative file I/O
-                            // resolve against the test's assets, not the scratch
-                            // dir where the generated binary lives.  Without this
-                            // `source_dir_native()` falls back to the executable's
-                            // dir (the loft scratch/tmp), so a relative
-                            // `file("asset")` or `source_dir()` misses under
-                            // `--native` while passing under the interpreter
-                            // (which anchors at the test file's dir).  Mirrors the
-                            // standalone `--native` run path in main.rs; an
-                            // explicit user `LOFT_SOURCE_DIR` wins.
-                            // @PLN26 phase 4 — stage native-package DLLs beside the
-                            // test binary on Windows (no RPATH there); mirrors the
-                            // standalone run path in main.rs.  No-op off Windows /
-                            // on the rlib path.
-                            if let Some(dir) = binary.parent() {
-                                native_utils::stage_native_dlls(dir, &native_data);
-                            }
-                            let run_one = |only: Option<&str>| -> Result<(), String> {
-                                let mut run_cmd = Spawn::new(Program::os(&binary));
-                                // @PLN195 — the build's library directories, for a program
-                                // that binds its libraries itself.
-                                if let Some(lib_path) = native_utils::lib_path_env(&native_data) {
-                                    run_cmd.push_env("LOFT_LIB_PATH", lib_path);
-                                }
-                                if let Some(name) = only {
-                                    run_cmd.push_arg(name);
-                                }
-                                // The program's own path, which the binary does not hold
-                                // (`codegen_runtime::main_file_or`).
-                                let n_main = native_data.def_nr("n_main");
-                                if n_main != u32::MAX {
-                                    run_cmd.push_env(
-                                        "LOFT_NATIVE_MAIN_FILE",
-                                        native_data.def(n_main).position().file,
-                                    );
-                                }
-                                if std::env::var("LOFT_SOURCE_DIR").is_err()
-                                    && let Some(dir) = std::path::Path::new(&abs_file).parent()
-                                {
-                                    run_cmd.push_env("LOFT_SOURCE_DIR", dir);
-                                }
-                                // Run the native test binary with cwd = source_dir so its
-                                // raw `std::fs` (e.g. imaging's load_png/save_png) anchors
-                                // where its loft `file()` does.  Gated on the program's own
-                                // mode, exactly as `enter_source_dir` gates the in-process
-                                // interpreter run: a `#cwd` program anchors loft I/O at the
-                                // cwd, so moving the child would put its raw `std::fs`
-                                // somewhere its `file()` is not.
-                                if clean_db.program_relative
-                                    && let Some(dir) = std::path::Path::new(&abs_file).parent()
-                                {
-                                    run_cmd = run_cmd.cwd(&fa::PathText::from_os(dir));
-                                }
-                                // The child's output is passed on as it was; its stderr is
-                                // also read for the first `error:` line, which names why
-                                // the test failed.
-                                run_cmd = run_cmd.stdout(std::process::Stdio::inherit());
-                                if leak_check {
-                                    run_cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
-                                }
-                                if std::env::var_os("LOFT_MEMORY_LIMIT").is_none() {
-                                    run_cmd.push_env(
-                                        "LOFT_MEMORY_LIMIT",
-                                        loft::store_budget::limit().to_string(),
-                                    );
-                                }
-                                let out = run_cmd
-                                    .run(b"")
-                                    .map_err(|e| format!("native run failed: {e}"))?;
-                                let stderr = String::from_utf8_lossy(&out.stderr);
-                                eprint!("{stderr}");
-                                if out.status.success() {
-                                    // The generated `main` reports a residue as a WARNING
-                                    // with exit 0 (`NATIVE_LEAK_CHECK_TAIL`); under the gate
-                                    // that line is the verdict, as `tests/native.rs` reads it.
-                                    if let Some(line) = stderr
-                                        .lines()
-                                        .find(|l| l.contains("stores not freed at program exit"))
-                                    {
-                                        return Err(line.trim().to_string());
-                                    }
-                                    return Ok(());
-                                }
-                                Err(native_failure(out.status, &stderr))
-                            };
-                            // A file's own `main` is one run; otherwise one run per test.
-                            let names: Vec<Option<&str>> = if has_main {
-                                vec![None]
-                            } else {
-                                native_fns.iter().map(|(_, n)| Some(n.as_str())).collect()
-                            };
-                            for only in names {
-                                let outcome = run_one(only);
-                                // A whole-file run (`main`) stands for every entry in it.
-                                let covered: Vec<&String> = match only {
-                                    Some(name) => native_fns
-                                        .iter()
-                                        .map(|(_, n)| n)
-                                        .filter(|n| n.as_str() == name)
-                                        .collect(),
-                                    None => native_fns.iter().map(|(_, n)| n).collect(),
-                                };
-                                for fn_name in covered {
-                                    match &outcome {
-                                        Ok(()) => {
-                                            file_result.tests.push((fn_name.clone(), true, None));
-                                            dir_pass += 1;
-                                        }
-                                        Err(msg) => {
-                                            file_result.tests.push((
-                                                fn_name.clone(),
-                                                false,
-                                                Some(msg.clone()),
-                                            ));
-                                            dir_fail += 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // The published binary stays as the cache; this process's own
-                        // build directory goes.  `LOFT_KEEP_NATIVE_RS=1` keeps it, source
-                        // included, for inspection.
-                        if std::env::var_os("LOFT_KEEP_NATIVE_RS").is_none() {
-                            let _ = fa::remove_dir_all(&work);
                         }
                     }
                 }
@@ -2658,13 +2160,15 @@ pub(crate) fn run_tests(
     // throughout, and could only find out by running the native sweep by hand.
     // The scope is not optional and not behind a flag: it rides on the default
     // path, because that is the path that was lying.
-    // @C102 — on a machine with no `rustc`, `loft test --native` cannot help: name what would.
+    // @C102 — on a machine with no C compiler, `loft test --native` cannot help: name what would.
+    let no_cc;
     let (ran, missing, missing_cmd) = if native_mode {
         ("native", "the interpreter", "loft test")
-    } else if loft::native_lib::rustc_available() {
-        ("the interpreter", "native", "loft test --native")
+    } else if let Err(why) = crate::c_driver::native_toolchain() {
+        no_cc = why;
+        ("the interpreter", "native", no_cc.as_str())
     } else {
-        ("the interpreter", "native", loft::native_lib::NO_RUSTC)
+        ("the interpreter", "native", "loft test --native")
     };
     // Tests that were counted but never executed on `ran` (see `total_skipped`).
     let skipped = if total_skipped > 0 {

@@ -254,17 +254,10 @@ pub struct Manifest {
     /// `[native] crate` marks, so every reader of those two sees it as a native library.
     pub native_component: Option<String>,
     /// @PLN21 Phase 2 — `[native] runtime-libs = "libGL.so.1, libasound.so.2"`:
-    /// the system shared libraries this package's cdylib needs at RUNTIME (its
+    /// the system shared libraries the package's native library needs at RUNTIME (its
     /// `dlopen` NEEDED set beyond libc).  Turns a load failure into an actionable
-    /// install hint; a missing one of these can NOT be fixed by building from
-    /// source (the source cdylib links the same lib) — Phase 3 / decision C3.
+    /// install hint — decision C3.
     pub runtime_libs: Vec<String>,
-    /// @PLN21 Phase 2 — `[native] build-deps = "libgl-dev, libasound2-dev"`:
-    /// the system DEV packages needed to BUILD the cdylib from source (the
-    /// fallback when no prebuilt matches).  Diagnoses a failed `auto_build_native`
-    /// ("install `<dev-lib>`").  Distinct from `runtime_libs` (the `-dev` headers
-    /// vs the runtime `.so`).
-    pub build_deps: Vec<String>,
     /// @PLN24 arc D — `[c] libs = "liblc_types.so, libpq.so.5"`: the C shared
     /// libraries this package's `#c` bindings resolve against.
     ///
@@ -315,8 +308,7 @@ pub struct Manifest {
     /// `wasm32-unknown-unknown` rlib and links it via `--extern`.
     pub wasm_bridge_crate: Option<String>,
     /// lib_plan-29 W1c: loft `#native` symbol → bridge `pub fn` name from
-    /// `[wasm.bridge.routes]`.  Read by `src/generation/mod.rs::output_
-    /// native_direct_call` (replaces the hard-coded `WASM_BRIDGE_FNS`).
+    /// `[wasm.bridge.routes]`, copied into `Data::wasm_bridge_routes`.
     pub wasm_bridge_routes: Vec<(String, String)>,
     /// lib_plan-29 W2: per-library JS host-imports file from
     /// `[wasm.bridge] host_js = "..."` (path relative to the package
@@ -358,8 +350,8 @@ pub struct Manifest {
     pub fonts: Vec<FontDecl>,
     /// @PLN146 F4 — the `[[embed]]` declarations, in file order.
     pub embeds: Vec<EmbedDecl>,
-    /// What the lexer could not read, each a value this manifest does not hold.  Also
-    /// handed to [`take_manifest_errors`] by [`read_manifest`].
+    /// What the lexer could not read, each a value this manifest does not hold.  A parse
+    /// reports them at the manifest's line (`Parser::read_manifest`).
     pub errors: Vec<ManifestError>,
 }
 
@@ -438,16 +430,6 @@ pub fn release_of(source_dir: &str) -> crate::database::Release {
 pub fn read_manifest(path: &str) -> Option<Manifest> {
     let content = crate::file_access::read_to_string(path).ok()?;
     let mut m = parse_manifest(&content, path);
-    if !m.errors.is_empty() {
-        MANIFEST_ERRORS.with(|sink| {
-            let mut sink = sink.borrow_mut();
-            for e in &m.errors {
-                if !sink.contains(e) {
-                    sink.push(e.clone());
-                }
-            }
-        });
-    }
     // @PLN146 F4 — an `[[embed]] source` is relative to the file that declares it,
     // and only the reader knows which file that was.  Recording it here rather than
     // at each call site keeps that fact in one home: a library's declaration and an
@@ -460,23 +442,6 @@ pub fn read_manifest(path: &str) -> Option<Manifest> {
         e.root.clone_from(&root);
     }
     Some(m)
-}
-
-thread_local! {
-    /// The errors of every manifest [`read_manifest`] read on this thread since the last
-    /// [`take_manifest_errors`], each once.  A manifest is read from some seventy places, most
-    /// of which can only skip what they cannot use; the parser drains this into its
-    /// diagnostics once the dependencies are resolved, so a malformed `loft.toml` is reported
-    /// as itself rather than as whatever it failed to declare (a type of the dependency whose
-    /// path it garbled reading as "Undefined type").
-    static MANIFEST_ERRORS: std::cell::RefCell<Vec<ManifestError>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// The manifest errors read on this thread since the last call, oldest first.
-#[must_use]
-pub fn take_manifest_errors() -> Vec<ManifestError> {
-    MANIFEST_ERRORS.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
 }
 
 /// One error in a `loft.toml`, at the position the lexer reported it.
@@ -527,17 +492,23 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
     let cfg = LexConfig::config(&["[", "]", "{", "}", "=", ".", ",", "-"], "#");
     let mut lex = Lexer::from_str_with(content, filename, cfg);
     let mut section = String::new();
+    // Where the manifest first declares a Rust native part, for its refusal below.
+    let mut rust_native_at: Option<(u32, u32)> = None;
     loop {
         match lex.peek().has.clone() {
             LexItem::None => break,
             LexItem::Token("[") => section = read_section(&mut lex, &mut m),
             LexItem::Identifier(_) => {
+                let at = (lex.peek().position.line, lex.peek().position.pos);
                 let key = read_key(&mut lex);
                 if !lex.has_token("=") {
                     continue; // malformed line; read_key already advanced
                 }
                 let value = read_value(&mut lex);
                 apply_kv(&mut m, &section, &key, &value);
+                if rust_native_at.is_none() && declares_rust_native(&section, &key) {
+                    rust_native_at = Some(at);
+                }
             }
             // Any stray token (or a value orphaned by a malformed line): skip one,
             // guaranteeing forward progress.
@@ -572,6 +543,25 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             message,
         });
     }
+    // A package's own native library (`[library] native`, `[native] crate` and the tables
+    // that go with them: a cdylib cargo built, or one shipped prebuilt) is not built, fetched
+    // or loaded: the manifest holds none, and the parse that reads it refuses
+    // the package at the declaration (`Parser::read_manifest`).  A `[native] component`
+    // names a library loft ships, not one of the package's own.
+    if m.native_component.is_none()
+        && let Some((line, col)) = rust_native_at
+    {
+        m.native = None;
+        m.native_crate = None;
+        m.native_functions.clear();
+        m.native_wasm.clear();
+        m.errors.push(ManifestError {
+            file: filename.to_string(),
+            line,
+            col,
+            message: RUST_NATIVE_REFUSED.to_string(),
+        });
+    }
     // `[native] component = "<name>"` stands for the native library it names and the C-ABI
     // link, so every reader of `native` and `native_crate` treats the package as native.
     if let Some(name) = m.native_component.clone() {
@@ -581,6 +571,20 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             .get_or_insert_with(|| format!("loft-{name}-component"));
     }
     m
+}
+
+/// Why a package with a native library of its own is refused, and what to write instead.
+pub const RUST_NATIVE_REFUSED: &str = "a package's own native library (`[library] native`, \
+    `[native] crate`) is no longer loaded: loft builds a package's native part itself, from C. \
+    List the C sources under `[c] shim = \"c/<file>.c\"` and bind each function with a `#c` \
+    declaration in the package's loft source";
+
+/// Does `key` in `section` declare a native library of the package's own?
+fn declares_rust_native(section: &str, key: &str) -> bool {
+    matches!(
+        (section, key),
+        ("library", "native") | ("native", "crate") | ("native.functions" | "native.wasm", _)
+    )
 }
 
 /// Read a `[section]` or `[[array-of-tables]]` header (current token is `[`) and
@@ -827,7 +831,6 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("c", "optional-libs") => m.c_optional_libs = split_list(&value.scalar()),
         ("c", "shim") => m.c_shim = split_list(&value.scalar()),
         ("native", "runtime-libs") => m.runtime_libs = split_list(&value.scalar()),
-        ("native", "build-deps") => m.build_deps = split_list(&value.scalar()),
         ("native.functions", _) => m.native_functions.push((key.to_string(), value.scalar())),
         ("native.wasm", _) => m.native_wasm.push((key.to_string(), value.scalar())),
         ("wasm.bridge", "crate") => m.wasm_bridge_crate = Some(value.scalar()),
@@ -841,7 +844,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
 
 /// @PLN21 Phase 2 — parse a comma-separated manifest value into a trimmed,
 /// non-empty list: `"libGL.so.1, libasound.so.2"` → `["libGL.so.1",
-/// "libasound.so.2"]`.  Backs `[native] runtime-libs` / `build-deps`.
+/// "libasound.so.2"]`.  Backs `[native] runtime-libs` and the `[c]` lists.
 fn split_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -1495,29 +1498,27 @@ mod tests {
         assert_eq!(m.description.as_deref(), Some("SHA-256, HMAC, base64."));
     }
 
-    // @PLN21 Phase 2 — `[native] runtime-libs` / `build-deps` parse into trimmed
-    // lists (with and without spaces), and are empty when absent.
+    // @PLN21 Phase 2 — `[native] runtime-libs` parses into a trimmed list (with and
+    // without spaces), and is empty when absent.
     #[test]
-    fn parses_native_runtime_and_build_deps() {
+    fn parses_native_runtime_libs() {
         let p = write_temp(
             "ndeps",
-            "[native]\ncrate = \"loft-graphics\"\nruntime-libs = \"libGL.so.1, libasound.so.2\"\nbuild-deps = \"libgl-dev,libasound2-dev\"\n",
+            "[native]\ncomponent = \"net\"\nruntime-libs = \"libGL.so.1, libasound.so.2\"\n",
         );
         let m = read_manifest(p.to_str().unwrap()).unwrap();
         assert_eq!(m.runtime_libs, vec!["libGL.so.1", "libasound.so.2"]);
-        assert_eq!(m.build_deps, vec!["libgl-dev", "libasound2-dev"]);
 
-        let p2 = write_temp("nodeps", "[native]\ncrate = \"loft-random\"\n");
+        let p2 = write_temp("nodeps", "[native]\ncomponent = \"net\"\n");
         let m2 = read_manifest(p2.to_str().unwrap()).unwrap();
-        assert!(m2.runtime_libs.is_empty() && m2.build_deps.is_empty());
+        assert!(m2.runtime_libs.is_empty(), "{:?}", m2.runtime_libs);
     }
 
     /// A Windows path in a TOML string: doubled backslashes are one each and no error; an
     /// undoubled one is an escape that is not one, recorded once per line (not once per
-    /// backslash) and handed to the parser's sink.
+    /// backslash).
     #[test]
     fn a_backslash_in_a_string_is_an_escape() {
-        let _ = take_manifest_errors();
         let p = write_temp(
             "bslash",
             "[dependencies]\nok = { path = \"D:\\\\a\\\\lib\" }\nbad = { path = \"D:\\a\\lib\" }\n",
@@ -1527,8 +1528,6 @@ mod tests {
         assert_eq!(m.errors.len(), 1, "{:?}", m.errors);
         assert_eq!(m.errors[0].line, 3);
         assert!(m.errors[0].message.contains("backslash"));
-        assert_eq!(take_manifest_errors(), m.errors);
-        assert_eq!(take_manifest_errors(), Vec::<ManifestError>::new());
     }
 
     #[test]
@@ -1615,43 +1614,44 @@ mod tests {
         assert_eq!(m.compile, None);
     }
 
+    /// @PLN225 R3 — a package's own native library is refused at its first declaration, and
+    /// the manifest holds none of it, so no reader builds, fetches or loads one.  A component
+    /// is loft's own library and still stands for the two fields.
     #[test]
-    fn parses_native_section() {
+    fn a_native_library_of_the_package_s_own_is_refused() {
         let p = write_temp(
             "native",
-            r#"[package]
-name = "graphics"
-version = "0.1.0"
-
-[native]
-crate = "graphics_native"
-
-[native.functions]
-save_png = "graphics_native::save_png"
-load_font = "graphics_native::load_font"
-
-[native.wasm]
-gl_create = "graphics_native::webgl::create_canvas"
-"#,
+            "[package]\nname = \"graphics\"\n\n[library]\nentry = \"src/graphics.loft\"\n\
+             native = \"loft_graphics\"\n\n[native]\ncrate = \"graphics_native\"\n\n\
+             [native.functions]\nsave_png = \"graphics_native::save_png\"\n",
         );
         let m = read_manifest(p.to_str().unwrap()).unwrap();
-        assert_eq!(m.native_crate.as_deref(), Some("graphics_native"));
-        assert_eq!(m.native_functions.len(), 2);
+        assert_eq!(m.native, None);
+        assert_eq!(m.native_crate, None);
+        assert_eq!(m.native_functions, Vec::<(String, String)>::new());
+        assert_eq!(m.errors.len(), 1, "{:?}", m.errors);
         assert_eq!(
-            m.native_functions[0],
-            (
-                "save_png".to_string(),
-                "graphics_native::save_png".to_string()
-            )
+            (m.errors[0].line, m.errors[0].message.as_str()),
+            (6, RUST_NATIVE_REFUSED)
         );
-        assert_eq!(m.native_wasm.len(), 1);
-        assert_eq!(
-            m.native_wasm[0],
-            (
-                "gl_create".to_string(),
-                "graphics_native::webgl::create_canvas".to_string()
-            )
-        );
+        for (tag, body) in [
+            ("crate", "[native]\ncrate = \"loft-x\"\n"),
+            ("functions", "[native.functions]\nf = \"x::f\"\n"),
+            ("wasm", "[native.wasm]\nf = \"x::f\"\n"),
+        ] {
+            let m = read_manifest(write_temp(tag, body).to_str().unwrap()).unwrap();
+            assert_eq!(m.errors.len(), 1, "{tag}: {:?}", m.errors);
+            assert_eq!(m.errors[0].line, 2, "{tag}");
+        }
+        let c = read_manifest(
+            write_temp("component", "[native]\ncomponent = \"net\"\n")
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(c.errors.is_empty(), "{:?}", c.errors);
+        assert_eq!(c.native.as_deref(), Some("loft_net"));
+        assert_eq!(c.native_crate.as_deref(), Some("loft-net-component"));
     }
 
     // @PLN100 Slice 2 — the [build] section: default-targets array,

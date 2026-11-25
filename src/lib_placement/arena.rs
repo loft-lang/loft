@@ -314,7 +314,7 @@ pub fn alloc_value(stores: &mut Stores, store_nr: u16, tp: u16) -> DbRef {
         pos: 0,
     };
     debug_assert!(
-        !stores.allocations[store_nr as usize].read_only,
+        !stores.allocations[store_nr as usize].is_locked(),
         "a call arena must be writable by the side that allocates in it"
     );
     let size = stores.enum_parent_size(tp);

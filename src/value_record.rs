@@ -9,9 +9,8 @@
 //! TUPLE: a function returning one builds `(a, b, c)` where it filled a `__retbuf`, a local
 //! bound from such a call is a tuple read by `TupleGet`, and a by-value parameter of such a
 //! record is received as a tuple.  The record, the caller's buffer store and the frees that
-//! released it leave the IR, so the interpreter claims no store for the call — the work
-//! `--native` already avoided with its own generator-side rewrite
-//! (`generation::hoist::value_records`).
+//! released it leave the IR, so the interpreter claims no store for the call — as `--native`
+//! does from the same plan (`opt::value_records`).
 //!
 //! ONE admission: the candidates are exactly what `value_records` admits — its `fns` for
 //! results and its `params` for parameters, whose soundness gate (nothing the callee reaches
@@ -595,6 +594,19 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         // presence word this pass has no spelling for, so the IR keeps the record form there.
         let shape = if arms.contains(&d) {
             Err("a fn-ref arm")
+        } else if data.any_drop_hook() && data.type_owns_droppable_anywhere(data.def(d).returned())
+        {
+            // `@FR-H-Drop`: a record that owns a droppable runs its hook when it is released,
+            // and a tuple holds no record to run it on.  Every local that would carry the tuple
+            // declines at that hook's mention, so a twin would never be served — and its body
+            // frees the droppable bare (the store records' `copied-lease`).
+            Err("its record owns a droppable")
+        } else if value_param_answer(data, d) {
+            // A VALUE struct read out of a parameter is copied (@PLN107), so a body answering
+            // one of its parameters binds each arm by a copy, which the record form hands to the
+            // caller as its answer.  Read field-wise into a tuple, that copy has no owner and
+            // leaks once per call (loft#2641).  `LOFT_NO_VALUE_PARAM_DECLINE=1` admits it.
+            Err("a value struct answering a parameter")
         } else {
             callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp)
         };
@@ -872,6 +884,19 @@ fn redirect_calls(n: &mut Value, to: &HashMap<u32, u32>) {
         *d = *t;
     }
     n.for_each_child_mut(&mut |c| redirect_calls(c, to));
+}
+
+/// Does `d` answer a value struct (`Data::is_value_struct`) whose deps name one of its visible
+/// parameters?  See the decline in [`rewrite_program`] (loft#2641).
+fn value_param_answer(data: &Data, d: u32) -> bool {
+    let def = data.def(d);
+    matches!(def.returned().peel_link().base(), Type::Reference(record, _) if data.is_value_struct(*record))
+        && !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
+        && def.returned().depend().iter().any(|&a| {
+            def.attributes
+                .get(a as usize)
+                .is_some_and(|attr| !attr.hidden)
+        })
 }
 
 /// The callee half of the shape, or `None` when `d` cannot return a tuple here.

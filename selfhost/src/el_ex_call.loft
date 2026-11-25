@@ -27,6 +27,7 @@ use el_ex_place;
 use el_ex_object;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_name;
@@ -767,10 +768,11 @@ pub fn resolve_order_stubs(e: el::El, vars: el_vars::Vars, n: ir::Node, h: integ
 }
 
 // `is_rewritable_append_target`: the bound types a parametric vector write is rewritten for —
-// a plain scalar, a text, a plain enum, a record or a vector.
+// a plain scalar, a nullable one (its own instance, `i_8integer?_…`, written as the scalar, its
+// null the scalar's sentinel), a text, a plain enum, a record or a vector.
 pub fn writes_carried(e: el::El, bound: ir::TypeT) -> boolean {
   b = el_types::base(bound);
-  if bound is TyOptional {
+  if bound is TyOptional && !el_convert::plain_scalar(b) {
     return false;
   }
   plain_enum = match b { TyEnum { n: _, is_ref } => !is_ref, _ => false };
@@ -1576,7 +1578,28 @@ pub fn materialize_collection(e: el::El, vars: el_vars::Vars, code: ir::Node, t:
   }
 }
 
+// `Parser::call` (loft#2146): an argument linked through a slot is stored back once the call
+// returns — the call held in `_amp_ret_N` (none for a void call), the stores after it, in an
+// "amp slot write-back" block.
 pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
+  outer_posts = vars.arg_posts;
+  vars.arg_posts = [];
+  r = call_args_at(e, vars, d, given, types);
+  posts = vars.arg_posts;
+  vars.arg_posts = outer_posts;
+  if r == null || len(posts) == 0 {
+    return r;
+  }
+  rx = r!;
+  if el_types::base(rx.tp) is TyVoid {
+    return ex(el_ir::v_block([rx.code] + posts, ir::TyVoid, "amp slot write-back"), ir::TyVoid);
+  }
+  ar = el_vars::create_unique(vars, "amp_ret", rx.tp);
+  el_vars::set_defined(vars, ar);
+  ex(el_ir::v_block([el_ir::v_set(ar, rx.code)] + posts + [ir::NdVar { n: ar }], rx.tp, "amp slot write-back"), rx.tp)
+}
+
+fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
   // pass types the call by the template's predicted result and leaves it `null`; the second
@@ -1630,7 +1653,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     // buffers: a text value's work text is numbered ahead of them.)
     for a in def.attributes {
       if a#index < len(given) && !(a.hidden) {
-        tvl = el_ex_match::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
+        tvl = el_ex_link::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
         if tvl != null {
           g2[a#index] = tvl!;
         }
@@ -1734,7 +1757,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
         },
         _ => {}
       }
-      l = el_ex_match::link_argument(e, vars, arg, at, pt);
+      l = el_ex_link::link_argument(e, vars, arg, at, pt);
       if l == null {
         return null;
       }
@@ -2262,9 +2285,10 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           tp = ir::TyNever;
         }
         stack = el_vars::tp(vars, var) is TyRefVar;
-        vector_row_def(e, tp, string_end(e, last));
-        append_spec(e, list, var, x.code, tp, stack, f!);
+        // (Registered where this hole ends — before the text after it — not at the string's end.)
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+        vector_row_def(e, tp, string_end(e, after));
+        append_spec(e, list, var, x.code, tp, stack, f!);
         s = text_part(e, after);
         if s != "" {
           list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: s }])];

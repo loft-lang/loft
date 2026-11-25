@@ -424,7 +424,7 @@ required for MVP.
 
 | Debian concept | Why we don't want it |
 |---|---|
-| Pre/post install scripts (`preinst`, `postinst`) | Security disaster: arbitrary code execution at install time.  Loft packages stay as data + Rust source + loft source — no install scripts.  Compilation of the Rust crate is the *only* code path that runs (and it's `rustc`, not the package's own scripts). |
+| Pre/post install scripts (`preinst`, `postinst`) | Security disaster: arbitrary code execution at install time.  Loft packages stay as data + C source + loft source — no install scripts.  Compilation of the package's `[c] shim` is the *only* code path that runs (and it's the C compiler, not the package's own scripts). |
 | `debconf` (interactive config) | Wrong UX for a programming-language ecosystem; install must be scriptable + non-interactive. |
 | `dpkg-divert` / `update-alternatives` | Solves file-conflict resolution for system-wide installs.  Doesn't apply — each loft package lives in its own `~/.loft/registry/<pkg>-<version>/` directory; no global file conflicts possible. |
 | Triggers (one package reacts to another's install/remove) | Overkill for a programming-language ecosystem.  Real use case has yet to emerge. |

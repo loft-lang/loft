@@ -8,7 +8,7 @@
     scripts/rewrite_census.py --bless-unless-drop   # one run that checks and records: fails on a
                                          #   drop (writing nothing), else writes the counts
     scripts/rewrite_census.py --only 12_drawing,drawing
-    scripts/rewrite_census.py --writer c # one writer only (`rust`, `c`; default both)
+    scripts/rewrite_census.py --writer c # one writer only (`c`, the only one)
     scripts/rewrite_census.py --verbose  # also list every rise and new row
     LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
 
@@ -22,9 +22,8 @@ it, and nothing but a compiler change can move it.
 
 How
 ---
-Each program is written by BOTH compiled writers without compiling the result — as Rust
-(`--native-emit --lean`, no rustc) and as C (`--emit-c`, no C compiler), ~0.2 s each — with
-`LOFT_REWRITE_CENSUS` set; the compiler counts each rewrite where it is ADMITTED
+Each program is written by the C writer without compiling the result (`--emit-c`, no C
+compiler), ~0.2 s each, with `LOFT_REWRITE_CENSUS` set; the compiler counts each rewrite where it is ADMITTED
 (`src/rewrite_census.rs`).  A row is per (program, writer, rule): a writer's count holds the
 admissions decided before any writer (the parse and IR phases, which both runs repeat) and that
 writer's own, so a clause one writer drops fails on that writer's row alone.  The body is the benches, the code whose speed is the goal: every
@@ -53,8 +52,7 @@ phase table `bench/portal/rule_phases.tsv` (`scripts/rule_phases.py`): a rule wh
 applying phases changed fails like a drop, and `--bless` rewrites it.  A partial run (`--only`,
 `--writer`) cannot judge the table and leaves it alone.
 
-The baseline is `bench/portal/rewrite_census.tsv`; a row of the older four-column form (no writer)
-reads as the Rust writer's.  A DROP fails; a rise, a new program or a
+The baseline is `bench/portal/rewrite_census.tsv`.  A DROP fails; a rise, a new program or a
 new rule is printed and passes.  A deliberate decline lands with `--bless` in the same commit,
 so the drop is visible in its review.  A program absent from this run (no checkout) is skipped.
 """
@@ -72,10 +70,9 @@ sys.path.insert(0, str(ROOT / "bench" / "portal"))
 from portal import library_packages  # noqa: E402  (the one home of which libraries)
 import rule_phases  # noqa: E402  (the phase table, beside this script)
 
-# Each compiled writer: its name in the baseline, the source it writes, its flags.  `rust` is
-# the rustc writer (census phase `native`), `c` the C writer (phase `c`).
+# Each compiled writer: its name in the baseline, the source it writes, its flags.  `c` is the
+# C writer (phase `c`), the one compiled writer.
 WRITERS = {
-    "rust": (".rs", lambda out: ["--native-rust", "--native-emit", str(out), "--lean"]),
     "c": (".c", lambda out: ["--emit-c", str(out)]),
 }
 
@@ -136,7 +133,7 @@ def census(loft, prog, writer):
             proc = subprocess.run(
                 [loft, *flags(out), *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
-                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else "",
                      "LOFT_REWRITE_CENSUS_FN": str(by_fn) if i == 0 else ""},
             )
@@ -159,43 +156,31 @@ def census(loft, prog, writer):
         return name, commit, writer, (counts, split), None
 
 
-def rust_writer_env():
-    """The environment for a census run, minus `LOFT_NATIVE_BACKEND`: each writer is chosen by
-    its flag (`WRITERS` — `--native-rust --native-emit` for Rust, `--emit-c` for C), and `make ci` exports
-    `LOFT_NATIVE_BACKEND=c` to every step, under which `--native-emit` writes C — the Rust row
-    then counted the C writer's rewrites and read every rule the C does not fire as a drop."""
-    return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
-
-
 def warm_dependencies(loft, progs):
-    """Build every library row's dependency cdylibs once, one program at a time, before the
-    parallel census.  A program whose dependency's cdylib exists calls into it; one that finds it
-    absent, or still being built by another census worker, emits those functions inline — and
-    counts their rewrites.  Run four at a time from a cold cache, WHICH program counted them was
-    a race: two admissions moved between `hex_recover` and `hex_edge` from run to run, the total
-    unchanged, and the gate failed on whichever lost them.  Warmed serially, every program sees
-    every dependency present, so the count is the program's own."""
+    """Emit every program once, one at a time, before the parallel census, so what a run builds
+    on the way — the standard library's hosted C unit (@PLN225 R1), a library's unit — is built
+    and cached before anything is counted.  Counted cold, a program also counts the rewrites of
+    the unit its run built (a census of 109110 admissions where the warm one reads 108969, on
+    the same tree), and which program builds it first is a race between the workers."""
     with tempfile.TemporaryDirectory() as tmp:
-        for name, commit, cwd, argv in progs:
-            if commit == "-":
-                continue
+        ext, flags = WRITERS["c"]
+        for _name, _commit, cwd, argv in progs:
             subprocess.run(
-                [loft, "--native-rust", "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
+                [loft, *flags(Path(tmp) / f"warm{ext}"), *argv],
                 cwd=cwd, capture_output=True, timeout=600,
-                env={**rust_writer_env(), "LOFT_REWRITE_CENSUS": ""},
+                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1", "LOFT_REWRITE_CENSUS": ""},
             )
 
 
 def read_baseline():
-    """`(program, writer) → (commit, {rule: count})`; a four-column row is the Rust writer's."""
+    """`(program, writer) → (commit, {rule: count})`."""
     rows = {}
     if BASELINE.is_file():
         for line in BASELINE.read_text(encoding="utf-8").splitlines():
             if line.startswith("#") or not line.strip():
                 continue
             parts = line.split("\t")
-            name, commit, rule, n = parts[0], parts[1], parts[-2], parts[-1]
-            writer = parts[2] if len(parts) == 5 else "rust"
+            name, commit, writer, rule, n = parts
             rows.setdefault((name, writer), (commit, {}))[1][rule] = int(n)
     return rows
 
@@ -205,7 +190,7 @@ def write_baseline(results):
         "# The rewrite census: how often each rewrite is admitted per bench program.",
         "# Written by `scripts/rewrite_census.py --bless`; a drop against it fails `make rewrite-census`.",
         "# program <TAB> commit (a library checkout's, then `+name@version` per dependency its lane "
-        "resolved; `-` for an in-repo lane) <TAB> writer (`rust`, `c`) <TAB> rule <TAB> count",
+        "resolved; `-` for an in-repo lane) <TAB> writer (`c`) <TAB> rule <TAB> count",
     ]
     for name, commit, writer, counts in sorted(results, key=lambda r: (r[0], r[2])):
         for rule, n in sorted(counts.items()):

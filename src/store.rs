@@ -47,12 +47,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 
-/// The text null: a loft `text` that holds no value is this one NUL byte, and
-/// [`Store::text_is_null`] reads nullity from the content.  The interpreter, the runtime
-/// emitted programs link and every store reader share it; `crate::state` re-exports it
-/// under the path emitted Rust names (`loft::state::STRING_NULL`).
-pub const STRING_NULL: &str = "\0";
-
 #[allow(dead_code)]
 static A: System = System;
 /// The first word of every store and image (`@FR-S-Frame`): a reader refuses a file without it.
@@ -685,12 +679,17 @@ pub struct Store {
     /// the outer copy's source-free would free the caller's own argument.  Depth
     /// makes the brackets nest: protection lifts when the LAST one closes.
     pub free_protect_depth: u32,
-    /// HARD lock: when `true`, the store is immutable.  All `addr_mut`,
+    /// HARD lock: when non-zero, the store is immutable.  All `addr_mut`,
     /// `claim`, and `delete` calls panic.  Set by CONST_STORE init
     /// (`compile.rs`), the JSON null sentinel (`native.rs`), and worker
     /// store borrows (`clone_locked` / `borrow_locked_for_light_worker`).
     /// Cleared via `unlock()`.
-    pub read_only: bool,
+    ///
+    /// A byte naming WHAT locked it ([`Self::RO_LOCK`], [`Self::RO_CONST`],
+    /// [`Self::RO_FOREIGN`]), never a `bool`: a hosted C unit works on this very struct and
+    /// writes the kind its locked-write advice reads (`LOFT_RO_*` in `loft_rt.h`), so a `bool`
+    /// here held 2 or 3 — undefined behaviour, which a release build read as unlocked.
+    pub read_only: u8,
     /// Which allocation this slot is, on `Stores`' monotonic counter.
     ///
     /// Slot NUMBERS are reused, so `store_nr` alone cannot answer *"is this the same store I
@@ -783,6 +782,10 @@ pub struct Store {
     pub frame_holds: u32,
     /// `@FR-G-Arg-Rebind` — the owner let go of this store while a frame held it.
     pub orphaned: bool,
+    /// The store was loaded from an image written before sidecar version 3, where a null text
+    /// could be stored as a record holding one NUL byte: [`Store::get_str`] reads such a record
+    /// as the null text (`@FR-L-Null-Text`).  The C runtime's `loft_store_t::legacy_nul`.
+    pub legacy_nul: bool,
     /// The C runtime's mapped length (`loft_mapped.h`).  The interpreter's own file-backed store
     /// keeps its mapping in `file` and leaves this 0: a hosted C call is never made on one
     /// (`p3-p4-design.md`, failure path 5).
@@ -856,6 +859,10 @@ pub struct Store {
     /// adopted worker store's free on the main thread included (`Store::trace_name`).
     #[cfg(feature = "op-census")]
     pub trace_worker: u32,
+    /// `@PLN226` — the instruments of the context the store belongs to
+    /// (`store_census::Tap`), set when a `Stores` makes it live or adopts it; `None` before.
+    #[cfg(feature = "op-census")]
+    pub(crate) tap: Option<std::sync::Arc<crate::store_census::Tap>>,
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
@@ -893,6 +900,17 @@ pub struct Store {
     /// growth and every move by hand, and phase 0 measured 33 separate routes that write
     /// these bytes.
     init_shadow: Vec<u32>,
+    /// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): scratch that
+    /// nothing reads, grown to the widest discarded write.  The store's own, so no other
+    /// thread writes it (`@FR-C-Own`).
+    discard: Vec<u64>,
+    /// `LOFT_VERIFY_STACK`: the records of this store that moved during the current operator,
+    /// `(old, new)` (`stack_verify::note_relocation`); its interpreter drains them after the op.
+    pub(crate) relocated: Vec<(u32, u32)>,
+    /// @PLN134 — the byte offsets a radix traversal of this store read, while a measurement
+    /// records them (`radix_tree::touch_begin`); `None` otherwise.
+    #[cfg(test)]
+    pub(crate) touched: std::cell::RefCell<Option<std::collections::BTreeSet<u32>>>,
     /// @PLN174 — the foreign bytes this store serves under [`FOREIGN_REC`], or `None` for
     /// every ordinary store.  Set by [`Store::make_foreign`], dropped by
     /// [`Store::release_foreign`] at the handle's free.
@@ -1116,25 +1134,18 @@ fn host_image_bytes(path: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): per-thread scratch
-/// of at least `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next call
-/// on the same thread; every caller writes through it at once.
-fn discard_sink(len: usize) -> *mut u8 {
-    thread_local! {
-        static SINK: std::cell::UnsafeCell<Vec<u64>> = const { std::cell::UnsafeCell::new(Vec::new()) };
-    }
-    SINK.with(|sink| {
-        // SAFETY: the buffer is this thread's alone and no reference to it outlives the call.
-        let sink = unsafe { &mut *sink.get() };
-        let words = len.div_ceil(8).max(8);
-        if sink.len() < words {
-            sink.resize(words, 0);
-        }
-        sink.as_mut_ptr().cast::<u8>()
-    })
-}
-
 impl Store {
+    /// Where a production run's DISCARDED write lands: the store's `discard` scratch, at least
+    /// `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next discard; every
+    /// caller writes through it at once.
+    fn discard_sink(&mut self, len: usize) -> *mut u8 {
+        let words = len.div_ceil(8).max(8);
+        if self.discard.len() < words {
+            self.discard.resize(words, 0);
+        }
+        self.discard.as_mut_ptr().cast::<u8>()
+    }
+
     /// The store's name in `LOFT_ALLOC_TRACE`: its serial, prefixed with the `par` worker that
     /// made it (`<worker>.<serial>`) — a worker numbers its stores on its own.
     #[cfg(feature = "op-census")]
@@ -1482,7 +1493,7 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             live: false,
-            read_only: false,
+            read_only: 0,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
@@ -1493,6 +1504,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1522,11 +1535,16 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         store.init(); // one free block spanning the store: claims empty, free_root = 0
         store
@@ -1693,7 +1711,7 @@ impl Store {
             // flag) — unlike `Store::new`, whose blank store stays
             // `free` until the database layer registers it.
             live: true,
-            read_only: false,
+            read_only: 0,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
@@ -1729,17 +1747,24 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         if init {
             store.init();
@@ -1752,7 +1777,7 @@ impl Store {
             #[cfg(debug_assertions)]
             store.validate(0);
             if read_surface {
-                store.read_only = true;
+                store.read_only = Store::RO_LOCK;
             } else {
                 // Bound, the file is a live store that grows: a written image's length no
                 // longer holds for it (`(S-Frame)`).
@@ -1809,7 +1834,7 @@ impl Store {
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
             live: true,
-            read_only: false,
+            read_only: 0,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
@@ -1820,6 +1845,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1851,11 +1878,16 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         // `(S-Frame)`: the chain tiles the file, checked before `fl_rebuild` walks it.
         store.validate_structure()?;
@@ -1944,7 +1976,7 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             live: true,
-            read_only: false,
+            read_only: 0,
             user_locked: false,
             foreign: None,
             free_protect_depth: 0,
@@ -1955,6 +1987,8 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1984,11 +2018,16 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         };
         // @PLN97 arc G Phase 2 — fail-closed structural validation of an
         // UNTRUSTED buffer, ALWAYS-ON and BEFORE `fl_rebuild`.  A crafted
@@ -2023,6 +2062,8 @@ impl Store {
         self.referenced.clear();
         self.removed.clear();
         self.released_root = false;
+        // Whatever it held, a reset store holds this build's texts only.
+        self.legacy_nul = false;
         // A reset store holds no parsed root, so it answers no parse errors.
         self.parse_errors.clear();
         self.parse_type = u16::MAX;
@@ -2095,11 +2136,10 @@ impl Store {
         }
         // `LOFT_ALLOC_TRACE` — every claim ends here; compiled only into the `op-census` build.
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!(
-            "C {} {} {pos}",
-            self.trace_name(),
-            self.read::<i32>(pos, 0)
-        ));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!("C {} {} {pos}", self.trace_name(), self.read::<i32>(pos, 0)),
+        );
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
@@ -2130,12 +2170,12 @@ impl Store {
     #[inline(never)]
     fn claim_discarded(&mut self, size: u32) -> u32 {
         self.refuse_locked("Claim on read-only store", 0, 0);
-        self.read_only = false;
+        let kind = std::mem::take(&mut self.read_only);
         let rec = self.claim(size.max(1));
         let bytes = (self.read::<i32>(rec, 0).max(1) as usize - 1) * 8;
         // SAFETY: `rec` was just claimed with `bytes` of payload after its size word.
         unsafe { std::ptr::write_bytes(self.ptr.offset(rec as isize * 8 + 8), 0, bytes) };
-        self.read_only = true;
+        self.read_only = kind;
         rec
     }
 
@@ -2144,7 +2184,7 @@ impl Store {
     /// * `size` - The requested record size in 8 byte words
     pub fn claim(&mut self, size: u32) -> u32 {
         crate::store_census::note(crate::store_census::Work::Claim, 1);
-        if self.read_only {
+        if self.is_locked() {
             return self.claim_discarded(size);
         }
         assert!(size >= 1, "Incomplete record");
@@ -2675,7 +2715,7 @@ impl Store {
 
     /// Mutate the claimed size of a record
     pub fn resize(&mut self, rec: u32, size: u32) -> u32 {
-        if self.read_only {
+        if self.is_locked() {
             return self.claim_discarded(size);
         }
         // CO1.9/S28: increment generation so coroutine_next can detect resize operations
@@ -2721,11 +2761,14 @@ impl Store {
                     self.zero_range(rec, from, len);
                 }
                 #[cfg(feature = "op-census")]
-                crate::store_census::alloc_event(format_args!(
-                    "R {} {rec} {} {rec}",
-                    self.trace_name(),
-                    self.read::<i32>(rec, 0)
-                ));
+                crate::store_census::alloc_event(
+                    self.tap.as_deref(),
+                    format_args!(
+                        "R {} {rec} {} {rec}",
+                        self.trace_name(),
+                        self.read::<i32>(rec, 0)
+                    ),
+                );
                 return rec;
             }
         }
@@ -2738,14 +2781,17 @@ impl Store {
         // a frame slot still naming it is indistinguishable from one naming a slot that was
         // simply reused.
         if crate::stack_verify::enabled() {
-            crate::stack_verify::note_relocation(self.store_nr, rec, new);
+            crate::stack_verify::note_relocation(&mut self.relocated, rec, new);
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!(
-            "R {} {rec} {} {new}",
-            self.trace_name(),
-            self.read::<i32>(new, 0)
-        ));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!(
+                "R {} {rec} {} {new}",
+                self.trace_name(),
+                self.read::<i32>(new, 0)
+            ),
+        );
         new
     }
 
@@ -2934,12 +2980,15 @@ impl Store {
         // Native never had this check and was always correct on the same source,
         // which is what made the `&`-redundancy advice right on one backend and
         // wrong on the other.
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked("Delete on locked store", rec, 0);
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("D {} {rec}", self.trace_name()));
+        crate::store_census::alloc_event(
+            self.tap.as_deref(),
+            format_args!("D {} {rec}", self.trace_name()),
+        );
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
@@ -3054,7 +3103,7 @@ impl Store {
     /// header but is left untracked (coalesced later), the same rule `claim_block`
     /// follows.
     pub(crate) fn claim_at(&mut self, pos: u32, size: u32) -> u32 {
-        debug_assert!(!self.read_only, "claim_at on read-only store");
+        debug_assert!(!self.is_locked(), "claim_at on read-only store");
         assert!(size >= 1, "claim_at: zero-size record");
         if pos == PRIMARY {
             self.released_root = false;
@@ -3121,7 +3170,7 @@ impl Store {
     /// @PLN16.J — begin buffering structural changes for the debugger's edit journal.
     /// No-op on a locked / freed store (those are never edit targets).
     pub(crate) fn start_recording(&mut self) {
-        if self.live && !self.read_only {
+        if self.live && !self.is_locked() {
             self.recording = Some(Vec::new());
         }
     }
@@ -3413,7 +3462,7 @@ impl Store {
     ///   that buffer's tail is not this store's to do).
     #[allow(dead_code)] // @PLN123 A1 lands inert: A3 is what calls it.
     pub fn shrink_to(&mut self, words: u32) -> bool {
-        if self.read_only || self.borrowed {
+        if self.is_locked() || self.borrowed {
             return false;
         }
         // `@FR-H-Park` — a parked block past the mark would be cut off while its list
@@ -3511,6 +3560,13 @@ impl Store {
 
     /// The lock origin of the CONSTANT store, read back by the write refusal.
     pub const CONST_STORE_ORIGIN: &'static str = "the constant store";
+    /// What locked a store, in [`Self::read_only`]: the author's `#lock = true` or any other
+    /// lock — the values `loft_rt.h` names `LOFT_RO_LOCK`, `LOFT_RO_CONST` and `LOFT_RO_FOREIGN`.
+    pub const RO_LOCK: u8 = 1;
+    /// A constant ([`Self::lock_constant`]).
+    pub const RO_CONST: u8 = 2;
+    /// Bytes the program does not own ([`Self::FOREIGN_ORIGIN`]).
+    pub const RO_FOREIGN: u8 = 3;
     /// @PLN174 — the lock origin of a FOREIGN store: read-only by contract, and the runtime
     /// error a write meets picks its advice off it (copy, never unlock).
     pub const FOREIGN_ORIGIN: &'static str = "a foreign store (read-only by contract)";
@@ -3538,20 +3594,24 @@ impl Store {
         // callers bypassing `Stores::lock_store(&r)` (e.g.
         // `compile.rs` const-store init, `native.rs` worker
         // store init) are visible too.
-        if !self.read_only && crate::log_config::lock_trace_enabled() {
+        if self.read_only == 0 && crate::log_config::lock_trace_enabled() {
             crate::loft_eprintln!("[locks] LOCK   origin={origin:?}");
         }
-        self.read_only = true;
+        self.read_only = match origin.as_ref() {
+            Self::CONST_STORE_ORIGIN => Self::RO_CONST,
+            Self::FOREIGN_ORIGIN => Self::RO_FOREIGN,
+            _ => Self::RO_LOCK,
+        };
         self.lock_origin = origin;
     }
 
     /// Unlock this store (only callable from Rust; loft code cannot unlock via d#lock = false
     /// on a const variable).
     pub fn unlock(&mut self) {
-        if self.read_only && crate::log_config::lock_trace_enabled() {
+        if self.read_only != 0 && crate::log_config::lock_trace_enabled() {
             crate::loft_eprintln!("[locks] UNLOCK origin-was={:?}", self.lock_origin);
         }
-        self.read_only = false;
+        self.read_only = 0;
         self.user_locked = false;
         self.lock_origin = std::borrow::Cow::Borrowed("");
     }
@@ -3584,7 +3644,7 @@ impl Store {
         }
         // Clear lock_origin only if the hard read_only lock isn't also
         // holding it (it shouldn't be — but be defensive).
-        if !self.read_only {
+        if !self.is_locked() {
             self.lock_origin = std::borrow::Cow::Borrowed("");
         }
     }
@@ -3595,7 +3655,7 @@ impl Store {
     #[must_use]
     #[inline]
     pub fn is_locked(&self) -> bool {
-        self.read_only
+        self.read_only != 0
     }
 
     /// Return whether this store is currently protected from frees
@@ -3613,7 +3673,7 @@ impl Store {
     /// exchange then frees: `released` is that side.
     pub(crate) fn content_swappable(&self, released: bool) -> bool {
         self.live
-            && !self.read_only
+            && !self.is_locked()
             && !self.user_locked
             && !self.borrowed
             && !self.stack_buffer
@@ -3782,7 +3842,7 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             live: self.live,
-            read_only: true,
+            read_only: self.read_only.max(Self::RO_LOCK),
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
@@ -3820,17 +3880,24 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 
@@ -3882,7 +3949,7 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             live: self.live,
-            read_only: false,
+            read_only: 0,
             user_locked: false,
             // @PLN174 — a checkpoint of a foreign store keeps serving its span (shared).
             foreign: self.foreign.clone(),
@@ -3894,6 +3961,8 @@ impl Store {
             alloc_serial: self.alloc_serial,
             #[cfg(feature = "op-census")]
             trace_worker: self.trace_worker,
+            #[cfg(feature = "op-census")]
+            tap: self.tap.clone(),
             created_at: self.created_at,
             freed_at: self.freed_at,
             last_op_at: self.last_op_at,
@@ -3923,11 +3992,16 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 
@@ -3949,7 +4023,7 @@ impl Store {
             #[cfg(feature = "mmap")]
             file: None,
             live: true,
-            read_only: true,
+            read_only: self.read_only.max(Self::RO_LOCK),
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
@@ -3988,17 +4062,24 @@ impl Store {
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
             trace_worker: 0,
+            #[cfg(feature = "op-census")]
+            tap: None,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
             parse_type: self.parse_type,
             init_shadow: Vec::new(),
+            discard: Vec::new(),
+            relocated: Vec::new(),
+            #[cfg(test)]
+            touched: std::cell::RefCell::default(),
         }
     }
 
@@ -4756,18 +4837,13 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn raise_out_of_bounds(&self, rec: u32, fld: u32, width: usize) -> ! {
-        // The interpreter's last dispatched op is the access: its site names where the
-        // corrupt reference was read (a compiled backend dispatches nothing, pc 0).
-        let (pc, _, _) = crate::crash_report::last_context();
-        let mut fields = vec![
+        // A store has no view of the interpreter that reads it: the op and its source line
+        // come with the panic, from the interpreter that catches it (`State::dispatch`).
+        let fields = [
             ("rec", rec.to_string()),
             ("fld", fld.to_string()),
             ("type", self.known_type.to_string()),
         ];
-        if pc != 0 && crate::fault_log::armed() {
-            fields.push(("pc", pc.to_string()));
-            fields.push(("site", crate::store_trace::site(pc)));
-        }
         crate::fault_log::record("corrupt-reference", &fields);
         panic!(
             "Store access out of bounds: rec={rec} fld={fld} width={width} \
@@ -4855,8 +4931,8 @@ impl Store {
 
     /// @PLN174 F5 — the `(rec, pos)` slot that names this store's foreign bytes: the
     /// HANDLE a `DbRef` into the store points at.  A bridge answers a foreign vector as
-    /// the bare [`FOREIGN_REC`], and the two consumers of a bridge's ref return
-    /// (`extensions::bridge_push_ref`, `codegen_runtime::from_loft_ref`) push this handle
+    /// the bare [`FOREIGN_REC`], and the consumer of a bridge's ref return
+    /// (`extensions::bridge_push_ref`) pushes this handle
     /// instead of claiming a header record in a store that is now locked.  `None` for an
     /// ordinary store.
     #[must_use]
@@ -4873,7 +4949,7 @@ impl Store {
     /// tree: the foreign bytes need no record of their own.
     pub fn make_foreign(&mut self, rec: u32, pos: u32, span: ForeignSpan) {
         assert!(
-            self.foreign.is_none() && !self.read_only,
+            self.foreign.is_none() && !self.is_locked(),
             "make_foreign on a store that is already foreign or locked"
         );
         let old = self.get_u32_raw(rec, pos);
@@ -4892,7 +4968,7 @@ impl Store {
             header,
             slot: (rec, pos),
         });
-        self.read_only = true;
+        self.read_only = Self::RO_FOREIGN;
         self.lock_origin = std::borrow::Cow::Borrowed(Self::FOREIGN_ORIGIN);
     }
 
@@ -5059,7 +5135,7 @@ impl Store {
         // with the author's line (loft#1405).  The assert is deliberately not a
         // `debug_assert`: a release build must refuse too.
         debug_assert!(
-            !self.read_only,
+            !self.is_locked(),
             "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
             self.lock_origin
         );
@@ -5067,7 +5143,7 @@ impl Store {
         // is the author's fault whatever the address, and a FOREIGN store (@PLN174) has no
         // address of its own for its record — asked first, the bounds test would call the
         // reference corrupt where the write is merely refused.
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, fld);
             return None;
         }
@@ -5108,7 +5184,7 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn write_allowed(&self, rec: u32, fld: u32) -> bool {
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, fld);
             return false;
         }
@@ -5264,7 +5340,7 @@ impl Store {
             );
             // SAFETY: the sink is 8-aligned (a `u64` buffer), at least `size_of::<T>()`
             // bytes long by the assert, and nothing reads it.
-            return unsafe { &mut *discard_sink(std::mem::size_of::<T>()).cast::<T>() };
+            return unsafe { &mut *self.discard_sink(std::mem::size_of::<T>()).cast::<T>() };
         };
         // Both preconditions of a reference are PROVED here rather than assumed:
         // `offset_in_bounds` for liveness, the assert above for alignment.
@@ -5285,9 +5361,9 @@ impl Store {
     /// The caller writes at most `len` bytes from the returned pointer.  The span is
     /// bounds-checked here.
     pub fn addr_span_mut(&mut self, rec: u32, fld: u32, len: usize) -> *mut u8 {
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, fld);
-            return discard_sink(len);
+            return self.discard_sink(len);
         }
         let at = self.offset_in_bounds(rec, fld, len);
         if self.shadow_armed() {
@@ -5297,11 +5373,11 @@ impl Store {
     }
 
     pub fn buffer(&mut self, rec: u32) -> &mut [u8] {
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, 8);
             let len = self.bytes_of(rec).len();
             // SAFETY: the sink holds at least `len` bytes and nothing reads it.
-            return unsafe { std::slice::from_raw_parts_mut(discard_sink(len), len) };
+            return unsafe { std::slice::from_raw_parts_mut(self.discard_sink(len), len) };
         }
         assert!(
             !Self::is_foreign_rec(rec),
@@ -5354,7 +5430,7 @@ impl Store {
     /// restore: no allocator interaction, so it never moves or resizes a record.
     /// Honors the hard `read_only` lock.
     pub fn write_span(&mut self, rec: u32, off: u32, bytes: &[u8]) {
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, off);
             return;
         }
@@ -5380,7 +5456,7 @@ impl Store {
     /// tolerates.
     #[must_use]
     pub fn claims_record(&self, rec: u32) -> bool {
-        self.read_only || self.is_file_backed() || self.claims.contains(rec)
+        self.is_locked() || self.is_file_backed() || self.claims.contains(rec)
     }
 
     /// Fast check whether a value looks like a valid live record.
@@ -5412,7 +5488,7 @@ impl Store {
         // existing image has an empty set while its records are live (the same
         // reason poison skips file-backed stores).
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(rec),
+            self.is_locked() || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         // Only the assertions read the size, so a build without them skips the read: kept, it
@@ -5491,7 +5567,11 @@ impl Store {
     fn copy(&self, rec: u32, into: u32) {
         let bytes = self.payload_bytes(rec, "Store::copy");
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Relocate, bytes);
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Relocate,
+            bytes,
+        );
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.ptr.offset(rec as isize * 8 + 4),
@@ -5551,7 +5631,7 @@ impl Store {
         if len == 0 {
             return;
         }
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(rec, pos);
             return;
         }
@@ -5607,7 +5687,7 @@ impl Store {
         to_pos: isize,
         size: isize,
     ) {
-        if self.read_only {
+        if self.is_locked() {
             self.refuse_locked_write(to_rec, to_pos as u32);
             return;
         }
@@ -5627,9 +5707,15 @@ impl Store {
             );
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, size as usize);
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Copy,
+            size as usize,
+        );
         #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(self.store_nr, size as u64);
+        if let Some(tap) = &self.tap {
+            tap.copied_into(self.store_nr, size as u64);
+        }
         // SAFETY: both spans were just held inside this store's allocation.
         unsafe {
             std::ptr::copy(
@@ -5677,7 +5763,7 @@ impl Store {
         to_pos: isize,
         len: isize,
     ) {
-        if to_store.read_only {
+        if to_store.is_locked() {
             to_store.refuse_locked_write(to_rec, to_pos as u32);
             return;
         }
@@ -5695,9 +5781,15 @@ impl Store {
             );
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
+        crate::op_census::moved(
+            to_store.tap.as_deref(),
+            crate::op_census::Moved::Copy,
+            len as usize,
+        );
         #[cfg(feature = "op-census")]
-        crate::store_census::copied_into(to_store.store_nr, len as u64);
+        if let Some(tap) = &to_store.tap {
+            tap.copied_into(to_store.store_nr, len as u64);
+        }
         let to_at = to_store.block_in_bounds(to_rec, to_pos, len);
         // SAFETY: `block_src` and `block_in_bounds` held each span inside its own store.
         unsafe {
@@ -5756,7 +5848,7 @@ impl Store {
         // header read asserts "Unknown record" for every bound store — which is
         // precisely the store `store_verify` is most often asked about.
         debug_assert!(
-            self.read_only || self.is_file_backed() || self.claims.contains(rec),
+            self.is_locked() || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
         let size: i32 = self.read(rec, 0);
@@ -6070,26 +6162,20 @@ impl Store {
 
     /// True when the `text` slot at `(rec, pos)` holds NULL.
     ///
-    /// @FR-L-Null-Text — an absent text has TWO byte-level spellings and they are one
-    /// absence: an **unset handle** (str_rec 0, the `nullref` sentinel `(L-Null)` names)
-    /// and an **allocated record holding the `STRING_NULL` (`"\0"`) bytes**, which is what
-    /// a written `null` and every native text-null produce.  Testing the handle alone reads
-    /// the second spelling as a present, one-character string — and telling `null` from `""`
-    /// is the distinction the whole reading exists for.
-    ///
-    /// The CONTENT test is the total one: [`Store::get_str`] maps an unset or out-of-range
-    /// handle onto `STRING_NULL` too, so it subsumes the pointer test rather than sitting
-    /// beside it.  This is the one home every reader asks — `Stores::is_null` (which decides
-    /// whether a struct field is omitted), the format walk (which decides how it renders) and
-    /// the native reader — so a render and an omission cannot disagree about whether a value
-    /// is there.
+    /// @FR-L-Null-Text — a stored null text is the **unset handle** (str_rec 0, the `nullref`
+    /// sentinel `(L-Null)` names), never a record; in an image from before sidecar version 3 a
+    /// record of one NUL byte is null as well ([`Store::legacy_nul`]).  [`Store::get_str`]
+    /// answers the null text for both, so asking its answer is the whole test.  This is the
+    /// one home every reader asks — `Stores::is_null` (which decides whether a struct field is
+    /// omitted), the format walk (which decides how it renders) and the native reader — so a
+    /// render and an omission cannot disagree about whether a value is there.
     ///
     /// An empty string is NOT null: `""` is an allocated record whose content is `""`, a
     /// present value that must survive a save→load round trip (@P375).
     #[inline]
     #[must_use]
     pub fn text_is_null(&self, rec: u32, pos: u32) -> bool {
-        self.get_str(self.get_u32_raw(rec, pos)) == STRING_NULL
+        crate::text_null::is_null(self.get_str(self.get_u32_raw(rec, pos)))
     }
 
     /// The store's DATA span — its buffer's address and its size in words — for a loop that
@@ -6106,11 +6192,14 @@ impl Store {
     #[inline]
     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
         if rec == 0 || rec > i32::MAX as u32 {
-            return STRING_NULL;
+            return crate::text_null::null_str();
         }
         let len = self.get_u32_raw(rec, 4);
         if (len / 8) + rec > self.size {
-            return STRING_NULL;
+            return crate::text_null::null_str();
+        }
+        if self.legacy_nul && len == 1 && self.get_byte(rec, 8, 0) == 0 {
+            return crate::text_null::null_str();
         }
         unsafe {
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(
@@ -6135,15 +6224,24 @@ impl Store {
         len != 0 && at >= base && at < base + self.size as usize * 8
     }
 
+    /// A text record holding `val`, its number answered — or 0 for the null text, which is
+    /// stored as the unset handle and never as a record (`@FR-L-Null-Text`).
     #[inline]
     pub fn set_str(&mut self, val: &str) -> u32 {
+        if crate::text_null::is_null(val) {
+            return 0;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             // Out of the store before the claim can move it.
             let moved_out = val.to_owned();
             return self.set_str(&moved_out);
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Text,
+            val.len(),
+        );
         let res = self.claim(((val.len() + 15) / 8) as u32);
         self.set_u32_raw(res, 4, val.len() as u32);
         unsafe {
@@ -6156,24 +6254,39 @@ impl Store {
         res
     }
 
-    /// `@FR-R-RefillText` — write `val` into the text slot at `(rec, fld)` reusing the block
-    /// the slot already owns: written over when `val` fits its claim (`len + 8 ≤ 8 × words`),
+    /// `OpSetTextReplace` (`@FR-H-TextReplace`) — write `val` into the text slot at
+    /// `(rec, fld)` reusing the block the slot already owns: written over when `val` fits its
+    /// claim (`len + 8 ≤ 8 × words`),
     /// released and claimed anew when it does not, claimed when the slot is 0.  The caller
-    /// owes the rule's invariant — the slot holds 0 or a text block it owns — which the
-    /// emitter proves at the call site; a slot holding anything else is read as a block.
+    /// owes the invariant — the slot holds 0 or a text block it owns — which the scope pass
+    /// proves at the call site (`scopes::text_replace`); a slot holding anything else is read
+    /// as a block.
     #[inline]
     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        if crate::text_null::is_null(val) {
+            // The null text is the unset handle: the slot's block is released.
+            let old = self.get_u32_raw(rec, fld);
+            if old != 0 && !self.is_locked() {
+                self.delete(old);
+            }
+            self.set_u32_raw(rec, fld, 0);
+            return;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             let moved_out = val.to_owned();
             self.refill_str(rec, fld, &moved_out);
             return;
         }
         let old = self.get_u32_raw(rec, fld);
-        if old != 0 && !self.read_only {
+        if old != 0 && !self.is_locked() {
             let words = self.read::<i32>(old, 0);
             if words > 0 && val.len() + 8 <= words as usize * 8 {
                 #[cfg(feature = "op-census")]
-                crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+                crate::op_census::moved(
+                    self.tap.as_deref(),
+                    crate::op_census::Moved::Text,
+                    val.len(),
+                );
                 self.set_u32_raw(old, 4, val.len() as u32);
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -6192,13 +6305,19 @@ impl Store {
 
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
+        // SAFETY: the caller hands `len` readable bytes at a non-null `ptr`.
+        if ptr.is_null()
+            || crate::text_null::is_null_bytes(unsafe { std::slice::from_raw_parts(ptr, len) })
+        {
+            return 0;
+        }
         if self.holds_bytes(ptr, len) {
             // SAFETY: the caller hands `len` readable bytes at `ptr`.
             let own = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
             return self.set_str_ptr(own.as_ptr(), len);
         }
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, len);
+        crate::op_census::moved(self.tap.as_deref(), crate::op_census::Moved::Text, len);
         let res = self.claim(((len + 15) / 8) as u32);
         self.set_u32_raw(res, 4, len as u32);
         unsafe {
@@ -6210,7 +6329,11 @@ impl Store {
     #[inline]
     pub fn append_str(&mut self, record: u32, val: &str) -> u32 {
         #[cfg(feature = "op-census")]
-        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+        crate::op_census::moved(
+            self.tap.as_deref(),
+            crate::op_census::Moved::Text,
+            val.len(),
+        );
         let prev = self.get_u32_raw(record, 4);
         let result = self.resize(record, (prev as usize + val.len()).div_ceil(8) as u32);
         unsafe {
@@ -6441,7 +6564,7 @@ mod tests {
         (plain, rec, foreign, froot)
     }
 
-    /// `@FR-R-RefillText` — the three cases of `refill_str`, read by value, by block and by
+    /// The three cases of `refill_str`, read by value, by block and by
     /// live-claim count: a 0 slot claims; a text that fits is written over the slot's own
     /// block (same block, no claim); one that does not releases the block and claims a fit
     /// (count flat); an empty text and a longer one after it ride the same rules.  A
@@ -6509,7 +6632,7 @@ mod tests {
         let data = sample_bytes();
         let len = data.len() as u32;
         let (plain, rec, foreign, froot) = copied_and_foreign(&data);
-        assert!(foreign.is_foreign() && foreign.read_only);
+        assert!(foreign.is_foreign() && foreign.is_locked());
         assert_eq!(foreign.collection_rec(froot, 8), FOREIGN_REC);
         assert_eq!(
             foreign.get_u32_raw(FOREIGN_REC, 4),
@@ -6554,7 +6677,7 @@ mod tests {
         // move the block.  Development halts the process and production discards, so neither
         // is catchable here — both are pinned per mode and backend in tests/locked_writes.rs;
         // this asserts the fact they rest on.
-        assert!(foreign.read_only && foreign.is_foreign());
+        assert!(foreign.is_locked() && foreign.is_foreign());
         assert!(foreign.validate_structure().is_ok());
     }
 
@@ -6620,7 +6743,7 @@ mod tests {
             "the view still serves the block"
         );
         assert_eq!(handle.foreign_handle(), None);
-        assert!(!handle.read_only);
+        assert!(!handle.is_locked());
         assert_eq!(
             view.get_byte(FOREIGN_REC, 8 + 3, 0),
             plain.get_byte(rec, 8 + 13, 0)
@@ -6644,7 +6767,7 @@ mod tests {
         let span = foreign.foreign_span(5, 12).expect("a span");
         assert_eq!((span.len, span.elem_size), (7, 1));
         view.make_foreign(vroot, 8, span);
-        assert!(view.is_foreign() && view.read_only);
+        assert!(view.is_foreign() && view.is_locked());
         assert_eq!(view.collection_rec(vroot, 8), FOREIGN_REC);
         assert_eq!(view.get_u32_raw(FOREIGN_REC, 4), 7);
         for i in 0..7u32 {
@@ -6688,7 +6811,7 @@ mod tests {
         // The release makes the view's store an ordinary, writable, EMPTY one again — the
         // shape a rebind after `s = m[a..b]` needs — and drops the last owner.
         view.release_foreign();
-        assert!(!view.is_foreign() && !view.read_only);
+        assert!(!view.is_foreign() && !view.is_locked());
         assert_eq!(view.collection_rec(vroot, 8), 0);
         let fresh = crate::vector::alloc_vector_from_bytes(&mut view, 1, 3, &[9, 8, 7]);
         view.set_u32_raw(vroot, 8, fresh);
@@ -6909,7 +7032,7 @@ mod tests {
         let mut store = Store::new(4);
         store.live = true;
         let rec = store.claim(2);
-        store.read_only = true;
+        store.read_only = Store::RO_LOCK;
         store.delete(rec);
     }
 
@@ -8557,7 +8680,7 @@ mod tests {
         store.write::<i32>(rec, 0, 42);
         let borrow = unsafe { store.borrow_locked_for_light_worker() };
         assert_eq!(borrow.read::<i32>(rec, 0), 42);
-        assert!(borrow.read_only);
+        assert!(borrow.is_locked());
         assert!(borrow.borrowed);
         // Drop of borrow must NOT free the original's buffer.
         drop(borrow);
@@ -8732,7 +8855,7 @@ mod tests {
         let (path, before) = image_with_freed_blocks("rs");
         {
             let s = Store::open_read_surface(path.to_str().unwrap()).unwrap();
-            assert!(s.read_only, "a read surface is read-only from the start");
+            assert!(s.is_locked(), "a read surface is read-only from the start");
         }
         let after = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);

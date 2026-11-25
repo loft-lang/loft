@@ -33,7 +33,7 @@ case "${1:-status}" in
       [ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && echo "note: another gate is running in $cwd — expect ~2x wall time"
     done
     # The seconds-long checks first (scripts/gate_preflight.sh): `make ci` reaches rustfmt only
-    # after rebuilding the native fixtures and both wasm rlibs, and a derived row after ~17
+    # after its first build, and a derived row after ~17
     # minutes, so a failure either finds costs a whole restart.  `CI_NO_PREFLIGHT=1` skips it.
     if [ -z "${CI_NO_PREFLIGHT:-}" ]; then
       scripts/gate_preflight.sh || { echo "gate NOT started"; exit 1; }
@@ -124,7 +124,7 @@ case "${1:-status}" in
         # FAILED with ZERO is three things, not one, and reading it as "the box" is wrong two
         # times out of three: `make ci` is fmt -> clippy -> test, so a FORMAT or a LINT failure
         # never reaches a test and still reports zero.  Both are the CODE and both are fixed in
-        # seconds; only what is left over — a stale rlib, a corrupt incremental cache, a full
+        # seconds; only what is left over — a torn build artefact, a corrupt incremental cache, a full
         # disk — is the box.  Measured the hard way: two agents on this box lost time to the
         # old wording within one hour, one sent to the format phase and one to the target dir,
         # each while holding a clippy or rustfmt error in the same verdict line.
@@ -146,13 +146,6 @@ case "${1:-status}" in
         elif grep -q "rust-clippy/.*index\.html#" result.txt 2>/dev/null; then
           lint=$(grep -oE "index\.html#[a-z_]+" result.txt 2>/dev/null | head -1 | sed "s/.*#//")
           note FAILED "0 tests — CLIPPY, so THE CODE (lint ${lint:-?}): $(grep -m1 -E "^error: " result.txt 2>/dev/null | head -c 100)"
-        elif grep -q "OVER BAR" result.txt 2>/dev/null; then
-          # The native/Rust RATIO gate runs LAST, after a green suite, and it is timing: a row
-          # over its bar under load is not the code until `make native-ratio-gate` run ALONE
-          # says so (the Makefile note beside it).  Reported as the box, it sent a green suite
-          # to be chased as a toolchain fault (2026-09-28).
-          rows=$(grep "OVER BAR" result.txt 2>/dev/null | awk "{ print \$2 \" \" \$5 \"/\" \$6 }" | sort -u | tr "\n" " ")
-          note FAILED "0 tests — RATIO GATE (timing, after a green suite): ${rows}over the bar; run make native-ratio-gate ALONE before believing it"
         elif grep -q "^Diff in " result.txt 2>/dev/null; then
           note FAILED "0 tests — RUSTFMT, so THE CODE: $(grep -c "^Diff in " result.txt 2>/dev/null) file(s) unformatted; run \`cargo fmt\`"
         else

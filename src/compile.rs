@@ -141,6 +141,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     laps.report("close_program", data.definitions());
     // The store records (STORE_RECORDS.md), on the closed program: an observer.
     crate::store_records::observe(data);
+    // `@FR-B-Scope` — every use of a variable inside its scope (`@PLN228`): an observer.
+    crate::scope_check::observe(data);
+    // `@PLN228` — the one-report lifetime check (`LOFT_LIFETIME_CHECK`): an observer.
+    crate::lifetime_check::observe(data);
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for
@@ -235,12 +239,16 @@ pub fn byte_code_from(
         {
             continue;
         }
-        // loft#665 piece 3 — publish which definition is being generated, so an
-        // internal panic in codegen names the user's function rather than only a
-        // compiler source line (loft#662 reported `codegen.rs:2955`, which told the
-        // reporter nothing about their program).
-        crate::crash_report::note_compile_pos(data.def(d_nr).position());
-        state.def_code(d_nr, data, program_store);
+        // loft#665 piece 3 — an internal panic in codegen names the user's function rather
+        // than only a compiler source line (loft#662 reported `codegen.rs:2955`, which told
+        // the reporter nothing about their program).
+        let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.def_code(d_nr, data, program_store);
+        }));
+        if let Err(payload) = generated {
+            crate::crash_report::compile_panicked(data.def(d_nr).position(), &*payload);
+            std::panic::resume_unwind(payload);
+        }
     }
     drop(own_memo);
     drop(param_writes);
@@ -388,57 +396,26 @@ fn build_const_vectors(
     state.const_refs.clone_from(&state.database.const_refs);
 }
 
-/// Which `#native` symbol each panicking stub stands for, by library index.
+/// The symbol the stub now running stands for, rendered for the panic message: the stub is a
+/// plain `fn` pointer and so cannot carry the symbol it replaced, so it reads the library
+/// index `State::invoke_native` published (`Stores::lib_idx`) and its program's table
+/// (`WiredNatives::stubs`) — the two builds where the name matters most are the ones with no
+/// console to re-run under `LOFT_STUB_DEBUG=1`: a browser bundle, and a released binary
+/// (loft#1189).
 ///
-/// A stub is a plain `fn` pointer and so cannot carry the symbol it replaced, which left the
-/// panic saying only that SOME native was missing — and the two builds where that matters most
-/// are the ones with no console to re-run under `LOFT_STUB_DEBUG=1`: a browser bundle, and a
-/// released binary.  loft#1189 spent its investigation on exactly that message.
-///
-/// `State::static_call` already publishes the index it is about to dispatch
-/// (`extensions::set_current_lib_idx`), so the stub can read it back and look the symbol up
-/// here.  A process-global is right for THIS map where it was wrong for the stub SET: the set
-/// decides what a wiring pass may replace, and two compiles racing there skipped each other's
-/// symbols, while this map only renders a message.  Two States can still land different symbols
-/// on one index, so the entry is a SET and the message names every candidate rather than
-/// picking one and sounding certain.
-static STUB_SYMBOLS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<u16, std::collections::BTreeSet<String>>>,
-> = std::sync::OnceLock::new();
-
-fn remember_stub_symbol(idx: u16, sym: &str) {
-    let map = STUB_SYMBOLS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(mut m) = map.lock() {
-        m.entry(idx).or_default().insert(sym.to_string());
-    }
-}
-
-/// The symbol the stub now running stands for, rendered for the panic message.
-///
-/// Never fails and never blocks the report: an unknown index answers a description rather than
-/// a name, because a message that says less is still better than one that says nothing.
-fn stub_symbol_now() -> String {
-    let idx = crate::extensions::current_lib_idx();
-    let Some(map) = STUB_SYMBOLS.get() else {
-        return format!("<library index {idx}>");
-    };
-    let Ok(m) = map.lock() else {
-        return format!("<library index {idx}>");
-    };
-    match m.get(&idx) {
-        None => format!("<library index {idx}>"),
-        Some(names) if names.len() == 1 => {
-            format!("`{}`", names.iter().next().unwrap_or(&idx.to_string()))
-        }
-        Some(names) => format!(
-            "one of {} (two programs put different symbols on library index {idx})",
-            names
-                .iter()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(" / ")
-        ),
-    }
+/// Never fails: an unknown index answers a description rather than a name, because a message
+/// that says less is still better than one that says nothing.
+fn stub_symbol_now(stores: &crate::database::Stores) -> String {
+    let idx = stores.lib_idx;
+    crate::extensions::wired(stores)
+        .stubs
+        .get(usize::from(idx))
+        .cloned()
+        .flatten()
+        .map_or_else(
+            || format!("<library index {idx}>"),
+            |sym| format!("`{sym}`"),
+        )
 }
 
 /// Is `msg` the panic of a native-function stub (below): a `#native` symbol whose library was
@@ -514,24 +491,27 @@ fn register_native_stubs(state: &mut State, data: &Data) {
         // presents as a missing library. The give-away is a `BUG (#306)` / strict-store line
         // earlier in the run, and a crash site that MOVES between builds.
         let stub: fn(&mut Stores, &mut DbRef) = {
-            |_stores: &mut Stores, _db: &mut DbRef| {
+            |stores: &mut Stores, _db: &mut DbRef| {
                 panic!(
-                    "native function {} not loaded. Either (a) its library's native cdylib is \
-                     missing or stale — commonly built against a different libloft.rlib; \
-                     rebuild with `make rebuild-native-cdylibs`, or `cargo build --release` \
-                     in the library's `native/` dir — or (b) a freed store was read and its \
+                    "native function {} not loaded. Either (a) its library's compiled unit is \
+                     missing or was built by another loft — rebuild it with \
+                     `loft build-native <package>` — or (b) a freed store was read and its \
                      poisoned contents were used as the call index, in which case the real \
                      fault is a store lifetime bug that happened EARLIER. Tell them apart: \
                      if the run is green with LOFT_POISON unset, or an earlier line reports \
                      a `BUG` refusal of a store free / a strict-store violation, it is (b) — re-run with \
                      `LOFT_STRICT_STORES=1` to name the access and the free.",
-                    stub_symbol_now()
+                    stub_symbol_now(stores)
                 );
             }
         };
         state.static_fn(sym, stub);
         if let Some(&idx) = state.library_names.get(sym) {
-            remember_stub_symbol(idx, sym);
+            crate::extensions::put_slot(
+                &mut crate::extensions::wired_mut(&mut state.database).stubs,
+                idx,
+                sym.to_string(),
+            );
         }
         // @PLN199 — a compiled library's text function also gets the slot its
         // destination-passing call uses (`<symbol>#dest`, `State::gen_cdylib_text_dest_call`):
@@ -540,7 +520,11 @@ fn register_native_stubs(state: &mut State, data: &Data) {
             let dest = crate::extensions::shared_dest_symbol(sym);
             state.static_fn(&dest, stub);
             if let Some(&idx) = state.library_names.get(&dest) {
-                remember_stub_symbol(idx, &dest);
+                crate::extensions::put_slot(
+                    &mut crate::extensions::wired_mut(&mut state.database).stubs,
+                    idx,
+                    dest.clone(),
+                );
             }
             stub_syms.insert(dest);
         }

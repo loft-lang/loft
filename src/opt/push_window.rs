@@ -3,9 +3,7 @@
 // @I68 — Native Rust generator: a second compiled target, C
 
 //! The push and mint window analyses — which counted loops push or mint through a window, and
-//! whether the window may stand — moved here from `generation::hoist` unchanged, with the
-//! helpers they share, so the C backend can name them without reaching up into the Rust
-//! writer.
+//! whether the window may stand — with the helpers they share.
 
 use crate::data::{Block, Data, Type, Value};
 use crate::database::Stores;
@@ -642,7 +640,7 @@ pub fn push_window_ok(
 /// The window clause's aliasing test over the `parts` of a loop body that are NOT the
 /// pushes themselves: none names a pushed root, none names a variable that may view a
 /// root's store, and none writes a store.  Shared by the scalar window
-/// ([`push_window_ok`]), the several-paths one (`generation::hoist::push_windows_ok`) and the record one
+/// ([`push_window_ok`]), the several-paths one (`opt::hoist::push_windows_ok`) and the record one
 /// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.  With
 /// `facts`, a variable whose store they prove apart from every root's (`@FR-R-Base`'s growth
 /// clause, an `@FR-R-Alias` versioned copy's runtime test) cannot view one either.

@@ -18,10 +18,8 @@
 //
 // Driven by `tests/lazy_sql_source.rs`, and deliberately NOT in `tests/scripts/`:
 // that directory is swept by `loft_suite`, which runs every file on both
-// backends under a leak gate — and this program is asymmetric on both counts by
-// design. `--native` cannot call the driver yet and must SAY so rather than
-// answer "no such row"; and a contained fault leaks exactly one store, which is
-// a measurement this test pins rather than a regression to grandfather.
+// backends under a leak gate — and this program's driver faults on purpose,
+// which the test pins on both backends: contained, and nothing left behind.
 //
 // No database is opened here. The driver stands in for one, which is what makes
 // the CONTRACT testable rather than the plumbing: what a driver answers, and

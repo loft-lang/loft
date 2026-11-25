@@ -5,21 +5,20 @@
 //! The types a compiled library artifact and the process that loads it share: the argument
 //! slot of a bridge call ([`LibArg`]), the table the host hands the artifact at load
 //! ([`HostTable`]), the id tables the artifact fills from it ([`IdTable`]) and the symbol
-//! that records the layout it was built for.  Both sides link this exact code, so its layout
-//! is the contract.  Part of the runtime a compiled unit links; the interpreter fills the
-//! table (`native_adopt::HOST_TABLE`) and the Rust writer names these types in what it emits
-//! (`loft::native_lib::…`, re-exported there).
+//! that records the layout it was built for.  Their layout is the contract: the interpreter
+//! fills the table (`native_adopt::HOST_TABLE`), and a hosted C unit is written against the
+//! offsets `c::hosted::defines` takes from these types.
 
 use crate::database::Stores;
 
 /// @PLN11 Arc N — a uniform 16/24-byte argument/return slot for the
-/// **shared-store** native-library bridge (`native_lib::generate_shared_cdylib_lib_rs`).
+/// **shared-store** native-library bridge (a hosted unit's `loft_shared_<name>`, `c::hosted`).
 ///
 /// The bridge knows each slot's type from the function signature, so no tag is
 /// needed: a scalar reads/writes `.scalar` (an `i64`, or float bits, or `0/1` for
 /// bool), a `vector`/`reference` reads/writes `.dbref`.  `#[repr(C)]` so the
-/// interpreter and the generated cdylib — **both linking this exact type from
-/// libloft** — agree on layout with no marshalling.
+/// interpreter and the hosted C unit (which reads its offsets from `c::hosted::defines`)
+/// agree on layout with no marshalling.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LibArg {
@@ -56,8 +55,8 @@ impl LibArg {
 /// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
 ///
 /// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
-/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
-/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
+/// layout on both sides (the same rlib builds both), but every process-wide `static` in libloft
+/// exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
 /// sides must agree on therefore crosses as a function of the HOST, reached through this
 /// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
 /// calls its `loft_shared_init`).
@@ -72,10 +71,9 @@ pub struct HostTable {
     /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
     /// arguments at `args`, in the interpreter running this bridge call, writing its result
     /// into `ret` (`State::call_back`).
-    /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
-    /// `codegen_runtime` forwards to once installed, so a generator handle means the same
-    /// frame on both sides.
-    pub coroutines: crate::codegen_runtime::CoroutineHost,
+    /// @PLN199 D2 — the host's coroutine table, handed to the artifact so a generator handle
+    /// means the same frame on both sides.
+    pub coroutines: crate::coroutine_host::CoroutineHost,
     pub call_ref: unsafe extern "C" fn(
         stores: *mut Stores,
         d_nr: u32,
@@ -97,8 +95,13 @@ pub struct HostTable {
     pub hosted: &'static HostedTable,
 }
 
-/// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 7;
+/// The [`HostTable`] layout version; a cdylib refuses a table of another.  9: a null text
+/// crosses as [`TEXT_NULL_LEN`].
+pub const HOST_ABI: u32 = 9;
+
+/// The `text_len` of a text answer that is the null text (`@FR-L-Null-Text`): its pointer is
+/// not null, because a null `text_ptr` says the call answered no text at all.
+pub const TEXT_NULL_LEN: usize = usize::MAX;
 
 /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
 /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set
@@ -183,6 +186,60 @@ pub struct HostedTable {
         entries: *const HandoverEntry,
         n: u32,
     ) -> u32,
+    /// `@PLN226` — the unit's store context for `stores` ([`HostedContexts`]): the one made
+    /// before, or a new one from `make`, which `end` ends when the `Stores` drops.  Appended
+    /// last, so a library built against the fields above reads them where they were.
+    pub cx_of: unsafe extern "C" fn(
+        stores: *mut Stores,
+        unit: *const std::ffi::c_void,
+        make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+        end: unsafe extern "C" fn(*mut std::ffi::c_void),
+    ) -> *mut std::ffi::c_void,
+}
+
+/// `@FR-C-Boundary` — the store contexts hosted C units keep for one `Stores`, one per unit it called
+/// into: what a unit's code keeps of the calling thread's own (its frames, its fault jump, its
+/// scratch; `src/c/loft_cx.h`), made by the unit at the first call and ended by it when this
+/// `Stores` drops.  A `par` worker's `Stores` is its own, so its calls into a unit work in a
+/// context of their own (formal/concurrency.md `C-Par`), as its stores are.
+#[derive(Default)]
+pub struct HostedContexts(Vec<HostedContext>);
+
+struct HostedContext {
+    unit: *const std::ffi::c_void,
+    cx: *mut std::ffi::c_void,
+    end: unsafe extern "C" fn(*mut std::ffi::c_void),
+}
+
+// SAFETY: a context is used only by the thread whose `Stores` holds it, as `TableView` is.
+unsafe impl Send for HostedContexts {}
+unsafe impl Sync for HostedContexts {}
+
+impl HostedContexts {
+    /// Unit `unit`'s context: the one it has, or a new one from `make`.
+    pub fn of(
+        &mut self,
+        unit: *const std::ffi::c_void,
+        make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
+        end: unsafe extern "C" fn(*mut std::ffi::c_void),
+    ) -> *mut std::ffi::c_void {
+        if let Some(c) = self.0.iter().find(|c| c.unit == unit) {
+            return c.cx;
+        }
+        // SAFETY: the unit's own constructor, which answers a context it owns.
+        let cx = unsafe { make() };
+        self.0.push(HostedContext { unit, cx, end });
+        cx
+    }
+}
+
+impl Drop for HostedContexts {
+    fn drop(&mut self) {
+        for c in self.0.drain(..) {
+            // SAFETY: the unit's own end, for the context its `make` answered.
+            unsafe { (c.end)(c.cx) };
+        }
+    }
 }
 
 /// `@PLN206 P7` — one local a unit's routine offers at a hand-over (`loft_ho_entry`): kind 0

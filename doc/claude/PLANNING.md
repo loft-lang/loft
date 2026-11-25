@@ -45,8 +45,8 @@ instead of re-proposing it.
 The ticket bodies are split by subject:
 
 - this page — L (language quality), A (architecture), the ecosystem sketches;
-- [PLANNING_STABILITY.md](PLANNING_STABILITY.md) — S-tier stability hardening; slot reuse (P70), closures (C47, C48), name clash (C52), match arms (C53);
-- [PLANNING_NATIVE.md](PLANNING_NATIVE.md) — Tier N native codegen, O-tier performance, AOT libraries;
+- [PLANNING_STABILITY.md](PLANNING_STABILITY.md) — S-tier stability hardening; slot reuse (P70), closures (C48), name clash (C52), match arms (C53);
+- [PLANNING_NATIVE.md](PLANNING_NATIVE.md) — native and O-tier performance items, the wasm half of AOT libraries;
 - [PLANNING_WEB.md](PLANNING_WEB.md) — H HTTP / JSON, R repository, W web IDE, E library ergonomics (C57); its first-run presentation design is [FIRST_CONTACT.md](FIRST_CONTACT.md).
 
 ---

@@ -12,7 +12,6 @@ wrong: [RUN_BOUNDS.md](RUN_BOUNDS.md).
 
 | Question | Section |
 |---|---|
-| Is my tree ready for a suite run? | [Before the suite](#before-the-suite-make-check-rlib-one-second) |
 | How do I start a run and wait for it? | [Agent](#-if-you-are-an-agent-run-the-blocking-form-and-let-the-harness-background-it) · [human](#preferred-shape-human-at-a-terminal--background--peek--wait) · [`make ci`](#waiting-for-make-ci) |
 | Which tests does a command run? | [What a test run selects](#what-a-test-run-selects-find_problemssh) |
 | One test, fast | [Running the Tests](#running-the-tests) |
@@ -25,37 +24,6 @@ After a change expected to touch many tests, do NOT iterate "run → see one fai
 re-run → see the next failure": each cycle pays the compile and test-startup cost and finds one
 failure.  Run one `--no-fail-fast` pass and read all the failures once —
 [One-pass-find-all-problems workflow](#one-pass-find-all-problems-workflow) is how.
-
-### Before the suite: `make check-rlib` (one second)
-
-The tests link a built `libloft.rlib`, and **nothing in an ordinary edit loop rebuilds one**.
-`cargo build --bin loft` refreshes the binary and leaves every rlib behind, so a session that
-iterates on the compiler with `--bin loft` drifts, and the drift is invisible until a gate runs.
-
-There are **three** of them, one per link target, and they drift independently — refreshing
-one does nothing for the other two:
-
-| rlib | linked by | cure |
-|---|---|---|
-| `target/release/libloft.rlib` | `--native`, the cdylib tests | `cargo build --release --lib` |
-| `target/loft/html/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `loft cache warm`, or `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html` |
-| `target/wasm32-wasip2/release/libloft.rlib` | the wasm library suite | `cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random` |
-
-A stale rlib does not fail like a compile error.  It surfaces minutes into a run as a handful of
-tests failing for what look like unrelated reasons — `libloft.rlib not found for this build`, a
-cdylib mtime that did not advance, a `--html` build panicking — each naming a file that is
-present when you go and look.
-
-`make ci` and `find_problems.sh` build what the selected tests link, so they need no
-pre-flight.  **A bare `cargo test --release` builds none of them**, so check before one — BEFORE
-the suite, because afterwards the check can only tell you the cycle was wasted:
-
-```bash
-make check-rlib          # all three, each with its own cure; skips a target that isn't installed
-```
-
-The general rule, for this and every instrument: ask what it did NOT refresh.  A partial
-refresh that reports its successes misleads more than one that refreshes nothing.
 
 ### Waiting for `make ci`
 
@@ -126,24 +94,21 @@ when nextest is on `PATH` (it parallelises per test rather than per binary), and
 `cargo test --release --no-fail-fast`.  The choice is logged at launch, so a change in suite
 speed can be tied to it.
 
-**Rebuild step.**  Before the tests it rebuilds, in parallel, the artefacts they link: the
-sibling and fixture cdylibs under `lib/*/native/` and `tests/lib/*/native/`, the dev
-`libloft.rlib` beside the test-profile `loft`, and — only when a selected binary needs them —
-the release `libloft.rlib` with `target/release/loft` and the two wasm rlibs.  It decides by
-READING the selected test sources, not by the subject's name; the curated and full runs need
-everything.  A stale cdylib otherwise shows up as `cannot find function X in crate
-loft_*_native` and a dozen unrelated failures.  `make test`, `make quick`, `make ci` and
-`make run-tests` run the same step through the `rebuild-native-cdylibs` target.
+**Rebuild step.**  Before the tests it builds what they run: the dev library, then — only when
+a selected binary spawns it — `target/release/loft`, then the library's unit tests alone.  It
+decides by READING the selected test sources, not by the subject's name; the curated and full
+runs need the release binary.  A library's compiled part is a hosted C unit loft builds on
+first use, so nothing else is rebuilt here.  `make test`, `make quick`, `make ci` and
+`make run-tests` build the release binaries through the `rebuild-native-cdylibs` target.
 
 Each step's time prints live and collects in `/tmp/loft_timings.<id>.txt`; `--wait` and the
 foreground run end with a `=== Wall-clock timing summary ===` block that names what it skipped
 and why, so a regressing step is named rather than "the suite is slow":
 
 ```
-  cdylib lib/graphics/native                        1.910s
-  cdylib lib/imaging/native                         0.885s
-  ...
-  wasm32 rlib                                       0.588s
+  dev library                                       0.910s
+  release loft binary                               0.885s
+  library unit tests                                0.154s
   (rebuild_native_cdylibs total wall-clock)         1.949s
   cargo nextest run --release --no-fail-fast …    313.479s
 ```
@@ -333,7 +298,7 @@ Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`, and the re
 builds only what the selection links (§ [Preferred shape](#preferred-shape-human-at-a-terminal--background--peek--wait)).
 
 **On a shared box, cap it.**  nextest runs one test process per hardware thread and every
-native test starts its own `rustc` besides, so an uncapped curated run holds the machine at a
+native test starts its own C compile besides, so an uncapped curated run holds the machine at a
 load of several times its core count for its whole length.  `NEXTEST_TEST_THREADS=<n> nice -n 10
 ./scripts/find_problems.sh …` caps the processes and yields the CPU to whatever else runs (the
 environment reaches nextest unchanged).  And read the first line, `changed: …`: a file no subject
@@ -410,7 +375,7 @@ nothing, so the one real regression arrives inside a band nobody trusts.
 Correctness is what fails a build; speed is what you read.
 
 Timeouts keep their job: they bound what we do **not** control — a socket, a
-process spawn, `rustc`. They are a liveness bound, not a speed measurement, and
+process spawn, the C compiler. They are a liveness bound, not a speed measurement, and
 a test that takes its whole timeout tells you nothing about how fast it is.
 
 ### The unit, and why it is not seconds
@@ -457,7 +422,7 @@ regression is one large one, both reviewable at the moment they land.
 
 ### What it does not measure
 
-It calibrates CPU, so a test dominated by `rustc`, disk or the network normalises
+It calibrates CPU, so a test dominated by the C compiler, disk or the network normalises
 poorly. And it is wall-clock: where a **deterministic counter** exists — claimed
 records, allocations, bytes — prefer that and assert on it. A counter is
 identical on every machine at any load, which is why

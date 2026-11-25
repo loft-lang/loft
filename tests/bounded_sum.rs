@@ -7,28 +7,10 @@
 //! (`tests/scripts/158-bounded-sum.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted, and for whom.
 use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-bounded-sum.loft";
-
-/// Per function: the reduction preludes emitted.
-const EXPECTED: &[(&str, usize)] = &[
-    // The stdlib `sum`'s integer instance, and the callee twin the hoisting caller reaches.
-    ("i_7integer_n_sum", 1),
-    ("i_7integer_n_sum__inv", 1),
-    // The same loop written by hand, and with the operands the other way round.
-    ("n_s_user", 1),
-    ("n_s_acc", 1),
-    // Not the shape: a float accumulate, a `?`-discharged read (a join), a second statement
-    // in the body, a computed index, a `for x in v` walk.
-    ("n_s_float", 0),
-    ("n_s_join", 0),
-    ("n_s_two", 0),
-    ("n_s_step", 0),
-    ("n_s_walk", 0),
-];
 
 const SWITCHES: [&str; 5] = [
     "LOFT_NO_LOOP_KERNELS",
@@ -41,9 +23,6 @@ const SWITCHES: [&str; 5] = [
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
-    // admits twice (a fast copy and the exact one).
-    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.args(args).env("LOFT_TIMEOUT", "300");
     for s in SWITCHES {
         cmd.env_remove(s);
@@ -64,7 +43,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         std::env::temp_dir().join(format!("loft_bounded_sum_{}_{tag}.rs", std::process::id()));
     let status = loft(
         &[
-            "--native-rust",
+            "--native",
             "--native-emit",
             out.to_str().unwrap(),
             cells().to_str().unwrap(),
@@ -80,26 +59,6 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     let _ = fa::remove_file(&out);
     rust
-}
-
-/// Native's own clause, read with the loop kernels off: with them on (@PLN180 § Kernels) the
-/// loops this rule's shape covers reach the generator as one `vector_sum_int` call.
-const NO_KERNELS: (&str, &str) = ("LOFT_NO_LOOP_KERNELS", "1");
-
-fn counts(rust: &str) -> HashMap<String, usize> {
-    let mut map: HashMap<String, usize> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        *map.entry(current.clone()).or_default() +=
-            line.matches("//@FR-R-BoundedNest reduction").count();
-    }
-    map
 }
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
@@ -146,79 +105,10 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
 }
 
 #[test]
-fn each_cell_emits_exactly_the_preludes_predicted() {
-    let got = counts(&emit("on", &[NO_KERNELS]));
-    for (name, preludes) in EXPECTED {
-        assert_eq!(
-            got.get(*name).copied().unwrap_or_default(),
-            *preludes,
-            "{name}: reduction preludes"
-        );
-    }
-}
-
-#[test]
-fn the_prelude_stands_before_the_loop_and_the_loop_is_unchanged() {
-    // The plain part advances `#index`; the checked loop that follows is emitted exactly as
-    // it was, guards and all, so it resumes where the first block declined.
-    let rust = emit("shape", &[NO_KERNELS]);
-    let start = rust.find("\nfn n_s_user(").expect("n_s_user was emitted");
-    let rest = &rust[start + 1..];
-    let f = &rest[..rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3)];
-    let prelude = f
-        .find("//@FR-R-BoundedNest reduction")
-        .expect("the prelude");
-    let lp = f.find("'l3: loop {").expect("the loop");
-    assert!(prelude < lp, "the prelude stands before the loop:\n{f}");
-    assert!(
-        f.contains("vector::sum_blocks_i64::<false>(__vb_")
-            && f.contains("ops::op_add_int(")
-            && f.contains("get_elem_at::<i64, false>("),
-        "the plain part reads through the held base, and the loop keeps its checked add and fused read:\n{f}"
-    );
-}
-
-#[test]
 fn the_switch_restores_the_checked_loop_alone() {
     let rust = emit("off", &[("LOFT_NO_BOUNDED_SUM", "1")]);
     assert!(
         !rust.contains("sum_blocks_i64::<") && !rust.contains("FR-R-BoundedNest reduction"),
         "LOFT_NO_BOUNDED_SUM=1 emits no prelude anywhere"
-    );
-}
-
-#[test]
-fn the_verify_form_reruns_every_admitted_block_through_the_checked_add() {
-    let rust = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
-    assert!(
-        rust.contains("vector::sum_blocks_i64::<true>("),
-        "LOFT_HOIST_VERIFY=1 emits the checking form"
-    );
-}
-
-/// With the loop kernels on, the stdlib `sum`'s integer instance and the same loop written by
-/// hand are ONE `vector_sum_int` call and no loop; the reversed operands (`v[i] + acc`), which
-/// the kernel rule does not admit, keep native's own prelude.
-#[test]
-fn the_kernel_takes_the_loops_its_shape_covers() {
-    let rust = emit("kernels", &[]);
-    let body = |name: &str| -> String {
-        let start = rust
-            .find(&format!("\nfn {name}("))
-            .unwrap_or_else(|| panic!("{name} was emitted"));
-        let rest = &rust[start + 1..];
-        rest[..rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3)].to_string()
-    };
-    for name in ["i_7integer_n_sum", "n_s_user"] {
-        let f = body(name);
-        assert!(
-            f.contains("n_vector_sum_int(") && !f.contains("loop {"),
-            "{name} is one kernel call:\n{f}"
-        );
-    }
-    let acc = body("n_s_acc");
-    assert!(
-        acc.contains("//@FR-R-BoundedNest reduction"),
-        "n_s_acc keeps native's prelude:\n{acc}"
     );
 }

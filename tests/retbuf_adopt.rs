@@ -33,7 +33,7 @@ const EXPECTED: &[(&str, usize)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -71,21 +71,6 @@ fn counts(rust: &str) -> HashMap<String, usize> {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-#[test]
-fn each_cell_adopts_exactly_as_predicted() {
-    let out = std::env::temp_dir().join("loft_retbuf_adopt_on.rs");
-    let rust = emit(&cells(), &out, &[]);
-    let got = counts(&rust);
-    for (name, adopts) in EXPECTED {
-        let a = got
-            .get(*name)
-            .copied()
-            .unwrap_or_else(|| panic!("{name} was not emitted"));
-        assert_eq!(a, *adopts, "{name}: adoption inits");
-    }
-    let _ = fa::remove_file(&out);
 }
 
 #[test]

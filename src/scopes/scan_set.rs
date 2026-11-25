@@ -45,8 +45,8 @@ use crate::variables::Function;
 /// @PLN130 F2 — the container variable an element/field read ultimately reads OUT of.
 ///
 /// One line, because the derivation is [`crate::use_analysis::projection_container_var`]'s:
-/// the EMITTER that copies a materialised view reads the same home
-/// (`generation::container_element_base`), and a walk that named a container the emitter
+/// the lowering that copies a materialised view reads the same home
+/// (`bind_lowering::first_arm`), and a walk that named a container the emitter
 /// cannot is a copy the compiler reports and does not make.
 fn base_container_var(value: &Value, data: &Data) -> Option<u16> {
     crate::use_analysis::projection_container_var(data, value)
@@ -685,7 +685,7 @@ impl Scopes<'_> {
         // per loop depth), and it lives here, so the free is emitted here.
         //
         // `--native` reaches the same verdict at runtime through its entry-buffer
-        // witness (`_rb_w_<name>`, `generation/mod.rs`), which is why only the
+        // witness (`_rb_w_<name>`), which is why only the
         // interpreter reported the leak — an @FR-O-NoDiverge asymmetry, with the
         // interpreter on the deviating side.  Its own guarded free is a no-op after
         // this one: the `OpFreeRef` emitter resets a freed Var to the null
@@ -1615,7 +1615,7 @@ impl Scopes<'_> {
                 keyed_copy = Some((tmp, i32::from(ktp)));
             }
             if let Type::Vector(inner, _) = function.tp(v).base().clone() {
-                let wrapper = format!("main_vector<{}>", inner.name(data));
+                let wrapper = data.vector_wrapper_name(&inner);
                 if data.name_type(&wrapper, data.def(self.d_nr).source) != u16::MAX
                     && let Some(elem) = data.vector_element_type(&inner, self.database)
                 {
@@ -1640,6 +1640,7 @@ impl Scopes<'_> {
             let cname = function.name(cause.container).to_string();
             let via = disturbance_via(data, &cause);
             report_materialised_view(
+                data,
                 cause.reported_cause(),
                 &vname,
                 &cname,
@@ -1726,6 +1727,7 @@ impl Scopes<'_> {
             {
                 let via = disturbance_via(data, &cause);
                 report_materialised_view(
+                    data,
                     cause.reported_cause(),
                     function.name(v),
                     function.name(cause.container),

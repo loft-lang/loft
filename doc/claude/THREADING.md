@@ -179,6 +179,57 @@ program meaning two different things depending on the backend, and in the browse
 (depth 2, depth 3, and a text return — each against a hand-computed value, on both
 backends) and by the nested cell in `tests/wasm/par-thread-proof.sh`.
 
+### Each thread's own state
+
+No running program keeps state in a thread-local, on any backend: a thread's state is a value
+it is handed (`@FR-C-Own`, [formal/concurrency.md](formal/concurrency.md) § Each thread's own
+state).  A store is claimed on the main thread; a worker starts its own stores and reads the
+common ones, which nothing writes while it runs.  The guard is
+`tests/par_contexts.rs::no_state_is_a_thread_local`, which fails on any thread-local spelling
+in `src/` — Rust's `thread_local!`, or C thread storage in the runtime or the C it emits.
+
+**Every implementation reaches its context as an argument.**
+
+| Implementation | Its context | A worker's |
+|---|---|---|
+| Interpreter | the `State` and the `Stores` it holds | `Stores::clone_for_light_worker`, made before the worker starts: the parent's stores borrowed read-only, a few scratch stores its own |
+| C runtime | `loft_cx *cx`, first argument of every runtime and emitted function ([C_BACKEND.md](C_BACKEND.md), the store context) | `loft_par_job_init` makes it before the thread starts; `loft_cx_end` releases what it holds |
+
+`cx` is written at every call and in every signature, never supplied by a macro,
+which would hide the argument the way a thread-local hides the state.
+
+**Where state that once looked per-thread lives:**
+
+| State | Home |
+|---|---|
+| a compile pass's memo | `Data`, behind `PassCell`, `ScopedCell` or `PassAny`: a `Mutex`, because `Data` is shared with `par` workers; a clone starts empty |
+| a run's checks, reports, crash context, engine host, output capture, web buffers | the `Stores` (`checks`, `run`, `crash`, `engine`, `output`, `web`) |
+| a running interpreter's censuses, bind notes, text yields, live reload | the `State` |
+| the C emission's options | `UnitShape` |
+| a switch read from the environment | `env_once!`: one process-wide answer |
+| what a fatal signal reports | a table of atomic slots, one per running context (`crash_report::RUNNING`); a panic is reported with its position by the dispatch loop or compile step that catches it |
+
+**The C runtime's choices.**
+
+- The work-buffer parks are the main thread's: plain statics that a `par` worker and a hosted
+  bridge call never touch (`cx->no_park`).
+- A hosted unit's context belongs to the `Stores` that calls it (`HostedTable::cx_of`), as its
+  table view does.
+- A component (`libloft_net`) keeps one context of its own per caller context
+  (`loft_cx_make_v1`): it is compiled with its own switches, so its struct is laid out its own
+  way, and the caller's cannot be passed to it.
+- The TLS archive (`loft_tls.c`, `loft_ssh.c`) keeps its C ABI: its functions take no context.
+
+**A library's callback finds its caller's context in the store handle.**  The loft-ffi ABI
+fixes `opaque` as the store number: its low 16 bits (`loft_ffi_store_nr`), the interpreter's
+return-store bit above them (`CTX_RETURN_STORE`), and the context pointer above that
+(`loft_ffi_handle`; `extensions::native_call::handle_word`).  That needs 64-bit pointers; a
+32-bit host runs one program per instance and publishes its `Stores` once.
+
+What threads do share takes one of `@FR-C-Publish`'s forms — set before the workers start,
+merged after the join, one atomic word — and every lock that remains is listed, with its
+reason, in [LOCKS.md](LOCKS.md).
+
 ### Where the threads come from (@PLN117)
 
 One seam decides it: `parallel.rs::with_pool`.
@@ -195,6 +246,17 @@ has no `thread::spawn`, so the page spawns Web Workers and each one claims a
 rayon thread through `loft_rayon_start_worker` (`src/wasm_threads.rs`, host half
 in `doc/loft-thread.js`).  Both browser bundles — `loft --html` and the
 wasm-bindgen gallery — link that same runtime.
+
+**A page the C backend builds** ([@C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)) has no rayon:
+its module is built for `wasm32-wasip1-threads`, and its threads are the WASI libc's
+(`pthread_create` → the page's `wasi.thread-spawn` → a Worker that instantiates the same module
+on the same memory).  The page starts them as a pool before the program runs
+(`loft_pool_start`), because a Worker begins only once the main thread returns to the event loop.
+A `par` on the main thread hands every slice to a pool worker and spins on each worker's `done`,
+showing what the workers printed meanwhile (`loft_pool_run`, `src/c/loft_keyed.h`); it runs no
+slice itself, so it never contends for a libc lock, whose wait would trap there.  A nested `par`
+and a `parallel { }` block start threads the page refuses, so their work runs where it is.
+Without isolation no pool starts and every `par` runs on the main thread.
 
 Two things about a browser thread are not like a native one:
 
@@ -356,7 +418,7 @@ Element size is computed from `self.database.size(element_type.known_type)` — 
 
 A worker does **not** get a semantically-independent copy of everything to mutate. Captured parent state is **read-only** (@PLN102 @C93 — a `ParentWrite` from inside a worker is a compile error, `scopes.rs`), so it is logically **shared**, not owned per-worker; only the worker-mutated stores (the element buffer, the return buffer) need to be per-worker. `Stores::clone_for_light_worker()` implements that: because captured state is *provably unwritten*, a worker **reads the captured stores directly** rather than slicing a large read-only structure into every job. Freed store slots (`.free == true`) are replaced with fresh unlocked `Store::new(100)` instances so that `State::new_worker → Stores::database` can safely re-initialise them without hitting the "Write to locked store" debug assert.
 
-**Read-only sharing (@PLN108, shipped 2026-07-17 — interpreter).** The per-worker byte-copy above is pure conservatism: a worker's captured parent state is read-only (@PLN102 @C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` now **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying — a copy-elision, no semantic change. There is **exactly ONE clone path** — always the read-only borrow. The original design auto-selected it by heap size (`par_share_for`, a 2 MB threshold, `LOFT_PAR_SHARE=0`/`=1`); the redesign retired both, so no data-dependent switch decides how a `par` shares (`src/parallel.rs`: *"no byte-copy, no size heuristic, no second `thread::scope` dispatcher"*). Net: a par over a large read-only structure no longer pays a copy of the whole session heap per worker (measured flat vs 53× growth). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). `--native` par is no longer separate: `src/codegen_runtime.rs`'s dispatchers call the same `parallel::parallel_workers` template, so both backends share the borrow.
+**Read-only sharing (@PLN108, interpreter).** A worker's captured parent state is read-only (@PLN102 @C93 — a `ParentWrite` from a worker is a compile error), so every parent store is provably unwritten for the par's lifetime, and the dispatcher joins all workers before the borrowed parent drops. So `run_parallel_discard` / `run_parallel_queue` **BORROW** the parent stores read-only (`clone_for_light_worker`: shares each store's `ptr`, `read_only:true`, `borrowed:true` ⇒ `Drop` skips dealloc) instead of copying. There is **exactly ONE clone path** — always the read-only borrow — so no data-dependent switch decides how a `par` shares (`src/parallel.rs`). Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) + `read_only` runtime write-panic, and it is **ASan + TSan clean** (a positive-control race fires, so the clean run is non-vacuous). This is the interpreter's dispatcher; the C's `par` is its own runtime (`loft_par_job_init`, § above).
 
 ### Example
 
@@ -641,15 +703,9 @@ no buffer), `run_parallel_fold` (Stitch::Reduce, scalar accumulator),
 `run_parallel_block` (`parallel { arm; arm }` — internal, not a row
 loop).
 
-`run_parallel_block`'s native twin is `codegen_runtime::n_parallel_block_native`, which
-takes one Rust closure per arm instead of one bytecode position per arm.  The generator
-emits every variable the arms assign at the top of EVERY closure, at its type's default:
-each arm is a separate top-level expression, so `sum = 0;` and the loop that reads `sum`
-are two different arms, and the interpreter gives the second one an entry-value copy
-through the parent's stack snapshot.  Private per closure, which is the isolation the
-construct promises.  A `&`-link local is left out — a raw pointer has no honest default,
-so an arm reading a sibling's link fails to compile rather than dereferencing a made-up
-address.
+`run_parallel_block`'s compiled twin is the C's `parallel_block`
+(`src/c/body/parallel.rs`): each arm written into a function of its own, the site an array
+of the addresses the arms read, and a `loft_parallel_run` over the functions.
 
 ### When to add a new dispatcher vs extend an existing one
 
@@ -660,8 +716,8 @@ address.
 - **Adding a return shape with a NEW Stores buffer-stack type** →
   add a new buffer stack in `src/database/mod.rs` (per-type, not
   polymorphic — see the rationale at lines 215-265), a new
-  `n_parallel_queue_<X>` native fn in `src/native.rs`, a new
-  `_native` mirror in `src/codegen_runtime.rs`, and either reuse
+  `n_parallel_queue_<X>` native fn in `src/native.rs`, its C
+  counterpart (`src/c/body/parallel.rs`), and either reuse
   one of the existing `run_parallel_*` shapes or add a new one if
   the per-thread state / merge truly diverges.
 - **Don't try to unify** the existing 5 dispatchers under one trait.

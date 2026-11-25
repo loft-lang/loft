@@ -27,6 +27,7 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
@@ -2344,7 +2345,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   // A `vector<T>?` is built in place as its base is.
   if e.p.nodes[rhs!] is SComprehension {
     match el_types::base(declared!) {
-      TyVector { inner } => return el_ex_match::comprehension_into(e, vars, v, rhs!, declared: inner),
+      TyVector { inner } => return el_ex_loop::comprehension_into(e, vars, v, rhs!, declared: inner),
       _ => {}
     }
   }

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I73 — native function registry: the loop kernels both backends call
 
-//! Loop kernels: a whole loop as ONE Rust function both backends call.
+//! Loop kernels: a whole loop as ONE function call, in Rust for the interpreter and C for `--native`.
 //!
 //! Each kernel is an ordinary stdlib function — declared without a loft body in
 //! `default/*.loft`, implemented here, and reached by the interpreter through its single
 //! native-call operator (`OpStaticCall`, a row in `native::FUNCTIONS`) and by `--native`
-//! through `codegen_runtime` (a row in `CODEGEN_RUNTIME_FNS`).  Adding a kernel therefore adds
+//! through its C twin (a row in `c::native_c`).  Adding a kernel therefore adds
 //! a function, never an operator: the opcode table does not grow with the library.
 //!
 //! What a kernel buys is the interpreter's per-element cost.  A loop the interpreter

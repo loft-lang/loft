@@ -187,8 +187,30 @@ pub struct Str {
 }
 
 impl Str {
+    /// The null text as a view: a null pointer, as the C runtime's `loft_null_text` spells it
+    /// (`crate::text_null`).
+    #[inline]
+    #[must_use]
+    pub fn null() -> Str {
+        Str {
+            ptr: std::ptr::null(),
+            len: 0,
+        }
+    }
+
+    /// Is this view the null text?
+    #[inline]
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
+
+    /// A view of `v`; the null text ([`crate::text_null::null_str`]) becomes [`Str::null`].
     #[must_use]
     pub fn new(v: &str) -> Str {
+        if crate::text_null::is_null(v) {
+            return Str::null();
+        }
         Str {
             ptr: v.as_ptr(),
             len: v.len() as u32,
@@ -210,7 +232,10 @@ impl Str {
         // is on the value-read hot path and must return the real bytes.  If a
         // genuinely corrupt `Str` ever reaches here, a loud fault surfaces the
         // producing bug — strictly better than silent corruption of valid data.
-        if self.ptr.is_null() || (self.ptr as usize) < (1 << 16) {
+        if self.ptr.is_null() {
+            return crate::text_null::null_str();
+        }
+        if (self.ptr as usize) < (1 << 16) {
             return "";
         }
         unsafe {
@@ -514,10 +539,7 @@ fn float_cmp(v1: f64, v2: f64) -> Ordering {
 /// a byte compare put it after `""` (loft#2237).
 #[inline]
 fn text_key_cmp(a: &str, b: &str) -> Ordering {
-    let (an, bn) = (
-        a == crate::store::STRING_NULL,
-        b == crate::store::STRING_NULL,
-    );
+    let (an, bn) = (crate::text_null::is_null(a), crate::text_null::is_null(b));
     if an || bn {
         return bn.cmp(&an);
     }
@@ -597,19 +619,6 @@ pub fn poison_host() -> Option<crate::file_access::Flavor> {
 pub fn copy_dump_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_COPY_DUMP"))
-}
-
-/// `LOFT_NO_BRIDGE_ORPHAN_FREE=1` — @PLN118 arc F opt-out / differential switch. The shared-store
-/// bridge (`native_lib::shared_bridge_wrapper`) frees a FALLBACK destination record it allocated
-/// itself when the inner fn ignored the retbuf and returned a fresh store (a struct-literal return
-/// does) — otherwise that record is orphaned across the interp↔cdylib boundary, one leaked store
-/// per call. Setting this reproduces the pre-fix leak (the arc-D "second implementation to flip
-/// to" + the differential leak oracle's positive control). Default OFF (the fix is active). One
-/// cached env read; the free itself only fires when the fallback was allocated.
-#[must_use]
-pub fn bridge_orphan_free_disabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NO_BRIDGE_ORPHAN_FREE"))
 }
 
 /// `LOFT_REPORT_COPIES=1` (or the `--report-copies` CLI flag) — @PLN90 Step 5. The USER-FACING
@@ -1500,7 +1509,7 @@ pub fn retbuf_witness_gate_disabled() -> bool {
 /// with `LOFT_NO_RETBUF_HOIST` (read at GENERATION time: the before-half of the A/B on one
 /// binary — `lock` 18.6M → 15.7M ns/op — and the first bisect step for a native-only wrong
 /// answer in a loop that calls a struct-returning fn).  See
-/// `generation::hoist::retbuf_only_writer` and `hoist::frees_a_record` for the arguments;
+/// `opt::writes::retbuf_only_writer` and `opt::writes::frees_a_record` for the arguments;
 /// `LOFT_HOIST_VERIFY=1` is the falsifier for both.
 #[must_use]
 pub fn retbuf_hoist_enabled() -> bool {
@@ -1543,7 +1552,7 @@ pub fn loop_rotate_enabled() -> bool {
 }
 
 /// A struct rebind from a fresh call result exchanges stores WITHOUT resetting the
-/// destination first on `--native` (`@FR-H-SwapRebind`, `codegen_runtime::OpRebindRecord`):
+/// destination first on `--native` (`@FR-H-SwapRebind`, the C's `loft_swap_rebind`):
 /// the old value leaves with the released store — **DEFAULT ON**.  Opt OUT with
 /// `LOFT_NO_SWAP_REBIND` (read at run time): every such rebind resets the destination and
 /// copies or exchanges as before, the before-half of the A/B and the first bisect step for a
@@ -1552,40 +1561,6 @@ pub fn loop_rotate_enabled() -> bool {
 pub fn swap_rebind_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_SWAP_REBIND"))
-}
-
-/// A callee whose return buffer is built by a literal that writes every field, of a type whose
-/// heap is only vectors of no-heap elements, refills the store a rebind exchange released
-/// instead of minting a new one on `--native` (`@FR-R-RefillBuffer`) — **DEFAULT ON**.  Opt OUT
-/// with `LOFT_NO_REFILL_BUFFER` (read where the buffer is emitted and at run time): the
-/// released store is freed and every buffer is minted, the before-half of the A/B and the
-/// first bisect step for a wrong record built into a return buffer on `--native`.
-#[must_use]
-pub fn refill_buffer_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
-}
-
-/// The store a rebind `x = f(…)` displaces becomes the hidden buffer of that call's next
-/// execution, and the fresh result is adopted (`@FR-R-RebindBuffer`) — **DEFAULT ON**.  Opt
-/// OUT with `LOFT_NO_REBIND_BUFFER` (read where the rebind is emitted): the result is
-/// exchanged into `x`'s store (`@FR-H-SwapRebind`) as before, the before-half of the A/B and
-/// the first bisect step for a wrong value after a rebind in a loop on `--native`.
-#[must_use]
-pub fn rebind_buffer_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_BUFFER"))
-}
-
-/// A refilled return buffer's repeat literal overwrites the kept vector where it stands when
-/// it already holds that many elements (`@FR-R-RefillBuffer`'s in-place clause,
-/// `Stores::fill_exact`) — **DEFAULT ON**.  Opt OUT with `LOFT_NO_REFILL_IN_PLACE` (read where
-/// the literal is emitted): the vector is emptied and filled again, the before-half of the
-/// A/B and the first bisect step for a wrong element in a refilled vector on `--native`.
-#[must_use]
-pub fn refill_in_place_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_IN_PLACE"))
 }
 
 /// A call of an effect-free function made twice in one body on arguments nothing writes in
@@ -1693,7 +1668,7 @@ pub fn fused_append_enabled() -> bool {
 /// GENERATION time: the before-half of the A/B on one binary, and the first bisect step
 /// for a native-only wrong element in a loop that calls a setter).  A callee whose store
 /// writes are all `IN_PLACE_SET_OPS` moves no record and changes no length, so no header
-/// the caller derived can go stale across the call (`generation::hoist::in_place_only_writer`
+/// the caller derived can go stale across the call (`opt::writes::in_place_only_writer`
 /// carries the argument; `LOFT_HOIST_VERIFY=1` is the falsifier).
 #[must_use]
 pub fn inplace_callee_hoist_enabled() -> bool {
@@ -1972,22 +1947,6 @@ pub fn trace_hand_over() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_HAND_OVER"))
 }
 
-/// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
-/// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
-/// or length after `v += [a]; v += [b]; …`.
-pub fn push_run_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_RUN"))
-}
-
-/// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
-/// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
-/// a fixed-width integer read.
-pub fn typed_read_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_TYPED_READ"))
-}
-
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
 /// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
 /// such a copy.
@@ -2127,13 +2086,6 @@ pub fn work_buffer_null_control() -> bool {
 pub fn format_append_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
-}
-
-/// `LOFT_NO_TEXT_CLEAR=1` — empty a text with a fresh `String` again (`@FR-R-TextClear` off):
-/// the first bisect step for a text that reads leftover content after `s = ""` on `--native`.
-pub fn text_clear_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_CLEAR"))
 }
 
 /// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
@@ -2325,19 +2277,6 @@ pub fn buffer_detach_enabled() -> bool {
 pub fn loop_buffer_reuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
-}
-
-/// Every LOOP-FREE loft function the native generator emits carries `#[inline]` —
-/// **DEFAULT ON** (`Output::fn_inline_attr` says why a looping one does not).
-/// The hint only raises LLVM's inlining threshold for that function, so a small helper whose
-/// checked arithmetic puts it just past the default budget (hex_field's `nb_q`, `eg_dir_from`,
-/// `eg_index` under `edgeset_count`) is folded into its caller the way rustc folds a plain-Rust
-/// twin's; a large function still stays a call.  Opt OUT with `LOFT_NO_INLINE_HINT` (read at
-/// GENERATION time): no attribute, the emission of before.  `--names` pins every loft function
-/// `#[inline(never)]` regardless, because a backtrace needs the frames.
-pub fn inline_hint_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_INLINE_HINT"))
 }
 
 /// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one
@@ -3136,25 +3075,15 @@ fn strict_stores_init(ss: &std::sync::atomic::AtomicU8) -> bool {
 /// than stopping at the first — the same reasoning as `LOFT_DEV_SOFT_HALT`.
 static STRICT_VIOLATIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-thread_local! {
-    /// Where each store was FREED: slot -> (pc, the variable name `free_named` was given).
-    /// A side table rather than two more `Store` fields, so the bookkeeping costs nothing
-    /// when strict mode is off.
-    static STRICT_FREE_SITE: std::cell::RefCell<std::collections::HashMap<u16, (u32, String)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// Record where store `slot` was freed. Call only when [`strict_stores`] is on.
-pub fn strict_note_free(slot: u16, pc: u32, name: &str) {
-    STRICT_FREE_SITE.with(|m| {
-        m.borrow_mut().insert(slot, (pc, name.to_string()));
-    });
+pub fn strict_note_free(c: &mut StoreChecks, slot: u16, pc: u32, name: &str) {
+    c.strict_free_site.insert(slot, (pc, name.to_string()));
 }
 
 /// The recorded free site for `slot`, if any.
 #[must_use]
-pub fn strict_free_site(slot: u16) -> Option<(u32, String)> {
-    STRICT_FREE_SITE.with(|m| m.borrow().get(&slot).cloned())
+pub fn strict_free_site(c: &StoreChecks, slot: u16) -> Option<(u32, String)> {
+    c.strict_free_site.get(&slot).cloned()
 }
 
 /// Report an access to a store that was freed. Call only when [`strict_stores`] is on.
@@ -3168,6 +3097,8 @@ pub fn strict_free_site(slot: u16) -> Option<(u32, String)> {
     reason = "one report line, one argument each"
 )]
 pub fn strict_store_violation(
+    checks: &StoreChecks,
+    cx: &crate::crash_report::CrashCx,
     store_nr: u16,
     rec: u32,
     pos: u32,
@@ -3179,9 +3110,9 @@ pub fn strict_store_violation(
 ) {
     let n = STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if n < 200 && crate::fault_log::armed() {
-        let (freed_pc, var) = strict_free_site(store_nr).unwrap_or((0, String::new()));
+        let (freed_pc, var) = strict_free_site(checks, store_nr).unwrap_or((0, String::new()));
         let var = if var.is_empty() {
-            crate::store_trace::freed_variable(freed_pc).unwrap_or_default()
+            crate::store_trace::freed_variable(cx, freed_pc).unwrap_or_default()
         } else {
             var
         };
@@ -3196,7 +3127,7 @@ pub fn strict_store_violation(
         // Generated Rust has no bytecode positions: leave the sites out rather than `pc=0`.
         for (key, pc) in [("created", created_at), ("freed", freed_pc), ("at", now_pc)] {
             if pc != 0 {
-                fields.push((key, crate::store_trace::site(pc)));
+                fields.push((key, crate::store_trace::site(cx, pc)));
             }
         }
         crate::fault_log::record("use-after-free", &fields);
@@ -3204,14 +3135,14 @@ pub fn strict_store_violation(
     // Cap the output: a stale ref inside a loop reports every iteration, and the first
     // few already name the site.
     if n < 20 {
-        let site = strict_free_site(store_nr);
+        let site = strict_free_site(checks, store_nr);
         let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
         // The interpreter's free carries no name: the variable is the one its operand read.
         let who = site.as_ref().map_or_else(
             || "<not recorded>".to_string(),
             |(_, nm)| {
                 if nm.is_empty() {
-                    crate::store_trace::freed_variable(freed_pc)
+                    crate::store_trace::freed_variable(cx, freed_pc)
                         .unwrap_or_else(|| "<anon>".to_string())
                 } else {
                     format!("`{nm}`")
@@ -3226,14 +3157,14 @@ pub fn strict_store_violation(
         let where_ = if spans == 0 {
             "  (no bytecode positions — native run; re-run with --interpret for pcs)".to_string()
         } else {
-            let at = crate::store_trace::site;
+            let at = |pc| crate::store_trace::site(cx, pc);
             let mut w = format!(
                 "  created {}\n  freed   {}\n  {what:<7} {}",
                 at(created_at),
                 at(freed_pc),
                 at(now_pc)
             );
-            if let Some(x) = crate::store_trace::excerpt(now_pc) {
+            if let Some(x) = crate::store_trace::excerpt(cx, now_pc) {
                 w.push('\n');
                 w.push_str(&x);
             }
@@ -3879,31 +3810,6 @@ pub fn c_own_join() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_JOIN"))
 }
 
-/// `LOFT_NATIVE_OWN_DISPLACED_FREE=1` — the rustc writer frees a reassignment's displaced store
-/// by its own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
-#[must_use]
-pub fn native_own_displaced_free() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_DISPLACED_FREE"))
-}
-
-/// `LOFT_NATIVE_OWN_CALL_BIND=1` — the rustc writer takes its runtime copy-or-adopt for every
-/// reassignment from a call again, instead of only where `bind_lowering::re_bind` copies or joins
-/// (@PLN220's A/B).
-#[must_use]
-pub fn native_own_call_bind() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_CALL_BIND"))
-}
-
-/// `LOFT_NATIVE_OWN_VAR_COPY=1` — the rustc writer copies every reassignment from another
-/// variable's record again, instead of only where `bind_lowering::re_bind` copies (@PLN220's A/B).
-#[must_use]
-pub fn native_own_var_copy() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_VAR_COPY"))
-}
-
 /// `LOFT_KEYED_VIEW_DISPLACED_FREE=1` — `bind_lowering::re_bind` frees what a keyed local whose
 /// null init minted nothing displaces again (a free of the sentinel; @PLN220's A/B).
 #[must_use]
@@ -4058,13 +3964,17 @@ pub fn watch_store() -> Option<u16> {
     *WATCH.get_or_init(|| env_value("LOFT_WATCH_STORE").and_then(|s| s.trim().parse::<u16>().ok()))
 }
 
-thread_local! {
+/// `@PLN226` — the store-lifetime detectors' records of ONE run, kept in its `Stores`
+/// (`Stores::checks`) rather than in thread-locals: a `par` worker's `Stores` is its own, so
+/// are its records, as each thread's were.
+#[derive(Default)]
+pub struct StoreChecks {
     /// `LOFT_UAF_GEN` (c): generation per store slot — bumped on each free. A DbRef
     /// minted while a slot is at gen G is stale if the slot reaches gen >G (freed +
     /// reused) before the ref is read. The gen distinguishes the OLD occupant from a
     /// re-claimed NEW one — so it does NOT false-positive on free-then-reclaim (the
     /// flaw that sank the store_nr-only scan).
-    static SLOT_GEN: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    slot_gen: Vec<u32>,
     /// Shadow of the operand stack: keyed by eval-stack byte offset, holding the STORE a
     /// DbRef named at PUSH together with that slot's gen. At POP, a mismatch against the
     /// slot's current gen = reused-since-push.
@@ -4077,59 +3987,66 @@ thread_local! {
     /// UNRELATED value occupied the offset. Matching the store makes such a leftover stamp
     /// inert instead of a false positive, for every bypassing writer rather than the ones
     /// that had been found.
-    static STACK_SHADOW: std::cell::RefCell<std::collections::HashMap<u32, (u16, u32)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-thread_local! {
+    stack_shadow: std::collections::HashMap<u32, (u16, u32)>,
     /// @PLN118 arc B refinement — depth of record deep-copies (`copy_record`/`finish_record`)
     /// on the stack. A `LOFT_UAF_GEN` stale read while > 0 is a record COPY reading a stale
     /// sub-reference (the copy is incomplete; the correctly-placed source free is NOT the bug)
     /// — a distinct root from a plain deref of a genuinely prematurely-freed store.
-    static COPY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    copy_depth: u32,
+    /// `LOFT_UAF` companion (cluster-462 tool-gap #1): store slot -> the
+    /// execution `code_pos` of its most-recent free.  The frame-var scan in
+    /// `uaf_scan_freed` misses a stale DbRef that lives on the OPERAND STACK
+    /// (the source `OpCopyRecord` pops) — so this records every free's pc and
+    /// `do_copy_record` reports it when it reads a still-freed source, pinning
+    /// the premature-free op without a full operand-stack scan.
+    freed_at: std::collections::HashMap<u16, (u32, u32, u16)>,
+    /// @PLN118 arc B — the free site keyed by `(slot, post-free generation)`. For a slot
+    /// freed-and-reused many times, `freed_at` (last free only) names the LAST occupant's
+    /// free, not the free that made a specific stale ref stale. Keyed by generation, the
+    /// gen-detector can name the CAUSAL free (the one at the ref's stamped gen + 1).
+    freed_at_gen: std::collections::HashMap<(u16, u32), (u32, u32, u16)>,
+    /// Where each store was FREED under [`strict_stores`]: slot -> (pc, the variable name
+    /// `free_named` was given).  A side table rather than two more `Store` fields, so the
+    /// bookkeeping costs nothing when strict mode is off.
+    strict_free_site: std::collections::HashMap<u16, (u32, String)>,
 }
 
 /// Enter a record deep-copy (bump the depth). Gate at the call site on `uaf_gen_enabled`.
-pub fn uaf_copy_enter() {
-    COPY_DEPTH.with(|d| d.set(d.get() + 1));
+pub fn uaf_copy_enter(c: &mut StoreChecks) {
+    c.copy_depth += 1;
 }
 
 /// Leave a record deep-copy (drop the depth). Saturating so a mismatched pair can't underflow.
-pub fn uaf_copy_exit() {
-    COPY_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+pub fn uaf_copy_exit(c: &mut StoreChecks) {
+    c.copy_depth = c.copy_depth.saturating_sub(1);
 }
 
 /// True when a record deep-copy is currently executing (a stale read here is a copy-incomplete,
 /// not a premature-free).
 #[must_use]
-pub fn uaf_in_copy() -> bool {
-    COPY_DEPTH.with(|d| d.get() > 0)
+pub fn uaf_in_copy(c: &StoreChecks) -> bool {
+    c.copy_depth > 0
 }
 
 /// Bump store `slot`'s generation (called from `free_named` under `LOFT_UAF_GEN`).
-pub fn uaf_bump_gen(slot: u16) {
-    SLOT_GEN.with(|g| {
-        let mut v = g.borrow_mut();
-        let i = slot as usize;
-        if i >= v.len() {
-            v.resize(i + 1, 0);
-        }
-        v[i] = v[i].wrapping_add(1);
-    });
+pub fn uaf_bump_gen(c: &mut StoreChecks, slot: u16) {
+    let i = slot as usize;
+    if i >= c.slot_gen.len() {
+        c.slot_gen.resize(i + 1, 0);
+    }
+    c.slot_gen[i] = c.slot_gen[i].wrapping_add(1);
 }
 
 /// Store `slot`'s current generation (0 if never freed).
 #[must_use]
-pub fn uaf_slot_gen(slot: u16) -> u32 {
-    SLOT_GEN.with(|g| g.borrow().get(slot as usize).copied().unwrap_or(0))
+pub fn uaf_slot_gen(c: &StoreChecks, slot: u16) -> u32 {
+    c.slot_gen.get(slot as usize).copied().unwrap_or(0)
 }
 
 /// Stamp eval-stack offset `off` with the store a pushed DbRef names and that slot's
 /// generation.
-pub fn uaf_stamp_shadow(off: u32, store_nr: u16, generation: u32) {
-    STACK_SHADOW.with(|s| {
-        s.borrow_mut().insert(off, (store_nr, generation));
-    });
+pub fn uaf_stamp_shadow(c: &mut StoreChecks, off: u32, store_nr: u16, generation: u32) {
+    c.stack_shadow.insert(off, (store_nr, generation));
 }
 
 /// The gen stamped at `off` — but only when the stamp is ABOUT `store_nr`. A stamp naming
@@ -4137,29 +4054,24 @@ pub fn uaf_stamp_shadow(off: u32, store_nr: u16, generation: u32) {
 /// writer that bypasses `put_stack`; it says nothing about the ref being popped now, so it
 /// reads as absent rather than as evidence.
 #[must_use]
-pub fn uaf_shadow_gen(off: u32, store_nr: u16) -> Option<u32> {
-    STACK_SHADOW.with(|s| {
-        s.borrow()
-            .get(&off)
-            .and_then(|&(st, stamped)| (st == store_nr).then_some(stamped))
-    })
+pub fn uaf_shadow_gen(c: &StoreChecks, off: u32, store_nr: u16) -> Option<u32> {
+    c.stack_shadow
+        .get(&off)
+        .and_then(|&(st, stamped)| (st == store_nr).then_some(stamped))
 }
 
 /// Move a stamp from one eval-stack offset to another, for a writer that relocates a DbRef
 /// without going through `put_stack` (the `copy_result` return slide). Clears `to` when
 /// `from` holds no stamp, so the destination never keeps its previous occupant's.
-pub fn uaf_move_shadow(from: u32, to: u32) {
-    STACK_SHADOW.with(|s| {
-        let mut m = s.borrow_mut();
-        match m.remove(&from) {
-            Some(v) => {
-                m.insert(to, v);
-            }
-            None => {
-                m.remove(&to);
-            }
+pub fn uaf_move_shadow(c: &mut StoreChecks, from: u32, to: u32) {
+    match c.stack_shadow.remove(&from) {
+        Some(v) => {
+            c.stack_shadow.insert(to, v);
         }
-    });
+        None => {
+            c.stack_shadow.remove(&to);
+        }
+    }
 }
 
 /// `LOFT_UAF_GEN_INJECT=1` — the positive control for detector (c). Bumps a store's
@@ -4180,56 +4092,33 @@ pub fn uaf_gen_inject_enabled() -> bool {
 /// Consume the shadow stamp at `off` (called on a DbRef POP). The stack is LIFO, so a
 /// stamp is valid only for its matching pop; clearing it stops a stale stamp from
 /// surviving to an unrelated later read once a non-DbRef push reuses the offset.
-pub fn uaf_clear_shadow(off: u32) {
-    STACK_SHADOW.with(|s| {
-        s.borrow_mut().remove(&off);
-    });
-}
-
-thread_local! {
-    /// `LOFT_UAF` companion (cluster-462 tool-gap #1): store slot -> the
-    /// execution `code_pos` of its most-recent free.  The frame-var scan in
-    /// `uaf_scan_freed` misses a stale DbRef that lives on the OPERAND STACK
-    /// (the source `OpCopyRecord` pops) — so this records every free's pc and
-    /// `do_copy_record` reports it when it reads a still-freed source, pinning
-    /// the premature-free op without a full operand-stack scan.
-    static FREED_AT: std::cell::RefCell<std::collections::HashMap<u16, (u32, u32, u16)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-    /// @PLN118 arc B — the free site keyed by `(slot, post-free generation)`. For a slot
-    /// freed-and-reused many times, `FREED_AT` (last free only) names the LAST occupant's
-    /// free, not the free that made a specific stale ref stale. Keyed by generation, the
-    /// gen-detector can name the CAUSAL free (the one at the ref's stamped gen + 1).
-    static FREED_AT_GEN: std::cell::RefCell<std::collections::HashMap<(u16, u32), (u32, u32, u16)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+pub fn uaf_clear_shadow(c: &mut StoreChecks, off: u32) {
+    c.stack_shadow.remove(&off);
 }
 
 /// Record (under `LOFT_UAF`/`LOFT_UAF_GEN`) that store `slot` was freed while executing
 /// `pc` in function `d_nr`, by the op whose opcode is `op` (names the freeing op category:
 /// a scope-exit `OpFreeRef`, an `OpFreeRefIfDistinct`, or a `copy_record` free-bit). Also
 /// stamps it against the slot's now-current (post-free) generation for causal attribution.
-pub fn uaf_record_free(slot: u16, pc: u32, d_nr: u32, op: u16) {
-    FREED_AT.with(|m| {
-        m.borrow_mut().insert(slot, (pc, d_nr, op));
-    });
+pub fn uaf_record_free(c: &mut StoreChecks, slot: u16, pc: u32, d_nr: u32, op: u16) {
+    c.freed_at.insert(slot, (pc, d_nr, op));
     if uaf_gen_enabled() {
-        let slot_gen = uaf_slot_gen(slot);
-        FREED_AT_GEN.with(|m| {
-            m.borrow_mut().insert((slot, slot_gen), (pc, d_nr, op));
-        });
+        let slot_gen = uaf_slot_gen(c, slot);
+        c.freed_at_gen.insert((slot, slot_gen), (pc, d_nr, op));
     }
 }
 
 /// The `(code_pos, d_nr, op_code)` of `slot`'s most-recent recorded free, if any.
 #[must_use]
-pub fn uaf_freed_pc(slot: u16) -> Option<(u32, u32, u16)> {
-    FREED_AT.with(|m| m.borrow().get(&slot).copied())
+pub fn uaf_freed_pc(c: &StoreChecks, slot: u16) -> Option<(u32, u32, u16)> {
+    c.freed_at.get(&slot).copied()
 }
 
 /// The free that took `slot` to generation `gen` (the CAUSAL free for a DbRef stamped at
 /// `gen - 1`), if recorded. Falls back to `uaf_freed_pc` at the call site when absent.
 #[must_use]
-pub fn uaf_freed_pc_at_gen(slot: u16, want_gen: u32) -> Option<(u32, u32, u16)> {
-    FREED_AT_GEN.with(|m| m.borrow().get(&(slot, want_gen)).copied())
+pub fn uaf_freed_pc_at_gen(c: &StoreChecks, slot: u16, want_gen: u32) -> Option<(u32, u32, u16)> {
+    c.freed_at_gen.get(&(slot, want_gen)).copied()
 }
 
 /// `#[inline]` because a generated `--native` program links this across a crate
@@ -4969,7 +4858,7 @@ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple>
     for f in k {
         match f {
             Content::Long(l) => result.push(Simple::Number(l)),
-            Content::Str(s) => result.push(Simple::Text(s.str().to_string())),
+            Content::Str(s) => result.push(Simple::Text(crate::text_null::own(s.str()))),
             _ => {}
         }
     }
@@ -5003,7 +4892,7 @@ pub fn long_hash(value: i64, seed: u64) -> u64 {
 #[must_use]
 pub fn str_hash(value: &str, seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
-    hasher.write_str(value);
+    hasher.write_str(crate::text_null::digest_text(value));
     hasher.finish()
 }
 
@@ -5027,7 +4916,7 @@ pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     for k in key {
         match k {
             Content::Long(l) => hasher.write_i64(*l),
-            Content::Str(s) => hasher.write_str(s.str()),
+            Content::Str(s) => hasher.write_str(crate::text_null::digest_text(s.str())),
             _ => (),
         }
     }
@@ -5041,7 +4930,9 @@ fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHash
         1 => hasher.write_i64(s.get_int(r.rec, p)),
         2 => hasher.write_i64(s.get_long(r.rec, p)),
         3 | 4 => (),
-        6 => hasher.write_str(s.get_str(s.get_u32_raw(r.rec, p))),
+        6 => hasher.write_str(crate::text_null::digest_text(
+            s.get_str(s.get_u32_raw(r.rec, p)),
+        )),
         // Narrow-integer key storage (Parts::Int / IntRaw / Short / ShortRaw / Byte).
         // Each yields an i64 view so the hash matches `get_key`'s
         // Content::Long(i64) reconstruction at the lookup site.
@@ -5100,7 +4991,10 @@ mod text_view_owned {
     /// multi-byte, empty and null texts, and for a view that points nowhere.
     #[test]
     fn a_text_view_owned_is_what_display_writes() {
-        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"] {
+        // Owned copies: the null text is an ADDRESS (`text_null::is_null`), and a `"\0"`
+        // literal in this crate may be merged with that very static.
+        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"].map(String::from) {
+            let text = text.as_str();
             let view = super::Str::new(text);
             assert_eq!(view.to_string(), format!("{view}"), "{text:?}");
             assert_eq!(view.to_string(), text, "{text:?}");

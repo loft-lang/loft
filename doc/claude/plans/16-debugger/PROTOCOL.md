@@ -122,6 +122,9 @@ continues — that is the agent's structured trace (and the browser's logpoint).
   (data stays local, like `make view` over an SSH port-forward). The loft HTTP `server`
   lib is request/response today; the live channel reuses loft's existing real-time
   socket stack (the multiplayer servers) or a thin server-side WebSocket.
+- **Who may connect.**  A transport that listens on a port answers only a client whose
+  opening request names the run's token (`?t=<token>`); the stdio ones need none
+  ([DEBUG_CHANNELS.md](../../DEBUG_CHANNELS.md), `@C172`).
 - **DAP (future).** A `loft-dap` adapter translates this protocol to the Debug Adapter
   Protocol so VS Code / any DAP editor can attach. Not v1 — but the request/response +
   event shape is chosen to make that a *translation*, never a redesign.

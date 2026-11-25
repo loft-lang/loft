@@ -7,11 +7,45 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, `status:next` on [loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225).  Design
-and inventory written; no phase started; R1's library half done in @PLN206.  Resume:
-[handoff-2026-11-23.md](handoff-2026-11-23.md).  Every count below was measured on
-`tuxedo-pr2606-next`, and each list in [inventory.md](inventory.md) carries the command that
-measures it again.
+**Finished 2026-11-24** on `tuxedo-pln225`, which reaches `main` through the join PR;
+[loft-lang/plans#225](https://github.com/loft-lang/plans/issues/225) is closed.  loft has two
+backends, the interpreter and the C; nothing in the tree or its CI builds through `rustc` except
+loft itself.
+
+| Phase | Outcome |
+|---|---|
+| **R0** | `@C170` recorded, with its refusal and guard.  The test-suite census ([census.md](census.md)): every failure was a test's own rust leg, none a C or interpreter defect.  `revalidate-libs` passes all 56 live library releases on the interpreter and the C. |
+| **R1** | A used library runs as its hosted C unit (@PLN206), and so do the standard library's compiled functions. |
+| **R2** | `--native-rust` and `LOFT_NATIVE_BACKEND=rust` are refused, naming `--native`; `--html`, `--native-wasm` and `--native-android` build through C (O2: no WASI clang is a refusal with the install line); `--threads` on `--html` is refused, a page runs `par` on one thread; `loft build` needs no rustup target. |
+| **R3** | A library's Rust native part is refused where it is used, naming the `[c] shim`; `loft generate` is refused and `loft new --native` scaffolds C.  Registry census: no live release needs rustc ([census.md](census.md) § Libraries). |
+| **R4** | Every test runs on the interpreter and the C; `tests/native.rs` runs its corpus through C with the interpreter's entry-point predicate (loft#1293).  65 writer-only patch receipts retired here and 47 in the language suite; 59 that also patch the interpreter or the C keep those hunks (`tests/falsified_retired_paths.txt`). |
+| **R5** | 18 of the 22 writer-only rewrites removed with no change to any program's C or bytecode over the corpus (3246 programs); R-LitHoist, R-FnRefValue, R-PushFill/record and R-Refresh stay, each with the measurement that kept it ([rewrite-audit.md](rewrite-audit.md)). |
+| **R6** | CI, scripts and the Makefile carry no rustc lane, runtime-rlib build or install, and no writer ASan job. |
+| **R7** | `src/generation/`, `codegen_runtime.rs`, `native_lib.rs`, `toolchain.rs` and the rustc build paths deleted; what the interpreter and the C shared moved out first (`coroutine_host.rs`, `host_print.rs`, `fs_ops.rs`).  The `#rust` templates STAY: they are the interpreter's operator source, not the writer's ([inventory.md](inventory.md) § The standard library).  `src/` 732 890 → 672 999 lines; the release binary 35.8 → 33.2 MB. |
+| **R8** | CLAUDE.md, the skills, the working docs and the formal chapters describe two backends; the writer's sections moved to their history companions.  O3: no diagnostic code retired — every one still has an emitting site. |
+
+**Verified at the close:** the full test suite passes (6262 tests, against the pinned language suite), and `revalidate-libs` passes every live library release on the interpreter and the C (56 releases; [census.md](census.md) § Measured at the close).
+
+**Found and fixed on the way** (each with a guard): a hosted unit's lock byte was an invalid
+`bool` on the interpreter's side (`STORE_MODEL.md`, D21b); the C did not carry the lazy natives
+without a bind, nor a `JsonValue` format; a pruned library artifact left its C behind; a sibling
+package's manifest errors stopped an unrelated program; `scripts/suite_pin.py` could not make its
+pin worktree in a linked git worktree; the IR schema check ran through the
+writer (it now compares layouts directly); an explicit `--tests file::name` filter ran nothing
+beside tests; a library run as a hosted unit reached a component (`net`) through a context of
+its own, so a program's own call to that component missed the connections the library had
+accepted (`formal/concurrency.md` `C-Boundary`; the test-integration lock now floors `web` and
+`server` at their C releases).
+
+**Follow-ups, outside this plan:** `loft targets`' surface (`index/target_surface.json`) is still
+derived from the Rust runtime's `cfg`s and wants deriving from the C; the rules whose refusal
+reasons only the writer reported say nothing now (`make reason-census`, wired on demand per
+REWRITE_REASONS.md); 16 `tests/scripts` cells are on the backlog to move into the language suite
+(`tests/scripts_unpinned.baseline`); the suite runner's `native` mode is the C's; the CI filter's
+nightly-only clause (`scripts/ci_test_filter.py`, a `mod rust_writer`) now matches no test and
+can go with its callers; 22 language-suite cells still name the writer's code in the comment
+that tells their defect; the `wasm32-unknown-unknown` cfg arms and `web_browser.rs` go with the
+target-surface follow-up.
 
 ## Goal
 
@@ -66,13 +100,13 @@ is the work list every later phase shrinks; R7 may start only when it is empty.
 | Phase | What | Validated by | Effort |
 |---|---|---|---|
 | **R0** | Record `@C170`.  Run the whole test suite, the language suite, `revalidate-libs` and the corpus with `LOFT_NO_RUSTC=1` (nothing builds through rustc; a request for it is refused) on Linux and macOS, and file the result as the rust-free census: every test, cell, library and target that fails or refuses. | The census is a list that can be non-empty: it is the plan's measured work list. | S |
-| **R1** | The library route (`@C71`): **done in @PLN206** (closed) on `tuxedo-pr2606-next` — a used library runs as its hosted C unit, shipped per release, no rustc.  **Open: the compiled stdlib** (@PLN181, `src/compiled_stdlib_gen.rs`), still writer output built into the binary, through the C backend too (O1). | Parallel run on the library test corpus: every interpreted program answers the same with its libraries built by C and by rustc (value, length, leak), and the time ratio C / rustc is recorded. | L+ (in @PLN206) |
+| **R1** | The library route (`@C71`), **done**: a used library runs as its hosted C unit (@PLN206), and so do the standard library's compiled functions (`src/compiled_stdlib.rs`: built once per loft build and stdlib source into `stdlib-units/` in the user cache, adopted by every interpreted program; no C compiler → interpreted).  `src/compiled_stdlib_gen.rs`, `stdlib_codegen.rs`, `loft-stdlib-gen` and `make compiled-stdlib` are gone. | `tests/stdlib_unit.rs` (built, adopted, answers alike under `LOFT_HOSTED_VERIFY`); the 16 functions it carries are the 16 the generated file carried; a text loop runs 0.16 s compiled, 0.21 s with the rustc-built stdlib, 0.82 s interpreted. | done |
 | **R2** | Targets: `--html` / `--native-wasm` without the writer fallback; `--native-android` without its rust path; `--native-rust` and `LOFT_NATIVE_BACKEND=rust` refused with a message that names `--native`. | The html, wasm and android test binaries pass under `LOFT_NO_RUSTC=1`; the refusals are tests. | M |
 | **R3** | Libraries: a registry census of published releases that need rustc (a Rust native part, a `#rust` body in library source).  Each gets a C successor or is deprecated in the registry, as `crypto` 0.3.x was.  Then the hand-written Rust native part goes (@PLN206 P6's route 3, [p6-design.md](../206-one-store-model/p6-design.md) § Route 3): a `[library] native` cdylib cargo builds and the interpreter loads, `install::fetch_prebuilt` and a library version's `binaries` — a library that declares one is refused, naming a `[c] shim`. | `revalidate-libs` green under `LOFT_NO_RUSTC=1`; the census list empty. | S–M |
 | **R4** | Tests and guards: each of the 165 test files keeps its interpreter and C halves and loses its rust leg; tests that exist only for the writer go; the 125 receipts are classified (writer-only → retire with that half; also guarding C or the interpreter → re-derived against that code); the 11 suite cells lose `ARMED: FALSIFY_NATIVE=rust` and are re-falsified on C or the interpreter, or lose their native half. | `make rule-coverage`: no rule loses its last guard except the rewrites R5 removes; the R0 census has no test left. | L |
 | **R5** | The 22 writer-only rewrites: their formal definitions, decision code in the IR pass, the interpreter and the C backend, census names, `REWRITE_REASONS.md` entries and guard cells ([rewrite-audit.md](rewrite-audit.md)).  The shared rewrites lose only their rust half (with R7). | The C backend's emission over the whole corpus is byte-identical before and after (`scripts/c_sweep.py` emission diff), and the rewrite census of every kept rule is unchanged. | M |
 | **R6** | Tooling and CI: the rustc lanes of 5 workflows, ~27 scripts (rewrite census, `rule_phases` native column, `slot_matrix.rust.baseline`, `falsify.sh` `FALSIFY_NATIVE`, `emission_audit.py`, `native_ratio.sh`, the perf portal's native columns), release bundles without the runtime rlib, `make check-rlib` and `make compiled-stdlib`, `src/toolchain.rs`'s rustc checks. | A CI job with no `rustc` on `PATH` beyond building loft itself runs the full gate green. | M |
-| **R7** | Delete the writer: the writer-only source, the 369 `#rust` bodies and the parser's `#rust` support (an annotation left in a library becomes an error naming the cure), the writer parts of the 16 shared files, `LOFT_NO_RUSTC` (moot). | Full CI green; the rust-free census still empty; binary size and build time measured before and after. | M |
+| **R7** | Delete the writer: the writer-only source, the writer parts of the shared files, `LOFT_NO_RUSTC` (moot).  The `#rust` templates STAY: they are the interpreter's operator source (`create.rs` generates `src/fill.rs` from them) and the marker of a primitive `src/native.rs` registers, which the IR pass reads; only libraries could not write one before, and still cannot. | Full CI green; the rust-free census still empty; binary size and build time measured before and after. | M |
 | **R8** | Documentation, phase by phase (see Documentation below), and security #61 unblocked. | `make docs-lint`, `scripts/check_doc_drift.sh`, `make features-check`. | M |
 
 **Order:** R0 → R1, R2, R3 (independent) → R4 → R5 → R6 → R7.  R8 lands with each phase, never

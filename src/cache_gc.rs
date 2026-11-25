@@ -55,7 +55,7 @@
 use std::path::{Path, PathBuf};
 
 /// How many auto-native artifacts a package keeps, matching the post-build sweep in
-/// `native_lib::prune_artifacts` so a manual prune and an automatic one cannot leave
+/// `native_artifact::prune_artifacts` so a manual prune and an automatic one cannot leave
 /// the directory in two different states.
 pub const KEEP_ARTIFACTS: usize = 8;
 

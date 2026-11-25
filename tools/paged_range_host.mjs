@@ -25,6 +25,17 @@ import process from "node:process";
 // is a LinkError the moment a program under test touches a file.
 import { loftFSImports } from '../doc/loft-fs.js';
 
+// A module the C backend wrote imports the WASI its libc runs on: the layer a page carries
+// (`doc/loft-wasi.js`), loaded as `deliver_repro.mjs` loads it.
+(0, eval)(fs.readFileSync(new URL('../doc/loft-wasi.js', import.meta.url), 'utf8'));
+async function instantiateWithWasi(bytes, imports) {
+  let inst = null;
+  for (const reg of globalThis.LOFT_WASM_EXTENSIONS || []) reg(imports, {}, () => inst.exports.memory);
+  const out = await WebAssembly.instantiate(bytes, imports);
+  inst = out.instance;
+  return out;
+}
+
 const wasmPath = process.argv[2];
 const storePath = process.env.LOFT_PAGED_FILE;
 if (!wasmPath || !storePath) {
@@ -94,7 +105,7 @@ const loft_io = {
 };
 
 try {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasmPath), { loft_io });
+  const { instance } = await instantiateWithWasi(fs.readFileSync(wasmPath), { loft_io });
   mem = instance.exports.memory;
   if (typeof instance.exports.loft_start === "function") instance.exports.loft_start();
   else if (typeof instance.exports.main === "function") instance.exports.main();

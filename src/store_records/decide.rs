@@ -237,7 +237,7 @@ impl Run<'_> {
         let may_null = !st.nonnull.contains(&x)
             && pts
                 .iter()
-                .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
+                .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Slot(..) | Pt::Unknown));
         let may_store = pts.iter().any(|p| !matches!(p, Pt::Null));
         let null_arm = may_null
             .then(|| {
@@ -312,7 +312,9 @@ impl Run<'_> {
     /// A store handed on keeps both answers: its new holder may or may not have freed it.
     pub(super) fn live_test(x: u16, st: State) -> (Option<State>, Option<State>) {
         let pts = Self::pts(&st, x);
-        let followed = !pts.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Unknown));
+        let followed = !pts
+            .iter()
+            .any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..) | Pt::Unknown));
         let stores: Vec<SKey> = Self::stores_of(&pts).into_iter().collect();
         // Live: `x` names a store, and that store is live or handed on.
         let live_arm = {
@@ -552,7 +554,9 @@ impl Run<'_> {
             return (Some(st.clone()), Some(st));
         };
         let single = |p: &Pts| match p.iter().next() {
-            Some(q @ (Pt::Store(_) | Pt::Null | Pt::Param(_))) if p.len() == 1 => Some(*q),
+            Some(q @ (Pt::Store(_) | Pt::Null | Pt::Param(_) | Pt::Slot(..))) if p.len() == 1 => {
+                Some(*q)
+            }
             _ => None,
         };
         if let Some(arms) = self.slot_arms(args, &a, &b, &st) {
@@ -563,13 +567,12 @@ impl Run<'_> {
             (Some(Pt::Store(_) | Pt::Null), Some(Pt::Store(_) | Pt::Null)) => (Some(st), None),
             // A store this frame made is never the caller's (`if OpDistinctStore(f, __rbw_f)`
             // after `f` was rebound to a fresh store).
-            (Some(Pt::Store(_)), Some(Pt::Param(_))) | (Some(Pt::Param(_)), Some(Pt::Store(_))) => {
-                (Some(st), None)
-            }
+            (Some(Pt::Store(_)), Some(Pt::Param(_) | Pt::Slot(..)))
+            | (Some(Pt::Param(_) | Pt::Slot(..)), Some(Pt::Store(_))) => (Some(st), None),
             // The witness names one store: where the first operand is DISTINCT from it, it
             // does not name that store (`if OpDistinctStore(__ref_1, __rbw___ref_1)` — the
             // caller's buffer is never the one freed under it).
-            (_, Some(y @ (Pt::Store(_) | Pt::Param(_))))
+            (_, Some(y @ (Pt::Store(_) | Pt::Param(_) | Pt::Slot(..))))
                 if let Some(x) = self.operand_var(args.first())
                     && a.len() > 1
                     && a.contains(&y) =>
@@ -602,7 +605,9 @@ impl Run<'_> {
                 && !a.contains(&Pt::Unknown)
                 && !b.contains(&Pt::Unknown) =>
             {
-                let b_null = b.iter().any(|p| matches!(p, Pt::Null | Pt::Param(_)));
+                let b_null = b
+                    .iter()
+                    .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Slot(..)));
                 let same_pts: Pts = a
                     .iter()
                     .copied()
@@ -610,7 +615,7 @@ impl Run<'_> {
                         b.contains(p)
                             || (*p == Pt::Null && b_null)
                             // A caller's store may be another parameter's, or null.
-                            || (matches!(p, Pt::Param(_)) && b_null)
+                            || (matches!(p, Pt::Param(_) | Pt::Slot(..)) && b_null)
                     })
                     .collect();
                 if same_pts.is_empty() {
@@ -737,8 +742,8 @@ impl Run<'_> {
             if !slot_corr_narrow()
                 || a.contains(&Pt::Unknown)
                 || b.contains(&Pt::Unknown)
-                || a.iter().any(|p| matches!(p, Pt::Param(_)))
-                || b.iter().any(|p| matches!(p, Pt::Param(_)))
+                || a.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)))
+                || b.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Slot(..)))
                 || !a.iter().any(|p| matches!(p, Pt::Store(_)))
             {
                 return None;
@@ -796,9 +801,10 @@ impl Run<'_> {
         if held.is_empty() {
             return None;
         }
-        let may_store = held
-            .iter()
-            .any(|p| p.iter().any(|q| matches!(q, Pt::Store(_) | Pt::Param(_))));
+        let may_store = held.iter().any(|p| {
+            p.iter()
+                .any(|q| matches!(q, Pt::Store(_) | Pt::Param(_) | Pt::Slot(..)))
+        });
         let may_null = held.iter().any(|p| p.is_empty() || p.contains(&Pt::Null));
         Some((may_store.then(|| st.clone()), may_null.then(|| st.clone())))
     }
@@ -835,7 +841,7 @@ impl Run<'_> {
             && held.len() == 1
             && !held_pts
                 .iter()
-                .any(|p| matches!(p, Pt::Unknown | Pt::Param(_)));
+                .any(|p| matches!(p, Pt::Unknown | Pt::Param(_) | Pt::Slot(..)));
         // …and a store correlated with the slot of the one record `w` names: live only where
         // the slot names it, and where it does, it is the store found dead.
         let recs = Self::stores_of(&Self::pts(st, *w));

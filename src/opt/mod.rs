@@ -3,10 +3,9 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! The `opt` layer (@PLN200, `@C153`): the analyses of the IR that more than one backend asks — the
-//! interpreter's bytecode emitter, the IR-phase rewrites and the native generator.  An
-//! optimisation the interpreter can use lives here, never in a backend's writer, so a second
-//! code generator reads the same answers without carrying the Rust writer.  Each item moved
-//! from `generation/` keeps a re-export at its old path.
+//! interpreter's bytecode emitter, the IR-phase rewrites and the C generator.  An
+//! optimisation the interpreter can use lives here, never in a backend's writer, so every
+//! code generator reads the same answers.
 
 pub mod apart;
 pub mod apart_records;
@@ -54,8 +53,8 @@ pub mod writes;
 /// address) and the non-null analysis's answers (keyed by its number) are facts about ONE
 /// program, and the next program a process compiles names other functions by the same
 /// addresses and numbers (loft#2122, loft#2142).  Called by the first pass of a program that
-/// asks them, `leaf_inline::rewrite_program`, and by `generation::Output::new`.
-pub(crate) fn begin_program() {
-    non_sentinel::begin_generation();
-    range::begin_generation();
+/// asks them, `leaf_inline::rewrite_program`.
+pub(crate) fn begin_program(data: &crate::data::Data) {
+    non_sentinel::begin_generation(data);
+    range::begin_generation(data);
 }

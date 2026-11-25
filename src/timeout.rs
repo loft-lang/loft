@@ -281,8 +281,8 @@ pub fn deadline_reached() -> bool {
 }
 
 /// @PLAN49 T2 — cooperative graceful exit.  A `checkpoint_*` on the
-/// executing thread observed the deadline has passed: print the (current,
-/// thread-local-accurate) breadcrumb and exit cleanly with `124` (the GNU
+/// executing thread observed the deadline has passed: print the current
+/// breadcrumb and exit cleanly with `124` (the GNU
 /// `timeout` convention) — *before* the watchdog's `T + grace` hard-kill, so
 /// in the common case the watchdog is a no-op and the user gets a clean,
 /// localised timeout report.  When execution is genuinely wedged in Rust

@@ -1,9 +1,7 @@
-// `@FR-R-BoundedNest` — an innermost counted loop that accumulates `?`-discharged element
-// products runs with PLAIN operators on `--native` when a guard, evaluated once at the loop's
-// entry, proves no operation in it can fault: no invariant is the sentinel, every element
-// bound is known, and the magnitude bound of every chain and of the accumulate fits.  The
-// checked loop is the fallback for every case the guard declines, and the interpreter never
-// takes the rewrite — it is the values oracle for every cell.
+// An innermost counted loop that accumulates `?`-discharged element products: near the
+// sentinel, with a stored null, a null invariant, an accumulator near the maximum, a vector
+// written in the enclosing loop, and reads at and past either end of the range.  The
+// interpreter is the values oracle for every cell.
 //
 // Every value below is hand-computed.  Cells whose guard must DECLINE (a stored null, a
 // product that overflows, a null invariant, an accumulator near the maximum, a vector written

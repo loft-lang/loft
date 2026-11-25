@@ -499,7 +499,7 @@ impl Program {
         let n_hidden_text = def
             .attributes()
             .iter()
-            .filter(|a| crate::native_lib::is_text_work_buffer(&a.typedef))
+            .filter(|a| crate::native_gate::is_text_work_buffer(&a.typedef))
             .count();
         // The hidden compound destination (`__retbuf`), if this function has one.
         // It is pushed like any other argument, so a call that skipped it would

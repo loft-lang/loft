@@ -192,8 +192,8 @@ fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
 }
 
 /// The backends the component is called from.
-fn backends() -> [&'static str; 3] {
-    ["--interpret", "--native-rust", "--native-c"]
+fn backends() -> [&'static str; 2] {
+    ["--interpret", "--native"]
 }
 
 #[test]

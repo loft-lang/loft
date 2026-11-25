@@ -49,22 +49,33 @@ const _: fn() = || {
     is_send::<crate::database::Stores>();
 };
 
-thread_local! {
+/// `@PLN226` — the state of the render in progress, shared by the nested renders of one
+/// top-level render: kept in the `Stores` it renders (`Stores::render`), which one thread uses
+/// at a time, rather than in a thread-local.  Each access is one short borrow, never held
+/// across a nested render.
+#[derive(Default)]
+pub(crate) struct RenderState {
     /// `@FR-L-OutOfLine` — the out-of-line child a record's last field holds, left for
     /// [`ShowDb::write`]'s loop: its record, its type and its indent.
-    static RENDER_TAIL: std::cell::Cell<Option<(u32, u16, u16)>> = const { std::cell::Cell::new(None) };
+    tail: Option<(u32, u16, u16)>,
     /// The closing text of the records a pending chain is inside, innermost last.
-    static RENDER_CLOSERS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    closers: Vec<String>,
     /// `@FR-F-Render-Ref` — the reference context of the top-level render in progress, or
     /// `None` outside one (and for a value whose type reaches no reference).
-    static REF_RENDER: std::cell::RefCell<Option<RefRender>> = const { std::cell::RefCell::new(None) };
+    refs: Option<RefRender>,
+}
+
+impl Stores {
+    fn rendering<R>(&self, f: impl FnOnce(&mut RenderState) -> R) -> R {
+        f(&mut self.render.borrow_mut())
+    }
 }
 
 /// `@FR-F-Render-Ref` / `@FR-F-Render-Refs` — what one top-level render knows about places and
 /// references: the path the walk is at, the pointer of every record it has written, and the
 /// target of every reference it met (marker `k` names `targets[k]`).
 #[derive(Default)]
-struct RefRender {
+pub(crate) struct RefRender {
     path: Vec<String>,
     at: std::collections::HashMap<(u16, u32, u32), String>,
     targets: Vec<(DbRef, u16)>,
@@ -78,8 +89,8 @@ struct RefRender {
 const REF_MARK_OPEN: &str = "\u{1}\u{2}R";
 const REF_MARK_CLOSE: char = '\u{2}';
 
-fn with_refs<R>(f: impl FnOnce(&mut RefRender) -> R) -> Option<R> {
-    REF_RENDER.with(|c| c.borrow_mut().as_mut().map(f))
+fn with_refs<R>(stores: &Stores, f: impl FnOnce(&mut RefRender) -> R) -> Option<R> {
+    stores.rendering(|r| r.refs.as_mut().map(f))
 }
 
 /// RFC 6901: `~` is `~0` and `/` is `~1` inside a segment.
@@ -126,24 +137,24 @@ impl Stores {
     /// pointer, and the targets the value does not reach appended under `$refs`.  A nested call
     /// (a render inside a render) and a value that reaches no reference render as before.
     pub fn render_top(&self, s: &mut String, top: &ShowDb) {
-        let nested = REF_RENDER.with(|c| c.borrow().is_some());
+        let nested = self.rendering(|r| r.refs.is_some());
         if nested || !self.reaches_reference(top.known_type, &mut Vec::new()) {
             top.write(s, 0);
             return;
         }
-        REF_RENDER.with(|c| *c.borrow_mut() = Some(RefRender::default()));
+        self.rendering(|r| r.refs = Some(RefRender::default()));
         let mut body = String::new();
         top.write(&mut body, 0);
         let mut refs: Vec<String> = Vec::new();
         let mut k = 0;
-        while let Some((target, tp)) = with_refs(|r| r.targets.get(k).copied()).flatten() {
+        while let Some((target, tp)) = with_refs(self, |r| r.targets.get(k).copied()).flatten() {
             k += 1;
             let key = (target.store_nr, target.rec, target.pos);
-            if tp == u16::MAX || with_refs(|r| r.at.contains_key(&key)).unwrap_or(true) {
+            if tp == u16::MAX || with_refs(self, |r| r.at.contains_key(&key)).unwrap_or(true) {
                 continue;
             }
             let path = vec!["$refs".to_string(), refs.len().to_string()];
-            with_refs(|r| {
+            with_refs(self, |r| {
                 r.at.insert(key, json_pointer(&path));
                 r.path = path;
             });
@@ -158,9 +169,7 @@ impl Stores {
             .write(&mut out, 1);
             refs.push(out);
         }
-        let ctx = REF_RENDER
-            .with(|c| c.borrow_mut().take())
-            .unwrap_or_default();
+        let ctx = self.rendering(|r| r.refs.take()).unwrap_or_default();
         // The reserved keys are no loft names, so every form quotes them (the text forms' reader
         // takes a quoted key).
         let quote = "\"";
@@ -723,13 +732,13 @@ impl Stores {
 
     /// [`Self::read_text`] on the current thread's stack.
     fn read_text_here(&mut self, text: &str, tp: u16, result: &DbRef) -> Result<(), TextErr> {
-        use super::structures::{READ_REFS, ReadRefs};
+        use super::structures::ReadRefs;
         let (mut rd, value_at) = crate::json::JParser::open(text, crate::json::Dialect::Lenient);
         let mut failed = Vec::new();
         // `@FR-F-Read-Ref` — a type that can hold a reference reads pointers and `$refs`.
         let refs = self.reaches_reference(tp, &mut Vec::new());
         if refs {
-            READ_REFS.with(|c| *c.borrow_mut() = Some(ReadRefs::default()));
+            self.read_refs = Some(ReadRefs::default());
         }
         let wrapped =
             refs && !matches!(
@@ -744,7 +753,7 @@ impl Stores {
         if refs {
             self.resolve_read_refs(&mut failed);
         }
-        READ_REFS.with(|c| c.borrow_mut().take());
+        self.read_refs = None;
         read.and_then(|()| rd.finish())
             .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
         if failed.is_empty() {
@@ -768,14 +777,17 @@ impl Stores {
         tp: u16,
         result: &DbRef,
     ) -> Result<(), crate::json::Fault> {
-        use super::structures::with_read_refs;
         let (start, mut more) = rd.open_object();
         while more {
             let (name, _, value_at) = rd.member(start)?;
             if name == "$value" {
-                with_read_refs(|r| r.path = vec!["$value".to_string()]);
+                if let Some(r) = self.read_refs.as_mut() {
+                    r.path = vec!["$value".to_string()];
+                }
                 self.read_into(rd, failed, value_at, tp, tp, u16::MAX, result, value_at)?;
-                with_read_refs(|r| r.path.clear());
+                if let Some(r) = self.read_refs.as_mut() {
+                    r.path.clear()
+                }
             } else if name == "$refs" {
                 self.read_refs_list(rd, failed, result, value_at)?;
             } else {
@@ -1041,7 +1053,7 @@ impl Stores {
     bridges `String` → `Str` via `Deref` (the @P304 path, like `to_lowercase`).
 
     **Unset and set-to-empty are different answers**, which is the whole point of the
-    distinction: an unset variable is `STRING_NULL` and an empty one is `""`.  This returned
+    distinction: an unset variable is the null text and an empty one is `""`.  This returned
     `""` for both, so the `== null` test its own documentation invited could never fire and
     a program could not tell a variable it must supply from one deliberately blanked
     (loft#1302).  `text` carries null in-band, so the signature never stood in the way —
@@ -1056,7 +1068,7 @@ impl Stores {
     pub fn os_variable(&mut self, name: &str) -> String {
         std::env::var_os(name)
             .and_then(|s| s.into_string().ok())
-            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
+            .unwrap_or_else(crate::text_null::null_string)
     }
 
     /**
@@ -1654,12 +1666,12 @@ impl ShowDb<'_> {
         // `@FR-L-OutOfLine` — a chain of out-of-line children is rendered as a LOOP: the last
         // field's child is left in `RENDER_TAIL` by the frame that met it, and the closing
         // text of every frame it leaves waits in `RENDER_CLOSERS` until the chain ends.
-        let mark = RENDER_CLOSERS.with(|c| c.borrow().len());
+        let mark = self.stores.rendering(|r| r.closers.len());
         // `@FR-F-Render-Ref` — a chained child is written at the path its field had.
-        let saved_path = with_refs(|r| r.path.clone());
+        let saved_path = with_refs(self.stores, |r| r.path.clone());
         self.write_one(s, indent);
-        while let Some((rec, known_type, ind)) = RENDER_TAIL.with(std::cell::Cell::take) {
-            with_refs(|r| {
+        while let Some((rec, known_type, ind)) = self.stores.rendering(|r| r.tail.take()) {
+            with_refs(self.stores, |r| {
                 if let Some(p) = r.tail_path.take() {
                     r.path = p;
                 }
@@ -1672,24 +1684,27 @@ impl ShowDb<'_> {
             };
             sub.write_one(s, ind);
         }
-        RENDER_CLOSERS.with(|c| {
-            let mut c = c.borrow_mut();
-            while c.len() > mark {
-                let text = c.pop().unwrap_or_default();
+        self.stores.rendering(|r| {
+            while r.closers.len() > mark {
+                let text = r.closers.pop().unwrap_or_default();
                 s.push_str(&text);
             }
         });
         if let Some(p) = saved_path {
-            with_refs(|r| r.path = p);
+            with_refs(self.stores, |r| r.path = p);
         }
     }
 
     /// Closing text of a record: written now, or — while a child chain is pending in
     /// `RENDER_TAIL` — after the chain, in the order the frames close.
-    fn write_close(s: &mut String, text: &str) {
-        if RENDER_TAIL.with(|t| t.get().is_some()) {
-            RENDER_CLOSERS.with(|c| c.borrow_mut().push(text.to_string()));
-        } else {
+    fn write_close(&self, s: &mut String, text: &str) {
+        let pending = self.stores.rendering(|r| {
+            if r.tail.is_some() {
+                r.closers.push(text.to_string());
+            }
+            r.tail.is_some()
+        });
+        if !pending {
             s.push_str(text);
         }
     }
@@ -1713,7 +1728,7 @@ impl ShowDb<'_> {
                 .map(|t| &t.parts),
             Some(Parts::Struct(_) | Parts::EnumValue(_, _) | Parts::Enum(_))
         ) {
-            with_refs(|r| {
+            with_refs(self.stores, |r| {
                 r.at.entry((self.store, self.rec, self.pos))
                     .or_insert_with(|| json_pointer(&r.path));
             });
@@ -1774,11 +1789,9 @@ impl ShowDb<'_> {
                 }
             } else if self.store().text_is_null(self.rec, self.pos) {
                 // @FR-F-Render — a null text renders as the word `null` in EVERY mode, and
-                // @FR-L-Null-Text says which slots are null: an unset handle and an allocated
-                // `STRING_NULL` record alike.  Rendering the sentinel raw put a NUL byte on
-                // the wire (`{a:1,t:"\0"}`), a present, corrupt value where the program meant
-                // nothing; in JSON and loft it also keeps SQL NULL distinct from `''` across a
-                // round trip rather than collapsing both to a string.
+                // @FR-L-Null-Text says which slots are null (`Store::text_is_null`); in JSON
+                // and loft it also keeps SQL NULL distinct from `''` across a round trip rather
+                // than collapsing both to a string.
                 s.push_str("null");
             } else {
                 let text_val = self.store().get_str(text_nr);
@@ -1905,7 +1918,7 @@ impl ShowDb<'_> {
                         } else {
                             s.push_str("{}");
                         }
-                        Self::write_close(s, "}");
+                        self.write_close(s, "}");
                         return;
                     }
                     // `@FR-F-Render` — a plain enum's null is the `0xFF` discriminant (`0` reads
@@ -1943,7 +1956,7 @@ impl ShowDb<'_> {
                         if let Some(st) = payload {
                             write!(s, "{{\"{enum_val}\":").unwrap();
                             self.write_struct(s, st, indent);
-                            Self::write_close(s, "}");
+                            self.write_close(s, "}");
                         } else {
                             // Payload-less (and the absent discriminant): the
                             // same rule the SCALAR route uses, asked in one place.
@@ -1981,7 +1994,7 @@ impl ShowDb<'_> {
                         let variant_name = &self.stores.types[self.known_type as usize].name;
                         write!(s, "{{\"{variant_name}\":").unwrap();
                         self.write_struct(s, st, indent);
-                        Self::write_close(s, "}");
+                        self.write_close(s, "}");
                     } else {
                         // loft emits the variant as its own constructor `V{…}`.
                         if self.loft {
@@ -2166,7 +2179,7 @@ impl ShowDb<'_> {
             close.push(' ');
         }
         close.push('}');
-        Self::write_close(s, &close);
+        self.write_close(s, &close);
     }
 
     /// Return true iff `fields` contains at least one entry that
@@ -2215,12 +2228,12 @@ impl ShowDb<'_> {
             }
             // `@FR-F-Render-Ref` — the field's name is its segment of the path; a reference field
             // leaves a marker its target's pointer replaces once the render knows it.
-            let tracked = with_refs(|r| r.path.push(fld.name.clone())).is_some();
+            let tracked = with_refs(self.stores, |r| r.path.push(fld.name.clone())).is_some();
             if tracked
                 && matches!(self.stores.types[fld.content as usize].parts, Parts::DbRef)
                 && self.write_reference_marker(s, u32::from(fld.position), fld.target)
             {
-                with_refs(|r| r.path.pop());
+                with_refs(self.stores, |r| r.path.pop());
                 continue;
             }
             // `@FR-L-OutOfLine` — the LAST field's child is rendered by `write`'s loop.
@@ -2232,8 +2245,9 @@ impl ShowDb<'_> {
                     .store()
                     .get_u32_raw(self.rec, self.pos + u32::from(fld.position));
                 if rec != 0 {
-                    RENDER_TAIL.with(|t| t.set(Some((rec, content, indent.saturating_add(1)))));
-                    with_refs(|r| {
+                    self.stores
+                        .rendering(|r| r.tail = Some((rec, content, indent.saturating_add(1))));
+                    with_refs(self.stores, |r| {
                         r.tail_path = Some(r.path.clone());
                         r.path.pop();
                     });
@@ -2255,7 +2269,7 @@ impl ShowDb<'_> {
                 max_elements: self.max_elements,
             };
             sub.write(s, indent.saturating_add(1));
-            with_refs(|r| r.path.pop());
+            with_refs(self.stores, |r| r.path.pop());
         }
     }
 
@@ -2275,7 +2289,7 @@ impl ShowDb<'_> {
         {
             return false;
         }
-        let k = with_refs(|r| {
+        let k = with_refs(self.stores, |r| {
             r.targets.push((DbRef { store_nr, rec, pos }, target));
             r.targets.len() - 1
         });
@@ -2400,9 +2414,9 @@ impl ShowDb<'_> {
                 max_elements: self.max_elements,
             };
             // `@FR-F-Render-Ref` — an element's position is its segment of the path.
-            with_refs(|r| r.path.push(count.to_string()));
+            with_refs(self.stores, |r| r.path.push(count.to_string()));
             sub.write(s, indent.saturating_add(1));
-            with_refs(|r| r.path.pop());
+            with_refs(self.stores, |r| r.path.pop());
             count += 1;
         }
         if self.pretty {
@@ -2469,9 +2483,9 @@ impl ShowDb<'_> {
                 max_elements: self.max_elements,
             };
             // `@FR-F-Render-Ref` — a keyed element's segment is its POSITION in this list.
-            with_refs(|r| r.path.push(n.to_string()));
+            with_refs(self.stores, |r| r.path.push(n.to_string()));
             sub.write(s, indent.saturating_add(1));
-            with_refs(|r| r.path.pop());
+            with_refs(self.stores, |r| r.path.pop());
         }
         if self.pretty {
             s.push(' ');

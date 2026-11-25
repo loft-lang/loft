@@ -465,8 +465,8 @@ const CODES: &[(&str, &str)] = &[
         "fn main() { print(\"needs a project manifest and an installed registry package\"); }",
     ),
     (
-        "lib-flag-outranked",
-        "fn main() { print(\"needs a cwd lib/ and a --lib directory that both provide one name\"); }",
+        "lib-flag-override",
+        "fn main() { print(\"needs a pinned library and a --lib directory that provides it\"); }",
     ),
     (
         "layout-upgrade-refused",
@@ -549,13 +549,11 @@ const NO_MINIMAL_TRIGGER: &[(&str, &str)] = &[
         "requires a project manifest plus a registry-resolved package",
     ),
     (
-        // loft#1352 — fires only when a `--lib` directory AND an earlier probe (a cwd
-        // `lib/`, a declared dependency, the script's own directory) both provide the
-        // `use`d name, which is two directories and a flag. Covered instead by
-        // `tests/lib_flag_outranked.rs`, which builds both and pins the reported /
-        // honoured pair with a corrupted copy behind the flag.
-        "lib-flag-outranked",
-        "requires a cwd lib/ plus a --lib directory providing the same name",
+        // `@C173` — fires only when a `--lib` directory provides a name the project pins or
+        // declares by path, which is a lock or a manifest, a package and a flag.  Covered
+        // instead by `tests/lib_flag_override.rs`, which builds them.
+        "lib-flag-override",
+        "requires a pinned or path-declared library plus a --lib directory providing it",
     ),
     (
         // loft#940 — fires only for a LIBRARY source (@PLN102 C97 module-scoping). The same
@@ -662,8 +660,8 @@ const EDIT_BLOCKED: &[(&str, &str)] = &[
         "the cure is running `loft install <pkg>`, which edits the manifest rather than the source",
     ),
     (
-        "lib-flag-outranked",
-        "the cure is where the command is RUN from, or where the override file lives — not an edit to any source span",
+        "lib-flag-override",
+        "nothing to cure: it says which copy of a library runs; dropping the `--lib` runs the pinned one",
     ),
     (
         "read-size-not-element-multiple",

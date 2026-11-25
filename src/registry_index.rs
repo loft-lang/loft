@@ -130,12 +130,13 @@ pub struct Version {
     /// having the source, and the declared builders as `"name:fn"` (`"set:fn"`),
     /// so a bare `set(…)` can.  Produced by `crate::triggers::derive_triggers`.
     pub triggers: Vec<String>,
-    /// Schema slot — pre-built distribution deferred.
+    /// On the `loft` toolchain's row: its release builds by triple (`self_update`).  A library's
+    /// row carries none — a package's own prebuilt native library is not fetched (@PLN225).
     pub binaries: BTreeMap<String, BinaryEntry>,
     /// @PLN199 G2c — on a `loft` release's row only: the library artifacts that release
     /// built, by `<package>@<version>` and then by triple.  An auto-compiled artifact is a
     /// function of the loft that built it, so it lives with that loft's release, and every
-    /// release carries its own (a library's `binaries` holds one per triple).
+    /// release carries its own.
     pub artifacts: BTreeMap<String, BTreeMap<String, BinaryEntry>>,
     /// Function-level API surface — one `ApiItem` (signature + one-line doc) per
     /// `pub` item, derived from THIS version's source at publish time (the same

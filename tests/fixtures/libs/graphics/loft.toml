@@ -3,9 +3,8 @@ name = "graphics"
 version = "0.1.1"
 loft = ">=0.8"
 
+# Local patch (@PLN225): the pinned tag declares a Rust native part (`[library] native`,
+# `[native] crate`), which loft no longer builds or loads — a package declaring one is
+# refused.  The snapshot keeps its loft source; its `#native` functions have no library.
 [library]
 entry = "src/graphics.loft"
-native = "loft_graphics_native"
-
-[native]
-crate = "loft-graphics-native"

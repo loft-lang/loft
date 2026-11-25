@@ -1,7 +1,7 @@
 
 # Native-side API
 
-How a native library talks to the interpreter: auto-marshalling, `loft-ffi`, store allocation, `loft generate`.  Split out of [PACKAGES.md](PACKAGES.md).
+How a native library talks to the interpreter: auto-marshalling, `loft-ffi`, store allocation.  Split out of [PACKAGES.md](PACKAGES.md).
 
 ---
 
@@ -44,12 +44,14 @@ as the first C-ABI argument, giving the native function access to store memory.
 For functions returning `Ref` with no `Ref` parameters (e.g. `rand_indices`),
 the dispatcher allocates a fresh store for the result automatically.
 
-### Thread-local state
+### How a callback finds the stores
 
-During a native call, a thread-local `CURRENT_STORES` holds a raw pointer
-to the interpreter's `Stores`. This enables the `LoftStore` allocation
-callbacks to reach back into the interpreter for `claim()` and `resize()`
-operations.
+The `LoftStore` handle carries the interpreter's `Stores` itself: `LoftStoreCtx`'s opaque word
+holds the store number in its low 16 bits and the `Stores` pointer above them, so the
+allocation callbacks (`claim()`, `resize()`, `reload()`) reach back into the stores of the call
+they serve — a `par` worker's call into its worker's own.  A native library reads only the low
+16 bits (`loft_ffi_store_nr`).  This needs 64-bit pointers; a 32-bit host runs one program per
+instance and publishes its `Stores` once.
 
 ---
 
@@ -190,7 +192,7 @@ the runtime side.
 The allocation callbacks bridge native code back into the interpreter:
 
 ```
-Native extension                    Interpreter (via thread-local)
+Native extension                    Interpreter (the Stores in the handle)
 ─────────────────                   ──────────────────────────────
 store.claim(words)
   → claim_fn(ctx, words)    ──→    Store::claim(words) → rec
@@ -199,8 +201,7 @@ store.claim(words)
   ← rec
 ```
 
-`LoftStoreCtx` encodes the `store_nr`; the thread-local `CURRENT_STORES`
-holds a pointer to the interpreter's `Stores` for the duration of the call.
+`LoftStoreCtx` encodes the `store_nr` and, above it, the `Stores` the handle was built from.
 
 ### Safety guarantees
 
@@ -212,69 +213,17 @@ The callback infrastructure provides two safety mechanisms:
    returns 0, `resize` returns the original record unchanged, and `reload`
    is a no-op.
 
-2. **RAII cleanup**: `dispatch_call` uses a guard struct whose `Drop` impl
-   clears `CURRENT_STORES`, ensuring the thread-local is reset even if the
+2. **No state outlives the call**: the handle is the only route back to the
+   stores, and it is built for one call, so nothing has to be reset after a
    native function or a callback panics.
 
 ---
 
 ## Code generation: `loft generate`
 
-The `loft generate` command reads a package's `.loft` declarations and produces
-a `native/src/generated.rs` file with correct C-ABI signatures and `todo!()`
-bodies. (This is the no-bridge scaffold for the legacy path; libraries using
-the `#[loft_native]` macro generate their bridges automatically and do not
-need it.)
-
-### Usage
-
-```sh
-cd lib/random
-loft generate .          # writes native/src/generated.rs
-```
-
-### What it generates
-
-For each `#native` declaration:
-
-1. **C-ABI function signature** with proper type marshalling:
-   - Scalars pass directly (`i32`, `i64`, `f64`, `f32`, `bool`)
-   - `text` becomes `(name_ptr: *const u8, name_len: usize)` with a
-     `let name = unsafe { loft_ffi::text(...) }` body line
-   - Struct/vector/collection becomes `LoftRef`, with `LoftStore` prepended
-   - Simple enums become `u8`
-
-2. **Return type handling:**
-   - Scalars return directly
-   - `text` returns `LoftStr` with `loft_ffi::ret(result)` pattern
-   - Struct/vector returns `LoftRef`
-
-3. **Field offset modules** for struct types referenced as parameters:
-   ```rust
-   pub mod image_fields {
-       pub const NAME: u16 = 0;   // text (record ref)
-       pub const WIDTH: u16 = 4;  // integer
-       pub const HEIGHT: u16 = 8; // integer
-       pub const DATA: u16 = 12;  // vector ref
-   }
-   ```
-
-4. **`todo!()` bodies** for the developer to fill in.
-
-### Example output
-
-For `fn rand_indices(n: integer) -> vector<integer>; #native "n_rand_indices"`:
-
-```rust
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn n_rand_indices(
-    store: loft_ffi::LoftStore,
-    n: i32,
-) -> loft_ffi::LoftRef /* vector<integer> */ {
-    let result: loft_ffi::LoftRef = todo!("implement n_rand_indices(n)");
-    result
-}
-```
+`loft generate` is refused: it wrote Rust stubs for a package's `#native` declarations, and a
+package's native part is C now (@PLN225).  `loft new --native <name>` scaffolds the C part —
+`c/<name>.c` under `[c] shim`, bound by a `#c` declaration ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).
 
 ---
 
@@ -285,5 +234,4 @@ pub unsafe extern "C" fn n_rand_indices(
 | `src/extensions.rs` | cdylib loader, auto-marshalling dispatcher, allocation callbacks |
 | `src/native.rs` | Built-in function registry (`FUNCTIONS` table, `init()`) |
 | `src/manifest.rs` | `loft.toml` reader and version checker |
-| `src/main.rs` | `generate_native_stubs()` for `loft generate` |
 | `loft-ffi/src/lib.rs` | `LoftRef`, `LoftStore`, `LoftStr`, allocation helpers |

@@ -26,8 +26,13 @@
 //!
 //! Off by default and off in every release path: one `OnceLock` read per op when armed,
 //! nothing when not.
+//!
+//! A byte counts as changed against whatever the slot held before, and a reused slot can
+//! hold a stale heap pointer, so the byte totals move with the address layout: between two
+//! builds of the same program, or two runs, by up to a word per op.  The op count, the
+//! claims and which ops write are exact; compare those, not the totals, across builds.
+//! Each interpreter keeps its own census (`State::stack_census`).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -59,9 +64,9 @@ pub fn max_ops() -> u64 {
 
 /// Has the op budget been spent?
 #[must_use]
-pub fn budget_spent() -> bool {
+pub fn budget_spent(c: &Census) -> bool {
     let n = max_ops();
-    n > 0 && CENSUS.with_borrow(|c| c.ops >= n)
+    n > 0 && c.ops >= n
 }
 
 /// One span `put_stack` wrote during the current op: `(absolute byte offset, length)`.
@@ -71,8 +76,9 @@ pub fn budget_spent() -> bool {
 /// system and cannot silently disagree.
 type Claim = (u32, u32);
 
+/// `@PLN226` — one interpreter's census (`State::stack_census`).
 #[derive(Default)]
-struct Census {
+pub struct Census {
     /// The stack store's bytes as they stood before the current op, from `origin`.
     snapshot: Vec<u8>,
     /// Absolute offset the snapshot starts at — the stack record's first data byte.
@@ -99,13 +105,9 @@ struct Census {
     claimed_unchanged: u64,
 }
 
-thread_local! {
-    static CENSUS: RefCell<Census> = RefCell::new(Census::default());
-}
-
 /// Record that `put_stack` wrote `len` bytes at absolute offset `off`.
-pub fn claim(off: u32, len: u32) {
-    CENSUS.with_borrow_mut(|c| c.claims.push((off, len)));
+pub fn claim(c: &mut Census, off: u32, len: u32) {
+    c.claims.push((off, len));
 }
 
 /// Snapshot the stack store's bytes before an operator runs.
@@ -117,74 +119,70 @@ pub fn claim(off: u32, len: u32) {
 /// buffer's end only because the allocator's slack grows without bound and diffing it
 /// costs more than the corpus can pay.  A `put_stack` span landing outside is counted
 /// and reported, so the bound is visible in the output rather than silently narrowing it.
-pub fn before_op(bytes: &[u8], origin: usize, end: usize) {
-    CENSUS.with_borrow_mut(|c| {
-        let origin = origin.min(bytes.len());
-        let end = end.clamp(origin, bytes.len());
-        c.origin = origin;
-        c.snapshot.clear();
-        c.snapshot.extend_from_slice(&bytes[origin..end]);
-        c.claims.clear();
-    });
+pub fn before_op(c: &mut Census, bytes: &[u8], origin: usize, end: usize) {
+    let origin = origin.min(bytes.len());
+    let end = end.clamp(origin, bytes.len());
+    c.origin = origin;
+    c.snapshot.clear();
+    c.snapshot.extend_from_slice(&bytes[origin..end]);
+    c.claims.clear();
 }
 
 /// Diff the stack store against the snapshot and attribute what changed.
-pub fn after_op(op: u16, bytes: &[u8], origin: usize, end: usize) {
-    CENSUS.with_borrow_mut(|c| {
-        c.ops += 1;
-        let origin = origin.min(bytes.len());
-        let end = end.clamp(origin, bytes.len());
-        if origin != c.origin || end - origin != c.snapshot.len() {
-            // `ensure_stack` grew the buffer, or the frame high-water moved: the two
-            // images are not comparable, so count the op and diff nothing rather than
-            // reporting the whole resize as a write.
-            c.grew += 1;
-            return;
+pub fn after_op(c: &mut Census, op: u16, bytes: &[u8], origin: usize, end: usize) {
+    c.ops += 1;
+    let origin = origin.min(bytes.len());
+    let end = end.clamp(origin, bytes.len());
+    if origin != c.origin || end - origin != c.snapshot.len() {
+        // `ensure_stack` grew the buffer, or the frame high-water moved: the two
+        // images are not comparable, so count the op and diff nothing rather than
+        // reporting the whole resize as a write.
+        c.grew += 1;
+        return;
+    }
+    let mut changed_in_claim = 0u64;
+    let mut changed_outside = 0u64;
+    // A bitmask, not a `Vec<bool>`: this runs once per operator, and an allocation
+    // there is the difference between a probe you can point at a corpus and one you
+    // cannot.  An op pushes a handful of values, so 64 claims is far above the real
+    // maximum; past that the extra claims simply do not record a hit, which can only
+    // over-report `claimed_unchanged` and never mis-attribute a byte.
+    let mut hit: u64 = 0;
+    for i in 0..c.snapshot.len() {
+        if bytes[origin + i] == c.snapshot[i] {
+            continue;
         }
-        let mut changed_in_claim = 0u64;
-        let mut changed_outside = 0u64;
-        // A bitmask, not a `Vec<bool>`: this runs once per operator, and an allocation
-        // there is the difference between a probe you can point at a corpus and one you
-        // cannot.  An op pushes a handful of values, so 64 claims is far above the real
-        // maximum; past that the extra claims simply do not record a hit, which can only
-        // over-report `claimed_unchanged` and never mis-attribute a byte.
-        let mut hit: u64 = 0;
-        for i in 0..c.snapshot.len() {
-            if bytes[origin + i] == c.snapshot[i] {
-                continue;
+        let abs = origin + i;
+        let idx = c
+            .claims
+            .iter()
+            .position(|&(off, len)| abs >= off as usize && abs < off as usize + len as usize);
+        if let Some(k) = idx {
+            if k < 64 {
+                hit |= 1 << k;
             }
-            let abs = origin + i;
-            let idx = c
-                .claims
-                .iter()
-                .position(|&(off, len)| abs >= off as usize && abs < off as usize + len as usize);
-            if let Some(k) = idx {
-                if k < 64 {
-                    hit |= 1 << k;
-                }
-                changed_in_claim += 1;
-            } else {
-                changed_outside += 1;
-            }
+            changed_in_claim += 1;
+        } else {
+            changed_outside += 1;
         }
-        for (k, &(off, len)) in c.claims.iter().enumerate() {
-            if k < 64 && hit & (1 << k) != 0 {
-                continue;
-            }
-            if (off as usize) < origin || off as usize + len as usize > end {
-                c.claims_beyond_span += 1;
-            } else {
-                c.claimed_unchanged += u64::from(len);
-            }
+    }
+    for (k, &(off, len)) in c.claims.iter().enumerate() {
+        if k < 64 && hit & (1 << k) != 0 {
+            continue;
         }
-        c.put_bytes += changed_in_claim;
-        c.other_bytes += changed_outside;
-        if changed_outside > 0 {
-            let e = c.by_op.entry(op).or_insert((0, 0));
-            e.0 += changed_outside;
-            e.1 += 1;
+        if (off as usize) < origin || off as usize + len as usize > end {
+            c.claims_beyond_span += 1;
+        } else {
+            c.claimed_unchanged += u64::from(len);
         }
-    });
+    }
+    c.put_bytes += changed_in_claim;
+    c.other_bytes += changed_outside;
+    if changed_outside > 0 {
+        let e = c.by_op.entry(op).or_insert((0, 0));
+        e.0 += changed_outside;
+        e.1 += 1;
+    }
 }
 
 /// Print the census.  Called at program exit when armed.
@@ -196,69 +194,66 @@ pub fn after_op(op: u16, bytes: &[u8], origin: usize, end: usize) {
 /// `data` resolves an opcode byte to its name; without it the rows still print, keyed by
 /// number, because a census that says nothing when the definition table has already gone
 /// is worse than one that names the opcodes by number.
-pub fn report(data: Option<&crate::data::Data>) {
-    CENSUS.with_borrow(|c| {
-        if c.ops == 0 {
-            crate::loft_eprintln!("stack census: armed, but no operator ran");
-            return;
+pub fn report(c: &Census, data: Option<&crate::data::Data>) {
+    if c.ops == 0 {
+        crate::loft_eprintln!("stack census: armed, but no operator ran");
+        return;
+    }
+    let total = c.put_bytes + c.other_bytes;
+    let pct = |n: u64| {
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * n as f64 / total as f64
         }
-        let total = c.put_bytes + c.other_bytes;
-        let pct = |n: u64| {
-            if total == 0 {
-                0.0
-            } else {
-                100.0 * n as f64 / total as f64
-            }
-        };
+    };
+    crate::loft_eprintln!(
+        "stack census: {} ops, {} bytes changed on the stack store",
+        c.ops,
+        total
+    );
+    crate::loft_eprintln!(
+        "  via put_stack : {:>10}  ({:.2} %)",
+        c.put_bytes,
+        pct(c.put_bytes)
+    );
+    crate::loft_eprintln!(
+        "  other routes  : {:>10}  ({:.2} %)",
+        c.other_bytes,
+        pct(c.other_bytes)
+    );
+    if c.grew > 0 {
+        crate::loft_eprintln!("  ops not diffed (buffer or frame resized): {}", c.grew);
+    }
+    if c.claims_beyond_span > 0 {
         crate::loft_eprintln!(
-            "stack census: {} ops, {} bytes changed on the stack store",
-            c.ops,
-            total
-        );
-        crate::loft_eprintln!(
-            "  via put_stack : {:>10}  ({:.2} %)",
-            c.put_bytes,
-            pct(c.put_bytes)
-        );
-        crate::loft_eprintln!(
-            "  other routes  : {:>10}  ({:.2} %)",
-            c.other_bytes,
-            pct(c.other_bytes)
-        );
-        if c.grew > 0 {
-            crate::loft_eprintln!("  ops not diffed (buffer or frame resized): {}", c.grew);
-        }
-        if c.claims_beyond_span > 0 {
-            crate::loft_eprintln!(
-                "  WARNING: {} put_stack spans fell beyond the watched frame span — \
+            "  WARNING: {} put_stack spans fell beyond the watched frame span — \
                  the shares above are a floor",
-                c.claims_beyond_span
-            );
-        }
-        if c.claimed_unchanged > 0 {
-            crate::loft_eprintln!(
-                "  claimed but unchanged bytes (a push of the value already there): {}",
-                c.claimed_unchanged
-            );
-        }
-        if c.by_op.is_empty() {
-            return;
-        }
-        let mut rows: Vec<(u16, u64, u64)> =
-            c.by_op.iter().map(|(&op, &(b, n))| (op, b, n)).collect();
-        rows.sort_by_key(|r| std::cmp::Reverse(r.1));
-        crate::loft_eprintln!("  bytes written by a route other than put_stack, by opcode:");
-        for (op, b, n) in rows.iter().take(25) {
-            crate::loft_eprintln!(
-                "    op {:>3}  {:<28} {:>10} bytes  over {:>8} ops",
-                op,
-                data.and_then(|d| d.operator_name(*op)).unwrap_or("?"),
-                b,
-                n
-            );
-        }
-        if rows.len() > 25 {
-            crate::loft_eprintln!("    … and {} further opcodes", rows.len() - 25);
-        }
-    });
+            c.claims_beyond_span
+        );
+    }
+    if c.claimed_unchanged > 0 {
+        crate::loft_eprintln!(
+            "  claimed but unchanged bytes (a push of the value already there): {}",
+            c.claimed_unchanged
+        );
+    }
+    if c.by_op.is_empty() {
+        return;
+    }
+    let mut rows: Vec<(u16, u64, u64)> = c.by_op.iter().map(|(&op, &(b, n))| (op, b, n)).collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    crate::loft_eprintln!("  bytes written by a route other than put_stack, by opcode:");
+    for (op, b, n) in rows.iter().take(25) {
+        crate::loft_eprintln!(
+            "    op {:>3}  {:<28} {:>10} bytes  over {:>8} ops",
+            op,
+            data.and_then(|d| d.operator_name(*op)).unwrap_or("?"),
+            b,
+            n
+        );
+    }
+    if rows.len() > 25 {
+        crate::loft_eprintln!("    … and {} further opcodes", rows.len() - 25);
+    }
 }

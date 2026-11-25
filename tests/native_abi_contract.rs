@@ -21,7 +21,7 @@
 //! Two guards here, because neither alone is enough:
 //!   * [`native_declarations_and_exports_agree`] is STATIC and covers every fixture at
 //!     once, including shapes no test calls.
-//!   * the behavioural half lives in `tests/lib/native_scalar_pkg` — `native_sentinel()`
+//!   * the behavioural half lives in `tests/lib/c_scalar_pkg` — `native_sentinel()`
 //!     returns -1 and its `.loft` test asserts the round trip on both backends.  That is
 //!     what proves the rule is about real values and not just about text matching.
 

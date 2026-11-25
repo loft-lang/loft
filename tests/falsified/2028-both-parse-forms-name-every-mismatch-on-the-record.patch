@@ -1,9 +1,9 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index cc5f79f89..896785e9c 100644
+index 7c3234ac2..4840157db 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -747,6 +747,7 @@ impl Stores {
-         READ_REFS.with(|c| c.borrow_mut().take());
+@@ -756,6 +756,7 @@ impl Stores {
+         self.read_refs = None;
          read.and_then(|()| rd.finish())
              .map_err(|(_, at)| TextErr::Malformed(format_walk_err(text, at, &[])))?;
 +        failed.truncate(1);

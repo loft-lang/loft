@@ -4,24 +4,24 @@ schema_version = 1
 
 [[package]]
 name = "web"
-version = "0.4.5"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.5/web-0.4.5.tar.gz"
-sha256 = "11beaa8103bb9fcbb8f9616ff0e4d9acbf58979a735fe9f9535489d881046944"
+version = "0.5.0"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.5.0/web-0.5.0.tar.gz"
+sha256 = "2fe16ea63260bf6d4d50546988b13687273884ba8769768c10910c0c01c4185e"
 source = "registry"
 
 [[package]]
 name = "server"
-version = "0.7.5"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.5/server-0.7.5.tar.gz"
-sha256 = "09fc1b01c8517dbe98ca942001ab90984e4444266d30f999c37788defc6373ed"
+version = "0.8.0"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.8.0/server-0.8.0.tar.gz"
+sha256 = "20b2916d26a7f999f033eb9b401da8874873140641e758d7a43abf76938c2ebe"
 source = "registry"
 deps = ["web"]
 
 [[package]]
 name = "game_protocol"
-version = "0.1.7"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/game_protocol-v0.1.7/game_protocol-0.1.7.tar.gz"
-sha256 = "b7b754fdd883530a254cb0d627183dd394b1c43b031db4ee026fa39fcf2bd5f6"
+version = "0.1.8"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/game_protocol-v0.1.8/game_protocol-0.1.8.tar.gz"
+sha256 = "22eecffb42c76bb535d3e13d4b83ab57b3b7f0d6907d898fe0eb949b3a3d67fe"
 source = "registry"
 deps = ["server", "web"]
 

@@ -9,8 +9,8 @@
 **loft** is a tree-walking interpreter (Rust) for the **loft** language: statically typed,
 expression-oriented, struct/enum, store-based heap, stdlib from `default/*.loft`. Two backends:
 the interpreter and `--native` (compiles through C). A backend stays only while it answers every
-program as the others do (`@C170`), so the rustc writer, `--native-rust`, is being retired
-(@PLN225). It's the **language** layer of a stack:
+program as the others do (`@C170`), which is why the rustc writer that `--native-rust` ran is
+gone. It's the **language** layer of a stack:
 **lavition** (the engine/brand) → **loft** (this repo) → games **moros**/**dryopea** + consumer
 libs (crawler, `lib/markdown`) that dogfood the language. History: [LAVITION.md](doc/claude/LAVITION.md).
 Developed almost entirely by AI agents (steered; docs + tooling prioritized above code), so
@@ -42,7 +42,6 @@ delete a tracked file of theirs. Report back in our docs, not in their files.
 ```bash
 cargo run --bin loft -- prog.loft        # run  |  -- repl  |  -- introspect prog.loft  |  -- --help
 loft debug prog.loft:12 [--lib dir]      # stop at line 12, read/edit the frame — INSTEAD of println (DEBUG.md)
-make check-rlib                          # before a bare `cargo test`: is libloft.rlib current?
 ./scripts/find_problems.sh --changed     # the tight loop: the subjects your diff touches (seconds)
 ./scripts/find_problems.sh --subject <n> # one area; `--bg|--peek|--wait` the full suite in the background
 scripts/ci-run.sh start | recheck        # ONE gate per change of unknown reach; after it, recheck — never restart
@@ -236,10 +235,8 @@ signal you haven't earned it:**
    The invariant is often already NAMED in `doc/claude/formal/` — cite the rule rather than
    re-deriving it, and close its deviation entry if it had one.
 6. Verify the full matrix on **BOTH backends**: the interpreter and the C backend (`--native`,
-   which `make`, `find_problems.sh`, `make falsify` and CI's PR gate run).  Add the rustc writer
-   (`--native-rust`, or `LOFT_NATIVE_BACKEND=rust`) only when the change touches what it emits —
-   `src/generation/`, `src/codegen_runtime.rs`, an operator's `#rust` body, a Rust native.
-   Graduate guarantee probes to suite cells.
+   which `make`, `find_problems.sh`, `make falsify` and CI's PR gate run).  Graduate guarantee
+   probes to suite cells.
 7. **Propose 3+ cases to check → write them ALL down BEFORE working the first** — the specifics of
    case three decay while you work case one.
 8. **A new case found = a new probe, always** — the suite is the only thing that remembers.
@@ -329,8 +326,8 @@ either states is a claim: run the guard or repro it cites before repeating it ·
 [OCAML_BAR.md](doc/claude/bars/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/bars/LUA_BAR.md) expressiveness probes (reports).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) · [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) IR/opcodes ·
-[INTERNALS.md](doc/claude/INTERNALS.md) · [SLOTS.md](doc/claude/SLOTS.md) · [NATIVE.md](doc/claude/NATIVE.md) rustc codegen ·
-[C_BACKEND.md](doc/claude/C_BACKEND.md) the C backend and `c_sweep.py` · [THREADING.md](doc/claude/THREADING.md) par ·
+[INTERNALS.md](doc/claude/INTERNALS.md) · [SLOTS.md](doc/claude/SLOTS.md) · [NATIVE.md](doc/claude/NATIVE.md) native builds ·
+[C_BACKEND.md](doc/claude/C_BACKEND.md) the C backend and `c_sweep.py` · [THREADING.md](doc/claude/THREADING.md) par · [LOCKS.md](doc/claude/LOCKS.md) every lock, why, and its lock-free alternative ·
 [CODEGEN_METHOD.md](doc/claude/CODEGEN_METHOD.md) how to do compiler work.
 
 **Runtime / memory:** [DATABASE.md](doc/claude/DATABASE.md) stores/DbRef · [REMOTE_STORES.md](doc/claude/REMOTE_STORES.md) ·
@@ -406,8 +403,7 @@ Every `LOFT_*` switch has ONE home doc.
   `cargo test` (writes `tests/dumps/*.txt`) or `cargo run` (stderr) —
   [RUNNING_TESTS.md § LogConfig](doc/claude/RUNNING_TESTS.md#logconfig--debug-logging-framework);
   `LOFT_VAR_TABLE=<fn>` a function's variable table with its deps resolved
-  ([DEBUG_TRACE.md](doc/claude/DEBUG_TRACE.md)); `LOFT_STRICT_SCHEMA_IDS=1` / `LOFT_TRACE_MINT=1` for a
-  `--native-rust` wrong-type fault ([NATIVE.md](doc/claude/NATIVE.md) § Architecture).
+  ([DEBUG_TRACE.md](doc/claude/DEBUG_TRACE.md)).
 - **Two diagnostic tiers:** a diagnostic GATES (`warning`, `LOFT_DENY_WARNINGS=1`) if and only if
   ignoring it can produce a wrong result; everything else is `advice`, which never gates.  And a
   diagnostic REACHES only whoever can act on its cure — enforced once, in
@@ -415,6 +411,6 @@ Every `LOFT_*` switch has ONE home doc.
   ([DIAGNOSTICS.md](doc/claude/DIAGNOSTICS.md) § Diagnostic tiers, § Who a diagnostic is addressed to).
 - **By family:** lint opt-outs and `LOFT_ERRORS` — [DIAGNOSTICS.md § Switching a diagnostic
   off](doc/claude/DIAGNOSTICS.md) · profilers — [PROFILING.md](doc/claude/PROFILING.md) (prefer `make profile`) ·
-  the rustc writer's rewrites, each with a `LOFT_NO_*` switch as the first bisect step —
+  the rewrites, each with a `LOFT_NO_*` switch as the first bisect step —
   [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) · both-backend lowering and store policies, where
   the two backends agreeing is no evidence — [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md).

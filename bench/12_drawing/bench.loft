@@ -13,7 +13,7 @@
 //
 // Rows print as: name, iters, total µs, ns/op, output px, ns/px, hash.  The
 // trailing "time: Xms" line is what bench/run_bench.sh parses; per-row numbers
-// are what scripts/native_ratio.sh joins against bench/ratio_oracle.tsv.
+// are what bench/stats.py joins against the Rust twin's.
 
 
 /// A reproducible pseudo-random float in [-1, 1) from three small non-negative

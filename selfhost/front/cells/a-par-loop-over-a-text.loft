@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` loop over a text is materialised into a `vector<character>` first
+// (`materialise_iter_for_par` with `iter_text`: `_par_mat_next` / `_par_mat_index`, the text in
+// `_for_text_N`), its `vector<character>` registered where `par` is read, on both passes.
+// Prints: 2
+
+fn one(c: character) -> integer { if c == 'l' { 1 } else { 0 } }
+fn main() {
+  n = 0;
+  for ch in "hello" par(r = one(ch), 2) { n += r; }
+  println("{n}");
+}

@@ -247,7 +247,7 @@ impl FnWriter<'_> {
         self.cx.request_twin(g, super::super::APV_BIT);
         let name = super::super::twin_name(self.cx.data, g, super::super::APV_BIT);
         crate::rewrite_census::fired("R-Apart", 1);
-        self.line(ind, &format!("{name}({});", xs.join(", ")));
+        self.line(ind, &format!("{name}({});", crate::c::cx_args(&xs)));
         Ok(())
     }
 
@@ -266,7 +266,7 @@ impl FnWriter<'_> {
             let val = self.av_val(v).ok_or("no apart value")?;
             let i = self.expr(idx, ind)?;
             return Ok(Some(E::new(
-                format!("loft_ap_get({val}.f{f}, {n}, {})", as_int(i)?),
+                format!("loft_ap_get(cx, {val}.f{f}, {n}, {})", as_int(i)?),
                 K::Float,
             )));
         }
@@ -280,7 +280,7 @@ impl FnWriter<'_> {
             self.line(
                 ind,
                 &format!(
-                    "loft_ap_set({target}.f{f}, {n}, {}, {});",
+                    "loft_ap_set(cx, {target}.f{f}, {n}, {}, {});",
                     as_int(i)?,
                     as_float(y)?
                 ),
@@ -415,7 +415,7 @@ impl FnWriter<'_> {
         self.line(
             ind,
             &format!(
-                "{b} = loft_ap_store({b}, {bytes}, {}, {}, (const uint32_t[]){{ {} }}, (const double *const[]){{ {} }}, (const uint32_t[]){{ {} }}); /* @FR-R-Apart boundary */",
+                "{b} = loft_ap_store(cx, {b}, {bytes}, {}, {}, (const uint32_t[]){{ {} }}, (const double *const[]){{ {} }}, (const uint32_t[]){{ {} }}); /* @FR-R-Apart boundary */",
                 layout.rec_tp,
                 layout.fields.len(),
                 offs.join(", "),

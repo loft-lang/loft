@@ -217,29 +217,33 @@ pub fn assign_slots_v2(
     // scan met first.  The loop-straddle test reads each interval's loop membership as bit
     // masks.  The layout is the one the full scan gave.
     let words = loop_ranges.len().div_ceil(64);
-    let membership = |ls: u32, le: u32| -> (Vec<u64>, Vec<u64>) {
-        let (mut inside, mut outside) = (vec![0u64; words], vec![0u64; words]);
+    // One flat table: entry `k` (scan order, below) holds `words` inside-bits then `words`
+    // outside-bits at `k * 2 * words` — one allocation, not two per slot.
+    // A function of few slots keeps the plain scan and builds neither table: the index is
+    // there for the large ones, and costs two allocations per function.
+    let small = pinned.len() + ivs.len() <= 32;
+    let entries = if small { 0 } else { pinned.len() + ivs.len() };
+    let mut masks: Vec<u64> = vec![0u64; entries * 2 * words];
+    for (k, i) in pinned.iter().chain(ivs.iter()).enumerate().take(entries) {
+        let (ls, le) = (i.ls, i.le);
+        let at = k * 2 * words;
         for (l, &(s, e)) in loop_ranges.iter().enumerate() {
             if ls >= s && le < e {
-                inside[l / 64] |= 1 << (l % 64);
+                masks[at + l / 64] |= 1 << (l % 64);
             }
             if le < s || ls >= e {
-                outside[l / 64] |= 1 << (l % 64);
+                masks[at + words + l / 64] |= 1 << (l % 64);
             }
         }
-        (inside, outside)
-    };
-    let all_loops: Vec<u64> = (0..words)
-        .map(|w| {
+    }
+    let straddles = |a: usize, b: usize| {
+        let (a, b) = (a * 2 * words, b * 2 * words);
+        (0..words).any(|w| {
             let n = loop_ranges.len() - w * 64;
-            if n >= 64 { u64::MAX } else { (1u64 << n) - 1 }
+            let all = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+            !((masks[a + w] & masks[b + w]) | (masks[a + words + w] & masks[b + words + w])) & all
+                != 0
         })
-        .collect();
-    let pinned_masks: Vec<(Vec<u64>, Vec<u64>)> =
-        pinned.iter().map(|p| membership(p.ls, p.le)).collect();
-    let iv_masks: Vec<(Vec<u64>, Vec<u64>)> = ivs.iter().map(|i| membership(i.ls, i.le)).collect();
-    let straddles = |a: &(Vec<u64>, Vec<u64>), b: &(Vec<u64>, Vec<u64>)| {
-        (0..words).any(|w| !((a.0[w] & b.0[w]) | (a.1[w] & b.1[w])) & all_loops[w] != 0)
     };
     // Scan order: pinned slot `k` is key `k`, placed local `j` is key `pinned.len() + j`.
     let max_size = pinned
@@ -248,11 +252,12 @@ pub fn assign_slots_v2(
         .map(|i| u32::from(i.size))
         .max()
         .unwrap_or(0);
-    let mut by_slot: std::collections::BTreeMap<u32, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for (k, p) in pinned.iter().enumerate() {
-        by_slot.entry(u32::from(p.slot)).or_default().push(k);
+    // Every placed slot as `(offset, key)`, kept sorted: one vector, not one per offset.
+    let mut by_slot: Vec<(u32, usize)> = Vec::with_capacity(entries);
+    for (k, p) in pinned.iter().enumerate().take(entries) {
+        by_slot.push((u32::from(p.slot), k));
     }
+    by_slot.sort_unstable();
     let mut frame_end = u32::from(local_start);
     for idx in 0..ivs.len() {
         let (sz, al, ls, le, kind) = {
@@ -269,12 +274,19 @@ pub fn assign_slots_v2(
             // A slot starting at or below `pos - max_size` ends at or before `pos`.
             let lo = (pos + 1).saturating_sub(max_size);
             let mut first: Option<(usize, u32)> = None;
-            for keys in by_slot.range(lo..end).map(|(_, k)| k) {
-                for &key in keys {
-                    let (p, p_mask) = if key < pinned.len() {
-                        (&pinned[key], &pinned_masks[key])
+            // A small function scans every placed slot in scan order, with no index built.
+            let scan = if small { 0..pinned.len() + idx } else { 0..0 };
+            let from = by_slot.partition_point(|&(s, _)| s < lo);
+            let indexed = by_slot[from..]
+                .iter()
+                .take_while(|&&(s, _)| s < end)
+                .map(|&(_, k)| k);
+            for key in scan.chain(indexed) {
+                {
+                    let p = if key < pinned.len() {
+                        &pinned[key]
                     } else {
-                        (&ivs[key - pinned.len()], &iv_masks[key - pinned.len()])
+                        &ivs[key - pinned.len()]
                     };
                     let p_end = u32::from(p.slot) + u32::from(p.size);
                     let overlap_range = pos < p_end && u32::from(p.slot) < end;
@@ -288,7 +300,17 @@ pub fn assign_slots_v2(
                     let life_overlap = ls <= p.le && p.ls <= le;
                     let incompatible = p.kind != kind || p.size != sz;
                     // I6: forbid sharing that straddles any loop scope.
-                    let straddle = straddles(&iv_masks[idx], p_mask);
+                    let straddle = if small {
+                        loop_ranges.iter().any(|&(s, e)| {
+                            let iv_in = ls >= s && le < e;
+                            let iv_out = le < s || ls >= e;
+                            let p_in = p.ls >= s && p.le < e;
+                            let p_out = p.le < s || p.ls >= e;
+                            !((iv_in && p_in) || (iv_out && p_out))
+                        })
+                    } else {
+                        straddles(pinned.len() + idx, key)
+                    };
                     if !exact || life_overlap || incompatible || straddle {
                         first = Some((key, p_end));
                     }
@@ -305,7 +327,11 @@ pub fn assign_slots_v2(
             break;
         }
         ivs[idx].slot = pos as u16;
-        by_slot.entry(pos).or_default().push(pinned.len() + idx);
+        if !small {
+            let key = (pos, pinned.len() + idx);
+            let at = by_slot.partition_point(|e| *e < key);
+            by_slot.insert(at, key);
+        }
     }
     let hwm = u16::try_from(frame_end).unwrap_or(u16::MAX);
     let mut slots: Vec<SlotAssignment> = ivs

@@ -3,7 +3,6 @@
 tests/falsified/102b-pass1-expected-errors.patch
 tests/falsified/102-expected-errors.patch
 tests/falsified/1160-a-variant-binding-write-means-the-field-write.patch
-tests/falsified/1217-a-keyed-lookup-through-a-discharge-reaches-its-emitter.patch
 tests/falsified/1270-an-absent-text-is-one-absence.patch
 tests/falsified/1277-yield-from-passes-arguments-and-ends-on-exhaustion.patch
 tests/falsified/1285-a-fn-ref-argument-reaches-a-fn-ref-callee.patch
@@ -11,7 +10,6 @@ tests/falsified/1296-an-i32-overflow-reads-as-null.patch
 tests/falsified/1450g-the-divisor-guard-is-read-in-every-spelling.patch
 tests/falsified/1450h-the-math-guard-is-read-in-every-spelling.patch
 tests/falsified/1456-a-key-write-through-a-nullable-collections-view-materialises.patch
-tests/falsified/1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.patch
 tests/falsified/1477b-a-tuple-answers-equals-null-from-the-coalesce-home.patch
 tests/falsified/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.patch
 tests/falsified/1495-a-diverging-arm-beside-a-value-arm-still-yields.patch
@@ -52,10 +50,7 @@ tests/falsified/1577-a-plain-enum-value-is-not-a-type.patch
 tests/falsified/1578-a-lambda-cannot-call-the-variable-it-is-first-bound-to.patch
 tests/falsified/1579-a-reference-to-an-enum-field-holds-its-record.patch
 tests/falsified/1582-a-vector-rebind-releases-what-it-displaces-after-the-new-value.patch
-tests/falsified/1583-a-lazy-generator-keeps-a-boolean-local.patch
 tests/falsified/1584-a-record-bound-with-an-early-return-builds-on-native.patch
-tests/falsified/1586-a-while-loop-generator-yields-before-its-next-iteration.patch
-tests/falsified/1587-a-generator-holds-a-lambda-across-a-yield.patch
 tests/falsified/1588-a-tuple-releases-at-its-own-turn.patch
 tests/falsified/158-keyed-length-reader.patch
 tests/falsified/1590-a-tuple-member-string-may-open-a-hole.patch
@@ -81,7 +76,6 @@ tests/falsified/1606-a-closure-releases-what-it-captured-once-hooks-first.patch
 tests/falsified/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.patch
 tests/falsified/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.patch
 tests/falsified/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.patch
-tests/falsified/1611-a-conditional-arms-work-runs-only-when-that-arm-does.patch
 tests/falsified/1612-a-coalesce-chain-copies-the-operand-it-chooses.patch
 tests/falsified/1612-a-coalesce-chain-copies-the-operand-it-chooses-refused.patch
 tests/falsified/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.patch
@@ -114,7 +108,6 @@ tests/falsified/1676b-a-yielded-lambda-over-a-droppable-is-refused.patch
 tests/falsified/1679-a-call-through-a-rebound-name-reaches-the-new-binding.patch
 tests/falsified/1679b-a-call-through-a-name-whose-block-has-ended-is-refused.patch
 tests/falsified/167-a-frame-reader-decodes-a-linked-narrow-local.patch
-tests/falsified/167-a-link-to-an-absent-place-reads-null.patch
 tests/falsified/167-a-ref-parameter-links-a-scalar-field-or-element.patch
 tests/falsified/167-a-ref-parameter-refuses-a-place-it-cannot-link.patch
 tests/falsified/167-a-size-is-written-in-a-type-alias.patch
@@ -187,7 +180,6 @@ tests/falsified/a-field-store-lands-in-the-record-bound-at-the-store.patch
 tests/falsified/a-field-store-refuses-a-narrowed-member.patch
 tests/falsified/a-field-store-refuses-a-text-member-into-a-float.patch
 tests/falsified/a-format-hole-may-open-with-whitespace.patch
-tests/falsified/a-generator-keeps-its-heap-temps-across-a-yield.patch
 tests/falsified/a-generic-and-a-method-of-one-name-are-one-set.patch
 tests/falsified/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.patch
 tests/falsified/a-generic-declares-several-type-variables.patch
@@ -221,12 +213,10 @@ tests/falsified/a-listed-pattern-may-test-a-field.patch
 tests/falsified/a-literal-infers-its-instance-from-its-field-values.patch
 tests/falsified/a-literal-parsed-twice-keeps-its-interpolations.patch
 tests/falsified/a-local-a-match-arm-assigns-is-bound-before-the-match.patch
-tests/falsified/a-local-whose-address-is-taken-is-not-proven-non-null-on-native.patch
 tests/falsified/a-loop-variable-over-a-vector-of-a-struct-enum-is-the-enum.patch
 tests/falsified/a-match-arm-names-a-variant-that-exists.patch
 tests/falsified/a-match-default-over-records-compiles.patch
 tests/falsified/a-match-on-a-literal-types-on-both-passes.patch
-tests/falsified/a-match-over-a-generator-of-dropped-records-reads-them.patch
 tests/falsified/a-match-streams-an-iterator-of-any-element.patch
 tests/falsified/a-method-and-a-function-of-one-name-on-one-type-are-refused.patch
 tests/falsified/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.patch
@@ -300,7 +290,6 @@ tests/falsified/a-record-local-reassigned-after-a-literal-build-releases-what-it
 tests/falsified/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces-refused.patch
 tests/falsified/a-record-read-through-a-link-is-copied.patch
 tests/falsified/a-reference-parameter-is-a-match-and-is-subject.patch
-tests/falsified/a-reference-parameter-re-points-to-an-element-a-field-or-a-local.patch
 tests/falsified/a-refused-loop-source-reports-once.patch
 tests/falsified/a-reserved-word-cannot-name-a-function.patch
 tests/falsified/a-returned-tuple-member-is-not-the-return-buffer-refused.patch

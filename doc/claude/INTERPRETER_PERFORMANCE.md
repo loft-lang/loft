@@ -12,7 +12,7 @@ are, is [PERFORMANCE.md](PERFORMANCE.md); past measurements are in
 
 ## Why the interpreter is optimised at all
 
-`--native` is the optimisation TARGET: shipped programs run compiled, through LLVM.  The
+`--native` is the optimisation TARGET: shipped programs run compiled, through C.  The
 interpreter runs the same program while it is being DEVELOPED and DEBUGGED, and its job is that
 a program does not fall off a speed cliff there.  So it gains on the back of native: a rule
 native already proves (a record it never builds, a move it never makes) is moved into the IR
@@ -36,7 +36,7 @@ worse.
 A routine over the bar is closed by making its LOFT code fast, not by replacing it: a kernel
 (one Rust body standing in for a loop) is a stop-gap that fixes one name, while a faster
 interpreter fixes every loop of that shape, a program's own included.  Loft compiles through
-rustc, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
+C, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
 exists, why, and when it goes: [KERNELS.md](KERNELS.md) (`make kernel-ratio`).
 
 Against Python the measure is the NUMBER of operations, not their cost.  A loft operation costs
@@ -54,7 +54,7 @@ been cut (below).  What decides how an ALGORITHM scales is the data that flows o
 caches: records claimed, grown and relocated, blocks copied, stores created.  So the first
 question for an interpreter routine is not *how many instructions* but **does the interpreter
 do more work on stores than the compiled code does for the same routine?**  `LOFT_STORE_CENSUS`
-answers it for both backends with the same counters ([§ Store work](#store-work-interpreter-against-native)),
+counts the interpreter's side ([§ Store work](#store-work-interpreter-against-native)),
 and a row where the interpreter does more is where a native rule avoids an object or a move —
 the candidate to move into the IR phase, where both backends get it.
 
@@ -142,29 +142,12 @@ next work is in the section below, not in more fusion.
 
 ## Store work: interpreter against native
 
-`LOFT_STORE_CENSUS=<file>` (PROFILING.md) counts, at the chokepoints both backends share,
-stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
-copies and text writes move — one line per `ticks()` call, so a bench routine's work is the
-difference between the two lines around its timed loop.  Build the interpreter and the native
-program against the `op-census` feature (the counters are compiled only there):
-
-```bash
-cargo build --release --lib --bin loft --features op-census --target-dir target/op-census
-LOFT_STORE_CENSUS=i.tsv target/op-census/release/loft --interpret bench.loft --n 2
-target/op-census/release/loft --native-emit n.rs --lean bench.loft
-rustc -C opt-level=3 --edition=2024 --extern loft=target/op-census/release/libloft.rlib \
-      -L target/op-census/release/deps -o n n.rs && LOFT_STORE_CENSUS=n.tsv ./n --n 2
-```
-
-Measured on `14_stdlib_vector`, per op (interpreter / native):
-
-| routine | claims | grows | relocations | bytes relocated |
-|---|--:|--:|--:|--:|
-| `push` | 4 / 1 | 4 / 0 | 4 / 0 | 81,526 / 0 |
-| `record_append` | 3 / 2 | 6 / 0 | 1 / 0 | 233,380 / 0 |
-| `grid` | 392 / 137 | 260 / 4 | 4 / 4 | 1,210 / 824 |
-| `copy`, `remove_front` | equal | equal | equal | equal — shared runtime work |
-| element reads and writes | none | none | none | none on either side |
+`LOFT_STORE_CENSUS=<file>` (PROFILING.md) counts the interpreter's store work: stores created
+and freed, records claimed, deleted, grown and relocated, and the bytes block copies and text
+writes move — one line per `ticks()` call, so a bench routine's work is the difference between
+the two lines around its timed loop.  The C backend's store carries no counters; the
+interpreter-against-native table, measured on the rustc writer, is in
+[INTERPRETER_PERFORMANCE-history.md](INTERPRETER_PERFORMANCE-history.md).
 
 The interpreter's extra store work is **vector growth**: native sizes a vector it fills once
 (`(R-Push)`, `(R-PushFill)`, `(R-PushRec)`) where the interpreter grows it step by step and
@@ -218,25 +201,23 @@ since that lookup on every call was a quarter of a recursive function's time.
 
 ## The compiled standard library
 
-An interpreted program runs the standard library's LOOPING loft functions compiled: their
-native code is built into the loft binary, so `--interpret` needs no rustc at run time
-(@C71: libraries compile, scripts interpret — the standard library is a library).  It is the
-same path an installed library takes, with three differences:
+An interpreted program runs the standard library's LOOPING loft functions compiled, as a
+hosted C unit (@C71: libraries compile, scripts interpret — the standard library is a library).
+It is the same route an installed library takes (`src/compiled_stdlib.rs`):
 
-- **What is compiled** — `compiled_stdlib::export_set`: non-generic functions the shared-store
-  dispatch can cross, with a loft body that loops.  A one-operation body gains nothing from the
-  bridge; output and file primitives stay out; generics are monomorphised per program and stay
-  interpreted (`sum<T>`).
-- **How it ships** — `make compiled-stdlib` generates `src/compiled_stdlib_gen.rs` (`@generated`,
-  exempt from `rustfmt`) with the native bodies, a name → bridge table, the standard library's
-  type PREFIX and the source hash it was compiled from.  `extensions::wire_shared_native_fns`
-  looks a bridge up in that table before `dlsym`.  Regenerate after a stdlib change, or a
-  code-generator change that alters what these functions emit;
-  `tests/compiled_stdlib.rs::compiled_stdlib_up_to_date` fails until you do.
-- **When it is used** — `compiled_stdlib::mark` checks, at start-up, that the program's type
-  table begins with that prefix and that `default/*.loft` hashes the same.  On any mismatch the
-  program runs the loft bodies interpreted: slower, never wrong.  `LOFT_NO_COMPILED_STDLIB=1`
-  interprets them anyway — the A/B for a wrong answer or a timing, and this section is its home.
+- **What is compiled** — `native_gate::export_set`: non-generic functions the shared-store
+  dispatch can cross, with a loft body that loops, that the hosted bridge carries.  A
+  one-operation body gains nothing from the bridge; output and file primitives stay out;
+  generics are monomorphised per program and stay interpreted (`sum<T>`).
+- **How it is built** — on the first interpreted run after this loft build or `default/*.loft`
+  changes, from the standard library parsed alone, with the machine's C compiler, into
+  `~/.cache/loft/stdlib-units/` (the unit, and a `.names` file listing what it carries).  Every
+  later run adopts it.  A unit maps its types to the program's at load, so it serves every
+  program.
+- **When it is not used** — no C compiler (the failure is remembered under the key, so it is
+  asked once), or `LOFT_NO_COMPILED_STDLIB=1`: the loft bodies run interpreted, slower, never
+  wrong.  `LOFT_HOSTED_VERIFY=1` compares each compiled call with the interpreted one and says
+  why a unit was not built.  `LOFT_TIMING=1` prints how many functions dispatched to it.
 
 The kernels it retired are in KERNELS.md § Removed (`split`, `lines`).  The design record is
 [plans/181-compiled-stdlib.md](plans/181-compiled-stdlib.md).
@@ -263,11 +244,8 @@ RUSTFLAGS='-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthr
 and read beside `perf stat -e instructions,cycles`: instructions are deterministic, so a change
 that removes work and still reads slower is layout until the pinned builds say otherwise.
 
-⚠ **Both builds come from ONE tree, which differs only by the change.**  A binary bakes in the
-compiled stdlib (`src/compiled_stdlib_gen.rs`) while the bench reads `default/*.loft` from the
-tree it runs in, so a binary built before a rebase runs a stdlib it was not compiled against
-and falls onto slow paths: a pre-rebase "before" made `join` read −95 % and `split` −90 % for
-a change that touched neither.  Across a rebase, build the "before" from a
+⚠ **Both builds come from ONE tree, which differs only by the change.**  Across a rebase,
+build the "before" from a
 detached worktree at the rebased commit just below the change (`git worktree add --detach`),
 with the current derived files copied in, and check `git diff --stat` between the two trees
 names only the change.  A comparison across the rebase measures main's commits too.

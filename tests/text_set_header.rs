@@ -58,7 +58,7 @@ fn a_loop_that_writes_texts_holds_and_one_that_also_pushes_declines() {
         let out = loft(
             &[
                 "--ship",
-                "--native-rust",
+                "--native",
                 "--native-emit",
                 loft::platform::null_sink(),
             ],

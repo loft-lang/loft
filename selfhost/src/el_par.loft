@@ -7,6 +7,7 @@ use el;
 use el_ir;
 use el_vars;
 use el_types;
+use el_schema;
 use el_expressions;
 use el_ex_base;
 use el_ex_assign;
@@ -113,7 +114,9 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     return el_ex_base::Ex { code: el_ir::v_block([fill, discard], ir::TyVoid, "par_discard"), tp: ir::TyVoid };
   }
   i = ir::NdVar { n: idx };
-  code = el_ir::replace_var(b.code, bv, ir::NdCall { def_nr: el::def_nr(e, ln.get), args: [i] });
+  // (A function value stays in its variable, set first thing in the body; any other result is
+  // read where the body names it.)
+  code = if ln.label == " fn" { match b.code { NdBlock { block: fbl } => { fb0 = fbl[0]; fb0.operators = [el_ir::v_set(bv, lane_read(e, ln, i))] + fb0.operators; ir::NdBlock { block: [fb0] } }, _ => b.code } } else { el_ir::replace_var(b.code, bv, lane_read(e, ln, i)) };
   row = el_ir::cl(e, "OpGetVectorNullable", [v, ir::NdInt { n: es }, i]);
   // A body variable BOUND to the element holds a borrowed view of the input vector, as the loop
   // variable did before the element read replaces it: the loop does not own what it looks at,
@@ -194,13 +197,58 @@ pub struct Lane {
   pub get: text,
   pub drop: text,
   pub label: text,
-  pub size: integer
+  pub size: integer,
+  // The narrow lane (`narrow_route_for`): a row of `size` bytes read back by
+  // `n_parallel_buf_get_narrow(idx, size, signed)`, wrapped as `wrap` says — "" none, "ne"
+  // a boolean (`OpNeInt(_, 0)`, its row byte 255 the null), else the conversion op's name.
+  pub narrow: boolean = false,
+  pub signed: boolean = false,
+  pub wrap: text = ""
+}
+
+// The read of row `i` a lane's body takes in place of its result.
+fn lane_read(e: el::El, ln: Lane, i: ir::Node) -> ir::Node {
+  if !ln.narrow {
+    return ir::NdCall { def_nr: el::def_nr(e, ln.get), args: [i] };
+  }
+  raw = ir::NdCall { def_nr: el::def_nr(e, "n_parallel_buf_get_narrow"), args: [i, ir::NdInt { n: ln.size }, ir::NdInt { n: if ln.signed { 1 } else { 0 } }] };
+  if ln.wrap == "" {
+    return raw;
+  }
+  if ln.wrap == "ne" {
+    return el_ir::v_if(el_ir::cl(e, "OpEqInt", [raw, ir::NdInt { n: 255 }]), el_ir::cl(e, "OpConvBoolFromNull", []), el_ir::cl(e, "OpNeInt", [raw, ir::NdInt { n: 0 }]));
+  }
+  el_ir::cl(e, ln.wrap, [raw])
 }
 
 // `build_parallel_for_ir`'s route for a worker answering `ret`: the wide lane for an 8-byte
 // integer or a float (its `return_size` the slot's 8 bytes), the text lane (0) for a text.
 fn lane(ret: ir::TypeT) -> Lane {
   none = Lane { queue: "", get: "", drop: "", label: "", size: 0 };
+  // `narrow_route_for_declared`: a boolean, character, plain enum, single or 1/2/4-byte integer
+  // answer rides the narrow lane, `τ?` alike — but a nullable narrow integer, whose null the
+  // packed row cannot hold, rides the wide one.
+  shape = match ret { TyOptional { inner: ri } => ri, _ => ret };
+  nullable = ret is TyOptional;
+  nq = Lane { queue: "n_parallel_queue_narrow", get: "", drop: "n_parallel_buf_drop_narrow", label: " narrow", size: 1, narrow: true };
+  match shape {
+    TyInteger { spec: ns } => {
+      nw = el_ex_base::byte_width(ns, true);
+      if nullable {
+        return Lane { queue: "n_parallel_queue", get: "n_parallel_buf_get", drop: "n_parallel_buf_drop", label: "", size: 8 };
+      }
+      if nw == 1 || nw == 2 || nw == 4 {
+        nq.size = nw;
+        nq.signed = ns.min < 0;
+        return nq;
+      }
+    },
+    TyBoolean => { nq.wrap = "ne"; return nq; },
+    TyCharacter => { nq.size = 4; nq.wrap = "OpConvCharacterFromInt"; return nq; },
+    TyEnum { n: _, is_ref } => { if !is_ref { nq.wrap = "OpCastEnumFromInt"; return nq; } },
+    TySingle => return Lane { queue: "n_parallel_queue_narrow", get: "n_parallel_buf_get_single", drop: "n_parallel_buf_drop_narrow", label: " narrow", size: 4 },
+    _ => {}
+  }
   match ret {
     TyInteger { spec } => {
       if el_ex_base::byte_width(spec, true) != 8 {
@@ -210,6 +258,13 @@ fn lane(ret: ir::TypeT) -> Lane {
     },
     TyFloat => Lane { queue: "n_parallel_queue", get: "n_parallel_buf_get_float", drop: "n_parallel_buf_drop", label: "", size: 8 },
     TyText { dep: _ } => Lane { queue: "n_parallel_queue_text", get: "n_parallel_buf_get_text", drop: "n_parallel_buf_drop_text", label: " text", size: 0 },
+    // (`route_fn_queue`: a function value is queued whole, its 20 stack bytes a row; the body
+    // reads it into the result's own variable, `_<b>_par<loop> = n_parallel_buf_get_fn(idx)`,
+    // and calls through that.)
+    TyFunction { args: _ } => Lane { queue: "n_parallel_queue_fn", get: "n_parallel_buf_get_fn", drop: "n_parallel_buf_drop_fn", label: " fn", size: 20 },
+    // (`route_ref_queue`, `is_dbref`: a record answer is queued as its reference, the row size
+    // unknown to the caller.)
+    TyReference { n: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
     _ => none
   }
 }
@@ -224,6 +279,9 @@ fn element_size(e: el::El, elem: ir::TypeT) -> integer {
     TyText { dep: _ } => 4,
     TyBoolean => 1,
     TyCharacter => 4,
+    // (A vector element is its four-byte handle, `@FR-H-Stride`; `element_store_size` asks
+    // `vector_element_type`, which makes the bare `vector` row where it is missing.)
+    TyVector { inner: _ } => { if !e.first_pass { el_schema::vector_type(e, el_schema::NO_TYPE); } 4 },
     _ => -1
   }
 }

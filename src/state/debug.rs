@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I66 — Bytecode VM / executor
 
-use super::{STRING_NULL, State};
+use super::State;
 use crate::data::{Attribute, Context, Data, DefType, Definition, Deps, I32, IntegerSpec, Type};
 use crate::fill::OPERATORS;
 use crate::keys::{DbRef, Key};
@@ -529,6 +529,7 @@ impl State {
     /// AT the offending free, naming the victim and the future read it would
     /// corrupt.  (Same-frame victims only warn: their "future read" may sit on
     /// a branch this activation never reaches.)
+    #[expect(clippy::too_many_lines, reason = "one scan with its report")]
     pub fn uaf_scan_freed(&mut self, data: &Data) {
         let freed = std::mem::take(&mut self.database.uaf_freed_this_op);
         // cluster-462 tool-gap #1: stamp each freed slot with the pc that freed
@@ -536,7 +537,13 @@ impl State {
         // premature-free op (the operand-stack stale ref the frame scan misses).
         let free_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
         for &slot in &freed {
-            crate::keys::uaf_record_free(slot, self.code_pos, free_d_nr, u16::MAX);
+            crate::keys::uaf_record_free(
+                &mut self.database.checks,
+                slot,
+                self.code_pos,
+                free_d_nr,
+                u16::MAX,
+            );
         }
         // Opcode bytes for the load + free families.  All are < 255 (single
         // byte); bail quietly if that ever changes rather than misdecode.
@@ -1292,7 +1299,7 @@ impl State {
             Type::Float => format!("{}", self.code::<f64>()),
             Type::Text(_) => {
                 let s = self.code_str();
-                if s == STRING_NULL {
+                if crate::text_null::is_null(s) {
                     "null".to_string()
                 } else {
                     format!("\"{}\"", crate::compile::escape_text(s))
@@ -1435,7 +1442,7 @@ impl State {
                             log,
                             "    [exit  #{n}: fn={in_fn} returned with the store live; its path:]"
                         )?;
-                        for line in path.render(prev_depth, 12) {
+                        for line in path.render(&self.database.crash, prev_depth, 12) {
                             writeln!(log, "        {line}")?;
                         }
                         holder_depth = Some(depth);
@@ -1494,7 +1501,11 @@ impl State {
                             via.join("<")
                         )?;
                         if config.trace_store.is_some() {
-                            writeln!(log, "        {}", crate::store_trace::site(code))?;
+                            writeln!(
+                                log,
+                                "        {}",
+                                crate::store_trace::site(&self.database.crash, code)
+                            )?;
                             holder_depth = Some(self.call_stack.len());
                             path.restart(self.call_stack.len());
                             log.flush()?;
@@ -1514,13 +1525,19 @@ impl State {
                             "    [free  #{s_nr} at pc={code} op={op_base} fn={in_fn} (allocated at {origin})]"
                         )?;
                         if config.trace_store.is_some() {
-                            let by = crate::store_trace::freed_variable(code)
+                            let by = crate::store_trace::freed_variable(&self.database.crash, code)
                                 .map_or_else(String::new, |v| format!(" by {v}"));
-                            writeln!(log, "        {}{by}", crate::store_trace::site(code))?;
-                            if let Some(x) = crate::store_trace::excerpt(code) {
+                            writeln!(
+                                log,
+                                "        {}{by}",
+                                crate::store_trace::site(&self.database.crash, code)
+                            )?;
+                            if let Some(x) = crate::store_trace::excerpt(&self.database.crash, code)
+                            {
                                 writeln!(log, "{x}")?;
                             }
-                            let lines = path.render(self.call_stack.len(), 12);
+                            let lines =
+                                path.render(&self.database.crash, self.call_stack.len(), 12);
                             if !lines.is_empty() {
                                 writeln!(log, "        the path this frame took:")?;
                                 for line in lines {
@@ -1963,7 +1980,7 @@ impl State {
                         None => {
                             return format!(" -> <raw:{:#x}>[{}]", s.ptr as usize, self.stack_pos);
                         }
-                        Some(s) if s == STRING_NULL => "null".to_string(),
+                        Some(s) if crate::text_null::is_null(s) => "null".to_string(),
                         Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                     }
                 } // text
@@ -2046,7 +2063,7 @@ impl State {
                 let s = self.string();
                 match s.try_str() {
                     None => format!("<raw:{:#x}>", s.ptr as usize),
-                    Some(s) if s == STRING_NULL => "null".to_string(),
+                    Some(s) if crate::text_null::is_null(s) => "null".to_string(),
                     Some(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                 }
             }

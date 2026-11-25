@@ -171,7 +171,7 @@ the same two cures. The gap between the rule and the model is
               i as `&r.f` names field f (binding.md B-Ref-Lvalue).  It may live on the stack,
               and where it lives changes nothing about its members.  The record layout is the
               DEFINITION (layout.md L-Tuple); any other representation — the interpreter's
-              stack form, a native Rust tuple of native types in rustc's field order — is
+              stack form, a struct of native types in a compiled target's own field order — is
               derived from that layout and kept only where no program can tell the difference,
               a `&` link to a member included (@C139).  A tuple handed over by a native library
               in its own representation is FOREIGN data (binding.md Const-Foreign).

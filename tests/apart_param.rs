@@ -37,7 +37,7 @@ fn cells() -> PathBuf {
 fn kept(env: &[(&str, &str)], tag: &str) -> Vec<(String, Vec<String>)> {
     let out = std::env::temp_dir().join(format!("loft_apart_param_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.arg("--native")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells())
@@ -90,18 +90,6 @@ fn of<'a>(found: &'a [(String, Vec<String>)], func: &str) -> &'a [String] {
         .iter()
         .find(|(f, _)| f == func)
         .map_or(&[][..], |(_, v)| v.as_slice())
-}
-
-#[test]
-fn each_loop_keeps_the_parameter_headers_the_clause_admits() {
-    let found = kept(&[], "on");
-    for (func, want) in EXPECTED {
-        let got = of(&found, func);
-        assert_eq!(
-            got, *want,
-            "{func}: the loops keep {got:?} apart where the clause admits {want:?}\nall: {found:?}"
-        );
-    }
 }
 
 #[test]

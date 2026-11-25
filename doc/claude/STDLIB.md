@@ -246,7 +246,8 @@ surrogate (`D800`–`DFFF`), anything past `U+10FFFF`, a negative number — and
 because `character` uses 0 as its null and text ITERATION STOPS at a NUL, so a
 NUL built by `chr` could not be read back by the loop it is the inverse of. The
 byte route still carries one inside a text: `text_from_bytes([65, 0, 66])` has `len` 3 and
-`size` 3.  A lone NUL, `text_from_bytes([0])`, is the null text (`size` 0).
+`size` 3.  A lone NUL, `text_from_bytes([0])`, is a one-character text like any other (`size` 1);
+the null text is no text at all (`@FR-L-Null-Text`).
 
 ⚠ **`char_slice` was missing for longer than that, and three trees paid for it.**
 `text2d` hand-rolled `take_chars` only after `fit_text` had shipped cutting a

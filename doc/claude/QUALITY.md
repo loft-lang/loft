@@ -47,7 +47,7 @@ value (`@FR-N-Shape`).  The ratchet is the count of such functions, and it must 
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **249** |
+| **219** |
 
 `python3 scripts/ir_walker_audit.py optional` reports it (the fourth figure);
 `make optional-ratchet` fails when it grows; `quality_optional_table_matches_the_audit` holds
@@ -62,7 +62,7 @@ optimisation that relied on the unwrapped shape.
 
 | sites a `Span` hides the shape from — must not grow |
 |---:|
-| **27** |
+| **24** |
 
 `python3 scripts/ir_walker_audit.py unspan` reports it; `quality_unspan_table_matches_the_audit`
 holds this row.  Origin: [QUALITY-history.md § B4f](QUALITY-history.md).
@@ -74,7 +74,7 @@ resolves it by op name sees only the first.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **22** |
+| **20** |
 
 `python3 scripts/ir_walker_audit.py spellings` prints three figures — functions resolving a
 projection by op name, those also handling `TupleGet`, those seeing only the call spelling.
@@ -101,7 +101,7 @@ reports the position against the contract-1 floors.  What remains open:
 | # | family | next action |
 |---|---|---|
 | 1 | **scalar** — the bare sites | adopting `is_scalar` adds value enums at each site: a behaviour change per site, one probe each, not a sweep |
-| 9 | **what a slice bound means** (`vector` + `text`) | `ops::sub_text` normalises both bounds and is the documented home, but nothing calls it; the two live halves (`State::get_text_sub`, `codegen_runtime::OpGetTextSub`) are fixed and cited.  Delete the orphan, or make the live halves derive from it |
+| 9 | **what a slice bound means** (`vector` + `text`) | `ops::sub_text` normalises both bounds and is the documented home, but nothing calls it; the two live halves (`State::get_text_sub`, the C's `OpGetTextSub` in `src/c/loft_rt.h`) are fixed and cited.  Delete the orphan, or make the live halves derive from it |
 
 ### Rules gaps (spec decisions, not code)
 

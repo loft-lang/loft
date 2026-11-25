@@ -68,7 +68,7 @@ it.
 
 The suite-backed checks of `verify` and `after.py` read the suite the tree PINS:
 `scripts/suite_pin.py` keeps an explicit `LOFT_SUITE_DIR`, else takes `../loft-suite` when it is
-at the pin, else a cached worktree at the pin (`.git/loft-suite-pin`) — so a sibling checkout on
+at the pin, else a cached worktree at the pin (`loft-suite-pin` in the checkout's git directory) — so a sibling checkout on
 another commit cannot hide a guard (index hygiene's "decision has no guard").
 
 `HERE` is measured on this tree as it stands, so a commit that reads as here is picked all the
@@ -115,13 +115,11 @@ gh workflow run derive.yml --ref <branch>
 git push origin HEAD:derive-probe   # before derive.yml is on main, or to try a change to it
 ```
 
-The runner is the better writer for these.  It builds the wasm rlib fresh, which a local
-`surface-gen` does not guarantee, and `make doc` there fetches every published package into a
+The runner is the better writer for these: `make doc` there fetches every published package into a
 clean cache.  Two steps cost a wasm build of the whole crate, and neither runs every time: the
 browser bundle rebuilds only when its source stamp moved, and the target surface only when
 `default/` (where builtins and ops are declared) differs from `main`.  The PR's `gallery` job
-checks the surface on every change, after `make game` has built the same rlib, so a surface
-that moved for another reason fails there.  Each step's seconds are in the run's log and its
+checks the surface on every change, so a surface that moved for another reason fails there.  Each step's seconds are in the run's log and its
 job summary.  Dispatch it where the branch stops moving: after a join, and before opening a
 PR.  It refuses `main`, and it never force-pushes; when the branch moved during the run, it
 fails and asks for a new dispatch.  A ratchet (a `pin`, the census, the drop gate) never

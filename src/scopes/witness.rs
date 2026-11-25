@@ -610,8 +610,8 @@ fn choice_delivering_temps(value: &Value, function: &Function, data: &Data) -> O
 /// MINTS means *both emitters give the local a store of its own here*: a whole-value copy of
 /// another heap variable (@FR-B-Copy, `gen_set_first_ref_var_copy` / native's record-copy
 /// arm); a loft-defined callee whose return does NOT adopt a fresh store, which both emitters
-/// deep-copy into the local (`state/codegen.rs`'s call-copy arm, `generation/dispatch.rs`'s
-/// `OpCopyRecord` arm); a value the oracle calls `Owned` — a minting call, an inline mint —
+/// deep-copy into the local (`state/codegen.rs`'s call-copy arm, the C's `OpCopyRecord`
+/// arm); a value the oracle calls `Owned` — a minting call, an inline mint —
 /// unless that mint lands in a work-ref that frees it itself (the `c = { Object → __ref_N }`
 /// literal, whose store is the work-ref's and not solely the local's).
 ///
