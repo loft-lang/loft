@@ -8130,11 +8130,6 @@ impl Data {
         }
     }
 
-    /**
-    Set the return type on a definition.
-    # Panics
-    When the return type was already set before.
-    */
     /// The roots a unit or a generated program names its sources from: `hosted_root` for a hosted
     /// unit (its package's parent), else the directory of the program's `main`; and the directory
     /// the standard library was read from.  Either is empty when the definitions hold none.
@@ -8163,6 +8158,11 @@ impl Data {
         roots
     }
 
+    /**
+    Set the return type on a definition.
+    # Panics
+    When the return type was already set before.
+    */
     pub fn set_returned(&mut self, d_nr: u32, tp: Type) {
         assert!(
             self.def(d_nr).returned.is_unknown(),
