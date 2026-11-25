@@ -8131,7 +8131,8 @@ impl Data {
     }
 
     /// The roots a unit or a generated program names its sources from: `hosted_root` for a hosted
-    /// unit (its package's parent), else the directory of the program's `main`; and the directory
+    /// unit (its package's parent), else the program's directory (`source_name::program_dir`: its
+    /// project root, else its `main`'s directory); and the directory
     /// the standard library was read from.  Either is empty when the definitions hold none.
     #[must_use]
     pub fn source_roots(&self, hosted_root: Option<String>) -> crate::source_name::Roots {
@@ -8148,11 +8149,7 @@ impl Data {
         roots.main_dir = match hosted_root {
             Some(root) => root,
             None => {
-                crate::source_name::Roots::of(
-                    &file_of(self.def_nr("n_main")).unwrap_or_default(),
-                    "",
-                )
-                .main_dir
+                crate::source_name::program_dir(&file_of(self.def_nr("n_main")).unwrap_or_default())
             }
         };
         roots
