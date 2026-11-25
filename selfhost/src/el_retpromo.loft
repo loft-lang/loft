@@ -96,18 +96,21 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
   // Step 3 — each mid-body `return`, in source order (Rust asks while it parses them, so their
   // renames and deps reach the sites after them).
   ir_returns = ir_returns_of(code, []);
-  for rn in returns_of(e, body, []) {
+  syn_returns = returns_of(e, body, []);
+  // (Paired by position: on the first pass only where the lowered body holds every one.)
+  p1_paired = len(ir_returns) == len(syn_returns);
+  for rn in syn_returns {
     rv = match e.p.nodes[rn] { SJump { e: je } => je ?? -1, _ => -1 };
     if rv < 0 {
       continue;
     }
-    inner: ir::Node? = if !e.first_pass && rn#index < len(ir_returns) { ir_returns[rn#index] } else { null };
+    // (On the first pass a returned CALL is read off its lowered call too — its work refs are
+    // what Rust's `ls` holds; any other first-pass value is read off its syntax.)
+    returns_call = match e.p.nodes[rv] { SCall { at: _ } => true, SMember { call } => call, _ => false };
+    inner: ir::Node? = if (!e.first_pass || (returns_call && p1_paired)) && rn#index < len(ir_returns) { ir_returns[rn#index] } else { null };
     ls = return_candidates(e, vars, ctx, rv, inner);
     if len(ls) == 0 {
-      // (Through a local of its own: `dep = copied_return_deps(…, dep)` handed the callee a
-      // null `dep` — the destination reset before the argument was read.)
-      nd = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
-      dep = nd;
+      dep = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
       continue;
     }
     at = match e.p.nodes[rn] { SJump { at: ja } => ja, _ => 0 };
@@ -120,8 +123,7 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
     }
     ctx.names = so.names;
     dep = so.dep;
-    nd2 = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
-    dep = nd2;
+    dep = copied_return_deps(e, vars, ret, ba, rv, inner, dep);
   }
   if ends_in_return_statement(e, body) {
     return;
@@ -256,8 +258,11 @@ fn return_candidates(e: el::El, vars: el_vars::Vars, ctx: Ctx, rv: integer, inne
       }
       return if len(own) > 0 && len([for w in own if vars.vars[w].argument && !starts_with(el_vars::name_of(vars, w), "__") { w }]) == len(own) { own } else { [] };
     }
-    // (A record: the deps, or — where the type names none — the call's work refs.)
-    return if len(deps) > 0 { deps } else { refs };
+    // (A record: the deps, or — where the type names none — the call's work refs.  A struct
+    // enum's return offers its deps alone: `parse_return`'s enum leg never adds the call's
+    // hidden buffers.)
+    struct_enum = match el_types::base(ctx.ret) { TyEnum { is_ref } => is_ref, _ => false };
+    return if len(deps) > 0 || struct_enum { deps } else { refs };
   }
   // A returned value this port lowered into a block of its own — a call chained through the
   // buffer (`one_buffer_chain`: `{ __ref_1 = f(__ref_1); __ref_1 }`) — offers what its type
@@ -904,6 +909,24 @@ fn call_of(n: ir::Node) -> ir::Node? {
   }
 }
 
+// The work refs a body's tail call is handed on the first pass (`classify_reference_delivery`'s
+// `ls`, or its hidden buffers where the callee's result names none yet).
+fn pass1_call_refs(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<integer> {
+  lt = last_operator(code);
+  if lt == null {
+    return [];
+  }
+  c = call_of(lt!) ?? ir::NdNull;
+  if !(c is NdCall) {
+    return [];
+  }
+  ws = call_result_deps(e, c);
+  if len(ws) == 0 {
+    ws = hidden_ref_args(e, c);
+  }
+  [for w in ws if w >= 0 && w < len(vars.vars) { w }]
+}
+
 // A call's result deps as variables: each attribute the callee's result depends on, read as the
 // variable this call hands it (an argument that is itself a call answers that call's deps).
 fn call_result_deps(e: el::El, call: ir::Node) -> vector<integer> {
@@ -914,6 +937,11 @@ fn call_result_deps(e: el::El, call: ir::Node) -> vector<integer> {
         return r;
       }
       for d in el_types::deps(el::def(e, def_nr).returned[0] ?? ir::TyVoid) {
+        // (A hidden attribute — the callee's return buffer — is no dep of the call's value:
+        // Rust's `ls` names the arguments it borrows, and the buffer is `collect_hidden_ref_args`'.)
+        if d >= 0 && d < len(el::def(e, def_nr).attributes) && el::def(e, def_nr).attributes[d]!.hidden {
+          continue;
+        }
         a = args[d] ?? ir::NdNull;
         match el_ir::unspan(a) {
           NdVar { n: av } => { if !r.contains(av) { r += [av]; } },
@@ -1029,7 +1057,21 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
       }
     }
   } else if e.first_pass && syn >= 0 {
-    match e.p.nodes[syn] {
+    // (`x?` / `x!` reads what `x` reads.)
+    ps = peel_postfix(e, syn);
+    match e.p.nodes[ps] {
+      // `a ?? b`: the deps of both sides, as Rust's join of the two takes them — a literal
+      // default adds none.
+      SBin { op, l, r } => {
+        if op != "??" { return; }
+        lw = syn_read_roots(e, vars, peel_postfix(e, l));
+        ws = lw + [for x in syn_read_roots(e, vars, peel_postfix(e, r)) if !lw.contains(x) { x }];
+        // (A lambda's capture borrows nothing on the first pass: a side that is one joins no
+        // deps, `AsIs`.)
+        if len(ws) == 0 && (is_capture_name(e, peel_postfix(e, l)) || is_capture_name(e, peel_postfix(e, r))) {
+          shown = "AsIs";
+        } else if len(ws) == 0 { return; }
+      },
       SName { name, member } => {
         v1 = if member == "" { el_vars::var(vars, name) } else { -1 };
         if v1 < 0 || el_ex_copy::views_a_local(vars, v1) || !record_shaped(e, vars, v1, ctx.ret) {
@@ -1042,11 +1084,14 @@ fn record_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, en
       // lowering's `MaterializeView`, which it reports itself.)
       // (Only a PARAMETER root: a local of another type than the result cannot be the buffer
       // — `ls_can_be_record_buffer` — and takes `MaterializeView`, which the lowering reports.)
-      SIndex { at: _ } => { r1 = syn_root_local(e, vars, syn); if r1 < 0 || !vars.vars[r1].argument { return; } ws = [r1]; },
+      SIndex { at: _ } => { r1 = syn_root_local(e, vars, ps); if r1 < 0 || !vars.vars[r1].argument { return; } ws = [r1]; },
       // (A field of a record declared further down the file is unknown to the first pass — the
       // root is typed `unknown(<record>)` until its fields are read: the read has no type, and
       // no delivery is asked.)
-      SMember { call } => { if call { return; } r2 = syn_root_local(e, vars, syn); if r2 < 0 || !vars.vars[r2].argument || el_types::is_unknown(el_vars::tp(vars, r2)) { return; } ws = [r2]; },
+      // A call — a function's or a method's — is asked about the work refs it is handed, read off
+      // the first pass's call as on the second: its result's deps, or its hidden buffers.
+      SCall { at: _ } => { ws = pass1_call_refs(e, vars, code); if len(ws) == 0 { return; } },
+      SMember { call } => { if call { ws = pass1_call_refs(e, vars, code); if len(ws) == 0 { return; } } else { r2 = syn_root_local(e, vars, ps); if r2 < 0 || !vars.vars[r2].argument || el_types::is_unknown(el_vars::tp(vars, r2)) { return; } ws = [r2]; } },
       // A branch whose every arm answers a local or a field of one: its deps are those locals.
       // (A branch whose arms borrow nothing — literals, `null`, a lambda's captures — joins no
       // deps: `AsIs`, where an arm reads a capture.)
@@ -1577,6 +1622,27 @@ fn branch_reads_capture(e: el::El, n: integer) -> boolean {
     }
   }
   false
+}
+
+fn peel_postfix(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SPostfix { e: pe } => if pe != null { peel_postfix(e, pe!) } else { n },
+    _ => n
+  }
+}
+
+// The first pass's candidate of one side of a `??`: a plain record local, or a read rooted at a
+// parameter whose type is known (the record tail's own `SName` / `SIndex` / `SMember` legs).
+fn syn_read_roots(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integer> {
+  match e.p.nodes[n] {
+    SName { name, member } => {
+      v1 = if member == "" && !is_capture_name(e, n) { el_vars::var(vars, name) } else { -1 };
+      if v1 < 0 || el_ex_copy::views_a_local(vars, v1) { [] } else { [v1] }
+    },
+    SIndex { at: _ } => { r1 = syn_root_local(e, vars, n); if r1 >= 0 && vars.vars[r1].argument { [r1] } else { [] } },
+    SMember { call } => { r2 = if call { -1 } else { syn_root_local(e, vars, n) }; if r2 >= 0 && vars.vars[r2].argument && !el_types::is_unknown(el_vars::tp(vars, r2)) { [r2] } else { [] } },
+    _ => []
+  }
 }
 
 fn syn_root_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
