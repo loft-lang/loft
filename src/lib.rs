@@ -383,6 +383,7 @@ pub mod resolution_scope;
 pub mod return_field;
 pub mod rewrite_census;
 pub mod same_read;
+pub mod scope_check;
 pub mod scopes;
 pub mod self_replace;
 pub mod shared_call;

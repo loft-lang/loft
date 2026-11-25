@@ -313,7 +313,18 @@ fn rewrite_in(
     }
     let int_tp = vars.tp(w.idx).clone();
     let len = vars.add_unique("walk_len", &int_tp, block.scope);
-    let at = vars.add_unique("walk_at", &int_tp, w.iter_scope);
+    // The index is the loop's own variable, as `i` is in `for i in 0..n`: the body reads it, so
+    // its scope is the loop's, not the `Iter range` block's that only computes the next one
+    // (`@FR-B-Scope`).
+    let loop_scope = block
+        .operators
+        .iter()
+        .find_map(|o| match o {
+            Value::Loop(lp) => Some(lp.scope),
+            _ => None,
+        })
+        .expect("matched");
+    let at = vars.add_unique("walk_at", &int_tp, loop_scope);
     // The length, read once before the loop, after the handle is taken.
     let set_vec = block
         .operators

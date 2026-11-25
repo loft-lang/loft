@@ -21,6 +21,10 @@ Each run gets one verdict:
           run did not reach)
   CLEAN   neither found anything
 
+With --wrong a failed test counts as a run-time fault too (kind `wrong`), so a check
+that reports a wrong answer before it runs (`store-out-of-scope`, @FR-B-Scope) is
+scored; without it a wrong answer is no fault, as before.
+
 A switched run is judged against the cell's no-switch run when the sweep has one
 (`--switch ''` beside the others): only its NEW findings answer its faults.
 
@@ -28,6 +32,7 @@ A switched run is judged against the cell's no-switch run when the sweep has one
   scripts/own_sweep.py --switch '' --switch LOFT_NO_JOIN_OWN --out sweep.tsv
   scripts/own_sweep.py --cell path/to/prog.loft     # any program, not only cells
   scripts/own_sweep.py --oracle check-records       # judge the store records instead
+  scripts/own_sweep.py --wrong --chapter binding     # a failed test is a fault too
 
 The table goes to --out (TSV); the summary and every MISS and MASKED go to stdout.
 """
@@ -76,6 +81,7 @@ def red_identity(line):
 # Which checker kinds answer a runtime fault kind: a CAUGHT whose findings answer none of the
 # run's faults is a coincidence, and `matched` says so.
 ANSWERS = {"uaf": {"use-after-end", "wrong-end", "re-free", "double-end"},
+           "wrong": {"out-of-scope"},
            "re-free": {"re-free", "double-end", "wrong-end"},
            "leak": {"leak"},
            "wrong-free": {"wrong-end"}}
@@ -88,6 +94,9 @@ def matched(faults, red_kinds):
 ARMED = re.compile(r"@ARMED:(.*)")
 # The checker mode: `check` (the shipped checks) or `check-records` (the store records).
 ORACLE = ["check"]
+# `--wrong`: a failed test is a run-time fault of kind `wrong`.
+WRONG = [False]
+FAILED_TEST = re.compile(r"^test result: FAILED", re.M)
 ARMED_SWITCH = re.compile(r"\b(LOFT_[A-Z0-9_]+)=([^\s`.,;)]+)")
 
 
@@ -141,6 +150,8 @@ def run(loft, cell, switch, timeout):
         os.unlink(fault_log)
         return cell, switch, "timeout", 0, "", "", ()
     kinds = [k for k, rx in FAULTS if rx.search(out)]
+    if WRONG[0] and FAILED_TEST.search(out):
+        kinds.append("wrong")
     for k in logged_kinds(fault_log):
         if k not in kinds:
             kinds.append(k)
@@ -238,8 +249,11 @@ def main():
                     help="a previous --out table: print each run whose verdict or red count changed")
     ap.add_argument("--oracle", default="check", choices=["check", "check-records"],
                     help="the static checker: the shipped checks, or the store records")
+    ap.add_argument("--wrong", action="store_true",
+                    help="a failed test is a run-time fault (kind `wrong`)")
     a = ap.parse_args()
     ORACLE[0] = a.oracle
+    WRONG[0] = a.wrong
     # Each cell runs from its own directory, so a relative binary path is resolved here.
     a.loft = os.path.abspath(a.loft)
     def resolve(c):

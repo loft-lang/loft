@@ -84,6 +84,14 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 | **re-free** | a double end whose second end is a free the runtime refuses (`@FR-H-FreeTwice`) |
 | **use after end** | a use of a store is reachable from one of its ends |
 | **wrong end** | a free of a foreign store, or of a view |
+| **out of scope** | a use of a variable lies outside the variable's scope (`@FR-B-Scope`) |
+
+The last kind is not read off a record.  `src/scope_check.rs` walks the closed program's block
+nesting against the variable table's scopes, under both `LOFT_OWN_ORACLE=check` and
+`=check-records`.  A local's value ends with its scope, so a read after that end answers a
+released value.  An initialisation to a constant and a release are not uses: neither reads the
+value.  The run-time fault this answers is a wrong value, which no detector sees, so
+`own_sweep.py --wrong` counts a failed test as one.
 
 The runtime detects the same four, on the paths a run takes: the leak check
 (`LOFT_LEAK_CHECK`), `LOFT_STRICT_STORES` for a use after free (it never reuses a slot), and
@@ -449,6 +457,10 @@ or a wrong free — is fixed in three places, in the same change:
 3. **The checker**: with the cure switched off (its `LOFT_NO_*` switch, or the build `make
    falsify` uses), the checker reports the defect.  `scripts/own_sweep.py --cell <cell>`
    with that switch reads CAUGHT, not MISS.
+
+A **scope defect** follows the same rule: a pass that leaves a use of a variable outside its
+scope (`@FR-B-Scope`) is cured in the compiler, and with the cure switched off the check reports
+it: `scripts/own_sweep.py --wrong --cell <cell>` reads CAUGHT, its finding `out-of-scope`.
 
 A fix that makes the runtime clean while the checker stays silent on the defect is
 incomplete: the next defect of the same shape is again found only by a run.  This holds for

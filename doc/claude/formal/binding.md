@@ -546,6 +546,13 @@ later breaks nothing, while the reverse would. Before 2026-09-23 such a local wa
 function-scoped, readable after its block, and on a path that never bound it, a read
 answered a value no statement had assigned (loft#1600, owner ruling).
 
+**Checked.**  The compiler can break this rule after the parser accepted the program: a pass
+that homes a local in a narrower block than the one that reads it releases the value at that
+block's `}` (`(H-Drop)`), and the read answers the released value.  The store-records checker
+reports every use of a variable outside its scope as `store-out-of-scope`, on the closed
+program's IR (`src/scope_check.rs`, [STORE_RECORDS.md](../STORE_RECORDS.md) § The
+checks).
+
 ---
 
 ## Deviations
