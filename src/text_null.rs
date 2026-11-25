@@ -40,7 +40,13 @@ pub fn null_str() -> &'static str {
 pub fn null_string() -> String {
     // SAFETY: with capacity 0 the pointer needs only be non-null and aligned
     // (`Vec::from_raw_parts`), and nothing is ever written through it.
-    unsafe { String::from_raw_parts(NULL_TEXT.as_ptr().cast_mut(), 0, 0) }
+    #[expect(
+        clippy::same_length_and_capacity,
+        reason = "the null text is its ADDRESS: an empty String built any other way points elsewhere"
+    )]
+    unsafe {
+        String::from_raw_parts(NULL_TEXT.as_ptr().cast_mut(), 0, 0)
+    }
 }
 
 /// Make `s` the null text.
