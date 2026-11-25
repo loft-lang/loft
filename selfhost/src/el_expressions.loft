@@ -868,6 +868,19 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
                 }
               }
             },
+            // A branch at the tail — a `match` or an `if` whose arms answer locals of the body,
+            // nested branches included — is copied into the renamed buffer arm by arm
+            // (`materialize_return_into`): 2525's `if pos.line != 0 { pos } else { null }` after
+            // `return deeper`.
+            NdIf { cond: _, t: _, f: _ } => {
+              rtd = struct_ref(e, el_types::base(result));
+              if rtd >= 0 && branch_locals(e, vars, el_ir::last(bl.operators), buf) > 0 {
+                barms = el_ex_copy::copy_arms(e, vars, el_ir::last(bl.operators), buf, rtd, el_types::with_deps(el_types::without_deps(el_types::base(result)), [buf]));
+                if barms != null {
+                  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), barms!);
+                }
+              }
+            },
             _ => {}
           }
         }
@@ -2504,6 +2517,28 @@ fn materialize_view_route(e: el::El, vars: el_vars::Vars) {
   } else {
     el_trace::route(e, "classify_reference_delivery=MaterializeView");
   }
+}
+
+// The locals of the body (not the buffer `buf`, not a parameter) the branch `n` answers, its
+// nested branches walked; -1 where a leaf is anything but such a local, a `null` or the null
+// sentinel.
+fn branch_locals(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer) -> integer {
+  locals = 0;
+  for arm in el_ex_deliver::branch_arms(el_ir::unspan(n), []) {
+    leaf = el_ir::unspan(join_leaf(arm));
+    k = match leaf {
+      NdVar { n: lv } => if lv == buf || vars.vars[lv].argument { -1 } else { 1 },
+      NdNull => 0,
+      NdCall { def_nr, args } => if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" { 0 } else { -1 },
+      NdIf { cond: _, t: _, f: _ } => branch_locals(e, vars, leaf, buf),
+      _ => -1
+    };
+    if k < 0 {
+      return -1;
+    }
+    locals += k;
+  }
+  locals
 }
 
 // `classify_ret_promotion`'s `MergeAttr` over a record BRANCH tail whose leaves are visible
