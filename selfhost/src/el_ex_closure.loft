@@ -147,6 +147,16 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
+        // (A `&` record or vector shares its referent, as the value itself is shared —
+        // `closure_attr_type` reads `peel_link`.)
+        match ct {
+          TyRefVar { inner: rvi } => {
+            if record_type(e, rvi) || el_types::base(rvi) is TyVector {
+              ct = rvi;
+            }
+          },
+          _ => {}
+        }
         // A vector the lambda writes is shared through its pointer as a read one is
         // (`@FR-L-CapHeap`): the write goes through the capture, no cell.
         // A capture pass 1 could not type is never boxed — `collect_mutated_captures` boxes by
