@@ -693,18 +693,15 @@ const POSIX_WRITE: &str = r#"#c "write" "long(int, const void*, size_t)""#;
 /// `_write`, so a declaration naming `write` resolves to nothing there and the
 /// call faults — measured, `` `#c` symbol 'write' not found ``.
 ///
-/// Only the symbol is branched, because only the symbol differs. `long` is
-/// genuinely right for the return on both: POSIX `write` gives `ssize_t`
-/// (64-bit on LP64) and `_write` gives `int` (32-bit), which is exactly what C
-/// `long` means on each — one of the places where naming the platform's own
-/// width is the correct binding rather than a portability bug. The count
-/// narrows to `unsigned int` for the same reason: that is `_write`'s third
-/// parameter, where POSIX takes `size_t`.
+/// The signature follows the symbol: a `#c` signature must spell the types the
+/// system header declares (C refuses two differing declarations of one function),
+/// and `_write` is `int _write(int, const void *, unsigned int)` where POSIX
+/// `write` is `ssize_t write(int, const void *, size_t)` — `long` on LP64.
 fn for_host(src: &str) -> String {
     if loft::platform::host_lib_os() == loft::platform::LibOs::Windows {
         src.replace(
             POSIX_WRITE,
-            r#"#c "_write" "long(int, const void*, unsigned int)""#,
+            r#"#c "_write" "int(int, const void*, unsigned int)""#,
         )
     } else {
         src.to_string()

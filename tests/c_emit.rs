@@ -8072,7 +8072,8 @@ fn a_rust_crate_native_is_named_as_such_on_the_c() {
         "nothing was compiled and run\n{printed}"
     );
     assert!(
-        err.contains(loft::manifest::RUST_NATIVE_REFUSED) && err.contains("rustlib/loft.toml"),
+        err.contains(loft::manifest::RUST_NATIVE_REFUSED)
+            && err.replace('\\', "/").contains("rustlib/loft.toml"),
         "the refusal names the library, why, and the cure\n{err}"
     );
     assert!(

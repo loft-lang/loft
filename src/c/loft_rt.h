@@ -7100,12 +7100,40 @@ static unsigned __stdcall loft_timeout_watch(void *arg) {
 /* A rename that replaces the file `to` names, as Rust's `fs::rename` — and so the interpreter —
  * does on every host.  POSIX `rename` does; the Windows CRT's refuses an existing target, so
  * there it is `MoveFileExW` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`.  The
- * paths go over in their wide form, as every path does (`loft_wpath`, loft_io.h). */
+ * paths go over in their wide form, as every path does (`loft_wpath`). */
 #if defined(_WIN32)
 #include <wchar.h>
 __declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *from, const wchar_t *to, unsigned long flags);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
-static wchar_t *loft_wpath(const char *s);
+/* `@FR-Path-Utf8` on Windows — a path is UTF-8 in loft and UTF-16 to the OS, as Rust's `OsStr`
+ * hands it to the interpreter's calls: every call here that names a path takes the WIDE form
+ * (`_wfopen`, `_wstat64`, `_wfindfirst64`, `CreateFileW` …).  The ANSI form reads the bytes in
+ * the machine's code page, so a name outside it reached another file (`a\u{FFFD}.txt` written
+ * as `aï¿½.txt`) and a listed name outside it showed as `?`. */
+static wchar_t *loft_wpath(const char *s) {
+    size_t n = strlen(s), o = 0;
+    /* A UTF-8 byte gives at most one UTF-16 unit: four bytes are two units. */
+    wchar_t *w = (wchar_t *) malloc((n + 1) * sizeof(wchar_t));
+    if (!w) { fputs("loft: out of memory\n", stderr); abort(); }
+    const unsigned char *p = (const unsigned char *) s;
+    for (size_t i = 0; i < n;) {
+        uint32_t c = p[i];
+        size_t k = c < 0x80 ? 1 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 0;
+        if (k == 0 || i + k > n) { w[o++] = 0xFFFD; i++; continue; }
+        if (k > 1) c &= 0x3F >> (k - 1);
+        for (size_t j = 1; j < k; j++) c = (c << 6) | (p[i + j] & 0x3F);
+        i += k;
+        if (c >= 0x10000) {
+            c -= 0x10000;
+            w[o++] = (wchar_t) (0xD800 | (c >> 10));
+            w[o++] = (wchar_t) (0xDC00 | (c & 0x3FF));
+        } else {
+            w[o++] = (wchar_t) c;
+        }
+    }
+    w[o] = 0;
+    return w;
+}
 static int loft_rename(loft_cx *cx, const char *from, const char *to) {
     wchar_t *wf = loft_wpath(from), *wt = loft_wpath(to);
     int ok = MoveFileExW(wf, wt, 1ul /* MOVEFILE_REPLACE_EXISTING */);

@@ -1582,7 +1582,9 @@ fn a_missing_c_compiler_falls_back_to_the_interpreter_unless_native_is_required(
             .current_dir(&tmp)
             .env("PATH", empty.as_os_str())
             .env_remove("CC")
-            .env_remove("LOFT_CC")
+            // A compiler that does not exist, named: an unset LOFT_CC makes Windows look for MSVC's
+            // `cl` past PATH, and find it.
+            .env("LOFT_CC", "loft-no-such-c-compiler")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TIMEOUT", "120");
         if require {
@@ -1653,6 +1655,11 @@ fn a_missing_c_compiler_is_named_where_the_developer_looks() {
             .env_remove("LOFT_CC")
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TIMEOUT", "120");
+        if no_cc {
+            // A compiler that does not exist, named: an unset LOFT_CC makes Windows look for
+            // MSVC's `cl` past PATH, and find it.
+            c.env("LOFT_CC", "loft-no-such-c-compiler");
+        }
         let out = c.output().expect("run loft");
         format!(
             "{}{}",
