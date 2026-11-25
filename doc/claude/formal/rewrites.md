@@ -7626,8 +7626,9 @@ first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
                  1, `-inf` answers 0, `+inf` and an overflow answer `+inf` — as `pow`
                  does.  The answer may move in its LAST bit, toward the reference's
                  (Rust's `f64::exp`, C's `exp`): an owner's decision recorded here.
-                 The stdlib `exp` keeps its `pow(E, self)` body, so every spelling
-                 folds.  Any other base is left to `pow`.
+                 The stdlib `exp` calls math function 10 itself; every other spelling
+                 folds on every route that turns loft into code, a hosted C unit
+                 included.  Any other base is left to `pow`.
 ```
 
 **In words.** `pow(E, x)` and `exp(x)` name one function, but a general `pow` computes it as

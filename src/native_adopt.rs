@@ -836,11 +836,13 @@ pub fn adopt_shared_cdylib(
     // so it runs in any program: neither the program's type table nor its function numbering is
     // part of what it is built for, only the loft that built it and the sources it carries.  A
     // unit built with the verify's switches or without its safepoints (`LOFT_NO_HANDOVER`) is
-    // another artifact: its own key.
+    // another artifact: its own key, and so is one built with `@FR-R-ExpPow` off
+    // (`LOFT_NO_EXP_POW`), whose answers move in their last bit.
     let program_fp = 1
         | (u64::from(crate::keys::poison_claim()) << 1)
         | (u64::from(crate::keys::hosted_planted()) << 2)
-        | (u64::from(crate::keys::no_handover()) << 3);
+        | (u64::from(crate::keys::no_handover()) << 3)
+        | (u64::from(!crate::keys::exp_pow_enabled()) << 4);
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions

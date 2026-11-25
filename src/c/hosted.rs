@@ -618,6 +618,11 @@ pub fn build_artifact(
     // code, whichever built it first.  Its constants are built here, as a program's compile
     // builds its own.
     crate::const_literal::build_const_vectors(stores, data, None);
+    // `@FR-R-ExpPow` — the one rewrite that defines an ANSWER, not only its speed: the program
+    // that calls the unit has its library functions folded when it closes, so the unit folds
+    // them too, or a library's `pow(E, x)` answers apart in its last bit.  Folding is
+    // idempotent: a unit built from a closed program finds nothing left to fold.
+    crate::exp_pow::rewrite_program(data);
     let (data, stores) = (&*data, &*stores);
     let export = hosted_exports(data, stores, library);
     let mut carried: Vec<u32> = export.iter().copied().collect();
