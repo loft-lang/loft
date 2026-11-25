@@ -1233,13 +1233,20 @@ impl Run<'_> {
                     // …or a compiler temporary the function frees: a stored reference only points
                     // (`@FR-H-RefHome`), and the temporary is the record's home.
                     let freed_temps = &self.freed_temps;
+                    // `(G-Hold)`: a generator handle written into a field is that holder's own
+                    // hold, released by its cascade — the variable that held it gives it up.
+                    let handle = Self::first_var(args, 2).is_some_and(|v| {
+                        v < function.count()
+                            && matches!(function.tp(v).base(), crate::data::Type::Iterator(..))
+                    });
                     let owned_elsewhere = |k: &SKey| {
                         host.contains(k)
-                            || info_of(&s, *k).live.iter().any(|w| {
-                                *w < function.count()
-                                    && (!function.is_compiler_generated(*w)
-                                        || freed_temps.contains(w))
-                            })
+                            || (!handle
+                                && info_of(&s, *k).live.iter().any(|w| {
+                                    *w < function.count()
+                                        && (!function.is_compiler_generated(*w)
+                                            || freed_temps.contains(w))
+                                }))
                     };
                     let handed = Val {
                         pts: value
