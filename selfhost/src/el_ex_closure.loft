@@ -188,7 +188,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // A nullable plain scalar and a plain enum are captured as the value itself, as a dense
         // scalar is (`closure_attr_type`).
         scalar_cap = el_convert::plain_scalar(el_types::base(ct)) || el_convert::plain_enum(el_types::base(ct)) || (el_types::base(ct) is TyText && !(ct is TyOptional));
-        if !heap && !scalar_cap {
+        // (loft#1869: a function-valued PARAMETER is captured as its definition number beside
+        // its closure record, `<name>__clos` — whose lambda is a run-time fact, `__fn_record`.
+        // A local's, whose lambda the bind may know, is not carried yet.)
+        fn_cap = el_types::base(ct) is TyFunction && vars.vars[cv].argument;
+        if !heap && !scalar_cap && !fn_cap {
           return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
         }
         caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
@@ -285,7 +289,7 @@ fn rust_mutated_captures(e: el::El, d: integer, caps: vector<el::Capture>, body:
   code = def.code[0] ?? ir::NdNull;
   // (The captures the body writes — Rust's placeholders, which this port does not make — asked
   // by name, then the variables the walk finds written.)
-  out: vector<text> = [for mc in caps if writes_rooted(e, body, mc.name) { mc.name }];
+  out: vector<text> = [for mc in caps if writes_rooted(e, body, mc.name) || (el_types::base(mc.tp) is TyFunction && calls_name(e, body, mc.name)) { mc.name }];
   if el_ir::is_null(code) {
     return out;
   }
@@ -432,6 +436,14 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
       }
       e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
       note_shared_vector(e, rd, c.name, c.tp);
+      // (`synthesize_closure_record`, loft#1869: a captured function value keeps its closure
+      // RECORD beside its number, a hidden shared pointer.)
+      if el_types::base(c.tp) is TyFunction {
+        frd = fn_record_def(e, el::pos_at(e, end + 1));
+        ha = el::attribute("{c.name}__clos", ir::TyReference { n: frd, dep: [el_types::MARKER] });
+        ha.hidden = true;
+        e.b.data.definitions[rd].attributes += [ha];
+      }
     }
     e.b.data.definitions[d].closure_record = rd;
     return ex(ir::NdNull, lambda_value_type(e, d));
@@ -463,6 +475,20 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
       continue;
     }
     built = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: w }]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: w }]));
+    // (A function value's closure half is the reference slot: what it held is released where it
+    // is not the record this build stores.)
+    if el_types::base(c.tp) is TyFunction {
+      fat = ir::NdInt { n: field_position(e, rd, "{c.name}__clos") };
+      fheld = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: w }, fat]);
+      ffill = el_ir::cl(e, "OpFnRefClosure", [ir::NdVar { n: cv }]);
+      if snap {
+        fdetach = el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, fat, el_ir::cl(e, "OpNullRefSentinel", [])]);
+        ops += [el_ir::v_if(built, el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [fheld, ffill]), ir::NdNull, fdetach), ir::NdNull)];
+      } else {
+        ops += [el_ir::v_if(built, el_ir::cl(e, "OpFreeRefIfDistinct", [fheld, ffill]), ir::NdNull)];
+      }
+      continue;
+    }
     at = ir::NdInt { n: field_position(e, rd, c.name) };
     held = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: w }, at]);
     if snap {
@@ -482,6 +508,13 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     cv = el_vars::var(vars, c.name);
     if cv >= 0 {
       el_vars::set_captured(vars, cv, "emit_lambda_code_in");
+    }
+    // A function value: its number (`FnRefDnr`), then its closure record (`OpFnRefClosure`).
+    if el_types::base(c.tp) is TyFunction && cv >= 0 {
+      el_vars::in_use(vars, cv, true);
+      ops += [el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdFnRefDnr { n: cv }])];
+      ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, "{c.name}__clos") }, el_ir::cl(e, "OpFnRefClosure", [ir::NdVar { n: cv }])])];
+      continue;
     }
     if record_type(e, c.tp) || el_types::base(c.tp) is TyVector || keyed_kind(el_types::base(c.tp)) {
       el_vars::in_use(vars, cv, true);
@@ -528,6 +561,18 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     _ => ft
   };
   ex(el_ir::v_block(ops, bt, "fn_ref_with_closure"), ft)
+}
+
+// `Parser::fn_record_def` (loft#1869): the record type a captured function value's closure half
+// is typed with when the lambda it holds is a run-time fact; it owns nothing.
+pub fn fn_record_def(e: el::El, pos: ir::Position) -> integer {
+  d = el::def_nr(e, "__fn_record");
+  if d >= 0 {
+    return d;
+  }
+  d = el::add_def(e, "__fn_record", pos, el::DT_STRUCT);
+  e.b.data.definitions[d].returned = [ir::TyReference { n: d, dep: [] }];
+  d
 }
 
 // `closure_attr_type`: a record capture is held as a shared pointer to it (`Reference` with the
@@ -907,6 +952,25 @@ fn writes_rooted(e: el::El, n: integer, name: text) -> boolean {
   }
   for c in el_length::children(e, n) {
     if writes_rooted(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does the syntax under `n` call `name(…)`?  A captured function value called in a lambda is
+// loaded into its placeholder first (`captured_fn_ref_call`), a write the mutation walk sees.
+fn calls_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SCall { f: cf } => {
+      if cf != null && match e.p.nodes[cf!] { SName { name: cn, member: cm } => cm == "" && cn == name, _ => false } {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if calls_name(e, c, name) {
       return true;
     }
   }
