@@ -89,8 +89,17 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 The last kind is not read off a record.  `src/scope_check.rs` walks the closed program's block
 nesting against the variable table's scopes, under both `LOFT_OWN_ORACLE=check` and
 `=check-records`.  A local's value ends with its scope, so a read after that end answers a
-released value.  An initialisation to a constant and a release are not uses: neither reads the
-value.  The run-time fault this answers is a wrong value, which no detector sees, so
+released value.  What the check does not report, and why:
+
+- an initialisation to a constant and a release: neither reads the value;
+- a variable that holds no store (an integer, a float, a boolean, a plain enum, a tuple of
+  them): its scope's end releases nothing, and its slot is placed by its live range, so a later
+  read answers what it holds;
+- a block's tail variable after the block: it is the block's value, handed on, not released;
+- a binder of an `if`'s condition read in its then branch: a pattern binds into its arm, its
+  guard and its body (`(B-Scope)`).
+
+The run-time fault this answers is a wrong value, which no detector sees, so
 `own_sweep.py --wrong` counts a failed test as one.
 
 The runtime detects the same four, on the paths a run takes: the leak check

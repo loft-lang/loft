@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A variable read outside its scope is reported (@PLN228)
+
+- The store-records checker reports a use of a variable outside its scope (`@FR-B-Scope`) as
+  `store-out-of-scope`, on the closed program's IR, under `LOFT_OWN_ORACLE=check` and
+  `=check-records` (`src/scope_check.rs`).  The value of a store-holding local ends with its
+  scope, so such a read answers a released value with nothing at run time to say so: loft#2636's
+  vector read back empty.  With that fix reversed the check reports the local in every function
+  of its cell; over the language suite and the gate corpus at HEAD it reports nothing.
+- `scripts/own_sweep.py --wrong` counts a failed test as a run-time fault (`wrong`), which the
+  new kind answers, so the sweep scores the check: CAUGHT on the reversed build, CLEAN at HEAD.
+- Three passes recorded a scope that did not enclose a variable's uses, and now record the one
+  that does: `(R-ForwardWalk)`'s counted index takes the loop's scope, not its `Iter range`
+  block's; `(R-LiftReuse)`'s shared lift takes the body's; a vector literal hoisted out of a
+  call argument gives its element records the enclosing scope, as its view already had.
+
 ### No state is a thread-local (@PLN226)
 
 - The C runtime and the C it emits keep no `LOFT_TLS` state: what a thread keeps of its own is

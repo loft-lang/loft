@@ -7,7 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open, nothing built.  [loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is
+P0–P3 built 2026-11-25 on `tuxedo-pr2634-next3`; P4 stays closed unless P1–P2 find what the
+suite did not.  [loft-lang/plans#228](https://github.com/loft-lang/plans/issues/228) is
 canonical.  This plan was first written as a separate IR verifier with five rules, its own
 switch and a Lean model.  On 2026-11-25 the owner narrowed it to the one rule no instrument
 checks yet, built into the checker that already exists.  The reasons are under
@@ -49,8 +50,9 @@ reported it.
 
 ## The check
 
-A walk over each function body after the scope pass, beside `oracle_free_checks`
-(`scopes.rs`), reached only under `LOFT_OWN_ORACLE=check`.
+`src/scope_check.rs`: a walk over each function body of the closed program, beside the store
+records' observer at the end of `close_program` (so it sees the IR the backends emit, after every
+rewrite), under `LOFT_OWN_ORACLE=check` and `=check-records`.
 
 - It keeps the stack of enclosing block scopes (`Block::scope`, for `Block` and `Loop`).
 - At each use of a variable `v`, the scope `Function::scope(v)` must be on that stack.
@@ -59,7 +61,12 @@ A walk over each function body after the scope pass, beside `oracle_free_checks`
   `CallRef`, `FnRef`, `FnRefDnr`, `Set` and `Iter` carry a variable number outside a `Var`
   node (`scopes::dominance_walk` in `src/scopes/confinement.rs` is the model).  A walk that
   reads only `Var` is right about every use it sees and blind to the rest.
-- Its `_ =>` fallback states why the forms it does not name carry no variable use.
+- It names every `Value` form, with no `_ =>` fallback.
+- Not reported, each because it reads no released value: an initialisation to a constant, a
+  release, a variable that holds no store (measured: on #2636's shape with the fix reversed the
+  integer and text versions answer right, the vector answers empty), a block's tail variable
+  after the block (the block's value, handed on), and a binder of an `if`'s condition read in
+  its then branch (a pattern binds into its guard and its body).
 - A report names the rule (`@FR-B-Scope`), the function, the variable, the use's IR node and
   both scopes.  Its kind in the checker's table is **out of scope**, beside leak, double end,
   use after end and wrong end.
@@ -71,9 +78,9 @@ Each phase has a positive control that must go red.
 | Phase | Deliverable | Validated by (what goes red) | E |
 |---|---|---|---|
 | P0 probe | The slot validator over #2636 on the build before its fix | **Done 2026-11-25:** not caught (see § Why this shape) | XS |
-| P1 the check | The walk above, under `LOFT_OWN_ORACLE=check`; the new kind in STORE_RECORDS.md § The checks | Control: #2636's cell (`loft-suite` `rules/binding/B-Scope/2636-…`) is reported on 02c3cf75d and clean on the build with the fix.  Then the suite and the gate corpus at HEAD: each report is fixed, or is the check's own bug, fixed in the check | S |
-| P2 the sweep | `own_sweep.py` scores the kind: a report with no run-time finding is STATIC; a run-time wrong answer the check missed is MISS | `own_sweep.py --suite ../loft-suite` under every `LOFT_NO_*` switch: MISS = 0 and STATIC = 0, or each one resolved as a records gap or a real defect | S |
-| P3 the rule | The owner's three-place rule for store-lifetime defects (STORE_RECORDS.md § Every new defect) also names a scope defect: the compiler, the records, and the check reporting it with the cure off | `rule_tags.py check`: the check's site cites `@FR-B-Scope` | XS |
+| P1 the check | The walk above; the new kind in STORE_RECORDS.md § The checks | **Done:** #2636's cell with the fix reversed reports `v` in all five functions, clean with it.  The suite (2139 cells) and the gate corpus (619 files) at HEAD: 2600 reports first, 0 after.  Fixed in the compiler: `(R-ForwardWalk)`'s index, `(R-LiftReuse)`'s shared lift, a hoisted vector literal's element records (`scopes/args.rs`); the rest were the check's own, fixed in the check | S |
+| P2 the sweep | `own_sweep.py --wrong` scores the kind: a failed test is a fault (`wrong`) the kind answers | **Done:** #2636's cell CAUGHT (matched) with the fix reversed, CLEAN at HEAD.  The binding chapter under every `LOFT_NO_*` switch (16016 runs): the kind fires in none, so no false finding.  Its 32 wrong-only MISS rows are other rewrites' classes (`OUT_OF_LINE`, `CALLEE_DISTURB`, `OWNER_WITNESS`), and `ENDED_CAPTURE_SCOPE`'s is a parse-time name binding the IR keeps consistent | S |
+| P3 the rule | The owner's three-place rule for store-lifetime defects (STORE_RECORDS.md § Every new defect) also names a scope defect: the compiler, the records, and the check reporting it with the cure off | **Done:** STORE_RECORDS.md § Every new defect; `formal/binding.md` `(B-Scope)` § Checked; the check's site cites `@FR-B-Scope` | XS |
 | P4 (later) read before write | A static check that every read of a heap or reference variable follows a write on every path: the static twin of `LOFT_VERIFY_STACK` | Opened only if P1–P2 find defects the suite did not.  Control: loft#1386's shape on the build before its fix | M |
 
 ## Out of scope

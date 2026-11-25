@@ -1434,7 +1434,12 @@ impl Scopes<'_> {
         // `var_scope` would keep pointing those vars at a scope no emitted code opens and
         // slot assignment would place them against a sibling's zone.
         if self.scope_encloses(*w) {
-            Some((*w, None))
+            // The block disappears whatever its tail: a vector literal whose view is declared
+            // outside still declares its element records (`_elm_N`) at its own scope, which no
+            // emitted code opens once it is hoisted (`@FR-B-Scope`).  A struct literal's block
+            // keeps its scope's entries: its tail is the owner itself.
+            let absorb = matches!(bl.result.base(), Type::Vector(_, _)).then_some(bl.scope);
+            Some((*w, absorb))
         } else if self.var_scope.get(w) == Some(&bl.scope) {
             Some((*w, Some(bl.scope)))
         } else {

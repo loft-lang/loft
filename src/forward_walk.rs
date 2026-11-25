@@ -316,15 +316,7 @@ fn rewrite_in(
     // The index is the loop's own variable, as `i` is in `for i in 0..n`: the body reads it, so
     // its scope is the loop's, not the `Iter range` block's that only computes the next one
     // (`@FR-B-Scope`).
-    let loop_scope = block
-        .operators
-        .iter()
-        .find_map(|o| match o {
-            Value::Loop(lp) => Some(lp.scope),
-            _ => None,
-        })
-        .expect("matched");
-    let at = vars.add_unique("walk_at", &int_tp, loop_scope);
+    let at = vars.add_unique("walk_at", &int_tp, loop_scope(block));
     // The length, read once before the loop, after the handle is taken.
     let set_vec = block
         .operators
@@ -381,6 +373,18 @@ fn rewrite_in(
     lp.operators = vec![Value::Set(at, Box::new(iter)), element];
     lp.operators.extend(body);
     n + 1
+}
+
+/// The scope of the walk's loop in `block`, which the match found.
+fn loop_scope(block: &Block) -> u16 {
+    block
+        .operators
+        .iter()
+        .find_map(|o| match o {
+            Value::Loop(lp) => Some(lp.scope),
+            _ => None,
+        })
+        .expect("matched")
 }
 
 /// Rewrite every admitted forward walk in the program; answers how many.

@@ -18,12 +18,22 @@
 //! live range a slot is placed by runs from the first write to the last mention whatever the
 //! scopes say, so neither form costs a slot.
 //!
+//! A block whose last operator is a variable yields that variable as its value: the block's end
+//! hands the value on instead of releasing it, so the variable is in scope wherever the block's
+//! value is read after it (a `return` of a tuple a block built).
+//!
+//! For the same reason a variable that holds no store is not checked: an integer, a float, a
+//! boolean, a character, a plain enum or a tuple of them.  Its scope's end releases nothing,
+//! and its slot is live to its last mention, so a use after that end reads what the variable
+//! holds.  Measured on loft#2636's shape with its fix reversed: the integer and text locals
+//! answered right, the vector local answered empty.
+//!
 //! **Independence.**  The check reads only the IR's block nesting (`Block::scope`) and the
 //! variable table's `scope`, never a predicate of `src/scopes/`, the pass whose result it
 //! checks.  It runs under `LOFT_OWN_ORACLE=check` and `=check-records`, the two modes
 //! `scripts/own_sweep.py` scores; it changes nothing it reads.
 
-use crate::data::{Data, DefType, Value};
+use crate::data::{Data, DefType, Type, Value};
 use crate::variables::Function;
 
 /// One use of a variable outside its scope.
@@ -72,6 +82,7 @@ fn check_function(vars: &Function, code: &Value, releases: &[u32], data: &Data) 
         vars,
         releases,
         data,
+        yielded: Vec::new(),
         open: vec![0],
         found: Vec::new(),
     };
@@ -84,6 +95,8 @@ struct Walk<'a> {
     /// The `OpFree*` operators: a release of a variable reads no value of it.
     releases: &'a [u32],
     data: &'a Data,
+    /// The variables a block yielded as its value: they outlive that block.
+    yielded: Vec<u16>,
     /// The scopes enclosing the node being read, outermost first: the function's own (0), then
     /// one per enclosing block.
     open: Vec<u16>,
@@ -94,7 +107,8 @@ impl Walk<'_> {
     /// A use of variable `v` here.  An argument lives for the whole call; a variable whose
     /// scope was never set (`u16::MAX`) was never placed, so it has no slot to lose.
     fn use_of(&mut self, v: u16) {
-        if self.vars.is_argument(v) {
+        if self.vars.is_argument(v) || holds_no_store(self.vars.tp(v)) || self.yielded.contains(&v)
+        {
             return;
         }
         let s = self.vars.scope(v);
@@ -174,6 +188,9 @@ impl Walk<'_> {
                 self.open.push(bl.scope);
                 self.all(&bl.operators);
                 self.open.pop();
+                if let Some(Value::Var(w)) = bl.operators.last().map(Value::unspan) {
+                    self.yielded.push(*w);
+                }
             }
             Value::If(c, t, e) => {
                 self.node(c);
@@ -212,6 +229,20 @@ impl Walk<'_> {
     }
 }
 
+/// A type whose value has no store, so a scope's end releases nothing of it.
+fn holds_no_store(tp: &Type) -> bool {
+    match tp {
+        Type::Integer(_)
+        | Type::Boolean
+        | Type::Float
+        | Type::Single
+        | Type::Character
+        | Type::Enum(_, false, _) => true,
+        Type::Tuple(items) => items.iter().all(holds_no_store),
+        _ => false,
+    }
+}
+
 /// The scopes of the blocks `n` yields its value through: a block and its last operator, an
 /// `if`'s two branches.  A variable these blocks bind is the condition's binding.
 fn yield_scopes(n: &Value, out: &mut Vec<u16>) {
@@ -233,8 +264,15 @@ fn yield_scopes(n: &Value, out: &mut Vec<u16>) {
 #[cfg(test)]
 mod tests {
     use super::check_function;
-    use crate::data::{Block, Data, I32, Type, Value};
+    use crate::data::{Block, Data, Deps, I32, Type, Value};
     use crate::variables::Function;
+
+    /// The definition number the tests use for a release (`OpFree*`).
+    const FREE: u32 = 7;
+
+    fn vec_tp() -> Type {
+        Type::Vector(Box::new(I32.clone()), Deps::none())
+    }
 
     fn block(scope: u16, operators: Vec<Value>) -> Value {
         Value::Block(Box::new(Block {
@@ -246,61 +284,116 @@ mod tests {
         }))
     }
 
-    /// loft#2636's shape: `v` homed in the `if`'s first arm (scope 2), read after the `if` in
-    /// the body (scope 1) — the slot is the next sibling's by then.
+    fn free(v: u16) -> Value {
+        Value::Call(FREE, vec![Value::Var(v)])
+    }
+
+    fn check(f: &Function, code: &Value) -> Vec<(u16, u16, u16)> {
+        check_function(f, code, &[FREE], &Data::new())
+            .iter()
+            .map(|x| (x.var, x.var_scope, x.use_scope))
+            .collect()
+    }
+
+    /// loft#2636's shape: `v` homed in the `if`'s first arm (scope 2) and released at its end,
+    /// then read after the `if` in the body (scope 1).
     #[test]
     fn a_local_homed_in_an_arm_and_read_after_it_is_reported() {
         let mut f = Function::new("n_t", "t.loft");
-        let v = f.add_unique("v", &I32, 2);
+        let v = f.add_unique("v", &vec_tp(), 2);
         let code = block(
             1,
             vec![
                 Value::If(
                     Box::new(Value::Boolean(true)),
-                    Box::new(block(2, vec![Value::Set(v, Box::new(Value::Int(1)))])),
-                    Box::new(block(3, vec![Value::Set(v, Box::new(Value::Int(2)))])),
+                    Box::new(block(
+                        2,
+                        vec![Value::Set(v, Box::new(Value::Var(v))), free(v)],
+                    )),
+                    Box::new(block(3, vec![])),
                 ),
                 Value::Return(Box::new(Value::Var(v))),
             ],
         );
-        let found = check_function(&f, &code, &[], &Data::new());
-        assert_eq!(found.len(), 1, "one finding per variable");
-        assert_eq!(
-            (found[0].var, found[0].var_scope, found[0].use_scope),
-            (v, 2, 1)
-        );
+        assert_eq!(check(&f, &code), vec![(v, 2, 1)]);
     }
 
-    /// The legal forms: a local of the enclosing block read in a nested one, a function-level
-    /// local (scope 0), and a tuple read — another spelling of a use — inside the scope.
+    /// The forms that are not reported: a local of the enclosing block read in a nested one, a
+    /// function-level local (scope 0), an initialisation to a constant and a release outside the
+    /// scope, a pattern's binder read in the THEN branch of the `if` whose condition bound it,
+    /// and a variable that holds no store.
     #[test]
-    fn uses_inside_the_scope_are_not_reported() {
+    fn uses_the_rule_allows_are_not_reported() {
         let mut f = Function::new("n_t", "t.loft");
-        let outer = f.add_unique("o", &I32, 1);
-        let top = f.add_unique("t", &I32, 0);
+        let outer = f.add_unique("o", &vec_tp(), 1);
+        let top = f.add_unique("t", &vec_tp(), 0);
+        let late = f.add_unique("l", &vec_tp(), 3);
+        let bound = f.add_unique("b", &vec_tp(), 4);
+        let kept = f.add_unique("k", &I32, 5);
         let code = block(
             1,
             vec![
-                Value::Set(outer, Box::new(Value::Int(1))),
-                block(
-                    2,
-                    vec![
-                        Value::Var(outer),
-                        Value::TupleGet(outer, 0),
-                        Value::Var(top),
-                    ],
+                Value::Set(late, Box::new(Value::Null)),
+                Value::Set(outer, Box::new(Value::Var(top))),
+                block(2, vec![Value::Var(outer), Value::Var(top)]),
+                block(3, vec![Value::Set(late, Box::new(Value::Var(top)))]),
+                free(late),
+                Value::If(
+                    Box::new(block(4, vec![Value::Set(bound, Box::new(Value::Var(top)))])),
+                    Box::new(Value::Var(bound)),
+                    Box::new(Value::Null),
                 ),
+                block(5, vec![Value::Set(kept, Box::new(Value::Var(top)))]),
+                Value::Var(kept),
+                free(outer),
+                free(top),
+                free(bound),
             ],
         );
-        assert!(check_function(&f, &code, &[], &Data::new()).is_empty());
+        assert_eq!(check(&f, &code), vec![]);
     }
 
     /// A use spelled outside a `Var` node is a use: a tuple read out of scope is reported.
     #[test]
     fn a_tuple_read_out_of_scope_is_reported() {
         let mut f = Function::new("n_t", "t.loft");
-        let v = f.add_unique("v", &I32, 2);
-        let code = block(1, vec![block(2, vec![]), Value::TupleGet(v, 0)]);
-        assert_eq!(check_function(&f, &code, &[], &Data::new()).len(), 1);
+        let v = f.add_unique("v", &vec_tp(), 2);
+        let code = block(1, vec![block(2, vec![free(v)]), Value::TupleGet(v, 0)]);
+        assert_eq!(check(&f, &code), vec![(v, 2, 1)]);
+    }
+
+    /// A block that yields its variable hands it on: a `return` of it after the block reads
+    /// the block's value, not a released one.
+    #[test]
+    fn a_block_s_yielded_variable_outlives_the_block() {
+        let mut f = Function::new("n_t", "t.loft");
+        let w = f.add_unique("w", &vec_tp(), 2);
+        let code = block(
+            1,
+            vec![
+                block(2, vec![Value::Set(w, Box::new(Value::Null)), Value::Var(w)]),
+                Value::Return(Box::new(Value::Var(w))),
+            ],
+        );
+        assert_eq!(check(&f, &code), vec![]);
+    }
+
+    /// The binder of an `if`'s condition is not in scope in its ELSE branch.
+    #[test]
+    fn a_condition_binder_read_in_the_else_branch_is_reported() {
+        let mut f = Function::new("n_t", "t.loft");
+        let v = f.add_unique("v", &vec_tp(), 2);
+        let code = block(
+            1,
+            vec![Value::If(
+                Box::new(block(
+                    2,
+                    vec![Value::Set(v, Box::new(Value::Null)), free(v)],
+                )),
+                Box::new(Value::Null),
+                Box::new(Value::Var(v)),
+            )],
+        );
+        assert_eq!(check(&f, &code), vec![(v, 2, 1)]);
     }
 }
