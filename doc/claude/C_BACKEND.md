@@ -19,7 +19,8 @@ loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache t
                                    #   .loft/cache/native-c-<key>, run it (exit 2 on a refusal);
                                    #   --ship is -O3, --native-debug -O0 -g,
                                    #   --native-emit [out.c] writes the C; plain --native means this;
-                                   #   LOFT_KEEP_NATIVE_C=1 keeps the .c
+                                   #   LOFT_KEEP_NATIVE_C=1 keeps the .c; one program builds to
+                                   #   the same C and executable anywhere: REPRODUCIBLE_OUTPUT.md
 loft --native-android app.apk prog.loft  # the C built as an Android app by the NDK's clang
 LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra instead of -w and
                                    #   print the warnings; =strict makes each an error, =all also
