@@ -147,11 +147,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
-        // (A `&` record or vector shares its referent, as the value itself is shared —
-        // `closure_attr_type` reads `peel_link`.)
+        // (A `&` record or vector shares its referent, as the value itself is shared, and a `&`
+        // plain scalar is copied as the scalar is — `closure_attr_type` reads `peel_link`.)
         match ct {
           TyRefVar { inner: rvi } => {
-            if record_type(e, rvi) || el_types::base(rvi) is TyVector {
+            if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) {
               ct = rvi;
             }
           },
