@@ -29,7 +29,8 @@ pub fn promote_text_returns(e: el::El) {
   if len(flagged) == 0 {
     return;
   }
-  taken = el_buffers::address_taken(e);
+  // (A `par` worker is no `FnRef` value: `targeted_tret_promotion` promotes it.)
+  taken = el_buffers::address_taken(e, workers: false);
   promote: vector<integer> = [];
   for d in flagged {
     if taken.contains(d) {

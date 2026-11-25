@@ -1593,8 +1593,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // (A fill runs no loop and mints no `_comp_N`.)
-  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText || made_vec { b.tp } else { rec_t }) };
+  // (A fill runs no loop and mints no `_comp_N`; nor does a constant empty range, which
+  // `try_const_unroll_comprehension` builds as the empty vector before the loop is made.)
+  comp = if fill_count >= 0 || (ranged && rw != null && rw!.empty) { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText || made_vec { b.tp } else { rec_t }) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if keyed {
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
