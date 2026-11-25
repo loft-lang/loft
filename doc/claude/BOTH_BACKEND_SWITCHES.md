@@ -418,9 +418,9 @@ Three switches turn off how a call's argument is named for the copy-or-adopt of 
 `heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built` and
 `heap/H-FreeTwice/2638-…`).  **`LOFT_NO_RETBUF_ARG_LIFT=1`** leaves a call result delivered into
 the caller's buffer (`first(none())`) unnamed: the copy of the answer loses its source-free and
-the record the callee made leaks (loft#2637).  **`LOFT_NO_JOIN_ARG_LIFT=1`** leaves a `??`
+the record the callee made leaks.  **`LOFT_NO_JOIN_ARG_LIFT=1`** leaves a `??`
 argument whose default the caller builds in a buffer unbound: an answer that is that default is
-adopted and freed again by the buffer (loft#2638).  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds a
+adopted and freed again by the buffer.  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds a
 call whose literal arguments were hoisted through its preamble (`o = { INSERT …; f(…) }`) instead
 of as the call: the bind adopts, and a second argument the callee answers is freed twice.
 

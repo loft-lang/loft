@@ -1245,6 +1245,15 @@ impl Run<'_> {
 
     /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
     fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
+        // A scalar local holds no store: `n = r` through a `&integer` link copies the value out
+        // of the record, and reading `n` later reads nothing that record's end touches.
+        let none = Val::null();
+        let function = &self.data.def(self.d_nr).variables;
+        let val = if v < function.count() && crate::data::is_scalar(function.tp(v)) {
+            &none
+        } else {
+            val
+        };
         st.copies.retain(|&(a, b)| a != v && b != v);
         st.views.retain(|&(a, b)| a != v && b != v);
         for k in Self::stores_of(&Self::pts(st, v)) {
