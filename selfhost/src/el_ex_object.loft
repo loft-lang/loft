@@ -1966,6 +1966,20 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     return ex(ir::NdCall { def_nr: od, args: [list[0]!, list[1]!, ir::NdInt { n: db_tp }] }, ir::TyVoid);
   }
   if d < 0 {
+    // (@PLN219: a callee declared later is unknown on the first pass, so a field link handed to
+    // it keeps its field in case the parameter is a slot — `slot_cell_argument`.)
+    if e.first_pass {
+      for la in list {
+        match el_ir::unspan(la) {
+          NdVar { n: lv } => {
+            if vars.amp_places.contains(lv) && !vars.vars[lv].argument && !e.slot_links.contains(e.context * 65536 + lv) {
+              e.slot_links += [e.context * 65536 + lv];
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });

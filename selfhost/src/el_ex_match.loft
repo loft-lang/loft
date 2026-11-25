@@ -302,9 +302,29 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
   // `slot_cell_argument`'s other half: a LOCAL link to an out-of-line field (`n = &t.right;
   // take_min(n)`) is handed as a cell naming the link's slot (`OpSlotTag(_slot_n_N)`), the call's
   // answer held while the link is read again after it — not carried: refused by name.
-  if !e.first_pass && binds::slot_link_def(e.b, pt) != null && vars.amp_places.contains(v) && !vars.vars[v].argument {
-    el::refuse(e, "a local field link handed to a `&` parameter of a record held out of line");
-    return null;
+  // The first pass records that the link is handed on, so the second keeps its field in a slot
+  // (`el_ex_assign`'s slot-link bind); a link the bind gave no slot keeps the general road.
+  if binds::slot_link_def(e.b, pt) != null && vars.amp_places.contains(v) && !vars.vars[v].argument {
+    lkey = e.context * 65536 + v;
+    if e.first_pass && !e.slot_links.contains(lkey) {
+      e.slot_links += [lkey];
+    }
+    lslot = -1;
+    for so in vars.slot_of {
+      if so == v {
+        lslot = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    if !e.first_pass && lslot >= 0 {
+      lcell = el_vars::work_ref_p2(vars, ir::TyReference { n: binds::slot_link_def(e.b, pt)!, dep: [] });
+      el_vars::set_skip_free(vars, lcell, "slot_cell_argument");
+      vars.arg_posts += [el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: lslot }]))];
+      return ir::NdInsert { items: [el_ir::v_set(lcell, el_ir::cl(e, "OpSlotTag", [ir::NdVar { n: lslot }])), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: lcell }])] };
+    }
+    if !e.first_pass {
+      el::refuse(e, "a local field link handed to a `&` parameter of a record held out of line");
+      return null;
+    }
   }
   vt = el_vars::tp(vars, v);
   // `@FR-T-Ref-Rep` (`ref_linked_tuple_locals`): a tuple local handed to a `&(…)` parameter
