@@ -1269,8 +1269,10 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // (Built in place, the route is printed once the fields are, with their notes.)
   // (`builds_into_element`: an ELEMENT of a record type holding any collection field is never
   // built in place — the copy road, the literal apart and copied over the element.)
+  // (Only an element of a LOCAL vector: one reached through a parameter keeps its road.)
+  local_elem = element_place && aroot >= 0 && !vars.vars[aroot].argument;
   coll_decline = false;
-  if element_place && !apart {
+  if local_elem && !apart {
     for ra in el::def(e, rd).attributes {
       rab = el_types::base(ra.typedef[0] ?? ir::TyVoid);
       if rab is TyVector || rab is TyHash || rab is TyIndex || rab is TySorted || rab is TyRadix || rab is TyTrie {
@@ -1278,9 +1280,13 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       }
     }
   }
-  if apart {
-    place_literal_route(e, vars, place, rhs, "apart(decline_place:primed_reads_place)");
+  // (An ELEMENT place's primed field that reads the place is no decline in Rust's trace — it is
+  // noted, `cells:element_primed`, and the in-place line printed where the literal is built; the
+  // collection decline above takes the copy road.)
+  if apart && !local_elem {
+    place_literal_route(e, vars, place, rhs, "decline_place:primed_reads_place");
   }
+  coll_decline = coll_decline || (apart && local_elem);
   apart = apart || coll_decline;
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
@@ -1352,11 +1358,31 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     rec = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
     vars.lit_root = aouter_root;
     astage = vars.lit_stage;
+    anotes = vars.lit_notes;
     vars.lit_place = aouter_place;
     vars.lit_stage = aouter_stage;
     vars.lit_notes = aouter_notes;
     if el_types::is_unknown(rec.tp) {
       return ex(ir::NdNull, ir::TyVoid);
+    }
+    // (Rust's trace names the collection decline's literal as built in place, its staged
+    // fields noted: `in_place(place;n:staged)` — the copy road under the in-place road's line.)
+    if coll_decline {
+      // (In field order: a staged field, or a primed one reading the place.)
+      enotes: vector<text> = [];
+      for efi in fields {
+        match e.p.nodes[efi] {
+          SFieldInit { name: efn, e: efe } => {
+            if anotes.contains("{efn}:staged") {
+              enotes += ["{efn}:staged"];
+            } else if efe != null && e.p.nodes[efe!] is SVecLit && aroot >= 0 && el_ex_into::syntax_names(e, efe!, el_vars::name_of(vars, aroot)) {
+              enotes += ["{efn}:element_primed"];
+            }
+          },
+          _ => {}
+        }
+      }
+      place_literal_route(e, vars, place, rhs, "", notes: if len(enotes) == 0 { "" } else { ";{enotes.join(",")}" });
     }
     rcode = rec.code;
     if len(astage) > 0 {
