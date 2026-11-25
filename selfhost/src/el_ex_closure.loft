@@ -151,7 +151,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // plain scalar is copied as the scalar is — `closure_attr_type` reads `peel_link`.)
         match ct {
           TyRefVar { inner: rvi } => {
-            if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) {
+            if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) || (el_types::base(rvi) is TyText && !(rvi is TyOptional)) {
               ct = rvi;
             }
           },
@@ -451,6 +451,8 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
       // A text capture's field keeps the borrows of the local it was captured from.
       if cells[c#index]! < 0 && el_types::base(c.tp) is TyText && el_vars::var(vars, c.name) >= 0 {
         ft = el_types::base(el_vars::tp(vars, el_vars::var(vars, c.name)));
+        // (A `&text` capture's field is the text, copied: `s: text`.)
+        ft = match ft { TyRefVar { inner: fri } => el_types::base(fri), _ => ft };
       }
       e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
       note_shared_vector(e, rd, c.name, c.tp);
