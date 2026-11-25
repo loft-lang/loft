@@ -1070,7 +1070,7 @@ fn p217_text_self_accumulator() {
 /// cause was `Stores::copy_claims` in `src/database/allocation.rs`:
 /// the text arm checked the *string content* via `s.is_empty()` to
 /// decide whether to allocate or write the null sentinel.  But
-/// `get_str(0)` returns `STRING_NULL` (`"\0"`, len 1) for a null
+/// `get_str(0)` returned a non-empty null spelling for a null
 /// source, so the empty-content check never fired for genuine
 /// nulls — it ONLY fired when the source had a real allocated
 /// empty string.  Result: copying a `""` element produced `null`

@@ -4034,6 +4034,8 @@ The directory form is found in any search directory you NAMED — `--lib \<dir\>
 
 A lone script with no manifest above it reads its `lib/` flat, so there a library must be the single file `lib/mylib.loft` — a `lib/mylib/` directory beside such a script answers "Library 'mylib' not found". Giving the script a `loft.toml` is what turns the directory form on.
 
+A library your project has pinned (in `loft.lock`) always loads that version, whatever same-named file lies in the directory you run from. To debug or fix it, say so: `--lib \<dir\>` runs your copy for one run, and `loft develop mylib` puts an editable copy in `lib/mylib` that the project uses until `loft develop --done mylib`.
+
 The `loft.toml` manifest carries the whole package declaration — name, version, dependencies, native crates, build targets. Two of its settings decide how the library above is LOADED:
 
 ```
@@ -4733,7 +4735,7 @@ fn counted_call(calls: &integer, value: integer) -> integer {
 }
 ```
 
-Used to obtain a null text value (an uninitialized field is the NUL sentinel).
+Used to obtain a missing text field.
 
 ```rust
 struct NullTextHolder {
@@ -4791,7 +4793,7 @@ Every type reserves one special value to mean "nothing here" (null). Be aware of
 - `integer`         — the most negative 64-bit integer (-9 223 372 036 854 775 808) is null
 - `float`/`single`  — `NaN` (Not a Number) is null
 - `character`       — the NUL character (code point 0) is null
-- `text`            — a single NUL character (`'\\0'`) is null; the empty string `""` is NOT null
+- `text`            — no text at all; `""` and a NUL character (`"\\0"`) are texts like any other
 - `reference`       — record 0 is null
 - `boolean`         — a third byte state, which is neither `false` nor `true`
 - plain `enum`      — both the 0 byte and the 255 byte are reserved, so an
@@ -4800,7 +4802,7 @@ Every type reserves one special value to mean "nothing here" (null). Be aware of
                     enum holds at most 254 variants
 ```
 
-For the first four, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with `?? null` (or a following null-check), division by zero produces this same value, so both paths look the same to your code:
+For the first three, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with `?? null` (or a following null-check), division by zero produces this same value, so both paths look the same to your code:
 
 ```rust
   zero = 0;
@@ -4816,7 +4818,7 @@ Arithmetic on null propagates: null plus anything is null.
   assert(! (n + 1), "null + 1 is still null");
 ```
 
-Text null is the NUL character ('\\0'), not the empty string. A `text?` local or field can hold it; a plain `text` cannot, and a parse respects that.
+Text null is no text at all, not the empty string and not a NUL character. A `text?` local or field can hold it; a plain `text` cannot, and a parse respects that.
 
 ```rust
   holder = NullTextHolder.parse(`{{}}`);

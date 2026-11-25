@@ -1053,7 +1053,7 @@ impl Stores {
     bridges `String` → `Str` via `Deref` (the @P304 path, like `to_lowercase`).
 
     **Unset and set-to-empty are different answers**, which is the whole point of the
-    distinction: an unset variable is `STRING_NULL` and an empty one is `""`.  This returned
+    distinction: an unset variable is the null text and an empty one is `""`.  This returned
     `""` for both, so the `== null` test its own documentation invited could never fire and
     a program could not tell a variable it must supply from one deliberately blanked
     (loft#1302).  `text` carries null in-band, so the signature never stood in the way —
@@ -1068,7 +1068,7 @@ impl Stores {
     pub fn os_variable(&mut self, name: &str) -> String {
         std::env::var_os(name)
             .and_then(|s| s.into_string().ok())
-            .unwrap_or_else(|| crate::store::STRING_NULL.to_string())
+            .unwrap_or_else(crate::text_null::null_string)
     }
 
     /**
@@ -1789,11 +1789,9 @@ impl ShowDb<'_> {
                 }
             } else if self.store().text_is_null(self.rec, self.pos) {
                 // @FR-F-Render — a null text renders as the word `null` in EVERY mode, and
-                // @FR-L-Null-Text says which slots are null: an unset handle and an allocated
-                // `STRING_NULL` record alike.  Rendering the sentinel raw put a NUL byte on
-                // the wire (`{a:1,t:"\0"}`), a present, corrupt value where the program meant
-                // nothing; in JSON and loft it also keeps SQL NULL distinct from `''` across a
-                // round trip rather than collapsing both to a string.
+                // @FR-L-Null-Text says which slots are null (`Store::text_is_null`); in JSON
+                // and loft it also keeps SQL NULL distinct from `''` across a round trip rather
+                // than collapsing both to a string.
                 s.push_str("null");
             } else {
                 let text_val = self.store().get_str(text_nr);

@@ -566,10 +566,10 @@ fn split_at(
         return refuse("a function-pointer or variadic parameter");
     }
     if stmts.iter().any(|s| {
-        idents(&s.bare_text()).into_iter().any(|(a, e)| {
-            let b = s.bare_text();
-            matches!(&b[a..e], "setjmp" | "_setjmp" | "sigsetjmp")
-        })
+        let b = s.bare_text();
+        idents(&b)
+            .into_iter()
+            .any(|(a, e)| matches!(&b[a..e], "setjmp" | "_setjmp" | "sigsetjmp"))
     }) {
         return refuse("a setjmp");
     }

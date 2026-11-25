@@ -110,6 +110,26 @@ ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 # (elaborator-instruments.md § 2), filled by `one` when the state trace is on:
 # path -> [(side, pass, line, col, text)], side `rust` / `port` / `refuse`.
 ROUTES = {}
+# The function each route site belongs to, `{path: {(side, pass, line): name}}`: the name of the
+# next `fn-end` of that pass in the same trace (a site prints before its function's end).  What
+# the route join reads to say whose a disagreement is.
+ROUTE_FN = {}
+FN_END_ANY = re.compile(r"^state (\d) \d+:\d+ fn-end (\S+)")
+
+
+def route_owners(side, stderr):
+    """`{(side, pass, line): function}` for every route line of one trace."""
+    out, pending = {}, {}
+    for l in stderr.splitlines():
+        m = ROUTE.match(l)
+        if m:
+            pending.setdefault(m.group(1), []).append((side, m.group(1), m.group(2)))
+            continue
+        e = FN_END_ANY.match(l)
+        if e:
+            for k in pending.pop(e.group(1), []):
+                out.setdefault(k, e.group(2))
+    return out
 # The reimplementation contract (`LOFT_REPORT_CONTRACT`, src/parser/contract.rs and
 # selfhost/src/el_contract.loft): per program that agrees on its image, the facts its functions
 # carry differently — {fact: count} — and the facts this port does not derive yet (`?`).
@@ -493,6 +513,7 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                          for m2 in map(ROUTE.match, rust_err.splitlines()) if m2 and m2.group(4) == "route"]
                         + [("port" if m2.group(4) == "route" else "refuse",) + m2.groups()[:3] + (m2.group(5),)
                            for m2 in map(ROUTE.match, m.stderr.splitlines()) if m2])
+        ROUTE_FN[path] = {**route_owners("rust", rust_err), **route_owners("port", m.stderr)}
         # The first pass is compared where the image is: every function of a program that
         # agrees, the agreeing functions of a refused one; a differing program's is not.
         if not refused and mine == want:
@@ -646,6 +667,10 @@ def main():
     # and the `beside` worklist (shape, program, function).
     fn_results = {}
     beside = []
+    # The HIDDEN differs: definitions of a refused program that differ (or are unaligned) with no
+    # refusal of their own — wrong already, and seen only once the refusal elsewhere is lifted.
+    # `(families, program, definition, verdict, shape)`.
+    hidden = []
     fn_layers = {}     # program::definition -> the layers an unaligned definition differs in
     reasons = collections.Counter()
     families = collections.Counter()
@@ -725,6 +750,12 @@ def main():
                 reasons.update(set(detail))
                 fams = {d.split(": ", 1)[0] for d in detail}
                 families.update(fams)
+                # (`numbers` is a renumbering the refusal itself causes, `emptied` a section it
+                # emptied: neither is a difference of the definition's own.)
+                for fname, (fv, shape) in fns.items():
+                    if fname.startswith("(") or not (fv == "unaligned" or (fv == "beside" and shape not in ("numbers", "emptied"))):
+                        continue
+                    hidden.append((fams, baseline.name_of(f, root, suite), fname, fv, shape))
                 blocked.append(fams)
                 if o.which and any(d.startswith(o.which) for d in detail):
                     which.append((len(fams), f))
@@ -837,6 +868,27 @@ def main():
         details = [(r, n) for r, n in reasons.most_common() if r.startswith(f + ": ")]
         for r, n in details[:o.details]:
             print(f"         {n:5}  {r[len(f) + 2:]}")
+    # The hidden differs by the refusal family that hides them: `alone` counts those in programs
+    # the family alone blocks — what lifting that family exposes at once.
+    if hidden:
+        by_fam = collections.defaultdict(lambda: [0, set(), 0, set()])
+        for fams_, prog, fname, fv, shape in hidden:
+            for fam in fams_:
+                b = by_fam[fam]
+                b[0] += 1
+                b[1].add(prog)
+                if len(fams_) == 1:
+                    b[2] += 1
+                    b[3].add(prog)
+        print(f"hidden differs (definitions of refused programs that differ with no refusal of their own): "
+              f"{len(hidden)} in {len({h[1] for h in hidden})} program(s); by the family hiding them "
+              f"(definitions/programs, of which where it alone blocks):")
+        for fam, (n, ps, na, pa) in sorted(by_fam.items(), key=lambda x: (-x[1][2], -x[1][0], x[0]))[:12]:
+            print(f"  {n:5}/{len(ps):<4} alone {na:4}/{len(pa):<4} {fam}")
+        if os.environ.get("LOFT_ELAB_HIDDEN_FILE"):
+            with open(os.environ["LOFT_ELAB_HIDDEN_FILE"], "w", encoding="utf-8") as fh:
+                for fams_, prog, fname, fv, shape in sorted(hidden, key=lambda h: (sorted(h[0]), h[1], h[2])):
+                    fh.write(f"{' | '.join(sorted(fams_))}\t{'alone' if len(fams_) == 1 else len(fams_)}\t{prog}\t{fname}\t{fv}\t{shape}\n")
     if alone:
         print("refusals that alone block a program:")
         for f, k in alone.most_common(15):
@@ -969,16 +1021,33 @@ def main():
         # is a pass and a line (the n-th verdict of a handler on that line pairs with the n-th);
         # `agree` = the same verdict, `kind` = the same variant with other fields, `differ`,
         # `missing` (the port names no verdict there) and `port only`.
-        VALUE_HANDLERS = ("classify_ret_promotion", "classify_reference_delivery", "materialize_return_into")
+        # (`literal_into_place`: where a literal written into a destination is built, and why;
+        # `match_subject`: what a match is over and what that borrows.)
+        VALUE_HANDLERS = ("classify_ret_promotion", "classify_reference_delivery", "materialize_return_into",
+                          "literal_into_place", "match_subject")
         vals = {h: collections.Counter() for h in VALUE_HANDLERS}
         rows = []
         kind_of = lambda v: re.split(r"[ {(]", v, maxsplit=1)[0]
+        # Whose a disagreement is (`owner`, the last column): a site in a definition that agrees on
+        # every layer is the CLASSIFIER's — the lowering is Rust's there, the verdict is not; one in
+        # a definition that differs or is refused follows from the port's own state (`port-state`);
+        # a port-only verdict whose twin is missing elsewhere in the same function is a
+        # `position` slip, not a disagreement.
+        owners = collections.Counter()
+        def fn_of(path, side, site):
+            fns_ = ROUTE_FN.get(path, {})
+            return fns_.get((side, site[0], site[1])) or fns_.get(("rust" if side == "port" else "port", site[0], site[1])) or "?"
+        def fn_verdict(path, fname):
+            name = baseline.name_of(path, root, suite)
+            pv_ = results.get(name, "?")
+            return fn_results.get(name + "::" + fname, pv_) if pv_ == "refused" else pv_
         for path, rs in ROUTES.items():
             for h in VALUE_HANDLERS:
                 at = {"rust": collections.defaultdict(list), "port": collections.defaultdict(list)}
                 for side, ps, ln, col, text in rs:
                     if side in at and text.startswith(h + "="):
                         at[side][(ps, ln)].append((col, text[len(h) + 1:]))
+                prow = []
                 for site in sorted(set(at["rust"]) | set(at["port"])):
                     ra, pa = at["rust"].get(site, []), at["port"].get(site, [])
                     for i in range(max(len(ra), len(pa))):
@@ -988,12 +1057,44 @@ def main():
                                    else "kind" if kind_of(rv) == kind_of(pv) else "differ")
                         vals[h][verdict] += 1
                         if verdict != "agree":
-                            rows.append((path, h, site[0], site[1], rv or "", pv or "", verdict))
+                            fname = fn_of(path, "port" if rv is None else "rust", site)
+                            prow.append([path, h, site[0], site[1], rv or "", pv or "", verdict, fname])
+                # A port-only verdict and a missing one of the same value in the same function and
+                # pass are one site printed at two positions.
+                for a in prow:
+                    if a[6] != "port only":
+                        continue
+                    for b in prow:
+                        if b[6] == "missing" and b[2] == a[2] and b[7] == a[7] and b[4] == a[5] and len(b) == 8:
+                            a.append("position")
+                            b.append("position")
+                            break
+                for a in prow:
+                    fv = fn_verdict(path, a[7])
+                    owner = a[8] if len(a) > 8 else ("classifier" if fv == "agree" else "port-state")
+                    owners[(h, owner)] += 1
+                    rows.append(tuple(a[:7]) + (f"{a[7]}:{fv}", owner))
         for h in VALUE_HANDLERS:
             c = vals[h]
             sites = sum(c[k] for k in ("agree", "kind", "differ", "missing"))
             print(f"route values: {h} {c['agree']} of {sites} sites agree; {c['kind']} same kind, "
-                  f"{c['differ']} differ, {c['missing']} missing, {c['port only']} port only")
+                  f"{c['differ']} differ, {c['missing']} missing, {c['port only']} port only"
+                  + "; not agreeing by owner: " + ", ".join(f"{o} {owners[(h, o)]}" for o in ("classifier", "port-state", "position")))
+        # `LOFT_ELAB_ROUTE_PROGRAMS=<file>`: the REACH index — every route Rust's trace prints
+        # (`parse_match`, `match_subject=literal/record`, `classify_ret_promotion=Bind {…}`), each
+        # program that reaches it, how many sites, and the program's verdict: the agreeing
+        # programs a change to that road can lose, listed before the change is tried.
+        if os.environ.get("LOFT_ELAB_ROUTE_PROGRAMS"):
+            reach = collections.defaultdict(collections.Counter)
+            for path, rs in ROUTES.items():
+                for side, ps, ln, col, text in rs:
+                    if side == "rust":
+                        reach[text][path] += 1
+            with open(os.environ["LOFT_ELAB_ROUTE_PROGRAMS"], "w", encoding="utf-8") as fh:
+                for text in sorted(reach):
+                    for path, n in sorted(reach[text].items()):
+                        name = baseline.name_of(path, root, suite)
+                        fh.write(f"{text}\t{name}\t{n}\t{results.get(name, '?')}\n")
         # `LOFT_ELAB_ROUTE_VALUES=<file>`: each site that does not agree, with both verdicts.
         if os.environ.get("LOFT_ELAB_ROUTE_VALUES"):
             with open(os.environ["LOFT_ELAB_ROUTE_VALUES"], "w", encoding="utf-8") as fh:

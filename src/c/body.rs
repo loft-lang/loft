@@ -12,6 +12,8 @@ mod apart;
 mod apart_value;
 mod chain;
 pub(crate) mod cold;
+pub(crate) mod decode_structure;
+mod decode_view;
 mod deferred;
 mod files;
 mod generator;
@@ -260,6 +262,12 @@ pub(crate) struct FnWriter<'a> {
     /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
     /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
     field_view: bool,
+    /// `@FR-R-DecodeView`: this body's part of the plan — a `__dv` twin's or a root's
+    /// (`decode_view.rs`) — and the statement its lazy holder is writing as itself.
+    dv: Option<decode_view::DvBody>,
+    dv_bypass: usize,
+    /// `@FR-R-DecodeView`'s structure clause: this body's positional mode (`decode_structure.rs`).
+    ps: Option<decode_structure::PsBody>,
     /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
@@ -909,6 +917,9 @@ impl<'a> FnWriter<'a> {
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
+            dv: None,
+            dv_bypass: 0,
+            ps: None,
             nk_skip: None,
             ap_buf: None,
             ap_views: std::collections::HashSet::new(),
@@ -1118,7 +1129,7 @@ impl<'a> FnWriter<'a> {
     /// `reserve_push_run`), and admission keeps the twin from reading its buffer, so no header
     /// is ever held for one.
     fn lean(&self) -> bool {
-        self.tr.is_some()
+        self.tr.is_some() || self.ps_lean()
     }
 
     /// A `__d` twin (`super::DS_BIT`, `@FR-R-Destination`): the return buffer is the caller's
@@ -1320,6 +1331,7 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "    {d}");
         }
         let arms = (!self.arm_fns.is_empty()).then(|| self.arm_functions(&out));
+        let closures = self.ps.is_some().then(|| self.ps_closure_functions(&out));
         let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
@@ -1332,9 +1344,9 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
         self.cold_finish(&out)?;
-        // The arms' functions land only with the body that calls them: a body the writer
-        // declines is written again, and its arms with it.
-        if let Some((decls, bodies)) = arms {
+        // The arms' functions, and a walk's closures, land only with the body that calls them:
+        // a body the writer declines is written again, and its arms with it.
+        for (decls, bodies) in arms.into_iter().chain(closures) {
             self.cx.gen_decls.borrow_mut().push_str(&decls);
             self.cx.gen_bodies.borrow_mut().push_str(&bodies);
         }
@@ -3373,6 +3385,11 @@ impl<'a> FnWriter<'a> {
     /// `ops`, since it stays bound while the value is written.
     fn stmts_upto(&mut self, all: &[Value], end: usize, ind: usize) -> Result<(), String> {
         let ops = &all[..end];
+        // `@FR-R-DecodeView`'s structure clause: a positional body is its statements one by
+        // one — no run of them is rewritten as a whole, so each meets the clause's hooks.
+        if self.ps.is_some() {
+            return ops.iter().try_for_each(|o| self.stmt(o, ind));
+        }
         let mut i = 0;
         // The end of the push run a reservation was made for (`reserve_push_run`), and whether
         // a header frame is open for it.
@@ -5128,6 +5145,14 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-DecodeView`'s structure clause: a statement over positions.
+        if self.ps.is_some() && self.ps_stmt(v, ind)? {
+            return Ok(());
+        }
+        // `@FR-R-DecodeView`: a span local's holder, placed on its slice guard's fallback only.
+        if self.dv.is_some() && self.dv_stmt(v, ind)? {
+            return Ok(());
+        }
         // `@FR-R-SameRead`'s filed clause: what the previous statement filed reaches this one
         // only when it is a lookup's binding; every other statement forgets it (a line marker
         // is no statement).
@@ -6469,13 +6494,28 @@ impl<'a> FnWriter<'a> {
             && self.lazy_vector(r, "OpGetVectorNullable").is_none()
             && !matches!(r.unspan(), Value::Call(_, ra) if ra.first().is_some_and(|v| self.split_tab_of(v).is_some()))
         {
+            // `@FR-R-DecodeView`'s structure clause: a text leaf of a position.
+            if self.ps.is_some() {
+                self.field_view = true;
+                let e = self.ps_operator(*d, args, ind);
+                self.field_view = false;
+                if let Some(e) = e? {
+                    let view = as_view(e)?;
+                    return self.borrowed_assign(var, x, &view, ind);
+                }
+            }
+            let span = self.dv_text_spare(r, fld);
             let fld = Self::literal(fld, "field")?;
             let before = self.pending.len();
             let r = self.expr(r, ind)?;
             if self.pending.len() != before {
                 return Err("a borrowed text would view a temporary".into());
             }
-            let view = format!("loft_get_text(cx, {}, {fld})", as_ref(r)?);
+            // `@FR-R-DecodeView`: a span text field views the frame's bytes.
+            let view = match span {
+                Some(spare) => format!("loft_dv_text(cx, {}, {fld}, {spare})", as_ref(r)?),
+                None => format!("loft_get_text(cx, {}, {fld})", as_ref(r)?),
+            };
             return self.borrowed_assign(var, x, &view, ind);
         }
         let before = self.pending.len();
@@ -7539,6 +7579,11 @@ impl<'a> FnWriter<'a> {
         c: CType,
         ind: usize,
     ) -> Result<(), String> {
+        // `@FR-R-DecodeView`'s structure clause: a return over positions in value position is
+        // written as the statement it is.
+        if self.ps.is_some() && self.ps_stmt(v, ind)? {
+            return Ok(());
+        }
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -8075,6 +8120,14 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(place, kind_of(c)))
             }
             Value::Call(d, args) => {
+                // `@FR-R-DecodeView`'s structure clause: a read of a position.
+                if let Some(e) = self.ps_operator(*d, args, ind)? {
+                    return Ok(e);
+                }
+                // `@FR-R-DecodeView`: a span field's write, a span text's read.
+                if let Some(e) = self.dv_operator(*d, args, ind)? {
+                    return Ok(e);
+                }
                 // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
                 if let Some(e) = self.apv_operator(self.cx.data.def(*d).name(), v, args, ind)? {
                     return Ok(e);
@@ -8714,6 +8767,11 @@ impl<'a> FnWriter<'a> {
             // which takes it as its buffers (`expr` answered them at that argument).
             if self.apr_twin_call(d, args) {
                 mask |= super::APR_BIT;
+            }
+            // `@FR-R-DecodeView`: a region function called from a twin or a root is its `__dv`
+            // twin, with whatever other variant this call takes.
+            if self.dv_call(d) {
+                mask |= super::DV_BIT;
             }
         }
         let tr_named = tr_name.is_some();
@@ -11883,7 +11941,7 @@ impl<'a> FnWriter<'a> {
             ("OpClear", [r, tp]) => self.clear_op(r, tp, ind),
             ("OpClearText", [dest]) => {
                 let dest = self.text_dest(dest)?;
-                Ok(E::new(format!("{dest}.len = 0"), K::Void))
+                Ok(E::new(format!("loft_text_clear(cx, &{dest})"), K::Void))
             }
             ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text(cx)", K::View)),
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),

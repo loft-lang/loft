@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a struct field and an enum variant field typed by a struct declared BELOW them —
+// a forward reference whose stub the declaration adopted — take its items on pass 1, the field's
+// `Unknown(stub)` read as the struct it became.
+// Prints: 1 2
+
+struct H { items: vector<E> }
+enum K { KNone, KList { items: vector<E> } }
+struct E { n: integer }
+fn main() {
+  h = H { items: [E { n: 1 }] };
+  k = KList { items: [E { n: 2 }, E { n: 3 }] };
+  println("{len(h.items)} {match k { KList { items } => len(items), _ => 0 }}");
+}

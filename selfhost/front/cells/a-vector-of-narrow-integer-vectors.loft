@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector of narrow integer vectors (`i32`, `i16`, `u8`) — the inner literal typed
+// by the expected element on both passes, its `vector<T>` / `main_vector<T>` registered at its
+// `]` after the declared outer's, and the rows built from the content (`int<…>`, its vector, the
+// outer) rather than found by the library's full-width name.
+// Prints: 2 2 2002 255
+
+fn main() {
+  vv: vector<vector<i32>> = [[1, 2], [3]];
+  a: vector<vector<i16>> = [[1001, 2002], [4004]];
+  b: vector<vector<u8>> = [[7], [255, 1]];
+  println("{len(vv)} {vv[0][1]} {a[0][1]} {b[1][0]}");
+}

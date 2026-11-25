@@ -183,21 +183,31 @@ impl Parser {
                         // registry dependency read only through it left `names:
                         // sorted<Word[key]>` undefined while the `path =` form of the same
                         // package fired (@PLN179 finding 018's registry half).
-                        // A `--lib` copy sits between the two, where `lib_path` puts it: a
-                        // `path =` dependency outranks the flag (`lib-flag-outranked`), and the
-                        // flag outranks anything installed.
-                        let entry = self
-                            .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
-                            .map(|r| r.entry)
-                            .or_else(|| self.dep_entry_by_path(&d, dep, value));
-                        let root = match entry {
-                            Some(entry) => std::path::Path::new(&entry)
-                                .parent()
-                                .and_then(|p| p.parent())
-                                .map(std::path::Path::to_path_buf),
-                            None => self
-                                .cmdline_dep_root(dep)
-                                .or_else(|| Self::registry_dep_root(&d, dep, value)),
+                        // `@C173` — a `--lib` copy of this run comes first, then the lock's pin,
+                        // where `lib_path` puts them: the flag outranks a `path =` dependency
+                        // and anything installed, the pin a same-named directory.
+                        let flagged = self
+                            .flag_dep_root(dep)
+                            .or_else(|| Self::locked_dep_root(&d, dep, value));
+                        let entry = if flagged.is_some() {
+                            None
+                        } else {
+                            self.lib_path_manifest_resolve(&d.to_string_lossy(), dep)
+                                .map(|r| r.entry)
+                                .or_else(|| self.dep_entry_by_path(&d, dep, value))
+                        };
+                        let root = if flagged.is_some() {
+                            flagged
+                        } else {
+                            match entry {
+                                Some(entry) => std::path::Path::new(&entry)
+                                    .parent()
+                                    .and_then(|p| p.parent())
+                                    .map(std::path::Path::to_path_buf),
+                                None => self
+                                    .cmdline_dep_root(dep)
+                                    .or_else(|| Self::registry_dep_root(&d, dep, value)),
+                            }
                         };
                         if let Some(root) = root {
                             Self::add_pkg_triggers(
@@ -277,6 +287,18 @@ impl Parser {
     fn cmdline_dep_root(&mut self, dep: &str) -> Option<std::path::PathBuf> {
         let mut dirs = self.lib_dirs.clone();
         dirs.extend(Self::loft_lib_dirs());
+        self.dep_root_in(dep, dirs)
+    }
+
+    /// `@C173` — the root of `dep`'s copy in a `--lib` directory of this run, the copy
+    /// `lib_path` loads before any declared or installed one.
+    fn flag_dep_root(&mut self, dep: &str) -> Option<std::path::PathBuf> {
+        let dirs = self.flag_lib_dirs.clone();
+        self.dep_root_in(dep, dirs)
+    }
+
+    /// The root of the first packaged copy of `dep` in `dirs`.
+    fn dep_root_in(&mut self, dep: &str, dirs: Vec<String>) -> Option<std::path::PathBuf> {
         for l in dirs {
             if self.lib_path_manifest_resolve(&l, dep).is_none() {
                 continue;

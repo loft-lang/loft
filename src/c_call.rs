@@ -446,10 +446,12 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
             );
         };
         let s = c_text(raw);
-        stores
-            .store_mut(&dest)
-            .addr_mut::<String>(dest.rec, dest.pos)
-            .push_str(&s);
+        crate::text_null::put(
+            stores
+                .store_mut(&dest)
+                .addr_mut::<String>(dest.rec, dest.pos),
+            &s,
+        );
         return;
     }
     // The declared width is what makes this right; read raw, a negative `int`
@@ -521,8 +523,8 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 /// twin of this in `output_c_direct_call`) — a text return that differed between
 /// them would be exactly the divergence arc C was built to stop:
 ///
-/// - **NULL is loft null.** text-null is CONTENT-based (`STRING_NULL`), so the
-///   record carries it and `??` / `!` / `match` read it as null.
+/// - **NULL is loft null** (`text_null::null_string`), so `??` / `!` / `match` read it as
+///   null.
 /// - **The bytes end at the first NUL**, because that is what `char *` means. A
 ///   loft text carries a length and can hold an interior NUL; a C string cannot,
 ///   so the crossing truncates there rather than inventing a length.
@@ -534,7 +536,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 #[must_use]
 fn c_text(raw: u64) -> String {
     if raw == 0 {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_string();
     }
     let p = raw as *const std::ffi::c_char;
     // SAFETY: the declaration says this symbol returns `char *`, and that

@@ -220,10 +220,11 @@ fn leading_use_region(source: &str) -> Option<String> {
 fn build_test_base(
     default_dir: &str,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     base_file: &str,
     use_region: &str,
 ) -> Option<Box<TestBase>> {
-    let built = build_test_base_inner(default_dir, lib_dirs, base_file, use_region);
+    let built = build_test_base_inner(default_dir, lib_dirs, flag_lib_dirs, base_file, use_region);
     // `LOFT_TEST_BASE_REPORT=1` — say whether the sharing engaged, and for which
     // libraries.  Off by default and on stderr: a run has nothing to report here,
     // and a suite that got slower is the only reason to ask.  It is also what
@@ -261,11 +262,13 @@ fn stdlib_dir_of(default_dir: &str) -> String {
 fn build_test_base_inner(
     default_dir: &str,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     base_file: &str,
     use_region: &str,
 ) -> Option<Box<TestBase>> {
     let mut p = Parser::new();
     p.lib_dirs = lib_dirs.to_vec();
+    p.flag_lib_dirs = flag_lib_dirs.to_vec();
     let stdlib_dir = stdlib_dir_of(default_dir);
     if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir)
         && p.parse_stdlib(&stdlib_dir).is_err()
@@ -614,6 +617,7 @@ pub(crate) fn run_tests(
     no_warnings: bool,
     deny_warnings: bool,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     project: Option<&str>,
     backend: TestBackend,
     extra_native_libs: &[String],
@@ -1084,6 +1088,8 @@ pub(crate) fn run_tests(
             // Build parser with CLI lib_dirs + @ARGS lib dirs.
             let mut p = Parser::new();
             p.lib_dirs = lib_dirs.to_vec();
+            // `@C173` — a `--lib` given to `loft test` outranks a pin, as in a run.
+            p.flag_lib_dirs = flag_lib_dirs.to_vec();
             if let Some(ref pl) = project_lib {
                 p.lib_dirs.insert(0, pl.clone());
             }
@@ -1144,7 +1150,13 @@ pub(crate) fn run_tests(
                                 .to_string_lossy()
                                 .into_owned();
                             let (libs, region) = slot.key();
-                            let built = build_test_base(default_dir, libs, &base_file, region);
+                            let built = build_test_base(
+                                default_dir,
+                                libs,
+                                flag_lib_dirs,
+                                &base_file,
+                                region,
+                            );
                             slot.insert(BaseSlot::Shared(built));
                         }
                         if let BaseSlot::Shared(Some(base)) = slot.get() {

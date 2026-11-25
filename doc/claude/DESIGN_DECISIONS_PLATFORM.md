@@ -558,3 +558,57 @@ through the C (`.github/workflows/ci.yml`); [plans/225-retire-rustc-writer/](pla
 which removed the writer; guard
 `tests/c_emit.rs::a_scalar_program_written_as_c_answers_what_the_interpreter_answers` (both
 backends held to hand-computed values).
+
+## C172 — A debug session answers only whoever holds its run's token
+
+**Decision.** Every debug channel that listens on a port — `loft debug --serve`'s page and
+socket, a game's control listener and agent commands on its game port, on the interpreter and
+the C build alike — answers only a client whose opening request names the run's token as
+`?t=<token>` in its URL.  The token is 128 bits from the operating system's random source,
+drawn once per process; it is printed on the line that gives the port, and handed to a process
+the session starts (`--serve`'s game, a swapped-in build) in `LOFT_DEBUG_TOKEN`.  No random
+source, no channel.  Channels over standard input and output (`--rpc`, the DAP adapter) need no
+token, and a wasm build opens no listener.
+**Why.** A loopback port is reachable by every account on the machine, and these channels
+evaluate code and edit frames with the user's rights; the address and the `Origin` check say
+nothing about which account connects.  One mechanism holds on every OS and in every client a
+browser can be: a URL is the one part of a WebSocket request a page can set.  A token kept in a
+file only its owner can read was set aside: the permission that makes it private differs per
+operating system, and a browser page has no file to read.
+**Revisit when.** A client cannot be handed the token on the launcher's output or in the
+environment, or a channel moves off loopback.  Decided 2026-11-25 (owner).
+**Holds at:** `@C172` — `src/debug_token.rs`, `src/serve.rs` (`run_serve`, `serve_connection`),
+`src/engine_host.rs` (`ws_upgrade`, `bind_ctl_listener`, `handle_debug_control`, `listen_impl`,
+`swap_successor`), `src/repl.rs` (`launch_game`), `src/c/loft_engine.h`
+(`loft_eh_debug_token`, `loft_eh_admits`, `loft_eh_ws_upgrade`); [DEBUG_CHANNELS.md](DEBUG_CHANNELS.md);
+guards `an_agent_command_on_the_game_port_needs_the_runs_token`,
+`s5_client_swap_under_running_world`, `s5_c_client_swap_under_running_world`
+(`tests/engine_host_kernel.rs`) and `serve_refuses_another_sites_page` (`tests/serve.rs`).
+
+## C173 — A library loads from what the run says, then what the project declares, then what lies in a directory
+
+**Decision.** A `use` takes the first copy in this order: the importing package's own name;
+a `--lib` directory of the command line; a `{ path = … }` dependency, a module beside the
+importing file, the lock's pin; and only for a name nothing pins, the implicit places — a
+`lib/` or a same-named file in the working directory or beside the script, sibling packages,
+`LOFT_LIB`, `~/.loft/lib`, the registry.  A `--lib` copy that replaces a pinned or declared
+library says so (`advice[lib-flag-override]`); it never rebinds a module beside the importing
+file.  `loft develop <name>` turns a library the project uses into an editable copy declared
+as a path dependency, and `--done` restores the declaration it replaced.
+**Why.** A pin is how a user says a library must not change, and before this a file that
+merely lay in the directory a program was run from replaced it in silence — including a
+directory someone else supplied.  The opposite need holds as firmly: whoever hits a bug in a
+library must always be able to debug and fix it, and `--lib` lost to a project `lib/`
+without a word (`lib-flag-outranked` only reported it).  Ranking the explicit over the
+declared over the implicit answers both with one rule: the restriction applies only where
+the user pinned, and the override is one word on the command line or one command in the
+project.
+**Revisit when.** A user who does not pin needs the same protection without a lock, or a
+library must be overridden in a way neither `--lib` nor a path dependency can say.
+Decided 2026-11-25 (owner).
+**Holds at:** `@C173` — `src/parser/packages.rs` (`lib_path`, `probe_flag_lib_dirs`,
+`lib_flag_overrides`, `locked_dep_root`), `src/parser/imports.rs` (`trigger_map`,
+`flag_dep_root`), the `--lib` plumbing in `src/main.rs`, `src/native_artifact.rs`,
+`src/test_runner.rs` and `src/repl.rs`, and `src/develop.rs`; [PACKAGES.md § Resolution
+order](PACKAGES.md#resolution-order) and § Developing a library you use; guards
+`tests/lib_flag_override.rs` and `tests/loft_develop.rs`.

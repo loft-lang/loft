@@ -1677,12 +1677,12 @@ fn verify_folded_read<T: Copy>(
 #[must_use]
 pub unsafe fn text_at(ptr: *const u8, size: u32, rec: u32) -> &'static str {
     if rec == 0 || rec > i32::MAX as u32 {
-        return crate::store::STRING_NULL;
+        return crate::text_null::null_str();
     }
     // SAFETY: the caller's span; `rec` is a record inside it, so its length word is too.
     let len = unsafe { ptr.add(rec as usize * 8 + 4).cast::<u32>().read_unaligned() };
     if (len / 8) + rec > size {
-        return crate::store::STRING_NULL;
+        return crate::text_null::null_str();
     }
     // SAFETY: the bytes `[rec*8+8, +len)` lie inside the span by the test above, and a text
     // record's bytes are the UTF-8 the store wrote.
@@ -1760,7 +1760,7 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     // past-the-end case cost the walk its registers (measured 9.0 µs against 6.9 on the
     // stdlib `join`).
     if from >= 0 {
-        return crate::store::STRING_NULL;
+        return crate::text_null::null_str();
     }
     text_elem_cold(db, from, stores)
 }
@@ -1790,7 +1790,7 @@ pub unsafe fn rec_text<const VERIFY: bool>(
     stores: &[Store],
 ) -> &'static str {
     if ptr.is_null() {
-        return crate::store::STRING_NULL;
+        return crate::text_null::null_str();
     }
     // SAFETY: the caller's proof — `ptr` addresses a live record and `fld` is a field of it.
     let rec = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
@@ -1820,7 +1820,7 @@ pub unsafe fn rec_text<const VERIFY: bool>(
 fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     let elem = get_vector(db, 4, from, stores);
     if elem.rec == 0 {
-        crate::store::STRING_NULL
+        crate::text_null::null_str()
     } else {
         let store = keys::store(&elem, stores);
         store.get_str(store.get_u32_raw(elem.rec, elem.pos))
@@ -2404,11 +2404,11 @@ pub fn sort_text_vector(db: &DbRef, stores: &mut [Store]) {
         .map(|i| {
             let off = store.get_u32_raw(v_rec, 8 + (i as u32) * 4);
             let s = store.get_str(off);
-            (off, s.to_string())
+            (off, crate::text_null::own(s))
         })
         .collect();
-    // `@FR-E-NullArg`: the order `<` answers — a null text (the sentinel `"\0"`) before every
-    // text, `""` included — asked of `<`'s own home rather than of the bytes (loft#2236).
+    // `@FR-E-NullArg`: the order `<` answers — a null text before every text, `""` included —
+    // asked of `<`'s own home rather than of the bytes (loft#2236).
     entries.sort_by(|a, b| text_order(&a.1, &b.1));
     for (i, (off, _)) in entries.iter().enumerate() {
         store.set_u32_raw(v_rec, 8 + (i as u32) * 4, *off);

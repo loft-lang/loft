@@ -7,6 +7,7 @@
 // mirror of a `Parser` field (`doc/claude/plans/91-self-host/parser-state.md`); one the port
 // carries only at one node prints only there.
 use ir;
+use lex::*;
 use el;
 use el_vars;
 use el_types;
@@ -140,6 +141,58 @@ pub fn route(e: el::El, name: text) {
     return;
   }
   eprintln("state {if e.first_pass { 1 } else { 2 }} {el::trace_pos(e)} route {name}");
+}
+
+// The token closing the literal that starts at token `at` (a struct literal's name first, when
+// `named`): its matching `]` or `}`, or -1.
+pub fn literal_end(e: el::El, at: integer, named: boolean) -> integer {
+  i = at;
+  while named && i >= 0 && i < len(e.p.src) && !(e.p.src[i] is LBracket || e.p.src[i] is LBrace) {
+    i += 1;
+  }
+  if i < 0 || i >= len(e.p.src) || !(e.p.src[i] is LBracket || e.p.src[i] is LBrace) {
+    return -1;
+  }
+  depth = 0;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LBracket || e.p.src[i] is LBrace {
+      depth += 1;
+    } else if e.p.src[i] is RBracket || e.p.src[i] is RBrace {
+      depth -= 1;
+      if depth == 0 {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  -1
+}
+
+// `route` printed after a record literal, where Rust's lexer stands when it decides the literal's
+// destination (`literal_into_place`): the token after the literal's closing `}`.  `at` is the
+// literal's first token.
+pub fn route_after_literal(e: el::El, at: integer, name: text) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  i = at;
+  while i < len(e.p.src) && !(e.p.src[i] is LBrace) {
+    i += 1;
+  }
+  depth = 0;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LBrace {
+      depth += 1;
+    } else if e.p.src[i] is RBrace {
+      depth -= 1;
+      if depth == 0 {
+        break;
+      }
+    }
+    i += 1;
+  }
+  p = el::pos_at(e, i + 1);
+  eprintln("state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} route {name}");
 }
 
 // `Parser::trace_shape`: a type's shape and the definitions it names, no deps.

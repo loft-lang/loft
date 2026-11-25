@@ -60,7 +60,7 @@ pub mod profiler {
 /// The bytecode machine: its state, execution and run-time values.
 pub mod state {
     pub use crate::state::{
-        HostRetKind, HostReturn, LocalState, STRING_NULL, State, WorkerArg, text_leak_violations,
+        HostRetKind, HostReturn, LocalState, State, WorkerArg, text_leak_violations,
         text_timeline_summary,
     };
     pub(crate) use crate::state::{loft_float_literal, loft_text_literal};

@@ -71,9 +71,30 @@ const SOURCES_FENCE: &str = "--sources--\n";
 
 const SIDECAR_MAGIC: &str = "LOFT-DSCHEMA";
 /// Version 2 adds the `root=` header and the facts section after the dump; a version-1
-/// sidecar (neither) is still read.  An older build reads a version-2 sidecar as unreadable
-/// and refuses the store, which is the safe direction: it never reads one raw.
-const SIDECAR_VERSION: u32 = 2;
+/// sidecar (neither) is still read.  Version 3 says the image stores a null text only as the
+/// unset handle (`@FR-L-Null-Text`): in an older one a record holding one NUL byte is the null
+/// text, and a load says so to the store ([`nul_is_null`]).  An older build reads a newer
+/// sidecar as unreadable and refuses the store, which is the safe direction: it never reads
+/// one raw.
+const SIDECAR_VERSION: u32 = 3;
+
+/// Does the sidecar `text` describe an image written before version 3, in which a record
+/// holding one NUL byte is the null text?  A text that is no sidecar answers false.
+#[must_use]
+pub fn nul_is_null(text: &str) -> bool {
+    text.strip_prefix(SIDECAR_MAGIC)
+        .and_then(|t| t.strip_prefix(" v"))
+        .and_then(|t| t.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|v| v.parse::<u32>().ok())
+        .is_some_and(|v| v < 3)
+}
+
+/// [`nul_is_null`] for the sidecar beside the store image at `image` (`<image>.dschema`);
+/// false when there is none.
+#[must_use]
+pub fn nul_is_null_beside(image: &Path) -> bool {
+    crate::file_access::read_to_string(dschema_path(image)).is_ok_and(|t| nul_is_null(&t))
+}
 /// Where the facts start, after the dump.
 const FACTS_FENCE: &str = "--facts--\n";
 
@@ -763,14 +784,28 @@ mod tests {
         // and a WITH-schema identity round-trips too (the new `schema=` line)
         let b = id_schema(0xfeed, "A\tsize=8\tstruct{i@0:integer}\n", "A:i");
         assert_eq!(LayoutIdentity::from_sidecar(&b.to_sidecar()), Some(b));
-        // and a version-2 one, with its root and facts
+        // and a current one, with its root and facts
         let mut c = id_schema(0xbeef, "A\tsize=8\tstruct{i@0:integer}\n", "nn/1;A:i");
         c.root = "A".to_string();
         c.facts = "A.i\tnullable\n".to_string();
         c.slot = Some(7);
         let text = c.to_sidecar();
-        assert!(text.starts_with("LOFT-DSCHEMA v2\n"), "{text}");
+        assert!(text.starts_with("LOFT-DSCHEMA v3\n"), "{text}");
         assert_eq!(LayoutIdentity::from_sidecar(&text), Some(c));
+        // a current sidecar's image stores a null text as the unset handle
+        assert!(!nul_is_null(&text));
+    }
+
+    /// `@FR-L-Null-Text` — an image whose sidecar predates version 3 may hold a null text as
+    /// a record of one NUL byte; a current one never does, and a text that is no sidecar
+    /// says nothing about it.
+    #[test]
+    fn a_sidecar_before_version_3_reads_a_nul_record_as_null() {
+        assert!(nul_is_null("LOFT-DSCHEMA v1\nhash=1\n--\n"));
+        assert!(nul_is_null("LOFT-DSCHEMA v2\nhash=1\n--\n"));
+        assert!(!nul_is_null("LOFT-DSCHEMA v3\nhash=1\n--\n"));
+        assert!(!nul_is_null("LOFT-DSCHEMA v12\nhash=1\n--\n"));
+        assert!(!nul_is_null("garbage"));
     }
 
     #[test]

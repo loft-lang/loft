@@ -110,9 +110,27 @@ impl Run<'_> {
                 };
                 let child_rec = matches!(val.unspan(), Value::Call(n, _)
                     if self.data.def(*n).name() == "OpChildRec");
-                let (mut st, out) = self.assign(v, *x, val, st)?;
+                // `(G-Hold)`: a local bound to a retained handle holds a hold of its own
+                // (`bind_retained`); every other bind is `assign`'s.
+                let (mut st, out) = match val.unspan() {
+                    Value::Call(d, args) if self.data.def(*d).name() == "OpCoroutineRetain" => {
+                        self.bind_retained(v, *x, *d, args, st)?
+                    }
+                    _ => self.assign(v, *x, val, st)?,
+                };
                 if child_rec {
                     st.nonnull.insert(*x);
+                }
+                st.placed.retain(|(r, _)| r != x);
+                if let Value::Call(op, a) = val.unspan()
+                    && *op == self.ops.place
+                    && let Some(h) = Self::first_var(a, 0)
+                    && h != *x
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_REMINT_ENDS_PLACED").is_some()
+                    )
+                {
+                    st.placed.insert((*x, h));
                 }
                 if let Value::Var(src) = val.unspan()
                     && src != x
@@ -158,7 +176,14 @@ impl Run<'_> {
             Value::If(cond, then_v, else_v) => {
                 let (s, _) = self.eval(cond, st)?;
                 let (then_st, else_st) = self.decide(cond, s);
+                let guard = self.distinct_guard(cond);
+                if let Some(g) = guard {
+                    self.distinct_guards.push(g);
+                }
                 let then_out = then_st.and_then(|s| self.eval(then_v, s));
+                if guard.is_some() {
+                    self.distinct_guards.pop();
+                }
                 let else_out = else_st.and_then(|s| self.eval(else_v, s));
                 let mut out = join_out(then_out, else_out)?;
                 Self::normalize(&mut out.0);
@@ -174,6 +199,7 @@ impl Run<'_> {
                     Value::Var(x) => Some(*x),
                     _ => None,
                 };
+                self.returned_after_drop(&s, &value, x);
                 self.leaving(&s, &value, x);
                 Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
@@ -286,6 +312,15 @@ impl Run<'_> {
                 // A heap member of a tuple PARAMETER lies in a store the caller holds, as the
                 // parameter's own would: a callee that answers it borrows argument `t`
                 // (`fn first(p: (R, integer)) -> R { p.0 }`).
+                // A member of a nested tuple held WHOLE (`_tuphold_1 = t.0`, a tuple member's
+                // move one level down: no member of its own here) names what its holder names.
+                None if !self.params.contains(t)
+                    && st.vars.contains_key(t)
+                    && self.member_is_nested_tuple(*t, *i) =>
+                {
+                    let val = Self::read(&st, *t);
+                    Some((st, val))
+                }
                 None if self.params.contains(t) && self.member_is_heap(*t, *i) => Some((
                     st,
                     Val {
@@ -323,12 +358,148 @@ impl Run<'_> {
     }
 
     /// A fresh store at this assignment, the variable's own: a copy the code generator makes.
+    /// The copy lands in the store the variable already names where that one is live — the
+    /// runtime re-initialises it in place (`alloc_record_at`, as `OpDatabase` does) and mints
+    /// only where the variable is null — so a loop's copy into one local is one store, not one
+    /// per pass (loft-suite O-Borrow/2338's `looped`).  `LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints
+    /// every copy.
     pub(super) fn copied(&mut self, st: &mut State, node: &Value) -> Val {
+        self.lease_copy(st, node);
         let site = self.site(node, Origin::Copy);
+        // A loop's head joins the null of the first pass with the store an earlier pass copied
+        // in here: the null path mints that same store and the others re-initialise it, so the
+        // copy names this site's current store, as `OpDatabase`'s loop case does.
+        if let Value::Set(x, _) = node.unspan()
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_COPY_IN_PLACE").is_some())
+        {
+            let cur = Self::pts(st, *x);
+            let here = SKey { site, older: false };
+            if cur.contains(&Pt::Store(here))
+                && cur.iter().all(|p| match p {
+                    Pt::Null => true,
+                    Pt::Store(k) => k.site == site,
+                    _ => false,
+                })
+                && info_of(st, here).has(LIVE)
+                && !info_of(st, here).has(ENDED)
+            {
+                return Val {
+                    pts: [Pt::Store(here)].into(),
+                    corr: [here].into(),
+                };
+            }
+        }
         let k = Self::fresh(st, site);
         Val {
             pts: [Pt::Store(k)].into(),
             corr: [k].into(),
+        }
+    }
+
+    /// `(H-Lease)`: a copy makes a second structure, and a second structure is a second drop.
+    /// The program may not write a copy of a type that owns a droppable and declares no `OpCopy`
+    /// (`(H-Copy-Refuse)`), so one the code generator makes runs the hook twice for one value —
+    /// a join's copy arm where the value had to move (loft#2552).  The type facts only: which
+    /// copies the compiler meant to be moves is its own decision, not read here.  A copy whose
+    /// source's drop a hand-off flag guards is read as the move it is; a copy out of a local is
+    /// judged where its source's store ends — bare, a move; under a hook, the second drop.
+    /// `LOFT_RECORDS_NO_LEASE=1` turns it off (`@PLN228` P9).
+    pub(super) fn lease_copy(&mut self, st: &mut State, node: &Value) {
+        let Value::Set(x, val) = node.unspan() else {
+            return;
+        };
+        if !super::lease_on() {
+            return;
+        }
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        let tp = function.tp(*x).clone();
+        let Some(def) = tp.heap_def_nr() else {
+            return;
+        };
+        // A type with no release function runs no hook on either structure.
+        if !data.any_drop_hook()
+            || !data.type_owns_droppable_anywhere(&tp)
+            || data.drop_cascade_nr(def) == u32::MAX
+        {
+            return;
+        }
+        // A type that declares `OpCopy` gives a copy a lease of its own (the hook runs on it).
+        let own_lease = crate::lease::copy_cascade_nr(data, def) != u32::MAX
+            || crate::lease::copy_hook_nr(data, def) != u32::MAX;
+        if let Value::Var(src) = val.unspan()
+            && !function.is_argument(*src)
+        {
+            // A copy out of a local takes its stores' lease: a move while the source is freed
+            // bare (a whole-value copy of a droppable, a literal built in a work reference and
+            // copied into its local), two drops where a hook still runs on one of them
+            // (`handed_off_drop`).  An argument's hook is its caller's, out of sight here.  A
+            // copy whose source's drop a hand-off flag guards (`__hoff_<src>`, set as the copy
+            // runs) is the move it stands for: the source's hook does not run.
+            let moved = function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX;
+            for k in Self::stores_of(&Self::pts(st, *src)) {
+                st.dropped.insert(k);
+                if !own_lease && !moved {
+                    st.lease_copied.insert(k, *x);
+                }
+            }
+            return;
+        }
+        if own_lease
+            || matches!(val.unspan(), Value::Var(src)
+                if function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX)
+        {
+            return;
+        }
+        let (name, ty) = (self.var_name(*x), data.def(def).name().to_string());
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!(
+                "`{name}` is a copy the code generator makes of a `{ty}`, which owns a droppable \
+                 and declares no OpCopy: the copy and its source each run the drop hook"
+            ),
+        );
+    }
+
+    /// `OpDistinctStore(v, w)` over two variables (a fn-ref's closure, `OpFnRefClosure(f)`, read as
+    /// `f`): its THEN branch runs only where `v` and `w` name different stores.
+    pub(super) fn distinct_guard(&self, cond: &Value) -> Option<(u16, u16)> {
+        let Value::Call(op, args) = cond.unspan() else {
+            return None;
+        };
+        if self.data.def(*op).name() != "OpDistinctStore" || args.len() != 2 {
+            return None;
+        }
+        let var = |a: &Value| match a.unspan() {
+            Value::Var(v) => Some(*v),
+            Value::Call(c, xs) if self.data.def(*c).name() == "OpFnRefClosure" => {
+                Self::first_var(xs, 0)
+            }
+            _ => None,
+        };
+        Some((var(&args[0])?, var(&args[1])?))
+    }
+
+    /// `@FR-H-DropOnce`: a return that hands the caller a store this path already ran a drop hook
+    /// on — the caller's release of the answer runs it again (loft#2552: a `return` path whose
+    /// guard against dropping the answer was lost).  `LOFT_RECORDS_NO_LEASE=1` turns it off
+    /// (`@PLN228` P9).
+    pub(super) fn returned_after_drop(&mut self, st: &State, value: &Val, val_var: Option<u16>) {
+        if !super::lease_on() {
+            return;
+        }
+        let x = val_var.unwrap_or(u16::MAX);
+        if Self::stores_of(&value.pts).iter().any(|k| {
+            st.dropped_must.contains(k) || st.dropped_unless.iter().any(|(d, w)| d == k && *w != x)
+        }) {
+            self.find(
+                "copied-lease",
+                u32::MAX,
+                "the function returns a record whose drop hook it already ran: the caller's \
+                 release runs it again"
+                    .to_string(),
+            );
         }
     }
 
@@ -344,6 +515,29 @@ impl Run<'_> {
                 info.alts.clear();
             }
         }
+    }
+
+    /// `(G-Hold)`: a local bound to a retained handle (`x = OpCoroutineRetain(g)`) holds the
+    /// frame on a hold of its own, which its free gives back — not the store `g` names (a
+    /// `match` over an iterator parameter, `scopes::handles`).  A retain handed straight to a
+    /// call is the callee's hold, read as its argument.
+    fn bind_retained(
+        &mut self,
+        node: &Value,
+        x: u16,
+        d: u32,
+        args: &[Value],
+        st: State,
+    ) -> Option<(State, Val)> {
+        let (mut s, _) = self.args(args, st)?;
+        let site = self.site(node, Origin::Call(d));
+        let k = Self::fresh(&mut s, site);
+        let value = Val {
+            pts: [Pt::Store(k)].into(),
+            corr: [k].into(),
+        };
+        self.bind(&mut s, x, &value);
+        Some((s, Val::null()))
     }
 
     /// `x = val`, as the code generator lowers it: the arm `bind_lowering` decides, with its
@@ -516,6 +710,13 @@ impl Run<'_> {
         else {
             return Vec::new();
         };
+        Self::join_adopts_held_on(s, base, x, value)
+    }
+
+    /// [`Self::join_adopts_held`] for a join on `base`, at a first bind or a reassignment: the
+    /// analysis's placeholder names (the displaced value a reassignment parks, `OLD_NAME`) are no
+    /// other holder.
+    pub(super) fn join_adopts_held_on(s: &State, base: u16, x: u16, value: &Val) -> Vec<SKey> {
         if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_ADOPT_HELD").is_some()) {
             return Vec::new();
         }
@@ -528,9 +729,9 @@ impl Run<'_> {
             .into_iter()
             .filter(|k| {
                 !witness.contains(&Pt::Store(*k))
-                    && s.vars
-                        .iter()
-                        .any(|(&w, p)| w != x && w != base && p.contains(&Pt::Store(*k)))
+                    && s.vars.iter().any(|(&w, p)| {
+                        w != x && w != base && w < OLD_NAME && p.contains(&Pt::Store(*k))
+                    })
             })
             .collect()
     }
@@ -984,7 +1185,22 @@ impl Run<'_> {
         s.vars.insert(OLD_NAME, old.clone());
         let bound = match rb.arm {
             ReArm::KeyedNull => Self::read(&s, x),
-            ReArm::Join { .. } | ReArm::OpaqueCallRef { .. } => {
+            // `OpBindOrCopy` copies what lies in the witness's store and adopts the rest, as at
+            // a first bind (`join_bound`): a store another variable holds, adopted here, has two
+            // owners (loft#2511: a lift bound from a stored reference's referent).
+            ReArm::Join { base, .. } => {
+                let held = Self::join_adopts_held_on(&s, base, x, &value);
+                let mut owned = value.clone();
+                owned.corr.retain(|k| !held.contains(k));
+                Self::consume(&mut s, &owned);
+                let mut bound = self.copied(&mut s, node);
+                bound
+                    .corr
+                    .extend(held.iter().copied().filter(|k| value.corr.contains(k)));
+                bound.pts.extend(held.into_iter().map(Pt::Store));
+                bound
+            }
+            ReArm::OpaqueCallRef { .. } => {
                 Self::consume(&mut s, &value);
                 self.copied(&mut s, node)
             }
@@ -1430,6 +1646,14 @@ impl Run<'_> {
     }
 
     /// Is member `i` of tuple variable `t` a store reference?
+    /// Is member `i` of tuple local `t` itself a tuple?
+    pub(super) fn member_is_nested_tuple(&self, t: u16, i: u16) -> bool {
+        let vars = &self.data.def(self.d_nr).variables;
+        t < vars.count()
+            && matches!(vars.tp(t).base(), crate::data::Type::Tuple(elems)
+                if elems.get(i as usize).is_some_and(|e| matches!(e.base(), crate::data::Type::Tuple(_))))
+    }
+
     pub(super) fn member_is_heap(&self, t: u16, i: u16) -> bool {
         let vars = &self.data.def(self.d_nr).variables;
         t < vars.count()
@@ -1529,6 +1753,11 @@ impl Run<'_> {
                     .iter()
                     .position(|x| x == v)
                     .map_or(Summary::Unknown, |i| Summary::Arg(i as u16)),
+                Pt::Slot(v, off) => self
+                    .params
+                    .iter()
+                    .position(|x| x == v)
+                    .map_or(Summary::Unknown, |i| Summary::Slot(i as u16, *off)),
                 Pt::Unknown => Summary::Unknown,
             };
             out = out.join(one);
@@ -1552,6 +1781,28 @@ impl Run<'_> {
         match place?.unspan() {
             Value::Var(x) => Some(*x),
             Value::Call(op, args) if *op == get_field => Self::root_var(args.first(), get_field),
+            _ => None,
+        }
+    }
+
+    /// The variable a stored reference's HOLDER is rooted at, through field reads and element
+    /// reads (`b.hs[i].r = …`): an element of a parameter's collection is the caller's record
+    /// as the parameter is, and keeps the reference past this frame (`@FR-H-RefHome`).
+    /// `LOFT_RECORDS_NO_ELEMENT_HOLDER=1` follows field reads only.
+    pub(super) fn holder_root(&self, place: Option<&Value>) -> Option<u16> {
+        match place?.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::Call(op, args) if *op == self.ops.get_field => self.holder_root(args.first()),
+            Value::Call(op, args)
+                if matches!(
+                    self.data.def(*op).name(),
+                    "OpGetVector" | "OpGetVectorNullable"
+                ) && !crate::env_once!(
+                    std::env::var_os("LOFT_RECORDS_NO_ELEMENT_HOLDER").is_some()
+                ) =>
+            {
+                self.holder_root(args.first())
+            }
             _ => None,
         }
     }

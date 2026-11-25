@@ -11,28 +11,50 @@
 #   V2/V3  parity gate + compiles against THIS loft (interpret is the hard gate;
 #          native is best-effort — an outside lib's system deps may be absent)
 #   V5     metadata: name matches dir, license marker, version present
-#   V6     risk tier: pure loft (auto-trustable) vs #native/#rust (human review),
-#          plus the declared capabilities
+#   V6     risk tier: pure loft (auto-trustable) vs native code — `#c` / `[c]` /
+#          `#native` / `#rust` (human review), plus the declared capabilities
 #   V4     public API surface (informational — diff vs the prior version by eye)
 #   V1     `loft package` sha256 + size (the entry the maintainer will sign)
 #   V7     third-party code, links and loads declared in loft.toml (THIRDPARTY.md)
 #
+# The checks that only READ the package run first.  V2/V3 run its tests — its code, and a
+# C part's too — so for a submission from outside the project they run only where nothing
+# can be stolen: the registry's CI (`vet-submission.yml`, `--isolated`), never on a machine
+# that holds a registry signing key.  A package that carries native code runs its tests only
+# there, or with `--reviewed` once a person has read that code.
+#
 # Usage:
-#   scripts/vet-lib.sh <org/repo> <tag> [package] [--native]
+#   scripts/vet-lib.sh <org/repo> <tag> [package] [--native] [--isolated] [--reviewed]
 #   e.g.  scripts/vet-lib.sh someone/cool-loft-lib widget-v0.1.0 widget
+#   --isolated   this runs where no signing key or credential exists (the registry's CI)
+#   --reviewed   a person has read the package's native code: run its tests here too
+# Exit: 0 PASS, 1 FAIL, 3 NEEDS REVIEW, 4 refused (a signing key on this machine).
 set -euo pipefail
 
-usage() { echo "usage: scripts/vet-lib.sh <org/repo> <tag> [package] [--native]" >&2; exit 2; }
+usage() { echo "usage: scripts/vet-lib.sh <org/repo> <tag> [package] [--native] [--isolated] [--reviewed]" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 REPO="$1"; TAG="$2"; shift 2
-PKG=""; WITH_NATIVE=0
+PKG=""; WITH_NATIVE=0; ISOLATED=0; REVIEWED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --native) WITH_NATIVE=1; shift ;;
+    --isolated) ISOLATED=1; shift ;;
+    --reviewed) REVIEWED=1; shift ;;
     -*) usage ;;
     *) PKG="$1"; shift ;;
   esac
 done
+
+# A submission's tests run as whoever runs this.  On a machine that holds a registry signing
+# key that would put someone else's code next to the key every install trusts — so a package
+# from outside the project is vetted in the registry's CI instead (REGISTRY_SUBMIT.md).
+case "$REPO" in loft-lang/*) own=1 ;; *) own=0 ;; esac
+if [ "$ISOLATED" = 0 ] && [ "$own" = 0 ] && [ -e "$HOME/.loft/trust-root/registry-signing-key.bin" ]; then
+  echo "✗ not here: this machine holds a registry signing key, and $REPO is not the project's own." >&2
+  echo "  A submission is vetted by the registry's CI on its pull request (vet-submission.yml);" >&2
+  echo "  to run it by hand, use a machine or an account without ~/.loft/trust-root/." >&2
+  exit 4
+fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # --manifest-path (not `cd $ROOT`) so the caller's CWD is preserved — the lib's
@@ -67,11 +89,14 @@ if ! ls "$DIR"/LICENSE* >/dev/null 2>&1 && ! grep -rqi "SPDX-License-Identifier"
   echo "   ⚠ no license marker (LICENSE file or SPDX header)"
 fi
 
-# V6 — risk tier  (greps must tolerate no-match under `set -e`)
-native_files=$( { grep -rlE '#native|#rust' "$DIR/src" 2>/dev/null || true; } | wc -l | tr -d ' ')
-caps=$( { grep -rhoE '\b(fs|net|db|env|proc|time|rand)#[a-z_]+' "$DIR/src" 2>/dev/null || true; } | sort -u | paste -sd, )
+# V6 — risk tier  (greps must tolerate no-match under `set -e`).  Native code is a `#c`
+# binding and the `[c]` section that compiles a C part in, as well as the older `#native` /
+# `#rust`: a C part runs in-process whatever backend loads the library.
+native_files=$( { grep -rlE '#native|#rust|^#c[[:space:]]' "$DIR/src" 2>/dev/null || true; } | wc -l | tr -d ' ')
+if grep -qE '^\[c\]' "$DIR/loft.toml" 2>/dev/null; then native_files=$((native_files + 1)); fi
+caps=$( { grep -rhoE '\b(fs|net|db|env|proc|time|rand)#[a-z_]+' "$DIR/src" 2>/dev/null || true; } | sort -u | paste -sd, - )
 if [ "$native_files" -gt 0 ]; then
-  echo "V6 risk tier     : contains #native/#rust in $native_files file(s) → HUMAN REVIEW required"
+  echo "V6 risk tier     : native code (#c / [c] / #native / #rust) in $native_files place(s) → HUMAN REVIEW required"
   review=1
 else
   echo "V6 risk tier     : pure loft — auto-trustable"
@@ -87,14 +112,22 @@ else
   fail=1
 fi
 
-# V2/V3 — parity gate + compiles against THIS loft (interpret = hard gate)
-printf "V2/V3 interpret  : "
-if ( cd "$DIR" && loft --interpret --tests tests ) >"$tmp/i.log" 2>&1; then
-  echo "✓ green (parses/types/tests against this loft)"
+# V2/V3 — parity gate + compiles against THIS loft (interpret = hard gate).  These RUN the
+# package's code; native code runs only where it is isolated or once it is reviewed.
+run_tests=1
+if [ "$review" = 1 ] && [ "$ISOLATED" = 0 ] && [ "$REVIEWED" = 0 ]; then
+  run_tests=0
+  echo "V2/V3 tests      : not run here — native code runs only in the registry's CI, or here"
+  echo "                   after you have read it (--reviewed)"
 else
-  echo "✗ FAILED — see below"; { grep -iE 'error|fail' "$tmp/i.log" || true; } | sed -n '1,5s/^/     /p'; fail=1
+  printf "V2/V3 interpret  : "
+  if ( cd "$DIR" && loft --interpret --tests tests ) >"$tmp/i.log" 2>&1; then
+    echo "✓ green (parses/types/tests against this loft)"
+  else
+    echo "✗ FAILED — see below"; { grep -iE 'error|fail' "$tmp/i.log" || true; } | sed -n '1,5s/^/     /p'; fail=1
+  fi
 fi
-if [ "$WITH_NATIVE" = 1 ]; then
+if [ "$WITH_NATIVE" = 1 ] && [ "$run_tests" = 1 ]; then
   printf "V2 native        : "
   if ( cd "$DIR" && LOFT_TIMEOUT=240 loft --native --tests tests ) >/dev/null 2>&1; then
     echo "✓ green"
@@ -146,7 +179,7 @@ echo "──────── verdict ────────"
 if [ "$fail" = 1 ]; then
   echo "✗ FAIL — a gate failed; do NOT admit."; exit 1
 elif [ "$review" = 1 ]; then
-  echo "⚠ NEEDS REVIEW — automated gates pass, but it carries #native/#rust; your one-time admission call."; exit 3
+  echo "⚠ NEEDS REVIEW — automated gates pass, but it carries native code; your one-time admission call."; exit 3
 else
   echo "✓ PASS — pure loft, all gates green; eligible for the next registry_maintain.sh fold-in."; exit 0
 fi

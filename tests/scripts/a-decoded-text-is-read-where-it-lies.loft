@@ -9,7 +9,7 @@
 // integer (one byte, minus 100), 2 a text and 3 a byte string (a length byte, then the bytes),
 // 4 a map (a count byte, then key / value pairs).
 //
-// Predictions (`tests/decode_view.rs` pins them on the emitted Rust): roots `lookup`,
+// Predictions (`tests/decode_view.rs` pins them on the emitted C): roots `lookup`,
 // `shout`, `measure`, `nested`, `first_key`, `count_unread`, `copied`, `mixed` and
 // `walk_values`; `bytes_len` (a byte string read), `scribble` (the frame written), `keep` (a
 // decoded value returned) and `mixed_alone` (a span variant minted alone) decline.

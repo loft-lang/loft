@@ -95,8 +95,13 @@ pub struct HostTable {
     pub hosted: &'static HostedTable,
 }
 
-/// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 8;
+/// The [`HostTable`] layout version; a cdylib refuses a table of another.  9: a null text
+/// crosses as [`TEXT_NULL_LEN`].
+pub const HOST_ABI: u32 = 9;
+
+/// The `text_len` of a text answer that is the null text (`@FR-L-Null-Text`): its pointer is
+/// not null, because a null `text_ptr` says the call answered no text at all.
+pub const TEXT_NULL_LEN: usize = usize::MAX;
 
 /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
 /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set

@@ -333,7 +333,7 @@ reconstructs the true *value* where the Rust twin emits packed parity bytes):
   with no repack). This is what makes `deliver` **O(1)** in element count for the inline path (proven
   structurally: the delivered node is a plain `vector`, the JS value's `.buffer === mem.buffer`).
 - **Text** is interned inline: the field holds a string id; bytes at `id*8+8`, len at `id*8+4`;
-  `STRING_NULL` (`id==0 || id>0x7fffffff`) → `null`.
+  the null text (`id==0 || id>0x7fffffff`) → `null`.
 - **Narrow ints** are PACKED: `Byte`/`ShortRaw` store `value - start` (add `start` back; read shorts
   UNSIGNED); nullable `Short` stores `value - start + 1` with `0` = null; `Int` is a direct i32
   (`start` is the null sentinel, not an offset). `start` (the range min) rides in the descriptor.

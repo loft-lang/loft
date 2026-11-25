@@ -146,7 +146,7 @@ it may place blocks differently, but it must write each kind of block the same w
 
 ```
   (S-Sidecar) beside an image at <path> lies its sidecar <path>.dschema, UTF-8 lines:
-                LOFT-DSCHEMA v2
+                LOFT-DSCHEMA v3
                 hash=<u64, decimal>
                 [root=<the root type's name>]
                 [slot=<u16: the store number the image's own references name>]
@@ -161,7 +161,10 @@ it may place blocks differently, but it must write each kind of block the same w
               `group=`) are carried for the reader and are not part of the identity.  A sidecar
               with none of root, slot, version and facts is written in the v1 form: the same
               text without those lines and without the facts fence.  A project baseline adds a
-              --sources-- section after the facts (layout.md L-Upgrade-Source).
+              --sources-- section after the facts (layout.md L-Upgrade-Source).  v3 says the
+              image stores a null text only as the unset handle; a v1 or v2 image may hold one
+              as a record of one NUL byte, which every loader reads as null (layout.md
+              L-Null-Text).  A reader refuses a version above its own.
   (S-Format)  every byte this chapter defines for a keyed kind belongs to that kind's PLACEMENT
               TOKEN (src/placement.rs: hash, index, spatial, trie), rendered into the kind's
               line of the layout dump, so it is part of the identity.  A change to anything a
@@ -210,6 +213,15 @@ it may place blocks differently, but it must write each kind of block the same w
                   records and nodes are as many as the header says, the free nodes form a
                   list, and each record a leaf names — and a trie's tagged null-key record —
                   holds an element.  The keys are not compared;
+                - a hash's table (S-Hash) has the LAYOUT every insert follows: its stride is
+                  the element's (0 only on an arena table that borrows); an inline table's
+                  slots and entries lie inside its record (S-Inline); no more slots are in use
+                  than its counts say (an inline table's tombstones included), and the counts
+                  are no more than its slots; an arena (S-Arena) has a chunk record of at
+                  least its chunk's size for every index below its cursor and names no record
+                  twice; each slot names an index below the cursor, once, or a record that
+                  holds an element; the free list runs through indices below the cursor that
+                  no slot names, each once.  The digests are not checked;
                 - a stored reference into its own store names a record of it and a byte
                   inside that record.  An image not yet adopted still carries the slot it was
                   written from, which the walk reads as "this store"; a reference into any

@@ -863,7 +863,9 @@ static int loft_image_gate_text(loft_cx *cx, const char *path, char *text, const
     if (fence && strncmp(text, "LOFT-DSCHEMA v", 14) == 0) {
         *fence = 0;
         ver = atoi(text + 14);
-        ok = ver >= 1 && ver <= 2;
+        ok = ver >= 1 && ver <= 3;
+        /* Before version 3 a null text may be a record holding one NUL byte. */
+        cx->gate_legacy_nul = ok && ver < 3;
         for (char *line = strchr(text, '\n'); ok && line && line < fence;) {
             char *start = line + 1, *end = strchr(start, '\n');
             if (!end) end = fence;
@@ -1029,6 +1031,12 @@ static const char *loft_image_refusal(loft_cx *cx, const uint8_t *bytes, size_t 
 /* `store_load` (`load_path`), and with `untrusted` `store_load_untrusted`
  * (`load_path_untrusted`): an image whose block structure does not hold is rejected before it is
  * adopted, and the slot keeps the store it had. */
+/* `schema_sidecar::nul_is_null`: a sidecar before version 3, whose image may hold a null text
+ * as a record of one NUL byte. */
+static int loft_sidecar_legacy_nul(loft_cx *cx, const char *text) {
+    return text && strncmp(text, "LOFT-DSCHEMA v", 14) == 0 && atoi(text + 14) < 3;
+}
+
 /* `LayoutIdentity::from_sidecar`'s slot: the `slot=` line of a v2 sidecar, -1 for none. */
 static long loft_sidecar_slot(loft_cx *cx, const char *text) {
     if (!text || strncmp(text, "LOFT-DSCHEMA v", 14) != 0 || atoi(text + 14) < 2) return -1;
@@ -1212,13 +1220,16 @@ static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_si
     if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores || loft_path_refused(cx, path)) return 0;
     char *p = loft_cpath(cx, path, 0);
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
     int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_image_gate(cx, p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
     }
     int trie_v1 = cx->gate_trie_v1;
+    int legacy_nul = cx->gate_legacy_nul;
     cx->gate_trie_v1 = 0;
+    cx->gate_legacy_nul = 0;
     FILE *f = fopen(p, "rb");
     free(p);
     if (!f) return 0;
@@ -1295,6 +1306,7 @@ static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_si
     char *what = loft_cstr_own(cx, path);
     int ok = loft_image_adopt(cx, r, bytes, n, untrusted, sc, recorded, what, untrusted ? "store_load_untrusted" : "store_load");
     free(what);
+    if (ok) cx->stores[r.store_nr].legacy_nul = (uint8_t) legacy_nul;
     if (ok && trie_v1) loft_trie_refile(cx, sc->types, sc->tp, r.store_nr);
     if (ok && gate == 2) loft_rekey_image(cx, sc, r);
     return ok;
@@ -1427,6 +1439,184 @@ static int loft_vc_holds_numbers(loft_cx *cx, const loft_tdesc *T, uint32_t nt, 
 #define LOFT_VC_BAD(...) do { fprintf(stderr, "[cr-check] store_verify: " __VA_ARGS__); fputc('\n', stderr); (*problems)++; } while (0)
 
 static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems);
+
+/* `arena::sound` — the arena of table record `table` at `stride` bytes a slot: a directory that
+ * is a record, a chunk for every index below the append cursor, each chunk a record of at least
+ * its chunk's words, no record named twice (by two chunks, or by a chunk and the table or the
+ * directory).  1 with the cursor in `*next`, or 0 with the first number that does not hold
+ * reported. */
+static int loft_vc_arena_sound(loft_cx *cx, loft_store_t *s, uint32_t table, uint32_t stride, uint32_t *next, uint32_t *problems) {
+    uint32_t dir = loft_u32(cx, s, table, LOFT_AR_DIR_FLD), cursor = loft_u32(cx, s, table, LOFT_AR_NEXT_FLD);
+    if (cursor < 1) cursor = 1;
+    *next = 1;
+    if (dir == 0) {
+        if (cursor > 1 || loft_u32(cx, s, table, LOFT_AR_FREE_FLD) != 0) {
+            LOFT_VC_BAD("hash arena of table %u has handed out entries and has no directory", table);
+            return 0;
+        }
+        return 1;
+    }
+    uint32_t words = loft_vc_block(cx, s, dir);
+    if (!words) {
+        LOFT_VC_BAD("hash arena directory %u is not a record", dir);
+        return 0;
+    }
+    uint32_t cap = (words - 1) * 2;
+    int has_last = cursor >= 2;
+    uint32_t last = has_last ? loft_ar_chunk_of(cx, cursor - 2) : 0;
+    if (has_last && last >= cap) {
+        LOFT_VC_BAD("hash arena directory %u holds %u chunks; the table has handed out %u entries", dir, cap, cursor - 1);
+        return 0;
+    }
+    uint32_t *named = (uint32_t *) malloc(((size_t) cap + 2) * sizeof(uint32_t)), nn = 0;
+    if (!named) { fputs("loft: out of memory\n", stderr); abort(); }
+    named[nn++] = table;
+    named[nn++] = dir;
+    for (uint32_t k = 0; k < cap; k++) {
+        uint32_t rec = loft_u32(cx, s, dir, LOFT_AR_DIR0 + 4 * k);
+        if (rec == 0) {
+            if (has_last && k <= last) {
+                LOFT_VC_BAD("hash arena chunk %u is missing; the table has handed out %u entries", k, cursor - 1);
+                free(named);
+                return 0;
+            }
+            continue;
+        }
+        uint32_t need = loft_ar_chunk_words(cx, k, stride), w = loft_vc_block(cx, s, rec);
+        if (!w || w < need) {
+            LOFT_VC_BAD("hash arena chunk %u is record %u, which is not a record of %u words", k, rec, need);
+            free(named);
+            return 0;
+        }
+        named[nn++] = rec;
+    }
+    qsort(named, nn, sizeof *named, loft_cmp_u32);
+    for (uint32_t i = 1; i < nn; i++) {
+        if (named[i] == named[i - 1]) {
+            LOFT_VC_BAD("hash arena of table %u names record %u twice", table, named[i]);
+            free(named);
+            return 0;
+        }
+    }
+    free(named);
+    *next = cursor;
+    return 1;
+}
+
+/* `hash::sound` — the layout of the table in record `claim`, a claimed block of `room` words
+ * holding `size`-byte elements: the stride is the element's (0 on an arena table that borrows);
+ * an inline table's buckets and entries lie inside its record; no more buckets are in use than
+ * the counts say (an inline table's tombstones included) and the counts are no more than the
+ * buckets; an arena is sound (`loft_vc_arena_sound`), each bucket names an index below its
+ * cursor, once, or a record that holds an element, and its free list runs through the indices
+ * no bucket names.  The entries it names as (record, byte) pairs, `*n` of them (the caller's to
+ * free), or NULL with the first number that does not hold reported. */
+static uint32_t *loft_vc_hash_entries(loft_cx *cx, loft_store_t *s, uint32_t claim, uint32_t room, uint32_t size, uint32_t *n, uint32_t *problems) {
+    *n = 0;
+    if (room < LOFT_H_RESERVED) {
+        LOFT_VC_BAD("hash table record %u is %u words, too small", claim, room);
+        return 0;
+    }
+    uint32_t flags = loft_u32(cx, s, claim, LOFT_H_STRIDE_FLD);
+    uint32_t stride = flags & LOFT_H_STRIDE_MASK, want = loft_h_stride_for(cx, size);
+    int inl = (flags & LOFT_H_INLINE) != 0;
+    if (stride != want && (stride != 0 || inl)) {
+        LOFT_VC_BAD("hash table record %u says entries of %u bytes; its elements take %u", claim, stride, want);
+        return 0;
+    }
+    uint64_t used = 0;
+    if (inl) {
+        uint32_t count = 1u << ((flags >> LOFT_H_COUNT_SHIFT) & 31);
+        if ((uint64_t) LOFT_H_RESERVED + (uint64_t) count * (8 + stride) / 8 > room) {
+            LOFT_VC_BAD("hash table record %u says %u buckets and is %u words", claim, count, room);
+            return 0;
+        }
+        uint32_t *out = (uint32_t *) malloc(((size_t) count + 1) * 2 * sizeof(uint32_t));
+        if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+        uint32_t e0 = loft_h_ent0(cx, count);
+        for (uint32_t at = 0; at < count; at++) {
+            uint32_t seq = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + at * 8);
+            if (seq != 0) used++;
+            if (seq != 0 && seq != LOFT_H_TOMB) {
+                out[2 * *n] = claim;
+                out[2 * *n + 1] = e0 + at * stride;
+                (*n)++;
+            }
+        }
+        uint32_t live = loft_u32(cx, s, claim, LOFT_H_INLINE_LEN_FLD), tombs = loft_u32(cx, s, claim, LOFT_AR_FREE_FLD);
+        uint64_t said = (uint64_t) live + tombs;
+        if (used > said || said > count) {
+            LOFT_VC_BAD("hash table record %u has %llu buckets in use of %u and says %u entries and %u removed", claim,
+                        (unsigned long long) used, count, live, tombs);
+            free(out);
+            *n = 0;
+            return 0;
+        }
+        return out;
+    }
+    uint32_t sb = (flags & LOFT_H_TAGGED) ? 8 : LOFT_H_SLOT_BYTES;
+    uint32_t count = loft_h_slots_in(cx, room - LOFT_H_RESERVED, sb);
+    uint32_t dir = loft_u32(cx, s, claim, LOFT_AR_DIR_FLD), next = 1, k, off;
+    if (stride != 0 && !loft_vc_arena_sound(cx, s, claim, stride, &next, problems)) return 0;
+    uint8_t *taken = (uint8_t *) calloc(next, 1);
+    uint32_t *out = (uint32_t *) malloc(((size_t) count + 1) * 2 * sizeof(uint32_t));
+    if (!taken || !out) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(cx, s, claim, LOFT_H_BUCKET0 + i * sb);
+        if (slot == 0) continue;
+        used++;
+        if (stride == 0 || (slot & LOFT_H_SLOT_RECORD) != 0) {
+            uint32_t rec = slot & ~LOFT_H_SLOT_RECORD, w = loft_vc_block(cx, s, rec);
+            if (!w || 8 + (uint64_t) size > (uint64_t) w * 8) {
+                LOFT_VC_BAD("hash entry record %u is not a record that holds an element", rec);
+                goto refuse;
+            }
+            out[2 * *n] = rec;
+            out[2 * *n + 1] = 8;
+            (*n)++;
+            continue;
+        }
+        if (slot >= next) {
+            LOFT_VC_BAD("hash bucket %u names entry %u; the table has handed out %u", i, slot, next - 1);
+            goto refuse;
+        }
+        if (taken[slot]) {
+            LOFT_VC_BAD("hash entry %u is named by two buckets", slot);
+            goto refuse;
+        }
+        taken[slot] = 1;
+        loft_ar_locate(cx, slot, stride, &k, &off);
+        out[2 * *n] = loft_ar_chunk_rec(cx, s, dir, k);
+        out[2 * *n + 1] = off;
+        (*n)++;
+    }
+    uint32_t len = loft_u32(cx, s, claim, LOFT_H_LEN_FLD);
+    if (used > len || len > count) {
+        LOFT_VC_BAD("hash table record %u has %llu buckets in use of %u and says %u entries", claim, (unsigned long long) used, count,
+                    len);
+        goto refuse;
+    }
+    for (uint32_t at = stride != 0 ? loft_u32(cx, s, claim, LOFT_AR_FREE_FLD) : 0; at != 0;) {
+        if (at >= next) {
+            LOFT_VC_BAD("hash arena free list names entry %u; the table has handed out %u", at, next - 1);
+            goto refuse;
+        }
+        if (taken[at]) {
+            LOFT_VC_BAD("hash arena free list names entry %u, which is in use or listed twice", at);
+            goto refuse;
+        }
+        taken[at] = 1;
+        loft_ar_locate(cx, at, stride, &k, &off);
+        at = loft_u32(cx, s, loft_ar_chunk_rec(cx, s, dir, k), off);
+    }
+    free(taken);
+    return out;
+refuse:
+    free(taken);
+    free(out);
+    *n = 0;
+    return 0;
+}
 
 /* `radix_tree::sound` — the shape of the tree in record `tree`, a claimed block of `words`
  * words: every node id is one the tree minted, no node is reached twice, a node has both
@@ -1753,6 +1943,9 @@ static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t n
         return;
     }
     case LOFT_T_HASH: {
+        /* The table's layout is checked whole before an entry of it is believed
+         * (`loft_vc_hash_entries`): every entry it names then lies inside a record, and an insert
+         * after the load writes only where the layout says. */
         uint32_t cur = loft_u32(cx, s, r.rec, r.pos);
         if (cur == 0) return;
         uint32_t room = loft_vc_block(cx, s, cur);
@@ -1760,46 +1953,12 @@ static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t n
             LOFT_VC_BAD("hash table record %u is not a record", cur);
             return;
         }
-        if (room < LOFT_H_RESERVED) {
-            LOFT_VC_BAD("hash table record %u is %u words, too small", cur, room);
-            return;
-        }
-        if (loft_h_is_inline(cx, s, cur)) {
-            uint32_t n;
-            loft_hent *ents = loft_h_entries_of(cx, r, &n);
-            for (uint32_t i = 0; i < n; i++) loft_validate_claims(cx, T, nt, d->elem, ents[i].e, problems);
-            free(ents);
-            return;
-        }
-        uint32_t sb = loft_h_slot_bytes(cx, s, cur);
-        uint32_t elms = (room - LOFT_H_RESERVED) * 8 / sb;
-        uint32_t stride = loft_h_stride(cx, s, cur);
-        uint32_t dir = loft_u32(cx, s, cur, LOFT_AR_DIR_FLD);
-        if (stride != 0 && !loft_vc_block(cx, s, dir)) {
-            LOFT_VC_BAD("hash arena directory %u is not a record", dir);
-            return;
-        }
-        for (uint32_t i = 0; i < elms; i++) {
-            uint32_t slot = loft_u32(cx, s, cur, LOFT_H_BUCKET0 + i * sb), entry, pos;
-            if (slot == 0) continue;
-            if (stride == 0 || (slot & LOFT_H_SLOT_RECORD) != 0) {
-                entry = slot & ~LOFT_H_SLOT_RECORD;
-                pos = 8;
-                if (!loft_vc_block(cx, s, entry)) {
-                    LOFT_VC_BAD("hash entry record %u is not a record", entry);
-                    if (*problems > 8) return;
-                    continue;
-                }
-            } else {
-                uint32_t k, off;
-                loft_ar_locate(cx, slot, stride, &k, &off);
-                entry = loft_ar_chunk_rec(cx, s, dir, k);
-                if (entry == 0) continue;
-                pos = off;
-            }
-            loft_ref e = { r.store_nr, entry, pos, 0 };
+        uint32_t n, *ents = loft_vc_hash_entries(cx, s, cur, room, d->elem < nt ? T[d->elem].size : 0, &n, problems);
+        for (uint32_t i = 0; i < n && *problems <= 8; i++) {
+            loft_ref e = { r.store_nr, ents[2 * i], ents[2 * i + 1], 0 };
             loft_validate_claims(cx, T, nt, d->elem, e, problems);
         }
+        free(ents);
         return;
     }
     case LOFT_T_ORDERED: {

@@ -1375,12 +1375,12 @@ fn render_capture(
                 format!("'{c}'")
             })
         }
-        // Text nullity is CONTENT-based (`Store::text_is_null`): the `STRING_NULL` NUL
-        // byte IS the absence, and quoting it renders a literal that looks like a
-        // one-character string — worse than declining, because it claims a value.
+        // The null text renders as `null`, asked of the view (`@FR-L-Null-Text`): its bytes,
+        // `""`, are an empty text's too, and quoting them would claim a value.
         Type::Text(_) => {
-            let s = state.get_stack::<crate::keys::Str>().str().to_string();
-            if s == crate::interp::state::STRING_NULL {
+            let v = state.get_stack::<crate::keys::Str>();
+            let s = v.str().to_string();
+            if v.is_null() {
                 *captured = Some(Captured::Scalar(ScalarValue::Text(s)));
                 return Some("null".to_string());
             }
@@ -1911,6 +1911,9 @@ impl ReplSession {
     pub fn open(ctx: &ResolutionContext) -> std::io::Result<Self> {
         let mut session = Self::new(&ctx.stdlib_dir)?;
         session.parser.lib_dirs.clone_from(&ctx.lib_dirs);
+        // `@C173` — a debug session's import directories are the ones it was given with
+        // `--lib`: the explicit override.
+        session.parser.flag_lib_dirs.clone_from(&ctx.lib_dirs);
         session.context = ctx.clone();
         Ok(session)
     }
@@ -2302,7 +2305,9 @@ impl ReplSession {
         // Both callers (the file-run debugger and the rpc/serve `launch`) want a *fresh* whole-
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
+        let flag_lib_dirs = std::mem::take(&mut self.parser.flag_lib_dirs);
         self.parser = Parser::open_program(&self.stdlib_dir, &lib_dirs)?;
+        self.parser.flag_lib_dirs = flag_lib_dirs;
         let loaded = self.load_program_str(&src, path);
         // `@PLN206 P7a` — the libraries run compiled, as in a plain run; a routine the
         // debugger wants runs interpreted (`Debugger::wants`).
@@ -2398,6 +2403,7 @@ impl ReplSession {
         // Parsed against again after compiling: no whole-program signature rewrite.
         parser.data.open_world = true;
         parser.lib_dirs.clone_from(&self.parser.lib_dirs);
+        parser.flag_lib_dirs.clone_from(&self.parser.flag_lib_dirs);
         for d in extra_lib_dirs {
             if !parser.lib_dirs.contains(d) {
                 parser.lib_dirs.push(d.clone());
@@ -2669,6 +2675,11 @@ impl ReplSession {
         }
         if std::env::var_os("LOFT_LIVE_FLIP").is_none() {
             spawn = spawn.env("LOFT_LIVE_FLIP", "1");
+        }
+        // `@C172` — the game answers the token this session's page holds, so the page drives
+        // its debug channel with the token it was opened with.
+        if let Some(t) = crate::debug_token::token() {
+            spawn = spawn.env("LOFT_DEBUG_TOKEN", t);
         }
         // A `--native` game serves from a GRANDCHILD of this child (the S1
         // process-model finding): the tree is owned, so stop_game reaches it all.

@@ -373,6 +373,123 @@ pub fn owns_entries(store: &Store, claim: u32) -> bool {
     stride(store, claim) != 0
 }
 
+/// `@FR-S-Sound` — whether table record `claim`, a claimed block of `room` words holding a
+/// hash of `size`-byte elements, has the layout every lookup, insert and removal follows
+/// (`(S-Hash)`, `(S-Arena)`, `(S-Inline)`):
+/// - the entry stride is the element's (`stride_for`), or 0 on an arena table that borrows;
+/// - an inline table's buckets and entries lie inside its record;
+/// - no more buckets are in use than the counts say (an inline table's tombstones included),
+///   and the counts are no more than the buckets — else an insert's walk to an empty bucket
+///   need not end;
+/// - an arena is [`arena::sound`], each bucket names an index below its cursor, once, or a
+///   record that holds an element, and its free list runs through the indices no bucket names.
+///
+/// Answers the entries the table names, as `(record, byte)`, or the first number that does
+/// not hold.  The keys are not hashed: a table that is sound here and wrongly placed answers
+/// wrongly, and stays inside its store doing so.
+pub(crate) fn sound(
+    store: &Store,
+    claim: u32,
+    room: u32,
+    size: u32,
+) -> Result<Vec<(u32, u32)>, String> {
+    if room < RESERVED_WORDS {
+        return Err(format!(
+            "hash table record {claim} is {room} words, too small"
+        ));
+    }
+    let flags = store.get_u32_raw(claim, STRIDE_FLD);
+    let stride = stride_of(flags);
+    let want = stride_for(size);
+    if stride != want && (stride != 0 || flags & INLINE != 0) {
+        return Err(format!(
+            "hash table record {claim} says entries of {stride} bytes; its elements take {want}"
+        ));
+    }
+    let mut out = Vec::new();
+    let mut used = 0u64;
+    if flags & INLINE != 0 {
+        let count = inline_count_of(flags);
+        let need = u64::from(RESERVED_WORDS) + u64::from(count) * u64::from(8 + stride) / 8;
+        if need > u64::from(room) {
+            return Err(format!(
+                "hash table record {claim} says {count} buckets and is {room} words"
+            ));
+        }
+        let e0 = ent0(count);
+        for at in 0..count {
+            let seq = store.get_u32_raw(claim, BUCKET0 + at * 8);
+            if seq != 0 {
+                used += 1;
+            }
+            if seq != 0 && seq != TOMB {
+                out.push((claim, e0 + at * stride));
+            }
+        }
+        let (live, tombs) = (
+            store.get_u32_raw(claim, INLINE_LEN_FLD),
+            store.get_u32_raw(claim, arena::FREE_FLD),
+        );
+        let said = u64::from(live) + u64::from(tombs);
+        if used > said || said > u64::from(count) {
+            return Err(format!(
+                "hash table record {claim} has {used} buckets in use of {count} and says \
+                 {live} entries and {tombs} removed"
+            ));
+        }
+        return Ok(out);
+    }
+    let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
+    let count = slots_in(room - RESERVED_WORDS, sb);
+    let next = if stride == 0 {
+        1
+    } else {
+        arena::sound(store, claim, stride)?
+    };
+    let dir = store.get_u32_raw(claim, arena::DIR_FLD);
+    let mut taken = vec![false; next as usize];
+    for i in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + i * sb);
+        if slot == 0 {
+            continue;
+        }
+        used += 1;
+        if stride == 0 || slot & SLOT_RECORD != 0 {
+            let rec = slot & !SLOT_RECORD;
+            if store.claimed_words(rec).is_none_or(|w| {
+                u64::from(crate::store::RECORD_PAYLOAD) + u64::from(size) > u64::from(w) * 8
+            }) {
+                return Err(format!(
+                    "hash entry record {rec} is not a record that holds an element"
+                ));
+            }
+            out.push((rec, crate::store::RECORD_PAYLOAD));
+            continue;
+        }
+        if slot >= next {
+            return Err(format!(
+                "hash bucket {i} names entry {slot}; the table has handed out {}",
+                next - 1
+            ));
+        }
+        if std::mem::replace(&mut taken[slot as usize], true) {
+            return Err(format!("hash entry {slot} is named by two buckets"));
+        }
+        let (k, off) = arena::locate(slot, stride);
+        out.push((arena::chunk_rec(store, dir, k), off));
+    }
+    let len = store.get_u32_raw(claim, LEN_FLD);
+    if used > u64::from(len) || len > count {
+        return Err(format!(
+            "hash table record {claim} has {used} buckets in use of {count} and says {len} entries"
+        ));
+    }
+    if stride != 0 {
+        arena::free_list_sound(store, claim, stride, next, &mut taken)?;
+    }
+    Ok(out)
+}
+
 /// The `DbRef` a bucket slot decodes to, or a null ref when it names nothing.
 ///
 /// For an owned entry `(chunk, offset)` is arithmetic against a chunk directory small

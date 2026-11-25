@@ -1,14 +1,34 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-R-DecodeView` instance 1 — which functions decode into spans of their frame, and
-//! which region functions are re-emitted to read them, PINNED on the cells
+//! which region functions are written again to read them, PINNED on the cells
 //! (`tests/scripts/a-decoded-text-is-read-where-it-lies.loft`).  The cells' values hold either
-//! way, so only this pin sees an admission move.  The plan is empty in a build that ships the
-//! live tier, so the cells run here on the release build, with the rule on and off.
+//! way, so only this pin sees an admission move; it reads the C (`--native-emit`).  The plan
+//! is empty in a build that ships the live tier, so the cells run here on the release build,
+//! with the rule on and off.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-decoded-text-is-read-where-it-lies.loft";
+
+/// The roots: each names its frame for the length of its call (a root's `__wr` work twin
+/// under a wrapper of its own).
+const ROOTS: &[&str] = &[
+    "n_copied",
+    "n_count_unread",
+    "n_first_key",
+    "n_lookup",
+    "n_measure",
+    "n_mixed",
+    "n_nested",
+    "n_shout",
+    "n_walk_values",
+];
+
+/// The region: every function a decoded value reaches from a root, as its `__dv` twin.  `len`
+/// is not in it: `@FR-R-Wrapper` writes the call of its one-op stdlib wrapper as the op itself
+/// (`wrapper_inline`, in the IR), so no decoded value reaches `t_6vector_len`.
+const TWINS: &[&str] = &["n_dec", "n_get", "n_read_v", "n_text_of"];
 
 fn loft() -> Command {
     let mut cmd =
@@ -23,11 +43,10 @@ fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
 }
 
-/// The release build's emission of the cells: the roots, the twins, and how many span writes
-/// the twins make.
+/// The release build's C for the cells: the roots, the twins, and how many span writes the
+/// twins make.
 fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize) {
-    let out =
-        std::env::temp_dir().join(format!("loft_decode_view_{tag}_{}.rs", std::process::id()));
+    let out = std::env::temp_dir().join(format!("loft_decode_view_{tag}_{}.c", std::process::id()));
     let mut cmd = loft();
     cmd.arg("--ship")
         .arg("--native")
@@ -40,7 +59,7 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
     let res = cmd.output().expect("spawn loft --native-emit");
     let text = loft::file_access::read_to_string(&out).unwrap_or_else(|e| {
         panic!(
-            "no Rust emitted ({e}; exit {:?}): {}",
+            "no C emitted ({e}; exit {:?}): {}",
             res.status,
             String::from_utf8_lossy(&res.stderr)
         )
@@ -50,27 +69,42 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
     let mut twins = Vec::new();
     let mut current: Option<String> = None;
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some((name, _)) = rest.split_once('(')
+        // A function's definition: `static … n_name(loft_cx *cx, …) {`.
+        if line.ends_with('{')
+            && !line.starts_with(' ')
+            && let Some((head, _)) = line.split_once("(loft_cx")
+            && let Some(name) = head.rsplit(' ').next()
+            && name.starts_with("n_")
         {
             current = Some(name.to_string());
-            // A twin's ranged, destination or view-return variant is the same twin.
-            if let Some((base, _)) = name.split_once("__dv") {
+            // A twin's ranged, destination or frame variant is the same twin; a work twin's
+            // body under its frame wrapper (`__wr__dvw`) is no twin.
+            if let Some((base, rest)) = name.split_once("__dv")
+                && (rest.is_empty() || rest.starts_with('_'))
+            {
                 twins.push(base.to_string());
             }
-        } else if line.contains("DvFrame::enter")
+        } else if line.contains("cx->dv_frame = v")
             && let Some(name) = current.take()
         {
-            roots.push(name);
+            let name = name.strip_suffix("__wr").unwrap_or(&name);
+            roots.push(name.to_string());
         }
     }
     roots.sort();
     roots.dedup();
     twins.sort();
     twins.dedup();
-    let spans = text.matches("codegen_runtime::dv_span_text(").count()
-        + text.matches("codegen_runtime::dv_put_span(").count();
+    let spans = text.matches("/* @FR-R-DecodeView */").count();
     (roots, twins, spans)
+}
+
+#[test]
+fn the_roots_and_the_region_are_where_the_cells_say() {
+    let (roots, twins, spans) = emitted(&[], "on");
+    assert_eq!(roots, ROOTS, "the roots moved");
+    assert_eq!(twins, TWINS, "the region moved");
+    assert!(spans > 0, "the twins write no span");
 }
 
 #[test]

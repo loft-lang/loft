@@ -214,6 +214,9 @@ fn slot_write(tp: &Type, size: u32, str_slot: bool, e: &HandoverEntry) -> Option
             };
             if str_slot {
                 SlotWrite::View(e.p, u32::try_from(e.len).ok()?)
+            } else if e.p.is_null() {
+                // The unit's null text: no pointer (`loft_null_text`).
+                SlotWrite::Text(crate::text_null::null_string())
             } else {
                 SlotWrite::Text(String::from_utf8_lossy(bytes).into_owned())
             }

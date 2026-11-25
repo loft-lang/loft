@@ -120,9 +120,12 @@ static void loft_la_set_bits(loft_cx *cx, unsigned char *a, int64_t v) {
  * held until its next text answer. */
 static const char loft_br_empty[1] = { 0 };
 static void loft_la_set_text(loft_cx *cx, unsigned char *a, loft_str s) {
-    const char *p = s.len ? s.p : loft_br_empty;
+    /* The null text crosses as no bytes and the length no text has (`host_abi::TEXT_NULL_LEN`):
+     * a null pointer here already says the call answered no text. */
+    const char *p = s.len && s.p ? s.p : loft_br_empty;
+    size_t len = s.p ? s.len : (size_t) -1;
     memcpy(a + LOFT_LA_TPTR, &p, sizeof p);
-    memcpy(a + LOFT_LA_TLEN, &s.len, sizeof s.len);
+    memcpy(a + LOFT_LA_TLEN, &len, sizeof len);
 }
 static void loft_la_set_ref(loft_cx *cx, unsigned char *a, loft_ref r) {
     loft_db_write(cx, a + LOFT_LA_DBREF, r);
@@ -615,6 +618,11 @@ pub fn build_artifact(
     // code, whichever built it first.  Its constants are built here, as a program's compile
     // builds its own.
     crate::const_literal::build_const_vectors(stores, data, None);
+    // `@FR-R-ExpPow` — the one rewrite that defines an ANSWER, not only its speed: the program
+    // that calls the unit has its library functions folded when it closes, so the unit folds
+    // them too, or a library's `pow(E, x)` answers apart in its last bit.  Folding is
+    // idempotent: a unit built from a closed program finds nothing left to fold.
+    crate::exp_pow::rewrite_program(data);
     let (data, stores) = (&*data, &*stores);
     let export = hosted_exports(data, stores, library);
     let mut carried: Vec<u32> = export.iter().copied().collect();

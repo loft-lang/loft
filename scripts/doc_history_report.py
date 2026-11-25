@@ -47,9 +47,11 @@ EXCLUDE_EXACT = {
 # The register's subject files: each entry is a decision with its date.
 EXCLUDE_PREFIX = ("doc/claude/DESIGN_DECISIONS_",)
 # `releases/` holds one directory per release cycle — its state write-up and checklist
-# evidence — a record by definition (RELEASE.md § Release records).
+# evidence — a record by definition (RELEASE.md § Release records).  `drafts/` holds dated
+# handoffs and proposals not yet decided: a record of what was found and suggested, not a
+# statement of what holds.
 EXCLUDE_DIRS = ("doc/claude/plans/", "doc/claude/lib_plans/", "doc/features/", "doc/claude/finished/",
-                "doc/claude/releases/")
+                "doc/claude/releases/", "doc/claude/drafts/")
 
 ROOTS = ("doc/claude", "doc", ".")
 

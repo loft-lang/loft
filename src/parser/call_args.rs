@@ -7,8 +7,8 @@
 //! which caller frame a returned view borrows from, what a fn-ref value publishes.
 
 use super::{
-    ConstHandOff, Deps, HashMap, HashSet, Level, Parser, Position, Type, Value,
-    callee_param_reassigns, callee_param_rebinds_owned, diagnostic_format, v_block, v_set,
+    ConstHandOff, Deps, HashMap, Level, Parser, Position, Type, Value, callee_param_reassigns,
+    callee_param_rebinds_owned, diagnostic_format, v_block, v_set,
 };
 
 impl Parser {
@@ -891,8 +891,12 @@ impl Parser {
     /// call site into caller FRAME var deps.  `d` must be attr-space
     /// (callers read it via `Deps::as_attr_indices`); the result is
     /// wrapped `Deps::frame` by `call_dependencies`.
+    ///
+    /// The result is in the callee's order — each dep where the first attribute naming it puts
+    /// it, once — so it is the same on every run.  A `HashSet` here answered its random hash
+    /// order: the call's deps, a return's `Rename(…)` and the parsed image changed run to run.
     pub(super) fn resolve_deps(types: &[Type], d: &[u16]) -> Vec<u16> {
-        let mut dp = HashSet::new();
+        let mut dp: Vec<u16> = Vec::new();
         for ar in d {
             if *ar as usize >= types.len() {
                 continue;
@@ -909,7 +913,7 @@ impl Parser {
             // as dep-transparent; a second list could only agree with it by accident.
             Self::type_deps(&types[*ar as usize], &mut dp);
         }
-        Vec::from_iter(dp)
+        dp
     }
 
     /// What a value of `tp` borrows: its dep list, or — a TUPLE having none of its own — the
@@ -917,7 +921,7 @@ impl Parser {
     /// argument's member borrows; read as nothing, the bind adopted that store and freed it
     /// beside its holder, `@FR-H-FreeTwice`).
     /// `LOFT_NO_TUPLE_ARG_DEPS=1` reads a tuple as borrowing nothing, as before.
-    fn type_deps(tp: &Type, dp: &mut HashSet<u16>) {
+    fn type_deps(tp: &Type, dp: &mut Vec<u16>) {
         if let Type::Tuple(elems) = tp.base()
             && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_DEPS").is_some())
         {
@@ -925,7 +929,11 @@ impl Parser {
                 Self::type_deps(e, dp);
             }
         } else if let Some(ad) = tp.deps_ref() {
-            dp.extend(ad.iter().copied());
+            for &x in ad {
+                if !dp.contains(&x) {
+                    dp.push(x);
+                }
+            }
         }
     }
 

@@ -314,20 +314,12 @@ pub fn wanted_deps(pkg_dir: &str, sources: &[String], deps: &[String]) -> Vec<St
     wanted
 }
 
-/// What the bodies depend on beyond the shim's sources: this binary, which writes them.
+/// What the bodies depend on beyond the shim's sources: the loft build that writes them —
+/// the content of the sources it was built from and its flags ([`crate::cache::build_identity_tag`]),
+/// never the executable's path or modification time, so one build of one commit names the
+/// same shim in every checkout and on every machine (@PLN229, reproducible builds).
 fn bodies_identity() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|e| crate::file_access::metadata(&e).ok().map(|m| (e, m)))
-        .map(|(e, m)| {
-            let t = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_nanos());
-            format!("{}:{}:{t}", e.display(), m.len())
-        })
-        .unwrap_or_default()
+    crate::cache::build_identity_tag()
 }
 
 /// The artifact is **content-addressed**: its name carries a hash of the shim

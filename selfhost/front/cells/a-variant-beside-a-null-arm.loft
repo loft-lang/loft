@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an `if` of a variant beside a `null` arm joins as that variant `?` — inside a
+// match arm it stays `At?`, its `null` the sentinel — and as the enum `?` where it is the body's
+// own tail of a function answering the enum.
+// Prints: 7 5 4
+
+struct Pos { file: text, line: integer }
+enum Nd { Leaf { v: integer }, Sp { pos: Pos, inner: Nd } }
+enum Tag { At { n: integer }, Off }
+fn tag_of(n: Nd, k: integer) -> Tag? {
+  match n {
+    Sp { pos, inner } => {
+      deeper = tag_of(inner, k);
+      if deeper != null {
+        return deeper;
+      }
+      if pos.line > k { At { n: pos.line } } else { null }
+    },
+    _ => null
+  }
+}
+fn cv_tail(c: boolean) -> Tag? { if c { At { n: 5 } } else { null } }
+fn cv_give(c: boolean) -> Tag? { return if c { At { n: 4 } } else { null }; }
+fn num(t: Tag?) -> integer { match t { At { n } => n, _ => -1 } }
+fn main() {
+  t = tag_of(Sp { pos: Pos { file: "a", line: 7 }, inner: Leaf { v: 1 } }, 5);
+  println("{num(t)} {num(cv_tail(true))} {num(cv_give(true))}");
+}

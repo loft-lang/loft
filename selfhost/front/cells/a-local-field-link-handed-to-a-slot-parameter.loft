@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a LOCAL link to an out-of-line field (`n = &t3.right.right`) handed to a `&Tree?`
+// parameter keeps the field in `_slot_n_N`; the call takes a cell naming the slot
+// (`OpSlotTag`), and the link is read again after it in an "amp slot write-back" block
+// (`_amp_ret_N` for a call that answers).  `late` hands one to a callee declared below it.
+// Prints: 80 true / 0 true
+
+struct Tree { k: integer, left: Tree?, right: Tree? }
+fn take_min(tm_s: &Tree?) -> integer {
+  while tm_s.left != null { tm_s = &tm_s.left; }
+  k = tm_s.k!;
+  tm_s = tm_s.right;
+  k
+}
+fn late() -> boolean {
+  t = Tree { k: 5, left: Tree { k: 3 } };
+  n = &t.left;
+  wipe(n);
+  t.left == null
+}
+fn wipe(slot: &Tree?) { slot = null; }
+fn main() {
+  t3 = Tree { k: 50, left: Tree { k: 30 }, right: Tree { k: 70, right: Tree { k: 80 } } };
+  n = &t3.right.right;
+  c = take_min(n);
+  println("{c} {t3.right.right == null}");
+  println("{0} {late()}");
+}

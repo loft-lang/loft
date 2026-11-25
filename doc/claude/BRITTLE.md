@@ -337,7 +337,8 @@ first of them to get a single home, read by both the freshness gate and the defe
 they cannot drift.  The rest are still per-site.  Beyond that, the missing instrument is a census
 over `(H-Drop)`'s three deaths (scope end, displacing reassignment, container cascade), counted
 per RESOURCE rather than per record: every defect in this section's history has been a hook or a
-free that no single gate represents, and `LOFT_OWN_ORACLE=check` is free-side only.
+free that no single gate represents, and the store records follow a hook only where it meets a
+copy, a free or a return (`copied-lease`).
 
 ## 8. `src/fill.rs` — 233 opcodes, auto-generated, hand-maintained
 

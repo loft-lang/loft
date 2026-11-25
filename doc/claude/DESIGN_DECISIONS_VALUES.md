@@ -337,3 +337,23 @@ spelling for that.  Decided 2026-10-30 (owner).
 `loft-suite/rules/types/N-Present/`.
 **Catalogue:** @F96 (the discharges) · `formal/types.md` `(N-Default)`.
 
+## C171 — A null text is an identity, never a content
+
+**Decision.** A `text` is absent or a byte string, and a byte string may hold NUL bytes anywhere:
+`""` and `"\0"` are present values.  Absence is spelled by identity in every representation — the
+unset handle in a store, a view with no pointer, the Rust null static (`text_null::NULL_TEXT`), a
+C owned text with a pointer and neither length nor room — never by bytes, so `text` reserves no
+writable value, unlike the scalars of [@C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen).
+An image whose sidecar predates version 3 may hold a null as a record of one NUL byte, and every
+loader reads it as null.
+**Why.** A content spelling is a value a program can write: a lone NUL read from input nulled
+every text built from it, in every place it was held, on both backends.  An identity costs no
+width — a slot holds a handle, a view a pointer — and leaves the digest and key order of stored
+tables as they were, so old images keep their nulls and their lookups.
+**Revisit when.** No trigger recorded.  Decided 2026-11-21 (owner) — [record](DESIGN_DECISIONS-history.md#c171--a-null-text-is-an-identity-never-a-content).
+**Holds at:** `@C171` — `./scripts/idx tag:@C171`: `src/text_null.rs` (the Rust homes), the C
+runtime's `loft_str_is_null` / `loft_text_is_null` (`src/c/loft_text.h`), `Store::text_is_null`
+and `Store::legacy_nul` (stored); `formal/layout.md` `(L-Null-Text)`; guards the null-text matrix
+`loft-suite/rules/layout/L-Null-Text/null-text-through-*.loft` and
+`tests/store_upgrade.rs::cell_an_image_holding_the_nul_record_reads_null`.
+**Catalogue:** @F1 (null / Optional); `formal/layout.md` `(L-Null-Text)`.

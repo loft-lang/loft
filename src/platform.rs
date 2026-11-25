@@ -2364,6 +2364,27 @@ fn find_msvc_tool(_target: &str, _tool: &str) -> Option<MsvcTool> {
     None
 }
 
+/// Put the C runtime's standard output and error into binary mode, as a compiled program's
+/// `loft_start` does (`loft_rt.h`).  On Windows the C runtime opens them in text mode and turns
+/// each `\n` written through it into `\r\n`; loft's own printing does not go through it, but a
+/// `#c` binding or a library's C unit running in the interpreter does, and must write the
+/// bytes a compiled program writes.  A no-op on every other host.
+pub fn c_stdio_binary() {
+    #[cfg(windows)]
+    {
+        const O_BINARY: i32 = 0x8000;
+        unsafe extern "C" {
+            fn _setmode(fd: i32, mode: i32) -> i32;
+        }
+        // SAFETY: `_setmode` takes a descriptor and a mode by value and touches no memory of
+        // this process; descriptors 1 and 2 are the C runtime's standard output and error.
+        unsafe {
+            _setmode(1, O_BINARY);
+            _setmode(2, O_BINARY);
+        }
+    }
+}
+
 /// The extension of a shared library on this host, without the dot: `dll`, `dylib` or `so`.
 #[must_use]
 pub fn dll_extension() -> &'static str {

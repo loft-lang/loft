@@ -1677,6 +1677,7 @@ if parser::parse("user_code", snippet) &gt; 0 {
 </code></pre>
 <p>The directory form is found in any search directory you NAMED — <code>--lib &lt;dir&gt;</code>, a path in <code>LOFT_LIB</code>, <code>~/.loft/lib/</code> — and in your own project's <code>lib/</code> once your program is itself a package, with a <code>loft.toml</code> of its own at the top. In all of those, <code>&lt;dir&gt;/mylib/</code> resolves to <code>&lt;dir&gt;/mylib/src/mylib.loft</code> on its own.</p>
 <p>A lone script with no manifest above it reads its <code>lib/</code> flat, so there a library must be the single file <code>lib/mylib.loft</code> — a <code>lib/mylib/</code> directory beside such a script answers "Library <code>mylib</code> not found". Giving the script a <code>loft.toml</code> is what turns the directory form on.</p>
+<p>A library your project has pinned (in <code>loft.lock</code>) always loads that version, whatever same-named file lies in the directory you run from. To debug or fix it, say so: <code>--lib &lt;dir&gt;</code> runs your copy for one run, and <code>loft develop mylib</code> puts an editable copy in <code>lib/mylib</code> that the project uses until <code>loft develop --done mylib</code>.</p>
 <p>The <code>loft.toml</code> manifest carries the whole package declaration — name, version, dependencies, native crates, build targets. Two of its settings decide how the library above is LOADED:</p>
 <pre><code>[package]
 loft = "&gt;=2026.10"    the oldest loft release that can load it
@@ -2031,7 +2032,7 @@ elapsed_ms  = elapsed_us / 1000
   calls += <span class="nm">1</span>;
   value
 }</code></pre>
-<p>Used to obtain a null text value (an uninitialized field is the NUL sentinel).</p>
+<p>Used to obtain a missing text field.</p>
 <pre><code><span class="kw">struct</span> <span class="en">NullTextHolder</span> {
   s: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
@@ -2062,12 +2063,12 @@ elapsed_ms  = elapsed_us / 1000
 <li><code>integer</code>         — the most negative 64-bit integer (-9 223 372 036 854 775 808) is null</li>
 <li><code>float</code>/<code>single</code>  — <code>NaN</code> (Not a Number) is null</li>
 <li><code>character</code>       — the NUL character (code point 0) is null</li>
-<li><code>text</code>            — a single NUL character (<code>'\0'</code>) is null; the empty string <code>""</code> is NOT null</li>
+<li><code>text</code>            — no text at all; <code>""</code> and a NUL character (<code>"\0"</code>) are texts like any other</li>
 <li><code>reference</code>       — record 0 is null</li>
 <li><code>boolean</code>         — a third byte state, which is neither <code>false</code> nor <code>true</code></li>
 <li>plain <code>enum</code>      — both the 0 byte and the 255 byte are reserved, so an enum holds at most 254 variants</li>
 </ul>
-<p>For the first four, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with <code>?? null</code> (or a following null-check), division by zero produces this same value, so both paths look the same to your code:</p>
+<p>For the first three, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with <code>?? null</code> (or a following null-check), division by zero produces this same value, so both paths look the same to your code:</p>
 <pre><code>  zero = <span class="nm">0</span>;
   n = <span class="nm">1</span> / zero ?? <span class="kw">null</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!n, <span class="st">"div-by-zero defended with `?? null` is null"</span>);
@@ -2075,7 +2076,7 @@ elapsed_ms  = elapsed_us / 1000
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n &lt; <span class="nm">0</span>, <span class="st">"i64::MIN is the most negative 64-bit integer"</span>);</code></pre>
 <p>Arithmetic on null propagates: null plus anything is null.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(! (n + <span class="nm">1</span>), <span class="st">"null + 1 is still null"</span>);</code></pre>
-<p>Text null is the NUL character (<code>\0</code>), not the empty string. A <code>text?</code> local or field can hold it; a plain <code>text</code> cannot, and a parse respects that.</p>
+<p>Text null is no text at all, not the empty string and not a NUL character. A <code>text?</code> local or field can hold it; a plain <code>text</code> cannot, and a parse respects that.</p>
 <pre><code>  holder = <span class="en">NullTextHolder</span>.<span class="fn-call">parse</span>(`{{}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(holder.s == <span class="st">""</span>, <span class="st">"a missing `text` field is empty, because it cannot be null"</span>);
   opt = <span class="en">OptTextHolder</span>.<span class="fn-call">parse</span>(`{{}}`);

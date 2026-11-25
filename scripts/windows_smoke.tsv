@@ -63,6 +63,7 @@ scripts/lib_audit.sh	--help
 scripts/lib_warning_scan.py	--help
 scripts/licence_census.py	--help
 scripts/lint_sweep.py	--help
+scripts/null_text_matrix.py	--help
 scripts/nullable_road.py	--help
 scripts/op_census.py	--help
 scripts/own_sweep.py	--help
@@ -85,6 +86,7 @@ scripts/release-gate.sh	--help
 scripts/release-lib-artifacts.sh	--help
 scripts/release-liveness.py	--help
 scripts/repeat-test.sh	--help
+scripts/repro-output.sh	--help
 scripts/repro-verify.sh	--help
 scripts/revalidate_libs_local.sh	--help
 scripts/rule_depth.py	--help

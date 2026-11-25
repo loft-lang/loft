@@ -1889,9 +1889,17 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // (A keyed collection is a collection here too: its null the reference sentinel.)
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && (t.tp is TyVector || keyed_kind(t.tp));
-  // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
-  // its arms typed as the variant.
+  // A struct enum's variant beside a `null` arm joins as that variant `?` (`joins_to_enum` widens
+  // for a sibling variant or the enum only, the `null` arm converted to the variant) — and as the
+  // enum `?` where this `if` is the body's own tail and the function answers that enum: the body
+  // is typed by its declared result.
   variant_null = f.tp is TyNull && !(t.tp is TyOptional) && el_ex_deliver::variant_parent(e, t.tp) >= 0;
+  vtail = if vars.body >= 0 { el_ex_deliver::tail_syntax(e, vars.body) } else { -1 };
+  body_tail_if = vtail >= 0 && match e.p.nodes[vtail] { SIf { cond: vc } => vc == cond, _ => false };
+  // (A result type declared below the function is still the forward `TyUnknown` naming it.)
+  vrt = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
+  vre = match vrt { TyUnknown { n: vun } => vun, _ => el_types::struct_enum_def(vrt) };
+  variant_lift = variant_null && body_tail_if && vre >= 0 && vre == el_ex_deliver::variant_parent(e, t.tp);
   // A struct enum held at its enum beside a `null` arm joins as a record does (`(N-Join)`).
   enum_rec_null = f.tp is TyNull && !(t.tp is TyOptional) && el_types::struct_enum_def(t.tp) >= 0 && !is_nullable_wrapper(e, t.tp);
   record_null = vector_null || variant_null || enum_rec_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
@@ -1925,7 +1933,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     // (`do_if_acc`) is decided there.
     if e.first_pass && !(el_types::base(t.tp) is TyText) {
       // A record join keeps its arms: the first pass reads the parameters they hand back.
-      ft = if variant_null { ir::TyEnum { n: el_ex_deliver::variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
+      ft = if variant_lift { ir::TyEnum { n: el_ex_deliver::variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
     }
     nl = if vector_null || enum_rec_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
@@ -1940,7 +1948,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     }
     fb = retail(f.code, nl, tt);
     if nl != null && fb != null {
-      jt = if variant_null { ir::TyEnum { n: el_ex_deliver::variant_parent(e, tt), is_ref: true, dep: el_types::deps(tt) } } else { tt };
+      jt = if variant_lift { ir::TyEnum { n: el_ex_deliver::variant_parent(e, tt), is_ref: true, dep: el_types::deps(tt) } } else { tt };
       return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: jt });
     }
   }
@@ -2839,7 +2847,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // A fn-ref LOCAL is returned as it is, its closure record with it.  (A lambda built in the
     // `return` itself is not carried: a closure answering a text names its block after its
     // capture, and a call answering it borrows `[32772]`.)
-    if result is TyFunction && v.tp is TyFunction && el_ir::unspan(v.code) is NdVar {
+    // (So is a named function, a value of its definition number: `return add5;`.)
+    if result is TyFunction && v.tp is TyFunction && (el_ir::unspan(v.code) is NdVar || el_ir::unspan(v.code) is NdFnRef || el_ir::unspan(v.code) is NdInt) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {

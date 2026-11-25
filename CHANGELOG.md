@@ -60,6 +60,14 @@ checks.  If a program now reports "`qx` was bound inside a block that has ended"
 before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 (`qx = if … { … } else { … }`).
 
+**A text of one NUL character is a text, not `null`.**  Absence used to be spelled as the text
+`"\0"`, so a lone NUL — from input, `text_from_bytes([0])`, a slice of a longer text — read as
+`null`, and any text built from it went `null` too.  Now `null` is no text at all, and `""` and
+`"\0"` are texts like any other, on both backends and wherever the text is held.  A program that
+wrote `"\0"` to mean `null` writes `null`.  Stores saved by an earlier release keep their nulls:
+loading one reads them as before.  A store this release saves is refused by an earlier one, which
+cannot read its texts.
+
 ### New
 
 **A page runs `par` on Web Workers.**  A page built with `--html` whose program runs a `par` loop

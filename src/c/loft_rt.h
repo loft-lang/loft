@@ -8,8 +8,8 @@
  *   integers   int64_t; INT64_MIN is null; an operand that is null, an overflow and a
  *              division by zero give null (ops::op_add_long and its peers).
  *   booleans   uint8_t where stored (0, 1, 255 = null); 0/1 in a condition.
- *   text       loft_text owns a byte buffer; loft_str borrows one.  The one-byte text "\0"
- *              is null (store::STRING_NULL), rendered as `null`.
+ *   text       loft_text owns a byte buffer; loft_str borrows one.  The null text is an
+ *              identity, never a content (loft_text.h, `@FR-L-Null-Text`), rendered as `null`.
  *
  * C99: <stdint.h>, declarations where they are used.  No allocation failure is survivable
  * here: one aborts the program, as the Rust runtime's does. */
@@ -174,7 +174,8 @@ static int loft_text_le(loft_cx *cx, loft_str a, loft_str b) {
 #pragma GCC diagnostic ignored "-Wstringop-overread"
 #endif
 static int loft_str_eq(loft_cx *cx, loft_str a, loft_str b) {
-    return a.len == b.len && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
+    return loft_str_is_null(cx, a) == loft_str_is_null(cx, b) && a.len == b.len
+        && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
 }
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
 #pragma GCC diagnostic pop
@@ -1286,6 +1287,11 @@ static loft_text loft_trim_end(loft_cx *cx, loft_str s) { return loft_text_own(c
 static loft_text loft_replace(loft_cx *cx, loft_str s, loft_str v, loft_str w) {
     loft_text out = { 0, 0, 0 };
     size_t at = 0;
+    /* `@FR-E-NullArg` — a null text answers null. */
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &out);
+        return out;
+    }
     if (v.len == 0) {
         while (at < s.len) {
             size_t n;
@@ -1617,9 +1623,17 @@ static void loft_set_store_lock(loft_cx *cx, loft_ref r, uint8_t locked) {
  * tuple, which no one frees or writes. */
 static loft_text loft_text_lend(loft_cx *cx, loft_str s) {
     loft_text t;
-    t.p = (char *) s.p;
-    t.len = s.len;
+    t.p = 0;
+    t.len = 0;
     t.cap = 0;
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &t);
+        return t;
+    }
+    /* "" lends as the empty text, which has no pointer: one with a pointer and neither
+     * length nor room is the null text. */
+    t.p = s.len ? (char *) s.p : 0;
+    t.len = s.len;
     return t;
 }
 
@@ -2191,7 +2205,8 @@ static inline void *loft_ta_zero(loft_cx *cx, size_t n) {
 /* A text's bytes copied into the arena. */
 static inline loft_str loft_ta_str(loft_cx *cx, loft_str s) {
     loft_str out = { 0, 0 };
-    if (s.len == 0) return out;
+    /* "" keeps a pointer: a view with none is not the empty text. */
+    if (s.len == 0) return loft_str_is_null(cx, s) ? s : loft_lit(cx, "", 0);
     char *p = (char *) loft_ta_alloc(cx, s.len);
     memcpy(p, s.p, s.len);
     out.p = p;
@@ -3639,7 +3654,9 @@ static loft_str loft_store_str(loft_cx *cx, loft_store_t *s, uint32_t srec) {
     if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text(cx);
     uint32_t len = loft_u32(cx, s, srec, 4);
     if (len / 8 + srec > s->size) return loft_null_text(cx);
-    return loft_lit(cx, (const char *) loft_at(cx, s, srec, 8), len);
+    const char *p = (const char *) loft_at(cx, s, srec, 8);
+    if (s->legacy_nul && len == 1 && p[0] == 0) return loft_null_text(cx);
+    return loft_lit(cx, p, len);
 }
 
 /* @FR-R-RecPtr's text clause — a text field through a held element's address: its string
@@ -3664,6 +3681,11 @@ static void loft_set_text(loft_cx *cx, loft_ref r, uint32_t fld, loft_str v) {
     if (r.rec == 0) return;
     if (LOFT_WRITE_REFUSED(loft_store_of(cx, r))) return;
     loft_store_t *s = loft_store_of(cx, r);
+    /* The null text is the unset handle, never a record (`@FR-L-Null-Text`). */
+    if (loft_str_is_null(cx, v)) {
+        loft_set_u32(cx, s, r.rec, r.pos + fld, 0);
+        return;
+    }
     loft_text copy = { 0, 0, 0 };
     if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(cx, v);
@@ -3682,6 +3704,12 @@ static void loft_refill_text(loft_cx *cx, loft_ref r, uint32_t fld, loft_str v) 
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(cx, r);
     if (LOFT_WRITE_REFUSED(s)) return;
+    if (loft_str_is_null(cx, v)) {
+        uint32_t held = loft_u32(cx, s, r.rec, r.pos + fld);
+        if (held != 0) loft_st_delete(cx, s, held);
+        loft_set_u32(cx, s, r.rec, r.pos + fld, 0);
+        return;
+    }
     loft_text copy = { 0, 0, 0 };
     if (v.len && v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(cx, v);
@@ -7100,12 +7128,40 @@ static unsigned __stdcall loft_timeout_watch(void *arg) {
 /* A rename that replaces the file `to` names, as Rust's `fs::rename` — and so the interpreter —
  * does on every host.  POSIX `rename` does; the Windows CRT's refuses an existing target, so
  * there it is `MoveFileExW` with MOVEFILE_REPLACE_EXISTING, its failure told in `errno`.  The
- * paths go over in their wide form, as every path does (`loft_wpath`, loft_io.h). */
+ * paths go over in their wide form, as every path does (`loft_wpath`). */
 #if defined(_WIN32)
 #include <wchar.h>
 __declspec(dllimport) int __stdcall MoveFileExW(const wchar_t *from, const wchar_t *to, unsigned long flags);
 __declspec(dllimport) unsigned long __stdcall GetLastError(void);
-static wchar_t *loft_wpath(const char *s);
+/* `@FR-Path-Utf8` on Windows — a path is UTF-8 in loft and UTF-16 to the OS, as Rust's `OsStr`
+ * hands it to the interpreter's calls: every call here that names a path takes the WIDE form
+ * (`_wfopen`, `_wstat64`, `_wfindfirst64`, `CreateFileW` …).  The ANSI form reads the bytes in
+ * the machine's code page, so a name outside it reached another file (`a\u{FFFD}.txt` written
+ * as `aï¿½.txt`) and a listed name outside it showed as `?`. */
+static wchar_t *loft_wpath(const char *s) {
+    size_t n = strlen(s), o = 0;
+    /* A UTF-8 byte gives at most one UTF-16 unit: four bytes are two units. */
+    wchar_t *w = (wchar_t *) malloc((n + 1) * sizeof(wchar_t));
+    if (!w) { fputs("loft: out of memory\n", stderr); abort(); }
+    const unsigned char *p = (const unsigned char *) s;
+    for (size_t i = 0; i < n;) {
+        uint32_t c = p[i];
+        size_t k = c < 0x80 ? 1 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 0;
+        if (k == 0 || i + k > n) { w[o++] = 0xFFFD; i++; continue; }
+        if (k > 1) c &= 0x3F >> (k - 1);
+        for (size_t j = 1; j < k; j++) c = (c << 6) | (p[i + j] & 0x3F);
+        i += k;
+        if (c >= 0x10000) {
+            c -= 0x10000;
+            w[o++] = (wchar_t) (0xD800 | (c >> 10));
+            w[o++] = (wchar_t) (0xDC00 | (c & 0x3FF));
+        } else {
+            w[o++] = (wchar_t) c;
+        }
+    }
+    w[o] = 0;
+    return w;
+}
 static int loft_rename(loft_cx *cx, const char *from, const char *to) {
     wchar_t *wf = loft_wpath(from), *wt = loft_wpath(to);
     int ok = MoveFileExW(wf, wt, 1ul /* MOVEFILE_REPLACE_EXISTING */);
@@ -7565,7 +7621,7 @@ static int64_t loft_vector_sum_int(loft_cx *cx, loft_ref v, int64_t acc) {
 static loft_text loft_text_from_cstr(loft_cx *cx, const char *c) {
     loft_text t = { 0, 0, 0 };
     if (!c) {
-        loft_push_char(cx, &t, 0);
+        loft_text_set_null(cx, &t);
         return t;
     }
     size_t n = strlen(c);
@@ -7618,6 +7674,118 @@ static loft_text loft_text_from_byte_range(loft_cx *cx, loft_ref v, int64_t lo, 
     const unsigned char *p = loft_elem_base(cx, s, r) + lo;
     if (loft_utf8_valid(cx, p, (size_t) (hi - lo))) loft_push(cx, &out, (const char *) p, (size_t) (hi - lo));
     return out;
+}
+
+/* `@FR-R-DecodeView` (@C141) — a text or byte-string field of a decoded enum value held as a SPAN
+ * of the frame it was decoded from.  The span word is the record's last eight bytes: two 32-bit
+ * words, the length and then the start plus one under the top bit, so a span word is never the
+ * owned form's 0 0 and no 64-bit value is formed to hold it.  The span's own field holds
+ * nothing, so a release frees nothing for it, and a copy of the record's bytes carries the
+ * word.  The frame is `cx->dv_frame`, named by the region's root for the length of its call. */
+typedef struct { uint32_t n, at; } loft_dvs;
+/* A walk's closure (`@FR-R-DecodeView`'s structure clause): the site's locals, the element, the
+ * answer; 1 when the closure answered and the walk stops. */
+typedef int (*loft_ps_fn)(loft_cx *, void *const *, const void *, void *);
+
+/* The bytes of byte vector `b` and their number, read as loft_vec_slice reads its source. */
+static const unsigned char *loft_dv_bytes(loft_cx *cx, loft_ref b, uint32_t *n) {
+    *n = 0;
+    if (b.store_nr == 0xFFFF || b.rec == 0 || b.pos == 0) return 0;
+    loft_store_t *s = loft_store_of(cx, b);
+    uint32_t r = loft_collection_rec(cx, s, b.rec, b.pos);
+    if (r == 0) return 0;
+    *n = (uint32_t) loft_vec_len(cx, b);
+    return loft_elem_base(cx, s, r);
+}
+
+/* The span word of `[lo, lo + n)`, or none (`at` 0) when it does not fit one. */
+static loft_dvs loft_dv_word(uint32_t lo, uint32_t n) {
+    loft_dvs w = { 0, 0 };
+    if (lo >= 0x7FFFFFFEu) return w;
+    w.n = n;
+    w.at = 0x80000000u | (lo + 1);
+    return w;
+}
+
+/* The span word of `b[lo..hi]` under loft_vec_slice's clamps, or none — the owned slice is then
+ * built, as it always was. */
+static loft_dvs loft_dv_span(loft_cx *cx, loft_ref b, int64_t lo, int64_t hi) {
+    loft_dvs none = { 0, 0 };
+    if (b.store_nr == 0xFFFF || b.rec == 0 || b.pos == 0) return none;
+    int64_t len = loft_vec_len(cx, b);
+    if (lo < 0) lo = 0;
+    if (lo > len) lo = len;
+    if (hi < lo) hi = lo;
+    if (hi > len) hi = len;
+    return loft_dv_word((uint32_t) lo, (uint32_t) (hi - lo));
+}
+
+/* Write span word `w` into record `rec`: its field at `off` holds nothing of its own. */
+static void loft_dv_put(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare, loft_dvs w) {
+    if (rec.rec == 0) return;
+    loft_store_t *s = loft_store_of(cx, rec);
+    if (LOFT_WRITE_REFUSED(s)) return;
+    loft_set_u32(cx, s, rec.rec, rec.pos + off, 0);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare, w.n);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare + 4, w.at);
+}
+
+/* The owned form of a span field: its span word cleared, so no read takes a stale one. */
+static void loft_dv_clear(loft_cx *cx, loft_ref rec, uint32_t spare) {
+    if (rec.rec == 0) return;
+    loft_store_t *s = loft_store_of(cx, rec);
+    if (LOFT_WRITE_REFUSED(s)) return;
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare, 0);
+    loft_set_u32(cx, s, rec.rec, rec.pos + spare + 4, 0);
+}
+
+/* A decoded text written as a span of the frame `b`, under loft_text_from_byte_range's bounds,
+ * when its bytes are UTF-8 — the condition that makes the span the text the owned form holds
+ * (`@FR-R-DecodeView` (5)).  Answers whether it was written; the caller builds the owned text
+ * otherwise. */
+static int loft_dv_span_text(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare, loft_ref b, int64_t lo, int64_t hi) {
+    if (rec.rec == 0) return 0;
+    uint32_t n32;
+    const unsigned char *p = loft_dv_bytes(cx, b, &n32);
+    int64_t n = n32;
+    if (p == 0 || n == 0) return 0;
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo) return 0;
+    loft_dvs w = loft_dv_word((uint32_t) lo, (uint32_t) (hi - lo));
+    if (w.at == 0 || !loft_utf8_valid(cx, p + lo, (size_t) (hi - lo))) return 0;
+    loft_dv_put(cx, rec, off, spare, w);
+    return 1;
+}
+
+/* `@FR-R-DecodeView`'s structure clause — a text leaf read at its position: the frame's bytes
+ * `b[lo..hi]` under loft_text_from_byte_range's bounds, and the empty text where they are not
+ * UTF-8, as that function answers.  Nothing is copied. */
+static loft_str loft_ps_text(loft_cx *cx, loft_ref b, int64_t lo, int64_t hi) {
+    uint32_t n32;
+    const unsigned char *p = loft_dv_bytes(cx, b, &n32);
+    int64_t n = n32;
+    if (p == 0 || n == 0) return loft_lit(cx, "", 0);
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo || !loft_utf8_valid(cx, p + lo, (size_t) (hi - lo))) return loft_lit(cx, "", 0);
+    return loft_lit(cx, (const char *) p + lo, (size_t) (hi - lo));
+}
+
+/* A text field of a decoded record: the frame's bytes when it holds a span, else its own. */
+static loft_str loft_dv_text(loft_cx *cx, loft_ref rec, uint32_t off, uint32_t spare) {
+    if (rec.rec == 0) return loft_null_text(cx);
+    loft_store_t *s = loft_store_of(cx, rec);
+    uint32_t at = loft_u32(cx, s, rec.rec, rec.pos + spare + 4);
+    if (at & 0x80000000u) {
+        uint32_t lo = (at & 0x7FFFFFFFu) - 1, n = loft_u32(cx, s, rec.rec, rec.pos + spare), len;
+        const unsigned char *p = loft_dv_bytes(cx, cx->dv_frame, &len);
+        /* Checked when the span was written, and the frame is not written while one lives
+         * (`@FR-R-DecodeView` (1)). */
+        if (p != 0 && lo <= len && n <= len - lo) return loft_lit(cx, (const char *) p + lo, n);
+        return loft_lit(cx, "", 0);
+    }
+    return loft_store_str(cx, s, loft_u32(cx, s, rec.rec, rec.pos + off));
 }
 
 /* `@FR-R-Transient`: the scalar elements of store vector `src` copied into transient vector `d`,

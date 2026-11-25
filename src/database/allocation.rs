@@ -4341,15 +4341,11 @@ impl Stores {
     fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
-                // text — P220: discriminate null source from empty-string
-                // source.  `get_str(0)` returns `STRING_NULL` ("\0"), so the
-                // old `s.is_empty()` check never fired for a null source
-                // (s would be "\0", not "") — but it DID fire for a
-                // genuinely empty `""` source, writing 0 (the null
-                // sentinel) into the destination and silently
-                // re-classifying the value as null.  Result: a `""`
-                // element copied through this path read back as `null`.
-                // Discriminate on the source `cur` instead.
+                // text — P220: the unset handle is the null text and an
+                // allocated `""` is a present one, so the copy discriminates on
+                // the source handle, never on the bytes (a `""` must not read
+                // back as null).  A NUL record of an image from before sidecar
+                // v3 reads as null through `get_str` and lands as 0 (`set_str`).
                 let store = self.store(rec);
                 let cur = store.get_u32_raw(rec.rec, rec.pos);
                 if cur == 0 {
@@ -5308,6 +5304,7 @@ impl Stores {
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
+        new_store.legacy_nul = crate::schema_sidecar::nul_is_null_beside(path);
 
         let what = path.display().to_string();
         if !self.adopt_image(
@@ -6651,6 +6648,9 @@ impl Stores {
 
     /// [`Stores::load_bytes`] for an image whose sidecar recorded the slot it was written
     /// from (`recorded`), so its stored references can be made to name `slot` (loft#2099).
+    ///
+    /// `legacy_nul`: the image's sidecar predates version 3, so a record holding one NUL byte
+    /// is the null text (`schema_sidecar::nul_is_null`).
     fn load_bytes_from(
         &mut self,
         slot: u16,
@@ -6658,6 +6658,7 @@ impl Stores {
         recorded: Option<u16>,
         what: &str,
         builtin: &str,
+        legacy_nul: bool,
     ) -> bool {
         if slot as usize >= self.allocations.len() {
             return false;
@@ -6676,6 +6677,7 @@ impl Stores {
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
+        new_store.legacy_nul = legacy_nul;
         // The loaders that come through here read a file from elsewhere: they ask the walk.
         self.adopt_image(slot, new_store, recorded, what, builtin, true)
     }
@@ -6827,7 +6829,10 @@ impl Stores {
             return Self::conversion_took(done, url, "store_load_url");
         }
         let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
-        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url")
+        let legacy_nul = sidecar
+            .as_deref()
+            .is_some_and(crate::schema_sidecar::nul_is_null);
+        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url", legacy_nul)
     }
 
     /// @PLN97 arc G Phase 0 — load a whole store IMAGE over HTTP(S)/`file://` from
@@ -6864,7 +6869,17 @@ impl Stores {
             return Self::conversion_took(done, url, "store_load_url_trusted");
         }
         let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
-        self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted")
+        let legacy_nul = sidecar
+            .as_deref()
+            .is_some_and(crate::schema_sidecar::nul_is_null);
+        self.load_bytes_from(
+            slot,
+            &bytes,
+            recorded,
+            url,
+            "store_load_url_trusted",
+            legacy_nul,
+        )
     }
 
     /// @PLN97 arc G Phase 2 — load a store IMAGE from a local file that may be
@@ -6901,7 +6916,8 @@ impl Stores {
         }
         let recorded =
             crate::schema_sidecar::LayoutIdentity::from_sidecar(sidecar).and_then(|id| id.slot);
-        self.load_bytes_from(slot, bytes, recorded, what, builtin)
+        let legacy_nul = crate::schema_sidecar::nul_is_null(sidecar);
+        self.load_bytes_from(slot, bytes, recorded, what, builtin, legacy_nul)
     }
 
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
@@ -6937,6 +6953,7 @@ impl Stores {
             Self::recorded_slot(path),
             &what,
             "store_load_untrusted",
+            crate::schema_sidecar::nul_is_null_beside(path),
         )
     }
 
@@ -7156,24 +7173,27 @@ impl Stores {
     /// is a local file or an `http(s)://` URL — the sidecar is read from beside
     /// it (`<path>.dschema`), over the same transport.
     ///
-    /// `Some(trie_v1)` reads the image; `trie_v1` says its tries were written under a
-    /// placement this build reads as written (`placement::TRIE_READS`), which the reader must
-    /// be told ([`PagedReader::trie_v1`](crate::paged_reader::PagedReader::trie_v1)).
+    /// `Some((trie_v1, legacy_nul))` reads the image; `trie_v1` says its tries were written
+    /// under a placement this build reads as written (`placement::TRIE_READS`), which the
+    /// reader must be told ([`PagedReader::trie_v1`](crate::paged_reader::PagedReader::trie_v1)),
+    /// and `legacy_nul` that it predates sidecar version 3
+    /// ([`PagedReader::legacy_nul`](crate::paged_reader::PagedReader::legacy_nul)).
     #[cfg(paged_store)]
-    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> Option<bool> {
+    fn layout_gate_ok(&mut self, path: &str, local: &DbRef) -> Option<(bool, bool)> {
         let known_type = self.allocations[local.store_nr as usize].known_type;
         if known_type == u16::MAX {
-            return Some(false); // untyped store — no identity to compare against
+            return Some((false, false)); // untyped store — no identity to compare against
         }
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
-        let verdict = crate::paged_reader::check_sidecar(path, &current, self.release());
+        let (verdict, legacy_nul) =
+            crate::paged_reader::check_sidecar(path, &current, self.release());
         if verdict.is_raw_safe() {
-            return Some(false);
+            return Some((false, legacy_nul));
         }
         if let crate::schema_sidecar::SchemaVerdict::Changed(diff) = &verdict
             && diff.trie_v1
         {
-            return Some(true);
+            return Some((true, legacy_nul));
         }
         // A layout mismatch is a rare, important safety event — always surface it
         // so a rejected load is not silently mistaken for "key absent". Through
@@ -7211,7 +7231,7 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
+        let Some((trie_v1, legacy_nul)) = self.layout_gate_ok(path, local) else {
             return 0;
         };
         use crate::paged_reader::{PageSource, PagedReader};
@@ -7221,6 +7241,7 @@ impl Stores {
         };
         let mut reader = PagedReader::new(source);
         reader.trie_v1 = trie_v1;
+        reader.legacy_nul = legacy_nul;
         let tp = self.allocations[local.store_nr as usize].known_type;
         if tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -7951,7 +7972,7 @@ impl Stores {
             return false;
         };
         let path = resolved.as_str();
-        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
+        let Some((trie_v1, legacy_nul)) = self.layout_gate_ok(path, local) else {
             return false;
         };
         use crate::paged_reader::{PageSource, PagedReader};
@@ -7961,6 +7982,7 @@ impl Stores {
         };
         let mut reader = PagedReader::new(source);
         reader.trie_v1 = trie_v1;
+        reader.legacy_nul = legacy_nul;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8023,7 +8045,7 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
+        let Some((trie_v1, legacy_nul)) = self.layout_gate_ok(path, local) else {
             return 0;
         };
         use crate::paged_reader::{PageSource, PagedReader};
@@ -8033,6 +8055,7 @@ impl Stores {
         };
         let mut reader = PagedReader::new(source);
         reader.trie_v1 = trie_v1;
+        reader.legacy_nul = legacy_nul;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8117,7 +8140,7 @@ impl Stores {
             return 0;
         };
         let path = resolved.as_str();
-        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
+        let Some((trie_v1, legacy_nul)) = self.layout_gate_ok(path, local) else {
             return 0;
         };
         use crate::paged_reader::{PageSource, PagedReader};
@@ -8127,6 +8150,7 @@ impl Stores {
         };
         let mut reader = PagedReader::new(source);
         reader.trie_v1 = trie_v1;
+        reader.legacy_nul = legacy_nul;
         let root_tp = self.allocations[local.store_nr as usize].known_type;
         if root_tp == u16::MAX {
             self.refuse_paged(path, "the target collection's store has no recorded type");
@@ -8264,7 +8288,7 @@ impl Stores {
         key_sets: &[Vec<crate::keys::Content>],
         stats_label: &str,
     ) -> i64 {
-        let Some(trie_v1) = self.layout_gate_ok(path, local) else {
+        let Some((trie_v1, legacy_nul)) = self.layout_gate_ok(path, local) else {
             return 0;
         };
         use crate::paged_reader::{PageSource, PagedReader};
@@ -8276,6 +8300,7 @@ impl Stores {
         };
         let mut reader = PagedReader::new(source);
         reader.trie_v1 = trie_v1;
+        reader.legacy_nul = legacy_nul;
 
         // Schema from the LIVE type of `local` (never reverse-engineered bytes).
         // `known_type` roots the collection directly (annotated local) OR the
@@ -8580,7 +8605,15 @@ impl Stores {
             {
                 // Flat sub-record pointer (text / vector<scalar>).
                 let src_sub = self.src_ptr(reader, dst_rec, dst_off, src_rec, src_off, store_nr);
-                if src_sub != 0 {
+                // An image older than sidecar version 3 may hold a null text as a NUL record:
+                // it lands as the unset handle (`@FR-L-Null-Text`).
+                let legacy_null = ftp == 5
+                    && src_sub != 0
+                    && reader.legacy_nul
+                    && reader.str_bytes(src_sub) == [0];
+                if legacy_null {
+                    self.allocations[store_nr as usize].set_u32_raw(dst_rec, dst_off, 0);
+                } else if src_sub != 0 {
                     // `text` is one byte per unit; a vector<scalar> is its element.
                     let esz = if ftp == 5 {
                         1

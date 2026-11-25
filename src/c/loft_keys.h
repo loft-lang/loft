@@ -247,6 +247,7 @@ static void loft_sip_i64(loft_cx *cx, loft_sip *h, int64_t v) {
 
 static void loft_sip_str(loft_cx *cx, loft_sip *h, loft_str s) {
     static const uint8_t end = 0xFF;
+    s = loft_digest_text(cx, s);
     if (s.len) loft_sip_write(cx, h, (const uint8_t *) s.p, s.len);
     loft_sip_write(cx, h, &end, 1);
 }
@@ -324,6 +325,7 @@ LOFT_HOT_INLINE uint64_t loft_digest_ints(loft_cx *cx, uint64_t seed, const int6
  * that ends a text part, the finish for their length — what the general digest computes for
  * `loft_kv_text(s)`, unrolled (`@FR-R-TypedKeyed`'s text clause). */
 static uint64_t loft_digest_str(loft_cx *cx, uint64_t seed, loft_str s) {
+    s = loft_digest_text(cx, s);
     loft_sip h;
     uint8_t b[8];
     const uint8_t *p = (const uint8_t *) s.p;

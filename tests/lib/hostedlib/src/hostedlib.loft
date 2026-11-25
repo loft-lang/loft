@@ -131,6 +131,12 @@ pub fn decay(fall: float) -> float {
   exp(0.0 - fall)
 }
 
+// `pow(E, x)` IS `exp(x)` (`@FR-R-ExpPow`): the unit answers it as the interpreter does, not as
+// a general power of the rounded E.
+pub fn grow(rise: float) -> float {
+  pow(E, rise)
+}
+
 // A text built from another carried function's text answers: its interpreted twin calls
 // `label_of` interpreted too, each nested answer landing in this call's own text, not the outer
 // one's destination.

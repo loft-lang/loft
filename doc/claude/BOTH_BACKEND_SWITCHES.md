@@ -413,6 +413,33 @@ record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.
 literal rebinding an enum local or a return buffer on a work reference again, and so also
 turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
 
+Three switches turn off how a call's argument is named for the copy-or-adopt of its answer
+(`@FR-H-Free`, `@FR-H-FreeTwice`, scope pass, BOTH backends; the guards are
+`heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built` and
+`heap/H-FreeTwice/2638-…`).  **`LOFT_NO_RETBUF_ARG_LIFT=1`** leaves a call result delivered into
+the caller's buffer (`first(none())`) unnamed: the copy of the answer loses its source-free and
+the record the callee made leaks.  **`LOFT_NO_JOIN_ARG_LIFT=1`** leaves a `??`
+argument whose default the caller builds in a buffer unbound: an answer that is that default is
+adopted and freed again by the buffer.  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds a
+call whose literal arguments were hoisted through its preamble (`o = { INSERT …; f(…) }`) instead
+of as the call: the bind adopts, and a second argument the callee answers is freed twice.
+
+**`LOFT_NO_SHADOW_CELL_OWNER=1`** (`@FR-L-CapOwn`, scope pass, BOTH backends) stops naming the
+closure record that takes a mutated parameter's cell (`__bx_<name>`, whose record attribute keeps
+the parameter's name): a run that builds no closure releases the cell nowhere
+(`closures/L-CapBox/2639-…`).
+
+**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, the value-record pass, BOTH backends)
+admits a function whose value-struct answer names a parameter into the tuple rewrite again: its
+body's copy of that parameter then has no owner and leaks once per call
+(`rewrites/R-ValueRecord/2641-…`).
+
+**`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
+hold for a generator handle a second holder takes while its source keeps one
+(`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
+releases the source's frame.  The store records read that free as the caller's store
+released (`wrong-end`; a `match` over an iterator parameter, `tests/scripts/35p-…`).
+
 **`LOFT_NO_CAPREBIND_MINT=1`** (`@FR-L-CapRebind`, default-ON, parse time and scope pass, BOTH
 backends) lets a rebind of a captured vector local that reads the local itself (`a = a + [3]`,
 `a = a[0..1]`) work in the local's store again, and drops the detach that keeps a loop pass's
@@ -423,7 +450,7 @@ a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a sto
 local was bound to at its last read here (`scopes::last_use`), while the closure record still
 reads it: a use after free the next allocation exposes (`--native-c` under
 `LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
-reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  Three switches bring back
+reference).  The store records report it (`LOFT_LIFETIME_CHECK`, the L-CapRebind cell).  Three switches bring back
 a re-free at a scope's end (`@FR-H-FreeTwice`, scope pass; `LOFT_DOUBLE_FREE` counts it): a fn-ref
 freeing the local record it was built over (**`LOFT_NO_FNREF_STAND_DOWN=1`**), a record a
 capturing record's cascade adopts (**`LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1`**), and a captured

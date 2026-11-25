@@ -30,6 +30,7 @@ use el_ex_object;
 use el_ex_deliver;
 use narrow;
 use el_ex_into;
+use el_ex_link;
 
 // `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
@@ -440,8 +441,11 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
   op = read_op(st.elem);
   // A record element is the element itself, a view of the vector (no read at offset 0).
   record = size == -2 && struct_ref(e, st.elem) >= 0 && !e.first_pass;
+  // (A template's element of its own variable reads with the variable's marker
+  // (`type_var_stride`), which each instance rewrites to its bound's stride.)
+  shv = if record { generic_holder(e, el_types::base(st.elem)) } else { -1 };
   if record {
-    size = record_size(e, st.elem);
+    size = if shv >= 0 { -1 - shv } else { record_size(e, st.elem) };
   }
   // An element that is a vector is read through its handle (`OpGetField(…, 0, <its type>)`),
   // the read typed as the element is — with the element type's own borrow.
@@ -449,7 +453,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
   if inner_vt >= 0 {
     size = 4;
   }
-  if hiv < 0 || (nxt < 0 && !rev) || (rev && lov < 0) || size < 0 || (op == "" && !record && inner_vt < 0) {
+  if hiv < 0 || (nxt < 0 && !rev) || (rev && lov < 0) || (size < 0 && shv < 0) || (op == "" && !record && inner_vt < 0) {
     return null;
   }
   i_v = ir::NdVar { n: st.idx };
@@ -511,6 +515,14 @@ pub fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
 // a store is refused by name.
 pub fn slice_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
+  // (A template's element of its variable borrows the slice's source from the first pass on:
+  // `m = v[1..3]` is a `vector<T["v"]>`.)
+  if generic_holder(e, el_types::base(elem)) >= 0 && len(el_types::deps(elem)) == 0 {
+    sbr = match x.code { NdIter { create: sbc } => place_root(e, sbc), _ => -1 };
+    if sbr >= 0 {
+      elem = el_types::with_deps(elem, [sbr]);
+    }
+  }
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elem, dep: [] }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -661,7 +673,12 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     at = ir::NdVar { n: elm_v };
     // (A vector element is copied into the new element itself, typed as the inner vector.)
     inner_vt = match el_types::base(elem) { TyVector { inner: vin } => vector_store(e, vin, el_types::elem_name(e, vin)), _ => -1 };
-    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
+    // (A TYPE VARIABLE's element, `@FR-G-Mono`, is written in the shape `v += [x]` writes one —
+    // `OpCopyRecord(src, elm, row | COPY_FRESH_DEST)` on the fresh element itself — which each
+    // instance re-lowers at its bound type; a field read around the destination it would not
+    // match.)
+    tv_elem = el_types::type_var(e, el_types::base(elem)) >= 0;
+    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if tv_elem && rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: el::def(e, rsd).known_type + 16384 }]) } else if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
     steps = [
       el_ir::v_set(se, read!),
       el_ir::v_set(elm_v, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: v }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
@@ -670,7 +687,7 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     ];
     head: vector<ir::Node> = [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
       el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
       init
     ];
@@ -681,7 +698,7 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   }
   ir::NdInsert { items: [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init,
     el_ir::cl(e, "OpSliceView", [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])
@@ -913,7 +930,8 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
   // container variable).
   bare_field = fd >= 0 && e.p.nodes[n] is SStructLit;
   if len(items) > 0 && !(bare_field && e.first_pass) {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    // (Typed as the collection's record from the first pass on, `ref(Rec)["s"]`.)
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [v] });
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
     if fd >= 0 && !bare_field {
@@ -941,7 +959,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
       }
       el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
-      kcopy = el_ex_match::record_item_copy(e, vars, elm, el_d, kx);
+      kcopy = el_ex_link::record_item_copy(e, vars, elm, el_d, kx);
       if kcopy == null {
         return null;
       }
@@ -1684,8 +1702,13 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
   }
   if el_types::base(a.tp) is TyVector && !(a.tp is TyOptional) {
     parts: vector<Ex> = [];
+    // (A literal operand is read against the first operand's element on the second pass —
+    // `a + [3]` over a `vector<u8>` is a `vector<u8>` literal — as a narrow element needs; the
+    // first pass reads it as it is spelled.)
+    celm = match el_types::base(a.tp) { TyVector { inner: ci } => ci, _ => ir::TyVoid };
+    narrow_elm = match celm { TyInteger { spec: cs } => el_types::narrow_width(cs) > 0 || el_types::int4(cs) || el_types::uint4(cs), _ => false };
     for n in rights {
-      parts += [el_ex_assign::expression(e, vars, n)];
+      parts += [if narrow_elm && !e.first_pass && e.p.nodes[n] is SVecLit { el_ex_pattern::vector_value(e, vars, n, elem: celm).x } else { el_ex_assign::expression(e, vars, n) }];
     }
     return vector_concat(e, vars, dest, a, parts);
   }
@@ -1767,8 +1790,12 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     }
   }
   if e.first_pass {
+    // (Pass 1 binds a local to the first operand's vector as it is read — a local, or the root
+    // of a place, naming itself as `depending` does: `q = a + [3]` borrows `a`, `b[0] + [3]`
+    // `b`.  A concatenation that is no bind — a `for` loop's source — borrows nothing.)
     if dest >= 0 {
-      return ex(ir::NdNull, ir::TyRewritten { inner: vt });
+      fpr = place_root(e, first);
+      return ex(ir::NdNull, ir::TyRewritten { inner: if fpr >= 0 { el_types::with_deps(vt, [fpr]) } else { vt } });
     }
     el_vars::create_unique(vars, "vec", vt);
     return ex(ir::NdNull, vt);
@@ -1779,7 +1806,9 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = rows!;
-  rec = el_schema::schema_type(e, nm);
+  // (A narrow element appends through its content row — `byte`, `short`, `int<…>` — which its
+  // name, `integer(0, 255)`, does not find.)
+  rec = if match elm { TyInteger { spec: cs } => el_types::narrow_width(cs) > 0 || el_types::int4(cs) || el_types::uint4(cs), _ => false } { el_schema::content_type(e, elm) } else { el_schema::schema_type(e, nm) };
   if rec < 0 {
     el::refuse(e, "a vector concatenation of this element type: {type_kind(elm)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1796,7 +1825,7 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
   w = ir::NdVar { n: target };
   ls: vector<ir::Node> = [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(target, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(target, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     el_ir::cl(e, "OpAppendVector", [w, a.code, ir::NdInt { n: rec }])
   ];

@@ -1004,7 +1004,7 @@ static loft_ref loft_h_entry_text(loft_cx *cx, loft_ref c, const loft_key *keys,
             loft_h_at_bucket(cx, &ents, s, slot, at, &e.rec, &e.pos);
             if (e.rec != 0) {
                 loft_str have = loft_store_str(cx, s, loft_u32(cx, s, e.rec, e.pos + kpos));
-                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+                if (loft_str_eq(cx, have, key)) return e;
             }
         }
         if (++at >= count) at = 0;
@@ -1056,7 +1056,7 @@ static loft_ref LOFT_H_TYPED(loft_h_find_text)(loft_cx *cx, loft_ref c, const lo
             loft_h_at_bucket(cx, &ents, s, slot, index, &e.rec, &e.pos);
             if (e.rec != 0) {
                 loft_str have = loft_store_str(cx, s, loft_u32(cx, s, e.rec, e.pos + kpos));
-                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+                if (loft_str_eq(cx, have, key)) return e;
             }
         }
         if (++index >= count) index = 0;

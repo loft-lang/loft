@@ -33,9 +33,8 @@ pub const COROUTINE_EXHAUSTED: i64 = i64::MIN;
 /// One method per yielded primitive shape:
 /// - `next_i64` for integer / float / boolean / single / character yields
 ///   (everything that fits in 8 bytes).
-/// - `next_text` for `text` yields.  Returns `STRING_NULL` ("\0") on
-///   exhaustion, matching the for-loop break-test convention used by
-///   `dispatch.rs::OpCoroutineNext`.
+/// - `next_text` for `text` yields.  Returns the null text on exhaustion
+///   (`text_null::null_string`).
 ///
 /// A given generator only ever overrides the method matching its yield
 /// type; the other keeps its default (returns the type's exhaustion
@@ -50,9 +49,9 @@ pub trait LoftCoroutine {
     }
 
     /// Advance a text-yielding generator one step.  Returns the yielded
-    /// `String`, or `STRING_NULL` (`"\0"`) when the generator is exhausted.
+    /// `String`, or the null text when the generator is exhausted.
     fn next_text(&mut self, _stores: &mut Stores) -> String {
-        crate::store::STRING_NULL.to_string()
+        crate::text_null::null_string()
     }
 
     /// Advance a Reference-yielding generator one step.  Returns the yielded
@@ -393,16 +392,16 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
 }
 
 /// Advance a text-yielding native coroutine.  Returns the yielded `String`,
-/// or `STRING_NULL` (`"\0"`) when exhausted.  Frees the coroutine slot
+/// or the null text when exhausted.  Frees the coroutine slot
 /// automatically on exhaustion, mirroring `coroutine_next_i64`.
 pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
     advance_native(
         gen_ref,
         stores,
-        crate::store::STRING_NULL.to_string(),
+        crate::text_null::null_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
-            let done = val == crate::store::STRING_NULL && coro.done();
+            let done = crate::text_null::is_null(&val) && coro.done();
             (val, done)
         },
     )

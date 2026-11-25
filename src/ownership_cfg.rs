@@ -471,7 +471,7 @@ impl OFact {
             // @PLN155 phase 2 — the shadow lattice has no "no answer" element, and giving it
             // one is a change to the fixpoint rather than a transcription.  `Owned` keeps the
             // answer this shadow read before `Unknown` existed, so the two derivations still
-            // disagree in exactly the places Check A already measures.
+            // disagree in exactly the places the `own` dump's shadow-diff already reports.
             Own::Owned | Own::Unknown => OFact::Owned,
             Own::Borrowed { base } => OFact::Borrowed(base),
             Own::Join { base } => OFact::Join(base),
@@ -518,16 +518,6 @@ impl OFact {
 }
 
 type OState = BTreeMap<u16, OFact>;
-
-/// TEST-ONLY: the var name whose shadow fact `ownership_dataflow` forces to `Owned` — Check A's
-/// injected true positive (`LOFT_OWN_INJECT_FACT_OWNED`).  One env read per process; never set
-/// outside tests.
-fn inject_fact_owned() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static V: OnceLock<Option<String>> = OnceLock::new();
-    V.get_or_init(|| std::env::var("LOFT_OWN_INJECT_FACT_OWNED").ok())
-        .as_deref()
-}
 
 /// @PLN94 (3.3) — consume a callee's return-ownership SUMMARY at a call site, INDEPENDENTLY of
 /// the shipped classifier (so the oracle can eventually disagree with it on calls): `Owned` →
@@ -610,37 +600,6 @@ fn block_in(preds: &[BlockId], outb: &[OState]) -> OState {
     st
 }
 
-/// Every statement-level free in the body, with the fact its variable holds AT the free — the
-/// block's IN state replayed through the assignments before it.  A local is borrowed or owned
-/// per bind, so the fact at the function's exit, or the type's last deps, can judge a free made
-/// while an earlier bind still owned its store (`bl = T{…}; free bl; bl = { p }`).
-fn facts_at_frees(
-    data: &Data,
-    d_nr: u32,
-    cfg: &Cfg,
-    outb: &[OState],
-    free_ops: &[u32],
-) -> Vec<(u16, OFact)> {
-    let reminted = reminted_vars(data, d_nr);
-    let preds = predecessors(cfg);
-    let mut out = Vec::new();
-    for (bb, pr) in cfg.blocks.iter().zip(&preds) {
-        let mut st = block_in(pr, outb);
-        let owns = &bb.owns;
-        for at in 0..=owns.len() {
-            for &(c, v, d) in &bb.calls_on {
-                if c == at && free_ops.contains(&d) {
-                    out.push((v, st.get(&v).copied().unwrap_or(OFact::Bottom)));
-                }
-            }
-            if let Some((var, rhs)) = owns.get(at) {
-                assign(data, d_nr, &reminted, &mut st, *var, rhs);
-            }
-        }
-    }
-    out
-}
-
 /// One assignment's transfer: the fact `var` takes from `rhs`, given the facts `st` holds so
 /// far.  The one transfer both the fixpoint and [`facts_at_frees`] replay.
 fn assign(
@@ -708,17 +667,6 @@ fn assign(
     } else {
         f
     };
-    // TEST-ONLY positive control for Check A: force the shadow's fact for the named
-    // var to `Owned` so it disagrees with the oracle where the oracle says a borrow.
-    // Check A's natural true positive was the A1b plan, and that disagreement was the
-    // shadow's own weaker base translation, not a fact defect (QUALITY-history.md B7r); with
-    // one translation shared by both derivations, a disagreement has to be injected
-    // to prove the reporting path fires.  Cached like the other injections.
-    let f = if inject_fact_owned() == Some(data.def(d_nr).variables.name(var)) {
-        OFact::Owned
-    } else {
-        f
-    };
     st.insert(var, f);
 }
 
@@ -753,161 +701,7 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
     (outb, passes)
 }
 
-/// The def_nrs of the UNCONDITIONAL reference frees (`OpFreeRef` and its tag-checked twin, read
-/// off the one free-op home, `OpSets`) — the only free-ops Check B inspects.
-/// Deliberately NOT `OpFreeText` (text ownership is a separate model: a `text` sub is copied via
-/// `to_string`, so it is `Owned` at runtime even where the fact reads `Borrowed`, and `OpFreeText`
-/// is emitted regardless of deps — the "Text exception" in `scopes::get_free_vars`) and NOT
-/// `OpFreeRefIfDistinct` (runtime-guarded: a no-op when the store aliases its witness — the guard
-/// IS the correctness mechanism for freeing a maybe-borrowed store, so flagging it cries wolf). An
-/// unconditional `OpFreeRef` of a `Borrowed` store, by contrast, is an unguarded over-free.
-fn free_op_nrs(data: &Data) -> Vec<u32> {
-    data.op_sets()
-        .unconditional_ref_frees
-        .iter()
-        .copied()
-        .collect()
-}
-
-/// Collect the vars freed (arg 0 of an `OpFree*` call) anywhere in `body` — Check B's free-site set.
-fn collect_free_targets(body: &Value, free_ops: &[u32]) -> Vec<u16> {
-    let mut out = Vec::new();
-    body.walk(&mut |x| {
-        if let Value::Call(d, args) = x
-            && free_ops.contains(d)
-            && let Some(Value::Var(v)) = args.first().map(Value::unspan)
-        {
-            out.push(*v);
-        }
-    });
-    out
-}
-
-/// The vars a function TRANSFERS OUT — so this frame does not free them, and their absence from the
-/// free set is NOT a leak (Check C, dev tier). A var is transferred iff it is returned, consumed
-/// into a container (element/source arg of `OpFinishRecord`/`OpAppendVector` (arg 1) or
-/// `OpCopyRecord` (arg 0)), or captured into a record (arg 2 of `OpSetDbRef`). Bias to EXCLUDE
-/// (over-approximate transfers): missing a leak is safe (the runtime leak-check backstops).
-fn transferred_out(body: &Value, data: &Data) -> BTreeSet<u16> {
-    let finish = data.def_nr("OpFinishRecord");
-    let append = data.def_nr("OpAppendVector");
-    let copy = data.def_nr("OpCopyRecord");
-    let set_dbref = data.def_nr("OpSetDbRef");
-    let mut s = BTreeSet::new();
-    body.walk(&mut |x| match x {
-        Value::Call(d, args) => {
-            let consumed_idx = if *d == finish || *d == append {
-                Some(1)
-            } else if *d == copy {
-                Some(0)
-            } else if *d == set_dbref {
-                Some(2)
-            } else {
-                None
-            };
-            if let Some(i) = consumed_idx
-                && let Some(Value::Var(v)) = args.get(i).map(Value::unspan)
-            {
-                s.insert(*v);
-            }
-        }
-        Value::Return(inner) => inner.walk(&mut |y| {
-            if let Value::Var(v) = y {
-                s.insert(*v);
-            }
-        }),
-        _ => {}
-    });
-    s
-}
-
-/// Check C (under-free / leak) — an `Owned`, HEAP-typed, LOCAL var (not a parameter) that appears in
-/// no free op and is not transferred out leaks its store. Returns the offending vars. Still in the
-/// DEV tier: its false-positive rate is bounded by the fact's precision (materialised copies read
-/// `Borrowed` today), tracked by the ratchet test, not yet asserted 0.
-fn under_free(
-    exit_state: &OState,
-    freed: &BTreeSet<u16>,
-    transferred: &BTreeSet<u16>,
-    func: &crate::variables::Function,
-) -> Vec<u16> {
-    // OWNS its store iff its post-codegen type dep is EMPTY (materialisation is baked in: a copied
-    // borrowed-source has an empty dep here — the dep is the ground truth codegen freed against).
-    // SCOPED to the fixpoint's exit-state: this keeps it CLEAN (0 FP) but MISSES `OpDatabase` db-var
-    // backing stores (only owns-entry is `= null`, absent from the state). Checking ALL vars
-    // (`snapshot_names`) catches those AND a genuine dropped free, but over-approximates leaks — the
-    // transfer-tracking increment proved that ruling out every codegen transfer artifact (retbuf/
-    // param aliasing, the phantom `__retbuf`, `par` queue frees, work-refs, backing stores) is
-    // re-implementing the shipped free analysis (VH), not a bounded fix. See CHECK_C_UNDERFREE_DESIGN
-    // § promotion; until that lands, Check C is exit-state-scoped in the dev tier.
-    exit_state
-        .iter()
-        .filter(|&(&v, &_f)| {
-            // @FR-O-Proxy asks oracle — @PLN94's flow-sensitive oracle runs BESIDE the shipped
-            // analysis and drives no codegen (SI-1), so nothing it concludes reaches an emitter.
-            // It also scans for UNDER-free, the opposite direction from the veto's.
-            func.tp(v).base().heap_dep().is_some() // only a HEAP store can leak (not a scalar)
-                && func.tp(v).depend().is_empty() // owns its store (empty dep)
-                && !func.is_argument(v)
-                && !freed.contains(&v)
-                && !transferred.contains(&v)
-        })
-        .map(|(&v, _)| v)
-        .collect()
-}
-
-/// Check B — free-legitimacy: a freed var whose fact is `Borrowed(base)` is an over-free of a store
-/// owned elsewhere (RED). Returns `(freed_var, base)` per offending site. Pure — the free set and the
-/// facts are supplied by the caller — so it is unit-testable without a `Data`.
-#[cfg(test)]
-fn free_of_borrowed(freed: &[u16], facts: &OState) -> Vec<(u16, u16)> {
-    freed
-        .iter()
-        .filter_map(|&v| match facts.get(&v) {
-            Some(&OFact::Borrowed(base)) => Some((v, base)),
-            _ => None,
-        })
-        .collect()
-}
-
-/// `@FR-O-Owner` — is `base` a literal buffer that handed its store to the local viewing it?
-/// A `__vdb_N` the frame never releases (skip-free, and no free of it in the body) leaves the
-/// store to its view, whose free is then the store's one release rather than an over-free; the
-/// scope pass detaches such a buffer afterwards (`buffer_detach`).  A parameter, or a buffer the
-/// frame does release, still owns what its views name.
-fn handed_over_buffer(vars: &crate::variables::Function, base: u16, freed: &[u16]) -> bool {
-    base != u16::MAX
-        && vars.name(base).starts_with("__vdb_")
-        && !vars.is_argument(base)
-        && vars.is_skip_free(base)
-        && !freed.contains(&base)
-}
-
-/// Check B's question, asked where each free IS: the frees whose variable is `Borrowed` at
-/// that point, once per variable, with the base it borrows — less a literal buffer that
-/// handed its store over ([`handed_over_buffer`]).
-fn borrowed_at_free(
-    data: &Data,
-    d_nr: u32,
-    cfg: &Cfg,
-    outb: &[OState],
-    free_ops: &[u32],
-    freed: &[u16],
-) -> Vec<(u16, u16)> {
-    let vars = &data.def(d_nr).variables;
-    let mut out: Vec<(u16, u16)> = Vec::new();
-    for (v, f) in facts_at_frees(data, d_nr, cfg, outb, free_ops) {
-        if let OFact::Borrowed(base) = f
-            && !handed_over_buffer(vars, base, freed)
-            && !out.iter().any(|(w, _)| *w == v)
-        {
-            out.push((v, base));
-        }
-    }
-    out
-}
-
-/// Check A — the shadow-diff: vars whose flow-sensitive fact does NOT refine B's `ownership_of`
+/// The shadow-diff (`own`): vars whose flow-sensitive fact does NOT refine B's `ownership_of`
 /// (neither identical nor a `⊏ Join` precision win). Each is a real defect in one implementation —
 /// the coexistence finding. Returns `(var, mine, theirs)`; `precision_out` accumulates the wins.
 fn disagreements(
@@ -977,62 +771,18 @@ fn dump_own(name: &str, cfg: &Cfg, data: &Data, d_nr: u32) {
     }
 }
 
-/// Phase 4 `check` mode — run the two consistency checks over one function BESIDE the shipped
-/// analysis and report each violation as a `RED` line (function, store, site). Returns the finding
-/// count so the caller can gate on the total. Pure observer (SI-1 unchanged).
-///
-/// - **Check A (the A1b catch):** the shadow-diff — any var whose fact does not refine B's is a RED
-///   fact-disagreement (the two independent implementations conflict).
-/// - **Check B (over-free):** free-legitimacy — an unconditional `OpFreeRef` of a var whose fact is
-///   `Borrowed` frees a store owned elsewhere.
-fn run_check(
-    name: &str,
-    body: &Value,
-    cfg: &Cfg,
-    data: &Data,
-    d_nr: u32,
-    free_ops: &[u32],
-) -> usize {
-    let (outb, _passes) = ownership_dataflow(data, d_nr, cfg);
-    let exit_state = &outb[cfg.exit];
-    let nm = |v: u16| data.def(d_nr).variables.name(v).to_string();
-    let mut reds = 0;
-    let mut precision = Vec::new();
-    for (v, mine, theirs) in disagreements(exit_state, data, d_nr, &mut precision) {
-        eprintln!(
-            "RED {name}: fact-disagree v{v}({}) mine={} B={}",
-            nm(v),
-            mine.show(),
-            theirs.show()
-        );
-        reds += 1;
-    }
-    let freed = collect_free_targets(body, free_ops);
-    for (v, base) in borrowed_at_free(data, d_nr, cfg, &outb, free_ops, &freed) {
-        eprintln!(
-            "RED {name}: free-of-borrowed {} (v{v}) is Borrowed(v{base}={})",
-            nm(v),
-            nm(base)
-        );
-        reds += 1;
-    }
-    reds
-}
-
 /// The oracle entry point, reached only under `LOFT_OWN_ORACLE` (SI-1). Modes:
 /// `cfg` dumps each user function's CFG (Phase 1.1); `rd` runs the reaching-defs fixpoint (1.2);
-/// `own` runs the forward ownership fixpoint + shadow-diff vs `ownership_of` (Phase 2); `check`
-/// runs the Phase-4 consistency checks BESIDE the shipped analysis and reports `RED` violations.
+/// `own` runs the forward ownership fixpoint + shadow-diff vs `ownership_of` (Phase 2).  The
+/// checks of a program's store lifetimes are the store records' (`LOFT_LIFETIME_CHECK`,
+/// STORE_RECORDS.md § The checks).
 pub fn oracle(data: &Data) {
     let Ok(mode) = std::env::var("LOFT_OWN_ORACLE") else {
         return;
     };
-    if !matches!(mode.as_str(), "cfg" | "rd" | "own" | "check" | "check-dev") {
+    if !matches!(mode.as_str(), "cfg" | "rd" | "own") {
         return;
     }
-    let free_ops = free_op_nrs(data);
-    let mut total_reds = 0usize;
-    let mut checked = 0usize;
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
@@ -1049,12 +799,6 @@ pub fn oracle(data: &Data) {
             "rd" => {
                 let rd = reaching_defs(&cfg);
                 dump_reach(name, &cfg, &rd);
-            }
-            // Both `check` and `check-dev` run the STABLE fact-based Check A + B here (pre-codegen);
-            // `check-dev` additionally runs the DEV free-based checks post-codegen (oracle_free_checks).
-            "check" | "check-dev" => {
-                total_reds += run_check(name, &body, &cfg, data, d_nr, &free_ops);
-                checked += 1;
             }
             _ => {
                 dump_own(name, &cfg, data, d_nr);
@@ -1073,42 +817,19 @@ pub fn oracle(data: &Data) {
             }
         }
     }
-    if matches!(mode.as_str(), "check" | "check-dev") {
-        if total_reds == 0 {
-            eprintln!("OWN-CHECK: clean — 0 RED over {checked} functions");
-        } else {
-            eprintln!("OWN-CHECK: {total_reds} RED finding(s) over {checked} functions");
-        }
-    }
 }
 
-/// The POST-codegen checks — run at the END of `scopes::check` (after `get_free_vars` has inserted
-/// the frees into `def.code`; the pre-codegen `oracle()` cannot see user-function frees). Modes:
-///  * `check` — PROMOTED: the DEFINITE-leak scan (`run_leak_scan`, under-free) AND the over-free
-///    Check B (`run_over_free_check`) — both clean + 0 FP across the corpora with a firing
-///    true-positive each. Run on the default path beside Check A (pre-codegen).
-///  * `check-leak` — the leak scan alone under its own ratchet (`oracle_leak_scan_ratchet` sweep).
-///  * `check-dev` — the still-EXPERIMENTAL exit-state Check C (under-free, `run_free_checks`),
-///    superseded on `check` by the leak scan but retained as a second opinion; never on the default
-///    path.
-///
-/// A check that RAISES the count gets its own flag (analysed at leisure), never a revert of the clean
-/// tier — the "raise-it-→-flag-it" workflow that made `check-leak` land, then promoted Check B.
+/// The POST-codegen report — run at the END of `scopes::check`, after `get_free_vars` has
+/// inserted the frees into `def.code`.  One mode: `census`, the licence census below
+/// (`scripts/licence_census.py`), a REPORT that emits no RED and answers a question about the
+/// compiler rather than about the program.
 pub fn oracle_free_checks(data: &Data) {
     let Ok(mode) = std::env::var("LOFT_OWN_ORACLE") else {
         return;
     };
-    let leak = mode == "check" || mode == "check-leak"; // leak scan is promoted onto `check`
-    let over = mode == "check"; // over-free Check B is promoted onto `check` (beside the leak scan)
-    let dev = mode == "check-dev";
-    // @PLN155 phase 0 — a REPORT, never promoted onto `check`: it emits no RED and answers a
-    // question about the compiler rather than about the program.
-    let census = mode == "census";
-    if !leak && !dev && !census {
+    if mode != "census" {
         return;
     }
-    let free_ops = free_op_nrs(data);
-    let mut total_reds = 0usize;
     let mut tally: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut spellings: BTreeMap<String, usize> = BTreeMap::new();
     let mut examples: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
@@ -1122,73 +843,44 @@ pub fn oracle_free_checks(data: &Data) {
             continue;
         }
         let name = data.def(d_nr).name();
-        if census {
-            run_licence_census(
-                name,
-                &body,
-                data,
-                d_nr,
-                &mut tally,
-                &mut spellings,
-                &mut examples,
-            );
-            walked += 1;
-            continue;
-        }
-        if leak {
-            total_reds += run_leak_scan(name, &body, data, d_nr);
-        }
-        if over {
-            total_reds += run_over_free_check(name, &body, data, d_nr, &free_ops);
-            total_reds += run_chain_release_check(name, &body, data, d_nr, &free_ops);
-        }
-        if over {
-            total_reds += run_override_check(name, &body, data, d_nr);
-            total_reds += run_capture_free_check(name, &body, data, d_nr);
-        }
-        if dev {
-            let cfg = build(&body);
-            total_reds += run_free_checks(name, &body, &cfg, data, d_nr);
-        }
-    }
-    if census {
-        let total: usize = tally.values().sum();
-        // `scopes::check` runs once per SOURCE, and each run walks every definition known so
-        // far — so a program that loads the three stdlib files prints a report per source and
-        // only the LAST one covers the whole program.  The function count is what identifies
-        // it; `scripts/licence_census.py` reads the last block for that reason.
-        eprintln!(
-            "OWN-CENSUS over {walked} function(s): {total} emitted free(s), \
-             by the fact that licensed them"
+        run_licence_census(
+            name,
+            &body,
+            data,
+            d_nr,
+            &mut tally,
+            &mut spellings,
+            &mut examples,
         );
-        for (bucket, n) in &tally {
-            // A share for a human to read, over counts in the tens of thousands — the
-            // precision clippy warns about is orders of magnitude below what this prints at.
-            #[allow(clippy::cast_precision_loss)]
-            let pct = if total > 0 {
-                100.0 * *n as f64 / total as f64
-            } else {
-                0.0
-            };
-            eprintln!("  {bucket:<18} {n:6}  {pct:5.1}%");
-            for ex in examples.get(bucket).into_iter().flatten() {
-                eprintln!("      {ex}");
-            }
-        }
-        eprintln!("  -- by free spelling --");
-        for (op, n) in &spellings {
-            eprintln!("  {op:<22} {n:6}");
-        }
-        return;
+        walked += 1;
     }
-    let tier = if dev {
-        "DEV-FREE (exit-state under-free)"
-    } else if over {
-        "LEAK+OVER (promoted)"
-    } else {
-        "LEAK (definite)"
-    };
-    eprintln!("OWN-CHECK-{tier}: {total_reds} RED finding(s)");
+    let total: usize = tally.values().sum();
+    // `scopes::check` runs once per SOURCE, and each run walks every definition known so
+    // far — so a program that loads the three stdlib files prints a report per source and
+    // only the LAST one covers the whole program.  The function count is what identifies
+    // it; `scripts/licence_census.py` reads the last block for that reason.
+    eprintln!(
+        "OWN-CENSUS over {walked} function(s): {total} emitted free(s), \
+         by the fact that licensed them"
+    );
+    for (bucket, n) in &tally {
+        // A share for a human to read, over counts in the tens of thousands — the
+        // precision clippy warns about is orders of magnitude below what this prints at.
+        #[allow(clippy::cast_precision_loss)]
+        let pct = if total > 0 {
+            100.0 * *n as f64 / total as f64
+        } else {
+            0.0
+        };
+        eprintln!("  {bucket:<18} {n:6}  {pct:5.1}%");
+        for ex in examples.get(bucket).into_iter().flatten() {
+            eprintln!("      {ex}");
+        }
+    }
+    eprintln!("  -- by free spelling --");
+    for (op, n) in &spellings {
+        eprintln!("  {op:<22} {n:6}");
+    }
 }
 
 /// @PLN155 phase 0 — the LICENCE census: which FACT licensed each emitted free?
@@ -1220,7 +912,7 @@ pub fn oracle_free_checks(data: &Data) {
 ///    phase 2).  Sharper than `proxy-alone`, which it is carved out of: there the oracle had
 ///    nothing to READ about the binding, here it read and could not conclude.
 ///  * `veto` — the binding is `skip_free`, whose contract is *no ownership-derived free in any
-///    spelling*.  Check D's population; it should be empty of live spellings.
+///    spelling*; it should be empty of live spellings (`@FR-O-Override`).
 ///
 /// ⚠ **A category reading 0 is a claim to check, not a result.**  The control is
 /// `LOFT_OWN_INJECT_FREE_BORROWED=<var>`, which forces an unconditional free of a borrowed
@@ -1298,579 +990,6 @@ fn run_licence_census(
             ));
         }
     }
-}
-
-/// The DEFINITE-leak scan (PROMOTED: runs under `LOFT_OWN_ORACLE=check` and `check-leak`). Flags a
-/// var that: OWNS a real heap store — MINTED by `OpDatabase` in this body OR an ADOPTED work-ref
-/// (`__ref_*`/`__rref_*`) buffer passed to a call (the NRVO return-buffer adoption, a
-/// `caller_hidden_buf` this function still owns + frees); a type-dep-only phantom like `__retbuf` is
-/// skipped (it appears only in a type annotation, never as a `Var` argument, so it has no store);
-/// OWNS its store (empty type dep, HEAP); is not a param; is not `skip_free`; is not freed; and is not
-/// transferred out. Iterating ALL vars (`snapshot_names`) catches db-vars a fixpoint state misses. The
-/// transferred set is RETURN seeds closed transitively through the dep (a returned `buf["__vdb_1"]`
-/// carries `__vdb_1` out) UNION consume/capture seeds NOT closed (an element absorbed into a LOCAL
-/// container leaves the container leak-checked). **0 FP across 829 files (all `tests/` + examples +
-/// fuzz) with two firing true-positives** — the `OpDatabase` class (`LOFT_OWN_INJECT_DROP_FREE=__vdb_1`,
-/// `oracle_leak_scan_flags_an_injected_leak`) and the adopted class
-/// (`LOFT_OWN_INJECT_DROP_FREE=__ref_1`, `oracle_adopt_leak_flags_an_injected_leak`). Drove the
-/// OpDatabase baseline 927 → 0 (the `__retbuf` phantom was ~889), then folded in the adopted class
-/// (0 FP, no ratchet needed). REMAINING GAP (documented, not an FP): conditional/`Join` leaks
-/// (`LOFT_NO_JOIN_OWN`) are the runtime leak-check's class BY DESIGN (coexistence); closure bodies
-/// (`n___lambda_*`) are skipped — their frees are codegen'd on a different clock.
-///
-/// Whether something other than a frame free releases a store — a closure record's cascade, a
-/// return or a `&fn` link, a placed buffer's adopting local — is asked through
-/// `scopes::FrameReleases`, the one home the debug-build mirror `check_ref_leaks` asks too, on
-/// the build facts the free emitter itself decided on.  `oracle_leak_scan_ratchet` holds the
-/// count over `tests/scripts` at 0 on every PR (ci.yml's advisory `leak-scan` job).
-fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
-    if name.starts_with("n___lambda_") {
-        return 0; // closure frees are codegen'd on a different clock — not visible here
-    }
-    let func = &data.def(d_nr).variables;
-    let all_frees: Vec<u32> = data.op_sets().frees.iter().copied().collect();
-    let freed: BTreeSet<u16> = collect_free_targets(body, &all_frees).into_iter().collect();
-    // Only a MINTED var owns a store that can leak: an `OpDatabase` target. A var that appears only
-    // in a block-result TYPE annotation (`["__retbuf"]`) but is never minted is a PHANTOM — no store,
-    // no leak (the dominant `__retbuf` FP class). The true-positive `__vdb_1` IS an OpDatabase target.
-    let op_database = data.def_nr("OpDatabase");
-    let mut minted: BTreeSet<u16> = BTreeSet::new();
-    body.walk(&mut |x| {
-        if let Value::Call(d, args) = x
-            && *d == op_database
-            && let Some(Value::Var(v)) = args.first().map(Value::unspan)
-        {
-            minted.insert(*v);
-        }
-    });
-    // The adopted-owned class: a work-ref (`__ref_*`/`__rref_*`) that OWNS a heap store filled by a
-    // CALL (the NRVO return-buffer adoption — `caller_hidden_buf`) rather than minted by `OpDatabase`
-    // in this body. It is a REAL store (unlike a `__retbuf` phantom, which appears only in a type
-    // annotation, never as a `Var` argument), so being passed as a call argument is the
-    // real-vs-phantom discriminator. On correct code these are always freed (`!freed`) or returned
-    // (`!closed`); a dropped free is a definite leak the OpDatabase-only recognizer misses.
-    body.walk(&mut |x| {
-        if let Value::Call(_, args) = x {
-            for a in args {
-                if let Value::Var(v) = a.unspan() {
-                    let nm = func.name(*v);
-                    if nm.starts_with("__ref_") || nm.starts_with("__rref_") {
-                        minted.insert(*v);
-                    }
-                }
-            }
-        }
-    });
-    // Transferred set. RETURN seeds close transitively through the type dep — a returned
-    // `buf["__vdb_1"]` carries its backing `__vdb_1` OUT. CONSUME/CAPTURE seeds do NOT close: an
-    // element `_elm_1["buf"]` absorbed into a LOCAL `buf` transfers only itself, NOT `buf`/`__vdb_1`
-    // (which stay local and must still be leak-checked — the difference that catches a dropped free).
-    let finish = data.def_nr("OpFinishRecord");
-    let append = data.def_nr("OpAppendVector");
-    let copy = data.def_nr("OpCopyRecord");
-    let set_dbref = data.def_nr("OpSetDbRef");
-    let fn_closure = data.def_nr("OpFnRefClosure");
-    let (mut returns, mut consumes): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
-    body.walk(&mut |x| match x {
-        Value::Return(inner) => inner.walk(&mut |y| {
-            if let Value::Var(v) = y {
-                returns.push(*v);
-            }
-        }),
-        Value::Call(d, args) => {
-            let idx = if *d == finish || *d == append {
-                Some(1)
-            } else if *d == copy {
-                Some(0)
-            } else if *d == set_dbref {
-                Some(2)
-            } else {
-                None
-            };
-            match idx.and_then(|i| args.get(i)).map(Value::unspan) {
-                Some(Value::Var(v)) => consumes.push(*v),
-                // loft#1869 — a closure's capture of a fn-ref stores its closure HALF
-                // (`OpSetDbRef(rec, pos, OpFnRefClosure(f))`): the record `f`'s deps name moves
-                // into the capturing closure's record, whose drop releases it.
-                Some(Value::Call(c, inner)) if *c == fn_closure => {
-                    if let Some(Value::Var(f)) = inner.first().map(Value::unspan) {
-                        consumes.extend(func.tp(*f).depend().iter().copied());
-                    }
-                }
-                _ => {}
-            }
-        }
-        _ => {}
-    });
-    let mut closed: BTreeSet<u16> = BTreeSet::new();
-    while let Some(v) = returns.pop() {
-        if closed.insert(v) {
-            returns.extend(func.tp(v).depend().iter().copied()); // returns close over their backing
-        }
-    }
-    closed.extend(consumes); // consumes/captures transfer only the element itself
-    let mut reds = 0;
-    let releases =
-        crate::scopes::FrameReleases::of(body, func, data, name, &data.def(d_nr).returned);
-    for (_, v) in func.snapshot_names() {
-        // @FR-O-Proxy asks oracle — the leak scan, which reports UNDER-free and emits nothing.
-        if minted.contains(&v)
-            && func.tp(v).base().heap_dep().is_some()
-            && func.tp(v).depend().is_empty()
-            && !func.is_argument(v)
-            && !func.is_skip_free(v)
-            && !freed.contains(&v)
-            && !closed.contains(&v)
-            // Released by something other than a frame free — a closure record's cascade, a
-            // caller through a return or a `&fn` link, the destination a block-tail temp
-            // moved into — on the free emitter's own legs, asked through the one home the
-            // debug-build mirror `check_ref_leaks` asks too.  Holding only the first of those
-            // legs, this scan reported the others' stores as leaks (48 of them, none real).
-            && !releases.freed.contains(&v)
-            && !releases.ret_deps.contains(&v)
-            && !releases.explains(data, func, v)
-        {
-            eprintln!(
-                "RED {name}: leak {} (v{v}) Owned heap, unfreed/untransferred",
-                func.name(v)
-            );
-            reds += 1;
-        }
-    }
-    reds
-}
-
-/// DEV tier: the POST-codegen free-based checks — Check B (over-free) on user functions (now that
-/// their frees are visible) + Check C (under-free/leak). Both key off the post-codegen TYPE DEP (the
-/// materialisation-aware ownership signal), so they need no fixpoint — they are a free-placement
-/// CONSISTENCY layer (does the emitted free match the dep), beside Check A's independent cross-check.
-/// `@FR-L-CapRebind` (loft#2459), PROMOTED onto `LOFT_OWN_ORACLE=check` — a closure record holds
-/// the store its captured local named AT THE BUILD, for as long as the record lives.  An
-/// unconditional `OpFreeRef` of that store's backing, followed by a call through the closure
-/// while its record is not yet freed, is a use after the store's end — and so is one in a
-/// function that RETURNS the closure.  A free under an `if` is the identity-decided release the
-/// scope pass places where a record may hold the store, and is not counted.  The local's later
-/// rebinds do not move the record's hold: the backing is the one the local was bound to when
-/// the build ran.
-fn run_capture_free_check(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
-    let mut w = CaptureWalk {
-        vars: data.def(d_nr).variables(),
-        set_dbref: data.def_nr("OpSetDbRef"),
-        get_field: data.def_nr("OpGetField"),
-        free: data.def_nr("OpFreeRef"),
-        name,
-        backing_of: BTreeMap::new(),
-        held: Vec::new(),
-        ended: BTreeSet::new(),
-        reported: BTreeSet::new(),
-        returned: BTreeSet::new(),
-        reds: 0,
-    };
-    w.walk(body, false);
-    // A closure the function hands back outlives every free in it.
-    if let Value::Block(bl) = body.unspan()
-        && let Some(Value::Var(g)) = bl.operators.last().map(Value::unspan)
-    {
-        w.returned.insert(*g);
-    }
-    for i in 0..w.held.len() {
-        let h = w.held[i];
-        if h.freed && w.returned.contains(&h.fn_ref) && w.reported.insert((h.fn_ref, h.backing)) {
-            w.red(h, "which the function returns");
-        }
-    }
-    w.reds
-}
-
-/// One closure build [`run_capture_free_check`] follows.
-#[derive(Clone, Copy)]
-struct Held {
-    fn_ref: u16,
-    record: u16,
-    backing: u16,
-    captured: u16,
-    freed: bool,
-}
-
-struct CaptureWalk<'a> {
-    vars: &'a crate::variables::Function,
-    set_dbref: u32,
-    get_field: u32,
-    free: u32,
-    name: &'a str,
-    /// local -> the `__vdb_N` backing it was bound to last, in evaluation order.
-    backing_of: BTreeMap<u16, u16>,
-    held: Vec<Held>,
-    ended: BTreeSet<u16>,
-    reported: BTreeSet<(u16, u16)>,
-    returned: BTreeSet<u16>,
-    reds: usize,
-}
-
-impl CaptureWalk<'_> {
-    fn red(&mut self, h: Held, why: &str) {
-        eprintln!(
-            "RED {}: capture-freed {} (v{}) is held by the closure record {} built over {}, {why}",
-            self.name,
-            self.vars.name(h.backing),
-            h.backing,
-            self.vars.name(h.record),
-            self.vars.name(h.captured)
-        );
-        self.reds += 1;
-    }
-
-    fn walk(&mut self, n: &Value, guarded: bool) {
-        match n.unspan() {
-            Value::If(c, t, e) => {
-                self.walk(c, guarded);
-                self.walk(t, true);
-                self.walk(e, true);
-                return;
-            }
-            Value::Set(c, rhs) => {
-                self.walk(rhs, guarded);
-                self.bind(*c, rhs);
-                return;
-            }
-            Value::Call(d, args) if *d == self.free => {
-                if let Some(Value::Var(x)) = args.first().map(Value::unspan) {
-                    self.ended.insert(*x);
-                    if !guarded {
-                        for h in &mut self.held {
-                            if h.backing == *x {
-                                h.freed = true;
-                            }
-                        }
-                    }
-                }
-            }
-            Value::CallRef(g, _) => {
-                for i in 0..self.held.len() {
-                    let h = self.held[i];
-                    if h.fn_ref == *g
-                        && h.freed
-                        && !self.ended.contains(&h.record)
-                        && self.reported.insert((h.fn_ref, h.backing))
-                    {
-                        self.red(h, "called after the free");
-                    }
-                }
-            }
-            Value::Return(v) => {
-                if let Value::Var(g) = v.unspan() {
-                    self.returned.insert(*g);
-                }
-            }
-            _ => {}
-        }
-        n.for_each_child(&mut |c| self.walk(c, guarded));
-    }
-
-    /// `c = rhs`: a bind to a literal backing, or a closure build over captured locals.
-    fn bind(&mut self, c: u16, rhs: &Value) {
-        if let Value::Call(d, args) = rhs.unspan()
-            && *d == self.get_field
-            && let Some(Value::Var(b)) = args.first().map(Value::unspan)
-            && self.vars.name(*b).starts_with("__vdb")
-        {
-            self.backing_of.insert(c, *b);
-        }
-        let mut record = None;
-        let mut caps: Vec<u16> = Vec::new();
-        rhs.walk(&mut |m| match m {
-            Value::FnRef(_, w, _) if *w != u16::MAX => record = Some(*w),
-            Value::Call(d, args) if *d == self.set_dbref => {
-                if let Some(Value::Var(x)) = args.get(2).map(Value::unspan) {
-                    caps.push(*x);
-                }
-            }
-            _ => {}
-        });
-        if let Some(w) = record {
-            self.ended.remove(&w);
-            self.held.retain(|h| h.fn_ref != c);
-            for x in caps {
-                if let Some(&b) = self.backing_of.get(&x) {
-                    self.held.push(Held {
-                        fn_ref: c,
-                        record: w,
-                        backing: b,
-                        captured: x,
-                        freed: false,
-                    });
-                }
-            }
-        }
-    }
-}
-
-/// Check B (over-free), PROMOTED onto `LOFT_OWN_ORACLE=check` (runs beside the leak scan). A var freed
-/// by an unconditional `OpFreeRef` whose post-codegen type dep is NON-empty borrows a store owned
-/// elsewhere — freeing it is an over-free (double-free / UAF). The dep is codegen's ground truth
-/// (empty = owns, incl. a materialised copy); the flow-sensitive fact is usage-blind here. Excludes a
-/// self-dep work-ref `[v]` (@P302 ownership marker, not a borrow); a `??` null-coalesce temp
-/// (`__ncc_*`, whose present-arm/JOIN dep is a stale borrow after default-arm materialisation, @PLN25);
-/// and a freed PARAMETER (the retbuf-displacement reassignment — `get_free_vars` otherwise suppresses
-/// freeing caller-owned params — not a user over-free).  0 FP over the nine-file
-/// `oracle_clean_on_correct_corpus`; over the whole corpus (QUALITY-history.md B7q) it
-/// reports TEN, all one shape — a pass-2 work-ref borrowing the NRVO buffer of an inline call
-/// (`__ref_p2_1["__ref_1"]`, 877/882/889), each clean under `LOFT_STRICT_STORES` on both backends —
-/// so that shape is a precision residual of this check, not a corpus defect.  The true-positive is the injected `LOFT_OWN_INJECT_FREE_BORROWED`
-/// over-free (`oracle_over_free_check_flags_an_injected_free`). Pure type-dep — needs no CFG/dataflow.
-fn run_over_free_check(
-    name: &str,
-    body: &Value,
-    data: &Data,
-    d_nr: u32,
-    free_ops: &[u32],
-) -> usize {
-    let func = &data.def(d_nr).variables;
-    let nm = |v: u16| func.name(v).to_string();
-    let mut reds = 0;
-    let mut seen = BTreeSet::new();
-    // The type's deps describe the LAST bind; a free is judged by the bind it releases, so a
-    // variable must also be borrowed AT one of its frees (`facts_at_frees`).
-    let cfg = build(body);
-    let (outb, _) = ownership_dataflow(data, d_nr, &cfg);
-    let freed = collect_free_targets(body, free_ops);
-    let borrowed_here: Vec<u16> = borrowed_at_free(data, d_nr, &cfg, &outb, free_ops, &freed)
-        .into_iter()
-        .map(|(v, _)| v)
-        .collect();
-    for v in freed {
-        if !seen.insert(v) || !borrowed_here.contains(&v) {
-            continue;
-        }
-        let dep = func.tp(v).depend();
-        let self_dep = dep.len() == 1 && dep[0] == v;
-        let ncc = func.name(v).starts_with("__ncc_");
-        // Through `base()`: a nullable VIEW local (`bview: vector<integer>? = h.data`) is the
-        // borrowed heap local it is (`@FR-L-Null`), and an injected free of it must read RED
-        // exactly as its dense twin's does — asked bare, the wrapper made this check blind;
-        // the three sibling filters above read through `base()` for the same reason.
-        if func.tp(v).base().heap_dep().is_some()
-            && !dep.is_empty()
-            && !self_dep
-            && !ncc
-            && !func.is_argument(v)
-            // @FR-O-Override — a free the IR names for a never-free binding is dropped at
-            // codegen on both backends (`generate_call`, `OpFreeRefEmitter`), so it releases
-            // nothing and is not an over-free; Check D reports it as a NOTE instead.
-            && !func.is_skip_free(v)
-        {
-            eprintln!("RED {name}: free-of-borrowed {} (v{v}) dep={dep:?}", nm(v));
-            reds += 1;
-        }
-    }
-    reds
-}
-
-/// Check E — a `??` chain's temp released twice (`@FR-H-FreeTwice`, loft#2550).  A binding whose
-/// value hands back a chain's own temp — `r = <chain>`, or a branch of chains, whose tail through
-/// blocks and `if` arms is a `__ncc_N` / `_ncr_N` — names the store that temp holds.  When BOTH are
-/// freed, the one store is released twice, unless the bind copied it (two stores) or a guard
-/// proves the two distinct where the binding is released (`if OpDistinctStore(v, t) …`, or
-/// `OpFreeRefIfDistinct(v, t)`).  A temp that is never freed has handed its record to the binding
-/// (the statement `r = f() ?? return`), which is the one release — so the temp must be freed too.
-///
-/// The fallback: a tail that is not a chain temp names no store this check reasons about, and
-/// adds nothing — the other checks keep their own questions.
-fn run_chain_release_check(
-    name: &str,
-    body: &Value,
-    data: &Data,
-    d_nr: u32,
-    free_ops: &[u32],
-) -> usize {
-    fn chain_tails(n: &Value, out: &mut Vec<u16>, func: &crate::variables::Function) {
-        match n.unspan() {
-            Value::Var(x) => {
-                let nm = func.name(*x);
-                if (nm.starts_with("__ncc_") || nm.starts_with("_ncr_")) && !out.contains(x) {
-                    out.push(*x);
-                }
-            }
-            Value::If(_, t, f) => {
-                chain_tails(t, out, func);
-                chain_tails(f, out, func);
-            }
-            // A chain's own block yields its value BEFORE the cleanup the scope pass appends
-            // (a displaced record's drop and free), so its last operator is not its value: every
-            // operator is read, and only a chain temp in a tail position counts.
-            Value::Block(bl) if bl.name == "ncc" || bl.name == "ncr" => {
-                for op in &bl.operators {
-                    if matches!(op.unspan(), Value::If(..) | Value::Var(_)) {
-                        chain_tails(op, out, func);
-                    }
-                }
-            }
-            Value::Block(bl) => {
-                if let Some(last) = bl.operators.last() {
-                    chain_tails(last, out, func);
-                }
-            }
-            Value::Insert(ops) => {
-                if let Some(last) = ops.last() {
-                    chain_tails(last, out, func);
-                }
-            }
-            _ => {}
-        }
-    }
-    let func = &data.def(d_nr).variables;
-    let freed: BTreeSet<u16> = collect_free_targets(body, free_ops).into_iter().collect();
-    let distinct = data.def_nr("OpDistinctStore");
-    let if_distinct = data.def_nr("OpFreeRefIfDistinct");
-    let pair = |args: &[Value]| match (
-        args.first().map(Value::unspan),
-        args.get(1).map(Value::unspan),
-    ) {
-        (Some(Value::Var(a)), Some(Value::Var(b))) => Some((*a, *b)),
-        _ => None,
-    };
-    let mut guarded: BTreeSet<(u16, u16)> = BTreeSet::new();
-    let mut binds: Vec<(u16, u16)> = Vec::new();
-    body.walk(&mut |n| match n.unspan() {
-        Value::If(cond, _, _) => {
-            if let Value::Call(d, args) = cond.unspan()
-                && *d == distinct
-                && let Some(p) = pair(args)
-            {
-                guarded.insert(p);
-            }
-        }
-        Value::Call(d, args) if *d == if_distinct => {
-            if let Some(p) = pair(args) {
-                guarded.insert(p);
-            }
-        }
-        // A bare `v = t` is a whole-value bind the emitters may COPY (`bind_copies`), two
-        // stores: only a chain block or a branch of them hands `t`'s own store over.
-        Value::Set(v, rhs) if !matches!(rhs.unspan(), Value::Var(_)) => {
-            let mut tails = Vec::new();
-            chain_tails(rhs, &mut tails, func);
-            for t in tails {
-                if t != *v && !binds.contains(&(*v, t)) {
-                    binds.push((*v, t));
-                }
-            }
-        }
-        _ => {}
-    });
-    let mut reds = 0;
-    for (v, t) in binds {
-        if freed.contains(&v)
-            && freed.contains(&t)
-            && !guarded.contains(&(v, t))
-            && !guarded.contains(&(t, v))
-        {
-            eprintln!(
-                "RED {name}: chain-temp-released-twice {} (v{v}) and {} (v{t})",
-                func.name(v),
-                func.name(t)
-            );
-            reds += 1;
-        }
-    }
-    reds
-}
-
-/// Check D — the never-free contract, @FR-O-Override: a binding marked `skip_free` must have NO
-/// free emitted for it, in ANY spelling.  The flag's contract is exactly *"no `OpFreeRef` is ever
-/// emitted for this binding"*, and a free is a NOTION with five spellings — the plain free, its
-/// tag-checked twin, the text free, and the two witness-guarded conditional frees — so the check
-/// asks by notion, not by the one name the rule happens to spell.
-///
-/// Two of the spellings are intercepted DOWNSTREAM for a bare variable operand: the interpreter's
-/// `generate_call` and the native `OpFreeRefEmitter` / `OpFreeRefTagEmitter` both emit nothing for a
-/// `skip_free` variable.  An IR free in those spellings is therefore reported as a `NOTE` (the emitted
-/// program honours the contract; the IR does not say so), while the spellings NEITHER backend
-/// intercepts — `OpFreeText`, `OpFreeRefIfDistinct`, `OpFreeRefOrHandUp`, and a free reached through
-/// a tuple element — are a RED: the store the binding views is released.
-///
-/// The ONE admissible free of a never-free binding is the release the marking pass PLACES itself:
-/// a staged text temp ([`crate::variables::Function::is_staged_text_temp`]) is never-free for the
-/// scope-exit sweep because its value outlives the block, and the pass that staged it frees it by
-/// `OpFreeText` at the site it chose — after the consuming statement, or after the bytes moved into
-/// the caller's buffer.  Measured over the 1247-file corpus, that shape was every live-spelling free
-/// of a never-free binding (217 function–binding pairs, all `OpFreeText`, all `__ncc_`/`__ret_`); a free of any
-/// other never-free binding by any live spelling is a RED, and a new staging pass that needs the
-/// same allowance extends the predicate rather than this check.
-fn run_override_check(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
-    let func = &data.def(d_nr).variables;
-    let sets = data.op_sets();
-    let mut reds = 0;
-    body.walk(&mut |x| {
-        if let Value::Call(d, args) = x
-            && sets.frees.contains(d)
-            && let Some(a0) = args.first()
-        {
-            let (v, via_tuple) = match a0.unspan() {
-                Value::Var(v) => (*v, false),
-                Value::TupleGet(v, _) => (*v, true),
-                _ => return,
-            };
-            if !func.is_skip_free(v) {
-                return;
-            }
-            let op = data.def(*d).name();
-            if *d == sets.text_free && func.is_staged_text_temp(v) {
-                return; // the release the staging pass placed — the admissible free
-            }
-            // …and the identity-guarded release a witness, snapshot or write-back pass placed.
-            if data.def(*d).name() == "OpFreeRefIfDistinct"
-                && !via_tuple
-                && let Some(Value::Var(w)) = args.get(1).map(Value::unspan)
-                && func.is_placed_identity_release(v, *w)
-            {
-                return;
-            }
-            if sets.unconditional_ref_frees.contains(d) && !via_tuple {
-                eprintln!(
-                    "NOTE {name}: never-free {} (v{v}) named by {op} in the IR (dropped at codegen on both backends)",
-                    func.name(v)
-                );
-            } else {
-                eprintln!(
-                    "RED {name}: never-free-freed {} (v{v}) by {op}{}",
-                    func.name(v),
-                    if via_tuple { " (tuple element)" } else { "" }
-                );
-                reds += 1;
-            }
-        }
-    });
-    reds
-}
-
-/// The DEV-tier (`check-dev`) residual: the still-experimental exit-state Check C (under-free), kept as
-/// an independent second opinion. On the default `check` path the promoted `run_leak_scan` supersedes
-/// it (that scan iterates ALL vars and recognises `OpDatabase`-minted stores a fixpoint exit-state
-/// misses); this exit-state-scoped variant stays clean but narrower. Check B (over-free) was PROMOTED
-/// out of here — see `run_over_free_check`.
-fn run_free_checks(name: &str, body: &Value, cfg: &Cfg, data: &Data, d_nr: u32) -> usize {
-    let (outb, _passes) = ownership_dataflow(data, d_nr, cfg);
-    let exit_state = &outb[cfg.exit];
-    let func = &data.def(d_nr).variables;
-    let nm = |v: u16| func.name(v).to_string();
-    let mut reds = 0;
-    // Check C skips CLOSURE bodies (`n___lambda_*`): their frees are inserted at closure-compile
-    // time, not into `def.code` here, so their free set reads empty (a documented coverage gap, not
-    // unsoundness — the runtime leak-check still covers closures).
-    if !name.starts_with("n___lambda_") {
-        let all_frees: Vec<u32> = data.op_sets().frees.iter().copied().collect();
-        let freed: BTreeSet<u16> = collect_free_targets(body, &all_frees).into_iter().collect();
-        let transferred = transferred_out(body, data);
-        for v in under_free(exit_state, &freed, &transferred, func) {
-            eprintln!(
-                "RED {name}: under-free (leak) {} (v{v}) Owned heap, never freed/transferred",
-                nm(v)
-            );
-            reds += 1;
-        }
-    }
-    reds
 }
 
 #[cfg(test)]
@@ -2059,39 +1178,5 @@ mod tests {
         assert!(!Borrowed(1).refines(Owned));
         // Coarser-than-B (my `Join` where B is definite) is also not a refinement.
         assert!(!Join(1).refines(Owned));
-    }
-
-    // ---- Phase 4.1: the consistency-check primitives (Check B core), on hand-built inputs ----
-
-    #[test]
-    fn free_of_borrowed_flags_only_the_borrowed_frees() {
-        use super::OFact::{Borrowed, Join, Owned};
-        use super::{OState, free_of_borrowed};
-        let mut facts = OState::new();
-        facts.insert(1, Owned); //  freeing an owned store is legitimate
-        facts.insert(2, Borrowed(5)); //  freeing a borrowed alias is the over-free — RED
-        facts.insert(3, Join(6)); //  a runtime-dependent store: the shipped code frees it
-        //  conditionally (OpFreeRefIfDistinct) — not a definite over-free, so NOT flagged in 4.1
-        let freed = [1u16, 2, 3];
-        let reds = free_of_borrowed(&freed, &facts);
-        // Only the definite Borrowed(5) free is a violation; it names its base.
-        assert_eq!(reds, vec![(2, 5)]);
-    }
-
-    #[test]
-    fn collect_free_targets_finds_only_free_op_arg0() {
-        use super::collect_free_targets;
-        // Body: OpFreeRef(v3) ; OpSetInt(v4, v5) — only the free-op's arg0 (v3) is a free target.
-        let free_ref = 99u32;
-        let other = 88u32;
-        let body = v_block(
-            vec![
-                Value::Call(free_ref, vec![Value::Var(3)]),
-                Value::Call(other, vec![Value::Var(4), Value::Var(5)]),
-            ],
-            Type::Void,
-            "body",
-        );
-        assert_eq!(collect_free_targets(&body, &[free_ref]), vec![3]);
     }
 }

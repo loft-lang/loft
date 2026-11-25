@@ -1487,6 +1487,12 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
         if el_types::is_collection(b) || b is TyReference || b is TyEnum {
           return false;
         }
+        // (`const_literal` folds a field for the setters it knows, the 1- and 2-byte narrow
+        // ones among them; a four-byte narrow field — `OpSetInt4` / `OpSetInt4Raw`, an `i32` or
+        // `u32` — blocks the constant.)
+        if match b { TyInteger { spec: fs } => el_types::int4(fs) || el_types::uint4(fs), _ => false } {
+          return false;
+        }
       }
     },
     _ => {}
@@ -1851,6 +1857,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    vars.start_ret_deps = el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid);
     // (The return buffer the first pass held back from the result is named before the body.)
     if !e.first_pass && e.owed_buffer.contains(e.context) {
       oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
@@ -1901,6 +1908,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         }
       }
     }
+    vars.start_attr_names = [for sa in el::def(e, e.context).attributes { sa.name }];
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
     if !e.first_pass && starts_with(name, "__lambda_") && len(e.captures) > 0 {
       el_vars::retire_capture_placeholders(vars, code, [for rc in e.captures { rc.name }]);
@@ -1909,6 +1917,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       for lm in vars.loop_made {
         e.loop_made += [e.context * 65536 + lm];
       }
+      e.loops_p1 += [e.context * 65536 + vars.loops_started];
     }
     if infers && e.first_pass {
       it = el_types::without_deps(vars.tail_tp[0] ?? ir::TyVoid);
@@ -1941,7 +1950,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     }
     e.b.data.definitions[e.context].code = [code];
     // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
-    el_retpromo::report(e, vars, code, body!, match e.p.nodes[body!] { SBlock { end: rbe } => rbe, _ => -1 });
+    el_retpromo::report(e, vars, code, body!, el_retpromo::body_end(e, body!), inferred: infers && e.first_pass);
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
     }

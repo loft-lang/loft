@@ -24,6 +24,8 @@ use el_ex_assign;
 use el_ex_place;
 use el_ex_call;
 use el_ex_match;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_name;
 use el_ex_into;
@@ -240,7 +242,7 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       continue;
     }
     x = el_ex_assign::expression(e, vars, it);
-    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, el_types::adopted(e, inner), x.tp) {
       el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return null;
     }
@@ -272,7 +274,7 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       // vector, filled as a vector literal's record item is (`record_item_copy`), finished.
       el_vars::set_var_type(vars, elm, ir::TyReference { n: ird, dep: el_types::deps(el_vars::tp(vars, elm)) });
       at = ir::NdVar { n: elm };
-      fill = el_ex_match::record_item_copy(e, vars, elm, ird, x);
+      fill = el_ex_link::record_item_copy(e, vars, elm, ird, x);
       if fill == null {
         return null;
       }
@@ -292,7 +294,7 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
       sen = el_types::struct_enum_def(inner);
       el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: el_types::deps(el_vars::tp(vars, elm)) });
       at = ir::NdVar { n: elm };
-      fill = el_ex_match::record_item_copy(e, vars, elm, sen, x);
+      fill = el_ex_link::record_item_copy(e, vars, elm, sen, x);
       if fill == null {
         return null;
       }
@@ -1901,13 +1903,13 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   // place as the method spelling is, where the program declares none of its own.
   if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
     if name == "map" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::map_call(e, vars, at, list, types);
+      return el_ex_loop::map_call(e, vars, at, list, types);
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::filter_call(e, vars, at, list, types);
+      return el_ex_loop::filter_call(e, vars, at, list, types);
     }
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
-      return el_ex_match::reduce_call(e, vars, list, types);
+      return el_ex_loop::reduce_call(e, vars, list, types);
     }
   }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
@@ -1918,7 +1920,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
     }
-    ops = el_ex_match::next_operands(step);
+    ops = el_ex_loop::next_operands(step);
     // A tuple's advance is followed by the generator's own state (Rust's `next_tuple` block,
     // an exhausted advance answering a tuple of nulls): not carried.
     if len(ops) == 0 || step is TyTuple {
@@ -1966,6 +1968,20 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     return ex(ir::NdCall { def_nr: od, args: [list[0]!, list[1]!, ir::NdInt { n: db_tp }] }, ir::TyVoid);
   }
   if d < 0 {
+    // (@PLN219: a callee declared later is unknown on the first pass, so a field link handed to
+    // it keeps its field in case the parameter is a slot — `slot_cell_argument`.)
+    if e.first_pass {
+      for la in list {
+        match el_ir::unspan(la) {
+          NdVar { n: lv } => {
+            if vars.amp_places.contains(lv) && !vars.vars[lv].argument && !e.slot_links.contains(e.context * 65536 + lv) {
+              e.slot_links += [e.context * 65536 + lv];
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2970,16 +2986,16 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   // `parse_map`: a vector's `map` is built in place, where the program declares none of its own.
   if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
-    return el_ex_match::map_call(e, vars, at, list, types);
+    return el_ex_loop::map_call(e, vars, at, list, types);
   }
   // `parse_filter`, `parse_reduce`: built in place as well.
   if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
-    return el_ex_match::filter_call(e, vars, at, list, types);
+    return el_ex_loop::filter_call(e, vars, at, list, types);
   }
   // (`reduce` through a function VALUE is a call of the standard library's generic: only a
   // function the call names directly is folded in place.)
   if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
-    return el_ex_match::reduce_call(e, vars, list, types);
+    return el_ex_loop::reduce_call(e, vars, list, types);
   }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
@@ -3633,6 +3649,14 @@ pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) 
 pub fn substitute_var(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
   match t {
     TyReference { n, dep } => if n == h { el_types::with_deps(bound, el_types::deps(bound) + dep) } else { t },
+    // (At every depth, as `subst_type` maps the children: a `vector<T["v"]>` keeps the element's
+    // borrow, `vector<text["v"]>`.)
+    TyVector { inner, dep } => ir::TyVector { inner: substitute_var(inner, h, bound), dep: dep },
+    TyOptional { inner } => {
+      so = substitute_var(inner, h, bound);
+      if (so is TyOptional) { so } else { ir::TyOptional { inner: so } }
+    },
+    TyRefVar { inner } => ir::TyRefVar { inner: substitute_var(inner, h, bound) },
     _ => substitute(t, h, bound)
   }
 }

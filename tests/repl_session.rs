@@ -2057,11 +2057,7 @@ fn a_nullable_local_evaluates_at_a_paused_frame() {
         ("vt", "\"hi\"", "present text"),
         ("vp", "P{a:1,b:\"x\"}", "present struct"),
         ("ve", "Col.Green", "present value enum"),
-        (
-            "et",
-            "\"\"",
-            "an EMPTY text is a value, not the STRING_NULL handle",
-        ),
+        ("et", "\"\"", "an EMPTY text is a value, not the null text"),
         (
             "fi",
             "-9223372036854775807",

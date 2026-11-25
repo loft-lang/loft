@@ -27,6 +27,7 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
@@ -345,6 +346,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "an out-of-line write whose place is no field");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    if op == "=" {
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
+    }
     w = el_ex_into::out_of_line_set(e, vars, field, kt, sd, rhs);
     return ex(w ?? ir::NdNull, ir::TyVoid);
   }
@@ -447,6 +451,8 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   if op == "=" && is_nullable_wrapper(e, p.tp) {
     syn = el_types::struct_enum_def(p.tp);
     place = el_ir::unspan(p.code);
+    // (Built as the holder's `Some` and copied in: no place hint, so Rust's trace reports no
+    // `literal_into_place` for it.)
     if el_ex_into::literal_of(e, rhs, el_ex_into::nullable_payload(e, syn)) {
       nb = el_ex_into::nullable_some_literal(e, vars, syn, rhs);
       if nb == null || e.first_pass {
@@ -519,6 +525,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       _ => {}
     }
     lroot = place_root(e, el_ir::unspan(p.code));
+    place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
     if lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
       if e.first_pass {
         el_ex_pattern::first_pass_fields(e, vars, lvd, lfs);
@@ -539,6 +546,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   vars.self_read = match el_ir::unspan(p.code) { NdCall { def_nr: kd, args: ka } => if op == "=" && el::def(e, kd).name == "OpGetRecord" && len(ka) > 0 { place_root(e, el_ir::unspan(ka[0]!)) } else { -1 }, _ => -1 };
   x = el_ex_assign::expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
   keyed_stage = vars.self_stage;
+  if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetRecord") {
+    place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
+  }
   vars.self_read = outer_self;
   vars.self_stage = outer_stage;
   pt = p.tp;
@@ -1145,6 +1155,31 @@ pub fn unqualify_literal(e: el::El, n: integer) {
   }
 }
 
+// `literal_into_place` for a record literal written into a PLACE (a field, an element, a keyed
+// slot, a tagged holder), as Rust's trace prints it at the literal's end: on the second pass, and
+// only where the place has a root Rust can name (`projection_root_field_place`: a variable the
+// program declared).  `apart` is the reason this road builds it apart, "" where it is built in
+// place — but for Rust's one place decline the road need not know: a variant literal written
+// into an out-of-line place whose fields read that place (`variant_reads_place`).
+pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs: integer, apart: text, notes: text = "") {
+  if !el_trace::on() || e.first_pass || !(e.p.nodes[rhs] is SStructLit) {
+    return;
+  }
+  root = place_root(e, place);
+  if root < 0 || root >= len(vars.vars) || el_vars::is_compiler_generated(vars, root) {
+    return;
+  }
+  why = apart;
+  if why == "" {
+    ld = match e.p.nodes[rhs] { SStructLit { name: ln } => el::def_nr(e, ln), _ => -1 };
+    if ld >= 0 && el::def(e, ld).def_type == el::DT_ENUM_VALUE && calls(e, place, "OpRefFromChildRec") && el_ex_into::syntax_names(e, rhs, el_vars::name_of(vars, root)) {
+      why = "decline_place:variant_reads_place";
+    }
+  }
+  lat = match e.p.nodes[rhs] { SStructLit { at: la } => la, _ => -1 };
+  el_trace::route_after_literal(e, lat, if why == "" { "literal_into_place=in_place(place{notes})" } else { "literal_into_place=apart({why})" });
+}
+
 pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer) -> Ex {
   fields: vector<integer> = [];
   unqualify_literal(e, rhs);
@@ -1185,12 +1220,42 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       SFieldInit { e: fe } => {
         // (A record item writes its element, a nested write the mask leaves: built apart.)
         rec_item = match e.p.nodes[fe ?? 0] { SVecLit { items: vits } => fe != null && len([for vi in vits if (e.p.nodes[vi] is SStructLit) { vi }]) > 0, _ => false };
-        if fe != null && e.p.nodes[fe!] is SVecLit && (element_place || rec_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot))) {
+        // (`@FR-R-InPlaceLiteral`'s decline, `primed_reads_place`: an item whose write carries a
+        // receiver the mask does not take out — a formatted text's work text — reads the place,
+        // and so does a comprehension field's build: both built apart, as record items are.)
+        fmt_item = match e.p.nodes[fe ?? 0] { SVecLit { items: fits } => fe != null && len([for fi2 in fits if match e.p.nodes[fi2] { SString { parts } => len(parts) > 1, _ => false } { fi2 }]) > 0, _ => false };
+        comp_field = fe != null && e.p.nodes[fe!] is SComprehension;
+        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field) {
           apart = true;
+          // (`snapshot_read_destination`: an item INDEXING the destination's vector —
+          // `v: [len(b.inner.v), b.inner.v[0]]` — has Rust copy it first, `_build_src_N` and the
+          // store it is built in, the copy borrowing that store, before the build takes this road.)
+          sfa = attr_nr(el::def(e, rd), match e.p.nodes[fi] { SFieldInit { name: sfn } => sfn, _ => "" });
+          if aroot >= 0 && e.p.nodes[fe!] is SVecLit && sfa >= 0 && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot)) {
+            match el_types::base(el::def(e, rd).attributes[sfa]!.typedef[0]) {
+              TyVector { inner: svi } => {
+                smd = el::def_nr(e, "main_vector<{el_types::elem_name(e, svi)}>");
+                if smd >= 0 {
+                  ssrc = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: svi, dep: [] });
+                  el_vars::set_defined(vars, ssrc);
+                  sdb = el_vars::work_vec_db(vars, ir::TyReference { n: smd, dep: [] });
+                  el_vars::set_type(vars, ssrc, ir::TyVector { inner: svi, dep: [sdb] });
+                }
+              },
+              _ => {}
+            }
+          }
         }
       },
       _ => {}
     }
+  }
+  // (`literal_into_place`, as Rust's trace prints it at the literal's end — the projection
+  // road is the second pass's: every reason this port builds such a literal apart is a primed
+  // collection field reading the place.)
+  // (Built in place, the route is printed once the fields are, with their notes.)
+  if apart {
+    place_literal_route(e, vars, place, rhs, "apart(decline_place:primed_reads_place)");
   }
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
@@ -1287,12 +1352,17 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   }
   outer_place = vars.lit_place;
   outer_lstage = vars.lit_stage;
+  outer_notes = vars.lit_notes;
   vars.lit_place = [place];
   vars.lit_stage = [];
+  vars.lit_notes = [];
   built = el_ex_into::fields_at(e, vars, root, place, rd, fields);
   lstage = vars.lit_stage;
+  lnotes = vars.lit_notes;
   vars.lit_place = outer_place;
   vars.lit_stage = outer_lstage;
+  vars.lit_notes = outer_notes;
+  place_literal_route(e, vars, place, rhs, "", notes: if len(lnotes) == 0 { "" } else { ";{lnotes.join(",")}" });
   if built == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1908,6 +1978,57 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el_vars::drop_use(vars, v);
     return ex(ir::NdInsert { items: [sinit, el_ir::cl(e, "OpSliceVector", [ir::NdVar { n: v }, ssubj, ir::NdVar { n: slo }, ir::NdVar { n: shi }, ir::NdInt { n: srec }])] }, ir::TyVoid);
   }
+  // `materialize_iterator` for a TYPE VARIABLE's element (`@FR-G-Mono`): a slice appended to a
+  // `vector<T>` is copied in element by element in the shape `v += [x]` writes one —
+  // `OpNewRecord`, `OpCopyRecord(src, elm, row | COPY_FRESH_DEST)`, `OpFinishRecord` — which each
+  // instance re-lowers at its bound type (`rewrite_vector_writes`).
+  tv_inner = match vt { TyVector { inner: tvi } => tvi, _ => ir::TyVoid };
+  if vt is TyVector && bin == "+" && el_ex_vector::slice_target(e, rhs) == rhs && el_types::type_var(e, el_types::base(tv_inner)) >= 0 {
+    outer_slice2 = vars.slice_node;
+    vars.slice_node = rhs;
+    tx = el_ex_assign::expression(e, vars, rhs);
+    vars.slice_node = outer_slice2;
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    tsel = match tx.tp { TyIterator { step } => step, _ => ir::TyVoid };
+    tinit = ir::NdNull;
+    tsubj = ir::NdNull;
+    match tx.code { NdIter { create: tc, init: ti } => { tinit = ti; tsubj = tc; }, _ => {} }
+    // (The per-element read is the slice's own, `slice_read` over its `_index_N`.)
+    tidx = -1;
+    match tinit {
+      NdInsert { items: tis } => {
+        for tst in tis {
+          match tst { NdSet { var: tiv } => { if starts_with(el_vars::name_of(vars, tiv), "_index") { tidx = tiv; } }, _ => {} }
+        }
+      },
+      _ => {}
+    }
+    tnr = if tidx < 0 { null } else { el_ex_vector::slice_read(e, vars, el_ex_vector::SliceStart { init: tinit, subj: tsubj, idx: tidx, elem: tsel }) };
+    tnext = tnr ?? ir::NdNull;
+    trows = vector_rows(e, el_types::without_deps(tv_inner), 0, true);
+    ttd = struct_ref(e, el_types::base(tv_inner));
+    if trows == null || ttd < 0 || tnext is NdNull {
+      el::refuse(e, "a slice appended to a vector of a type variable in this shape");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    telm = el_vars::create_unique(vars, "elm", el_types::with_deps(el_types::without_deps(tv_inner), [v]));
+    // (The element read borrows the slice's source, `_slice_elm_N: ref(T)["v"]`.)
+    tsr = place_root(e, tsubj);
+    tse = el_vars::create_unique(vars, "slice_elm", if tsr >= 0 { el_types::with_deps(el_types::without_deps(tsel), [tsr]) } else { tsel });
+    el_vars::set_defined(vars, tse);
+    tw = ir::NdVar { n: v };
+    tvk = ir::NdInt { n: trows!.vec_known };
+    tbody = [
+      el_ir::v_set(tse, tnext),
+      el_ir::v_set(telm, el_ir::cl(e, "OpNewRecord", [tw, tvk, ir::NdInt { n: 65535 }])),
+      el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: tse }, ir::NdVar { n: telm }, ir::NdInt { n: el::def(e, ttd).known_type + 16384 }]),
+      el_ir::cl(e, "OpFinishRecord", [tw, ir::NdVar { n: telm }, tvk, ir::NdInt { n: 65535 }])
+    ];
+    el_vars::drop_use(vars, v);
+    return ex(ir::NdInsert { items: [tinit, el_ir::v_loop(tbody, "Slice materialise")] }, ir::TyVoid);
+  }
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs);
   x = el_ex_assign::expression(e, vars, rhs);
@@ -2224,7 +2345,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   // A `vector<T>?` is built in place as its base is.
   if e.p.nodes[rhs!] is SComprehension {
     match el_types::base(declared!) {
-      TyVector { inner } => return el_ex_match::comprehension_into(e, vars, v, rhs!, declared: inner),
+      TyVector { inner } => return el_ex_loop::comprehension_into(e, vars, v, rhs!, declared: inner),
       _ => {}
     }
   }

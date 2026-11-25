@@ -98,6 +98,7 @@
 </code></pre>
 <p>The directory form is found in any search directory you NAMED — <code>--lib &lt;dir&gt;</code>, a path in <code>LOFT_LIB</code>, <code>~/.loft/lib/</code> — and in your own project's <code>lib/</code> once your program is itself a package, with a <code>loft.toml</code> of its own at the top. In all of those, <code>&lt;dir&gt;/mylib/</code> resolves to <code>&lt;dir&gt;/mylib/src/mylib.loft</code> on its own.</p>
 <p>A lone script with no manifest above it reads its <code>lib/</code> flat, so there a library must be the single file <code>lib/mylib.loft</code> — a <code>lib/mylib/</code> directory beside such a script answers "Library <code>mylib</code> not found". Giving the script a <code>loft.toml</code> is what turns the directory form on.</p>
+<p>A library your project has pinned (in <code>loft.lock</code>) always loads that version, whatever same-named file lies in the directory you run from. To debug or fix it, say so: <code>--lib &lt;dir&gt;</code> runs your copy for one run, and <code>loft develop mylib</code> puts an editable copy in <code>lib/mylib</code> that the project uses until <code>loft develop --done mylib</code>.</p>
 <p>The <code>loft.toml</code> manifest carries the whole package declaration — name, version, dependencies, native crates, build targets. Two of its settings decide how the library above is LOADED:</p>
 <pre><code>[package]
 loft = "&gt;=2026.10"    the oldest loft release that can load it
@@ -245,6 +246,12 @@ fn main() {
   // library must be the single file `lib/mylib.loft` — a `lib/mylib/` directory
   // beside such a script answers "Library 'mylib' not found". Giving the script a
   // `loft.toml` is what turns the directory form on.
+  //
+  // A library your project has pinned (in `loft.lock`) always loads that version,
+  // whatever same-named file lies in the directory you run from. To debug or fix
+  // it, say so: `--lib &lt;dir&gt;` runs your copy for one run, and `loft develop mylib`
+  // puts an editable copy in `lib/mylib` that the project uses until
+  // `loft develop --done mylib`.
   //
   // The `loft.toml` manifest carries the whole package declaration — name,
   // version, dependencies, native crates, build targets. Two of its settings

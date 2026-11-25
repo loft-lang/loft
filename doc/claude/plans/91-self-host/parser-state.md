@@ -11,7 +11,7 @@ the elaborator field mirroring it (`—`: none yet).  A *scoped* field is saved 
 a sub-parse: context a caller hands down into an expression, invisible from the function that
 reads it — mirror it before porting a function that reads it (`--missing` lists those not yet).
 
-Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15 of 55.
+Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 11 of 209; `Function` 15 of 56.
 
 ## `Parser`, scoped channels
 
@@ -191,6 +191,8 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Parser.diagnostics` | other |  | — |  |
 | `Parser.context` | other |  | `El.context` | The definition that is currently parsed (function or struct) |
 | `Parser.lib_dirs` | other |  | — | Extra library directories for 'use' resolution (from --lib / --project flags) |
+| `Parser.flag_lib_dirs` | other |  | — | `@C173` — the `--lib` directories THIS run was given, the explicit override: a name |
+| `Parser.lib_override_reported` | other |  | — | The names already reported as taken from a `--lib` directory over a pin or a |
 | `Parser.pending_native_libs` | other |  | — | Resolved paths of native shared libraries to load after `byte_code()`. |
 | `Parser.native_lib_regs` | other |  | — | The `(stem, pkg_dir)` registration inputs behind `pending_native_libs`. |
 | `Parser.pending_native_compile` | other |  | — | @PLN11 Arc N / N3 — package dirs of libraries that opted into |
@@ -203,9 +205,9 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Parser.pkg_dep_cache` | other |  | — | Per-directory cache for the dep-shadowing guard in `lib_path`: the |
 | `Parser.use_paths` | other |  | — | The FILE each `use` short-name was loaded from, canonicalised (loft#912). |
 | `Parser.undeclared_reported` | other |  | — | loft#968 — packages already reported as resolved-but-undeclared, so one `use` |
-| `Parser.lib_outranked_reported` | other |  | — | The `use` ids already reported by [`Parser::lib_flag_outranked`] — one advice per |
 | `Parser.auto_installed` | other |  | — | What an auto-install already answered this run: `id -> Some(version)`, or `None` |
 | `Parser.pin_behind_reported` | other |  | — | Packages already told about in the "this pin has fallen behind" notice (@PLN143 |
+| `Parser.governed` | other |  | — | A parse governed by another program's entry (`Parser::govern_by`): that program |
 | `Parser.newest_releases` | other |  | — | Newest release per package as the CACHED index knows it, read at most once per run |
 | `Parser.module_clash_reported` | other |  | — | Module names already reported as captured by another file (loft#912 / loft#949), |
 | `Parser.root_dep_pins` | other |  | — | Root project's `[dependencies]` version constraints (name → req), read |
@@ -217,6 +219,9 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Parser.auto_use_type_map` | other |  | — | The type half of the same surface: `type name -> providing package`, from the |
 | `Parser.auto_use_builder_map` | other |  | — | The builder half: `function name -> providing package`, from the `[triggers] |
 | `Parser.reported_manifest_errors` | other |  | — | The manifest errors already reported by [`report_manifest_errors`]: each file's parse |
+| `Parser.manifest_errors` | other |  | — | The errors of the manifests this parse read since the last report |
+| `Parser.compile_pos` | other |  | — | The source line the parse is on, for the report of an internal panic (`parse_file`). |
+| `Parser.parsing` | other |  | — | A parse is running: a nested one (an import) leaves the panic report to it. |
 | `Parser.auto_use_catalog_map` | other |  | — |  |
 | `Parser.auto_use_catalog_builders` | other |  | — | The builder half of the catalog fallback: `function name -> providing package` from |
 | `Parser.auto_use_catalog_ambiguous` | other |  | — | The catalogue's methods two packages provide (`method -> "a,b"`), for the refusal |
@@ -248,6 +253,7 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Parser.coalesce_defaults` | other |  | — | The default arms of the `??`s built last, each with the type it SYNTHESISED before it |
 | `Parser.block_path` | other |  | `Vars.block_path` | `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser |
 | `Parser.loop_spelling` | other |  | — | The ended binding a `for` statement's spelling named before its variable took it, |
+| `Parser.loop_spelling_kept` | other |  | — | Pass 1's answer to [`Self::ended_spelling`] per loop — `(function, loop variable)` — |
 | `Parser.block_ord` | other |  | `Vars.block_ord` |  |
 | `Parser.bound_in_block` | other |  | — | The binding's block is kept as its INNERMOST ordinal (`None` = the function's own |
 | `Parser.block_rebinds` | other |  | — | Per open block, the spellings a bind after an ended binding re-pointed there, with the |
@@ -326,7 +332,7 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Parser.narrowed_non_null` | other |  | — | @PLN25 DN3 flow-narrowing — the stack of local-var slots PROVEN non-null by an |
 | `Parser.capture_variant` | other |  | — | loft#2025 — a match arm's root capture (`w: Circle { r } => …`) and the variant its |
 | `Parser.const_views` | other |  | — | loft#1540 — the VIEWS of a value-const value, keyed by `(context, view variable)`, each |
-| `Parser.foreign_bound` | other |  | — | `@FR-Const-Foreign` — the variables value-const because their first binding is a |
+| `Parser.foreign_bound` | other |  | `Vars.foreign_bound` | `@FR-Const-Foreign` — the variables value-const because their first binding is a |
 | `Parser.narrowed_non_null_exprs` | other |  | — | The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }` |
 | `Parser.divisor_nonzero` | other |  | — | @PLN25 DN3 fault-op narrowing — local-var slots PROVEN non-zero by an enclosing |
 | `Parser.variant_proven` | other |  | — | `(subject, discriminant)` pairs an enclosing `if s is Variant { … }` proves in its THEN |
@@ -350,6 +356,7 @@ Mirrored: `Parser` scoped 12 of 77, pass 4 of 32, other 10 of 203; `Function` 15
 | `Function.untyped_binds` | function |  | — | @C168 — the locals a `=` bound on pass 1 to a value whose type that pass could not |
 | `Function.pass1_untyped_bind` | function |  | — | The undeclared locals whose latest PASS-1 bind had no type yet (a call to a function |
 | `Function.nullable_text_buffers` | function |  | — | loft#1616 — the `text?` locals `text_return` promoted to a hidden `&text` work buffer. |
+| `Function.capture_placeholders` | function |  | — | The pass-1 capture placeholders (`Parser::parse_var_inner`'s capture arm): a lambda's |
 | `Function.join_owners` | function |  | — | loft#1721 — a `??` temp (`__ncc_N`) mapped to the stores its DEFAULT arm may deliver. |
 | `Function.ref_evacuations` | function |  | — | `@FR-H-RefHome` — the stored references to copy out before a local's store is freed: |
 | `Function.ref_named` | function |  | — | `@FR-H-RefHome` — the locals whose store holds a record a stored reference names, |

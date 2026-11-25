@@ -60,6 +60,7 @@ pub fn cached_or_build_shared_cdylib(
                 pkg_dir,
                 &context.default_dir,
                 &context.lib_dirs,
+                &context.flag_lib_dirs,
                 context.scope_entry.as_deref(),
             )?;
             let export = alone.export.clone();
@@ -91,6 +92,8 @@ pub fn cached_or_build_shared_cdylib(
 pub struct LibraryContext {
     pub default_dir: String,
     pub lib_dirs: Vec<String>,
+    /// The `--lib` directories of the run (`@C173`), which outrank a pin there as here.
+    pub flag_lib_dirs: Vec<String>,
     /// The program's entry file, whose resolution scope (its lock pins) the library's own
     /// dependencies resolve by, as they did in the program; `None` for `build-native`.
     pub scope_entry: Option<String>,
@@ -113,6 +116,7 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
     let context = LibraryContext {
         default_dir: default_dir.to_string(),
         lib_dirs: parser.lib_dirs.clone(),
+        flag_lib_dirs: parser.flag_lib_dirs.clone(),
         scope_entry: Some(entry.to_string()),
     };
     for pkg_dir in &pending {
@@ -263,6 +267,7 @@ fn program_unit_key(data: &Data) -> u64 {
             u8::from(crate::keys::no_handover()),
             u8::from(crate::keys::poison_claim()),
             u8::from(crate::keys::hosted_planted()),
+            u8::from(!crate::keys::exp_pow_enabled()),
         ],
     ];
     for f in &files {
@@ -351,6 +356,7 @@ pub fn parse_library_alone(
     pkg_dir: &str,
     default_dir: &str,
     lib_dirs: &[String],
+    flag_lib_dirs: &[String],
     scope_entry: Option<&str>,
 ) -> Result<LibraryAlone, String> {
     let pkg_path = crate::file_access::plain_canonical(std::path::Path::new(pkg_dir));
@@ -379,6 +385,9 @@ pub fn parse_library_alone(
             p.lib_dirs.push(d.clone());
         }
     }
+    // `@C173` — the run's `--lib` override reaches the library's own `use`s as it does the
+    // program's, so the unit carries the copy the program loads.
+    p.flag_lib_dirs = flag_lib_dirs.to_vec();
     // The library's dependencies resolve as the program's did: by its lock pins, not the newest
     // release — the unit carries their code, and the artifact's key names the program's copies.
     if let Some(entry) = scope_entry {

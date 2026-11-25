@@ -1,0 +1,50 @@
+diff --git a/selfhost/src/el_ex_pattern.loft b/selfhost/src/el_ex_pattern.loft
+index dd76efdd1..e4410f0c0 100644
+--- a/selfhost/src/el_ex_pattern.loft
++++ b/selfhost/src/el_ex_pattern.loft
+@@ -2231,6 +2231,12 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
+         at = if a >= 0 { el::def(e, d).attributes[a]!.typedef[0] } else { ir::TyVoid };
+         // (A nullable KEYED field's literal fills it as the dense twin's does: no vector of its own.)
+         opt_keyed = at is TyOptional && el_types::is_collection(el_types::base(at)) && !(el_types::base(at) is TyVector);
++        // (A comprehension filling the field mints its element temp too, `unique_elm_var`.)
++        if el_types::base(at) is TyVector && e.p.nodes[fe!] is SComprehension {
++          cfe = el_vars::create_unique(vars, "elm", el_types::with_deps(empty_elm_type(e, at, holder), if holder >= 0 { [holder] } else { [] }));
++          el_vars::set_skip_free(vars, cfe, "parse_vector_inner");
++          el_vars::mark_inline(vars, cfe, "unique_elm_var");
++        }
+         if (el_types::is_collection(at) || opt_keyed) && e.p.nodes[fe!] is SVecLit {
+           match e.p.nodes[fe!] {
+             SVecLit { items } => {
+@@ -2244,6 +2250,8 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
+                 fet = empty_elm_type(e, at, holder);
+                 fpe = el_vars::create_unique(vars, "elm", el_types::with_deps(fet, if holder >= 0 { [holder] } else { [] }));
+                 el_vars::set_skip_free(vars, fpe, "parse_vector_inner");
++                // (`unique_elm_var` marks its element an inline ref.)
++                el_vars::mark_inline(vars, fpe, "unique_elm_var");
+                 // (A literal that fills the field names its vector's row on this pass, ahead
+                 // of the struct that holds it; an empty one names nothing.)
+                 match at {
+diff --git a/selfhost/src/el_ex_place.loft b/selfhost/src/el_ex_place.loft
+index 47a152254..2059e21c5 100644
+--- a/selfhost/src/el_ex_place.loft
++++ b/selfhost/src/el_ex_place.loft
+@@ -1226,6 +1226,19 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
+       el_ex_pattern::first_pass_fields(e, vars, rd, fields);
+       return ex(ir::NdNull, ir::TyVoid);
+     }
++    // (`decline_place`: Rust first parses the literal in its place and declines only then, so the
++    // temporaries that attempt minted — a comprehension's loop variable and `_comp_N`, a formatted
++    // item's `__work_N` — stand before the build apart's own.  Parsed once, the code dropped.)
++    for pf in fields {
++      match e.p.nodes[pf] {
++        SFieldInit { e: pfe } => {
++          if pfe != null && (e.p.nodes[pfe!] is SComprehension || match e.p.nodes[pfe!] { SVecLit { items: pits } => len([for pi in pits if match e.p.nodes[pi] { SString { parts } => len(parts) > 1, _ => false } { pi }]) > 0, _ => false }) {
++            el_ex_assign::expression(e, vars, pfe!);
++          }
++        },
++        _ => {}
++      }
++    }
+     // Rust's head, mirrored: the field form declares the vector literal's first-pass `_elm_N`
+     // (unused); the element form mints a `__ref_p2_N` before the one it builds in (unused).
+     // (The element form's second buffer appears only where the place is reached through a

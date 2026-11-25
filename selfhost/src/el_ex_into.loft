@@ -28,6 +28,8 @@ use el_ex_object;
 use el_ex_call;
 use el_ex_null;
 use el_ex_match;
+use el_ex_link;
+use el_ex_loop;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
@@ -239,6 +241,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
         staged = true;
       }
     }
+    literal_route(e, n, "literal_into_place=apart(build_apart:release_before_call)");
     abandon_work_refs(vars, ref_mark, p2_mark);
     // Its own store is typed as the definition answers (`returned`): a variant's is its enum.
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
@@ -388,6 +391,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // The watch fired: this attempt — its staging included — is abandoned and the literal built
   // apart in a `__ref_p2_N` of its own, then bound.
   if watch_hit {
+    literal_route(e, n, "literal_into_place=apart(build_apart:rebuild_watch)");
     vars.own_buffer_hit = false;
     // (The function's RETURNED local, renamed onto the hidden buffer, takes the plain local's
     // bind: the literal built apart, each collection field copied in, the local bound to it.)
@@ -483,7 +487,49 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     ops = guarded;
   }
   staged += ops;
+  literal_route(e, n, "literal_into_place=in_place(local{primed_notes(e, n, d)})");
   ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// `literal_into_place`, as Rust's trace prints it at the end of a record literal written into a
+// local: built in place, or parsed again built apart and why — on the second pass, where Rust's
+// destination hint is taken.  (Rust's per-field notes on an in-place build are not printed here
+// yet: the route gate counts that as the same kind.)
+fn literal_route(e: el::El, n: integer, route: text) {
+  if !el_trace::on() || e.first_pass {
+    return;
+  }
+  lat = match e.p.nodes[n] { SStructLit { at: la } => la, _ => -1 };
+  if lat >= 0 {
+    el_trace::route_after_literal(e, lat, route);
+  }
+}
+
+// `literal_into_place`'s field notes for a literal built into a local: a field primed with a
+// non-empty vector literal whose elements are built as records (`_elm_N` — any element no
+// push op writes: a text, a record, a struct enum, a vector) reads the place through its
+// elements (`{field}:element_primed`), in the literal's field order.
+fn primed_notes(e: el::El, n: integer, d: integer) -> text {
+  fs = match e.p.nodes[n] { SStructLit { fields } => fields, _ => return "" };
+  notes: vector<text> = [];
+  for f in fs {
+    match e.p.nodes[f] {
+      SFieldInit { name, e: fv } => {
+        if fv != null && match e.p.nodes[fv!] { SVecLit { items } => len(items) > 0, _ => false } {
+          for a in el::def(e, d).attributes {
+            if a.name == name {
+              elem = match el_types::base(a.typedef[0] ?? ir::TyVoid) { TyVector { inner } => inner, _ => ir::TyVoid };
+              if !(elem is TyVoid) && el_ex_pattern::push_op(el_types::base(elem)) == "" {
+                notes += ["{name}:element_primed"];
+              }
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  if len(notes) == 0 { "" } else { ";{notes.join(",")}" }
 }
 
 // Is there, anywhere in `n`, a call of a loft function whose arguments read `v`?
@@ -747,7 +793,7 @@ pub fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
       if starts_with(el::def(e, cd).name, "Op") {
         return -1;
       }
-      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
+      if el_ex_link::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
     },
     _ => -1
   }
@@ -1042,6 +1088,14 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           pos = ir::NdInt { n: field_position(e, d, fname) };
           list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
           place = el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, sed).known_type }]);
+          // (`literal_into_place`: a variant literal in a struct-enum field is written into the
+          // field, which Rust's trace reports where the outer literal's own destination is a
+          // variable the program declared — a local, a place, a parameter it rebinds — and not
+          // for an appended element, a return buffer or a record built apart.)
+          rroot = el_ex_base::place_root(e, r);
+          if !e.first_pass && rroot >= 0 && rroot < len(vars.vars) && !el_vars::is_compiler_generated(vars, rroot) {
+            literal_route(e, fe!, "literal_into_place=in_place(place)");
+          }
           built = fields_at(e, vars, v, place, vd, sub);
           if built == null {
             return null;
@@ -1163,6 +1217,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           lw = el_vars::work_ref(vars, x.tp);
           vars.lit_stage += [el_ir::v_set(lw, fc!)];
           fc = ir::NdVar { n: lw };
+          vars.lit_notes += ["{fname}:staged"];
         }
         list += [el_ex_object::set_field(e, d, a, r, fc!)];
         found += [fname];
@@ -1569,7 +1624,9 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   if e.p.nodes[fe] is SNull {
     return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
   }
-  // A struct enum's child is a literal of any of its variants.
+  // A struct enum's child is a literal of any of its variants — qualified by its enum or not
+  // (`inner: Nd::Leaf { v: 1 }` is the variant's literal, as at every other literal road).
+  el_ex_place::unqualify_literal(e, fe);
   vl = el_ex_pattern::variant_literal_def(e, fe);
   literal = struct_literal_def(e, fe) == sd || (vl >= 0 && el::def(e, vl).parent == sd);
   x = el_ex_assign::expression(e, vars, fe);
@@ -1603,6 +1660,11 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
     }
+    // (An unwrapped local, `inner!` — the `ncr` block checking it present and answering it —
+    // is set as the child as the local itself is.)
+    if same && match xc { NdBlock { block: nb } => nb[0].name == "ncr" && len(nb[0].operators) > 0 && el_ir::unspan(el_ir::last(nb[0].operators)) is NdVar, _ => false } {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
     // A unit variant (`TVec { inner: TInt }`): its record, built in a work ref, set as the child.
     if same && match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
@@ -1624,7 +1686,7 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
       return el_ir::cl(e, "OpMoveChildRec", [field, src!, k]);
     }
     if same && xc is NdCall && !calls(e, xc, "OpRefFromChildRec") {
-      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_match::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, ir::NdInt { n: kt + (if el_ex_link::gives_away_its_store(e, x.code) { 32768 } else { 0 }) }]);
     }
     // A child read from another slot (`t.right = t.left`) is set as it is read: the copy is
     // the set's own.
@@ -1940,7 +2002,7 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
       return null;
     }
     vars.comp_place = [fp!];
-    c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
+    c = el_ex_loop::comprehension_into(e, vars, -1, n, declared: inner);
     vars.comp_place = [];
     // (The build is one inserted group, as the comprehension answers it.)
     return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };

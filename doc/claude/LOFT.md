@@ -88,7 +88,7 @@ Loft uses in-band sentinel values to represent `null`. Each type has a dedicated
 | `float` | `NaN` | IEEE 754: `NaN != NaN`, but `!f` correctly detects null |
 | `single` | `NaN` (32-bit) | Same as `float` |
 | `character` | `'\0'` (NUL) | The null character is not a valid loft character value |
-| `text` | internal null pointer | Opaque; `!t` and `t == null` detect it.  `len` / `size` take a non-null `text`, so passing a `text?` warns — discharge it first (`len(t?)`) |
+| `text` | no text (never a content) | Opaque; `!t` and `t == null` detect it, and `""` and `"\0"` are texts.  `len` / `size` take a non-null `text`, so passing a `text?` warns — discharge it first (`len(t?)`) |
 | `reference` | record 0 | Opaque; `!r` detects it |
 | plain `enum` | byte `255` **or** byte `0` | Limits plain enums to 254 variants.  **Two bytes mean absent, and every test accepts both:** an explicit `null` writes `255`, while zero-initialised storage and a read of an absent record produce `0`.  Variants are numbered from 1, so `0` is a variant of no enum — which is why the renderer has always shown both as `null`.  A `??` that recognised only `255` let `v[9] ?? d` and a field never set answer `null` through a coalesce. |
 | narrow int (`u8`/`u16`/`i8`/`i16`) | top of the packed range | e.g. `i8::MIN` for `i8`; stored compactly in `Parts::Byte`/`Short` |

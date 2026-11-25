@@ -211,12 +211,10 @@ pub fn to_char(val: i32) -> char {
 
 #[inline]
 pub fn format_text(s: &mut String, val: &str, width: i64, dir: i8, token: u8) {
-    // @PLN10 — render the text null sentinel ("\0") as `null`, mirroring
-    // `format_long`'s `i64::MIN → null`.  A loft text equal to `STRING_NULL`
-    // IS null (the content-based null model — `conv_bool_from_text`), so the
-    // substitution is consistent with `?? ` / `!`.  The interpreter's
-    // `OpFormatText` routes text interpolation through this fn.
-    let val = if val == crate::store::STRING_NULL {
+    // @PLN10 — render the null text as `null`, mirroring `format_long`'s `i64::MIN → null`,
+    // so the substitution is consistent with `??` / `!`.  The interpreter's `OpFormatText`
+    // routes text interpolation through this fn.
+    let val = if crate::text_null::is_null(val) {
         "null"
     } else {
         val
@@ -733,16 +731,15 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
 /// provenances.  @P347.
 ///
 /// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
-/// home both backends call, rather than at each operator site.
+/// included: `null < v` is true, `v < null` false, `null < null` false — `null < ""` too, which a
+/// byte compare cannot say (loft#1924).  Asked here, the one home both backends call, rather
+/// than at each operator site.
 #[inline]
 #[must_use]
 pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::store::STRING_NULL;
-    let b_null = b == crate::store::STRING_NULL;
+    let a_null = crate::text_null::is_null(a);
+    let b_null = crate::text_null::is_null(b);
     if a_null || b_null {
         return a_null && !b_null;
     }
@@ -755,8 +752,8 @@ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 #[must_use]
 pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
     let (a, b) = (a.as_ref(), b.as_ref());
-    let a_null = a == crate::store::STRING_NULL;
-    if a_null || b == crate::store::STRING_NULL {
+    let a_null = crate::text_null::is_null(a);
+    if a_null || crate::text_null::is_null(b) {
         return a_null;
     }
     a <= b
@@ -768,12 +765,11 @@ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 /// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
 #[inline]
 pub fn append_text(dst: &mut String, src: &str) {
-    if dst.as_str() == crate::store::STRING_NULL {
+    if crate::text_null::is_null(dst) {
         return;
     }
-    if src == crate::store::STRING_NULL {
-        dst.clear();
-        dst.push_str(crate::store::STRING_NULL);
+    if crate::text_null::is_null(src) {
+        crate::text_null::set_null(dst);
         return;
     }
     dst.push_str(src);
@@ -793,14 +789,15 @@ pub fn append_text(dst: &mut String, src: &str) {
 #[inline]
 #[must_use]
 pub fn op_eq_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() == b.as_ref()
+    let (a, b) = (a.as_ref(), b.as_ref());
+    crate::text_null::is_null(a) == crate::text_null::is_null(b) && a == b
 }
 
 /// Text inequality — see [`op_eq_text`].  @P347 / #622.
 #[inline]
 #[must_use]
 pub fn op_ne_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() != b.as_ref()
+    !op_eq_text(a, b)
 }
 
 #[inline]

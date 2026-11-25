@@ -47,12 +47,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 
-/// The text null: a loft `text` that holds no value is this one NUL byte, and
-/// [`Store::text_is_null`] reads nullity from the content.  The interpreter, the runtime
-/// emitted programs link and every store reader share it; `crate::state` re-exports it
-/// under the path emitted Rust names (`loft::state::STRING_NULL`).
-pub const STRING_NULL: &str = "\0";
-
 #[allow(dead_code)]
 static A: System = System;
 /// The first word of every store and image (`@FR-S-Frame`): a reader refuses a file without it.
@@ -788,6 +782,10 @@ pub struct Store {
     pub frame_holds: u32,
     /// `@FR-G-Arg-Rebind` — the owner let go of this store while a frame held it.
     pub orphaned: bool,
+    /// The store was loaded from an image written before sidecar version 3, where a null text
+    /// could be stored as a record holding one NUL byte: [`Store::get_str`] reads such a record
+    /// as the null text (`@FR-L-Null-Text`).  The C runtime's `loft_store_t::legacy_nul`.
+    pub legacy_nul: bool,
     /// The C runtime's mapped length (`loft_mapped.h`).  The interpreter's own file-backed store
     /// keeps its mapping in `file` and leaves this 0: a hosted C call is never made on one
     /// (`p3-p4-design.md`, failure path 5).
@@ -1537,6 +1535,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1756,6 +1755,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1878,6 +1878,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -2017,6 +2018,7 @@ impl Store {
             pinned: false,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -2060,6 +2062,8 @@ impl Store {
         self.referenced.clear();
         self.removed.clear();
         self.released_root = false;
+        // Whatever it held, a reset store holds this build's texts only.
+        self.legacy_nul = false;
         // A reset store holds no parsed root, so it answers no parse errors.
         self.parse_errors.clear();
         self.parse_type = u16::MAX;
@@ -3884,6 +3888,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3987,6 +3992,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -4064,6 +4070,7 @@ impl Store {
             pinned: self.pinned,
             frame_holds: 0,
             orphaned: false,
+            legacy_nul: false,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -6155,26 +6162,20 @@ impl Store {
 
     /// True when the `text` slot at `(rec, pos)` holds NULL.
     ///
-    /// @FR-L-Null-Text — an absent text has TWO byte-level spellings and they are one
-    /// absence: an **unset handle** (str_rec 0, the `nullref` sentinel `(L-Null)` names)
-    /// and an **allocated record holding the `STRING_NULL` (`"\0"`) bytes**, which is what
-    /// a written `null` and every native text-null produce.  Testing the handle alone reads
-    /// the second spelling as a present, one-character string — and telling `null` from `""`
-    /// is the distinction the whole reading exists for.
-    ///
-    /// The CONTENT test is the total one: [`Store::get_str`] maps an unset or out-of-range
-    /// handle onto `STRING_NULL` too, so it subsumes the pointer test rather than sitting
-    /// beside it.  This is the one home every reader asks — `Stores::is_null` (which decides
-    /// whether a struct field is omitted), the format walk (which decides how it renders) and
-    /// the native reader — so a render and an omission cannot disagree about whether a value
-    /// is there.
+    /// @FR-L-Null-Text — a stored null text is the **unset handle** (str_rec 0, the `nullref`
+    /// sentinel `(L-Null)` names), never a record; in an image from before sidecar version 3 a
+    /// record of one NUL byte is null as well ([`Store::legacy_nul`]).  [`Store::get_str`]
+    /// answers the null text for both, so asking its answer is the whole test.  This is the
+    /// one home every reader asks — `Stores::is_null` (which decides whether a struct field is
+    /// omitted), the format walk (which decides how it renders) and the native reader — so a
+    /// render and an omission cannot disagree about whether a value is there.
     ///
     /// An empty string is NOT null: `""` is an allocated record whose content is `""`, a
     /// present value that must survive a save→load round trip (@P375).
     #[inline]
     #[must_use]
     pub fn text_is_null(&self, rec: u32, pos: u32) -> bool {
-        self.get_str(self.get_u32_raw(rec, pos)) == STRING_NULL
+        crate::text_null::is_null(self.get_str(self.get_u32_raw(rec, pos)))
     }
 
     /// The store's DATA span — its buffer's address and its size in words — for a loop that
@@ -6191,11 +6192,14 @@ impl Store {
     #[inline]
     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
         if rec == 0 || rec > i32::MAX as u32 {
-            return STRING_NULL;
+            return crate::text_null::null_str();
         }
         let len = self.get_u32_raw(rec, 4);
         if (len / 8) + rec > self.size {
-            return STRING_NULL;
+            return crate::text_null::null_str();
+        }
+        if self.legacy_nul && len == 1 && self.get_byte(rec, 8, 0) == 0 {
+            return crate::text_null::null_str();
         }
         unsafe {
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(
@@ -6220,8 +6224,13 @@ impl Store {
         len != 0 && at >= base && at < base + self.size as usize * 8
     }
 
+    /// A text record holding `val`, its number answered — or 0 for the null text, which is
+    /// stored as the unset handle and never as a record (`@FR-L-Null-Text`).
     #[inline]
     pub fn set_str(&mut self, val: &str) -> u32 {
+        if crate::text_null::is_null(val) {
+            return 0;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             // Out of the store before the claim can move it.
             let moved_out = val.to_owned();
@@ -6254,6 +6263,15 @@ impl Store {
     /// as a block.
     #[inline]
     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        if crate::text_null::is_null(val) {
+            // The null text is the unset handle: the slot's block is released.
+            let old = self.get_u32_raw(rec, fld);
+            if old != 0 && !self.is_locked() {
+                self.delete(old);
+            }
+            self.set_u32_raw(rec, fld, 0);
+            return;
+        }
         if self.holds_bytes(val.as_ptr(), val.len()) {
             let moved_out = val.to_owned();
             self.refill_str(rec, fld, &moved_out);
@@ -6287,6 +6305,12 @@ impl Store {
 
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
+        // SAFETY: the caller hands `len` readable bytes at a non-null `ptr`.
+        if ptr.is_null()
+            || crate::text_null::is_null_bytes(unsafe { std::slice::from_raw_parts(ptr, len) })
+        {
+            return 0;
+        }
         if self.holds_bytes(ptr, len) {
             // SAFETY: the caller hands `len` readable bytes at `ptr`.
             let own = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();

@@ -363,6 +363,7 @@ pub mod host_store;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod ledger;
+pub mod lifetime_check;
 pub mod literal_append;
 pub mod literal_host;
 pub mod loop_kernel_rewrite;
@@ -383,6 +384,7 @@ pub mod resolution_scope;
 pub mod return_field;
 pub mod rewrite_census;
 pub mod same_read;
+pub mod scope_check;
 pub mod scopes;
 pub mod self_replace;
 pub mod shared_call;
@@ -442,6 +444,7 @@ mod spatial;
 pub mod store;
 pub mod store_budget;
 pub mod text_calls;
+pub mod text_null;
 pub mod trie_db;
 pub mod type_schema;
 mod typedef;
@@ -460,6 +463,7 @@ pub mod platform;
 pub mod state;
 
 pub mod compile;
+pub mod debug_token;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
@@ -494,6 +498,7 @@ pub use extensions::native_call;
 // @PLN53 F1/F2 — raw-source fuzz oracle + keyed-container generator; available
 // under cargo-fuzz (the `fuzzing` feature) and under `cargo test`.
 pub mod compiled_stdlib;
+pub mod develop;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzz_keyed;
 #[cfg(any(test, feature = "fuzzing"))]

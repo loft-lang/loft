@@ -1,0 +1,20 @@
+LOFT-DSCHEMA v2
+hash=18159258644458774241
+root=NRoot
+slot=2
+--
+@endian	little
+NI	size=16	struct{k@8:text, v@0:integer}
+NInner	size=16	struct{t@8:text, n@0:integer}
+NRoot	size=48	struct{opt@16:text, plain@20:text, empty@24:text, here@28:text, inner@0:NInner, elems@32:vector<text>, h@36:hash<NT[k]>, s@40:sorted<NS[k]>, i@44:index<NI[k]>}
+NS	size=16	struct{k@8:text, v@0:integer}
+NT	size=16	struct{k@8:text, v@0:integer}
+hash<NT[k]>	size=4	hash<NT>(keys=[0],elem_size=16,placement=3)
+index<NI[k]>	size=4	index<NI>(keys=[(0, true)],elem_size=16,placement=2,order=1)
+integer	size=8	base
+sorted<NS[k]>	size=4	sorted<NS>(keys=[(0, true)],elem_size=16,order=1)
+text	size=4	base
+vector<text>	size=4	vector<text>(elem_size=4)
+--facts--
+NInner.t	nullable
+NRoot.opt	nullable

@@ -943,6 +943,7 @@ impl Function {
         self.capture_builds = Some(builds);
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn capture_builds(&self) -> Option<&CaptureBuilds> {
         self.capture_builds.as_ref()
     }
@@ -953,6 +954,7 @@ impl Function {
 
     /// Does an owning local's rebinds and free release this literal buffer's store, so the
     /// free emitter gave the buffer no exit free (`Scopes::pair_literal_buffers`)?
+    #[cfg(debug_assertions)]
     pub(crate) fn adopter_released(&self, v: u16) -> bool {
         self.adopter_released.contains(&v)
     }
@@ -3478,7 +3480,7 @@ impl Function {
     /// loft#1616 — record that `var_nr`, a local the author declared `text?`, is now the
     /// hidden `&text` work buffer `text_return` promoted it to.  `@FR-N-Shape`: the promotion
     /// changes the local's CHANNEL and never its nullability, so a `null` stored into it stays
-    /// legal — it is `STRING_NULL` in the buffer's own slot.  Only a nullable local is marked:
+    /// legal — it is the null text in the buffer's own slot.  Only a nullable local is marked:
     /// a buffer promoted from a non-null `text` keeps `@FR-N-Store`'s refusal of `null`.
     pub fn mark_nullable_text_buffer(&mut self, var_nr: u16) {
         if matches!(self.tp(var_nr), Type::Optional(_)) {
@@ -3929,7 +3931,7 @@ impl Function {
             // @PLN25 DN1: peel an `Optional` source — `&text ← text?` is the hoisted
             // work-buffer local (control.rs return-deps hoist) re-assigned from a
             // nullable call result; `Optional(τ)` shares `τ`'s sentinel storage, so the
-            // buffer carries the null (`STRING_NULL`) without a type change.
+            // buffer carries the null text without a type change.
             // loft#1372 — and the other direction, `&τ? ← τ`: the link's SLOT is what a write
             // through it has to fit, and whether that slot may be absent is `@FR-N-Store`'s
             // question, asked where the value lands, not a RETYPE of the link.  Both sides
@@ -3940,7 +3942,7 @@ impl Function {
             // loft#1616 — and a bare `null` into the hidden work buffer a `text?` local was
             // promoted to (`a: text? = null; return a ?? "d"`).  `@FR-N-Shape`: the `?` is a
             // marker over τ's own storage and never selects a road, so the nullable local takes
-            // the same promotion as its dense twin and its null is `STRING_NULL` in the same
+            // the same promotion as its dense twin and its null is the null text in the same
             // slot.  An author's `&text`, and a buffer promoted from a non-null `text`, keep
             // `@FR-N-Store`'s refusal (`fn g(s: &text) { s = null; }`).
             if let Type::RefVar(in_tp) = var_tp
@@ -5931,8 +5933,8 @@ impl Function {
     /// spellings (`OpSets::frees`), from the scope-exit sweep, a transition free, a pre-`Set`
     /// free or a move alike?  Its contract is that sentence, and nothing weaker; the one
     /// admissible free of a marked binding is the release its marking pass PLACES itself, on
-    /// a consumption fact ([`Self::is_staged_text_temp`]), and `ownership_cfg`'s Check D
-    /// reports every other.
+    /// a consumption fact ([`Self::is_staged_text_temp`]); the store records report what
+    /// any other releases.
     ///
     /// Enforces @FR-O-Override — the never-free veto.
     ///
@@ -6057,7 +6059,7 @@ impl Function {
     /// pass chose: the ncc-orphan pass right after the consuming statement, the return delivery
     /// once the bytes have moved into the caller's buffer.  @FR-O-Override names this as the ONE
     /// admissible free of a never-free binding — a release placed on a CONSUMPTION fact, never
-    /// on the ownership proxy — and `ownership_cfg`'s Check D admits exactly this predicate.
+    /// on the ownership proxy.
     /// Both facts are required, as in [`Self::is_overwritten_view`]: the PREFIX says which pass
     /// staged it, and `skip_free` that the pass did mark it.
     #[must_use]

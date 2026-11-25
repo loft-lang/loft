@@ -293,7 +293,7 @@ types), the functions reachable from `n_test` (`output_native_reachable`), and a
 
 **What it checks.** `formal/heap.md (H-Drop)`: a droppable resource is released exactly once,
 at the death of the record that owns it; and `(H-Drop-Not)`: the places that rule names release
-nothing.  The free-side instruments — `LOFT_POISON`, the leak check, `LOFT_OWN_ORACLE=check` —
+nothing.  The free-side instruments — `LOFT_POISON`, the leak check, the store records' free checks —
 cannot see a drop: each is clean on a program that runs a hook twice or never.  So this gate
 scores the release itself.
 

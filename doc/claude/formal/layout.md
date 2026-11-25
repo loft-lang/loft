@@ -400,12 +400,18 @@ The rule wants splitting rather than weakening, and the split is decidable from 
                each of which also copies nothing from a null SOURCE — without that guard the
                copy indexes past the stores and the process dies on a program the compiler
                accepts).
-  (L-Null-Text) `text` reserves TWO spellings of absence and they are ONE value: an UNSET
-               handle (str_rec 0 — the `nullref` above) and an ALLOCATED record holding the
-               `STRING_NULL` (`"\0"`) bytes.  A reader tests the CONTENT, never the handle
-               alone: `get_str` maps an unset or out-of-range handle onto `STRING_NULL` too,
-               so the content test is TOTAL and subsumes the handle test.  An allocated `""`
-               is a present value, not an absence (@P375).  One home: `Store::text_is_null`.
+  (L-Null-Text) absence of a `text` is an IDENTITY, never a content: a text is null or a byte
+               string, and a byte string may hold NUL bytes anywhere — `""` and `"\0"` are
+               present values (@P375).  Each representation spells null one way:
+                 stored  — the UNSET handle (str_rec 0, the `nullref` above), never a record;
+                 Rust    — whatever points at `text_null::NULL_TEXT`: the zero-length `&str`
+                           there and the owned `String` of capacity 0 there;
+                 a view  — no pointer (`Str`, the C runtime's `loft_str`);
+                 C owned — a pointer with neither length nor room (`loft_text`).
+               The homes: `text_null` (Rust), `loft_str_is_null` / `loft_text_is_null` (C),
+               `Store::text_is_null` (stored) — `@C171`.  An image whose sidecar predates version 3 may
+               hold a null as a record of one NUL byte, which a load reads as null
+               (`Store::legacy_nul`).
 ```
 
 `(L-Null-Which)` is there because the split above is decidable from the type and the code still
@@ -417,19 +423,14 @@ that returns to its own struct the inline form has no finite size, so a linked l
 could not be declared at all.  A rule that says WHICH half applies but not HOW a site decides is
 the incomplete kind this doc has been bitten by twice already (see the ⚠ above).
 
-`(L-Null-Text)` is the same kind of record for the one scalar whose sentinel is not a bit
-pattern in its own slot.  A text slot holds a HANDLE, and absence is spelled twice because the
-two writers spell it differently: a never-written slot keeps the zero handle a fresh record
-starts with, while writing `null` — from a literal, an assignment, a call, or any native text
-path — allocates a record holding the sentinel bytes.  Neither writer is wrong; what is wrong is
-a reader that knows only one.  Measured (loft#1270): `Stores::is_null` tested the handle alone
-and decided whether a struct field was OMITTED (a null field was left out until @C143), so `NT { a: 1, t: null }`
-serialised `{"a":1,"t":null}` while the same value parsed back serialised `{"a":1}` — one value,
-two documents, and a document that is hashed, signed or diffed changed for a value that did not.
-The render arm applied the content test only under `json`/`loft`, so the plain form put the
-sentinel on the wire AS TEXT: `"{x}"` answered `{a:1,t:"\0"}`, a present one-character string
-where the program meant nothing.  `native.rs` had carried the total test for its own reader since
-loft#769 — the rule was discoverable in the code and simply not written down here.
+`(L-Null-Text)` is the same kind of record for the one scalar whose absence is not a bit pattern
+in its own slot.  A text slot holds a HANDLE, and a value in flight is a pointer and a length, so
+absence has to be something no byte string can be: the unset handle, a pointer no text has, or a
+view with none.  A content spelling — a byte string chosen to mean absence — is a value a
+program can WRITE, so input holding it would null every text built from it, in every place it
+is held (the null-text matrix below measures every value through every place).  `text` therefore
+reserves no writable value, unlike `integer`, `float` and `character`; the readers ask the one
+home of their representation and never a text's bytes.
 
 Neither half of the tag split is a new decision — both are what the code has shipped since
 @PLN25 — so this records the boundary rather than moving it. The falsifier below covers `(L-Null)`; `(L-Null-Tag)`
@@ -617,7 +618,15 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   `reference<E>` in a variant.  The controls are the load-bearing half: following an enum edge
   is what could start reporting a cycle for every program that puts an enum in a struct.
 
-- **`L-Null-Text`** — `loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft`, on both backends:
+- **`L-Null-Text`** — the null-text matrix, `loft-suite/rules/layout/L-Null-Text/null-text-through-*.loft`
+  (written by `scripts/null_text_matrix.py`, each answer computed by hand), on both backends: every
+  value — null, `""`, `"x"`, a lone NUL as a literal, a slice and a byte buffer, two NULs, a
+  trailing NUL — through every place a text is held (a parameter, a local, an accumulator, a
+  field, a vector element, a hash and a sorted key, a tuple member, a yield, a `par` result, a
+  saved image), read by every text operation, answers by its value alone.  An image written
+  before the identity null still reads its nulls:
+  `tests/store_upgrade.rs::cell_an_image_holding_the_nul_record_reads_null`.
+- **`L-Null-Text`**, one document — `loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft`, on both backends:
   every way of SAYING absent (literal `null`, an omitted field, an assignment, a call, a parse)
   writes ONE document and round-trips to itself, while an allocated `""` stays a present value.
   The `""` cells are the control — a fix reading "no characters" as absence passes every null

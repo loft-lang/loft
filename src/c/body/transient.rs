@@ -1021,11 +1021,31 @@ impl Cx<'_> {
             format!("loft_cx *cx, {params}")
         };
         let sig = format!("static inline void {name}({params})");
+        // `@FR-R-DecodeView`: a root's work twin is a root too — its body is written over the
+        // plan, under a wrapper that names the frame for the length of the call.
+        let dv_root = self.dv_plan().roots.get(&d).copied();
         let (body, _) = FnWriter::new(self, d, shapes, CType::Void)
             .work_return(args[p])
+            .decode_view(false)
             .write()?;
-        let _ = writeln!(self.gen_decls.borrow_mut(), "{sig};");
-        let _ = write!(self.gen_bodies.borrow_mut(), "\n{sig} {{\n{body}}}\n");
+        let Some(b) = dv_root else {
+            let _ = writeln!(self.gen_decls.borrow_mut(), "{sig};");
+            let _ = write!(self.gen_bodies.borrow_mut(), "\n{sig} {{\n{body}}}\n");
+            return Ok(());
+        };
+        let inner = format!("{name}__dvw");
+        let inner_sig = format!("static inline void {inner}({params})");
+        let call: Vec<&str> = params
+            .split(", ")
+            .map(|p| p.rsplit([' ', '*']).next().unwrap_or(""))
+            .collect();
+        let frame = super::var_name(self.data.def(d).variables().name(b), b);
+        let _ = writeln!(self.gen_decls.borrow_mut(), "{inner_sig};\n{sig};");
+        let _ = write!(
+            self.gen_bodies.borrow_mut(),
+            "\n{inner_sig} {{\n{body}}}\n\n{sig} {{\n    loft_ref dvo = cx->dv_frame;\n    cx->dv_frame = {frame};\n    {inner}({});\n    cx->dv_frame = dvo;\n}}\n",
+            call.join(", ")
+        );
         Ok(())
     }
 }

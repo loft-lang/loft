@@ -141,6 +141,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     laps.report("close_program", data.definitions());
     // The store records (STORE_RECORDS.md), on the closed program: an observer.
     crate::store_records::observe(data);
+    // `@FR-B-Scope` — every use of a variable inside its scope (`@PLN228`): an observer.
+    crate::scope_check::observe(data);
+    // `@PLN228` — the one-report lifetime check (`LOFT_LIFETIME_CHECK`): an observer.
+    crate::lifetime_check::observe(data);
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for

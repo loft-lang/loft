@@ -719,11 +719,14 @@ done < "$tmp/work.tsv"
 # ── submissions/ drain (@C96 key-absent path) ─────────────────────────────────
 # A key-absent contributor stages a version by adding submissions/<name>-<ver>.json
 # (name, version, repo, tag, subpath, entry) via a PR that does NOT touch index.json,
-# so it can't race the signed index.  Here — on the key-present machine — each staged
-# submission goes through the full vet-lib gate; a PASS is folded into the index and
-# its staging file `git rm`ed (committed together with the index + .sig by the sign
-# step, so it lands atomically); a native-code NEEDS-REVIEW or a FAIL is reported and
-# the submission left in place for a human decision.
+# so it can't race the signed index.  The vet-lib gate runs on that PR, in the
+# registry's CI (`vet-submission.yml`), where no signing key or credential exists: a
+# submission's tests are its author's code, and this machine holds the key every install
+# trusts, so nothing here runs them.  A PASS is green and merged with the other green PRs
+# above; a native-code NEEDS-REVIEW or a FAIL is red, and only a person merges it after
+# reading the code.  So every submission on main was vetted on its PR, and here each is
+# folded into the index and its staging file `git rm`ed (committed together with the
+# index + .sig by the sign step, so it lands atomically).
 DRAINED=(); REVIEW_SUBS=(); FAILED_SUBS=()
 for sub in "$REG_DIR"/submissions/*.json; do
     [ -e "$sub" ] || continue
@@ -741,17 +744,7 @@ PYEOF
         echo "  ⚠ malformed submission $(basename "$sub") (need name/version/repo/tag) — left for review"
         FAILED_SUBS+=("$(basename "$sub")"); continue
     fi
-    echo "vetting submission $s_name $s_ver ($s_repo @ $s_tag) ..."
-    bash "$here/scripts/vet-lib.sh" "$s_repo" "$s_tag" "$s_sub" > "$tmp/vet_$s_name.log" 2>&1
-    rc=$?
-    if [ "$rc" = 3 ]; then
-        echo "  ⚠ $s_name $s_ver NEEDS REVIEW (carries #native/#rust) — promote by hand after review (log: $tmp/vet_$s_name.log)"
-        REVIEW_SUBS+=("$s_name-$s_ver"); continue
-    fi
-    if [ "$rc" != 0 ]; then
-        echo "  ✗ $s_name $s_ver did NOT pass the gate — not admitted (log: $tmp/vet_$s_name.log)"
-        FAILED_SUBS+=("$s_name-$s_ver"); continue
-    fi
+    echo "folding submission $s_name $s_ver ($s_repo @ $s_tag), vetted on its pull request ..."
     if python3 - "$REG_DIR/index.json" "$sub" <<'PYEOF'
 import json, sys
 from datetime import datetime, timezone

@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a match whose arms are variant-or-null `if`s of one enum joins to the enum and
+// keeps the `?` both arms carry (`@FR-C-Var` with `@FR-N-Join`).
+// Prints: 1
+
+enum Fd { FInt { v: integer }, FFloat { v: float } }
+fn by_int(k: integer) -> Fd? {
+  match k {
+    1 => if k > 0 { FInt { v: 1 } } else { null },
+    _ => if k > 0 { FFloat { v: 2.5 } } else { null },
+  }
+}
+fn main() { println("{match by_int(1) { FInt { v } => v, _ => -1 }}"); }

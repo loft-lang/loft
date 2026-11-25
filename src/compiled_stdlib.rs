@@ -59,6 +59,7 @@ fn unit_key(default_dir: &str) -> Option<u64> {
             u8::from(crate::keys::no_handover()),
             u8::from(crate::keys::poison_claim()),
             u8::from(crate::keys::hosted_planted()),
+            u8::from(!crate::keys::exp_pow_enabled()),
         ],
     ];
     Some(crate::cache::stable_hash(&parts))

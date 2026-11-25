@@ -924,16 +924,18 @@ fn n_c_library_available(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, ok);
 }
 
-// @PLN10 Phase 2 — destination-passing variant of `n_env_variable`.
-// Always-non-null (the env value, "" if unset).  Routed by `is_text_dest_native`.
+// @PLN10 Phase 2 — destination-passing variant of `n_env_variable`: the variable's value, or
+// null when it is unset.  Routed by `is_text_dest_native`.
 fn n_env_variable_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_name = stores.get::<Str>(stack);
     let value = stores.os_variable(v_name.str());
-    stores
-        .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&value);
+    crate::text_null::put(
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos),
+        &value,
+    );
 }
 
 // Reads all program input as one text: stdin on native/WASI, the JS host on
@@ -1062,31 +1064,43 @@ fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
     let v_with = stores.get::<Str>(stack);
     let v_value = stores.get::<Str>(stack);
     let v_self = stores.get::<Str>(stack);
-    let new_value = v_self.str().replace(v_value.str(), v_with.str());
-    stores
+    let out = stores
         .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&new_value);
+        .addr_mut::<String>(dest.rec, dest.pos);
+    // `@FR-E-NullArg` — a null text answers null.
+    if v_self.is_null() {
+        crate::text_null::set_null(out);
+        return;
+    }
+    out.push_str(&v_self.str().replace(v_value.str(), v_with.str()));
 }
 
 fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_self = stores.get::<Str>(stack);
-    let new_value = v_self.str().to_lowercase();
-    stores
+    let out = stores
         .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&new_value);
+        .addr_mut::<String>(dest.rec, dest.pos);
+    // `@FR-E-NullArg` — a null text answers null.
+    if v_self.is_null() {
+        crate::text_null::set_null(out);
+        return;
+    }
+    out.push_str(&v_self.str().to_lowercase());
 }
 
 fn t_4text_to_uppercase_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_self = stores.get::<Str>(stack);
-    let new_value = v_self.str().to_uppercase();
-    stores
+    let out = stores
         .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&new_value);
+        .addr_mut::<String>(dest.rec, dest.pos);
+    // `@FR-E-NullArg` — a null text answers null.
+    if v_self.is_null() {
+        crate::text_null::set_null(out);
+        return;
+    }
+    out.push_str(&v_self.str().to_uppercase());
 }
 
 fn t_9character_is_lowercase(stores: &mut Stores, stack: &mut DbRef) {
@@ -2133,10 +2147,9 @@ fn reflect_field_at(
                 (i64::from(v), 0.0, 0, v == 0)
             }
             Some(LayoutNode::Base(BaseKind::Text)) => {
-                // @FR-L-Null-Text — text-null is CONTENT-based, and `Store::text_is_null`
-                // is its one home (an unset handle and an allocated `STRING_NULL` record are
-                // one absence).  Testing the pointer alone reads a null as the empty string,
-                // and telling `null` from `""` is the distinction this reading exists for.
+                // @FR-L-Null-Text — `Store::text_is_null` is the stored null's one home (the
+                // unset handle, and a NUL record in an image from before sidecar v3).  Telling
+                // `null` from `""` is the distinction this reading exists for.
                 let r = store.get_u32_raw(value.rec, at);
                 let null = store.text_is_null(value.rec, at);
                 (0, 0.0, if null { 0 } else { r }, null)
@@ -2187,7 +2200,7 @@ fn reflect_field_at(
                 // Copied into the ANSWER's store rather than pointed at: the
                 // caller owns the `FieldValue` and may outlive the record it
                 // was read from.
-                let s = stores.store(value).get_str(t_ref).to_string();
+                let s = crate::text_null::own(stores.store(value).get_str(t_ref));
                 let copy = stores.store_mut(&out).set_str(&s);
                 stores
                     .store_mut(&out)
@@ -3253,12 +3266,9 @@ fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
         .push_str(&msg);
 }
 
-// @PLN10 Phase 2 — destination-passing variant of `n_as_text`.  text-null is
-// CONTENT-based (`conv_bool_from_text`: content == "\0"), so the dest carries
-// null by holding the `STRING_NULL` ("\0") bytes — `?? ` / `!` / format all read
-// it identically to the old sentinel (probed on both backends).  So `as_text`
-// dest-passes like any other producer; no "null-aware primitive" is needed.
-// Bonus: per-call dests retire the @P354 sibling-aliasing scratch hazard.
+// The destination-passing variant of `n_as_text`: a `JString`'s value, null for
+// any other variant; the dest carries the null as the null text (`text_null::put`).  Each call
+// has its own dest, so two sibling calls never share one scratch text.
 fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v = stores.get::<DbRef>(stack);
@@ -3267,14 +3277,16 @@ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
         let str_tp = stores.name("JString");
         let value_pos = u32::from(stores.position(str_tp, "value")) + v.pos;
         let s_rec = stores.store(&v).get_u32_raw(v.rec, value_pos);
-        stores.store(&v).get_str(s_rec).to_string()
+        crate::text_null::own(stores.store(&v).get_str(s_rec))
     } else {
-        crate::store::STRING_NULL.to_string()
+        crate::text_null::null_string()
     };
-    stores
-        .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&out);
+    crate::text_null::put(
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos),
+        &out,
+    );
 }
 
 fn n_as_number(stores: &mut Stores, stack: &mut DbRef) {
@@ -4168,7 +4180,7 @@ fn n_json_number(stores: &mut Stores, stack: &mut DbRef) {
 /// text independently of the input's lifetime.
 fn n_json_string(stores: &mut Stores, stack: &mut DbRef) {
     let v = stores.get::<Str>(stack);
-    let s_owned = v.str().to_owned();
+    let s_owned = crate::text_null::own(v.str());
     let result = jv_alloc(stores);
     let pos = result.pos;
     let str_tp = stores.name("JString");

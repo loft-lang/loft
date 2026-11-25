@@ -773,7 +773,7 @@ fn serialise_text_slots(
     for &(offset, typ) in type_slots {
         if !matches!(typ, Type::Text) { continue; }
         let str_ref = read_str_at(bytes, offset);
-        if str_ref.ptr == STRING_NULL.as_ptr() { continue; }   // null text
+        if str_ref.is_null() { continue; }                       // null text
         if database.is_static_text(str_ref.ptr) { continue; }  // static pool
         // Dynamic: copy, free original, patch.
         let s = str_ref.str().to_owned();
@@ -839,7 +839,7 @@ CL-3, CL-8 and CL-9 are closed on both backends; their rows are in
 - [STACKTRACE.md](STACKTRACE.md) — `call_stack: Vec<CallFrame>` (Phase 1) is
   a prerequisite; `CallFrame` is shared between the two features
 - [INTERMEDIATE.md](INTERMEDIATE.md) — `State` layout, `fn_call`/`fn_return`,
-  stack frame conventions, `Str` vs `String`, `STRING_NULL` sentinel
+  stack frame conventions, `Str` vs `String`, the null text (`text_null`)
 - [THREADING.md](THREADING.md) — `par(...)` execution model; coroutines must
   not cross `par` boundaries (SC-CO-4)
 - [SLOTS.md](SLOTS.md) — stack slot layout; understanding the two-zone design

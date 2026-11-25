@@ -295,12 +295,15 @@ impl crate::coroutine_host::LoftCoroutine for HostedGen {
 
     fn next_text(&mut self, stores: &mut Stores) -> String {
         match self.step(stores) {
+            Some(a) if a.text_len == crate::host_abi::TEXT_NULL_LEN => {
+                crate::text_null::null_string()
+            }
             Some(a) if !a.text_ptr.is_null() => {
                 // SAFETY: the unit's yielded bytes, valid until its next step.
                 let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
                 String::from_utf8_lossy(b).into_owned()
             }
-            _ => crate::store::STRING_NULL.to_string(),
+            _ => crate::text_null::null_string(),
         }
     }
 
@@ -463,10 +466,10 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
     let yielded = st.advance_for_native(gen_ref);
     let v = yielded.as_slice();
     if v.len() < std::mem::size_of::<crate::keys::Str>() {
-        return crate::store::STRING_NULL.to_string();
+        return crate::text_null::null_string();
     }
     let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
-    s.str().to_string()
+    crate::text_null::own(s.str())
 }
 
 pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
@@ -833,11 +836,13 @@ pub fn adopt_shared_cdylib(
     // so it runs in any program: neither the program's type table nor its function numbering is
     // part of what it is built for, only the loft that built it and the sources it carries.  A
     // unit built with the verify's switches or without its safepoints (`LOFT_NO_HANDOVER`) is
-    // another artifact: its own key.
+    // another artifact: its own key, and so is one built with `@FR-R-ExpPow` off
+    // (`LOFT_NO_EXP_POW`), whose answers move in their last bit.
     let program_fp = 1
         | (u64::from(crate::keys::poison_claim()) << 1)
         | (u64::from(crate::keys::hosted_planted()) << 2)
-        | (u64::from(crate::keys::no_handover()) << 3);
+        | (u64::from(crate::keys::no_handover()) << 3)
+        | (u64::from(!crate::keys::exp_pow_enabled()) << 4);
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions

@@ -45,8 +45,6 @@ fn dev_soft_halt_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
 
-pub use crate::store::STRING_NULL;
-
 /// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
 /// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
 /// `State`'s fields: each operator receives them as arguments and returns them, so no op
@@ -290,11 +288,11 @@ impl Yielded {
 
 impl State {
     /// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
-    /// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+    /// the null text when the generator is exhausted, which drops what it held.
     pub(crate) fn hold_native_text_yield(&mut self, gen_ref: DbRef, text: String) -> Str {
-        if text == STRING_NULL {
+        if crate::text_null::is_null(&text) {
             self.release_native_text_yield(gen_ref);
-            return Str::new(STRING_NULL);
+            return Str::null();
         }
         let y = &mut self.native_text_yields;
         let at = if let Some(i) = y
@@ -2360,7 +2358,7 @@ impl State {
                 std::ptr::read_unaligned(src)
             };
             // Skip null sentinel and static text (pointer lives in text_code).
-            let is_null = str_val.ptr == STRING_NULL.as_ptr() || str_val.len == 0;
+            let is_null = str_val.is_null() || str_val.len == 0;
             if !is_null && !self.is_in_text_code(str_val.ptr) {
                 let owned = str_val.str().to_owned();
                 let new_str = Str::new(owned.as_str());
@@ -2770,10 +2768,9 @@ impl State {
         match value_size {
             4 => self.put_stack(i32::MIN), // integer null sentinel
             8 => self.put_stack(i64::MIN), // long null sentinel
-            // Text Str sentinel: use STRING_NULL ("\0") so that the ptr is non-null
-            // and conv_bool_from_text / append_text / str() don't crash on ptr=0.
+            // The null text as a view (`Str::null`).
             v if v == std::mem::size_of::<Str>() as u32 => {
-                self.put_stack(Str::new(STRING_NULL));
+                self.put_stack(Str::null());
             }
             _ => {
                 // @PLAN53 cluster 2 / S4 (R4): push the value_size zero bytes as
@@ -2813,7 +2810,7 @@ impl State {
             }
             let ptr_val = u64::from_ne_bytes(locals_bytes[off..off + 8].try_into().unwrap());
             if ptr_val == 0 {
-                continue; // null / STRING_NULL — not store-backed
+                continue; // the null text, or no text: not store-backed
             }
             for (store_idx, store) in self.database.allocations.iter().enumerate() {
                 if !store.live || store_idx as u16 == self.stack_cur.store_nr {
@@ -6597,12 +6594,17 @@ impl State {
             // true width — reading a local's `String` as a `Str` mis-takes the
             // capacity word for the length and renders garbage / `""`.
             Type::Text(_) => {
+                // The null text renders as `null`, asked of the slot itself
+                // (`@FR-L-Null-Text`): its bytes, `""`, are an empty text's too.
                 let raw = if is_arg {
-                    self.database
+                    let v = self
+                        .database
                         .store(&self.stack_cur)
-                        .read::<crate::keys::Str>(rec, at)
-                        .str()
-                        .to_string()
+                        .read::<crate::keys::Str>(rec, at);
+                    if v.is_null() {
+                        return "null".to_string();
+                    }
+                    v.str().to_string()
                 } else {
                     // `reserve_frame` does not zero locals, so a text local shown
                     // at its own (not-yet-run) assignment op holds stack garbage.
@@ -6611,6 +6613,9 @@ impl State {
                     // the slice, rather than `.clone()` (which would deref).
                     let s = self.database.store(&self.stack_cur).addr::<String>(rec, at);
                     let (ptr, len) = (s.as_ptr(), s.len());
+                    if std::ptr::eq(ptr, crate::text_null::NULL_TEXT.as_ptr()) {
+                        return "null".to_string();
+                    }
                     if ptr.is_null() || (ptr as usize) < (1 << 16) || len > 10_000_000 {
                         String::new()
                     } else {
@@ -6717,19 +6722,7 @@ impl State {
                 if absent {
                     return "null".to_string();
                 }
-                let rendered =
-                    self.render_frame_local(frame_base, off, inner, is_arg, data, narrow);
-                // A null `text` is the `STRING_NULL` sentinel — a single NUL byte — and the
-                // Text arm renders it as a literal that LOOKS like a one-character string
-                // (`" "` on a terminal).  That is worse than printing the type: it claims a
-                // value.  Compared against the same renderer that produced it, so the two
-                // cannot drift the way a hand-written `"\0"` literal here would.
-                if matches!(inner.base(), Type::Text(_))
-                    && rendered == loft_text_literal(STRING_NULL)
-                {
-                    return "null".to_string();
-                }
-                rendered
+                self.render_frame_local(frame_base, off, inner, is_arg, data, narrow)
             }
             // Nothing above renders this kind — a keyed collection, an iterator, a fn-ref.
             // Name it the way the AUTHOR wrote it (`hash<P[a]>`), not by the schema key
@@ -8874,6 +8867,9 @@ impl State {
                 match a.typedef.base() {
                     Type::Float => st.put_stack(f64::from_bits(arg.scalar as u64)),
                     Type::Boolean => st.put_stack(arg.scalar != 0),
+                    Type::Text(_) if arg.text_len == crate::host_abi::TEXT_NULL_LEN => {
+                        st.put_stack(Str::null());
+                    }
                     Type::Text(_) => st.put_stack(Str {
                         ptr: arg.text_ptr,
                         len: arg.text_len as u32,
@@ -8908,11 +8904,16 @@ impl State {
             Type::Text(_) => {
                 let s = self.reenter_ret::<Str>(d_nr, pos, push);
                 // Copied out before the buffers it points into are dropped; the compiled
-                // caller copies it again before its next call back.
+                // caller copies it again before its next call back.  The null text crosses
+                // as no pointer, the C runtime's own spelling of it.
                 let t = &mut self.call_back_text;
                 t.clear();
                 t.push_str(s.str());
-                ret.text_ptr = t.as_ptr();
+                ret.text_ptr = if s.is_null() {
+                    std::ptr::null()
+                } else {
+                    t.as_ptr()
+                };
                 ret.text_len = t.len();
             }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
@@ -10146,7 +10147,7 @@ impl State {
         self.run_to_return(Self::WORKER_OP_CEILING);
         // Pop the Str return value (16 bytes) and copy into owned String.
         let s = self.get_stack::<Str>();
-        let result = s.str().to_owned();
+        let result = crate::text_null::own(s.str());
         // Drop the String buffers to free their heap allocations.
         for cr in work_crs.iter().rev() {
             unsafe {

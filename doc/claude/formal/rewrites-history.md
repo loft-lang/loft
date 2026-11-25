@@ -746,6 +746,24 @@ profile), and the rule's gain was that cost: on Apple silicon, clang, 21_tree `b
 −14.5 %, every routine of @PLN219's hand pricing −10 % to −21 %.  With the state in the store
 context (`loft_cx`) the rule keeps only the thread it does not start.
 
+## `(R-DecodeView)` on the C
+
+Both clauses were built first in the rustc writer, which measured them on pluginabi
+`check_request` (over-9x.md, one core): the view clause 2.57 → 1.64 ms per op (−36 %, against
+−46 % priced), the structure clause 4.66× → 0.94× of the Rust twin (1.58 → 0.32 ms against the
+twin's 0.34 ms; the hand price of the same form was 0.30 ms), every hash unchanged.  The writer
+went with @PLN225, and the C took the emission over on 2026-11-25 (`src/c/body/decode_view.rs`,
+`src/c/body/decode_structure.rs`).
+
+Measured on the C, `--ship` (`bench/stats.py --routine check_request --lanes rust,cship`, five
+samples, one pinned core), 2026-11-25: the rule off 290.7 µs per op against the twin's
+242.5 µs (1.20×), the view clause alone 290.3 µs (1.17×), both clauses 288.4 µs (1.19×), hash
+unchanged in every lane.  The lane does not move because no root is admitted: the cbor
+`read_value` the bench links reads a decoded byte string, which instance 1 declines.  The
+guard's own decoder, 200 000 lookups of one of three keys in its F1 frame (`--ship`, five runs
+each, one core): 100 ms with the rule off, 92 ms with the view clause alone, 46 ms with both,
+the answers the same.
+
 ## Retired with the rustc writer (@PLN225 R5)
 
 Rules only the rustc writer applied.  Over the whole corpus the C backend admitted none of them

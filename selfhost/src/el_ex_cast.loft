@@ -1,0 +1,273 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: `as` casts — scalar conversions and a struct-enum value cast to one of its variants
+// (operators.rs `parse_cast`).
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use binds;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_ex_assign;
+use el_ex_call;
+use el_ex_null;
+use el_ex_pattern;
+use el_ex_vector;
+use el_ex_copy;
+use el_ex_bind;
+use el_ex_closure;
+use el_ex_into;
+use el_ex_deliver;
+use el_ex_match;
+
+// `handle_operator`'s `as`: the target read as a type, the value converted the way an implicit
+// store converts it (`convert` in its explicit-cast mode: a narrowing that a constant provably
+// fits needs no op) or else cast (`OpCast…`), typed as the target.  `as text` renders through its
+// cast (`true as text`).  The checked `as τ?` takes the value's base — a nullable value converts
+// as its base does and stays nullable — a `null` is the target's null, and a text is parsed
+// (`OpCastIntFromText`, null when it does not parse).  A checked narrowing, a non-scalar side and
+// a narrowing no constant answers are refused by name.
+pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
+  if ae == null || tn == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  coalesced = vars.dn4_coalesce;
+  vars.dn4_coalesce = false;
+  x = el_ex_assign::expression(e, vars, ae!);
+  t = el_types::parse_type(e, tn!);
+  if t == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  to = t!;
+  // `@C131`: a struct-enum value cast to one of its own variants (`self.code[b] as Block`).
+  vc = variant_cast(e, vars, x, to, ae!, tn!);
+  if vc != null {
+    return vc!;
+  }
+  // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
+  // `dn4cast` guard and the store's range default) is refused by name.
+  // A text to a plain enum (`bad as Direction`, `bad as Direction?`): the value its variant name
+  // spells, the first variant where it names none (`OpCastEnumFromText`) — never null, so typed
+  // as the enum itself.
+  ten = match el_types::base(to) { TyEnum { n: tn0, is_ref: tr0 } => if tr0 { -1 } else { tn0 }, _ => -1 };
+  if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
+  }
+  match to {
+    TyOptional { inner } => {
+      src = el_types::base(x.tp);
+      if el_convert::plain_scalar(inner) && x.tp is TyNull {
+        n = el_convert::null_of(e, inner);
+        if n != null {
+          return ex(if e.first_pass { ir::NdNull } else { n! }, to);
+        }
+      } else if inner is TyText && x.tp is TyNull {
+        // `null as text?`: the text null.
+        return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvTextFromNull", []) }, to);
+      } else if el_convert::plain_scalar(inner) && src is TyText {
+        c = el_convert::cast(e, x.code, src, inner);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
+        // (A bare integer variable cast to an integer it does not narrow is the variable on
+        // pass 1 too — so a `??` over the cast sees it bare and holds nothing, `(v as i32?) ?? 0`,
+        // as on pass 2 where the conversion answers the variable.)
+        if e.first_pass && el_ir::unspan(x.code) is NdVar && src is TyInteger && inner is TyInteger {
+          return ex(x.code, to);
+        }
+        b = cast_expr_to(e, vars, ex(x.code, src), inner);
+        return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {
+        // Pass 1 converts nothing: the cast is typed `τ?` there and built on pass 2.
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, x, inner) };
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) {
+        // (A value that provably fits — `1 as u8?` — is the value itself, typed `τ?`.)
+        return ex(if e.first_pass { ir::NdNull } else { x.code }, to);
+      } else if el_convert::narrowing_int(src, inner) && x.tp is TyOptional && src is TyInteger {
+        // (A nullable integer — an element read at an index nothing proves — is cast as it reads:
+        // its null fails the range test and casts to null.)
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, ex(x.code, src), inner) };
+      }
+      // A text cast to a record or a struct enum (`s as List?`) interns it into a store of its
+      // own (`cast_allocates`): the lenient parse `T.parse` runs, `OpCastVectorFromText(text,
+      // <the target's known type>)`, answering the plain record reference — its own null.
+      ctd = match inner { TyReference { n: crn } => if el::def(e, crn).def_type == el::DT_STRUCT { crn } else { -1 }, TyEnum { n: cen, is_ref } => if is_ref { cen } else { -1 }, _ => -1 };
+      if src is TyText && ctd >= 0 {
+        crt = if el::def(e, ctd).def_type == el::DT_ENUM { ir::TyEnum { n: ctd, is_ref: true, dep: [] } } else { ir::TyReference { n: ctd, dep: [] } };
+        return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastVectorFromText", [x.code, ir::NdInt { n: el::def(e, ctd).known_type }]) }, crt);
+      }
+      el::refuse(e, "a checked narrowing cast");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    },
+    TyText { dep: _ } => {
+      if el_convert::plain_scalar(x.tp) {
+        c = el_convert::cast(e, x.code, x.tp, to);
+        if c != null {
+          return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+        }
+      }
+    },
+    _ => {}
+  }
+  // A plain enum's value to its integer (`OpConvIntFromEnum`), an integer to an enum's value
+  // (`OpCastEnumFromInt`, under the enum's store type), and — directly left of `??` — a text to
+  // the value its variant name spells (`OpCastEnumFromText`).
+  if el_convert::plain_enum(el_types::base(x.tp)) && el_types::base(to) is TyInteger && !(to is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvIntFromEnum", [x.code]) }, to);
+  }
+  if el_convert::plain_enum(to) && (el_types::base(x.tp) is TyInteger || (coalesced && el_types::base(x.tp) is TyText)) {
+    en = match to { TyEnum { n } => n, _ => -1 };
+    op = if el_types::base(x.tp) is TyText { "OpCastEnumFromText" } else { "OpCastEnumFromInt" };
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, op, [x.code, ir::NdInt { n: el::def(e, en).known_type }]) }, to);
+  }
+  // A text parse directly left of `??` (`s as integer ?? -1`): the parse, typed as the target,
+  // whose null the `??` tests — a bare one is Rust's `text-parse-may-fail` error.
+  xb = el_types::base(x.tp);
+  if coalesced && xb is TyText && el_convert::plain_scalar(to) {
+    c = el_convert::cast(e, x.code, xb, to);
+    if c != null {
+      return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+    }
+  }
+  // A bare narrowing cast directly left of `??` is checked: the `??` is its fallback.
+  if coalesced && !e.first_pass && el_convert::plain_scalar(xb) && el_convert::narrowing_int(xb, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    return dn4_cast(e, vars, ex(x.code, xb), to);
+  }
+  cast_expr_to(e, vars, x, to)
+}
+
+// `@C131`, `Parser::cast`'s struct-enum arm: a value of a struct enum cast to one of its own
+// variants is the value where its tag is the variant's and the null reference where it is not,
+// typed as the variant borrowing what the value borrows.  Carried where an `is` test proved the
+// variant (`variant_proven`) and for the checked `as V?` (typed `V?`); an unproven plain cast (its
+// default fallback, a local's `if s is V { … } else { … }` rewrite) is refused by name.  Null where the cast is no
+// variant cast.
+fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: integer, tn: integer) -> Ex? {
+  sen = el_types::struct_enum_def(x.tp);
+  vd = match el_types::base(to) { TyReference { n } => n, _ => -1 };
+  if sen < 0 || vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sen {
+    return null;
+  }
+  // The checked `as V?` is the same test, null on a miss: typed `V?`, nothing to prove.
+  checked = to is TyOptional;
+  disc = el_ex_object::variant_ord(e, vd);
+  place = el_ir::unspan(x.code);
+  proven = checked;
+  for pv in vars.proven {
+    if pv.disc == disc && el_ex_base::same_expression(pv.place, place) {
+      proven = true;
+    }
+  }
+  // An unproven cast of a LOCAL is `if s is V { s as V } else { (s as V?)? }` (Rust's
+  // `subparse_default`): the hit a proven cast, a miss the variant's default record.  Of
+  // anything else (its `?` default fallback) it is refused by name.
+  if !proven {
+    sn = match e.p.nodes[ae] { SName { name: an, member: am } => if am == "" { an } else { "" }, _ => "" };
+    vn = match e.p.nodes[tn] { STy { name: tyn } => tyn, _ => "" };
+    if sn != "" && vn != "" && el_ir::unspan(x.code) is NdVar {
+      return ex_some(spelled_variant_cast(e, vars, sn, vn, tn));
+    }
+    if !e.first_pass {
+      el::refuse(e, "a variant cast no `is` test proves");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, el_types::deps(x.tp));
+  if checked {
+    rt = ir::TyOptional { inner: rt };
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);
+  ex(el_ir::v_if(test, x.code, el_ir::cl(e, "OpConvRefFromNull", [])), rt)
+}
+
+fn ex_some(x: Ex) -> Ex? {
+  x
+}
+
+// `subparse_default`'s `if {n} is {vn} {{ {n} as {vn} }} else {{ ({n} as {vn}?)? }}`, as syntax.
+fn spelled_variant_cast(e: el::El, vars: el_vars::Vars, sn: text, vn: text, tn: integer) -> Ex {
+  at = match e.p.nodes[tn] { STy { at: ta } => ta, _ => 0 };
+  qt = match e.p.nodes[tn] {
+    STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9 } => STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9, nullable: true },
+    _ => e.p.nodes[tn]
+  };
+  e.p.nodes += [qt];
+  tq = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SIs { at: at, e: len(e.p.nodes) - 1, variant: vn, caps: [], has_caps: false }];
+  cond = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SAs { at: at, e: len(e.p.nodes) - 1, tp: tn, checked: false }];
+  e.p.nodes += [SStmt { at: at, e: len(e.p.nodes) - 1, semi: false, orelse: null }];
+  e.p.nodes += [SBlock { at: at, stmts: [len(e.p.nodes) - 1], end: at }];
+  hit = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SAs { at: at, e: len(e.p.nodes) - 1, tp: tq, checked: false }];
+  e.p.nodes += [SParen { at: at, e: len(e.p.nodes) - 1 }];
+  e.p.nodes += [SPostfix { at: at, op: "?", e: len(e.p.nodes) - 1 }];
+  e.p.nodes += [SStmt { at: at, e: len(e.p.nodes) - 1, semi: false, orelse: null }];
+  e.p.nodes += [SBlock { at: at, stmts: [len(e.p.nodes) - 1], end: at }];
+  miss = len(e.p.nodes) - 1;
+  e.p.nodes += [SIf { at: at, cond: cond, then: hit, other: miss }];
+  el_ex_assign::expression(e, vars, len(e.p.nodes) - 1)
+}
+
+// `Parser::dn4_checked_cast` — `el_convert::dn4_cast`, typed as an `Ex`.
+pub fn dn4_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
+  ex(el_convert::dn4_cast(e, vars, x.code, x.tp, to), ir::TyOptional { inner: to })
+}
+
+pub fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
+  if el_types::is_unknown(x.tp) {
+    if !e.first_pass {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(ir::NdNull, to);
+  }
+  if !el_convert::plain_scalar(x.tp) || !el_convert::plain_scalar(to) {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, to);
+  }
+  if el_convert::narrowing_int(x.tp, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    // `@FR-I-Narrow-U32`: `as u32` is the same guarded narrowing as the implicit one — 0 where
+    // the value does not fit.
+    u = el_convert::into_u32_with_default(e, x.code, to);
+    if u != null {
+      return ex(u!, to);
+    }
+    el::refuse(e, "a narrowing cast no constant answers");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  c = el_convert::convert(e, vars, x.code, x.tp, to, true);
+  if c == null {
+    c = el_convert::cast(e, x.code, x.tp, to);
+  }
+  if c == null {
+    el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(c!, to)
+}
+
+// ── match (src/parser/control.rs `parse_match`, `parse_scalar_match`) ──────────────────────────

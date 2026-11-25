@@ -486,7 +486,8 @@ decoded value once holds the value as its position (the decoder's arguments) and
 decoder's `__ps` shape and `__psw` walk twins to read it.  The first bisect step for a wrong
 answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`.
 **`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
-its reason; `=2` also prints each consumer's IR.
+its reason, and each body the C writes without the clause (`C <name>: written without the
+clause: <why>`); `=2` also prints each consumer's IR.
 
 
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`

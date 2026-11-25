@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Writes the NULL-TEXT edge image: every stored place a text can hold `null` — a nullable and a
+// plain field, a nested struct's field, a vector element, a hash, sorted and index key — beside
+// `""` and a present text in each, written ONCE into `null-text-n0/` by a build that stored a
+// null text as a record holding one NUL byte (tuxedo-pln225 @ 814b5dc7f), and never written
+// again.  `cell_an_image_holding_the_nul_record_reads_null` in `tests/store_upgrade.rs` reads it.
+//
+// Env: LOFT_GOLDEN_DIR (the directory the image goes to).
+
+struct NT { k: text, v: integer }
+struct NS { k: text, v: integer }
+struct NI { k: text, v: integer }
+struct NInner { t: text?, n: integer }
+struct NRoot {
+  opt: text?,
+  plain: text,
+  empty: text,
+  here: text,
+  inner: NInner,
+  elems: vector<text?>,
+  h: hash<NT[k]>,
+  s: sorted<NS[k]>,
+  i: index<NI[k]>
+}
+
+fn main() {
+  dir = env_variable("LOFT_GOLDEN_DIR") ?? "";
+  assert(dir != "", "LOFT_GOLDEN_DIR names the directory");
+  nt: text? = null;
+  r = NRoot {
+    opt: null, plain: nt, empty: "", here: "a", inner: NInner { t: null, n: 7 },
+    elems: [], h: [], s: [], i: []
+  };
+  r.elems += ["a", nt, ""];
+  r.h += [NT { k: "b", v: 3 }, NT { k: nt, v: 1 }, NT { k: "", v: 2 }];
+  r.s += [NS { k: "b", v: 3 }, NS { k: nt, v: 1 }, NS { k: "", v: 2 }];
+  r.i += [NI { k: "b", v: 3 }, NI { k: nt, v: 1 }, NI { k: "", v: 2 }];
+  assert(store_persist_copy(r, "{dir}/root.store"), "writing the image");
+}

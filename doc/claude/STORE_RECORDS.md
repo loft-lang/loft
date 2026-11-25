@@ -84,6 +84,30 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 | **re-free** | a double end whose second end is a free the runtime refuses (`@FR-H-FreeTwice`) |
 | **use after end** | a use of a store is reachable from one of its ends |
 | **wrong end** | a free of a foreign store, or of a view |
+| **out of scope** | a use of a variable lies outside the variable's scope (`@FR-B-Scope`) |
+
+The last kind is not read off a record.  `src/scope_check.rs` walks the closed program's block
+nesting against the variable table's scopes, under `LOFT_OWN_ORACLE=check-records` and in the
+lifetime report.  A local's value ends with its scope, so a read after that end answers a
+released value.  What the check does not report, and why:
+
+- an initialisation to a constant and a release: neither reads the value;
+- a variable that holds no store (an integer, a float, a boolean, a plain enum, a tuple of
+  them): its scope's end releases nothing, and its slot is placed by its live range, so a later
+  read answers what it holds;
+- a block's tail variable after the block: it is the block's value, handed on, not released;
+- a binder of an `if`'s condition read in its then branch: a pattern binds into its arm, its
+  guard and its body (`(B-Scope)`).
+
+The run-time fault this answers is a wrong value, which no detector sees, so
+`own_sweep.py --wrong` counts a failed test as one.
+
+**One report: `LOFT_LIFETIME_CHECK=<file>`** (`-` for standard error) runs every check of this
+table on any compile, `--emit-image` included, which runs no program, and writes one sorted line
+per problem: the program file, the function, the rule it breaks, the kind, the site (`line N`, or
+`-`) and a one-line reason, tab-separated; then `# N problem(s) in M function(s) (kind=count, …)`
+or `# no problems` (`src/lifetime_check.rs`).  It is the form a gate reads: two runs of one program
+print the same lines, so a change shows as the lines it adds or removes.
 
 The runtime detects the same four, on the paths a run takes: the leak check
 (`LOFT_LEAK_CHECK`), `LOFT_STRICT_STORES` for a use after free (it never reuses a slot), and
@@ -145,7 +169,15 @@ local then names a record it does not own, and its release frees it
 (`OpGetDbRef(__closure, off)`) is the caller's store, and a closure record this frame builds
 that holds one in a slot its cascade frees releases the caller's store: a wrong end, the
 record having adopted a capture it only relays (`@FR-L-CapOwn`;
-`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A fn-ref a callee hands
+`LOFT_RECORDS_NO_CLOSURE_SLOT_PARAM=1` reads the slot as unknown).  A stored reference read
+off any other parameter (`h.link`) names the record that slot holds, a store of its own, not
+the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
+reads the answer as what its records know that slot of the argument holds — so a join whose
+witness is the holder adopts the record, and the two holders' frees are one store's
+(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+the callee such a record is judged only where it is answered: who owns a field's value is not
+one fact here (a record a stored reference names, a generator a hand-off flag guards).
+A fn-ref a callee hands
 back holds the closure record its caller built, though a function type names no store: a call
 whose summary answers a view of its arguments (`fn pass(f) -> fn(…) { f }`) is read through
 that summary, so the holder and the record's own local are two names for one store
@@ -163,8 +195,37 @@ a new one; a write inside a branch joins the written and the kept state
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
 read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
-A first bind that joins at run time copies what lies in its witness's store and adopts the
-rest, so a store the value names while another variable holds it (a branch arm's call that
+**The drop lease (`@PLN228` P9; `LOFT_RECORDS_NO_LEASE=1` turns it off).**  A type that owns a
+droppable has a LEASE per value: its hook runs once.  The records follow, per path, the stores a
+hook ran on (may and must), a hook guarded by `OpDistinctStore(v, w)` (settled except where `v` is
+`w`), and where a lease moves: a record copy or an append hands its source's lease to the
+destination (a displacement before a rebind, a tuple member's move — a member of a nested tuple
+held whole reads what its holder names), and a re-mint gives fresh content a fresh lease.  A type
+with no release function (a closure record that only borrows its captures) holds no lease, and a
+free the code generator does not emit releases nothing.  A copy the code generator makes out of a
+local takes its source's lease per STORE: a move while the source's store is freed bare, the
+second drop where a hook still runs on it.  Reported as `copied-lease`: that hook, and a copy
+out of an argument or an element, of a type owning a droppable with no `OpCopy`
+(`@FR-H-Lease`); a hook on a value its hand-off flag says moved; a return of a store every path
+ran the hook on (`@FR-H-DropOnce`); an `OpFreeRef` of such a store no path ran the hook on
+(`@FR-H-Drop`).
+A stored reference's holder is rooted through field AND element reads (`b.hs[i].r = …`): an
+element of a parameter's collection is the caller's record, so a reference written there naming
+a record this frame releases is read by the caller after its end
+(`LOFT_RECORDS_NO_ELEMENT_HOLDER=1` follows field reads only).  A refusal cell
+(`@EXPECT_ERROR`) never reaches the program's close under `--tests`, so `own_sweep.py` cannot
+score it; the compile-only report (`LOFT_LIFETIME_CHECK` with `--emit-image`) does.
+A copy the code generator makes into a local lands in the store that local already names where
+that one is live, and is minted only where the local is null (`alloc_record_at`), so a loop's
+copy into one local is one store across its passes, as `OpDatabase`'s is
+(`LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints every copy).
+A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@FR-H-RefHome`) is
+gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
+`r` names an ended generation from there, and writing it into a field is a use after its end —
+every later read of that field finds the wiped record
+(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
+A bind that joins at run time, first or a reassignment, copies what lies in its witness's
+store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
 free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
 A value whose tail projects a variable `w`, or is `w` itself (a branch arm answering its
@@ -413,7 +474,7 @@ not a re-free.
 
 ## Measuring: the sweep
 
-`scripts/own_sweep.py` runs language-suite cells with the checker on and the runtime
+`scripts/own_sweep.py` runs language-suite cells with the checker on (the store records and the scope check, `LOFT_OWN_ORACLE=check-records`) and the runtime
 detectors armed, once per lowering switch asked for, and gives each run a verdict:
 **MISS** (the runtime found a fault, the checker did not), **CAUGHT**, **STATIC** (the
 checker reported something the runtime did not see) or **CLEAN**.  A `LOFT_NO_*` switch from
@@ -449,6 +510,10 @@ or a wrong free — is fixed in three places, in the same change:
 3. **The checker**: with the cure switched off (its `LOFT_NO_*` switch, or the build `make
    falsify` uses), the checker reports the defect.  `scripts/own_sweep.py --cell <cell>`
    with that switch reads CAUGHT, not MISS.
+
+A **scope defect** follows the same rule: a pass that leaves a use of a variable outside its
+scope (`@FR-B-Scope`) is cured in the compiler, and with the cure switched off the check reports
+it: `scripts/own_sweep.py --wrong --cell <cell>` reads CAUGHT, its finding `out-of-scope`.
 
 A fix that makes the runtime clean while the checker stays silent on the defect is
 incomplete: the next defect of the same shape is again found only by a run.  This holds for

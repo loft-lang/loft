@@ -363,7 +363,7 @@ fn entry(k: usize, body: &str, args: &[Slot], ret: Slot) -> String {
     if ret == Slot::Text {
         let _ = writeln!(e, "    loft_text r = {body}({});", super::cx_args(&call));
         e.push_str(
-            "    if (r.len > 0) loft_text_concat(cx, dest, loft_view(cx, &r));\n    loft_text_free(cx, &r);\n",
+            "    if (r.len > 0 || loft_text_is_null(cx, &r)) loft_text_concat(cx, dest, loft_view(cx, &r));\n    loft_text_free(cx, &r);\n",
         );
         for (i, s) in args.iter().enumerate() {
             if *s == Slot::Work {
