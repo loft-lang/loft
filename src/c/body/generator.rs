@@ -33,14 +33,14 @@ impl FnWriter<'_> {
         {
             let t = self.temp(c);
             self.assign(x, &t, c, ind)?;
-            self.copy_member(&t, &format!("(*({} *) out)", held(c)), c, ind);
+            self.copy_member(&t, &format!("(*({} *) out)", held(self.cx, c)), c, ind);
         } else {
             let e = self.expr(x, ind)?;
             let put = match c {
                 CType::Text => format!("loft_text_set(cx, (loft_text *) out, {});", as_view(e)?),
                 other => format!(
                     "*({} *) out = {};",
-                    held(other),
+                    held(self.cx, other),
                     as_shape(self.cx, e, other)?
                 ),
             };
@@ -243,11 +243,11 @@ impl FnWriter<'_> {
             .map(|v| {
                 let c = self.shapes[v];
                 let ty = if self.links[v] {
-                    format!("{} *", held(c))
+                    format!("{} *", held(self.cx, c))
                 } else if self.params[v] {
-                    passed(c)
+                    passed(self.cx, c)
                 } else {
-                    held(c)
+                    held(self.cx, c)
                 };
                 let name = super::var_name(self.vars.name(v as u16), v as u16);
                 // A link is the caller's: nothing of it is the frame's to copy or free.
@@ -260,7 +260,7 @@ impl FnWriter<'_> {
             })
             .collect();
         for (t, c) in &self.temps {
-            fields.push((held(*c), t.clone(), *c, false));
+            fields.push((held(self.cx, *c), t.clone(), *c, false));
         }
         let mut decls = String::from("typedef struct { int32_t state; int32_t done;");
         for (ty, n, c, param) in &fields {

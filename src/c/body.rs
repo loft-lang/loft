@@ -1311,7 +1311,7 @@ impl<'a> FnWriter<'a> {
             }
             if self.links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
-                let _ = writeln!(out, "    {} *{name} = 0;", held(c));
+                let _ = writeln!(out, "    {} *{name} = 0;", held(self.cx, c));
                 continue;
             }
             if self.borrowed[v] && c == CType::Text {
@@ -1321,7 +1321,7 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(
                 out,
                 "    {} {} = {};",
-                held(c),
+                held(self.cx, c),
                 self.var(v as u16),
                 self.cx.initial(c)
             );
@@ -1471,7 +1471,7 @@ impl<'a> FnWriter<'a> {
         } else {
             format!(
                 "{{ {} loft_hr = {}; return loft_hr; }}",
-                held(self.ret),
+                held(self.cx, self.ret),
                 self.cx.initial(self.ret)
             )
         };
@@ -1576,9 +1576,14 @@ impl<'a> FnWriter<'a> {
                 out.push_str("#ifdef LOFT_VERIFY\n");
             }
             if plain {
-                let _ = writeln!(out, "    {} {t};", held(*c));
+                let _ = writeln!(out, "    {} {t};", held(self.cx, *c));
             } else {
-                let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+                let _ = writeln!(
+                    out,
+                    "    {} {t} = {};",
+                    held(self.cx, *c),
+                    self.cx.initial(*c)
+                );
             }
             if verify {
                 out.push_str("#endif\n");
@@ -1757,8 +1762,11 @@ impl<'a> FnWriter<'a> {
                 }
                 let e = self.nested(|w| w.expr(getter, ind))?;
                 let name = format!("s{}", self.decls.len() + 1);
-                self.decls
-                    .push(format!("{} {name} = {};", held(c), self.cx.initial(c)));
+                self.decls.push(format!(
+                    "{} {name} = {};",
+                    held(self.cx, c),
+                    self.cx.initial(c)
+                ));
                 self.line(ind, &format!("{name} = {};", as_shape(self.cx, e, c)?));
                 held_scalars.push((*key, name, c));
             }
@@ -3307,7 +3315,7 @@ impl<'a> FnWriter<'a> {
             self.epilogue(ind);
             self.line(ind, &format!("return {r};"));
         } else {
-            self.line(ind, &format!("{} {r}_out = {r};", held(self.ret)));
+            self.line(ind, &format!("{} {r}_out = {r};", held(self.cx, self.ret)));
             for m in moved {
                 self.line(ind, &format!("{m}.p = 0;"));
             }
@@ -4892,7 +4900,8 @@ impl<'a> FnWriter<'a> {
         if let Some(ds) = &self.ds {
             for (k, sc) in ds.scalars.iter().enumerate() {
                 let c = super::dest_scalar_ctype(sc);
-                self.decls.push(format!("{} loft_ds{k} = 0;", held(c)));
+                self.decls
+                    .push(format!("{} loft_ds{k} = 0;", held(self.cx, c)));
             }
         }
     }
@@ -7168,7 +7177,7 @@ impl<'a> FnWriter<'a> {
         let e = self.expr(x, ind)?;
         Ok(Some(format!(
             "({} *) loft_place(cx, {}, &{absent})",
-            held(c),
+            held(self.cx, c),
             as_ref(e)?
         )))
     }
@@ -7759,7 +7768,10 @@ impl<'a> FnWriter<'a> {
         let value = as_shape(self.cx, e, c)?;
         self.line(
             ind,
-            &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
+            &format!(
+                "{{ {} mv = {value};{frees} {target} = mv; }}",
+                held(self.cx, c)
+            ),
         );
         Ok(())
     }
@@ -7879,7 +7891,10 @@ impl<'a> FnWriter<'a> {
             }
             other => {
                 let init = self.cx.initial(other);
-                self.line(ind, &format!("{t} = ({}) {init};", super::held(other)));
+                self.line(
+                    ind,
+                    &format!("{t} = ({}) {init};", super::held(self.cx, other)),
+                );
             }
         }
     }
@@ -9102,7 +9117,7 @@ impl<'a> FnWriter<'a> {
                 Value::Null if shapes[i] != CType::Void => {
                     xs[i] = match shapes[i] {
                         CType::Text => "loft_null_text(cx)".into(),
-                        c => format!("(({}) {})", held(c), self.cx.initial(c)),
+                        c => format!("(({}) {})", held(self.cx, c), self.cx.initial(c)),
                     };
                 }
                 _ => rest.push(i),
