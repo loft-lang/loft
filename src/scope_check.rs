@@ -276,7 +276,8 @@ impl Walk<'_> {
 
 /// A type whose value has no store, so a scope's end releases nothing of it.
 fn holds_no_store(tp: &Type) -> bool {
-    match tp {
+    // `.base()`: a `τ?` is `τ`'s storage behind a nullability marker (`@FR-N-Shape`).
+    match tp.base() {
         Type::Integer(_)
         | Type::Boolean
         | Type::Float
