@@ -2134,7 +2134,7 @@ pub fn format_for_carried(e: el::El, vars: el_vars::Vars, n: integer) -> boolean
         return true;
       }
       sv = match e.p.nodes[sr] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
-      sv >= 0 && (el_vars::tp(vars, sv) is TyVector || el_vars::tp(vars, sv) is TyText)
+      sv >= 0 && (el_vars::tp(vars, sv) is TyVector || el_vars::tp(vars, sv) is TyText || el_vars::tp(vars, sv) is TyHash || el_vars::tp(vars, sv) is TySorted || el_vars::tp(vars, sv) is TyIndex)
     },
     _ => false
   }
@@ -2160,7 +2160,8 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   st = if sv >= 0 { el_vars::tp(vars, sv) } else { ir::TyVoid };
   range = e.p.nodes[source] is SRange;
   walks_text = !range && st is TyText;
-  if len(binds) != 1 || par != null || body == null || (!range && (sv < 0 || !(st is TyVector || walks_text))) {
+  keyed = !range && (st is TyHash || st is TySorted || st is TyIndex);
+  if len(binds) != 1 || par != null || body == null || (!range && (sv < 0 || !(st is TyVector || walks_text || keyed))) {
     el::refuse(e, "a `for` in a format hole over a source other than a vector local or a range");
     return null;
   }
@@ -2173,7 +2174,20 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   rw: el_ex_pattern::RangeWalk? = null;
   pos = -1;
   extra: vector<ir::Node> = [];
-  if walks_text {
+  scratch = -1;
+  el_d = -1;
+  if keyed {
+    // (`iter_for` over `keyed_snapshot`: `{id}#index`, then a hash's sorted scratch copy of
+    // its records, `_hash_scratch_N`; `{id}#iter_state` on the second pass, after the rest.)
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    el_ex_base::start_loop(e, vars);
+    el_d = el_types::keyed_elem(st);
+    if st is TyHash {
+      scratch = el_vars::create_unique(vars, "hash_scratch", ir::TyReference { n: el_d, dep: [sv] });
+    }
+    lt = ir::TyReference { n: el_d, dep: [sv] };
+  } else if walks_text {
     // (`iter_text`: `{id}#index`, then the byte position `{id}#next`; the text held in
     // `_for_text_N` and the character read into `_for_result_N` after the loop variable.)
     idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
@@ -2221,7 +2235,34 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     cnt = el_vars::add_variable(vars, "{id}#count", count_type(e));
   }
   el_vars::set_defined(vars, cnt);
-  if walks_text {
+  if keyed && !e.first_pass {
+    state = el_vars::add_variable(vars, "{id}#iter_state", count_type(e));
+    el_vars::set_defined(vars, state);
+    known = el_schema::keyed_type(e, st);
+    on = 128;
+    arg = 4;
+    match st {
+      TyIndex { n: _ } => { on += 1; arg = known; },
+      TySorted { n: _ } => {
+        if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+          on += 3;
+        } else {
+          on += 2;
+          arg = e.b.types[el::def(e, el_d).known_type]!.size;
+        }
+      },
+      _ => { on += 4; }
+    }
+    ksrc: ir::Node = if scratch >= 0 { ir::NdVar { n: scratch } } else { ir::NdVar { n: sv } };
+    kstart = el_ir::cl(e, "OpIterate", [ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+    walk = ir::NdInsert { items: [el_ir::v_set(state, kstart), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+    init = if scratch >= 0 { [ir::NdInsert { items: [el_ir::v_set(scratch, el_ir::cl(e, "n_hash_sorted", [ir::NdVar { n: sv }, ir::NdInt { n: known }])), walk] }] } else { [walk] };
+    knext = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }])], lt, "sorted iter next");
+    kbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    head = [el_ir::v_set(lv, knext), el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), kbrk, ir::NdNull)];
+  } else if keyed {
+    head = [];
+  } else if walks_text {
     tt = ir::NdVar { n: tv };
     tbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
     head = [el_ir::v_set(lv, text_step(e, tv, pos, idx, res)),
