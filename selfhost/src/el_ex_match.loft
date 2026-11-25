@@ -525,6 +525,9 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     el::refuse(e, "a reversed walk of this source: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if par != null && x.tp is TyText && !(x.code is NdIter) {
+    return par_text(e, vars, h, x, par!, loop_nr);
+  }
   if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
     el::refuse(e, "a `par` loop over this source: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1141,6 +1144,67 @@ fn par_range(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, par: i
     x = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
   }
   el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: x, vec: mat, elem: int_t, var_tp: int_t, loop_nr: loop_nr }, par, h.body)
+}
+
+// `materialise_iter_for_par` for a text: the identity comprehension over its characters fills
+// `_par_mat_l<loop>` — its byte position `_par_mat_next_l<loop>` and character start
+// `_par_mat_index_l<loop>`, its loop variable `_par_mat_e_l<loop>`, the text held in
+// `_for_text_N` and each character in `_for_result_N` (`iter_text`), then the element temp,
+// `_comp_N` and the store — and the vector `par` loop runs over it.  Pass 1 mints the vector.
+fn par_text(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, loop_nr: integer) -> Ex {
+  ct = ir::TyCharacter;
+  int_t = el_ex_base::count_type(e);
+  // (`vector_def` of the element, early and on both passes, where `par` was read.)
+  if el::def_nr(e, "main_vector<character>") < 0 {
+    ptok = match e.p.nodes[par] { SPar { at: pat } => pat, _ => 0 };
+    el_schema::make_vector_def(e, ct, "character", el::pos_at(e, ptok + 1), true);
+  }
+  mat = el_vars::add_variable(vars, "_par_mat_l{loop_nr}", ir::TyVector { inner: ct, dep: [] });
+  el_vars::set_defined(vars, mat);
+  mx = ex(ir::NdNull, ir::TyVector { inner: ct, dep: [] });
+  if !e.first_pass {
+    pos = el_vars::add_variable(vars, "_par_mat_next_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, pos);
+    idx = el_vars::add_variable(vars, "_par_mat_index_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, idx);
+    me = el_vars::add_variable(vars, "_par_mat_e_l{loop_nr}", ct);
+    el_vars::set_defined(vars, me);
+    src_tp = match el_ir::unspan(x.code) { NdVar { n } => ir::TyText { dep: [n] }, _ => x.tp };
+    tv = el_vars::create_unique(vars, "for_text", src_tp);
+    res = el_vars::create_unique(vars, "for_result", ct);
+    celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [mat] });
+    comp = el_vars::create_unique(vars, "comp", ct);
+    el_vars::set_defined(vars, comp);
+    r = el_ex_base::vector_rows(e, ct, 0, true);
+    if r == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r!.main_def, dep: [] });
+    el_vars::set_var_type(vars, mat, ir::TyVector { inner: ct, dep: [db] });
+    el_vars::set_var_type(vars, celm, ir::TyReference { n: el::def_nr(e, "character"), dep: [db] });
+    t = ir::NdVar { n: tv };
+    i = ir::NdVar { n: idx };
+    brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    dest = ir::NdVar { n: mat };
+    steps = [
+      el_ir::v_set(me, text_step(e, tv, pos, idx, res)),
+      el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [t])]), brk, ir::NdNull),
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpSizeText", [t]), i]), brk, ir::NdNull),
+      el_ir::v_set(comp, ir::NdVar { n: me }),
+      el_ir::cl(e, el_ex_pattern::push_op(ct), el_ex_pattern::push_args(e, vars, ct, dest, ir::NdVar { n: comp }))
+    ];
+    items = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r!.main_known }]),
+      el_ir::v_set(mat, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: el_ex_base::wrapper_row(e, r!) }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+      el_ir::v_set(idx, ir::NdInt { n: 0 }),
+      el_ir::v_set(tv, x.code),
+      el_ir::v_set(pos, ir::NdInt { n: 0 }),
+      el_ir::v_loop(steps, "For comprehension")
+    ];
+    mx = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
+  }
+  el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: mx, vec: mat, elem: ct, var_tp: ct, loop_nr: loop_nr }, par, h.body)
 }
 
 pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
