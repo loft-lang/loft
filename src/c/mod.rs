@@ -1816,8 +1816,46 @@ pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, Str
 }
 
 pub fn c_name(data: &Data, d: u32) -> String {
-    let dups = crate::opt::names::duplicate_fn_names(data);
+    let at = std::ptr::from_ref(data) as usize;
+    let held = FN_DUPS.with(|h| {
+        h.borrow()
+            .as_ref()
+            .filter(|(p, _)| *p == at)
+            .map(|(_, s)| s.clone())
+    });
+    let dups =
+        held.unwrap_or_else(|| std::rc::Rc::new(crate::opt::names::duplicate_fn_names(data)));
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
+}
+
+thread_local! {
+    /// The function names two definitions share ([`crate::opt::names::duplicate_fn_names`]),
+    /// kept for the length of one unit's emission ([`FnDupsScope`]) beside the address of the
+    /// definitions they were read from.  Emission holds those definitions borrowed, so no name
+    /// can change while it runs; outside a scope, or for other definitions, [`c_name`] reads
+    /// the names afresh.  Without it every name written read the whole table (@PLN229).
+    static FN_DUPS: std::cell::RefCell<Option<(usize, std::rc::Rc<std::collections::HashSet<String>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds [`FN_DUPS`] for `data` while it lives, and puts back what was held before.
+struct FnDupsScope(Option<(usize, std::rc::Rc<std::collections::HashSet<String>>)>);
+
+impl FnDupsScope {
+    fn enter(data: &Data) -> Self {
+        let now = (
+            std::ptr::from_ref(data) as usize,
+            std::rc::Rc::new(crate::opt::names::duplicate_fn_names(data)),
+        );
+        Self(FN_DUPS.with(|h| h.borrow_mut().replace(now)))
+    }
+}
+
+impl Drop for FnDupsScope {
+    fn drop(&mut self) {
+        let before = self.0.take();
+        FN_DUPS.with(|h| *h.borrow_mut() = before);
+    }
 }
 
 /// The name a runtime routine answers definition `d` by: its own for a standard-library
@@ -2220,6 +2258,7 @@ fn emit_unit_with(
     };
     // The analysis memos of the definitions this writer works from (`Data::nn_memo`).
     crate::opt::non_sentinel::begin_c_generation(data);
+    let _fn_dups = FnDupsScope::enter(data);
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -3701,25 +3740,63 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
         //   the pattern, and no test follows the match
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
-    let resolve = |text: &str| -> String {
-        let mut out = text.to_string();
-        for d in cx.hot_candidates.borrow().iter() {
-            let marker = format!("static /*loft_hot:{d}*/");
-            let body = format!("static /*loft_hot_body:{d}*/");
-            let (to, body_to) = if hot.contains(d) {
-                ("static inline", "LOFT_HOT_INLINE")
-            } else {
-                ("static", "static")
-            };
-            out = out.replace(&marker, to).replace(&body, body_to);
-        }
-        out
-    };
+    let cands = cx.hot_candidates.borrow().clone();
+    let resolve = |text: &str| resolve_hot_markers(text, &cands, &hot);
     let decls = resolve(&cx.gen_decls.borrow());
     let wrapped = resolve(&cx.gen_bodies.borrow());
     *cx.gen_decls.borrow_mut() = decls;
     *cx.gen_bodies.borrow_mut() = wrapped;
     (resolve(protos), resolve(bodies))
+}
+
+/// Every `static /*loft_hot:D*/` and `static /*loft_hot_body:D*/` storage marker of a candidate
+/// `D` in `text`, resolved: `static inline` / `LOFT_HOT_INLINE` when `D` is hot, `static`
+/// otherwise; any other text, a marker of a non-candidate included, is copied unchanged.  ONE
+/// pass over the text: the unit of a large program is a hundred megabytes, and a pass per
+/// candidate made this the C writer's largest cost (@PLN229).
+fn resolve_hot_markers(
+    text: &str,
+    cands: &std::collections::BTreeSet<u32>,
+    hot: &std::collections::BTreeSet<u32>,
+) -> String {
+    const LEAD: &str = "static /*loft_hot";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(LEAD) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + LEAD.len()..];
+        let (tail, body) = if let Some(t) = after.strip_prefix(':') {
+            (t, false)
+        } else if let Some(t) = after.strip_prefix("_body:") {
+            (t, true)
+        } else {
+            ("", false)
+        };
+        let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+        let resolved = tail[digits..]
+            .starts_with("*/")
+            .then(|| tail[..digits].parse::<u32>().ok())
+            .flatten()
+            .filter(|d| {
+                // the exact spelling the writer gives `D` (`format!("{d}")`): no leading zero
+                digits > 0 && (digits == 1 || !tail.starts_with('0')) && cands.contains(d)
+            })
+            .map(|d| match (hot.contains(&d), body) {
+                (true, false) => "static inline",
+                (true, true) => "LOFT_HOT_INLINE",
+                (false, _) => "static",
+            });
+        if let Some(to) = resolved {
+            out.push_str(to);
+            let used = rest.len() - tail.len() + digits + 2;
+            rest = &rest[used..];
+        } else {
+            out.push_str(LEAD);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn small_function(statements: usize) -> bool {
