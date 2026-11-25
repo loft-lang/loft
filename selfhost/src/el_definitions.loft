@@ -1857,6 +1857,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    vars.start_ret_deps = el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid);
     // (The return buffer the first pass held back from the result is named before the body.)
     if !e.first_pass && e.owed_buffer.contains(e.context) {
       oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
@@ -1949,7 +1950,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     }
     e.b.data.definitions[e.context].code = [code];
     // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
-    el_retpromo::report(e, vars, code, body!, match e.p.nodes[body!] { SBlock { end: rbe } => rbe, _ => -1 });
+    el_retpromo::report(e, vars, code, body!, el_retpromo::body_end(e, body!), inferred: infers && e.first_pass);
     if e.first_pass {
       add_capture_owner_slots(e, vars, e.context);
     }
