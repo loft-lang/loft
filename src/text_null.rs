@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I90 — Shared utilities & data structures
 
 //! The null text: the one home for how Rust code spells an absent `text` and asks whether a
 //! text is absent (`@FR-L-Null-Text`, `@C171`).
@@ -32,6 +33,10 @@ pub fn null_str() -> &'static str {
 /// `String` of capacity 0 owns no allocation — and a push gives it a buffer of its own.
 #[inline]
 #[must_use]
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "the null text is the empty String AT `NULL_TEXT`: its address is its identity, which a copy would lose"
+)]
 pub fn null_string() -> String {
     // SAFETY: with capacity 0 the pointer needs only be non-null and aligned
     // (`Vec::from_raw_parts`), and nothing is ever written through it.

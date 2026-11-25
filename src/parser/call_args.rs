@@ -929,7 +929,7 @@ impl Parser {
                 Self::type_deps(e, dp);
             }
         } else if let Some(ad) = tp.deps_ref() {
-            for &x in ad.iter() {
+            for &x in ad {
                 if !dp.contains(&x) {
                     dp.push(x);
                 }

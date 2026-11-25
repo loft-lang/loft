@@ -3266,7 +3266,7 @@ fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
         .push_str(&msg);
 }
 
-// @PLN10 Phase 2 — destination-passing variant of `n_as_text`: a `JString`'s value, null for
+// The destination-passing variant of `n_as_text`: a `JString`'s value, null for
 // any other variant; the dest carries the null as the null text (`text_null::put`).  Per-call
 // dests retire the @P354 sibling-aliasing scratch hazard.
 fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
