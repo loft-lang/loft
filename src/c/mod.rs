@@ -3827,6 +3827,9 @@ fn hot_twin(mask: u64, statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
+    // Writing the body changes no body, so the ownership oracle's whole-function walk is done
+    // once for it, not once per question the writer asks — as the bytecode and Rust writers do.
+    let _defs_memo = crate::use_analysis::defs_memo_scope(data, d);
     let places = mask
         & !INV_BIT
         & !NK_BIT
