@@ -1884,6 +1884,17 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
           }
         }
         hint_lambda(e, vars, hd, len(list), ae!, sofar: types);
+        // (`special_form_callback_hint`: `any` / `all` / `count_if`'s predicate is
+        // `fn(T) -> boolean` over the vector's element, where the program declares none.)
+        if hd < 0 && source < 0 && len(list) == 1 && (name == "any" || name == "all" || name == "count_if") && el::def_nr(e, "n_{name}") < 0 {
+          match el_types::base(types[0]!) {
+            TyVector { inner: sfi } => {
+              vars.lambda_node = ae!;
+              vars.lambda_hint = ir::TyFunction { args: [sfi], result: ir::TyBoolean, dep: [], consts: 0 };
+            },
+            _ => {}
+          }
+        }
         eh = argument_element_hint(e, hd, len(list), ae!);
         built += [eh];
         if el_trace::on() {
@@ -1955,6 +1966,9 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
       return el_ex_loop::filter_call(e, vars, at, list, types);
+    }
+    if (name == "any" || name == "all" || name == "count_if") && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_loop::predicate_call(e, vars, at, name, list, types);
     }
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
       return el_ex_loop::reduce_call(e, vars, list, types);
