@@ -50,6 +50,29 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
         Value::Call(d_nr, cargs) if crate::use_analysis::is_projection_op(data, *d_nr) => {
             lift_view_deps(cargs.first()?, data)
         }
+        // A call whose answer lies in the hidden return buffer its caller passes (`n_none(
+        // __ref_1)`: every dep of its return names that buffer parameter): its value is in that
+        // buffer's store, which the caller owns and frees, so the temp borrows the buffer.  Left
+        // unnamed, the outer call's copy kept no source-free, and a fresh answer of the outer
+        // callee leaked once per call (`fn first(v) -> R { v[0]? }` called as `first(f())`).
+        // `LOFT_NO_RETBUF_ARG_LIFT=1` leaves such an argument unnamed again.
+        Value::Call(d_nr, cargs)
+            if !crate::env_once!(std::env::var_os("LOFT_NO_RETBUF_ARG_LIFT").is_some()) =>
+        {
+            let def = data.def(*d_nr);
+            let buf = def.hidden_return_buffer_attr()?;
+            let deps = def.returned().heap_dep()?;
+            let only_buffer = !deps.is_empty()
+                && deps.iter().all(|&d| {
+                    matches!(crate::data::DepEntry::decode(d), crate::data::DepEntry::Attr(a)
+                        if a as usize == buf)
+                });
+            match cargs.get(buf).map(Value::unspan) {
+                Some(Value::Var(b)) if only_buffer => Some(vec![*b]),
+                _ => None,
+            }
+        }
+        // Any other value makes or reads a store this walk cannot name, and is not bound.
         _ => None,
     }
 }
