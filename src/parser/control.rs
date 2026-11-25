@@ -15233,7 +15233,7 @@ impl Parser {
                 (list[2].clone(), list[3].clone())
             } else {
                 (
-                    Value::str(call_pos.file.as_str()),
+                    self.site_file(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 )
             };
@@ -15277,7 +15277,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(call_pos.file.as_str()),
+                    self.site_file(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -15299,7 +15299,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(call_pos.file.as_str()),
+                    self.site_file(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -16137,7 +16137,7 @@ impl Parser {
                 args.push(Value::str(""));
                 tps.push(Type::Text(Deps::none()));
             }
-            args.push(Value::str(call_pos.file.as_str()));
+            args.push(self.site_file(call_pos.file.as_str()));
             tps.push(Type::Text(Deps::none()));
             args.push(Value::Int(call_pos.line as i32));
             tps.push(Type::Integer(IntegerSpec::wide()));
