@@ -75,8 +75,10 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     TyVector { inner: cvi } => {
       if el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
         cvt = el_types::without_deps(el_types::base(to));
+        // (The first pass leaves the code as it was — `cast` returns before converting — so a
+        // bind of the cast reads its text source as the place it copies: `copy_bound`.)
         if e.first_pass {
-          return ex(ir::NdNull, cvt);
+          return ex(x.code, cvt);
         }
         narrow = match el_types::base(cvi) { TyInteger { spec: cvs } => el_types::narrow_width(cvs) > 0 || el_types::int4(cvs) || el_types::uint4(cvs), _ => false };
         cnm = el_types::elem_name(e, cvi);
