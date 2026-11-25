@@ -2699,7 +2699,7 @@ impl Parser {
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
-                    Value::Text(pos.file.to_string()),
+                    self.site_file(pos.file.as_str()),
                     Value::Int(pos.line as i32),
                 ],
                 ret.clone(),
@@ -6715,7 +6715,7 @@ impl Parser {
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
         let pos = *self.lexer.pos();
-        fields.insert(1, Value::Text(pos.file.to_string()));
+        fields.insert(1, self.site_file(pos.file.as_str()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
@@ -7530,7 +7530,7 @@ impl Parser {
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.to_string()),
+                            self.site_file(pos.file.as_str()),
                             Value::Int(pos.line as i32),
                         ],
                     ));
