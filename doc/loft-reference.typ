@@ -4034,6 +4034,8 @@ The directory form is found in any search directory you NAMED — `--lib \<dir\>
 
 A lone script with no manifest above it reads its `lib/` flat, so there a library must be the single file `lib/mylib.loft` — a `lib/mylib/` directory beside such a script answers "Library 'mylib' not found". Giving the script a `loft.toml` is what turns the directory form on.
 
+A library your project has pinned (in `loft.lock`) always loads that version, whatever same-named file lies in the directory you run from. To debug or fix it, say so: `--lib \<dir\>` runs your copy for one run, and `loft develop mylib` puts an editable copy in `lib/mylib` that the project uses until `loft develop --done mylib`.
+
 The `loft.toml` manifest carries the whole package declaration — name, version, dependencies, native crates, build targets. Two of its settings decide how the library above is LOADED:
 
 ```
