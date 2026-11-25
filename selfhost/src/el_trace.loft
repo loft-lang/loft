@@ -181,7 +181,8 @@ pub fn route_after_literal(e: el::El, at: integer, name: text) {
   }
   depth = 0;
   while i < len(e.p.src) {
-    if e.p.src[i] is LBrace {
+    // (A string segment that opens a hole holds the hole's `{`; its `}` is a token of its own.)
+    if e.p.src[i] is LBrace || e.p.src[i] is StrHole {
       depth += 1;
     } else if e.p.src[i] is RBrace {
       depth -= 1;

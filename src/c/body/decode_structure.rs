@@ -216,7 +216,7 @@ impl FnWriter<'_> {
                     let c = self.cx.ps_rep_ctype(prod, r);
                     self.undeclared.insert(v);
                     self.decls
-                        .push(format!("{} {} = {{ 0 }};", held(c), self.var(v)));
+                        .push(format!("{} {} = {{ 0 }};", held(self.cx, c), self.var(v)));
                 }
             }
         }
@@ -335,7 +335,7 @@ impl FnWriter<'_> {
                 pos(self, parts[0].1)
             } else {
                 let items: Vec<String> = parts.iter().map(|x| pos(self, x.1)).collect();
-                format!("(({}) {{ {} }})", held(ec), items.join(", "))
+                format!("(({}) {{ {} }})", held(self.cx, ec), items.join(", "))
             };
             crate::rewrite_census::fired("R-DecodeView/structure", 1);
             let e = self.temp(ec);
@@ -561,7 +561,7 @@ impl FnWriter<'_> {
         let t = self.temp(c);
         self.line(ind, &format!("{t} = {code};"));
         if self.ps.as_ref().is_some_and(|p| p.walk > 0) {
-            self.line(ind, &format!("*({} *) loft_pr = {t};", held(c)));
+            self.line(ind, &format!("*({} *) loft_pr = {t};", held(self.cx, c)));
             self.line(ind, PSC_OUT);
             self.epilogue(ind);
             self.line(ind, "return 1;");
@@ -693,7 +693,11 @@ impl FnWriter<'_> {
                 }
                 self.line(
                     ind,
-                    &format!("{xv} = ({}) {{ {} }};", held(d_t), members.join(", ")),
+                    &format!(
+                        "{xv} = ({}) {{ {} }};",
+                        held(self.cx, d_t),
+                        members.join(", ")
+                    ),
                 );
                 Ok(())
             }
@@ -734,7 +738,11 @@ impl FnWriter<'_> {
                 }
                 self.line(
                     ind,
-                    &format!("{xv} = ({}) {{ {} }};", held(d_t), members.join(", ")),
+                    &format!(
+                        "{xv} = ({}) {{ {} }};",
+                        held(self.cx, d_t),
+                        members.join(", ")
+                    ),
                 );
                 Ok(())
             }
@@ -1003,7 +1011,7 @@ impl FnWriter<'_> {
                 name: name.clone(),
                 text,
                 copies,
-                elem: (held(ec), elem),
+                elem: (held(self.cx, ec), elem),
             });
         }
         crate::rewrite_census::fired("R-DecodeView/structure", 1);
@@ -1251,9 +1259,9 @@ fn ps_function(cx: &Cx, d: u32, mode: PsMode) -> Result<(String, String), String
         let c = shapes[a as usize];
         let name = var_name(vars.name(a), a);
         let decl = if matches!(vars.tp(a).base(), crate::data::Type::RefVar(_)) {
-            format!("{} *{name}", held(c))
+            format!("{} *{name}", held(cx, c))
         } else {
-            format!("{} {name}", passed(c))
+            format!("{} {name}", passed(cx, c))
         };
         param_decls.insert(a, decl.clone());
         params.push(decl);
@@ -1266,7 +1274,7 @@ fn ps_function(cx: &Cx, d: u32, mode: PsMode) -> Result<(String, String), String
         .structure(Some(mode))
         .write()
         .map_err(|why| format!("{name}: {why}"))?;
-    let sig = format!("static {} {name}({params})", held(ret));
+    let sig = format!("static {} {name}({params})", held(cx, ret));
     Ok((
         sig,
         crate::c::framed_plain(cx, d, &name, &params, ret, &body),
@@ -1280,7 +1288,7 @@ fn ps_slow_text(cx: &Cx, pd: u32, prod: &Producer) -> (String, String) {
     let vars = def.variables();
     let mut params = vec!["loft_cx *cx".to_string(), "loft_ref b".to_string()];
     for (i, (_, r)) in prod.params.iter().enumerate() {
-        params.push(format!("{} p{i}", held(param_ctype(r))));
+        params.push(format!("{} p{i}", held(cx, param_ctype(r))));
     }
     params.push("int64_t off".to_string());
     let sig = format!(

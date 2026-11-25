@@ -268,6 +268,9 @@ pub struct Vars {
   // field writes — the place's old record snapshot where a field reads it.
   pub lit_place: vector<ir::Node> = [],
   pub lit_stage: vector<ir::Node> = [],
+  // The place's root a literal built APART reads its old record through (`v` of `v[1] = E { … }`),
+  // -1 where the literal is built in place: what `@FR-R-InPlaceLiteral`'s staging asks about.
+  pub lit_root: integer = -1,
   // `literal_into_place`'s field notes of the literal being built into `lit_place` (`{field}:staged`).
   pub lit_notes: vector<text> = [],
   pub self_read: integer = -1,

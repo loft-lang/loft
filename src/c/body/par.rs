@@ -319,7 +319,7 @@ impl FnWriter<'_> {
                 });
                 format!(
                     "{{ {} loft_t = {call};{frees} (void) loft_t; }}",
-                    crate::c::held(shape)
+                    crate::c::held(self.cx, shape)
                 )
             }
             CType::Ref => format!(
@@ -377,7 +377,7 @@ impl FnWriter<'_> {
         let (row_c, push) = dense.unwrap_or(("loft_par_slot", "loft_par_push"));
         let mut decl = format!("typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n");
         for (i, c) in shapes.iter().take(extra.len()).enumerate() {
-            let _ = writeln!(decl, "    {} x{i};", crate::c::held(*c));
+            let _ = writeln!(decl, "    {} x{i};", crate::c::held(self.cx, *c));
         }
         let _ = writeln!(
             decl,

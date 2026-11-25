@@ -1198,7 +1198,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       _ => {}
     }
   }
-  if fixed || rhs == null {
+  // (`const x = …` binds as any local does: what `const` fixes is the binding, which the
+  // contents' writes do not touch — `x.n = 2` and `x.v += [3]` are allowed.)
+  if rhs == null {
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
   }

@@ -401,7 +401,7 @@ impl FnWriter<'_> {
             {
                 self.line(
                     ind,
-                    &format!("{target} = ({}) {};", held(c), self.cx.initial(c)),
+                    &format!("{target} = ({}) {};", held(self.cx, c), self.cx.initial(c)),
                 );
                 return Ok(());
             }
@@ -451,7 +451,7 @@ impl FnWriter<'_> {
                 ind,
                 &format!(
                     "{target} = ({}) {{ {}, 1 }};",
-                    held(shape),
+                    held(self.cx, shape),
                     parts.join(", ")
                 ),
             );
@@ -460,7 +460,11 @@ impl FnWriter<'_> {
         if keyed(&facts.leaves.nulls) {
             self.line(
                 ind,
-                &format!("{target} = ({}) {};", held(shape), self.cx.initial(shape)),
+                &format!(
+                    "{target} = ({}) {};",
+                    held(self.cx, shape),
+                    self.cx.initial(shape)
+                ),
             );
             return Ok(true);
         }
@@ -541,7 +545,11 @@ impl FnWriter<'_> {
             }
             self.line(
                 ind,
-                &format!("{target} = ({}) {{ {} }};", held(c), parts.join(", ")),
+                &format!(
+                    "{target} = ({}) {{ {} }};",
+                    held(self.cx, c),
+                    parts.join(", ")
+                ),
             );
             return Ok(());
         }
@@ -572,7 +580,7 @@ impl FnWriter<'_> {
             ind,
             &format!(
                 "{{ const uint8_t *{pt} = loft_rec_ptr(cx, {rt}); {target} = ({}) {{ {} }}; }}",
-                held(c),
+                held(self.cx, c),
                 parts.join(", ")
             ),
         );
@@ -649,7 +657,11 @@ impl FnWriter<'_> {
         }
         self.line(
             ind,
-            &format!("{target} = ({}) {{ {} }};", held(c), parts.join(", ")),
+            &format!(
+                "{target} = ({}) {{ {} }};",
+                held(self.cx, c),
+                parts.join(", ")
+            ),
         );
         if let Some(p) = crate::opt::value_records::leaves::object_own_return(bl) {
             self.vr_object_releases(bl, p, ind)?;
@@ -857,7 +869,7 @@ impl FnWriter<'_> {
         if matches!(arg.unspan(), Value::Null)
             || crate::opt::value_records::is_null_sentinel(self.cx.data, arg)
         {
-            return Ok(format!("(({}) {})", held(c), self.cx.initial(c)));
+            return Ok(format!("(({}) {})", held(self.cx, c), self.cx.initial(c)));
         }
         // `@FR-R-ValueRecord` — the IR pass's own LEND of a dense tuple carrier, handed to a
         // parameter this writer takes as a tuple: the carrier already is that tuple, so its
@@ -872,7 +884,7 @@ impl FnWriter<'_> {
                 }
                 self.line(
                     ind,
-                    &format!("{t} = ({}) {{ {} }};", held(c), parts.join(", ")),
+                    &format!("{t} = ({}) {{ {} }};", held(self.cx, c), parts.join(", ")),
                 );
                 return Ok(t);
             }
@@ -898,7 +910,11 @@ impl FnWriter<'_> {
                 let parts: Vec<String> = (0..n).map(|i| format!("{dt}.f{i}")).collect();
                 self.line(
                     ind,
-                    &format!("{t} = ({}) {{ {}, 1 }};", held(c), parts.join(", ")),
+                    &format!(
+                        "{t} = ({}) {{ {}, 1 }};",
+                        held(self.cx, c),
+                        parts.join(", ")
+                    ),
                 );
             }
             None => self.vr_getters(key, arg, &t, c, ind)?,

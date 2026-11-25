@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `v[1] = E { k: v[1].k + 1, t: …, xs: [r, len(v[1].xs)] }` — its vector field reads
+// the place, so the literal is built apart and copied over the element; its scalar field that
+// reads the place is staged first (`__ref_N` ahead of the record's writes), as in place.
+// Prints: 4 g2 2
+
+struct E { k: integer, t: text, xs: vector<integer> }
+fn main() {
+  v = [E { k: 0, t: "a", xs: [] }, E { k: 1, t: "b", xs: [1] }];
+  for r in 0..3 {
+    v[1] = E { k: v[1].k + 1, t: "g{r}", xs: [r, len(v[1].xs)] };
+  }
+  println("{v[1].k} {v[1].t} {len(v[1].xs)}");
+}
