@@ -929,7 +929,8 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
   // container variable).
   bare_field = fd >= 0 && e.p.nodes[n] is SStructLit;
   if len(items) > 0 && !(bare_field && e.first_pass) {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    // (Typed as the collection's record from the first pass on, `ref(Rec)["s"]`.)
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [v] });
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
     if fd >= 0 && !bare_field {
