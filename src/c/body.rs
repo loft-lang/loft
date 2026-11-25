@@ -1378,7 +1378,10 @@ impl<'a> FnWriter<'a> {
             if out.matches(&decl).count() != 1 {
                 continue;
             }
-            let slot = format!("loft_wp{}_{v}", self.d);
+            // Named from the function's own C name, never its definition number, which moves when
+            // a definition is added before it (@PLN229 B0); unique at file scope, where the C
+            // splitter may move the slot.
+            let slot = format!("loft_wp_{}_{v}", super::c_name(self.cx.data, self.d));
             out = out.replacen(
                 &decl,
                 &format!(
