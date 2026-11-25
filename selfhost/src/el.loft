@@ -126,6 +126,13 @@ pub struct El {
   // second pass names it as the function starts, so a caller sees it whatever the body's
   // delivery then does — a refused callee included.
   pub owed_buffer: vector<integer>,
+  // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
+  // shared with the lambdas its lambdas make; cleared as each pass starts.
+  pub lambda_roots: vector<text>,
+  // The lambdas (`n___lambda_<root>_<k>`) that declare their result (`fn(x) -> T { … }`): their
+  // first pass knows the result, so a tail call's buffer can GROW into their parameters.
+  pub declared_lambdas: vector<text>,
+  pub lambda_next: vector<integer>,
   // The functions whose first-pass return promotion put the return buffer into the result's
   // deps (`Rename` / `Bind` / `MergeAttr` of it): the second pass starts from that dep (`el_retpromo`).
   pub p1_bound: vector<integer>,
@@ -135,6 +142,9 @@ pub struct El {
   pub p1_bind: vector<integer>,
   // `Variable::created_in_loop` of each function's first-pass variables, `context * 65536 + nr`.
   pub loop_made: vector<integer>,
+  // `Function::loops` as pass 1 left it, per function (`context * 65536 + count`): pass 2's loop
+  // numbers continue after them (`start_loop`).
+  pub loops_p1: vector<integer>,
   // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
   // pass, read as the typed declaration on both).
   pub cast_decls: vector<integer>,
@@ -257,6 +267,9 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_in: [],
     unbacked: [],
     owed_buffer: [],
+    lambda_roots: [],
+    declared_lambdas: [],
+    lambda_next: [],
     p1_bound: [],
     p1_bind: [],
     cast_decls: [],
@@ -826,4 +839,44 @@ pub fn std_count(b: ir::Bundle) -> integer {
     }
   }
   len(b.data.definitions)
+}
+
+// `next_lambda_name`'s root for a lambda made in the function named `ctx`: the function's own
+// name, or — inside a lambda `n___lambda_<root>_<k>` — that lambda's root.
+pub fn lambda_root(ctx: text) -> text {
+  if starts_with(ctx, "n___lambda_") {
+    rest = ctx[11..];
+    cut = -1;
+    for i in 0..len(rest) {
+      if rest[i..i + 1] == "_" {
+        cut = i;
+      }
+    }
+    return if cut < 0 { "" } else { rest[0..cut] };
+  }
+  if starts_with(ctx, "n_") { ctx[2..] } else { ctx }
+}
+
+// The next lambda number of `root` on this pass.
+pub fn lambda_peek(el: El, root: text) -> integer {
+  for r in el.lambda_roots {
+    if r == root {
+      return el.lambda_next[r#index] ?? 0;
+    }
+  }
+  0
+}
+
+// The next lambda number of `root`, taken.
+pub fn lambda_take(el: El, root: text) -> integer {
+  for r in el.lambda_roots {
+    if r == root {
+      k = el.lambda_next[r#index] ?? 0;
+      el.lambda_next[r#index] = k + 1;
+      return k;
+    }
+  }
+  el.lambda_roots += [root];
+  el.lambda_next += [1];
+  0
 }

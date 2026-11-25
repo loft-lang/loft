@@ -2258,6 +2258,15 @@ pub fn int4_rows(e: el::El, t: ir::TypeT) {
 // What `Data::vector_def` answers for element type `t`, looked up where the standard library
 // registered it: the `main_vector<T>` wrapper (its definition and store type) and the `vector<T>`
 // store type.  An element type the library has no rows for yet is refused by name.
+// `OpGetField(db, 0, …)`'s row for the vector a `main_vector<T>` wrapper holds: its `vector`
+// field as the wrapper was laid out.  The vector's own row (`vec_known`, what its elements are
+// pushed through) unless a vector of the same name laid the wrapper out first — a full-width
+// `vector<vector<integer>>` before a narrow `vector<vector<i32>>` shares the wrapper and its row.
+pub fn wrapper_row(e: el::El, r: VecRows) -> integer {
+  fk = if r.main_def < 0 { -1 } else { el_schema::field_content(e, r.main_known, "vector") };
+  if fk >= 0 { fk } else { r.vec_known }
+}
+
 pub struct VecRows {
   pub main_def: integer,
   pub main_known: integer,
@@ -2555,6 +2564,11 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
     },
     _ => {}
   }
+  // (A vector of narrow vectors: its row is built from the content — `vector<vector<int<…>>>` —
+  // not found by a name the library's full-width `vector<integer>` shares.)
+  if el_types::narrow_vector(t) {
+    return el_schema::vector_type(e, el_schema::content_type(e, t));
+  }
   el_schema::schema_type(e, "vector<{nm}>")
 }
 
@@ -2621,7 +2635,8 @@ pub fn element_place_type(e: el::El, t: ir::TypeT) -> integer {
     return el::def(e, sed).known_type;
   }
   match t {
-    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
+    // (A narrow inner vector's place is its own row, `vector<int<…>>`, not the library's.)
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else if el_types::narrow_vector(t) { el_schema::content_type(e, t) } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
   }
 }
@@ -2656,6 +2671,23 @@ pub fn body_width32(e: el::El, d: integer) -> boolean {
 // `Parser::count_type` (`@FR-W-Count`, `@FR-W-Lit`): the type of a plain integer literal and of
 // every count or counter the compiler makes itself — the regime's `i32` (`IntegerSpec::i32`, its
 // width forced to 4) in a file under the 32-bit regime, else the `signed32` template.
+// `Function::start_loop`: this loop's number, `loops.len() - 1` once it is pushed.  Pass 2's
+// `loops` still holds pass 1's, so its numbers continue after them (`_par_mat_l2` beside pass
+// 1's `_par_mat_l0` in a function of two loops).
+pub fn start_loop(e: el::El, vars: el_vars::Vars) -> integer {
+  base = 0;
+  if !e.first_pass {
+    for lp in e.loops_p1 {
+      if lp / 65536 == e.context {
+        base = lp % 65536;
+      }
+    }
+  }
+  n = base + vars.loops_started;
+  vars.loops_started += 1;
+  n
+}
+
 pub fn count_type(e: el::El) -> ir::TypeT {
   if el_types::regime32(e) {
     return ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 4 } };

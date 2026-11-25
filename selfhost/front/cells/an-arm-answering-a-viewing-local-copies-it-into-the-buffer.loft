@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector `if` tail whose arm answers a local viewing another local copies it into
+// the buffer, and the body borrows the buffer, not the local.
+// Prints: [11,22,33] []
+
+fn c4(k: integer) -> vector<integer> { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; if k < 0 { [] } else { e } }
+fn main() { println("{c4(1)} {c4(-1)}"); }

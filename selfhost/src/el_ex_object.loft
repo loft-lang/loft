@@ -1705,6 +1705,11 @@ pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::
       }
       return el_ex_pattern::vector_value(e, vars, node, hinted: false).x;
     }
+    // (A literal handed to a parameter that names no element — a template's `vector<T>` —
+    // keeps its element temp bare: `unique_elm_var`'s `parent_tp` has no content.)
+    if e.p.nodes[node] is SVecLit {
+      vars.bare_literal = node;
+    }
     return el_ex_assign::expression(e, vars, node);
   }
   el_ex_pattern::vector_value(e, vars, node, elem: elem).x

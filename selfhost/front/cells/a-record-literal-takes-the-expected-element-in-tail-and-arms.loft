@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a literal of records at the tail, in `if` and `match` arms, types its element temp from the expected plain vector; an argument, a bind and a `vector<T>?` result do not.
+// Prints: 1 1 1 1 1 1
+
+struct P { x: integer }
+fn t1() -> vector<P> { [P { x: 1 }] }
+fn t2(c: boolean) -> vector<P> { if c { [P { x: 1 }] } else { [] } }
+fn t3() -> vector<P>? { [P { x: 1 }] }
+fn t4(c: boolean) -> vector<P>? { if c { [P { x: 1 }] } else { null } }
+fn t5() -> vector<P> { k = 1; [P { x: k }] }
+fn t6() -> integer { len([P { x: 1 }]) }
+fn t7(c: boolean) -> vector<P> { match c { true => [P { x: 1 }], _ => [] } }
+fn t8() -> vector<P> { return [P { x: 1 }]; }
+fn t9() -> integer { v = [P { x: 1 }]; len(v) }
+fn main() { println("{len(t1())} {len(t2(true))} {t6()} {len(t7(true))} {len(t8())} {t9()}"); }

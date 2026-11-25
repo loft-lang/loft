@@ -670,7 +670,7 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     ];
     head: vector<ir::Node> = [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
       el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
       init
     ];
@@ -681,7 +681,7 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   }
   ir::NdInsert { items: [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init,
     el_ir::cl(e, "OpSliceView", [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])
@@ -1684,8 +1684,13 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
   }
   if el_types::base(a.tp) is TyVector && !(a.tp is TyOptional) {
     parts: vector<Ex> = [];
+    // (A literal operand is read against the first operand's element on the second pass —
+    // `a + [3]` over a `vector<u8>` is a `vector<u8>` literal — as a narrow element needs; the
+    // first pass reads it as it is spelled.)
+    celm = match el_types::base(a.tp) { TyVector { inner: ci } => ci, _ => ir::TyVoid };
+    narrow_elm = match celm { TyInteger { spec: cs } => el_types::narrow_width(cs) > 0 || el_types::int4(cs) || el_types::uint4(cs), _ => false };
     for n in rights {
-      parts += [el_ex_assign::expression(e, vars, n)];
+      parts += [if narrow_elm && !e.first_pass && e.p.nodes[n] is SVecLit { el_ex_pattern::vector_value(e, vars, n, elem: celm).x } else { el_ex_assign::expression(e, vars, n) }];
     }
     return vector_concat(e, vars, dest, a, parts);
   }
@@ -1767,8 +1772,12 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     }
   }
   if e.first_pass {
+    // (Pass 1 binds a local to the first operand's vector as it is read — a local, or the root
+    // of a place, naming itself as `depending` does: `q = a + [3]` borrows `a`, `b[0] + [3]`
+    // `b`.  A concatenation that is no bind — a `for` loop's source — borrows nothing.)
     if dest >= 0 {
-      return ex(ir::NdNull, ir::TyRewritten { inner: vt });
+      fpr = place_root(e, first);
+      return ex(ir::NdNull, ir::TyRewritten { inner: if fpr >= 0 { el_types::with_deps(vt, [fpr]) } else { vt } });
     }
     el_vars::create_unique(vars, "vec", vt);
     return ex(ir::NdNull, vt);
@@ -1779,7 +1788,9 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = rows!;
-  rec = el_schema::schema_type(e, nm);
+  // (A narrow element appends through its content row — `byte`, `short`, `int<…>` — which its
+  // name, `integer(0, 255)`, does not find.)
+  rec = if match elm { TyInteger { spec: cs } => el_types::narrow_width(cs) > 0 || el_types::int4(cs) || el_types::uint4(cs), _ => false } { el_schema::content_type(e, elm) } else { el_schema::schema_type(e, nm) };
   if rec < 0 {
     el::refuse(e, "a vector concatenation of this element type: {type_kind(elm)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1796,7 +1807,7 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
   w = ir::NdVar { n: target };
   ls: vector<ir::Node> = [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(target, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(target, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     el_ir::cl(e, "OpAppendVector", [w, a.code, ir::NdInt { n: rec }])
   ];

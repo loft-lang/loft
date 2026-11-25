@@ -816,7 +816,7 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   ];
   ops: vector<ir::Node> = if in_buffer { [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rv }]), init] } else { [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(rv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(rv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init
   ] };
@@ -983,6 +983,7 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
     }
   }
   first_names: vector<text> = [];
+  alt_names: vector<text> = [];
   for pn in pats {
     match e.p.nodes[pn] {
       PWild => {
@@ -1089,7 +1090,8 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                   }
                 }
               }
-              if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) {
+              // (A slot a partial name made `τ?` is still `τ` to the patterns that bind it.)
+              if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) && !match el_vars::tp(vars, mv) { TyOptional { inner: mvi } => el_types::is_equal(e, mvi, ft), _ => false } {
                 el::refuse(e, "a binding the listed patterns type differently: {bname}");
                 return null;
               }
@@ -1111,12 +1113,14 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
           }
         }
         if split {
-          if len(r.alts) == 0 {
-            first_names = anames;
-          } else if len(anames) != len(first_names) || !all_in(anames, first_names) {
-            el::refuse(e, "a name only some of the listed patterns bind");
-            return null;
+          // (`@FR-P-Alt-Diff`: a name only some listed patterns bind is `τ?`, null where another
+          // matched — typed and filled once every pattern is read, below.)
+          for an in anames {
+            if !first_names.contains(an) {
+              first_names += [an];
+            }
           }
+          alt_names += [anames.join("|")];
           r.alts += [VAlt { cond: c, binds: ab, fcond: fc }];
         } else {
           r.binds += ab;
@@ -1131,7 +1135,61 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
       }
     }
   }
+  // `@FR-P-Alt-Diff`, as Rust's multi-pattern arm makes it: each name some pattern lacks, in
+  // the order of its slot, is typed `τ?` (`capture_optional`) and set to its null at the end of
+  // every pattern's bindings that lacks it.
+  partial: vector<integer> = [];
+  for pn2 in first_names {
+    for ns in alt_names {
+      if !ns.split('|').contains(pn2) && !partial.contains(el_vars::var(vars, pn2)) {
+        partial += [el_vars::var(vars, pn2)];
+      }
+    }
+  }
+  partial = sorted_ints(partial);
+  for pv in partial {
+    pname = "";
+    for fnm in first_names {
+      if el_vars::var(vars, fnm) == pv {
+        pname = fnm;
+      }
+    }
+    pt = el_vars::tp(vars, pv);
+    if !(pt is TyOptional) {
+      if match pt { TyInteger { spec } => el_types::narrow_width(spec) > 0, _ => false } {
+        el::refuse(e, "a narrow integer capture only some of the listed patterns bind");
+        return null;
+      }
+      pt = ir::TyOptional { inner: pt };
+      el_vars::set_type(vars, pv, pt);
+    }
+    // (`Parser::null` of a `vector<T>?` is the bare null; a record's the reference sentinel.)
+    pnull = if match pt { TyOptional { inner: pvi } => pvi is TyVector, _ => false } { ir::NdNull } else { el_convert::null_of(e, match pt { TyOptional { inner: pti } => match pti { TyReference { n: _ } => pti, TyVector { inner: _ } => pti, TyText { dep: _ } => ir::TyText { dep: [] }, _ => el_types::without_deps(pti) }, _ => pt }) };
+    if pnull == null {
+      el::refuse(e, "a capture only some of the listed patterns bind, of this type: {type_kind(pt)}");
+      return null;
+    }
+    for ai in 0..len(r.alts) {
+      if !alt_names[ai].split('|').contains(pname) {
+        r.alts[ai].binds += [el_ir::v_set(pv, pnull!)];
+      }
+    }
+  }
   r
+}
+
+fn sorted_ints(xs: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in xs {
+    at = len(out);
+    for o in out {
+      if x < o && at == len(out) {
+        at = o#index;
+      }
+    }
+    out.insert(at, x);
+  }
+  out
 }
 
 pub fn all_in(xs: vector<text>, ys: vector<text>) -> boolean {
@@ -1504,6 +1562,7 @@ pub fn condition(e: el::El, c: Ex) -> Ex? {
 // does not hold — `if !cond { break }` — and runs the body, a block expecting nothing.
 pub fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> Ex {
   c0 = el_ex_assign::expression(e, vars, cond);
+  start_loop(e, vars);
   cc = condition(e, c0);
   if cc == null {
     el::refuse(e, "a `while` condition that is not a boolean: {type_kind(c0.tp)}");
@@ -1960,7 +2019,11 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
     // library's already.
     TyInteger { spec } => if el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec) { el_schema::content_type(e, t) } else { -1 },
     // A vector element's content is the inner vector's own store type.
-    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
+    // (A narrow inner element — `vector<i32>` — has its own content and vector rows, made here
+    // ahead of the outer one; by name it would read the library's full-width `vector<integer>`.)
+    // (…and so does a vector inner element: the middle row of a three-deep vector is built
+    // from its content, `database.vector`, where its name finds nothing yet.)
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else if inner is TyVector || match inner { TyInteger { spec: vis } => el_types::narrow_width(vis) > 0 || el_types::int4(vis) || el_types::uint4(vis), _ => false } { el_schema::content_type(e, t) } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
   };
   if kt >= 0 && kt != el_schema::NO_TYPE {
@@ -2122,20 +2185,24 @@ pub fn variant_literal(e: el::El, n: integer) -> boolean {
 // The element temps of a nested vector literal, minted on the first pass as `parse_item` mints
 // them while it reads the items (`unique_elm_var`, each borrowing the element it is built into):
 // the second pass's build finds them by name.  An empty nested `[]` mints none.
-fn mint_nested_elms(e: el::El, vars: el_vars::Vars, outer: integer, n: integer) {
+// (`want`: the vector `n` is expected to be.  A literal whose items are vector literals types
+// its temp as their vector — `vector<integer>["_elm_1"]` in a three-deep literal — as the
+// nested-literal temp of `unique_elm_var` is typed.)
+fn mint_nested_elms(e: el::El, vars: el_vars::Vars, outer: integer, n: integer, want: ir::TypeT = ir::TyUnknown { n: 0 }) {
   if el_ex_place::vec_lit_len(e, n) <= 0 {
     return;
   }
-  inner = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [outer] });
-  match e.p.nodes[n] {
-    SVecLit { items } => {
-      for it in items {
-        if e.p.nodes[it] is SVecLit {
-          mint_nested_elms(e, vars, inner, it);
-        }
-      }
-    },
-    _ => {}
+  items: vector<integer> = match e.p.nodes[n] { SVecLit { items: its } => its, _ => [] };
+  inner_want = match want { TyVector { inner: wi } => wi, _ => ir::TyUnknown { n: 0 } };
+  first_vec = len(items) > 0 && el_ex_place::vec_lit_len(e, items[0]!) > 0;
+  // (The expected element where it is known: reading the items evaluates them — a call among
+  // them would mint its work ref a second time.)
+  et = if !first_vec { ir::TyUnknown { n: 0 } } else if inner_want is TyVector { el_types::without_deps(inner_want) } else { el_types::without_deps(nested_item_type(e, vars, items[0]!, inner_want)) };
+  inner = el_vars::create_unique(vars, "elm", if et is TyVector { el_types::with_deps(et, [outer]) } else { ir::TyReference { n: 0, dep: [outer] } });
+  for it in items {
+    if e.p.nodes[it] is SVecLit {
+      mint_nested_elms(e, vars, inner, it, inner_want);
+    }
   }
 }
 
@@ -2166,6 +2233,11 @@ pub fn nested_item_type(e: el::El, vars: el_vars::Vars, n: integer, want: ir::Ty
     if el_types::is_unknown(first) {
       first = el_types::without_deps(t);
     }
+  }
+  // (Integer items under an expected narrow element are that element: `parse_vector` converts
+  // them to it, `[1001, 2002]` in a `vector<vector<i16>>` is a `vector<i16>` on either pass.)
+  if first is TyInteger && match want { TyVector { inner: wi } => match wi { TyInteger { spec: ws } => el_types::narrow_width(ws) > 0 || el_types::int4(ws) || el_types::uint4(ws), _ => false }, _ => false } {
+    return want;
   }
   if el_types::is_unknown(first) { want } else { ir::TyVector { inner: first, dep: [] } }
 }
@@ -2209,16 +2281,18 @@ pub fn variant_literal_def(e: el::El, n: integer) -> integer {
 }
 
 // The first pass of a struct literal: its field values read, for the locals they make.
-pub fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer) {
+pub fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer, holder: integer = -1) {
   match e.p.nodes[n] {
-    SStructLit { name, fields } => { first_pass_fields(e, vars, el::def_nr(e, name), fields); },
+    SStructLit { name, fields } => { first_pass_fields(e, vars, el::def_nr(e, name), fields, holder: holder); },
     _ => {}
   }
 }
 
 // A struct literal's field values read on the first pass: a collection field's literal is built
 // in the field, so only its items are read — it is no vector value of its own.
-pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>) {
+// `holder`: the element temp of the vector literal this record is an item of, which the
+// field literal's own element temp borrows (`parent_tp.depend()`); -1 elsewhere.
+pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, holder: integer = -1) {
   for fi in fields {
     match e.p.nodes[fi] {
       SFieldInit { name: fname, e: fe } => {
@@ -2237,7 +2311,10 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               // its temporary by that number.
               if len(items) > 0 {
                 // (`is_field`: a reference into the field's store, never freed itself.)
-                fpe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                // (Typed by the field's element, `unique_elm_var`'s `parent_tp.content()`: a
+                // struct enum's `ref(T)`, the bare reference for a scalar.)
+                fet = empty_elm_type(e, at, holder);
+                fpe = el_vars::create_unique(vars, "elm", el_types::with_deps(fet, if holder >= 0 { [holder] } else { [] }));
                 el_vars::set_skip_free(vars, fpe, "parse_vector_inner");
                 // (A literal that fills the field names its vector's row on this pass, ahead
                 // of the struct that holds it; an empty one names nothing.)
@@ -2468,7 +2545,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     if sd >= 0 {
       recs += [it];
       if e.first_pass {
-        literal_field_exprs(e, vars, it);
+        literal_field_exprs(e, vars, it, holder: elm);
       }
       xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
     } else if el_ex_place::vec_lit_len(e, it) > 0 || (e.p.nodes[it] is SVecLit && (el_types::base(nested_want) is TyVector || len([for oi in items if el_ex_place::vec_lit_len(e, oi) > 0 { oi }]) > 0)) {
@@ -2476,9 +2553,24 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // one too (`[[1], []]`): its element made and zeroed, nothing appended.
       nested += [it];
       if e.first_pass && elm >= 0 {
-        mint_nested_elms(e, vars, elm, it);
+        mint_nested_elms(e, vars, elm, it, match nested_want { TyVector { inner: _ } => nested_want, _ => ir::TyUnknown { n: 0 } });
       }
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
+      // (`parse_vector` of the inner literal registers its element's `vector<T>` and
+      // `main_vector<T>` on the first pass, at its `]` — a narrow element's own, which the
+      // library has not (`vector<i16>` beside the library's `vector<integer>`), and a vector
+      // element's: the middle literal of a three-deep one.)
+      ninner = match el_types::base(xs[-1]!.tp) { TyVector { inner: ni } => ni, _ => ir::TyVoid };
+      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && (ninner is TyVector || match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false }) && el::def_nr(e, "main_vector<{el_types::elem_name(e, ninner)}>") < 0 {
+        ntok = match e.p.nodes[it] { SVecLit { at: nat } => nat, _ => 0 };
+        // (A declared outer vector's own definitions stand first: Rust registers them where the
+        // declaration is read, before the literal's items.)
+        if declared is TyVector && el::def_nr(e, "main_vector<{el_types::elem_name(e, declared)}>") < 0 {
+          otok = match e.p.nodes[n] { SVecLit { at: oat } => oat, _ => 0 };
+          vector_def(e, declared, el_types::elem_name(e, declared), otok, true);
+        }
+        vector_def(e, ninner, el_types::elem_name(e, ninner), ntok, false);
+      }
     } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
       // A record item is read INTO its element (`parse_item`): a local it starts with borrows
       // nothing there (`parse_var`'s `into` arm).
@@ -2494,6 +2586,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       xs += [el_ex_assign::expression(e, vars, it)];
       vars.enum_hint = keep_hint;
     }
+  }
+  // (`unique_elm_var` over nested literals: the element temp is the nested vector's type,
+  // borrowing the destination — `vv = [[11, 22], [33]]` makes `_elm_1: vector<integer>["vv"]`.)
+  if e.first_pass && elm >= 0 && len(nested) > 0 && len(items) > 0 && nested[0]! == items[0]! && len(xs) > 0 && el_types::base(xs[0]!.tp) is TyVector && match el_vars::tp(vars, elm) { TyReference { n: en } => en == 0, _ => false } {
+    edeps = match el_vars::tp(vars, elm) { TyReference { dep } => dep, _ => [] };
+    el_vars::set_var_type(vars, elm, el_types::with_deps(el_types::without_deps(el_types::base(xs[0]!.tp)), edeps));
   }
   mixed = len(recs) > 0 && len(recs) != len(xs);
   // Mixed with items that are no literal, each element is made in order: carried for a plain
@@ -3369,7 +3467,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   vt = el_vars::tp(vars, v);
   el_ir::v_block([
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: rows.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: rows.vec_known }])),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, rows) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     ir::NdVar { n: v }
   ], vt, "Vector")
@@ -3387,7 +3485,7 @@ pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, reb
   el_vars::depend(vars, v, db);
   [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: slot }])
   ]
 }

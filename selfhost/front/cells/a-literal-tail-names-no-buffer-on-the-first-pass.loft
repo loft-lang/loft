@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function whose vector tail is a literal names no buffer on the first pass, so a caller's bind borrows nothing there; a local tail does.
+// Prints: 2 1 1 2 1 1 3 3
+
+struct P { x: integer }
+fn v_lit() -> vector<P> { [P { x: 1 }, P { x: 2 }] }
+fn v_local() -> vector<P> { v: vector<P> = []; v += [P { x: 1 }]; v }
+fn v_lit_local() -> vector<P> { v = [P { x: 1 }]; v }
+fn v_call() -> vector<P> { v_lit() }
+fn v_if(c: boolean) -> vector<P> { if c { [P { x: 1 }] } else { [] } }
+fn v_ret(c: boolean) -> vector<P> { if c { return [P { x: 3 }]; } [P { x: 1 }] }
+fn v_int() -> vector<integer> { [1, 2, 3] }
+fn v_comp() -> vector<integer> { [for i in 0..3 { i * 2 }] }
+fn main() {
+  a = v_lit(); b = v_local(); c = v_lit_local(); d = v_call(); f = v_if(true); g = v_ret(false); h = v_int(); k = v_comp();
+  println("{len(a)} {len(b)} {len(c)} {len(d)} {len(f)} {len(g)} {len(h)} {len(k)}");
+}

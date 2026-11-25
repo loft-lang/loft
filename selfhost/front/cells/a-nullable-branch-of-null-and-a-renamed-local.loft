@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `vector<T>?` branch of `null` and a local the buffer was renamed onto builds the
+// local in place; the body answers the buffer's `?`.
+// Prints: [1,2] null
+
+fn b3(k: integer) -> vector<integer>? { if k < 0 { null } else { e = [1, 2]; e } }
+fn main() { println("{b3(1)} {b3(-1)}"); }

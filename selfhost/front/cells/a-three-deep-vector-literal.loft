@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a three-deep vector literal — full-width and `i32` — registers its middle
+// literal's `vector<…>` at that literal's `]`, builds the middle and outer rows from their
+// content before the wrapper, and types the middle literal's element temp as its vector items.
+// Prints: 3 1 222222 333333
+
+fn main() {
+  d3: vector<vector<vector<integer>>> = [[[1, 2], [3]], [[4]]];
+  vvv: vector<vector<vector<i32>>> = [[[111111, 222222]], [[333333]]];
+  println("{d3[0][1][0]} {len(d3[1])} {vvv[0][0][1]} {vvv[1][0][0]}");
+}

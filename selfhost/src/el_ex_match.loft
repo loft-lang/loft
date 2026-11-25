@@ -250,13 +250,15 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     // (`OpRefFromChildRec(OpGetField(host, pos, kt))`, `take_min(t.right)`) handed to a `&S` /
     // `&S?` whose `S` is held out of line gets a cell of this frame naming the field
     // (`OpSlotTag`), so the callee's whole write is the field write.  The cell is a second-pass
-    // work ref, never freed; the first pass mints nothing for it.
+    // work ref, never freed.  On the first pass `slot_cell_argument` answers nothing for a field,
+    // and the argument takes `convert`'s general road: a work ref of its type holding it.
     slot_d = binds::slot_link_def(e.b, pt);
     slot_field = match place { NdCall { def_nr: sfd, args: sfa } => if el::def(e, sfd).name == "OpRefFromChildRec" && len(sfa) > 0 { el_ir::unspan(sfa[0]!) } else { ir::NdNull }, _ => ir::NdNull };
     slot_kt = match slot_field { NdCall { def_nr: gfd, args: gfa } => if el::def(e, gfd).name == "OpGetField" && len(gfa) == 3 { match el_ir::unspan(gfa[2]!) { NdInt { n } => n, _ => 0 } } else { 0 }, _ => 0 };
     if slot_d != null && slot_kt != 0 {
       if e.first_pass {
-        return arg;
+        fwv = el_vars::work_ref(vars, at);
+        return ir::NdInsert { items: [el_ir::v_set(fwv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: fwv }])] };
       }
       cell = el_vars::work_ref_p2(vars, ir::TyReference { n: slot_d!, dep: [] });
       el_vars::set_skip_free(vars, cell, "slot_cell_argument");
@@ -418,10 +420,12 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     el::refuse(e, "a `for` with no body");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // A `par` loop over anything but a vector is materialised into one first
-  // (`materialise_iter_for_par`, `materialise_keyed_for_par`): refused by name, as are a
-  // destructure and a filter.
-  if par != null && (len(binds) > 1 || filter != null || e.p.nodes[source] is SRange) {
+  // (`parse_for`'s `start_loop`, after the `in`: the loop's number.)
+  loop_nr = el_ex_base::start_loop(e, vars);
+  // A `par` loop over a keyed collection, an iterator or a text is materialised into a vector
+  // first (`materialise_keyed_for_par`, `materialise_iter_for_par`): refused by name, as are a
+  // destructure and a filter; a range is materialised below (`par_range`).
+  if par != null && (len(binds) > 1 || filter != null) {
     el::refuse(e, "a `par` loop that destructures, filters or walks a range");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -453,6 +457,13 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[source] is SRange {
+    if par != null {
+      if rev {
+        el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return par_range(e, vars, h, source, par!, loop_nr);
+    }
     return el_ex_pattern::range_for(e, vars, h, source, rev: rev);
   }
   match e.p.nodes[source] {
@@ -605,7 +616,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     var_tp = ir::TyReference { n: td, dep: [vec] };
   }
   if par != null {
-    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
+    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp, loop_nr: loop_nr }, par!, body!);
   }
   // A function value's walk: the loop variable is the function type borrowing the walked vector.
   fn_walk = el_types::base(elem) is TyFunction && !rev && par == null;
@@ -1088,6 +1099,50 @@ pub fn yield_is_fresh(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT
 // `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
 // build a "Vector comprehension" block answering it — the walk's start as Rust's value form
 // lays it out.
+// `materialise_iter_for_par` for a range: the identity comprehension `[for e in lo..hi { e }]`
+// fills `_par_mat_l<loop>` (its index `_par_mat_index_l<loop>` declared and unused — the walk
+// steps the range's own `i#index` — its loop variable `_par_mat_e_l<loop>`, then the element
+// temp, `_comp_N` and the store), and the vector `par` loop runs over it, that fill standing
+// where a vector's hoist would.  Pass 1 mints the vector alone.
+fn par_range(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, par: integer, loop_nr: integer) -> Ex {
+  rwo = el_ex_pattern::range_walk(e, vars, h.id, source);
+  if rwo == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  rw = rwo!;
+  int_t = el_ex_base::count_type(e);
+  mat = el_vars::add_variable(vars, "_par_mat_l{loop_nr}", ir::TyVector { inner: int_t, dep: [] });
+  el_vars::set_defined(vars, mat);
+  x = ex(ir::NdNull, ir::TyVector { inner: int_t, dep: [] });
+  if !e.first_pass {
+    mi = el_vars::add_variable(vars, "_par_mat_index_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, mi);
+    me = el_vars::add_variable(vars, "_par_mat_e_l{loop_nr}", int_t);
+    el_vars::set_defined(vars, me);
+    celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [mat] });
+    comp = el_vars::create_unique(vars, "comp", int_t);
+    el_vars::set_defined(vars, comp);
+    r = el_ex_base::vector_rows(e, int_t, source, false);
+    if r == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r!.main_def, dep: [] });
+    el_vars::set_var_type(vars, mat, ir::TyVector { inner: int_t, dep: [db] });
+    el_vars::set_var_type(vars, celm, ir::TyReference { n: el::def_nr(e, "integer"), dep: [db] });
+    dest = ir::NdVar { n: mat };
+    steps = [el_ir::v_set(me, el_ir::v_block(rw.steps, int_t, "Iter range")), el_ir::v_set(comp, ir::NdVar { n: me }), el_ir::cl(e, el_ex_pattern::push_op(int_t), el_ex_pattern::push_args(e, vars, int_t, dest, ir::NdVar { n: comp }))];
+    items = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r!.main_known }]),
+      el_ir::v_set(mat, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r!.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ] + (if len(el_ex_pattern::range_init(rw)) > 1 { [ir::NdInsert { items: el_ex_pattern::range_init(rw) }] } else { el_ex_pattern::range_init(rw) }) + [el_ir::v_loop(steps, "For comprehension")];
+    // (A range start of more than one statement — a bound held in `_range_end_N` — stays a
+    // group of its own.)
+    x = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
+  }
+  el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: x, vec: mat, elem: int_t, var_tp: int_t, loop_nr: loop_nr }, par, h.body)
+}
+
 pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
   built = comprehension_into(e, vars, v, n, as_value: true);
@@ -1357,6 +1412,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     SComprehension { binds: bs, source: sc, filter: fl, body: bd } => { binds = bs; source = sc; filter = fl; body = bd; },
     _ => {}
   }
+  el_ex_base::start_loop(e, vars);
   // The destination's element temp, minted on both passes as the literal path mints it.
   celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
   // (`is_field`: into a field the element is a reference into the field's store — never freed.)
@@ -1569,8 +1625,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // (A fill runs no loop and mints no `_comp_N`.)
-  comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText || made_vec { b.tp } else { rec_t }) };
+  // (A fill runs no loop and mints no `_comp_N`; nor does a constant empty range, which
+  // `try_const_unroll_comprehension` builds as the empty vector before the loop is made.)
+  comp = if fill_count >= 0 || (ranged && rw != null && rw!.empty) { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText || made_vec { b.tp } else { rec_t }) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
   if keyed {
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
@@ -1649,9 +1706,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     // (`build_comprehension_code`'s value form allocates through `vector_db`, not `insert_new`:
     // its element keeps borrowing the `_vec_N` it was minted for.)
     if made {
-      // (A vector element's temp bound into a local is typed as the body's vector itself.)
+      // (A vector element's temp bound into a local is typed as the body's vector, borrowing
+      // the destination's store as a record element's does — not the body literal's own.)
       if made_vec && !as_value {
-        el_vars::set_var_type(vars, celm, b.tp);
+        el_vars::set_var_type(vars, celm, el_types::with_deps(el_types::without_deps(b.tp), [if had_store { v } else { db }]));
       } else {
         el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store || as_value { v } else { db }] });
       }
@@ -1663,7 +1721,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     }
     items = [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
       el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
     ];
   }
@@ -2395,7 +2453,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     // A call answering a view of its arguments keeps what it borrows of them the same way.
     view_call = match el_ir::unspan(x.code) { NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)), _ => false };
     // (So does a `?? return` / `?? panic(…)` / `?? break` subject: the same `ncr` block.)
-    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } { st } else { el_types::without_deps(st) };
+    ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } { st } else if match el_ir::unspan(x.code) { NdCall { def_nr: _ } => true, NdBlock { block: sb } => sb[0].name == "Object" || sb[0].name == "EnumUnitLit", _ => false } { el_types::without_deps(el_types::base(st)) } else { el_types::base(st) };
+    // (Held never nullable.  A call's answer — `match mk(k) { … }` over a `T?` holds `ref(T)` —
+    // and a literal, the held record's own store, borrow nothing; any other subject keeps what it
+    // borrows: a `??` over a view of a local holds `ref(Nd)["ops"]`, Rust's `local/record[ops]`.)
     // (In a text function Rust names the `??`'s own `_ncr_N` as what the answer borrows, not
     // the held subject — not carried: refused by name.)
     if match e.p.nodes[subject] { SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyText {
@@ -2636,8 +2697,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
             tuple_joined = true;
           }
         } else if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
-          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
-          result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`) — `?` where
+          // either arm may be absent (`@FR-N-Join`): two variant-or-null `if` arms.
+          sje = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+          result = if b.tp is TyOptional || result is TyOptional { ir::TyOptional { inner: sje } } else { sje };
         } else if arm_settles(result, b.tp) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
           // join (`arm_join_type`).
@@ -4030,7 +4093,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         el_vars::set_skip_free(vars, relm, "subrule_run");
         pre += [
           el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: vr.main_known }]),
-          el_ir::v_set(xs, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: vr.vec_known }])),
+          el_ir::v_set(xs, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, vr) }])),
           el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
           el_ir::v_set(rx, if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) })
         ];
@@ -4427,6 +4490,7 @@ fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
 // scalar; a function value, a record or text element and a callee with hidden parameters are
 // refused by name.  The first pass answers the result's type alone, as Rust's does.
 pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_map");
   }
@@ -4449,14 +4513,17 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   // by `OpSetText`) and a plain struct (copied into its fresh element).
   text_out = el_types::base(out) is TyText && !(out is TyOptional);
   rec_out = !(out is TyOptional) && struct_ref(e, el_types::base(out)) >= 0 && el::def(e, struct_ref(e, el_types::base(out))).def_type == el::DT_STRUCT;
-  out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out;
+  // (…and a vector: each answer copied whole into its fresh element, `OpCopyRecord` at the
+  // element vector's type.)
+  vec_out = !(out is TyOptional) && el_types::base(out) is TyVector && element_vector_known(e, out) >= 0;
+  out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out || vec_out;
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
   in_ok = el_convert::plain_scalar(in_elem) || in_text || in_rec;
   // A function VALUE (a local, a lambda with captures) is held in `_map_fn_N` first, minted
   // before the walk's own temporaries, and called through it (`callback_call_ref`).
   by_value = d < 0;
-  if !in_ok || !out_ok || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !(el_convert::plain_scalar(in_elem) && el_convert::plain_scalar(out)) {
+  if !in_ok || !out_ok || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !(el_convert::plain_scalar(in_elem) && (el_convert::plain_scalar(out) || vec_out)) {
     el::refuse(e, "a `map` over or to an element of this kind: {type_kind(in_elem)} to {type_kind(out)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4482,7 +4549,12 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   res = el_vars::create_unique(vars, "map_result", rt);
   el_vars::set_defined(vars, res);
   out_d = el_ex_base::type_def_nr(e, el_types::base(out));
-  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (text_out || rec_out) && out_d >= 0 { out_d } else { 0 }, dep: [res] });
+  // (`unique_elm_var` over a vector element: the slot is that vector, borrowing the result, an
+  // inline ref.)
+  slot = el_vars::create_unique(vars, "elm", if vec_out { el_types::with_deps(el_types::without_deps(el_types::base(out)), [res]) } else { ir::TyReference { n: if (text_out || rec_out) && out_d >= 0 { out_d } else { 0 }, dep: [res] } });
+  if vec_out {
+    el_vars::mark_inline(vars, slot, "unique_elm_var");
+  }
   // The callback's call, made as any call (`callback_call`): its hidden buffers are the call's.
   call: ir::Node = ir::NdNull;
   if by_value {
@@ -4508,11 +4580,15 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   el_vars::set_defined(vars, comp);
   w = ir::NdVar { n: res };
   steps: vector<ir::Node> = [el_ir::v_set(elm_v, nx!), vector_past_end(e, mv, idx), el_ir::v_set(comp, call)];
-  if text_out || rec_out {
+  if text_out || rec_out || vec_out {
     sv = ir::NdVar { n: slot };
     vk = ir::NdInt { n: rows!.vec_known };
     steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
-    if text_out {
+    if vec_out {
+      // (The fresh element vector starts empty, then takes the answer's items.)
+      steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: element_vector_known(e, out) }])];
+    } else if text_out {
       steps += [el_ex_pattern::elem_write(e, out, sv, ir::NdVar { n: comp })];
     } else {
       rk = el::def(e, struct_ref(e, el_types::base(out))).known_type;
@@ -4528,6 +4604,15 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::No
   ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
 }
 
+// The known type of the element vector `t` (`vector<text>`'s own, not the generic `vector`'s):
+// what `OpCopyRecord` copies a whole element vector at; -1 where it has no definition.
+fn element_vector_known(e: el::El, t: ir::TypeT) -> integer {
+  inner = match el_types::base(t) { TyVector { inner: i } => i, _ => return -1 };
+  nm = el_types::elem_name(e, inner);
+  vd = if nm == "" { -1 } else { el::def_nr(e, "vector<{nm}>") };
+  if vd < 0 { -1 } else { el::def(e, vd).known_type }
+}
+
 // The type of the hoisted copy a `map` / `filter` / `reduce` walks: the source's, borrowing the
 // source itself where it is a local (`depending` replaces the deps).
 fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
@@ -4540,6 +4625,7 @@ fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
 // `Parser::parse_filter`: as `map_call`, the element kept where the predicate holds
 // (`if pred(elm) null else continue`), then pushed as it is.
 pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_filter");
   }
@@ -4558,8 +4644,10 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   // The element kinds carried, as `map_call`'s: a plain scalar, a text, a plain struct.
   in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
   in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
+  // (…and a vector: a kept element copied whole into its fresh element, as `map_call`'s.)
+  in_vec = !(in_elem is TyOptional) && el_types::base(in_elem) is TyVector && element_vector_known(e, in_elem) >= 0;
   by_value = d < 0;
-  if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
+  if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec || in_vec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
     el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4574,13 +4662,16 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
   idx = el_vars::create_unique(vars, "filter_idx", int_t);
   el_vars::set_defined(vars, idx);
   plain = el_types::without_deps(in_elem);
-  elm_t = if in_text || in_rec { el_types::with_deps(plain, [mv]) } else { in_elem };
+  elm_t = if in_text || in_rec || in_vec { el_types::with_deps(plain, [mv]) } else { in_elem };
   elm_v = el_vars::create_unique(vars, "filter_elm", elm_t);
   el_vars::set_defined(vars, elm_v);
   res = el_vars::create_unique(vars, "filter_result", ir::TyVector { inner: plain, dep: [] });
   el_vars::set_defined(vars, res);
   in_d = el_ex_base::type_def_nr(e, el_types::base(in_elem));
-  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (in_text || in_rec) && in_d >= 0 { in_d } else { 0 }, dep: [res] });
+  slot = el_vars::create_unique(vars, "elm", if in_vec { el_types::with_deps(plain, [res]) } else { ir::TyReference { n: if (in_text || in_rec) && in_d >= 0 { in_d } else { 0 }, dep: [res] } });
+  if in_vec {
+    el_vars::mark_inline(vars, slot, "unique_elm_var");
+  }
   test: ir::Node = ir::NdNull;
   if by_value {
     test = ir::NdCallRef { var: fv, args: [ir::NdVar { n: elm_v }] };
@@ -4600,9 +4691,10 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
-  comp = el_vars::create_unique(vars, "comp", if in_text || in_rec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
+  // (`parse_filter` mints the kept element's `_comp_N` before the result's store.)
+  comp = el_vars::create_unique(vars, "comp", if in_text || in_rec || in_vec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
   el_vars::set_defined(vars, comp);
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
   w = ir::NdVar { n: res };
   steps: vector<ir::Node> = [
     el_ir::v_set(elm_v, nx!),
@@ -4610,11 +4702,14 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
     el_ir::v_if(test, ir::NdNull, ir::NdContinue { n: 0 }),
     el_ir::v_set(comp, ir::NdVar { n: elm_v })
   ];
-  if in_text || in_rec {
+  if in_text || in_rec || in_vec {
     sv = ir::NdVar { n: slot };
     vk = ir::NdInt { n: rows!.vec_known };
     steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
-    if in_text {
+    if in_vec {
+      steps += [el_ir::cl(e, "OpSetInt4", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, sv, ir::NdInt { n: element_vector_known(e, in_elem) }])];
+    } else if in_text {
       steps += [el_ex_pattern::elem_write(e, in_elem, sv, ir::NdVar { n: comp })];
     } else {
       rk = el::def(e, struct_ref(e, el_types::base(in_elem))).known_type;
@@ -4633,6 +4728,7 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
 // `Parser::parse_reduce`: `v.reduce(init, f)` folds in place — the accumulator set to `init`,
 // then `acc = f(acc, elm)` for each element — in a "reduce" block answering it.
 pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  el_ex_base::start_loop(e, vars);
   if el_trace::on() {
     el_trace::route(e, "parse_reduce");
   }

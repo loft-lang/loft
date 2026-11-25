@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function answering a literal vector of records with a four-byte narrow field
+// (`u32`, `i32`) gets no constant twin — `const_literal` folds no `OpSetInt4`/`OpSetInt4Raw`
+// field — while a 1- or 2-byte narrow field's does.
+// Prints: 4294967295 1 -7 200
+
+struct R { a: u32, c: integer }
+struct Q { a: i32 }
+struct B { a: u8 }
+fn minted() -> vector<R> { [R { a: 4294967295, c: 1 }] }
+fn signed() -> vector<Q> { [Q { a: -7 }] }
+fn small() -> vector<B> { [B { a: 200 }] }
+fn main() { m = minted(); q = signed(); b = small(); println("{m[0].a} {m[0].c} {q[0].a} {b[0].a}"); }

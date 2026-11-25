@@ -172,6 +172,8 @@ pub struct Vars {
   // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
   // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
   pub loop_made: vector<integer>,
+  // `Function::start_loop`'s count on this pass: the loops begun so far.
+  pub loops_started: integer = 0,
   // `ended_spelling`: per open loop, the spelling to give back to its ended binding.
   pub loop_spellings: vector<LoopSpelling>,
   // The subject node of a tuple member an assignment writes (`v[i].1 += 5`): its element is
@@ -311,6 +313,13 @@ pub struct Vars {
   pub foreign_bound: vector<integer>,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
   pub lambdas: integer = 0,
+  // The closure records (`__closure_<root>_<k>`) of the lambdas this body made — a lambda made
+  // inside a lambda is numbered in its enclosing FUNCTION's sequence, so the body's own `k`s are
+  // not `0..lambdas`.
+  pub lambda_recs: vector<text> = [],
+  // A literal (by its syntax node) read against an expected `vector<T>?`: the content of a
+  // nullable vector is unknown to `unique_elm_var`, so its element temp keeps the bare reference.
+  pub bare_literal: integer = -1,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
   // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
   pub expect_node: integer = -1,
@@ -1011,6 +1020,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_ctext = 0;
   v.work_tp2 = 0;
   v.lambdas = 0;
+  v.lambda_recs = [];
 }
 
 // `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the

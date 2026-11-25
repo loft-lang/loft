@@ -1658,6 +1658,11 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
     }
+    // (An unwrapped local, `inner!` — the `ncr` block checking it present and answering it —
+    // is set as the child as the local itself is.)
+    if same && match xc { NdBlock { block: nb } => nb[0].name == "ncr" && len(nb[0].operators) > 0 && el_ir::unspan(el_ir::last(nb[0].operators)) is NdVar, _ => false } {
+      return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
+    }
     // A unit variant (`TVec { inner: TInt }`): its record, built in a work ref, set as the child.
     if same && match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
