@@ -2125,8 +2125,9 @@ pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
 // `Parser::iter_for` + `append_iter` (`"{for y in v {y * 3}}"`): a `for` in a format hole renders
 // `[`, each body value formatted as the hole says with `,` between, then `]` — `{id}#index`
 // first, the loop's number, `_val_N` (typed by the body), the loop variable, and `{id}#count`
-// when the appender counts.  Carried for one binding over a vector local, no filter and no
-// `par`; null (refused by name) otherwise.
+// when the appender counts; a filter continues the walk where it does not hold.  Carried for
+// one binding over a vector local or an integer range, no `par`; null (refused by name)
+// otherwise.
 pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack: boolean, f: el_ex_call::Fmt) -> vector<ir::Node>? {
   binds: vector<text> = [];
   source = -1;
@@ -2139,20 +2140,39 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   }
   sv = match e.p.nodes[source] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
   st = if sv >= 0 { el_vars::tp(vars, sv) } else { ir::TyVoid };
-  if len(binds) != 1 || par != null || filter != null || body == null || sv < 0 || !(st is TyVector) {
-    el::refuse(e, "a `for` in a format hole over a source other than a vector local, or with a filter");
+  range = e.p.nodes[source] is SRange;
+  if len(binds) != 1 || par != null || body == null || (!range && (sv < 0 || !(st is TyVector))) {
+    el::refuse(e, "a `for` in a format hole over a source other than a vector local or a range");
     return null;
   }
-  elem = match st { TyVector { inner } => inner, _ => ir::TyVoid };
   src_id = binds[0];
   id = el_vars::loop_binding(vars, src_id);
-  idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
-  el_vars::set_defined(vars, idx);
-  el_ex_base::start_loop(e, vars);
+  init: vector<ir::Node> = [];
+  head: vector<ir::Node> = [];
+  lt: ir::TypeT = ir::TyVoid;
+  idx = -1;
+  rw: el_ex_pattern::RangeWalk? = null;
+  if range {
+    el_ex_base::start_loop(e, vars);
+    rw = el_ex_pattern::range_walk(e, vars, id, source);
+    if rw == null {
+      return null;
+    }
+    idx = rw!.idx;
+    lt = el_ex_base::count_type(e);
+    init = el_ex_pattern::range_init(rw!);
+  } else {
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    el_ex_base::start_loop(e, vars);
+    lt = match st { TyVector { inner } => el_types::with_deps(el_types::without_deps(inner), [sv]), _ => ir::TyVoid };
+    init = [el_ir::v_set(idx, ir::NdInt { n: -1 })];
+  }
   val = el_vars::create_unique(vars, "val", ir::TyUnknown { n: 0 });
-  lv = loop_var(vars, src_id, id, el_types::with_deps(el_types::without_deps(elem), [sv]));
+  lv = loop_var(vars, src_id, id, lt);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
+  fc = el_ex_pattern::loop_filter(e, vars, filter);
   b = el_ex_assign::parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
   el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
@@ -2163,16 +2183,25 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     cnt = el_vars::add_variable(vars, "{id}#count", count_type(e));
   }
   el_vars::set_defined(vars, cnt);
-  next = vector_step(e, sv, idx, elem);
-  if next == null {
-    if !e.first_pass {
-      el::refuse(e, "a `for` in a format hole over a vector of this element: {type_kind(elem)}");
+  if range {
+    head = [el_ir::v_set(lv, el_ir::v_block(rw!.steps, lt, "Iter range"))];
+  } else {
+    elem = match st { TyVector { inner } => inner, _ => ir::TyVoid };
+    next = vector_step(e, sv, idx, elem);
+    if next == null {
+      if !e.first_pass {
+        el::refuse(e, "a `for` in a format hole over a vector of this element: {type_kind(elem)}");
+      }
+      return null;
     }
-    return null;
+    head = [el_ir::v_set(lv, next!), vector_past_end(e, sv, idx)];
+  }
+  if fc != null {
+    head += [fc!];
   }
   app = if stack { "OpAppendStackText" } else { "OpAppendText" };
-  it = el_ir::v_block([el_ir::v_set(lv, next!), vector_past_end(e, sv, idx), b.code], vt, "Iter For");
+  it = el_ir::v_block(head + [b.code], vt, "Iter For");
   steps: vector<ir::Node> = [el_ir::v_set(val, it), el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "," }]), ir::NdNull), el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
   el_ex_call::append_spec(e, steps, w, ir::NdVar { n: val }, vt, stack, f);
-  [el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "[" }]), ir::NdInsert { items: [el_ir::v_set(idx, ir::NdInt { n: -1 })] }, el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "]" }])]
+  [el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "[" }]), ir::NdInsert { items: init }, el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "]" }])]
 }
