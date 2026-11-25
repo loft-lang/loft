@@ -413,8 +413,17 @@ impl RuntimeError {
     /// frames at all (loft#1056).
     #[must_use]
     pub fn render(&self) -> String {
-        let entry = self.to_diag_entry();
-        let loader = crate::diagnostic_render::FileSourceLoader::new();
+        let mut entry = self.to_diag_entry();
+        // The file is printed under its name ([`crate::source_name`]: the generated binary
+        // carries only that name), and its source line read from wherever the name is found.
+        let roots = crate::source_name::program_roots();
+        if let Some(roots) = &roots {
+            entry.file = crate::source_name::name(&entry.file, roots);
+        }
+        let loader = NamedSourceLoader {
+            roots: roots.unwrap_or_default(),
+            files: crate::diagnostic_render::FileSourceLoader::new(),
+        };
         let mut out = crate::diagnostic_render::render_entry_pretty(
             &entry,
             &loader,
@@ -589,6 +598,19 @@ impl RuntimeError {
             suggestion: None,
             fixes: Vec::new(),
         }
+    }
+}
+
+/// Reads a source line by the NAME a fault prints ([`crate::source_name::locate`]).
+struct NamedSourceLoader {
+    roots: crate::source_name::Roots,
+    files: crate::diagnostic_render::FileSourceLoader,
+}
+
+impl crate::diagnostic_render::SourceLoader for NamedSourceLoader {
+    fn line(&self, file: &str, line_1based: u32) -> Option<String> {
+        let path = crate::source_name::locate(file, &self.roots)?;
+        self.files.line(&path.to_string_lossy(), line_1based)
     }
 }
 

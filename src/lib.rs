@@ -539,6 +539,8 @@ pub mod schema_sidecar;
 pub mod self_update;
 /// Whether this process writes shipped artefacts (`--ship`): read by the parser and the C writer.
 pub mod ship_tier;
+/// @PLN229 — the name a source file is printed and written under (reproducible builds).
+pub mod source_name;
 mod stack;
 pub mod store_guard;
 pub mod timeout;
