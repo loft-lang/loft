@@ -218,6 +218,20 @@ pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
 // `i32` as an element (@PLN204): four bytes of the plain integer's range.  Its vector is NAMED
 // as the plain integer's (`vector<integer>`, the library's wrapper) and laid out at stride 4,
 // with the `Int4` push, read and write.
+// A vector — at any depth of nesting — of a narrow integer (`vector<i32>`,
+// `vector<vector<u8>>`): its rows are its own, built from the content, never the library's
+// full-width ones a name lookup finds.
+pub fn narrow_vector(t: ir::TypeT) -> boolean {
+  match t {
+    TyVector { inner } => match inner {
+      TyInteger { spec } => narrow_width(spec) > 0 || int4(spec) || uint4(spec),
+      TyVector { inner: _ } => narrow_vector(inner),
+      _ => false
+    },
+    _ => false
+  }
+}
+
 pub fn int4(spec: ir::IntegerSpec) -> boolean {
   spec.forced_size == 4 && spec.min == -2147483647 && spec.max == 2147483647
 }
