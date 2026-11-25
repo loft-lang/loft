@@ -18,7 +18,7 @@
 
 use crate::data::Data;
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::fmt::Write as _;
 
 /// One problem of the report.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -102,8 +102,9 @@ pub fn observe(data: &Data) {
         } else {
             format!("line {}", r.line)
         };
-        text += &format!(
-            "{}\t{}\t{}\t{}\t{site}\t{}\n",
+        let _ = writeln!(
+            text,
+            "{}\t{}\t{}\t{}\t{site}\t{}",
             r.file, r.function, r.rule, r.kind, r.reason
         );
         *kinds.entry(&r.kind).or_default() += 1;
@@ -115,8 +116,9 @@ pub fn observe(data: &Data) {
         text += "# no problems\n";
     } else {
         let per: Vec<String> = kinds.iter().map(|(k, n)| format!("{k}={n}")).collect();
-        text += &format!(
-            "# {} problem(s) in {} function(s) ({})\n",
+        let _ = writeln!(
+            text,
+            "# {} problem(s) in {} function(s) ({})",
             rows.len(),
             functions.len(),
             per.join(", ")
@@ -124,9 +126,7 @@ pub fn observe(data: &Data) {
     }
     if out == "-" {
         eprint!("{text}");
-    } else if let Err(e) =
-        std::fs::File::create(&out).and_then(|mut f| f.write_all(text.as_bytes()))
-    {
+    } else if let Err(e) = crate::file_access::write(std::path::Path::new(&out), &text) {
         eprintln!(
             "loft: LOFT_LIFETIME_CHECK: cannot write {}: {e}",
             out.to_string_lossy()
