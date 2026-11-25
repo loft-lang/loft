@@ -369,8 +369,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // A record (or `τ?`) answered by an `if` of parameters, literals and nulls borrows those
   // parameters.
   // (Both passes: a recursive arm's borrow is known only once the first pass typed the function.)
+  // (A `??` tail's value is its subject's: the default's borrows are not the result's, `o ?? self`
+  // borrows `o`.)
+  ts = el_ex_deliver::tail_syntax(e, vars.body);
+  coalesce_tail = ts >= 0 && match e.p.nodes[ts] { SBin { op: top } => top == "??", _ => false };
   if rb >= 0 && el_types::base(result) is TyReference {
-    ps = el_ex_copy::if_tail_params(e, vars, code);
+    ps0 = el_ex_copy::if_tail_params(e, vars, code);
+    cdv = if coalesce_tail { coalesce_default_var(el_ir::unspan(body_tail(code))) } else { -1 };
+    ps: vector<integer>? = if ps0 == null { null } else { [for pp in ps0! if pp != cdv { pp }] };
     if ps != null {
       r0 = el::def(e, e.context).returned[0];
       ds = el_types::deps(r0);
@@ -1482,6 +1488,14 @@ fn under_ncr(n: ir::Node) -> boolean {
   }
 }
 
+// The variable a `??` tail's default arm answers (`if present(x) { x } else { d }`), or -1.
+fn coalesce_default_var(tail: ir::Node) -> integer {
+  match el_ir::unspan(tail) {
+    NdIf { cond: _, t: _, f } => match el_ir::unspan(join_leaf(f)) { NdVar { n: dv } => dv, _ => -1 },
+    _ => -1
+  }
+}
+
 // The visible parameter a place's syntax is rooted at — through fields and plain element
 // reads (`q.items`, `w[0]`, `w[0].items`) — or -1.
 fn place_param(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
@@ -2586,6 +2600,10 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
   if !(tail is NdIf) {
     return null;
   }
+  // (A `??` tail is its subject's value: its DEFAULT is no candidate — `o ?? self` borrows `o`,
+  // `a ?? Pt { … }` borrows `a`.)
+  pts = el_ex_deliver::tail_syntax(e, vars.body);
+  dflt = if pts >= 0 && match e.p.nodes[pts] { SBin { op: pop } => pop == "??", _ => false } { coalesce_default_var(tail) } else { -1 };
   ps: vector<integer> = [];
   call_arm = false;
   for arm in el_ex_deliver::branch_arms(tail, []) {
@@ -2603,7 +2621,7 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
       return null;
     }
     match leaf {
-      NdVar { n: pv } => { if !ps.contains(pv) { ps += [pv]; } },
+      NdVar { n: pv } => { if !ps.contains(pv) && pv != dflt { ps += [pv]; } },
       // (Pass 2: a call arm's candidates are what its answer borrows — a parameter joins `ps`
       // (`MergeAttr`), a local of the body cannot be renamed onto the buffer (`Bind`).)
       NdCall { def_nr: cd, args: cargs } => {
