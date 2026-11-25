@@ -601,6 +601,12 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             // declines at that hook's mention, so a twin would never be served — and its body
             // frees the droppable bare (the store records' `copied-lease`).
             Err("its record owns a droppable")
+        } else if value_param_answer(data, d) {
+            // A VALUE struct read out of a parameter is copied (@PLN107), so a body answering
+            // one of its parameters binds each arm by a copy, which the record form hands to the
+            // caller as its answer.  Read field-wise into a tuple, that copy has no owner and
+            // leaks once per call (loft#2641).  `LOFT_NO_VALUE_PARAM_DECLINE=1` admits it.
+            Err("a value struct answering a parameter")
         } else {
             callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp)
         };
@@ -880,6 +886,19 @@ fn redirect_calls(n: &mut Value, to: &HashMap<u32, u32>) {
     n.for_each_child_mut(&mut |c| redirect_calls(c, to));
 }
 
+/// Does `d` answer a value struct (`Data::is_value_struct`) whose deps name one of its visible
+/// parameters?  See the decline in [`rewrite_program`] (loft#2641).
+fn value_param_answer(data: &Data, d: u32) -> bool {
+    let def = data.def(d);
+    matches!(def.returned().peel_link().base(), Type::Reference(record, _) if data.is_value_struct(*record))
+        && !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
+        && def.returned().depend().iter().any(|&a| {
+            def.attributes
+                .get(a as usize)
+                .is_some_and(|attr| !attr.hidden)
+        })
+}
+
 /// The callee half of the shape, or `None` when `d` cannot return a tuple here.
 fn callee_shape(
     data: &Data,
@@ -914,20 +933,6 @@ fn callee_shape(
     let Type::Reference(record, _) = def.returned().peel_link().base() else {
         return Err("no record result");
     };
-    // A VALUE struct read out of a parameter is copied (@PLN107), so a body answering one of
-    // its parameters binds each arm by a copy, which the record form hands to the caller as
-    // its answer.  Read field-wise into a tuple, that copy has no owner and leaks once per call
-    // (loft#2641).  `LOFT_NO_VALUE_PARAM_DECLINE=1` admits it as before.
-    if data.is_value_struct(*record)
-        && !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
-        && def.returned().depend().iter().any(|&a| {
-            def.attributes
-                .get(a as usize)
-                .is_some_and(|attr| !attr.hidden)
-        })
-    {
-        return Err("a value struct answering a parameter");
-    }
     let layout =
         flat_layout(data, stores, *record, tp, vr.view_offs.get(&tp)).ok_or("no flat layout")?;
     let key = key_of(*record, tp);
