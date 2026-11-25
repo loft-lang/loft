@@ -519,7 +519,14 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
       // `__fn_record`, releases what it adopted first, through the number beside it — as a
       // function-value local's release does.  `__held_fn` only names the slot's record.)
       held = match el_types::base(el::def(e, t).attributes[a]!.typedef[0] ?? ir::TyVoid) { TyReference { n: hn } => hn, _ => -1 };
-      if held >= 0 && el::def(e, held).name == "__fn_record" && len(an) > 6 && an[len(an) - 6..] == "__clos" {
+      // (An adopted closure RECORD — a captured function value's whose lambda is known —
+      // releases what it adopted through its own cascade first.)
+      if held >= 0 && starts_with(el::def(e, held).name, "__closure_") {
+        hc = target(e, held, h);
+        if hc >= 0 {
+          release += [ir::NdCall { def_nr: hc, args: [slot] }];
+        }
+      } else if held >= 0 && el::def(e, held).name == "__fn_record" && len(an) > 6 && an[len(an) - 6..] == "__clos" {
         fbase = an[..len(an) - 6];
         fba = el_ex_base::attr_nr(el::def(e, t), fbase);
         doff = el_schema::field_position(e, el::def(e, t).known_type, fbase);
