@@ -1035,6 +1035,23 @@ static void loft_fault_where(loft_cx *cx, loft_str file, int64_t line) {
         path[file.len] = 0;
         fprintf(stderr, "  --> %s:%lld:1\n", path, (long long) line);
         f = fopen(path, "rb");
+        /* A source is named from its root (`source_name::name`), not from where it was built:
+         * a name that does not open from the working directory is tried beneath
+         * `LOFT_SOURCE_ROOT` (`source_name::locate`). */
+        if (!f && path[0] != '/') {
+            const char *root = getenv("LOFT_SOURCE_ROOT");
+            if (root && *root) {
+                size_t rl = strlen(root);
+                char *full = (char *) malloc(rl + 1 + file.len + 1);
+                if (full) {
+                    memcpy(full, root, rl);
+                    full[rl] = '/';
+                    memcpy(full + rl + 1, path, file.len + 1);
+                    f = fopen(full, "rb");
+                    free(full);
+                }
+            }
+        }
         free(path);
         for (int64_t v = line; v >= 10; v /= 10) digits++;
         if (f) {
