@@ -3633,6 +3633,14 @@ pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) 
 pub fn substitute_var(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
   match t {
     TyReference { n, dep } => if n == h { el_types::with_deps(bound, el_types::deps(bound) + dep) } else { t },
+    // (At every depth, as `subst_type` maps the children: a `vector<T["v"]>` keeps the element's
+    // borrow, `vector<text["v"]>`.)
+    TyVector { inner, dep } => ir::TyVector { inner: substitute_var(inner, h, bound), dep: dep },
+    TyOptional { inner } => {
+      so = substitute_var(inner, h, bound);
+      if (so is TyOptional) { so } else { ir::TyOptional { inner: so } }
+    },
+    TyRefVar { inner } => ir::TyRefVar { inner: substitute_var(inner, h, bound) },
     _ => substitute(t, h, bound)
   }
 }

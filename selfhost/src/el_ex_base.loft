@@ -1586,9 +1586,11 @@ pub fn substitute_code(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> 
       // bound element's stride and the value read its twin uses (`wrap_vector_get_val`).
       nm = el::def(e, def_nr).name;
       if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(sa) == 3 && (sa[1] == ir::NdInt { n: -1 - h } || sa[1] == ir::NdInt { n: 0 }) {
-        st = element_stride(e, bound);
+        // (A vector element is its four-byte handle, `@FR-H-Stride`.)
+        st = if el_types::base(bound) is TyVector { 4 } else { element_stride(e, bound) };
         read = ir::NdCall { def_nr: def_nr, args: [sa[0] ?? ir::NdNull, ir::NdInt { n: st }, sa[2] ?? ir::NdNull] };
-        by_ref = bound is TyReference;
+        // (A record or a vector element is the element itself: no value read around it.)
+        by_ref = bound is TyReference || el_types::base(bound) is TyVector;
         return if by_ref { read } else { elem_read(e, bound, read) };
       }
       r = if stub_call(e, def_nr, h) { re_resolve_stub(e, def_nr, h, bound) } else { -1 };
