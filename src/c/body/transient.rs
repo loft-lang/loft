@@ -368,6 +368,10 @@ impl Cx<'_> {
 
     /// The struct of every group a twin names: one member per `(offset, kind)` the twins
     /// read or write, a group held by value written before the struct that holds it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass that orders the groups and writes each struct; its steps share the order it builds"
+    )]
     pub(crate) fn tr_typedefs(&self) -> String {
         let st = self.tr.borrow();
         if st.protos.is_empty() {

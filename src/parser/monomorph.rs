@@ -1925,6 +1925,10 @@ impl Parser {
     /// Lower a [`Parser::TV_OBJECT`] literal: a fresh record of the instance the open one
     /// names here, its declared defaults, then each given field written through
     /// `handle_field` — the field write a literal of the twin makes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one literal, lowered in the order its record is built: the instance, its defaults, each field"
+    )]
     pub(super) fn lower_open_object(&mut self, bl: &crate::data::Block) -> Value {
         let Some(Value::Int(open)) = bl.operators.first().map(Value::unspan) else {
             return Value::Null;
