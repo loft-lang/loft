@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native generators: one written C unit cut into the units of a split build
 //! @PLN229 B1 — one written unit cut into the units of a split build.
 //!
 //! The writer writes the unit it always writes, with each function's body marked with the file
