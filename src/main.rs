@@ -7253,6 +7253,9 @@ fn run_tag_command(args: &[String]) -> i32 {
 
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn main() {
+    // A `#c` binding and a library's C unit write through the C runtime: the bytes they write
+    // are a compiled program's, with no `\r\n` for `\n` (`platform::c_stdio_binary`).
+    loft::platform::c_stdio_binary();
     // @PLN119 arc A — this process is the worker holding one process-placed
     // library. Internal: spawned by `lib_placement::Worker::spawn`, never typed
     // by a user, so it is deliberately absent from `--help`. It takes over the
