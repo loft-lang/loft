@@ -1185,7 +1185,13 @@ pub(crate) fn build(
     }
     let scratch = loft::platform::scratch_dir();
     let pid = std::process::id();
-    let src = scratch.join(format!("loft_native_c_{pid}.c"));
+    // The source keeps ONE name in a directory of its own: the compiler writes the file's name
+    // into the executable (its symbol table), so a name that carried the process id made two
+    // builds of one program two different executables (@PLN229, reproducible builds).
+    let src_dir = scratch.join(format!("loft_native_c_{pid}"));
+    fa::create_dir_all(&src_dir)
+        .map_err(|e| BuildError::Rejected(format!("cannot create {}: {e}", src_dir.display())))?;
+    let src = src_dir.join("loft_native_c.c");
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
     // A unit written with source lines (the debug tier) hands the code between its loft
     // functions back to this file, under the name it is written as here.
@@ -1203,6 +1209,7 @@ pub(crate) fn build(
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {
         let _ = fa::remove_file(&src);
+        let _ = fa::remove_dir(&src_dir);
     }
     let out = out.map_err(|e| {
         BuildError::NoCompiler(format!(
