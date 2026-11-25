@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector match arm with alternatives (`[9, ..] | [1, ..]`, or `,`) tests each in
+// turn; the first binds the arm's names, a later one binds its own and links each into the
+// first's (`a#1 = a#2`); a guard is asked of each alternative after its bindings, the body
+// read once.  Integer, record-variant and text elements.
+// Prints: 1 1 0 / 70 80 0 / 9 8 0 / 3 4 0 / y! z! -
+
+enum Sh { A { n: integer }, S2B { n: integer }, C }
+fn f1(v: vector<integer>) -> integer { match v { [9, ..] | [1, ..] => 1, _ => 0 } }
+fn f2(v: vector<integer>) -> integer { match v { [a, 1, ..] | [1, a, ..] => a * 10, _ => 0 } }
+fn f3(v: vector<integer>) -> integer { match v { [a, ..], [.., a] if a > 5 => a, _ => 0 } }
+fn f4(v: vector<Sh>) -> integer { match v { [A { n }, ..] | [S2B { n }, ..] => n, _ => 0 } }
+fn f5(v: vector<text>) -> text { match v { [t, "x"] | ["x", t] => "{t}!", _ => "-" } }
+fn main() {
+  println("{f1([1, 2])} {f1([9])} {f1([5])}");
+  println("{f2([7, 1, 5])} {f2([1, 8])} {f2([2, 2])}");
+  println("{f3([1, 9])} {f3([8, 1])} {f3([1, 2])}");
+  println("{f4([S2B { n: 3 }])} {f4([A { n: 4 }, C])} {f4([C])}");
+  println("{f5(["y", "x"])} {f5(["x", "z"])} {f5(["q"])}");
+}

@@ -922,6 +922,13 @@ pub fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
 // variant record belongs to — or -1.
 // Are `a` and `b` both of one struct enum — each the enum or one of its variants?
+// One alternative of a vector match arm: its test and the bindings it makes (linked into the
+// first alternative's names).
+struct SliceArmAlt {
+  cond: ir::Node?,
+  binds: vector<ir::Node>
+}
+
 pub fn sibling_variants(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
   ea = struct_enum_of(e, el_types::base(a));
   ea >= 0 && ea == struct_enum_of(e, el_types::base(b))
@@ -1379,9 +1386,90 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if len(pats) != 1 || (guard != null && len(vars.cursor) > 0) {
+        if (len(pats) != 1 || guard != null) && len(vars.cursor) > 0 {
           el::refuse(e, "a vector match arm with alternatives or a guard");
           return void;
+        }
+        // `[9, ..] | [1, ..] => …` (or `,`): each alternative its own arm, tested in turn; the
+        // first binds the arm's names, a later one binds its own and links each into the
+        // first's (`a#1 = a#2`); the guard and the body are read once, against the first's.
+        if len(pats) > 1 {
+          altn: vector<el_vars::VarName> = [];
+          alts: vector<SliceArmAlt> = [];
+          first_names: vector<text> = [];
+          for apn in pats {
+            if !(e.p.nodes[apn] is PSlice) {
+              el::refuse(e, "a vector match arm with alternatives or a guard");
+              return void;
+            }
+            aelems = match e.p.nodes[apn] { PSlice { elems: ae } => ae, _ => [] };
+            an_names: vector<el_vars::VarName> = [];
+            asa = slice_arm(e, vars, sv, src, elm, aelems, an_names);
+            if asa == null {
+              return void;
+            }
+            abinds = asa!.binds;
+            if apn#index == 0 {
+              altn = an_names;
+              first_names = [for fnm in an_names { fnm.name }];
+            } else {
+              if len(an_names) != len(first_names) || len([for anm in an_names if !first_names.contains(anm.name) { 1 }]) > 0 {
+                el::refuse(e, "a vector match arm whose alternatives bind different names");
+                return void;
+              }
+              for anm in an_names {
+                av = el_vars::var(vars, anm.name);
+                f0 = anm.nr;
+                if av >= 0 && f0 >= 0 {
+                  abinds += [el_ir::v_set(f0, ir::NdVar { n: av })];
+                }
+              }
+              for anm in rev(an_names) {
+                el_vars::restore_name(vars, anm.name, anm.nr);
+              }
+            }
+            alts += [SliceArmAlt { cond: asa!.cond, binds: abinds }];
+            shapes += [asa!.shape];
+            prechain += asa!.pre;
+          }
+          ag: ir::Node? = null;
+          if guard != null {
+            agx = el_ex_assign::expression(e, vars, guard!);
+            if !e.first_pass && !(agx.tp is TyBoolean) {
+              el::refuse(e, "a match guard that is not a boolean: {type_kind(agx.tp)}");
+              return void;
+            }
+            ag = agx.code;
+            shapes = shapes[..len(shapes) - len(pats)];
+          }
+          aexpected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+          ab = el_ex_pattern::empty_vector_arm(e, vars, body, aexpected) ?? el_ex_pattern::arm_body(e, vars, body, aexpected);
+          if !e.first_pass && el_ex_null::ends_in_halt(e, ab.code) {
+            el::refuse(e, "a vector match arm that halts");
+            return void;
+          }
+          if arm_settles(result, ab.tp) {
+            result = ab.tp;
+          }
+          result = join_fn_arm(result, ab);
+          for anm in rev(altn) {
+            el_vars::restore_name(vars, anm.name, anm.nr);
+          }
+          for al in alts {
+            acond = al.cond;
+            acode = ab.code;
+            if ag != null {
+              agc = if len(al.binds) > 0 { el_ir::v_block(al.binds + [ag!], ir::TyBoolean, "match_guard") } else { ag! };
+              acond = if acond == null { agc } else { el_ir::v_if(acond!, agc, ir::NdBoolean { b: false }) };
+            } else if len(al.binds) > 0 {
+              acode = el_ir::v_block(al.binds + [ab.code], ab.tp, "slice_binding");
+            }
+            out += [SMArm { guard: acond, code: acode }];
+          }
+          if el_types::base(result) is TyText && len(alts) > 0 && answers_binding(ab.code, alts[0]!.binds) {
+            result = el_types::with_deps(result, [sv]);
+          }
+          continue;
         }
         pn = pats[0]!;
         names: vector<el_vars::VarName> = [];
