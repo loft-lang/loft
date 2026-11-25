@@ -191,7 +191,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // (loft#1869: a function-valued PARAMETER is captured as its definition number beside
         // its closure record, `<name>__clos` — whose lambda is a run-time fact, `__fn_record`.
         // A local's, whose lambda the bind may know, is not carried yet.)
-        fn_cap = el_types::base(ct) is TyFunction && (vars.vars[cv].argument || !vars.closure_bound.contains(cv));
+        fn_cap = el_types::base(ct) is TyFunction;
         if !heap && !scalar_cap && !fn_cap {
           return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
         }
@@ -395,6 +395,7 @@ fn walk_mutations(e: el::El, n: ir::Node, cand: vector<text>, cp: integer, f: ir
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   vars.last_closure = d;
   vars.closure_made = true;
+  vars.closure_made_d = d;
   vars.last_closure_body = body;
   // `collect_mutated_captures`: the captures the lambda's body writes, on its definition — the
   // fact a call through it (`fn_ref_call` choosing the cell-reading form) and the closure's
@@ -440,7 +441,18 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
       // (`synthesize_closure_record`, loft#1869: a captured function value keeps its closure
       // RECORD beside its number, a hidden shared pointer.)
       if el_types::base(c.tp) is TyFunction {
-        frd = fn_record_def(e, el::pos_at(e, end + 1));
+        // (A local one capturing lambda was bound to shares that lambda's own record.)
+        fcv = el_vars::var(vars, c.name);
+        held_d = -1;
+        if fcv >= 0 && !vars.vars[fcv].argument {
+          for cb in vars.closure_bound {
+            if cb == fcv {
+              held_d = vars.closure_bound_d[cb#index] ?? -1;
+            }
+          }
+        }
+        held_rec = if held_d >= 0 { el::def(e, held_d).closure_record } else { -1 };
+        frd = if held_rec >= 0 && held_rec != el::NONE { held_rec } else { fn_record_def(e, el::pos_at(e, end + 1)) };
         ha = el::attribute("{c.name}__clos", ir::TyReference { n: frd, dep: [el_types::MARKER] });
         ha.hidden = true;
         e.b.data.definitions[rd].attributes += [ha];

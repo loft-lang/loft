@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `h` captures `g`, a local bound to ONE capturing lambda: its closure half is
+// typed with that lambda's own record (`g__clos: __closure_outer_0`, `fn_lambda_of`), and
+// `h`'s cascade frees it.
+// Prints: 12
+
+fn outer() -> integer {
+  k = 5;
+  g = fn(x: integer) -> integer { x + k };
+  h = fn(y: integer) -> integer { g(y) * 2 };
+  h(1)
+}
+fn main() { println("{outer()}"); }

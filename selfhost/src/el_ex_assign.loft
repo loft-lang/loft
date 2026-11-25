@@ -923,6 +923,13 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     cbv = match e.p.nodes[target] { SName { name: cbn, member: cbm } => if cbm == "" { el_vars::var(vars, cbn) } else { -1 }, _ => -1 };
     if cbv >= 0 && !vars.closure_bound.contains(cbv) {
       vars.closure_bound += [cbv];
+      vars.closure_bound_d += [vars.closure_made_d];
+    } else if cbv >= 0 {
+      for cb in vars.closure_bound {
+        if cb == cbv && (vars.closure_bound_d[cb#index] ?? -1) != vars.closure_made_d {
+          vars.closure_bound_d[cb#index] = -1;
+        }
+      }
     }
     vars.closure_made = false;
   }

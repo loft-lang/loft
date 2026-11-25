@@ -292,7 +292,10 @@ pub struct Vars {
   // `Function::fn_lambda_map`'s question on both passes: the locals a capturing lambda was
   // bound to (`closure_made` is the pending build, taken by the bind).
   pub closure_bound: vector<integer> = [],
+  // (Beside each, the lambda it holds, -1 once it was bound to two: `fn_lambda_of`'s MAX.)
+  pub closure_bound_d: vector<integer> = [],
   pub closure_made: boolean = false,
+  pub closure_made_d: integer = -1,
   // The cell a re-pointed `&` PARAMETER points at (`repoint_slot_param`), per parameter, in step.
   pub repoint_cells: vector<integer> = [],
   pub repoint_of: vector<integer> = [],
