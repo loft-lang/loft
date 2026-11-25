@@ -12105,13 +12105,9 @@ extern crate loft;"
                 // P199 — prepend the `&mut Stores` derivation from the
                 // `&UnsafeCell<Stores>` parameter so templates and inner
                 // emissions see `stores` as a regular `&mut Stores` binding.
-                // @PLN199 G1a — a library artifact names the file inside its package.
-                let escaped_file = if self.shared_ids.is_some() {
-                    self.source_path(loft_file)
-                } else {
-                    loft_file.to_string()
-                }
-                .replace('\\', "\\\\");
+                // @PLN199 G1a — a library artifact names the file inside its package; a program
+                // names it from its root (`source_path`).
+                let escaped_file = self.source_path(loft_file).replace('\\', "\\\\");
                 // A key may carry any spelling a type has (an instance's bound types).
                 let loft_name = loft_name.replace('\\', "\\\\").replace('"', "\\\"");
                 // @PLN18 08-S2 — the live-dispatch entry check precedes even
@@ -12247,15 +12243,10 @@ extern crate loft;"
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
-                    // The main file's path comes from the driver at run time
-                    // (`main_file_or`), so a test/semantics build holds no path and the same
-                    // program at another path is the same binary and cache entry.
-                    let file_expr =
-                        if self.reads_main_file_at_run_time() && **loft_file == *self.main_file() {
-                            "main_file_or(\"\")".to_string()
-                        } else {
-                            format!("\"{escaped_file}\"")
-                        };
+                    // The file is its source's NAME (`source_path`, `source_name`): the same
+                    // program at another path is the same binary and cache entry, and a fault
+                    // names it as the interpreter does (@PLN229).
+                    let file_expr = format!("\"{escaped_file}\"");
                     format!(
                         "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
                          let _call_guard = codegen_runtime::NamedCallGuard;"

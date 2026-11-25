@@ -1569,6 +1569,11 @@ jobs:
         run: cargo build --release --bin loft
       - name: Sweep this shard of the corpus through the C backend
         run: python3 scripts/c_sweep.py --shard ${{ matrix.shard }}/4
+      # @PLN229 — what loft PRODUCES is reproducible: one program built twice and built from
+      # another directory gives the same C and the same executable.  One shard is enough.
+      - name: Reproducible output
+        if: matrix.shard == 0
+        run: bash scripts/repro-output.sh
 
   # The ownership oracle's leak scan over `tests/scripts` (`LOFT_OWN_ORACLE=check-leak`): a
   # STATIC check that every store a function owns is freed or handed on, on every path — the
