@@ -11,7 +11,7 @@
 //!   scalar fields…)`: a dropped statement writes nothing; a recursive call answers its shape
 //!   into the call variable and its arguments into `loft_pa<call>`; a scalar field of a call's
 //!   result is a struct member; a `return` answers the variant's tag, its slot — a number, a
-//!   text run's span `(lo, hi)` when its guard holds, `INT64_MIN` for a field only the built
+//!   text run's span `(lo, hi)` when its guard holds, `LOFT_INT_NULL` for a field only the built
 //!   value answers — and the scalar fields;
 //! - the producer's WALK TWIN `P__psw<k>(cx, B, position…, f, env, out)` runs the same body,
 //!   where an append to the walked field's local hands the element's positions to `f` and stops
@@ -436,12 +436,12 @@ impl FnWriter<'_> {
                 self.line(ind + 1, &format!("{lo_t} = {lo};"));
                 self.line(ind + 1, &format!("{hi_t} = {hi};"));
                 self.line(ind, "} else {");
-                self.line(ind + 1, &format!("{lo_t} = INT64_MIN;"));
+                self.line(ind + 1, &format!("{lo_t} = LOFT_INT_NULL;"));
                 self.line(ind + 1, &format!("{hi_t} = 0;"));
                 self.line(ind, "}");
                 (lo_t, hi_t)
             }
-            Slot::Built => ("INT64_MIN".to_string(), "INT64_C(0)".to_string()),
+            Slot::Built => ("LOFT_INT_NULL".to_string(), "INT64_C(0)".to_string()),
         };
         let mut members = vec![format!("{}", form.tag), x0, x1];
         for sc in &prod.scalars {
@@ -906,10 +906,10 @@ impl FnWriter<'_> {
         if field_view {
             // The slow text stays in its temporary until the site writes it again or the
             // function ends: a borrowed bind views it for longer than the statement.
-            self.line(ind, &format!("if ({s}.f1 == INT64_MIN) {t} = {slow};"));
+            self.line(ind, &format!("if ({s}.f1 == LOFT_INT_NULL) {t} = {slow};"));
             return Ok(E::new(
                 format!(
-                    "({s}.f1 != INT64_MIN ? loft_ps_text(cx, {frame}, {s}.f1, {s}.f2) : loft_view(cx, &{t}))"
+                    "({s}.f1 != LOFT_INT_NULL ? loft_ps_text(cx, {frame}, {s}.f1, {s}.f2) : loft_view(cx, &{t}))"
                 ),
                 K::View,
             ));
@@ -917,7 +917,7 @@ impl FnWriter<'_> {
         self.line(
             ind,
             &format!(
-                "{t} = {s}.f1 != INT64_MIN ? loft_text_own(cx, loft_ps_text(cx, {frame}, {s}.f1, {s}.f2)) : {slow};"
+                "{t} = {s}.f1 != LOFT_INT_NULL ? loft_text_own(cx, loft_ps_text(cx, {frame}, {s}.f1, {s}.f2)) : {slow};"
             ),
         );
         Ok(self.held(t, CType::Text))
