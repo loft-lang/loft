@@ -572,14 +572,21 @@ impl Scopes<'_> {
     /// free then guarded against every one (loft#2648; `LOFT_NO_NCC_MULTI_WITNESS=1` declines
     /// them), and a subject the oracle does not read as owned (`pick(c, d) ?? e` hands back
     /// `d`) may be another variable's store: `None`, the conservative no-lift.
-    fn ncc_local_arm_bases(&self, bl: &Block, data: &Data) -> Option<Vec<u16>> {
+    fn ncc_local_arm_bases(
+        &self,
+        bl: &Block,
+        data: &Data,
+        function: &Function,
+    ) -> Option<Vec<u16>> {
         // Owned by the ownership oracle's reading (`@FR-O-Oracle`), not by naming no variable:
         // a call that hands back its argument (`pick(c, d) ?? e`) names none and is a borrow.
+        // A tuple member (`t.0`) is a read of the tuple, which owns it: never the lift's.
         let owned = |v: &Value| {
-            matches!(
-                crate::use_analysis::ownership_of(data, self.d_nr, v),
-                crate::use_analysis::Own::Owned
-            )
+            !matches!(v.unspan(), Value::TupleGet(..))
+                && matches!(
+                    crate::use_analysis::ownership_of(data, self.d_nr, v),
+                    crate::use_analysis::Own::Owned
+                )
         };
         let mut arms: Vec<(&Value, bool)> = Vec::new();
         if !Self::ncc_flat_arms(bl, &mut arms) {
@@ -622,13 +629,17 @@ impl Scopes<'_> {
                 }
                 // A default the parser gave its own buffer (`join-arm-owner`, `materialise_owned_call`)
                 // is that buffer's store, which frees itself: one more base, so the lift never
-                // frees it a second time (`h.ws[9].items ?? mk(c)`, loft#2650).
+                // frees it a second time (`h.ws[9].items ?? mk(c)`, loft#2650).  A literal default
+                // (`?? [..]`) ends in its accumulator (`__kvb_N`, `__vdb_N`), which frees itself too.
                 Value::Block(jb)
-                    if jb.name == "join-arm-owner"
-                        && !crate::env_once!(
-                            std::env::var_os("LOFT_NO_NCC_ARM_OWNER_BASE").is_some()
-                        )
-                        && let Some(Value::Var(w)) = jb.operators.last().map(Value::unspan) =>
+                    if !crate::env_once!(
+                        std::env::var_os("LOFT_NO_NCC_ARM_OWNER_BASE").is_some()
+                    ) && let Some(Value::Var(w)) = jb.operators.last().map(Value::unspan)
+                        && (jb.name == "join-arm-owner"
+                            || (*w < function.count()
+                                && crate::variables::owns_literal_backing_store(
+                                    function.name(*w),
+                                ))) =>
                 {
                     if !bases.contains(w) {
                         bases.push(*w);
@@ -832,7 +843,7 @@ impl Scopes<'_> {
             && !subject_is_call_ref
             && crate::keys::lift_join_witness_enabled()
             && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LOCAL_ARM_WITNESS").is_some())
-            && let Some(bases) = self.ncc_local_arm_bases(bl, data)
+            && let Some(bases) = self.ncc_local_arm_bases(bl, data, function)
         {
             // The witness reaches the scope's free through the next `new_lift_var`, as the
             // fn-ref route's does; the dep keeps the pre-Set free away on a loop's next pass.
