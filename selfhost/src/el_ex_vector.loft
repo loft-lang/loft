@@ -669,7 +669,12 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     el_vars::set_defined(vars, se);
     // (A DECLARED local keeps the element its declaration names: `s: vector<text> = big[0..2]`.)
     el_vars::set_var_type(vars, v, ir::TyVector { inner: if vars.annotated.contains(v) { elem } else { viewed }, dep: [db] });
-    el_vars::set_var_type(vars, elm_v, if vec_elem { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] } });
+    // (A text element's temp keeps the type it was minted with — the placeholder, or a pass-1
+    // `_elm_N` of another site the name reuses (`add_variable(reuse)`) — its borrow the store's,
+    // `depend` above.)
+    if vec_elem || rsd >= 0 {
+      el_vars::set_var_type(vars, elm_v, if vec_elem { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: rsd, dep: [db] } });
+    }
     at = ir::NdVar { n: elm_v };
     // (A vector element is copied into the new element itself, typed as the inner vector.)
     inner_vt = match el_types::base(elem) { TyVector { inner: vin } => vector_store(e, vin, el_types::elem_name(e, vin)), _ => -1 };
