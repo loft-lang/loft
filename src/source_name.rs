@@ -121,8 +121,7 @@ pub fn name(file: &str, roots: &Roots) -> String {
     {
         return rest.to_string_lossy().into_owned();
     }
-    path.file_name()
-        .map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned())
+    crate::file_access::file_name(path).unwrap_or_else(|| file.to_string())
 }
 
 /// The file a printed `name` stands for, to show its source line: the name itself when it can

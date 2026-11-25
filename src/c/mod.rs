@@ -1847,8 +1847,12 @@ pub(crate) fn c_ident(name: &str) -> String {
         match ch {
             'a'..='z' | 'A'..='Z' | '0'..='9' => out.push(ch),
             '_' => out.push_str("__"),
-            c if (c as u32) < 0x100 => out.push_str(&format!("_{:02x}", c as u32)),
-            c => out.push_str(&format!("_u{:06x}", c as u32)),
+            c if (c as u32) < 0x100 => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("_{:02x}", c as u32));
+            }
+            c => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("_u{:06x}", c as u32));
+            }
         }
     }
     out
@@ -5578,6 +5582,7 @@ pub(crate) fn framed_plain(
 
 #[expect(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "one wrapper: the function's name, signature and body, its storage, and the frame a decode root names"
 )]
 fn framed(
