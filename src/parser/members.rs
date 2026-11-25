@@ -2061,7 +2061,7 @@ impl Parser {
             vec![
                 bound,
                 msg,
-                Value::Text(pos.file.to_string()),
+                self.site_file(pos.file.as_str()),
                 Value::Int(pos.line as i32),
             ],
         );

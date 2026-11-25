@@ -5371,7 +5371,7 @@ impl Parser {
             self.data.def_nr("n_panic"),
             vec![
                 Value::str(&format!("{shown} is null")),
-                Value::str(at.file.as_str()),
+                self.site_file(at.file.as_str()),
                 Value::Int(at.line as i32),
             ],
         );

@@ -2125,6 +2125,19 @@ pub enum ParseResult {
 }
 
 impl Parser {
+    /// The text a call site's `file` argument carries (an `assert`'s, a `panic`'s, a field
+    /// check's): its source file named from its root ([`crate::source_name::name`]), so the
+    /// program the parse produces is the same wherever its sources lie (@PLN229).  The main
+    /// directory is the program entry's; before there is one (the standard library's own
+    /// parse) only the standard library's directory names anything.
+    pub(crate) fn site_file(&self, file: &str) -> Value {
+        let mut roots = crate::source_name::roots_of(&self.data, None);
+        if let Some(entry) = self.program_entry {
+            roots.main_dir = crate::source_name::Roots::of(entry.as_str(), "").main_dir;
+        }
+        Value::Text(crate::source_name::name(file, &roots))
+    }
+
     #[must_use]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn new() -> Self {
