@@ -1622,7 +1622,9 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   if e.p.nodes[fe] is SNull {
     return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
   }
-  // A struct enum's child is a literal of any of its variants.
+  // A struct enum's child is a literal of any of its variants — qualified by its enum or not
+  // (`inner: Nd::Leaf { v: 1 }` is the variant's literal, as at every other literal road).
+  el_ex_place::unqualify_literal(e, fe);
   vl = el_ex_pattern::variant_literal_def(e, fe);
   literal = struct_literal_def(e, fe) == sd || (vl >= 0 && el::def(e, vl).parent == sd);
   x = el_ex_assign::expression(e, vars, fe);
