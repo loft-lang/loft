@@ -528,7 +528,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if par != null && x.tp is TyText && !(x.code is NdIter) {
     return par_text(e, vars, h, x, par!, loop_nr);
   }
-  if par != null && (el_types::base(x.tp) is TySorted || el_types::base(x.tp) is TyIndex) && !(x.code is NdIter) && el_ir::unspan(x.code) is NdVar {
+  if par != null && (el_types::base(x.tp) is TySorted || el_types::base(x.tp) is TyIndex || el_types::base(x.tp) is TyHash) && !(x.code is NdIter) && el_ir::unspan(x.code) is NdVar {
     return par_keyed(e, vars, h, x, par!, loop_nr);
   }
   if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
@@ -1221,7 +1221,9 @@ fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, lo
   src_var = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
   elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, [src_var]);
   nm = el::def(e, el_d).name;
-  // (`vector_def` of the element, early and on both passes, where `par` was read.)
+  // (A hash is walked through a scratch copy of its records, `keyed_snapshot` — unsorted for a
+  // `par` loop, `n_hash_unsorted` — minted ahead of the vector, on both passes.)
+  scratch = if ct is TyHash { el_vars::create_unique(vars, "hash_scratch", elem) } else { -1 };
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
     ptok = match e.p.nodes[par] { SPar { at: pat } => pat, _ => 0 };
     el_schema::make_vector_def(e, ir::TyReference { n: el_d, dep: [] }, nm, el::pos_at(e, ptok + 1), true);
@@ -1264,7 +1266,7 @@ fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, lo
     }
     tmp = el_vars::create_unique(vars, "__par_mat_t", elem);
     el_vars::set_defined(vars, tmp);
-    src = x.code;
+    src = if scratch >= 0 { ir::NdVar { n: scratch } } else { x.code };
     i = ir::NdVar { n: idx };
     w = ir::NdVar { n: mat };
     ck = el::def(e, el_d).known_type;
@@ -1290,7 +1292,7 @@ fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, lo
       ir::NdInsert { items: [el_ir::v_set(state, start), el_ir::v_set(idx, ir::NdInt { n: -1 })] },
       el_ir::v_loop(steps, "Materialise par input")
     ];
-    mx = ex(ir::NdInsert { items: items }, el_vars::tp(vars, mat));
+    mx = ex(if scratch >= 0 { ir::NdInsert { items: [el_ir::v_set(scratch, el_ir::cl(e, "n_hash_unsorted", [x.code, ir::NdInt { n: known }])), ir::NdInsert { items: items }] } } else { ir::NdInsert { items: items } }, el_vars::tp(vars, mat));
   }
   el_par::par_for(e, vars, el_par::Walk { src_id: h.src_id, id: h.id, x: mx, vec: mat, elem: elem, var_tp: elem, loop_nr: loop_nr }, par, h.body)
 }

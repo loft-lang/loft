@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` loop over a hash local walks a scratch copy of its records
+// (`_hash_scratch_N = n_hash_unsorted(s, …)`, minted on both passes ahead of the vector), the
+// records materialised into `___par_mat_N` by the scratch's own walk.
+// Prints: 80
+
+struct Rec { k: integer, v: integer }
+fn rdbl(r: Rec) -> integer { r.v * 2 }
+fn main() {
+  s: hash<Rec[k]> = [];
+  s += [Rec { k: 3, v: 30 }, Rec { k: 1, v: 10 }];
+  t = 0;
+  for x in s par(r = rdbl(x), 2) { t += r; }
+  println("{t}");
+}
