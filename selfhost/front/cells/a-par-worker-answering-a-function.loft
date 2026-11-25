@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` worker answering a function value rides the fn lane (`route_fn_queue`):
+// `n_parallel_queue_fn` with 20-byte rows, the result read into its own variable first thing in
+// the body (`_fr_par<loop> = n_parallel_buf_get_fn(idx)`) and called through it.
+// Prints: 50
+
+fn add5(x: integer) -> integer { x + 5 }
+fn dbl(x: integer) -> integer { x * 2 }
+fn pick(x: integer) -> fn(integer) -> integer { if x % 2 == 0 { add5 } else { dbl } }
+fn main() {
+  fsum = 0;
+  for i in 0..3 par(fr = pick(i), 2) { fsum += fr(10); }
+  println("{fsum}");
+}
