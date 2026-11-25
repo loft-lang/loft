@@ -137,6 +137,17 @@ fn plan(data: &Data, stores: &Stores, library: bool, twin_sites: bool) -> ValueR
             }
             continue;
         }
+        // A record bound out of a parameter is copied (`@FR-B-Copy`), so a body answering one of
+        // its parameters (`o ?? s`) binds each arm by a copy the record form hands to the caller.
+        // Read field-wise into a tuple, that copy has no owner and leaks once per call
+        // (loft#2646; the IR pass's twin of the same refusal is loft#2641's).
+        // `LOFT_NO_VALUE_PARAM_DECLINE=1` admits it.
+        if crate::value_record::answers_a_parameter(data, d_nr) {
+            if trace {
+                eprintln!("[valuerec] {}: a record answering a parameter", def.name());
+            }
+            continue;
+        }
         let Some(layout) = type_layout(data, stores, *rd, tp, views_ok, &mut out.index) else {
             continue;
         };

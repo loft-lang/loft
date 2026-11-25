@@ -81,7 +81,10 @@ def write_baseline(path, base):
 
 def main():
     args = sys.argv[1:]
-    if not args or "-h" in args or "--help" in args:
+    if "-h" in args or "--help" in args:
+        print(__doc__)
+        return 0
+    if not args:
         print(__doc__)
         return 2
     loft, baseline, libs, pkgs = os.path.join(HERE, "target/release/loft"), BASELINE, [], []

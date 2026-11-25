@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a format-hole `for` over a hash walks a sorted scratch copy of its records
+// (`_hash_scratch_N = n_hash_sorted(h, …)`, kept after the walk), over a sorted local the
+// collection itself — `OpIterate` / `OpStep` with `{id}#iter_state`, as the statement walks.
+// Prints: [1,3] / [1,3]
+
+struct E { k: integer, v: integer }
+fn main() {
+  h: hash<E[k]> = [E { k: 3, v: 1 }, E { k: 1, v: 2 }];
+  println("{for e in h {e.k}}");
+  s: sorted<E[k]> = [E { k: 3, v: 1 }, E { k: 1, v: 2 }];
+  println("{for e in s if e.v > 0 {e.k}}");
+}

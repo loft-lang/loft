@@ -327,7 +327,7 @@ either states is a claim: run the guard or repro it cites before repeating it ·
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) · [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) IR/opcodes ·
 [INTERNALS.md](doc/claude/INTERNALS.md) · [SLOTS.md](doc/claude/SLOTS.md) · [NATIVE.md](doc/claude/NATIVE.md) native builds ·
-[C_BACKEND.md](doc/claude/C_BACKEND.md) the C backend and `c_sweep.py` · [THREADING.md](doc/claude/THREADING.md) par · [LOCKS.md](doc/claude/LOCKS.md) every lock, why, and its lock-free alternative ·
+[C_BACKEND.md](doc/claude/C_BACKEND.md) the C backend and `c_sweep.py` · [REPRODUCIBLE_OUTPUT.md](doc/claude/REPRODUCIBLE_OUTPUT.md) one program, the same bytes anywhere · [THREADING.md](doc/claude/THREADING.md) par · [LOCKS.md](doc/claude/LOCKS.md) every lock, why, and its lock-free alternative ·
 [CODEGEN_METHOD.md](doc/claude/CODEGEN_METHOD.md) how to do compiler work.
 
 **Runtime / memory:** [DATABASE.md](doc/claude/DATABASE.md) stores/DbRef · [REMOTE_STORES.md](doc/claude/REMOTE_STORES.md) ·

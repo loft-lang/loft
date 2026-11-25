@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lambda capturing a `&S` parameter shares the record it names, as an `S`
+// capture does — a pointer field of the closure record (`s: S["#65535"]`), read through
+// `__closure`.
+// Prints: 32 2
+
+struct S { v: integer, w: vector<integer> }
+fn of_ref_param(s: &S) -> fn() -> integer { s.w += [0]; fn() -> integer { s.v * 10 + len(s.w) } }
+fn main() { x = S { v: 3, w: [1] }; f = of_ref_param(x); println("{f()} {len(x.w)}"); }

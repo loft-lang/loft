@@ -5288,7 +5288,21 @@ pub fn text_return_orphan_risk(data: &Data, d_nr: u32) -> Option<&'static str> {
     if def.text_work_buffers() > 0 {
         return None;
     }
-    let borrows_arg = |base: u16| base != u16::MAX && def.variables.is_argument(base);
+    // An argument REBOUND in the body to a value of this frame (`v = o` copies `o` into a store
+    // the frame owns and frees: `v: vector<text>["__vdb_1"]`) no longer holds the caller's
+    // store, so a text read out of it is frame-local text, not a borrow of the argument
+    // (loft#2645).  `LOFT_NO_REBOUND_ARG_TEXT_COPY=1` reads it as the argument again.
+    let rebound_to_frame = |base: u16| {
+        !crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ARG_TEXT_COPY").is_some())
+            && def
+                .variables
+                .tp(base)
+                .depend()
+                .iter()
+                .any(|&w| w != base && !def.variables.is_argument(w))
+    };
+    let borrows_arg =
+        |base: u16| base != u16::MAX && def.variables.is_argument(base) && !rebound_to_frame(base);
     // A returned TEXT LOCAL is a view of this frame whatever bound it: a text `Set` copies
     // bytes into the local's own `String` (`OpAppendText`), so `t = text_src(i, s); return t`
     // hands up `t`'s buffer, not the argument `text_src` borrowed.  The ownership oracle
@@ -5400,9 +5414,14 @@ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
 }
 
-/// The one function whose [`function_defs`] may be reused, and the value once asked; kept in
-/// its program's `Data` (`Data::defs_memo`), set only inside a [`DefsMemoScope`].
-pub(crate) type DefsMemo = (u32, Option<std::sync::Arc<Defs>>);
+/// The one function whose [`function_defs`] may be reused, the value once asked, and its view
+/// binds once asked ([`view_binds`]); kept in its program's `Data` (`Data::defs_memo`), set only
+/// inside a [`DefsMemoScope`].
+pub(crate) type DefsMemo = (
+    u32,
+    Option<std::sync::Arc<Defs>>,
+    Option<std::sync::Arc<Vec<(u16, u16)>>>,
+);
 
 /// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
 /// the first [`ownership_of`] about it and reused for every later one (loft#1697).
@@ -5417,7 +5436,7 @@ pub(crate) type DefsMemo = (u32, Option<std::sync::Arc<Defs>>);
 pub(crate) type DefsMemoScope = crate::data::ScopedSpan;
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    data.defs_memo.open::<DefsMemo>((d_nr, None))
+    data.defs_memo.open::<DefsMemo>((d_nr, None, None))
 }
 
 /// The callee facts every ownership question in one span shares: per function, the round's
@@ -5485,7 +5504,7 @@ fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
 /// `Data` and this function is open; `None` otherwise.
 fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
     let open = data.defs_memo.with(|m: Option<&mut DefsMemo>| match m {
-        Some((n, got)) if *n == d_nr => Some(got.clone()),
+        Some((n, got, _)) if *n == d_nr => Some(got.clone()),
         _ => None,
     })?;
     if let Some(defs) = open {
@@ -5493,13 +5512,44 @@ fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
     }
     let defs = std::sync::Arc::new(function_defs(data, d_nr));
     data.defs_memo.with(|m: Option<&mut DefsMemo>| {
-        if let Some((n, got)) = m
+        if let Some((n, got, _)) = m
             && *n == d_nr
         {
             *got = Some(defs.clone());
         }
     });
     Some(defs)
+}
+
+/// The binds `w = <projection of root>` in `d_nr`'s body, as `(w, root)`: `collect` walks the
+/// body for them once per [`DefsMemoScope`] over this function, and on every call outside one.
+/// They are a function of the body alone, which cannot change while the scope is open, and the
+/// scope drops them with itself (@PLN229: the bind lowering asked for them per reassignment, a
+/// walk of the whole body each time).
+pub(crate) fn view_binds(
+    data: &Data,
+    d_nr: u32,
+    collect: impl FnOnce() -> Vec<(u16, u16)>,
+) -> std::sync::Arc<Vec<(u16, u16)>> {
+    let held = data.defs_memo.with(|m: Option<&mut DefsMemo>| match m {
+        Some((n, _, binds)) if *n == d_nr => Some(binds.clone()),
+        _ => None,
+    });
+    match held {
+        Some(Some(binds)) => binds,
+        Some(None) => {
+            let binds = std::sync::Arc::new(collect());
+            data.defs_memo.with(|m: Option<&mut DefsMemo>| {
+                if let Some((n, _, held)) = m
+                    && *n == d_nr
+                {
+                    *held = Some(binds.clone());
+                }
+            });
+            binds
+        }
+        None => std::sync::Arc::new(collect()),
+    }
 }
 
 /// WHY the oracle answers what it answers about a BINDING — @PLN155 phase 0.

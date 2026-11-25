@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a format-hole `for` over a text local walks its characters as `iter_text` does —
+// `c#index`, `c#next`, the text held in `_for_text_N` — with a filter skipping `'l'`.
+// Prints: [h,e,o]
+
+fn main() {
+  s = "hello";
+  println("{for c in s if c != 'l' {c}}");
+}

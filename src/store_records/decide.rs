@@ -7,7 +7,7 @@
 
 use super::{
     ABSENT, BTreeSet, Data, ENDED, HANDED, LIVE, Origin, Pt, Pts, Run, SKey, State, Summary, Value,
-    field_record_holds, info_of, join_opt_arms, rule_out_everywhere, rule_out_holder,
+    field_record_holds, info_of, join_opt_arms, member_key, rule_out_everywhere, rule_out_holder,
     slot_corr_narrow, slot_dead_arm, slot_holders_off, slot_null, views_enabled,
 };
 
@@ -43,19 +43,20 @@ impl Run<'_> {
                 (join_opt_arms(tt, et), join_opt_arms(tf, ef))
             }
             // `OpEqInt(OpGetInt4(x, 0), 0)`: a nullable struct-enum's absent tag, the second half
-            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  No local OWNS a
-            // tag-0 COPY — copying an absent field answers null — so the absent side drops `x`'s copies.  Without it
-            // the `x == null` arm kept `x`'s copy and a rebind there read as a leak (`cond =
-            // mc.cond` under `if cond == null`).  OPT-IN (`LOFT_RECORDS_TAG_NULL_TEST=1`): a MINTED record
-            // can carry a non-absent variant the records do not know, so the absent side keeps it,
-            // and suite B-Copy/a-branch-handing-back-… then reads one false finding where the
-            // default reads none — the precise answer needs the variant a mint writes.
+            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  The absent side
+            // drops a store whose tag this path wrote a present variant into (`State::tagged`: a
+            // variant literal's mint), so a rebind under `if cond == null` does not read the
+            // record `cond` built on an earlier pass as lost (`LOFT_RECORDS_NO_TAGGED_NULL_TEST=1`
+            // keeps it).  `LOFT_RECORDS_TAG_NULL_TEST=1` also drops `x`'s copies — copying an
+            // absent field answers null, so no local owns a tag-0 copy — but a copy taken into a
+            // return buffer is not told apart yet, and suite B-Copy/a-binding-from-a-value-branch-…
+            // then reads one false re-free; so that half stays opt-in.
             Value::Call(op, a)
                 if a.len() == 2
                     && self.data.def(*op).name() == "OpEqInt"
                     && matches!(a[1].unspan(), Value::Int(0))
-                    && crate::env_once!(
-                        std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some()
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_TAGGED_NULL_TEST").is_some()
                     )
                     && let Value::Call(g, ga) = a[0].unspan()
                     && self.data.def(*g).name() == "OpGetInt4"
@@ -77,7 +78,12 @@ impl Run<'_> {
                     .into_iter()
                     .filter(|p| match p {
                         Pt::Store(k) => {
-                            !matches!(self.sites[k.site as usize].origin, Some(Origin::Copy))
+                            !absent.tagged.contains(k)
+                                && (!copies_never_absent()
+                                    || !matches!(
+                                        self.sites[k.site as usize].origin,
+                                        Some(Origin::Copy)
+                                    ))
                         }
                         _ => true,
                     })
@@ -147,12 +153,33 @@ impl Run<'_> {
                         (null, present)
                     };
                 }
-                let Value::Var(x) = a[0].unspan() else {
-                    return both(st);
+                // A collection member of a tuple is tested as the variable its key follows
+                // (`member_key`).  Only the collection test: a record member's test
+                // (`OpConvBoolFromRef(u.0)`) read that way loses the copies a tuple copy
+                // (`u = t`) makes of it, and suite N-Shape's tuple-member cell then reads three
+                // false `copied-lease` findings.
+                let x = match a[0].unspan() {
+                    Value::Var(x) => *x,
+                    Value::TupleGet(t, i)
+                        if exact_null_test() && *op == self.ops.vector_is_null =>
+                    {
+                        match member_key(*t, *i) {
+                            Some(k) => k,
+                            None => return both(st),
+                        }
+                    }
+                    _ => return both(st),
                 };
+                let x = &x;
+                // A value that can name nothing but null is null, whoever holds it: a local's
+                // null is undecided only because it may be an absent-marked STORE.
+                let only_null =
+                    exact_null_test() && Self::pts(&st, *x).iter().all(|p| matches!(p, Pt::Null));
                 if *op == self.ops.ref_is_null {
                     Self::null_test(*x, st)
-                } else if *op == self.ops.vector_is_null && self.only_call_answers(&st, *x) {
+                } else if *op == self.ops.vector_is_null
+                    && (only_null || self.only_call_answers(&st, *x))
+                {
                     // A collection a call answered is null only as the null sentinel: a
                     // `-> hash<…>?` hands back no absent-marked store (loft#1150).  A local's
                     // null may be such a store, so for it the test decides nothing.
@@ -992,4 +1019,16 @@ impl Run<'_> {
             st.vars.insert(x, to);
         }
     }
+}
+
+/// `LOFT_RECORDS_TAG_NULL_TEST=1`: the absent half of a null test also drops the tested local's
+/// copies (see the tag test in `decide`).
+fn copies_never_absent() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some())
+}
+
+/// `LOFT_RECORDS_NO_EXACT_NULL_TEST=1`: a null test of a tuple member, or of a collection local
+/// that can name only null, decides nothing (see `decide`).
+fn exact_null_test() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_EXACT_NULL_TEST").is_some())
 }

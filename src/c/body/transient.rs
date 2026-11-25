@@ -368,6 +368,10 @@ impl Cx<'_> {
 
     /// The struct of every group a twin names: one member per `(offset, kind)` the twins
     /// read or write, a group held by value written before the struct that holds it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass that orders the groups and writes each struct; its steps share the order it builds"
+    )]
     pub(crate) fn tr_typedefs(&self) -> String {
         let st = self.tr.borrow();
         if st.protos.is_empty() {
@@ -375,10 +379,19 @@ impl Cx<'_> {
         }
         let mut out = String::new();
         let all: BTreeSet<u16> = st.groups.iter().chain(st.members.keys()).copied().collect();
+        // A record's struct is named from its type, never its number (`Cx::type_ident`).
+        let id = |g: u16| self.type_ident(g);
         for g in &all {
-            let _ = writeln!(out, "typedef struct lt_{g} lt_{g};");
+            let gi = id(*g);
+            let _ = writeln!(out, "typedef struct lt_{gi} lt_{gi};");
         }
-        fn emit(g: u16, st: &TrState, done: &mut BTreeSet<u16>, out: &mut String) {
+        fn emit(
+            g: u16,
+            st: &TrState,
+            id: &dyn Fn(u16) -> String,
+            done: &mut BTreeSet<u16>,
+            out: &mut String,
+        ) {
             if !done.insert(g) {
                 return;
             }
@@ -386,10 +399,10 @@ impl Cx<'_> {
             let ms = st.members.get(&g).unwrap_or(&none);
             for (_, m) in ms {
                 if let Member::Record(r) = m {
-                    emit(*r, st, done, out);
+                    emit(*r, st, id, done, out);
                 }
             }
-            let _ = writeln!(out, "struct lt_{g} {{");
+            let _ = writeln!(out, "struct lt_{} {{", id(g));
             if ms.is_empty() {
                 let _ = writeln!(out, "    char lt_none;");
             }
@@ -399,7 +412,7 @@ impl Cx<'_> {
                     Member::Bool | Member::Enum => "uint8_t".to_string(),
                     Member::Text => "loft_str".to_string(),
                     Member::Vector => "loft_ta_vec".to_string(),
-                    Member::Record(r) => format!("lt_{r}"),
+                    Member::Record(r) => format!("lt_{}", id(*r)),
                 };
                 let _ = writeln!(out, "    {t} {};", m.name(*off));
             }
@@ -407,7 +420,7 @@ impl Cx<'_> {
         }
         let mut done = BTreeSet::new();
         for g in &all {
-            emit(*g, &st, &mut done, &mut out);
+            emit(*g, &st, &id, &mut done, &mut out);
         }
         for (g, off) in &st.zeros {
             let none = BTreeSet::new();
@@ -425,7 +438,8 @@ impl Cx<'_> {
                 .collect();
             let _ = writeln!(
                 out,
-                "#define LT_ZERO_{g}_{off}(s) do {{ {} }} while (0)",
+                "#define LT_ZERO_{}_{off}(s) do {{ {} }} while (0)",
+                id(*g),
                 parts.join(" ")
             );
         }
@@ -442,9 +456,10 @@ impl Cx<'_> {
             }
         }
         for g in &seals {
+            let gi = id(*g);
             let _ = writeln!(
                 out,
-                "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s);"
+                "static inline void lt_seal_{gi}(loft_cx *cx, lt_{gi} *s);"
             );
         }
         for g in &seals {
@@ -456,13 +471,16 @@ impl Cx<'_> {
                 .iter()
                 .filter_map(|(o, m)| match m {
                     Member::Vector => Some(format!("s->{n}.cap = s->{n}.n;", n = m.name(*o))),
-                    Member::Record(r) => Some(format!("lt_seal_{r}(cx, &s->{});", m.name(*o))),
+                    Member::Record(r) => {
+                        Some(format!("lt_seal_{}(cx, &s->{});", id(*r), m.name(*o)))
+                    }
                     _ => None,
                 })
                 .collect();
+            let gi = id(*g);
             let _ = writeln!(
                 out,
-                "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s) {{ (void) s; {} }}",
+                "static inline void lt_seal_{gi}(loft_cx *cx, lt_{gi} *s) {{ (void) s; {} }}",
                 body.join(" ")
             );
         }
@@ -647,11 +665,11 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
             if vars.is_store_text_link(a) {
                 format!("loft_ref {n}")
             } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
-                format!("{} *{n}", held(c))
+                format!("{} *{n}", held(cx, c))
             } else if vr_ptr.contains(&i) {
-                format!("const {} *{n}", passed(c))
+                format!("const {} *{n}", passed(cx, c))
             } else {
-                format!("{} {n}", passed(c))
+                format!("{} {n}", passed(cx, c))
             }
         })
         .collect();
@@ -662,7 +680,7 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
         .map(|(_, &a)| var_name(vars.name(a), a))
         .collect();
     let params = crate::c::cx_params(&params);
-    let rtype = held(ret);
+    let rtype = held(cx, ret);
     let sig = format!("static {rtype} {name}({params})");
     let (body, _) = FnWriter::new(cx, key.d, shapes, ret)
         .transient(tf)
@@ -978,9 +996,9 @@ impl Cx<'_> {
             let c = shapes[a as usize];
             let n = var_name(vars.name(a), a);
             params.push(if matches!(vars.tp(a).base(), Type::RefVar(_)) {
-                format!("{} *{n}", held(c))
+                format!("{} *{n}", held(self, c))
             } else {
-                format!("{} {n}", passed(c))
+                format!("{} {n}", passed(self, c))
             });
         }
         let params = if params.is_empty() {
@@ -1297,8 +1315,9 @@ impl FnWriter<'_> {
                 };
                 let g = self.cx.tr_group(tp);
                 let tmp = format!("trp{}", self.decls.len() + 1);
-                self.decls.push(format!("lt_{g} *{tmp} = 0;"));
-                let zero = format!("{tmp} = (lt_{g} *) loft_ta_zero(cx, sizeof(lt_{g}));");
+                let gi = self.cx.type_ident(g);
+                self.decls.push(format!("lt_{gi} *{tmp} = 0;"));
+                let zero = format!("{tmp} = (lt_{gi} *) loft_ta_zero(cx, sizeof(lt_{gi}));");
                 let test = super::as_cond(self.expr(cond, ind)?)?;
                 self.line(ind, &format!("if ({}) {{", super::bare(&test)));
                 if first {
@@ -1539,9 +1558,10 @@ impl FnWriter<'_> {
                 }
                 let g = self.cx.tr_group(tp);
                 let n = self.var(v);
+                let gi = self.cx.type_ident(g);
                 self.line(
                     ind,
-                    &format!("{n} = (lt_{g} *) loft_ta_alloc(cx, sizeof(lt_{g}));"),
+                    &format!("{n} = (lt_{gi} *) loft_ta_alloc(cx, sizeof(lt_{gi}));"),
                 );
                 void()
             }
@@ -1619,7 +1639,8 @@ impl FnWriter<'_> {
                         return Err("a narrow field written".into());
                     }
                     self.cx.tr.borrow_mut().zeros.insert((g, off));
-                    self.line(ind, &format!("LT_ZERO_{g}_{off}(&{lv});"));
+                    let gi = self.cx.type_ident(g);
+                    self.line(ind, &format!("LT_ZERO_{gi}_{off}(&{lv});"));
                     return void();
                 }
                 let m = match name {
@@ -1660,7 +1681,8 @@ impl FnWriter<'_> {
                 // The copy shares its vectors' elements with the source: sealed, a push into
                 // it moves it first.
                 self.cx.tr.borrow_mut().seals.insert(g);
-                self.line(ind, &format!("{d} = *{s}; lt_seal_{g}(cx, &{d});"));
+                let gi = self.cx.type_ident(g);
+                self.line(ind, &format!("{d} = *{s}; lt_seal_{gi}(cx, &{d});"));
                 void()
             }
             "OpMoveVector" if args.first().and_then(|b| self.tr_root(b)).is_some() => {
@@ -1834,10 +1856,11 @@ impl FnWriter<'_> {
                             };
                             let idx = self.expr(&cargs[2], ind)?;
                             let idx = super::as_int(idx)?;
+                            let gi = self.cx.type_ident(g);
                             self.line(
                                 ind,
                                 &format!(
-                                    "{lhs} = (lt_{g} *) loft_ta_vec_at(cx, &{lv}, {idx}, sizeof(lt_{g}));"
+                                    "{lhs} = (lt_{gi} *) loft_ta_vec_at(cx, &{lv}, {idx}, sizeof(lt_{gi}));"
                                 ),
                             );
                             if let Some(t) = self.tr.as_mut() {
@@ -1850,10 +1873,11 @@ impl FnWriter<'_> {
                             }
                             self.tr_writable(&cargs[0])?;
                             let lv = self.tr_new_record_vec(cargs, ind)?;
+                            let gi = self.cx.type_ident(g);
                             self.line(
                                 ind,
                                 &format!(
-                                    "{lhs} = (lt_{g} *) loft_ta_vec_push(cx, &{lv}, sizeof(lt_{g}));"
+                                    "{lhs} = (lt_{gi} *) loft_ta_vec_push(cx, &{lv}, sizeof(lt_{gi}));"
                                 ),
                             );
                         }
@@ -1861,9 +1885,10 @@ impl FnWriter<'_> {
                             if !self.tr_builds() {
                                 return Err("a site that places into a transient value".into());
                             }
+                            let gi = self.cx.type_ident(g);
                             self.line(
                                 ind,
-                                &format!("{lhs} = (lt_{g} *) loft_ta_alloc(cx, sizeof(lt_{g}));"),
+                                &format!("{lhs} = (lt_{gi} *) loft_ta_alloc(cx, sizeof(lt_{gi}));"),
                             );
                         }
                         (opn, _) => return Err(format!("a transient local bound from {opn}")),
@@ -1912,9 +1937,10 @@ impl FnWriter<'_> {
         if let Some(tp) = default_object(self.cx, arm) {
             let g = self.cx.tr_group(tp);
             let lhs = self.var(var);
+            let gi = self.cx.type_ident(g);
             self.line(
                 ind,
-                &format!("{lhs} = (lt_{g} *) loft_ta_zero(cx, sizeof(lt_{g}));"),
+                &format!("{lhs} = (lt_{gi} *) loft_ta_zero(cx, sizeof(lt_{gi}));"),
             );
             return Ok(());
         }

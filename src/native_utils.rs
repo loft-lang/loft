@@ -865,6 +865,27 @@ pub(crate) fn link_directive(source: &str) -> Option<bool> {
     None
 }
 
+/// Say that a compiled program crashed, when it did, and answer the exit code a shell gives
+/// it (`128 + signal` on Unix), so `loft prog.loft` ends as running the binary itself does.
+/// A crashed program could print nothing itself, and an exit code alone reads as an ordinary
+/// failure.  A memory fault is where a recursion deeper than the stack holds ends — a shipped
+/// build has no call cap, and a development build's frames can fill the stack before the cap
+/// is reached — so that one names the run that stops such a recursion at its line.  `None`
+/// when the program ended on its own or someone stopped it.
+pub(crate) fn report_crash(status: std::process::ExitStatus, file: &str) -> Option<i32> {
+    let crash = crate::platform::crash_of(status)?;
+    eprintln!("error: the program crashed: {}", crash.what);
+    if crash.memory {
+        eprintln!(
+            "  A compiled program ends this way when a recursion goes deeper than its stack \
+             holds.\n  `loft --interpret {file}` stops such a recursion at {} calls and names \
+             the line it is on.",
+            loft::limits::MAX_CALL_DEPTH
+        );
+    }
+    Some(crash.code)
+}
+
 /// Say something useful when a Windows binary dies before `main`.
 ///
 /// `STATUS_DLL_NOT_FOUND` (`0xC000_0135`) is the loader refusing to start a

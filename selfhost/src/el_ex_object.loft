@@ -1404,7 +1404,36 @@ pub fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
 // A call through a local or parameter holding a function (`fn_ref[v](…)`, `Value::CallRef`):
 // each argument converted to the function type's parameter; typed by its result.  A named
 // argument and a wrong count are refused by name.
+// `parse_call_ref`'s capture arm (P215, loft#1869): in a lambda, a call through a function value
+// it CAPTURED reads its placeholder from the closure record first — the number and the closure
+// half (`fn_ref_field_read`) — the placeholder a view of the record (`depending(__closure)`),
+// in a "captured_fn_ref_call" block.
 pub fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -> Ex {
+  cname = el_vars::name_of(vars, v);
+  ca = -1;
+  if !e.first_pass && e.closure_var >= 0 && e.closure_rec >= 0 && len([for c in e.captures if c.name == cname && el_types::base(c.tp) is TyFunction { 1 }]) > 0 {
+    ca = attr_nr(el::def(e, e.closure_rec), cname);
+  }
+  if ca < 0 || attr_nr(el::def(e, e.closure_rec), "{cname}__clos") < 0 {
+    return call_ref_at(e, vars, v, args);
+  }
+  // (A captured function answering a record or a vector passes on what its result borrows
+  // (`fnref_result_type` through the capture): not carried yet.)
+  crt = match el_types::base(el_vars::tp(vars, v)) { TyFunction { result: cr } => el_types::base(cr), _ => ir::TyVoid };
+  if crt is TyVector || crt is TyReference {
+    el::refuse(e, "a call through a captured function value answering a record or a vector");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  el_vars::change_var_type(e, vars, v, el_types::with_deps(el_types::without_deps(el_vars::tp(vars, v)), [e.closure_var]));
+  r = call_ref_at(e, vars, v, args);
+  cr = e.closure_rec;
+  cl = ir::NdVar { n: e.closure_var };
+  ftp = el_types::without_deps(el::def(e, cr).attributes[ca]!.typedef[0] ?? ir::TyVoid);
+  load = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [cl, ir::NdInt { n: field_position(e, cr, cname) }]), el_ir::cl(e, "OpGetDbRef", [cl, ir::NdInt { n: field_position(e, cr, "{cname}__clos") }])], ftp, "fn_ref_field_read");
+  ex(el_ir::v_block([el_ir::v_set(v, load), r.code], r.tp, "captured_fn_ref_call"), r.tp)
+}
+
+fn call_ref_at(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -> Ex {
   ft = el_types::base(el_vars::tp(vars, v));
   pts: vector<ir::TypeT> = [];
   rt = ir::TyVoid;
@@ -1752,6 +1781,25 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     },
     _ => {}
   }
+  // (A function value the lambda captured is called through its placeholder, made at its first
+  // mention on the first pass as a read makes it — `parse_var_inner`'s capture arm.)
+  if source < 0 && name != "" && e.first_pass && el_vars::var(vars, name) < 0 {
+    for cc in e.captures {
+      // (Made by the call's lookup, not a read: not user-named.)
+      if cc.name == name && el_types::base(cc.tp) is TyFunction && el_vars::var(vars, name) < 0 {
+        cph1 = el_vars::add_variable(vars, cc.name, el_types::without_deps(cc.tp));
+        el_vars::in_use(vars, cph1, true);
+      }
+    }
+  }
+  // (On the second pass the placeholder is unmapped — reads go through the record — and found
+  // by name: `capture_placeholder`.)
+  if source < 0 && name != "" && !e.first_pass && el_vars::var(vars, name) < 0 && e.closure_var >= 0 && len([for cc in e.captures if cc.name == name && el_types::base(cc.tp) is TyFunction { 1 }]) > 0 {
+    cph = el_vars::capture_placeholder(vars, name);
+    if cph >= 0 {
+      return call_ref(e, vars, cph, args);
+    }
+  }
   if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
     rf = call_ref(e, vars, el_vars::var(vars, name), args);
     // `parse_call`'s position wrap takes a call through a function value as it takes a call
@@ -1836,6 +1884,17 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
           }
         }
         hint_lambda(e, vars, hd, len(list), ae!, sofar: types);
+        // (`special_form_callback_hint`: `any` / `all` / `count_if`'s predicate is
+        // `fn(T) -> boolean` over the vector's element, where the program declares none.)
+        if hd < 0 && source < 0 && len(list) == 1 && (name == "any" || name == "all" || name == "count_if") && el::def_nr(e, "n_{name}") < 0 {
+          match el_types::base(types[0]!) {
+            TyVector { inner: sfi } => {
+              vars.lambda_node = ae!;
+              vars.lambda_hint = ir::TyFunction { args: [sfi], result: ir::TyBoolean, dep: [], consts: 0 };
+            },
+            _ => {}
+          }
+        }
         eh = argument_element_hint(e, hd, len(list), ae!);
         built += [eh];
         if el_trace::on() {
@@ -1866,7 +1925,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       list += [ir::NdText { s: "" }];
       types += [ir::TyText { dep: [] }];
     }
-    list += [ir::NdText { s: apos.file }];
+    list += [ir::NdText { s: el::site_file(e, apos.file) }];
     types += [ir::TyText { dep: [] }];
     list += [ir::NdInt { n: apos.line }];
     types += [ir::TyInteger { spec: wide_spec() }];
@@ -1881,7 +1940,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       }
       cp = el::pos_at(e, after_paren(e, at));
       message = if len(list) == 0 { ir::NdText { s: "" } } else { list[0] };
-      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: cp.file }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
+      return ex(ir::NdSpan { pos: cp, inner: el_ir::cl(e, "n_{name}", [message, ir::NdText { s: el::site_file(e, cp.file) }, ir::NdInt { n: cp.line }]) }, ir::TyVoid);
     }
   }
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
@@ -1907,6 +1966,9 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
       return el_ex_loop::filter_call(e, vars, at, list, types);
+    }
+    if (name == "any" || name == "all" || name == "count_if") && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_loop::predicate_call(e, vars, at, name, list, types);
     }
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
       return el_ex_loop::reduce_call(e, vars, list, types);
@@ -3172,7 +3234,7 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
       _ => {}
     }
   }
-  file_arg = ir::NdText { s: call_pos.file };
+  file_arg = ir::NdText { s: el::site_file(e, call_pos.file) };
   line_arg = ir::NdInt { n: call_pos.line };
   code = ir::NdNull;
   if kind == "panic" {
@@ -3183,12 +3245,26 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
       // Already refused where its type was lost.
       return ex(ir::NdNull, ir::TyVoid);
     }
-    if len(list) == 0 || !(el_types::base(types[0]) is TyBoolean) {
+    // (A condition of another kind is converted to a boolean, `convert`'s `conv_bool_call`: a
+    // plain enum's truth is its ordinal's — `assert(delete(p), …)` over a `FileResult`.)
+    cb = if len(list) == 0 { ir::TyVoid } else { el_types::base(types[0]) };
+    conv = match cb {
+      TyInteger { spec: _ } => "OpConvBoolFromInt",
+      TyText { dep: _ } => "OpConvBoolFromText",
+      TyFloat => "OpConvBoolFromFloat",
+      TySingle => "OpConvBoolFromSingle",
+      TyCharacter => "OpConvBoolFromCharacter",
+      _ => if el_convert::plain_enum(cb) { "OpConvBoolFromEnum" } else { "" }
+    };
+    if len(list) == 0 || (!(cb is TyBoolean) && conv == "") {
       el::refuse(e, "an assert whose condition is not a boolean");
       return ex(ir::NdNull, ir::TyVoid);
     }
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
+    }
+    if conv != "" {
+      list[0] = el_ir::cl(e, conv, [list[0]!]);
     }
     if len(list) >= 4 {
       file_arg = list[2];

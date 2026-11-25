@@ -918,6 +918,21 @@ impl Scopes<'_> {
                         } else {
                             free
                         };
+                        // loft#2648 — a value that may be any of several variables is freed
+                        // only where it is none of them.
+                        let free = self.lift_extra_witnesses.get(&v).into_iter().flatten().fold(
+                            free,
+                            |inner, &w| {
+                                v_if(
+                                    Value::Call(
+                                        data.def_nr("OpDistinctStore"),
+                                        vec![Value::Var(v), Value::Var(w)],
+                                    ),
+                                    inner,
+                                    Value::Null,
+                                )
+                            },
+                        );
                         ls.push(free);
                     } else if is_work_ref && let Some(&witness) = self.paired_witness.get(&v) {
                         // `OpFreeRefIfDistinct` declines where the two alias, so it is

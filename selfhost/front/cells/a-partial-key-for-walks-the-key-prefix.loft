@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `for r in d.rows[1]` over a `sorted<Row[a, b]>` gives fewer keys than it has —
+// `parse_key`'s partial-key match, the inclusive range `1..=1` (`OpIterate(…, 1, k, 1, k)`, its
+// step block "Partial key match").  Its two `fill_iter`s each take a loop number, so the `par`
+// loop after it is `_q_par2`; the first pass reads it as an iterator, `r#index` before `r`.
+// Prints: 30 12 / 4
+struct Row { a: integer, b: integer, w: integer }
+struct Db { rows: sorted<Row[a, b]> }
+fn dbl(x: integer) -> integer { x * 2 }
+fn local_rows() -> integer {
+  rs: sorted<Row[a, b]> = [Row { a: 2, b: 1, w: 1 }, Row { a: 2, b: 5, w: 3 }, Row { a: 3, b: 1, w: 9 }];
+  n = 0;
+  for r in rs[2] { n += r.w; }
+  n
+}
+fn main() {
+  d = Db { rows: [Row { a: 1, b: 1, w: 10 }, Row { a: 1, b: 2, w: 20 }, Row { a: 2, b: 1, w: 30 }] };
+  s = 0;
+  for r in d.rows[1] { s += r.w; }
+  v = [1, 2, 3];
+  t = 0;
+  for x in v par(q = dbl(x), 2) { t += q; }
+  println("{s} {t}");
+  println("{local_rows()}");
+}

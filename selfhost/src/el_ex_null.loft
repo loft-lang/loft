@@ -957,7 +957,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   pos = el::pos_at(e, at);
-  halt = el_ir::cl(e, "n_panic", [ir::NdText { s: "{shown} is null" }, ir::NdText { s: pos.file }, ir::NdInt { n: el_line(e, at) }]);
+  halt = el_ir::cl(e, "n_panic", [ir::NdText { s: "{shown} is null" }, ir::NdText { s: el::site_file(e, pos.file) }, ir::NdInt { n: el_line(e, at) }]);
   test = el_ir::v_if(el_ir::cl(e, "OpNot", [check!]), halt, ir::NdNull);
   ops: vector<ir::Node> = [];
   if held >= 0 {
@@ -2592,6 +2592,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
   if kind == "continue" {
     return ex(ir::NdContinue { n: 0 }, ir::TyNever);
   }
+  // (`break <value>` returns the value from the enclosing function: loft's loops are
+  // void-typed, so Rust desugars it to `return <value>`.)
+  if kind == "break" {
+    return jump(e, vars, "return", x);
+  }
   if kind == "return" {
     result = el::def(e, e.context).returned[0];
     if x == null {
@@ -2848,7 +2853,9 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // `return` itself is not carried: a closure answering a text names its block after its
     // capture, and a call answering it borrows `[32772]`.)
     // (So is a named function, a value of its definition number: `return add5;`.)
-    if result is TyFunction && v.tp is TyFunction && (el_ir::unspan(v.code) is NdVar || el_ir::unspan(v.code) is NdFnRef || el_ir::unspan(v.code) is NdInt) {
+    // (So is a closure built in the `return`, `fn_ref_with_closure`, unless it answers a text.)
+    built_closure = (match el_ir::unspan(v.code) { NdBlock { block: rb } => rb[0].name == "fn_ref_with_closure", _ => false } || (e.first_pass && el_ir::unspan(v.code) is NdNull)) && !(match el_types::base(v.tp) { TyFunction { result: vr } => el_types::base(vr) is TyText, _ => true });
+    if result is TyFunction && v.tp is TyFunction && (el_ir::unspan(v.code) is NdVar || el_ir::unspan(v.code) is NdFnRef || el_ir::unspan(v.code) is NdInt || built_closure) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {

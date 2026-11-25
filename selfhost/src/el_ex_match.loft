@@ -97,8 +97,21 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
   }
   for k in e.subject_sites {
     if k == key && vars.match_site >= 0 {
+      // (`add_variable(reuse)`: the site's pass-1 temp keeps its type, borrows included — a
+      // `_match_subj_N` is no `__` temp; an unknown one is refined — and the value bound into it
+      // on this pass lends its own borrows too: `["_mv_t_1"]` from the first pass beside a call
+      // whose buffer lends none, `["__vdb_1"]` from a stream buffer the first pass read bare.)
       w = el_vars::add_variable(vars, e.subject_names[k#index] ?? "", t);
-      el_vars::set_var_type(vars, w, t);
+      wt = el_vars::tp(vars, w);
+      wd = el_types::deps(wt);
+      for td in el_types::deps(t) {
+        if !wd.contains(td) {
+          wd += [td];
+        }
+      }
+      if wd != el_types::deps(wt) {
+        el_vars::set_var_type(vars, w, el_types::with_deps(wt, wd));
+      }
       return w;
     }
   }
@@ -493,7 +506,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
             b.code = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(e, b.code, el_types::deps(b.tp))) }, _ => b.code };
           }
-          b.code = el_ir::v_block(binds + [b.code], b.tp, if binding_arm { "binding_arm" } else { "match_arm" });
+          // (An arm answering a vector literal is typed by the literal's own block, the store it
+          // mints — not the match's expected type, which may name a renamed buffer.)
+          atp = match el_ir::unspan(b.code) { NdBlock { block: vbk } => if vbk[0].name == "Vector" && !e.first_pass { vbk[0].result[0] ?? b.tp } else { b.tp }, _ => b.tp };
+          b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
         // (`first_pass_null_arm`).
@@ -1215,7 +1231,7 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
       if rec_enum { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: xv }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sen).known_type }]), ir::NdInt { n: el::def(e, sen).known_type + 32768 }]) } else { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdVar { n: xv }]) },
       el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: buf }, ir::NdVar { n: elm }, vk, ir::NdInt { n: 65535 }])
     ], ir::TyVoid, "stream append");
-    stop = el_ir::cl(e, "n_panic", [ir::NdText { s: "a `match` over an iterator read more than 1000000 elements (max_lookahead) — the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD" }, ir::NdText { s: pos.file }, ir::NdInt { n: pos.line }]);
+    stop = el_ir::cl(e, "n_panic", [ir::NdText { s: "a `match` over an iterator read more than 1000000 elements (max_lookahead) — the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD" }, ir::NdText { s: el::site_file(e, pos.file) }, ir::NdInt { n: pos.line }]);
     bounded = el_ir::v_block([
       el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }])),
       el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 1000000 }, ir::NdVar { n: cnt }]), stop, ir::NdNull),

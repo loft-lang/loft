@@ -34,6 +34,16 @@
 use crate::diagnostics::{DiagEntry, Level};
 use crate::lexer::Position;
 
+/// The line under a call stack overflow that names what to write instead.  A development
+/// build stops a recursion at `limits::MAX_CALL_DEPTH` calls so that a runaway one does not
+/// take the developer's machine with it; the cure is in the program, and these are the two
+/// forms that need no frame per step.  The C runtime prints the same line, handed to it as
+/// `LOFT_STACK_OVERFLOW_HELP` (`c::unit_defines`), so the two backends read alike.  ASCII
+/// with no quote or backslash: it is written into C as a string literal.
+pub const STACK_OVERFLOW_HELP: &str = "help: a call that is the last thing its function does \
+     runs as a loop and needs no frame; a walk over deep data keeps the work still to do in a \
+     vector and loops over it";
+
 /// A typed runtime fault attributable to user code.
 ///
 /// Constructed by a fault-site opcode or native fn via the
@@ -413,14 +423,27 @@ impl RuntimeError {
     /// frames at all (loft#1056).
     #[must_use]
     pub fn render(&self) -> String {
-        let entry = self.to_diag_entry();
-        let loader = crate::diagnostic_render::FileSourceLoader::new();
+        let mut entry = self.to_diag_entry();
+        // The file is printed under its name ([`crate::source_name`]: the generated binary
+        // carries only that name), and its source line read from wherever the name is found.
+        let roots = crate::source_name::program_roots();
+        if let Some(roots) = &roots {
+            entry.file = crate::source_name::name(&entry.file, roots);
+        }
+        let loader = NamedSourceLoader {
+            roots: roots.unwrap_or_default(),
+            files: crate::diagnostic_render::FileSourceLoader::new(),
+        };
         let mut out = crate::diagnostic_render::render_entry_pretty(
             &entry,
             &loader,
             crate::diagnostic_render::ColorMode::Auto,
         );
         out.push_str(&self.render_call_chain());
+        if matches!(self.kind, RuntimeErrorKind::StackOverflow) {
+            out.push_str(STACK_OVERFLOW_HELP);
+            out.push('\n');
+        }
         out
     }
 
@@ -589,6 +612,19 @@ impl RuntimeError {
             suggestion: None,
             fixes: Vec::new(),
         }
+    }
+}
+
+/// Reads a source line by the NAME a fault prints ([`crate::source_name::locate`]).
+struct NamedSourceLoader {
+    roots: crate::source_name::Roots,
+    files: crate::diagnostic_render::FileSourceLoader,
+}
+
+impl crate::diagnostic_render::SourceLoader for NamedSourceLoader {
+    fn line(&self, file: &str, line_1based: u32) -> Option<String> {
+        let path = crate::source_name::locate(file, &self.roots)?;
+        self.files.line(&path.to_string_lossy(), line_1based)
     }
 }
 

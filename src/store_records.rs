@@ -189,6 +189,22 @@ struct State {
     /// stands for while the source is freed bare, and a hook run on one of them later is the
     /// second drop of one value (`(H-Lease)`).
     lease_copied: BTreeMap<SKey, u16>,
+    /// The stores whose struct-enum tag (offset 0) holds a present variant on every path
+    /// reaching here where they are live: written a non-zero constant (`OpSetEnum(x, 0, n)`),
+    /// as a variant literal mints one.  The absent half of a null test (`tag(x) == 0`) does
+    /// not hold for them.
+    tagged: BTreeSet<SKey>,
+}
+
+/// A set that holds a fact about a store on every path where the store is live: kept where
+/// both sides hold it, and where only one side does and the store is not live on the other.
+fn join_must(a: &State, b: &State, set: impl Fn(&State) -> &BTreeSet<SKey>) -> BTreeSet<SKey> {
+    let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
+    let (sa, sb) = (set(a), set(b));
+    let mut m: BTreeSet<SKey> = sa.intersection(sb).copied().collect();
+    m.extend(sa.iter().filter(|k| !live(b, k)).copied());
+    m.extend(sb.iter().filter(|k| !live(a, k)).copied());
+    m
 }
 
 /// The stores a code-generator copy took the lease of on either side (`State::lease_copied`).
@@ -568,6 +584,13 @@ fn demote(st: &mut State, site: u32) {
         // No earlier generation live here: a slot correlated with the current store stays
         // correlated with the older key it becomes.
         let old_quiet = !info_of(st, old).has(LIVE);
+        // Its tag goes with it: the merged generation holds a present variant where both did.
+        let tagged = st.tagged.remove(&cur) && (old_quiet || st.tagged.contains(&old));
+        if tagged {
+            st.tagged.insert(old);
+        } else {
+            st.tagged.remove(&old);
+        }
         let merged = match st.stores.get(&old) {
             Some(o) => join_info(o, &info),
             None => info,
@@ -767,17 +790,8 @@ fn join_state(a: &State, b: &State) -> State {
         dropped: a.dropped.union(&b.dropped).copied().collect(),
         dropped_unless: a.dropped_unless.union(&b.dropped_unless).copied().collect(),
         lease_copied: join_lease_copied(a, b),
-        dropped_must: {
-            let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
-            let mut m: BTreeSet<SKey> = a
-                .dropped_must
-                .intersection(&b.dropped_must)
-                .copied()
-                .collect();
-            m.extend(a.dropped_must.iter().filter(|k| !live(b, k)).copied());
-            m.extend(b.dropped_must.iter().filter(|k| !live(a, k)).copied());
-            m
-        },
+        dropped_must: join_must(a, b, |st| &st.dropped_must),
+        tagged: join_must(a, b, |st| &st.tagged),
         mints: a.mints.clone(),
     }
 }

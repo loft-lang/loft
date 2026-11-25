@@ -27,6 +27,21 @@ use std::path::{Path, PathBuf};
 /// a quoted value, or `absent` when the project did not declare the library.
 const MARK: &str = "# loft develop: was ";
 
+/// `path` as a loft.toml string holds it.  A backslash there starts an escape
+/// (`manifest::read_manifest` refuses one that is not), and a Windows path holds one per
+/// directory: it is written with `/` (`file_access::portable_str`), which Windows accepts and
+/// which reads back as written.  A `\\` or `"` left after that is part of a name, and no
+/// string spelling reads back as written.
+fn toml_path(path: &str) -> Result<String, String> {
+    let path = crate::file_access::portable_str(path);
+    if path.contains(['"', '\\']) {
+        return Err(format!(
+            "{path} cannot be written into loft.toml: rename the directory without `\"` or `\\`"
+        ));
+    }
+    Ok(path)
+}
+
 /// Run `loft develop` with the arguments after the subcommand; answers the exit code.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
@@ -108,6 +123,7 @@ fn start(text: &str, name: &str, dir: Option<&String>) -> Result<(String, String
             crate::manifest::extract_version_req(&d.value).map(|v| v.trim_matches('"').to_string())
         })
         .unwrap_or_else(|| version.clone());
+    let path = toml_path(&path)?;
     let line = format!("{name} = {{ path = \"{path}\", version = \"{req}\" }}  {MARK}{was}");
     let new_text = set_line(text, name, &line);
     Ok((
@@ -335,5 +351,17 @@ mod tests {
     fn a_comment_starts_outside_quotes_only() {
         assert_eq!(split_comment("\"a#b\"  # c"), ("\"a#b\"", "# c"));
         assert_eq!(split_comment("\"0.1\""), ("\"0.1\"", ""));
+    }
+
+    #[test]
+    fn a_path_is_written_as_loft_toml_reads_it_back() {
+        assert_eq!(
+            super::toml_path("/home/me/checkout").as_deref(),
+            Ok("/home/me/checkout")
+        );
+        assert!(super::toml_path("/home/a\"b").is_err());
+        if !crate::platform::is_windows_fs() {
+            assert!(super::toml_path(r"/home/a\b").is_err());
+        }
     }
 }

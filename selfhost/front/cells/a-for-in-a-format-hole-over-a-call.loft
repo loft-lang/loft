@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a format-hole `for` over a call answering a vector evaluates the call once and
+// holds its answer in `_vector_N` (`hold_loop_source`, after `{id}#index` and the call's own
+// work ref), the walk reading the holder.
+// Prints: [30,40]
+
+fn mk(n: integer) -> vector<integer> { [n, n + 1] }
+fn main() {
+  println("{for p in mk(3) {p * 10}}");
+}

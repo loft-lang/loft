@@ -131,9 +131,10 @@ fn cc_flags(tier: Tier) -> Vec<String> {
             .iter()
             .map(|a| (*a).to_string()),
     );
-    // A fault in a semantics or a debug build names the frames it fired under; a shipped
-    // binary compiles the frame names away and keeps the call-depth cap, as the rustc writer's
-    // `--ship` builds its lean tier (`cr_call_push_lean`).
+    // A fault in a semantics or a debug build names the frames it fired under, and a runaway
+    // recursion stops at the call-depth cap; a shipped binary compiles the frame names away and
+    // has no cap (`c::unit_defines` writes none for `--ship`): it recurses as deep as the
+    // hardware allows.
     match tier {
         Tier::Check => flags.extend(["-O1".into(), "-DLOFT_CALL_CHAIN".into()]),
         Tier::Release => flags.push("-O3".into()),

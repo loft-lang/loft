@@ -176,8 +176,10 @@ pub(crate) fn native_shape(c: CType) -> CType {
     if c == CType::Int32 { CType::Int } else { c }
 }
 
-/// The C type a local or a result of shape `c` is held in.
-pub(crate) fn held(c: CType) -> String {
+/// The C type a local or a result of shape `c` is held in.  A transient record's struct is
+/// named from its type ([`Cx::type_ident`]), never its number in the program's type table
+/// (@PLN229 B0), so `cx` is the unit it is written in.
+pub(crate) fn held(cx: &Cx, c: CType) -> String {
     match c {
         CType::Int => "int64_t".into(),
         CType::Int32 => "int32_t".into(),
@@ -190,17 +192,17 @@ pub(crate) fn held(c: CType) -> String {
         CType::Char => "uint32_t".into(),
         CType::Fn => "loft_fn".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
-        CType::Tr(g) => format!("lt_{g} *"),
+        CType::Tr(g) => format!("lt_{} *", cx.type_ident(g)),
         CType::TrVec => "loft_ta_vec *".into(),
         CType::Void => "void".into(),
     }
 }
 
 /// The C type a parameter of shape `c` is passed as.
-pub(crate) fn passed(c: CType) -> String {
+pub(crate) fn passed(cx: &Cx, c: CType) -> String {
     match c {
         CType::Text => "loft_str".into(),
-        other => held(other),
+        other => held(cx, other),
     }
 }
 
@@ -258,7 +260,7 @@ pub(crate) struct Cx<'a> {
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
     eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
-    /// Every keyed collection type whose key parts the unit names (`loft_keys{tp}`).
+    /// Every keyed collection type whose key parts the unit names (`loft_keys_<ident>`).
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The root types a `store_persist_copy` writes an image of: one sidecar each.
     sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
@@ -329,10 +331,13 @@ pub(crate) struct Cx<'a> {
     /// an OPEN unit, which takes no whole-program rewrite that changes a signature, as an
     /// `open_world` program takes none (NATIVE.md § Optimisation tiers).
     pub(crate) open: bool,
-    /// `@PLN206 P5` — where a hosted unit names its library's sources from: the package's
-    /// parent directory, so a fault site reads `<library>/src/<file>.loft` on every machine the
-    /// unit is adopted on, not the path of the one that built it (`Self::source_name`).
-    pub(crate) source_root: Option<String>,
+    /// The roots the unit names its source files from (`Self::source_name`): a program's main
+    /// directory, or — `@PLN206 P5` — a hosted unit's package parent, so a fault site reads
+    /// `<library>/src/<file>.loft` on every machine the unit is adopted on; and the standard
+    /// library's directory.
+    pub(crate) source_roots: crate::source_name::Roots,
+    /// Each type's C name ([`Cx::type_ident`]), worked out once per unit.
+    type_idents: std::cell::OnceCell<Vec<String>>,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -478,7 +483,8 @@ impl<'a> Cx<'a> {
             source_lines: false,
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_root: None,
+            source_roots: data.source_roots(None),
+            type_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -621,27 +627,11 @@ impl<'a> Cx<'a> {
             .map(|l| format!("loft_ap_{}", l.rust))
     }
 
-    /// The name a fault site, a frame and a line mark give source `file`: in a hosted unit, a
-    /// library file from the package's parent directory and a standard-library file from
-    /// `default/` (as the compiled standard library names it, `bodies.rs`), so the unit is the
-    /// same text wherever it is built; in a program, the file as it was found.
+    /// The name a fault site, a frame and a line mark give source `file`: from its root, never
+    /// from where the unit was built ([`crate::source_name::name`]), so the unit is the same
+    /// text wherever it is built (@PLN229, reproducible builds).
     pub(crate) fn source_name(&self, file: &str) -> String {
-        let Some(root) = &self.source_root else {
-            return file.to_string();
-        };
-        // Both spelled with `/`: on Windows the package directory arrives with the host's
-        // separator and a source position may hold either, so a bare prefix test misses and
-        // the unit names the machine's path.
-        let root = crate::file_access::portable_str(root);
-        let root = root.trim_end_matches('/');
-        let file = crate::file_access::portable_str(file);
-        if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
-            return rest.to_string();
-        }
-        match file.rfind("/default/") {
-            Some(at) => file[at + 1..].to_string(),
-            None => file,
-        }
+        crate::source_name::name(file, &self.source_roots)
     }
 
     pub(crate) fn value_records(
@@ -747,11 +737,40 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// The C name of keyed collection type `tp`'s key parts (`loft_keys{tp}`) and their count.
+    /// The part of a C name that stands for type `tp` (`loft_keys_<ident>`, `loft_fields_<ident>`,
+    /// `loft_dflt_<ident>`): the type's own name made an identifier ([`c_ident`]), never its
+    /// number in the program's type table, which moves whenever a type is added before it
+    /// (@PLN229 B0: a unit's text depends on the types it names, not on the others).  Two types
+    /// that share a name keep their number beside it, so no two C names collide.
+    pub(crate) fn type_ident(&self, tp: u16) -> String {
+        let all = self.type_idents.get_or_init(|| {
+            let names: Vec<String> = self.stores.types.iter().map(|t| c_ident(&t.name)).collect();
+            let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for n in &names {
+                *seen.entry(n.as_str()).or_default() += 1;
+            }
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    if seen[n.as_str()] > 1 {
+                        format!("{n}_{i}")
+                    } else {
+                        n.clone()
+                    }
+                })
+                .collect()
+        });
+        all.get(tp as usize)
+            .cloned()
+            .unwrap_or_else(|| tp.to_string())
+    }
+
+    /// The C name of keyed collection type `tp`'s key parts (`loft_keys_<ident>`) and their count.
     pub(crate) fn keys_of(&self, tp: u16) -> (String, usize) {
         self.key_types.borrow_mut().insert(tp);
         (
-            format!("loft_keys{tp}"),
+            format!("loft_keys_{}", self.type_ident(tp)),
             self.stores.types[tp as usize].keys.len(),
         )
     }
@@ -980,7 +999,7 @@ impl<'a> Cx<'a> {
             let bytes = s.store(&r).read_span(r.rec, r.pos, size).to_vec();
             self.defaults.borrow_mut().insert(tp, bytes);
         }
-        (format!("loft_dflt{tp}"), size)
+        (format!("loft_dflt_{}", self.type_ident(tp)), size)
     }
 
     /// Is record type `tp`'s default image all zero bytes, so a zero fill already writes it?
@@ -1249,7 +1268,7 @@ impl<'a> Cx<'a> {
         walk(self.stores, tp, &mut Vec::new())
     }
 
-    /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
+    /// A struct's field rows, `loft_fields_<ident>` ([`Cx::type_ident`]): each field's byte position, its type, whether it
     /// is a view member of a linked group (it borrows its records), whether it is hidden (a
     /// `#`-named field), its group, and a stored reference's target type (`Field::target`).
     fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
@@ -1275,7 +1294,8 @@ impl<'a> Cx<'a> {
             })
             .collect();
         format!(
-            "static const loft_fld loft_fields{tp}[] = {{ {} }};",
+            "static const loft_fld loft_fields_{}[] = {{ {} }};",
+            self.type_ident(tp),
             if list.is_empty() {
                 "{ 0, 0, 0, 0, 0, 0xFFFF }".into()
             } else {
@@ -1330,8 +1350,9 @@ impl<'a> Cx<'a> {
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                     let _ = writeln!(out, "{}", self.field_rows(tp, fields));
                     format!(
-                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
-                        fields.len()
+                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields_{}, 0 }}",
+                        fields.len(),
+                        self.type_ident(tp)
                     )
                 }
                 Parts::Vector(c) | Parts::Sorted(c, _) => {
@@ -1425,7 +1446,8 @@ impl<'a> Cx<'a> {
                 .collect();
             let _ = writeln!(
                 out,
-                "static const loft_key loft_keys{tp}[] = {{ {} }};",
+                "static const loft_key loft_keys_{}[] = {{ {} }};",
+                self.type_ident(*tp),
                 if parts.is_empty() {
                     "{ 0, 0, 0 }".into()
                 } else {
@@ -1454,7 +1476,8 @@ impl<'a> Cx<'a> {
             let list: Vec<String> = bytes.iter().map(u8::to_string).collect();
             let _ = writeln!(
                 out,
-                "static const uint8_t loft_dflt{tp}[{}] = {{ {} }};",
+                "static const uint8_t loft_dflt_{}[{}] = {{ {} }};",
+                self.type_ident(*tp),
                 bytes.len().max(1),
                 if list.is_empty() {
                     "0".to_string()
@@ -1486,7 +1509,7 @@ impl<'a> Cx<'a> {
             let fields: Vec<String> = shapes
                 .iter()
                 .enumerate()
-                .map(|(i, c)| format!("{} f{i};", held(*c)))
+                .map(|(i, c)| format!("{} f{i};", held(self, *c)))
                 .collect();
             let _ = writeln!(
                 out,
@@ -1813,6 +1836,26 @@ impl Cx<'_> {
 pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, String>> {
     let archive = tls::archive().ok()?;
     (std::path::Path::new(link) == archive).then(tls::sources)
+}
+
+/// `name` as a C identifier, injectively: a letter or digit stays, `_` is `__`, and any other
+/// character is `_` and its code in hex (two digits, or `u` and six), so two names never meet in
+/// one identifier (`vector<P>` is `vector_3cP_3e`, `two::P` is `two_3a_3aP`).
+pub(crate) fn c_ident(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' => out.push(ch),
+            '_' => out.push_str("__"),
+            c if (c as u32) < 0x100 => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("_{:02x}", c as u32));
+            }
+            c => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("_u{:06x}", c as u32));
+            }
+        }
+    }
+    out
 }
 
 pub fn c_name(data: &Data, d: u32) -> String {
@@ -2285,7 +2328,9 @@ fn emit_unit_with(
     cx.wasm |= shape.wasm;
     cx.source_lines = shape.source_lines;
     cx.whole |= shape.whole;
-    cx.source_root.clone_from(&shape.source_root);
+    if shape.source_root.is_some() {
+        cx.source_roots = data.source_roots(shape.source_root.clone());
+    }
     cx.c_twins = twins;
     cx.open = hosted.is_some();
     cx.frames
@@ -3163,13 +3208,18 @@ fn unit_defines(
     if stores.field_bytes(stores.name("ValueInfo"), "f") == 4 {
         out.push_str("#define LOFT_STD_SINGLE 1\n");
     }
-    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
-    // the runtime cannot hold a copy of the number that drifts from it.
-    let _ = writeln!(
-        out,
-        "#define LOFT_MAX_CALL_DEPTH {}",
-        crate::limits::MAX_CALL_DEPTH
-    );
+    // The call-depth cap the interpreter enforces (`limits::MAX_CALL_DEPTH`), and the line that
+    // says what to write instead, stated here so the runtime holds no copy of either that
+    // drifts.  A development build stops a runaway recursion before it takes the machine
+    // with it; a shipped one (`--ship`) has no cap: it runs as deep as the hardware allows.
+    if !crate::ship_tier::shipped_units() {
+        let _ = writeln!(
+            out,
+            "#define LOFT_MAX_CALL_DEPTH {}\n#define LOFT_STACK_OVERFLOW_HELP \"{}\"",
+            crate::limits::MAX_CALL_DEPTH,
+            crate::runtime_error::STACK_OVERFLOW_HELP
+        );
+    }
     (out, parses, reflects)
 }
 
@@ -3977,11 +4027,11 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             } else if places & (1 << i) != 0 || vars.is_store_text_link(a) {
                 format!("loft_ref {name}")
             } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
-                format!("{} *{name}", held(c))
+                format!("{} *{name}", held(cx, c))
             } else if vr_ptr.contains(&i) {
-                format!("const {} *{name}", passed(c))
+                format!("const {} *{name}", passed(cx, c))
             } else {
-                format!("{} {name}", passed(c))
+                format!("{} {name}", passed(cx, c))
             };
             param_decls.insert(a, decl.clone());
             decl
@@ -4021,7 +4071,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .collect::<Vec<_>>()
         .join(", ");
     let name = twin_name(data, d, mask);
-    let sig = format!("static {} {name}({params})", held(ret));
+    let sig = format!("static {} {name}({params})", held(cx, ret));
     // `LOFT_REWRITE_CENSUS_FN`: this body's admissions under its own name, phase `c`, so they
     // line up with the native writer's per function.
     let _census_body = crate::rewrite_census::InBody::enter("c", def.name());
@@ -4231,7 +4281,7 @@ fn inv_inputs(
             .ok_or("an __inv twin of a function with no inputs")?;
         for (k, (p, fld, getter)) in fi.scalars.iter().enumerate() {
             if let Some(c) = twin_scalar_shape(cx, getter) {
-                params.push(format!("{} is{k}", held(c)));
+                params.push(format!("{} is{k}", held(cx, c)));
                 scalars.push(((*p, *fld), format!("is{k}"), c));
             }
         }
@@ -4345,7 +4395,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
             .ctype(tp)
             .filter(|c| *c != CType::Void)
             .ok_or_else(|| format!("parameter of type {}", type_word(tp)))?;
-        decl_params.push(format!("{} a{i}", passed(c)));
+        decl_params.push(format!("{} a{i}", passed(cx, c)));
         let ct = c_params.get(args.len()).copied().unwrap_or("int");
         match arg {
             CArg::Scalar => args.push(format!("({ct}) a{i}")),
@@ -4429,7 +4479,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     // caller's size — out of line it doubles the call a binding stands for.
     let sig_c = format!(
         "LOFT_HOT_INLINE {} {}({})",
-        held(ret),
+        held(cx, ret),
         c_name(data, d),
         cx_params(&decl_params)
     );
@@ -4475,7 +4525,7 @@ fn c_binding_result(
                 let _ = writeln!(
                     out,
                     "    {{ {} r = {}; return r; }}",
-                    held(ret),
+                    held(cx, ret),
                     cx.initial(ret)
                 );
             }
@@ -4502,7 +4552,7 @@ fn c_binding_result(
                 CType::Bool => format!("(uint8_t) (({widened}) != 0)"),
                 _ => format!("(int64_t) ({widened})"),
             };
-            let _ = writeln!(out, "    {} r = {value};", held(c));
+            let _ = writeln!(out, "    {} r = {value};", held(cx, c));
             for f in frees {
                 let _ = writeln!(out, "{f}");
             }
@@ -4630,9 +4680,9 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
             .filter(|c| *c != CType::Void)
             .ok_or_else(|| format!("parameter of type {}", type_word(&a.typedef)))?;
         params.push(if matches!(a.typedef.base(), Type::RefVar(_)) {
-            format!("{} *a{i}", held(c))
+            format!("{} *a{i}", held(cx, c))
         } else {
-            format!("{} a{i}", passed(c))
+            format!("{} a{i}", passed(cx, c))
         });
     }
     Ok(params)
@@ -4871,7 +4921,7 @@ fn library_native(
         .insert((pkg_dir.to_string(), lib.to_string()));
     let sig = format!(
         "static {} {}({})",
-        held(ret),
+        held(cx, ret),
         c_name(cx.data, d),
         if params.is_empty() {
             "void".to_string()
@@ -5252,12 +5302,12 @@ fn browser_import_native(
             let _ = writeln!(body, "    return (uint8_t) ({call} != 0);");
         }
         Some(_) => {
-            let _ = writeln!(body, "    return ({}) {call};", held(ret));
+            let _ = writeln!(body, "    return ({}) {call};", held(cx, ret));
         }
     }
     let sig = format!(
         "static {} {}({})",
-        held(ret),
+        held(cx, ret),
         c_name(cx.data, d),
         if params.is_empty() {
             "void".to_string()
@@ -5280,7 +5330,7 @@ fn forwarded_native(
     // all written another way (`swap_world_call`).
     let sig = format!(
         "static inline {} {}({})",
-        held(ret),
+        held(cx, ret),
         c_name(cx.data, d),
         if params.is_empty() {
             "void".to_string()
@@ -5305,7 +5355,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     let params = declared_params(cx, d)?;
     let sig = format!(
         "static {} {}({})",
-        held(ret),
+        held(cx, ret),
         c_name(cx.data, d),
         if params.is_empty() {
             "void".to_string()
@@ -5389,7 +5439,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
         let _ = writeln!(
             out,
             "    {{ {} r = {}; return r; }}",
-            held(ret),
+            held(cx, ret),
             cx.initial(ret)
         );
     }
@@ -5416,7 +5466,7 @@ fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String 
     let Some(p) = param.strip_prefix("int64_t ") else {
         return body;
     };
-    if held(ret) != "int64_t" {
+    if held(cx, ret) != "int64_t" {
         return body;
     }
     let Some(tab) = crate::opt::tabulate::table(cx.data, d) else {
@@ -5532,6 +5582,7 @@ pub(crate) fn framed_plain(
 
 #[expect(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "one wrapper: the function's name, signature and body, its storage, and the frame a decode root names"
 )]
 fn framed(
@@ -5547,13 +5598,20 @@ fn framed(
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let mut parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, body);
+    let mut parts = split::split(cx.whole, storage, &held(cx, ret).clone(), &fr, params, body);
     // `@PLN206 P7` — a body written in parts keeps no hand-over: a part's `return` leaves the
     // part, not the routine.
     let unsplit;
     let body = if parts.is_some() && body.contains("/*LOFT_SP*/") {
         unsplit = strip_safepoints(body);
-        parts = split::split(cx.whole, storage, &held(ret).clone(), &fr, params, &unsplit);
+        parts = split::split(
+            cx.whole,
+            storage,
+            &held(cx, ret).clone(),
+            &fr,
+            params,
+            &unsplit,
+        );
         unsplit.as_str()
     } else {
         body
@@ -5575,15 +5633,21 @@ fn framed(
     let _ = writeln!(
         cx.gen_decls.borrow_mut(),
         "{body_storage} {} {name}__fr({params});",
-        held(ret)
+        held(cx, ret)
     );
-    let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    let whole = format!(
+        "{body_storage} {} {fr}({params}) {{\n{body}}}\n",
+        held(cx, ret)
+    );
     trace_body(name, parts.is_some(), &whole);
     // `@FR-R-CTail`: the whole body's shared release tails are written once.  The parts keep
     // every exit's own statements (a part cannot jump into another), and the body trace above
     // shows the body before this pass, as the body comparisons read it.
-    let whole = match tail::merge(name, &held(ret), body) {
-        Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
+    let whole = match tail::merge(name, &held(cx, ret), body) {
+        Some(body) => format!(
+            "{body_storage} {} {fr}({params}) {{\n{body}}}\n",
+            held(cx, ret)
+        ),
         None => whole,
     };
     // The parts alone where a budget was asked for; otherwise both forms, and the C compiler
@@ -5656,7 +5720,7 @@ fn framed(
     } else {
         format!(
             "{push}{dv_enter}    {} r = {call};\n{dv_leave}{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n",
-            held(ret)
+            held(cx, ret)
         )
     }
 }

@@ -93,6 +93,11 @@ loft's part is to say so.  Lowering the cap on wasm instead would halt programs
 that work today, and the right number is a property of the host that the
 compiler cannot know.
 
+A `--ship` build counts no calls on any target (CAVEATS.md § Recursion depth), so on wasm the
+engine's stack is its only bound.  [@PLN177](plans/177-growable-stack.md) moves the frames of
+recursive calls into the module's own memory, where they grow on use; that is the route by
+which a wasm program stops depending on the host's stack.
+
 On `--html` loft owns the JS that calls in, so the trap is caught and reported to
 the page and the console rather than lost — see
 [HTML_EXPORT.md § When a page faults](HTML_EXPORT.md).

@@ -638,17 +638,20 @@ fn rhs_reads_a_view_of(data: &Data, d_nr: u32, function: &Function, value: &Valu
         views[usize::from(v)] = true;
     }
     // Each bind `w = <projection of root>` in the body, as (w, root).
-    let mut binds: Vec<(u16, u16)> = Vec::new();
-    if d_nr != u32::MAX && (d_nr as usize) < data.definitions() as usize {
-        data.def(d_nr).code().walk(&mut |nd| {
-            if let Value::Set(w, val) = nd
-                && let Some(root) = crate::use_analysis::projection_container_var(data, val)
-                && root != *w
-            {
-                binds.push((*w, root));
-            }
-        });
-    }
+    let binds = crate::use_analysis::view_binds(data, d_nr, || {
+        let mut binds: Vec<(u16, u16)> = Vec::new();
+        if d_nr != u32::MAX && (d_nr as usize) < data.definitions() as usize {
+            data.def(d_nr).code().walk(&mut |nd| {
+                if let Value::Set(w, val) = nd
+                    && let Some(root) = crate::use_analysis::projection_container_var(data, val)
+                    && root != *w
+                {
+                    binds.push((*w, root));
+                }
+            });
+        }
+        binds
+    });
     let is_view = |views: &[bool], d: u16| views.get(usize::from(d)).copied().unwrap_or(false);
     let mut grew = true;
     while grew {

@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `[for p in mk_sorted(3) { p.k }]` evaluates the call once, holding its answer
+// in `_vector_N` before the loop's index (`hold_loop_source`), and walks the holder as a sorted
+// local is walked; `p#iter_state` is a second-pass mint there.
+// Prints: [3,4]
+
+struct P { k: integer }
+fn mk_sorted(n: integer) -> sorted<P[k]> { s: sorted<P[k]> = [P { k: n }, P { k: n + 1 }]; s }
+fn main() {
+  q = [for p in mk_sorted(3) { p.k }];
+  println("{q}");
+}

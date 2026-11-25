@@ -8,6 +8,7 @@
 // images `OpNewRecord` fills an element with (`<kernel>.cdflt`).
 use load;
 use types;
+use ir;
 
 fn compare_tables(kernel: text) -> integer {
   dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
@@ -37,8 +38,41 @@ fn test_the_loft_type_table_equals_the_c_generators() {
   assert(compare_tables("hashes") >= 8, "the hashes kernel's rows were compared");
 }
 
+// `src/c/mod.rs` `c_ident`: a name made a C identifier — letters and digits kept, `_` doubled,
+// any other character `_hh` (`_uhhhhhh` past one byte).
+fn c_ident(name: text) -> text {
+  out = "";
+  for ch in name {
+    ci = ch as integer;
+    if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+      out += "{ch}";
+    } else if ch == '_' {
+      out += "__";
+    } else if ci < 256 {
+      out += "_{ci:02x}";
+    } else {
+      out += "_u{ci:06x}";
+    }
+  }
+  out
+}
+
+// The type a C name's ident stands for (`Cx::type_ident`): the type whose name makes that
+// ident, a name two types share carrying the type's number after it (`<ident>_<tp>`); -1 for none.
+fn type_of_ident(ts: vector<ir::DbType>, ident: text) -> integer {
+  ids = [for t in ts { c_ident(t.name) }];
+  for i in ids {
+    shared = len([for j in ids if j == i { 1 }]) > 1;
+    if (if shared { "{i}_{i#index}" } else { i }) == ident {
+      return i#index;
+    }
+  }
+  -1
+}
+
 // P6: each default image the C generator writes for a kernel equals `types::default_image` of
-// the same type, byte by byte.  A zero-size type's C array holds one 0.
+// the same type, byte by byte.  A zero-size type's C array holds one 0.  The C names each image
+// by its type's ident, which `type_of_ident` turns back into the type's number.
 fn compare_images(kernel: text) -> integer {
   dir = env_variable("LOFT_SELFHOST_KERNELS") ?? "";
   b = load::load("{dir}/{kernel}.store");
@@ -49,9 +83,11 @@ fn compare_images(kernel: text) -> integer {
       continue;
     }
     parts = line.split(' ');
-    tp = (parts[0] ?? "") as integer? ?? -1;
+    ident = parts[0] ?? "";
+    tp = type_of_ident(b.types, ident);
+    assert(tp >= 0, "{kernel}: no type is named `{ident}`");
     got = types::default_image(b.types, tp);
-    shown = "{tp}";
+    shown = ident;
     for x in got {
       shown += " {x as integer}";
     }

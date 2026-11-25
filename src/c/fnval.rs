@@ -79,8 +79,8 @@ impl Cx<'_> {
             let mut list: Vec<String> = std::iter::once("loft_fn f".to_string())
                 .chain(params.iter().enumerate().map(|(i, (c, mode))| match mode {
                     2 => format!("loft_ref a{i}"),
-                    1 => format!("{} *a{i}", held(*c)),
-                    _ => format!("{} a{i}", passed(*c)),
+                    1 => format!("{} *a{i}", held(self, *c)),
+                    _ => format!("{} a{i}", passed(self, *c)),
                 }))
                 .collect();
             // `@FR-R-FnRefBuffer`: the caller's store, handed to a target's record buffer.
@@ -96,20 +96,20 @@ impl Cx<'_> {
                         params
                             .iter()
                             .enumerate()
-                            .map(|(i, (c, _))| format!("{} a{i}", passed(*c))),
+                            .map(|(i, (c, _))| format!("{} a{i}", passed(self, *c))),
                     )
                     .collect();
                 let _ = writeln!(
                     out,
                     "\n#ifdef LOFT_HOSTED\nstatic {} loft_up{id}(loft_cx *cx, {});\n#endif",
-                    held(*ret),
+                    held(self, *ret),
                     proto.join(", ")
                 );
             }
             let _ = writeln!(
                 out,
                 "\nstatic {} loft_call{id}{}(loft_cx *cx, {}) {{",
-                held(*ret),
+                held(self, *ret),
                 if buf { "b" } else { "" },
                 list.join(", ")
             );
@@ -183,7 +183,7 @@ impl Cx<'_> {
                     let _ = writeln!(
                         out,
                         "    {{ {} r = {}; return r; }}\n}}",
-                        held(*c),
+                        held(self, *c),
                         self.initial(*c)
                     );
                 }
@@ -207,7 +207,7 @@ impl Cx<'_> {
                     params
                         .iter()
                         .enumerate()
-                        .map(|(i, (c, _))| format!("{} a{i}", passed(*c))),
+                        .map(|(i, (c, _))| format!("{} a{i}", passed(self, *c))),
                 )
                 .collect();
             let n = params.len();
@@ -215,7 +215,7 @@ impl Cx<'_> {
                 out,
                 "\nstatic {} loft_up{id}(loft_cx *cx, {}) {{\n    unsigned char la[{} * LOFT_LA_SIZE], cl[LOFT_LA_SIZE], r[LOFT_LA_SIZE];\n    \
                  memset(la, 0, sizeof la);\n    memset(cl, 0, sizeof cl);\n    memset(r, 0, sizeof r);\n    loft_la_set_ref(cx, cl, f.clos);",
-                held(*ret),
+                held(self, *ret),
                 list.join(", "),
                 n.max(1)
             );
@@ -470,7 +470,7 @@ impl Cx<'_> {
         if ret == CType::Void {
             let _ = write!(out, " {call};");
         } else {
-            let _ = write!(out, " {} r = {call};", held(ret));
+            let _ = write!(out, " {} r = {call};", held(self, ret));
         }
         if vec_tp.is_some() {
             out.push_str(" loft_fnref_buf(cx, r, hb);");

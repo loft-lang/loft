@@ -1180,7 +1180,9 @@ pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs:
   el_trace::route_after_literal(e, lat, if why == "" { "literal_into_place=in_place(place{notes})" } else { "literal_into_place=apart({why})" });
 }
 
-pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer) -> Ex {
+// (`in_place`: a shared capture's record, `OpGetDbRef(__closure, pos)`, built where it is rather
+// than re-pointed — `@FR-H-RefSet` is a `reference<T>` field's.)
+pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer, in_place: boolean = false) -> Ex {
   fields: vector<integer> = [];
   unqualify_literal(e, rhs);
   match e.p.nodes[rhs] {
@@ -1214,6 +1216,17 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // place.  An element place (`vs.els[i] = …`) is still built apart.
   apart = false;
   aroot = place_root(e, place);
+  // (A shared capture's record, `OpGetDbRef(__closure, pos)`, is rooted at the closure record.)
+  if aroot < 0 {
+    match el_ir::unspan(place) {
+      NdCall { def_nr: gd, args: ga } => {
+        if el::def(e, gd).name == "OpGetDbRef" && len(ga) == 2 {
+          aroot = match el_ir::unspan(ga[0]!) { NdVar { n: gv } => gv, _ => -1 };
+        }
+      },
+      _ => {}
+    }
+  }
   element_place = calls(e, place, "OpGetVector");
   for fi in fields {
     match e.p.nodes[fi] {
@@ -1322,7 +1335,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // as it is.
   match el_ir::unspan(place) {
     NdCall { def_nr: gd, args: ga } => {
-      if el::def(e, gd).name == "OpGetDbRef" && len(ga) == 2 {
+      if el::def(e, gd).name == "OpGetDbRef" && len(ga) == 2 && !in_place {
         rp = el_ex_append::object_fresh_into_pointer(e, vars, rd, fields);
         if rp == null {
           return ex(ir::NdNull, ir::TyVoid);
@@ -1335,14 +1348,14 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     },
     _ => {}
   }
-  root = place_root(e, place);
+  root = if in_place { aroot } else { place_root(e, place) };
   element = calls(e, place, "OpGetVector");
   index_ok = match el_ir::unspan(el_ir::last(match place { NdCall { args } => args, _ => [] })) {
     NdInt { n: _ } => true,
     NdVar { n: _ } => true,
     _ => false
   };
-  if root < 0 || !(calls(e, place, "OpGetField") || element) || (element && !index_ok) {
+  if root < 0 || !(calls(e, place, "OpGetField") || element || in_place) || (element && !index_ok) {
     el::refuse(e, "a record literal written into a field or an element: a place it is built apart for");
     return ex(ir::NdNull, ir::TyVoid);
   }
