@@ -345,6 +345,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "an out-of-line write whose place is no field");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    if op == "=" {
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
+    }
     w = el_ex_into::out_of_line_set(e, vars, field, kt, sd, rhs);
     return ex(w ?? ir::NdNull, ir::TyVoid);
   }
@@ -447,6 +450,8 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   if op == "=" && is_nullable_wrapper(e, p.tp) {
     syn = el_types::struct_enum_def(p.tp);
     place = el_ir::unspan(p.code);
+    // (Built as the holder's `Some` and copied in: no place hint, so Rust's trace reports no
+    // `literal_into_place` for it.)
     if el_ex_into::literal_of(e, rhs, el_ex_into::nullable_payload(e, syn)) {
       nb = el_ex_into::nullable_some_literal(e, vars, syn, rhs);
       if nb == null || e.first_pass {
@@ -519,6 +524,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       _ => {}
     }
     lroot = place_root(e, el_ir::unspan(p.code));
+    place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
     if lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
       if e.first_pass {
         el_ex_pattern::first_pass_fields(e, vars, lvd, lfs);
@@ -539,6 +545,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   vars.self_read = match el_ir::unspan(p.code) { NdCall { def_nr: kd, args: ka } => if op == "=" && el::def(e, kd).name == "OpGetRecord" && len(ka) > 0 { place_root(e, el_ir::unspan(ka[0]!)) } else { -1 }, _ => -1 };
   x = el_ex_assign::expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
   keyed_stage = vars.self_stage;
+  if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetRecord") {
+    place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
+  }
   vars.self_read = outer_self;
   vars.self_stage = outer_stage;
   pt = p.tp;
@@ -1145,6 +1154,31 @@ pub fn unqualify_literal(e: el::El, n: integer) {
   }
 }
 
+// `literal_into_place` for a record literal written into a PLACE (a field, an element, a keyed
+// slot, a tagged holder), as Rust's trace prints it at the literal's end: on the second pass, and
+// only where the place has a root Rust can name (`projection_root_field_place`: a variable the
+// program declared).  `apart` is the reason this road builds it apart, "" where it is built in
+// place — but for Rust's one place decline the road need not know: a variant literal written
+// into an out-of-line place whose fields read that place (`variant_reads_place`).
+pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs: integer, apart: text) {
+  if !el_trace::on() || e.first_pass || !(e.p.nodes[rhs] is SStructLit) {
+    return;
+  }
+  root = place_root(e, place);
+  if root < 0 || root >= len(vars.vars) || el_vars::is_compiler_generated(vars, root) {
+    return;
+  }
+  why = apart;
+  if why == "" {
+    ld = match e.p.nodes[rhs] { SStructLit { name: ln } => el::def_nr(e, ln), _ => -1 };
+    if ld >= 0 && el::def(e, ld).def_type == el::DT_ENUM_VALUE && calls(e, place, "OpRefFromChildRec") && el_ex_into::syntax_names(e, rhs, el_vars::name_of(vars, root)) {
+      why = "decline_place:variant_reads_place";
+    }
+  }
+  lat = match e.p.nodes[rhs] { SStructLit { at: la } => la, _ => -1 };
+  el_trace::route_after_literal(e, lat, if why == "" { "literal_into_place=in_place(place)" } else { "literal_into_place=apart({why})" });
+}
+
 pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer) -> Ex {
   fields: vector<integer> = [];
   unqualify_literal(e, rhs);
@@ -1218,12 +1252,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // (`literal_into_place`, as Rust's trace prints it at the literal's end — the projection
   // road is the second pass's: every reason this port builds such a literal apart is a primed
   // collection field reading the place.)
-  if el_trace::on() && !e.first_pass {
-    lat = match e.p.nodes[rhs] { SStructLit { at: la } => la, _ => -1 };
-    if lat >= 0 {
-      el_trace::route_after_literal(e, lat, if apart { "literal_into_place=apart(decline_place:primed_reads_place)" } else { "literal_into_place=in_place(place)" });
-    }
-  }
+  place_literal_route(e, vars, place, rhs, if apart { "apart(decline_place:primed_reads_place)" } else { "" });
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
   if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) {
