@@ -369,7 +369,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // A record (or `τ?`) answered by an `if` of parameters, literals and nulls borrows those
   // parameters.
   // (Both passes: a recursive arm's borrow is known only once the first pass typed the function.)
-  if rb >= 0 && el_types::base(result) is TyReference {
+  // (Not a `??` tail: its value is its subject's, typed by the subject alone — the default's
+  // borrows are not the result's, `o ?? self` borrows `o`.)
+  ts = el_ex_deliver::tail_syntax(e, vars.body);
+  coalesce_tail = ts >= 0 && match e.p.nodes[ts] { SBin { op: top } => top == "??", _ => false };
+  if rb >= 0 && el_types::base(result) is TyReference && !coalesce_tail {
     ps = el_ex_copy::if_tail_params(e, vars, code);
     if ps != null {
       r0 = el::def(e, e.context).returned[0];
@@ -2584,6 +2588,11 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
     _ => {}
   }
   if !(tail is NdIf) {
+    return null;
+  }
+  // (A `??` tail is its subject's value: its default is no candidate, `o ?? self` borrows `o`.)
+  pts = el_ex_deliver::tail_syntax(e, vars.body);
+  if pts >= 0 && match e.p.nodes[pts] { SBin { op: pop } => pop == "??", _ => false } {
     return null;
   }
   ps: vector<integer> = [];

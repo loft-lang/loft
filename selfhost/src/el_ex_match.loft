@@ -98,8 +98,20 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
   for k in e.subject_sites {
     if k == key && vars.match_site >= 0 {
       // (`add_variable(reuse)`: the site's pass-1 temp keeps its type, borrows included — a
-      // `_match_subj_N` is no `__` temp; an unknown one is refined.)
+      // `_match_subj_N` is no `__` temp; an unknown one is refined — and the value bound into it
+      // on this pass lends its own borrows too: `["_mv_t_1"]` from the first pass beside a call
+      // whose buffer lends none, `["__vdb_1"]` from a stream buffer the first pass read bare.)
       w = el_vars::add_variable(vars, e.subject_names[k#index] ?? "", t);
+      wt = el_vars::tp(vars, w);
+      wd = el_types::deps(wt);
+      for td in el_types::deps(t) {
+        if !wd.contains(td) {
+          wd += [td];
+        }
+      }
+      if wd != el_types::deps(wt) {
+        el_vars::set_var_type(vars, w, el_types::with_deps(wt, wd));
+      }
       return w;
     }
   }
