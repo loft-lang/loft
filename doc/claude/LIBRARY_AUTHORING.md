@@ -228,9 +228,10 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    one.
 3. **Dependencies — only what `loft.toml` declares**, resolved from the registry at the declared
    version (`loft install` in the package directory).  A dependency you are changing in the same
-   arc gets an explicit `--lib <its worktree>` for that run.  `advice[undeclared-dependency]`
-   and `advice[lib-flag-outranked]` are the testbed's own checks: either one means the run is
-   resolving something other than what you think.
+   arc gets an explicit `--lib <its worktree>` for that run; `--lib` outranks every pin and
+   declaration (`@C173`, PACKAGES.md § Resolution order), and `advice[lib-flag-override]`
+   names each library it replaced.  `advice[undeclared-dependency]` is the testbed's own
+   check: it means the run resolves something the manifest does not declare.
 4. **The suite, both backends, warnings denied** — the steps the library's CI gates on:
    `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, every
    `docs/*.loft` guide with `--interpret` and `--native`, and `LOFT_DENY_WARNINGS=1 loft

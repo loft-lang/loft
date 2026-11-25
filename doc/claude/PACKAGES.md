@@ -265,33 +265,39 @@ pub fn transform(canvas: Canvas, mat: math.Mat4) -> Canvas {
 
 ### Resolution order
 
-When the compiler encounters `use math;` it searches:
+When the compiler encounters `use math;` it takes the first copy it finds, by one rule
+(`@C173`): **what this run says, then what the project declares, then what merely lies in a
+directory.**
 
-1. **Local `src/`** — sibling files in the same package.  Inside a package, its own
-   `[package] name` binds its own entry, whatever its directory is called — a package is
-   identified by its manifest, not its path (`tests/own_package_resolution.rs`).  Every
-   spelling of a test run (`loft test`, `--tests <dir>`, one file) puts the package's
-   source directory on the import path.  For a script outside any package, a flat
-   `<name>.loft` in the script's own directory is this step, so it outranks a
-   same-named registry package
-2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
+1. **The package's own name** — inside a package, its own `[package] name` binds its own
+   entry, whatever its directory is called; a package is identified by its manifest, not its
+   path (`tests/own_package_resolution.rs`).
+2. **`--lib` on this command line** — the explicit override: a library can always be run from
+   your own copy to debug or fix it.  It outranks everything below, the pin included, and
+   `advice[lib-flag-override]` says which copy runs when it replaces a pinned or declared one.
+   The one exception is a module beside the importing file (`helper.loft` next to the file
+   that says `use helper`): that is the file's own source, and resolves as before.
+3. **What the project declares** — a `[dependencies]` `path = "..."` entry (the importing
    package's, then the **root project's**, so a path the root declares answers a `use`
-   anywhere in the program, however deep (`tests/transitive_binding.rs`)
-3. **Package lib directories** — `~/.loft/lib/math/`, project `lib/math/`
-4. **`--lib` CLI flag** — explicit search directories
-5. **`LOFT_LIB` environment variable**
+   anywhere in the program, however deep — `tests/transitive_binding.rs`), then a module
+   beside the importing file, then the version the lock pins (`loft.lock`, or a script's
+   `<script>.loft.lock` from `loft pin`).
+4. **Everything else, for a name nothing pins** — a `lib/` in the working directory or beside
+   the script, a flat `<name>.loft` there, sibling packages, `~/.loft/lib/`, the `LOFT_LIB`
+   directories, the registry.  A **pinned** name skips these: a same-named file that merely
+   lies in a directory never replaces the version the lock records.
+
+The rule is `tests/lib_flag_override.rs`.  To work on a pinned library for longer than one
+run, `loft develop` (below) declares your copy as a path dependency.
 
 A package loads once, so the copy chosen is the program's; every package that `use`s it
 must accept it.  The importing package's own range is checked against that copy wherever it
 was chosen — at its first `use` or a later one — and a copy outside it is refused, naming
-both declarations, rather than loaded anyway.
+both declarations, rather than loaded anyway.  If the dependency has its own `loft.toml`, its
+version is checked against the requirement; which installed version a lock file selects is
+[LIBRARY_AUTHORING.md § Troubleshooting](LIBRARY_AUTHORING.md).
 
-The first match wins, and a project `lib/` outranks `--lib`
-(`advice[lib-flag-outranked]` says so when it happens).  If the dependency has its own
-`loft.toml`, its version is checked against the requirement; which installed version a
-lock file selects is [LIBRARY_AUTHORING.md § Troubleshooting](LIBRARY_AUTHORING.md).
-
-⚠ **Step 3's project half needs a project.** The directory form `lib/math/` is read
+⚠ **A `lib/` directory's package form needs a project.** The directory form `lib/math/` is read
 through `lib_path_manifest`, which runs over the directories a program NAMED — a
 `--lib` argument, a `LOFT_LIB` entry, `~/.loft/lib/`, a path dependency, a sibling
 package.  A bare script's own `lib/` is not one of those: it is probed flat, so
@@ -501,6 +507,30 @@ rule.  So:
   of what the package pulling it requires, so the lock records the version the program
   loads whatever order `[dependencies]` lists.  A declaration no dependency can accept is
   refused at install, naming both sides.
+
+### Developing a library you use (`loft develop`)
+
+A pinned library loads only from its pin, so working on one is an explicit step, and
+`loft develop` is that step:
+
+```sh
+loft develop crypto                 # a copy of the version in use, in lib/crypto
+loft develop crypto --path ../loft-libs-core/crypto   # or your own checkout of it
+loft develop                        # what this project develops
+loft develop --done crypto          # back to what the manifest said before
+```
+
+It rewrites the library's `[dependencies]` line to a path dependency that keeps its version
+and records what the line was:
+
+```toml
+crypto = { path = "lib/crypto", version = "0.5.0" }  # loft develop: was "0.5.0"
+```
+
+A path dependency outranks the pin, so the copy runs, and its own `use`s of other libraries
+resolve as before.  `--done` restores the line exactly (removing it when the library was only
+used through another one) and leaves the copy where it is.  For one run, `--lib <dir>` does the
+same without touching the project.
 
 ---
 
