@@ -893,16 +893,22 @@ fn value_param_answer(data: &Data, d: u32) -> bool {
         && answers_a_parameter(data, d)
 }
 
-/// Does `d` answer a record whose deps name one of its visible parameters (`o ?? s`, `p`)?  A
-/// tuple twin of it leaks the copy its body binds (loft#2641, loft#2646).
-/// `LOFT_NO_VALUE_PARAM_DECLINE=1` answers no.
+/// Does `d` answer a record that may be one of its visible parameters WHOLE (`o ?? s`, `p`, a
+/// parameter of the returned record's own type its deps name)?  A body answering one binds it by
+/// a copy, which a tuple twin leaves owned by nothing (loft#2641, loft#2646).  A part of a
+/// parameter (`pts[i]?` out of a `vector<Pt>`) is read field-wise by the twin and copies nothing,
+/// so it keeps its rewrite.  `LOFT_NO_VALUE_PARAM_DECLINE=1` answers no.
 pub(crate) fn answers_a_parameter(data: &Data, d: u32) -> bool {
     let def = data.def(d);
+    let Type::Reference(record, _) = def.returned().peel_link().base() else {
+        return false;
+    };
     !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
         && def.returned().depend().iter().any(|&a| {
-            def.attributes
-                .get(a as usize)
-                .is_some_and(|attr| !attr.hidden)
+            def.attributes.get(a as usize).is_some_and(|attr| {
+                !attr.hidden
+                    && matches!(attr.typedef.peel_link().base(), Type::Reference(r, _) if r == record)
+            })
         })
 }
 
