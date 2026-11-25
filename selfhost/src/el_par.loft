@@ -7,6 +7,7 @@ use el;
 use el_ir;
 use el_vars;
 use el_types;
+use el_schema;
 use el_expressions;
 use el_ex_base;
 use el_ex_assign;
@@ -278,6 +279,9 @@ fn element_size(e: el::El, elem: ir::TypeT) -> integer {
     TyText { dep: _ } => 4,
     TyBoolean => 1,
     TyCharacter => 4,
+    // (A vector element is its four-byte handle, `@FR-H-Stride`; `element_store_size` asks
+    // `vector_element_type`, which makes the bare `vector` row where it is missing.)
+    TyVector { inner: _ } => { if !e.first_pass { el_schema::vector_type(e, el_schema::NO_TYPE); } 4 },
     _ => -1
   }
 }
