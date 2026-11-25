@@ -1816,45 +1816,36 @@ pub fn tls_sources_for(link: &str) -> Option<Result<Vec<std::path::PathBuf>, Str
 }
 
 pub fn c_name(data: &Data, d: u32) -> String {
-    let at = std::ptr::from_ref(data) as usize;
-    let held = FN_DUPS.with(|h| {
-        h.borrow()
-            .as_ref()
-            .filter(|(p, _)| *p == at)
-            .map(|(_, s)| s.clone())
-    });
+    let held = data.fn_dups_memo.with(|m: &mut FnDups| m.clone());
     let dups =
-        held.unwrap_or_else(|| std::rc::Rc::new(crate::opt::names::duplicate_fn_names(data)));
+        held.unwrap_or_else(|| std::sync::Arc::new(crate::opt::names::duplicate_fn_names(data)));
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
 }
 
-thread_local! {
-    /// The function names two definitions share ([`crate::opt::names::duplicate_fn_names`]),
-    /// kept for the length of one unit's emission ([`FnDupsScope`]) beside the address of the
-    /// definitions they were read from.  Emission holds those definitions borrowed, so no name
-    /// can change while it runs; outside a scope, or for other definitions, [`c_name`] reads
-    /// the names afresh.  Without it every name written read the whole table (@PLN229).
-    static FN_DUPS: std::cell::RefCell<Option<(usize, std::rc::Rc<std::collections::HashSet<String>>)>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// The function names two definitions share ([`crate::opt::names::duplicate_fn_names`]), kept
+/// on the definitions for the length of one unit's emission ([`FnDupsScope`]).  Emission holds
+/// those definitions borrowed, so no name can change while it runs; outside a scope [`c_name`]
+/// reads the names afresh.  Without it every name written read the whole table (@PLN229).  A
+/// field of `Data`, not a thread-local (`@PLN226`, THREADING.md § Each thread's own state).
+type FnDups = Option<std::sync::Arc<std::collections::HashSet<String>>>;
 
-/// Holds [`FN_DUPS`] for `data` while it lives, and puts back what was held before.
-struct FnDupsScope(Option<(usize, std::rc::Rc<std::collections::HashSet<String>>)>);
+/// Holds the duplicate names for `data` while it lives, and puts back what was held before.
+struct FnDupsScope<'a>(&'a Data, FnDups);
 
-impl FnDupsScope {
-    fn enter(data: &Data) -> Self {
-        let now = (
-            std::ptr::from_ref(data) as usize,
-            std::rc::Rc::new(crate::opt::names::duplicate_fn_names(data)),
-        );
-        Self(FN_DUPS.with(|h| h.borrow_mut().replace(now)))
+impl<'a> FnDupsScope<'a> {
+    fn enter(data: &'a Data) -> Self {
+        let now = std::sync::Arc::new(crate::opt::names::duplicate_fn_names(data));
+        Self(
+            data,
+            data.fn_dups_memo.with(|m: &mut FnDups| m.replace(now)),
+        )
     }
 }
 
-impl Drop for FnDupsScope {
+impl Drop for FnDupsScope<'_> {
     fn drop(&mut self) {
-        let before = self.0.take();
-        FN_DUPS.with(|h| *h.borrow_mut() = before);
+        let before = self.1.take();
+        self.0.fn_dups_memo.with(|m: &mut FnDups| *m = before);
     }
 }
 

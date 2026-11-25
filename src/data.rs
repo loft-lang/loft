@@ -6201,6 +6201,9 @@ pub struct Data {
     pub(crate) range_memo: PassAny,
     /// `@PLN226` — the non-null analysis's answers (`opt::non_sentinel`).
     pub(crate) nn_memo: PassAny,
+    /// `@PLN226` — the function names two definitions share, held for one C unit's emission
+    /// (`c::FnDupsScope`, @PLN229).
+    pub(crate) fn_dups_memo: PassAny,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
     pub(crate) defs_memo: ScopedCell,
@@ -6914,6 +6917,7 @@ impl Data {
             name_only: NameOnlyCache::default(),
             range_memo: PassAny::default(),
             nn_memo: PassAny::default(),
+            fn_dups_memo: PassAny::default(),
             defs_memo: ScopedCell::default(),
             span_memo: ScopedCell::default(),
             param_writes: ScopedCell::default(),
