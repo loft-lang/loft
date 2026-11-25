@@ -2019,7 +2019,9 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
     // library's already.
     TyInteger { spec } => if el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec) { el_schema::content_type(e, t) } else { -1 },
     // A vector element's content is the inner vector's own store type.
-    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
+    // (A narrow inner element — `vector<i32>` — has its own content and vector rows, made here
+    // ahead of the outer one; by name it would read the library's full-width `vector<integer>`.)
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else if match inner { TyInteger { spec: vis } => el_types::narrow_width(vis) > 0 || el_types::int4(vis) || el_types::uint4(vis), _ => false } { el_schema::content_type(e, t) } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
   };
   if kt >= 0 && kt != el_schema::NO_TYPE {
@@ -2225,6 +2227,11 @@ pub fn nested_item_type(e: el::El, vars: el_vars::Vars, n: integer, want: ir::Ty
     if el_types::is_unknown(first) {
       first = el_types::without_deps(t);
     }
+  }
+  // (Integer items under an expected narrow element are that element: `parse_vector` converts
+  // them to it, `[1001, 2002]` in a `vector<vector<i16>>` is a `vector<i16>` on either pass.)
+  if first is TyInteger && match want { TyVector { inner: wi } => match wi { TyInteger { spec: ws } => el_types::narrow_width(ws) > 0 || el_types::int4(ws) || el_types::uint4(ws), _ => false }, _ => false } {
+    return want;
   }
   if el_types::is_unknown(first) { want } else { ir::TyVector { inner: first, dep: [] } }
 }
@@ -2543,6 +2550,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         mint_nested_elms(e, vars, elm, it);
       }
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
+      // (`parse_vector` of the inner literal registers its element's `vector<T>` and
+      // `main_vector<T>` on the first pass, at its `]` — a narrow element's own, which the
+      // library has not: `vector<i16>` beside the library's `vector<integer>`.)
+      ninner = match el_types::base(xs[-1]!.tp) { TyVector { inner: ni } => ni, _ => ir::TyVoid };
+      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } && el::def_nr(e, "main_vector<{el_types::elem_name(e, ninner)}>") < 0 {
+        ntok = match e.p.nodes[it] { SVecLit { at: nat } => nat, _ => 0 };
+        // (A declared outer vector's own definitions stand first: Rust registers them where the
+        // declaration is read, before the literal's items.)
+        if declared is TyVector && el::def_nr(e, "main_vector<{el_types::elem_name(e, declared)}>") < 0 {
+          otok = match e.p.nodes[n] { SVecLit { at: oat } => oat, _ => 0 };
+          vector_def(e, declared, el_types::elem_name(e, declared), otok, true);
+        }
+        vector_def(e, ninner, el_types::elem_name(e, ninner), ntok, false);
+      }
     } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
       // A record item is read INTO its element (`parse_item`): a local it starts with borrows
       // nothing there (`parse_var`'s `into` arm).

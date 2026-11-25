@@ -2555,6 +2555,11 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
     },
     _ => {}
   }
+  // (A vector of narrow vectors: its row is built from the content — `vector<vector<int<…>>>` —
+  // not found by a name the library's full-width `vector<integer>` shares.)
+  if match t { TyVector { inner: vi } => match vi { TyInteger { spec: vs } => el_types::narrow_width(vs) > 0 || el_types::int4(vs) || el_types::uint4(vs), _ => false }, _ => false } {
+    return el_schema::vector_type(e, el_schema::content_type(e, t));
+  }
   el_schema::schema_type(e, "vector<{nm}>")
 }
 
@@ -2621,7 +2626,8 @@ pub fn element_place_type(e: el::El, t: ir::TypeT) -> integer {
     return el::def(e, sed).known_type;
   }
   match t {
-    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
+    // (A narrow inner vector's place is its own row, `vector<int<…>>`, not the library's.)
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else if match inner { TyInteger { spec: pis } => el_types::narrow_width(pis) > 0 || el_types::int4(pis) || el_types::uint4(pis), _ => false } { el_schema::content_type(e, t) } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
   }
 }
