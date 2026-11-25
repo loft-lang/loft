@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `a + [3]` over narrow vectors (`u8`, `i16`, `i32`, and an element of a
+// `vector<vector<u8>>`): appended through the content row, the literal operand read against
+// the first operand's element on pass 2; on pass 1 the result borrows the first operand's root.
+// Prints: [200,3] [-7,8] [100000,3] [200,4] [5,6]
+
+fn main() {
+  a: vector<u8> = [200];
+  b: vector<i16> = [-7];
+  c: vector<i32> = [100000];
+  d: vector<vector<u8>> = [[200]];
+  w: vector<integer> = [5];
+  q = a + [3];
+  r = b + [8];
+  s = c + [3];
+  t = d[0] + [4];
+  u = w + [6];
+  println("{q} {r} {s} {t} {u}");
+}
