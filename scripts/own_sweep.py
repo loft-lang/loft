@@ -31,7 +31,6 @@ A switched run is judged against the cell's no-switch run when the sweep has one
   scripts/own_sweep.py --chapter ownership
   scripts/own_sweep.py --switch '' --switch LOFT_NO_JOIN_OWN --out sweep.tsv
   scripts/own_sweep.py --cell path/to/prog.loft     # any program, not only cells
-  scripts/own_sweep.py --oracle check                # judge the older shipped checks instead
   scripts/own_sweep.py --wrong --chapter binding     # a failed test is a fault too
 
 The table goes to --out (TSV); the summary and every MISS and MASKED go to stdout.
@@ -98,7 +97,7 @@ def matched(faults, red_kinds):
         fs.remove("wrong")
     return all(ANSWERS.get(f, set()) & rk for f in fs)
 ARMED = re.compile(r"@ARMED:(.*)")
-# The checker mode: `check` (the shipped checks) or `check-records` (the store records).
+# The checker mode: the store records (`check-records`, with the scope check).
 ORACLE = ["check-records"]
 # `--wrong`: a failed test is a run-time fault of kind `wrong`.
 WRONG = [False]
@@ -253,13 +252,11 @@ def main():
     ap.add_argument("--out", default="")
     ap.add_argument("--compare", default="",
                     help="a previous --out table: print each run whose verdict or red count changed")
-    ap.add_argument("--oracle", default="check-records", choices=["check", "check-records"],
-                    help="the static checker: the store records (default; the scope check runs with them),"
-                         " or the older shipped checks (@PLN228 P7: they catch nothing the records do not)")
+    ap.add_argument("--oracle", default="check-records", choices=["check-records"],
+                    help="the static checker: the store records, the one there is")
     ap.add_argument("--wrong", action="store_true",
                     help="a failed test is a run-time fault (kind `wrong`)")
     a = ap.parse_args()
-    ORACLE[0] = a.oracle
     WRONG[0] = a.wrong
     # Each cell runs from its own directory, so a relative binary path is resolved here.
     a.loft = os.path.abspath(a.loft)

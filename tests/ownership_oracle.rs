@@ -1,25 +1,26 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-//! @PLN94 Phase 5 — the CFG+dataflow ownership oracle as a STANDING check, run BESIDE the shipped
-//! analysis (coexistence: it never drives codegen; SI-1 holds). This binary makes the H-tier gates
-//! permanent so every CI run re-proves them:
+//! The store records' standing gates, on the one lifetime report (`LOFT_LIFETIME_CHECK`,
+//! `@PLN228`, STORE_RECORDS.md § The checks).  Each is compile-only (`--emit-image`), so it
+//! runs no program:
 //!
-//! - **4.2 no crying wolf** — `LOFT_OWN_ORACLE=check` is 0 RED on the verified-correct corpus
-//!   (`oracle_clean_on_correct_corpus`).
-//! - **4.3 true positive** — the known-wrong `LOFT_NO_A1B` plan is flagged RED, and the correct
-//!   default is not (`oracle_flags_the_a1b_wrong_plan`).
-//! - **SI-1 observer** — the oracle does not perturb shipped output: `introspect` is byte-identical
-//!   with the oracle on vs off (`oracle_is_a_pure_observer_si1`).
-//! - **SI-2 backend fact-identity** — the fact reads identically under `--interpret` and `--native`
-//!   (`oracle_fact_is_backend_identical_si2`, release-gated: rustc per run).
+//! - **no crying wolf** — the report is clean on the verified-correct corpus and on every
+//!   generated fuzz cell;
+//! - **true positives** — each injected defect (a dropped free of an owned store, of an adopted
+//!   return buffer, a free of a borrowed view, of a never-free binding) is reported, and the same
+//!   program without the injection is clean;
+//! - **observer** — the report does not change the shipped IR or bytecode;
+//! - **the ratchet** — the problem count over `tests/scripts` and the language suite does not
+//!   rise (`records_lifetime_ratchet`, ci.yml's advisory `leak-scan` job).
 //!
-//! Design + the strictness verification (why it catches the A1b class the runtime gates miss):
-//! `doc/claude/plans/94-cfg-ownership-dataflow/PHASE4_DESIGN.md`.
+//! The ownership oracle's dump modes (`LOFT_OWN_ORACLE=own`) keep one gate here: its fact reads
+//! the same on both backends (`oracle_fact_is_backend_identical_si2`).
 
 use loft::file_access as fa;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod common;
 
@@ -31,49 +32,66 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Run the oracle in `mode` over `file` (with any extra env) and return its stderr lines.
-fn run_oracle(file: &str, mode: &str, extra_env: &[(&str, &str)], native: bool) -> String {
+/// The lifetime report of `file`, compiled only with the `--lib` directories given and any
+/// extra env: its problem lines (the function, the rule, the kind and the reason,
+/// tab-separated), or `None` when it printed no report (a program that does not compile).
+fn lifetime_report_of(
+    file: &Path,
+    libs: &[String],
+    extra_env: &[(&str, &str)],
+) -> Option<BTreeSet<String>> {
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    let image = std::env::temp_dir().join(format!(
+        "loft_lifetime_{}_{}.store",
+        std::process::id(),
+        RUN.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.arg(if native { "--native" } else { "--interpret" })
-        .arg(root().join(file))
-        .env("LOFT_NO_CACHE", "1") // force scopes::check to re-run on the user file
-        .env("LOFT_OWN_ORACLE", mode);
-    if native {
-        cmd.env("LOFT_TIMEOUT", "120"); // rustc can hang — name the phase if it does
+    cmd.current_dir(root());
+    for lib in libs {
+        cmd.arg("--lib").arg(lib);
     }
+    cmd.arg("--emit-image")
+        .arg(&image)
+        .arg(file)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_LIFETIME_CHECK", "-");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("the loft binary must be runnable");
-    String::from_utf8_lossy(&out.stderr).into_owned()
+    let _ = fa::remove_file(&image);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !stderr.lines().any(|l| l.starts_with("# ")) {
+        return None;
+    }
+    Some(
+        stderr
+            .lines()
+            .filter(|l| !l.starts_with('#') && l.matches('\t').count() >= 5)
+            .map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                format!("{}\t{}\t{}\t{}", f[1], f[2], f[3], f[5])
+            })
+            .collect(),
+    )
 }
 
-/// The deduplicated `RED …` findings the `check` mode reports (it re-runs per compilation unit, so
-/// the same finding repeats; the SET is what matters).
-fn check_reds(file: &str, extra_env: &[(&str, &str)]) -> BTreeSet<String> {
-    run_oracle(file, "check", extra_env, false)
-        .lines()
-        .filter(|l| l.starts_with("RED "))
-        .map(str::to_string)
-        .collect()
+/// The lifetime report of a program that must compile.  Panics when it printed none — a gate
+/// that reads silence as clean proves nothing.
+fn lifetime_report(file: &Path, extra_env: &[(&str, &str)]) -> BTreeSet<String> {
+    lifetime_report_of(file, &[], extra_env).unwrap_or_else(|| {
+        panic!(
+            "no lifetime report for {} (did it compile?)",
+            file.display()
+        )
+    })
 }
 
-/// The `OWN <fn> …` fact lines (mode `own`), sorted — the per-function shadow-diff summary. Used for
-/// the SI-2 backend-identity comparison.
-fn own_facts(file: &str, native: bool) -> Vec<String> {
-    let mut v: Vec<String> = run_oracle(file, "own", &[], native)
-        .lines()
-        .filter(|l| l.starts_with("OWN "))
-        .map(str::to_string)
-        .collect();
-    v.sort();
-    v
-}
-
-/// The verified-correct corpus the check must stay silent on (no crying wolf). Kept to files proven
-/// 0-RED (the @PLN94 probes + the collection-capture stress). `85-struct-copy-return-owned`
-/// (`n_choose`, the retbuf-materialisation residual) is now INCLUDED — the `reminted` rule resolved it
-/// (a `var = src` copy into a var re-minted via `OpDatabase` owns; @PLN94 n_choose fix).
+/// The verified-correct corpus the records must stay silent on (no crying wolf): the @PLN94
+/// probes, the collection-capture stress, and the shapes two ownership derivations once
+/// disagreed on.
 const CLEAN_CORPUS: &[&str] = &[
     "doc/claude/plans/94-cfg-ownership-dataflow/probes/00-a1b-silent-blindspot.loft",
     "doc/claude/plans/94-cfg-ownership-dataflow/probes/01-cfg-corpus.loft",
@@ -84,53 +102,39 @@ const CLEAN_CORPUS: &[&str] = &[
     "doc/claude/plans/94-cfg-ownership-dataflow/probes/06-capture.loft",
     "tests/scripts/505-collection-capture.loft",
     "tests/scripts/85-struct-copy-return-owned.loft",
-    // The three shapes the two derivations disagreed on over the 1247-file corpus until the
-    // `@FR-O-Oracle` walk (QUALITY-history.md B7r): a local minted once and rebound by a call that may
-    // hand back its argument, a keyed literal repointed at a captured collection inside a
-    // closure, and a call delivering through a hidden buffer.  Zero disagreements is the claim.
     "tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft",
     "tests/scripts/1326-a-captured-keyed-collection-rebind-replaces.loft",
     "tests/scripts/1331-a-repointed-literal-accumulator-is-detached.loft",
+    // Every assignment of a witnessed local mixes ownership; the witness alone releases it.
+    "tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft",
+    A1B_UAF,
 ];
 
 const A1B_UAF: &str = "tests/scripts/85-temp-subject-borrow-return-uaf.loft";
 
-/// 4.2 — the check cries no wolf: 0 RED across the verified-correct corpus.
+/// No crying wolf: the records report nothing across the verified-correct corpus.
 #[test]
-fn oracle_clean_on_correct_corpus() {
+fn records_clean_on_correct_corpus() {
     for &f in CLEAN_CORPUS {
-        let reds = check_reds(f, &[]);
+        let problems = lifetime_report(&root().join(f), &[]);
         assert!(
-            reds.is_empty(),
-            "the ownership oracle flagged correct code (false positive) in {f}:\n{}",
-            reds.iter().cloned().collect::<Vec<_>>().join("\n")
+            problems.is_empty(),
+            "the store records flagged correct code in {f}:\n{}",
+            problems.into_iter().collect::<Vec<_>>().join("\n")
         );
     }
 }
 
-/// 4.3 — the known-wrong A1b plan (the promotion collapse: a temp subject built INTO the return
-/// buffer, then a borrowed view of it returned) fails its own fixture at run time, and the correct
-/// default does not — the runtime channel this class is caught on.
+/// The known-wrong A1b plan (the promotion collapse: a temp subject built INTO the return
+/// buffer, then a borrowed view of it returned) fails its own fixture at run time, and the
+/// correct default does not — the run-time channel this class is caught on.
 ///
-/// It takes ALL THREE opt-outs to reach that plan now. `LOFT_NO_A1B` restores the promotion
-/// collapse, but loft#872's work-ref/argument step-over then keeps the roles apart anyway — pass 2's
-/// mint for the inner call asks for a `vector` and the promoted buffer is a record, so it steps to a
-/// fresh local and `n_h` comes out correct. loft#1078 added the third: the value-position object
-/// literal is a pass-2-ONLY mint site, so it now draws from the `__ref_p2_N` sequence and cannot be
-/// handed the promoted buffer whatever the other two do. Any ONE of the three makes this fixture
-/// right, which is worth knowing: they are independent guards on the same collapse, and the gate has
-/// to disable all of them to have a defect to catch.
-///
-/// This gate used to ask Check A to FLAG the wrong plan, and it did — but the disagreement it
-/// reported was the shadow's own weaker callee-to-caller base translation (`Borrowed(MAX)` for an
-/// argument built in place) against the oracle's mint shortcut (`Owned` for any `OpDatabase` var),
-/// two derivation defects that happened to differ on this shape.  With the mint shortcut refined and
-/// one translation shared by both (`use_analysis::structural_arg_base`), the two derivations agree on
-/// the wrong plan as on the right one, and Check A stays CLEAN on both — that is asserted here too,
-/// so a future divergence on this fixture is a finding.  Check A's own true positive is the injected
-/// one below.
+/// It takes all three opt-outs to reach that plan: `LOFT_NO_A1B` restores the collapse,
+/// loft#872's work-ref/argument step-over keeps the roles apart anyway, and loft#1078's
+/// pass-2-only mint site cannot be handed the promoted buffer.  Any one of the three makes the
+/// fixture right — independent guards on the same collapse.
 #[test]
-fn the_a1b_wrong_plan_fails_at_run_time_and_the_oracles_agree_on_it() {
+fn the_a1b_wrong_plan_fails_at_run_time() {
     let wrong_env: &[(&str, &str)] = &[
         ("LOFT_NO_A1B", "1"),
         ("LOFT_NO_WORKREF_STEPOVER", "1"),
@@ -160,85 +164,61 @@ fn the_a1b_wrong_plan_fails_at_run_time_and_the_oracles_agree_on_it() {
         right_ok,
         "the correct default plan must pass its fixture:\n{right_err}"
     );
-    for env in [wrong_env, &[][..]] {
-        let reds = check_reds(A1B_UAF, env);
-        let disagree: Vec<&String> = reds
-            .iter()
-            .filter(|r| r.contains("fact-disagree"))
-            .collect();
-        assert!(
-            disagree.is_empty(),
-            "the two ownership derivations disagreed on the A1b fixture under {env:?}: {disagree:?}"
-        );
-    }
 }
 
-/// Check A's TRUE-POSITIVE gate, injected: `LOFT_OWN_INJECT_FACT_OWNED=inner` forces the shadow's
-/// fact for `inner` — a vector header viewing its own `__vdb_` backing, `Borrowed` to the oracle and
-/// never filled, so no `Join` softens the comparison — to `Owned`, and Check A must report the
-/// `fact-disagree`; the un-injected run must be clean.  Symmetric to the leak-scan and over-free
-/// injections — a report whose zero cannot be made non-zero proves nothing.
+/// Observer: the report changes nothing shipped — `introspect` (the IR and bytecode) is
+/// byte-identical with the lifetime check on and off.
 #[test]
-fn oracle_fact_check_flags_an_injected_owned_fact() {
-    let disagree = |env: &[(&str, &str)]| -> Vec<String> {
-        check_reds(A1B_UAF, env)
-            .into_iter()
-            .filter(|r| r.contains("fact-disagree") && r.contains("inner"))
-            .collect()
-    };
-    assert!(
-        disagree(&[]).is_empty(),
-        "Check A cried wolf on the un-injected fixture: {:?}",
-        disagree(&[])
-    );
-    let injected = disagree(&[("LOFT_OWN_INJECT_FACT_OWNED", "inner")]);
-    assert!(
-        injected
-            .iter()
-            .any(|r| r.contains("mine=Owned") && r.contains("B=Borrowed")),
-        "Check A FAILED to flag the injected Owned fact for inner (vacuous?): {injected:?}"
-    );
-}
-
-/// SI-1 — the oracle is a pure observer: `introspect` stdout (the shipped IR + bytecode) is
-/// byte-identical with the oracle ON (`check`) vs OFF. Proof it only observes.
-#[test]
-fn oracle_is_a_pure_observer_si1() {
-    let introspect = |mode: Option<&str>| {
+fn the_lifetime_check_is_a_pure_observer() {
+    let introspect = |on: bool| {
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("introspect").arg(root().join(A1B_UAF));
-        if let Some(m) = mode {
-            cmd.env("LOFT_OWN_ORACLE", m);
+        if on {
+            cmd.env("LOFT_LIFETIME_CHECK", "-");
         }
         let out = cmd.output().expect("run loft introspect");
-        out.stdout // the oracle writes to stderr only; stdout is the shipped artefact
+        out.stdout // the report goes to stderr; stdout is the shipped artefact
     };
     assert_eq!(
-        introspect(None),
-        introspect(Some("check")),
-        "the oracle changed shipped `introspect` output — SI-1 (observer) violated"
+        introspect(false),
+        introspect(true),
+        "the lifetime check changed shipped `introspect` output"
     );
 }
 
-/// SI-2 — backend fact-identity: the ownership fact is computed at compile time (`scopes::check`),
-/// so it must read identically under `--interpret` and `--native`. Release-gated (rustc per run).
+/// The ownership fact (`LOFT_OWN_ORACLE=own`) is computed at compile time, so it reads
+/// identically under `--interpret` and `--native` (`@FR-O-NoDiverge`).  Release-gated.
 #[test]
-#[ignore = "native backend needs rustc per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`"]
+#[ignore = "native backend needs a C compile per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`"]
 fn oracle_fact_is_backend_identical_si2() {
-    let f = "doc/claude/plans/94-cfg-ownership-dataflow/probes/03-ownership.loft";
+    let own_facts = |native: bool| -> Vec<String> {
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg(if native { "--native" } else { "--interpret" })
+            .arg(root().join("doc/claude/plans/94-cfg-ownership-dataflow/probes/03-ownership.loft"))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_OWN_ORACLE", "own")
+            .env("LOFT_TIMEOUT", "120");
+        let out = cmd.output().expect("the loft binary must be runnable");
+        let mut v: Vec<String> = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| l.starts_with("OWN "))
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        v
+    };
     assert_eq!(
-        own_facts(f, false),
-        own_facts(f, true),
-        "the ownership fact differs between --interpret and --native — SI-2 (O-NoDiverge) violated"
+        own_facts(false),
+        own_facts(true),
+        "the ownership fact differs between --interpret and --native — @FR-O-NoDiverge violated"
     );
 }
 
-/// 5.2 — the fuzzer hook: every generated `program_ownership` case (9 shapes × 2 values × 3 churn =
-/// 54) runs the oracle check; the whole grammar must be 0 RED (no crying wolf at generative scale,
-/// not just the fixed corpus). The generator is the @PLN85 fuzz harness's `grammar_gen.py`.
+/// No crying wolf at generative scale: every `program_ownership` case the @PLN85 fuzz grammar
+/// generates (9 shapes × 2 values × 3 churn = 54) reads clean.
 // @speed 3.6
 #[test]
-fn oracle_clean_on_generated_fuzz_corpus() {
+fn records_clean_on_generated_fuzz_corpus() {
     let fuzz_dir = root().join("doc/claude/plans/85-store-lifetime-retirement/fuzz");
     let cells = std::env::temp_dir().join(format!("loft_oracle_fuzz_{}", std::process::id()));
     let _ = fa::remove_dir_all(&cells);
@@ -254,7 +234,6 @@ fn oracle_clean_on_generated_fuzz_corpus() {
         "grammar_gen failed: {}",
         String::from_utf8_lossy(&generated.stderr)
     );
-
     let mut offenders = Vec::new();
     let mut count = 0usize;
     for entry in fa::read_dir(&cells).expect("read cells") {
@@ -263,24 +242,12 @@ fn oracle_clean_on_generated_fuzz_corpus() {
             continue;
         }
         count += 1;
-        // `check_reds` takes a repo-relative path; this cell is absolute, so run the binary directly.
-        let out = loft::platform::process::harness_command(loft_bin())
-            .arg("--interpret")
-            .arg(&path)
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check")
-            .output()
-            .expect("run loft on a fuzz cell");
-        let reds: BTreeSet<String> = String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| l.starts_with("RED "))
-            .map(str::to_string)
-            .collect();
-        if !reds.is_empty() {
+        let problems = lifetime_report(&path, &[]);
+        if !problems.is_empty() {
             offenders.push(format!(
                 "{}:\n{}",
                 fa::file_name(&path).unwrap(),
-                reds.iter().cloned().collect::<Vec<_>>().join("\n")
+                problems.into_iter().collect::<Vec<_>>().join("\n")
             ));
         }
     }
@@ -288,29 +255,26 @@ fn oracle_clean_on_generated_fuzz_corpus() {
     assert!(count >= 54, "expected ≥54 generated cells, got {count}");
     assert!(
         offenders.is_empty(),
-        "the ownership oracle cried wolf on {} generated fuzz cell(s):\n{}",
+        "the store records cried wolf on {} generated fuzz cell(s):\n{}",
         offenders.len(),
         offenders.join("\n---\n")
     );
 }
 
-/// The all-vars leak scan (`LOFT_OWN_ORACLE=check-leak`) ratchet baseline — the "raise it → flag it,
-/// don't revert" workflow that drove it 927 → 0 (recognising each codegen-transfer artifact:
-/// retbuf/param aliasing, the phantom `__retbuf`, `par` queue frees, work-refs). The scan is now
-/// PROMOTED onto `check` (both the `OpDatabase` and the adopted-owned classes) with two firing
-/// true-positives; this sweep re-arms the ratchet as a regression guard. It asserts the count does not
-/// REGRESS above the baseline; a future gap recognised lowers it further.
-const LEAK_SCAN_BASELINE: usize = 0;
+/// The problem count over `tests/scripts` and every language-suite program may only fall.
+/// Each line is a records gap or a compiler defect (STORE_RECORDS.md § Every new defect); one
+/// resolved lowers the baseline.
+const LIFETIME_BASELINE: usize = 40;
+
+/// The programs the ratchet must read a report of, at least: every compiling program of
+/// `tests/scripts` and the suite reports, so a sweep that read far fewer read silence.
+const LIFETIME_REPORTS_FLOOR: usize = 3000;
 
 #[test]
-#[ignore = "sweeps tests/scripts under check-leak — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored`"]
-#[allow(clippy::absurd_extreme_comparisons)] // baseline reached 0 — the ratchet endpoint
-fn oracle_leak_scan_ratchet() {
+#[ignore = "sweeps tests/scripts and the suite — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored`"]
+fn records_lifetime_ratchet() {
     let dir = root().join("tests/scripts");
-    let mut total = 0usize;
-    // The programs here, then every program of the language suite beside the tree
-    // (@PLN193): the scan asks the same question of the corpus it asked before the move.
-    let mut paths: Vec<std::path::PathBuf> = fa::read_dir(&dir)
+    let mut paths: Vec<PathBuf> = fa::read_dir(&dir)
         .expect("read tests/scripts")
         .into_iter()
         .map(|e| e.os_spelling())
@@ -318,258 +282,125 @@ fn oracle_leak_scan_ratchet() {
         .collect();
     paths.sort();
     paths.extend(common::corpus::suite_programs());
+    let tests_lib = root().join("tests/lib").to_string_lossy().to_string();
+    let mut found = Vec::new();
+    let mut reports = 0usize;
     for path in paths {
-        let out = loft::platform::process::harness_command(loft_bin())
-            .arg("--interpret")
-            .arg(&path)
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check-leak")
-            .output()
-            .expect("run loft check-leak");
-        let reds: BTreeSet<String> = String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| l.starts_with("RED ") && l.contains(": leak "))
-            .map(str::to_string)
-            .collect();
-        total += reds.len();
+        let source = fa::read_to_string(&path).unwrap_or_default();
+        let mut libs = common::corpus::args_lib_dirs(&source, &path);
+        if path.starts_with(&dir) {
+            libs.push(tests_lib.clone());
+        }
+        let Some(problems) = lifetime_report_of(&path, &libs, &[]) else {
+            continue;
+        };
+        reports += 1;
+        for p in problems {
+            found.push(format!("{}: {p}", path.display()));
+        }
     }
     assert!(
-        total <= LEAK_SCAN_BASELINE,
-        "leak-scan findings REGRESSED: {total} > baseline {LEAK_SCAN_BASELINE}. \
-         Update LEAK_SCAN_BASELINE only DOWNWARD (each transfer artifact recognised lowers it)."
+        reports >= LIFETIME_REPORTS_FLOOR,
+        "the ratchet read only {reports} lifetime reports (floor {LIFETIME_REPORTS_FLOOR}): \
+         most programs did not compile"
     );
-    if total < LEAK_SCAN_BASELINE {
+    assert!(
+        found.len() <= LIFETIME_BASELINE,
+        "lifetime problems REGRESSED: {} > baseline {LIFETIME_BASELINE}:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+    if found.len() < LIFETIME_BASELINE {
         eprintln!(
-            "leak-scan ratchet PROGRESS: {total} < {LEAK_SCAN_BASELINE} — lower LEAK_SCAN_BASELINE to {total}."
+            "lifetime ratchet PROGRESS: {} < {LIFETIME_BASELINE} — lower LIFETIME_BASELINE to {}.",
+            found.len(),
+            found.len()
         );
     }
+    eprintln!(
+        "lifetime ratchet: {} problem(s) over {reports} report(s)",
+        found.len()
+    );
 }
 
-/// The leak-scan TRUE-POSITIVE gate (on the PROMOTED default `check` path): proving the definite-leak
-/// scan is not vacuous. A positive-control fixture owns a vector local (`buf`, backed by the
-/// OpDatabase store `__vdb_1`), freed at scope exit. `LOFT_OWN_INJECT_DROP_FREE=__vdb_1` drops that
-/// free (a genuine leak — the runtime leak-check agrees); the scan MUST flag `__vdb_1` under `check`,
-/// and the un-injected run MUST be clean.
-#[test]
-fn oracle_leak_scan_flags_an_injected_leak() {
-    let ctrl = "doc/claude/plans/94-cfg-ownership-dataflow/probes/07-leak-positive-control.loft";
-    let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--interpret")
-            .arg(root().join(ctrl))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check"); // promoted: the leak scan runs on the default path
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run loft check-leak");
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ") && l.contains(": leak ") && l.contains("n_make_local")
-            })
-            .map(str::to_string)
+/// An injected defect is reported, and the program without it is clean: `inject` is the env
+/// that makes the compiler emit the defect, `function` the function the report must name, and
+/// `name` the variable its reason must name.
+fn injected_is_reported(file: &str, inject: (&str, &str), function: &str, name: &str) {
+    let mine = |env: &[(&str, &str)]| -> Vec<String> {
+        lifetime_report(&root().join(file), env)
+            .into_iter()
+            .filter(|p| p.starts_with(&format!("{function}\t")))
             .collect()
     };
+    let clean = mine(&[]);
     assert!(
-        reds(&[]).is_empty(),
-        "check-leak cried wolf on the un-injected positive control: {:?}",
-        reds(&[])
+        clean.is_empty(),
+        "the records cried wolf on the un-injected {file}: {clean:?}"
     );
-    let injected = reds(&[("LOFT_OWN_INJECT_DROP_FREE", "__vdb_1")]);
+    let injected = mine(&[inject]);
     assert!(
-        injected.iter().any(|r| r.contains("__vdb_1")),
-        "check-leak FAILED to flag the injected __vdb_1 leak (vacuous?): {injected:?}"
-    );
-}
-
-/// The ADOPTED-leak TRUE-POSITIVE gate (on the PROMOTED default `check` path): proving the leak scan's
-/// adopted-owned class is not vacuous. The positive control binds `adopted = make()`; the caller
-/// allocates a hidden NRVO return buffer `__ref_1` (a `caller_hidden_buf` work-ref) it OWNS + frees.
-/// `__ref_1` is NOT `OpDatabase`-minted in the caller's body, so the OpDatabase-only recognizer missed
-/// it — the gap this class closes. `LOFT_OWN_INJECT_DROP_FREE=__ref_1` drops that free (a genuine leak
-/// the runtime leak-check also flags); the scan MUST go RED on `n_use_adopted`'s `__ref_1`, and the
-/// un-injected run MUST be clean. (The injection is name-global, so other functions' `__ref_1` may also
-/// flag — the assertion pins the fixture's own function.)
-#[test]
-fn oracle_adopt_leak_flags_an_injected_leak() {
-    let ctrl =
-        "doc/claude/plans/94-cfg-ownership-dataflow/probes/09-adopt-leak-positive-control.loft";
-    let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--interpret")
-            .arg(root().join(ctrl))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check"); // promoted: the adopted class rides on the default path
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run loft check");
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ") && l.contains(": leak ") && l.contains("n_use_adopted")
-            })
-            .map(str::to_string)
-            .collect()
-    };
-    assert!(
-        reds(&[]).is_empty(),
-        "the leak scan cried wolf on the un-injected adopted positive control: {:?}",
-        reds(&[])
-    );
-    let injected = reds(&[("LOFT_OWN_INJECT_DROP_FREE", "__ref_1")]);
-    assert!(
-        injected.iter().any(|r| r.contains("__ref_1")),
-        "the leak scan FAILED to flag the injected adopted __ref_1 leak (vacuous?): {injected:?}"
+        injected.iter().any(|p| p.contains(&format!("`{name}`"))),
+        "the records FAILED to report the injected defect ({}={}) in {function} (vacuous?): {injected:?}",
+        inject.0,
+        inject.1
     );
 }
 
-/// The over-free TRUE-POSITIVE gate (on the PROMOTED default `check` path): proving the over-free
-/// check (`run_over_free_check`, Check B) is not vacuous. A positive-control fixture binds a
-/// dep-carrying view `bview` of a copied store; the copy owns + frees the store, so `get_free_vars`
-/// correctly does NOT free `bview`. `LOFT_OWN_INJECT_FREE_BORROWED=bview` forces an unconditional
-/// `OpFreeRef(bview)` (a genuine over-free / double-free); the check MUST flag `free-of-borrowed bview`
-/// under `check`, and the un-injected run MUST be clean. Symmetric to the leak-scan injection.
+/// A dropped free of a vector local's `OpDatabase` store (`__vdb_1`) is a leak.
 #[test]
-fn oracle_over_free_check_flags_an_injected_free() {
-    let ctrl =
-        "doc/claude/plans/94-cfg-ownership-dataflow/probes/08-overfree-positive-control.loft";
-    let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--interpret")
-            .arg(root().join(ctrl))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check"); // promoted: the over-free check runs on the default path
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run loft check");
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ") && l.contains("free-of-borrowed") && l.contains("bview")
-            })
-            .map(str::to_string)
-            .collect()
-    };
-    assert!(
-        reds(&[]).is_empty(),
-        "the over-free check cried wolf on the un-injected positive control: {:?}",
-        reds(&[])
-    );
-    let injected = reds(&[("LOFT_OWN_INJECT_FREE_BORROWED", "bview")]);
-    assert!(
-        injected.iter().any(|r| r.contains("bview")),
-        "the over-free check FAILED to flag the injected bview over-free (vacuous?): {injected:?}"
+fn records_flag_an_injected_leak() {
+    injected_is_reported(
+        "doc/claude/plans/94-cfg-ownership-dataflow/probes/07-leak-positive-control.loft",
+        ("LOFT_OWN_INJECT_DROP_FREE", "__vdb_1"),
+        "n_make_local",
+        "__vdb_1",
     );
 }
 
-/// The never-free TRUE-POSITIVE gate (Check D, on the promoted `check` path): proving the
-/// @FR-O-Override check is not vacuous.  The B7p guard marks `d` never-free (a nullable local that
-/// only views a projection); `LOFT_OWN_INJECT_FREE_SKIPFREE=d` makes `get_free_vars` name a
-/// witness-guarded free of `d` against itself — a run-time no-op, but a free of a never-free
-/// binding in a spelling neither backend intercepts, which the check MUST report; the un-injected
-/// run MUST be clean for `d`.
-/// @PLN153 phase 4 — the over-free check sees a NULLABLE view local as the heap local it is.
-///
-/// `08b` is the positive control (08) with `bview` declared `vector<integer>?`: the same
-/// dep-carrying view of the holder's store behind a nullability marker (`@FR-L-Null`, the
-/// same storage).  Check B's heap filter asked `heap_dep()` of the local's type BARE, so the
-/// nullable spelling was never a candidate and the injected over-free went unflagged while the
-/// dense control's was flagged — the oracle green over exactly the twin @PLN153 is about.
-/// Both halves: the un-injected run stays clean, the injected one goes RED on `bview`.
+/// A dropped free of the hidden return buffer a caller allocates and adopts (`__ref_1`, not
+/// `OpDatabase`-minted in the caller) is a leak.
 #[test]
-fn oracle_over_free_check_sees_a_nullable_view_local() {
-    let ctrl = "doc/claude/plans/94-cfg-ownership-dataflow/probes/08b-overfree-positive-control-nullable.loft";
-    let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--interpret")
-            .arg(root().join(ctrl))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check");
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run loft check");
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ") && l.contains("free-of-borrowed") && l.contains("bview")
-            })
-            .map(str::to_string)
-            .collect()
-    };
-    assert!(
-        reds(&[]).is_empty(),
-        "the over-free check cried wolf on the un-injected nullable control: {:?}",
-        reds(&[])
-    );
-    let injected = reds(&[("LOFT_OWN_INJECT_FREE_BORROWED", "bview")]);
-    assert!(
-        injected.iter().any(|r| r.contains("bview")),
-        "the over-free check FAILED to flag the injected over-free of a NULLABLE view (the \
-         heap filter read the wrapper as not-a-heap-local): {injected:?}"
+fn records_flag_an_injected_adopted_leak() {
+    injected_is_reported(
+        "doc/claude/plans/94-cfg-ownership-dataflow/probes/09-adopt-leak-positive-control.loft",
+        ("LOFT_OWN_INJECT_DROP_FREE", "__ref_1"),
+        "n_use_adopted",
+        "__ref_1",
     );
 }
 
+/// A free of a dep-carrying view (`bview`) of a store its copy owns frees that store twice.
 #[test]
-fn oracle_override_check_flags_an_injected_free_of_a_never_free_binding() {
-    let guard = "tests/scripts/a-nullable-view-local-does-not-free-what-it-displaces.loft";
-    let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--check")
-            .arg(root().join(guard))
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check");
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run loft check");
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ") && l.contains("never-free-freed") && l.contains(" d (v")
-            })
-            .map(str::to_string)
-            .collect()
-    };
-    assert!(
-        reds(&[]).is_empty(),
-        "Check D cried wolf on the un-injected guard: {:?}",
-        reds(&[])
-    );
-    let injected = reds(&[("LOFT_OWN_INJECT_FREE_SKIPFREE", "d")]);
-    assert!(
-        injected.iter().any(|r| r.contains("OpFreeRefIfDistinct")),
-        "Check D FAILED to flag the injected free of the never-free `d` (vacuous?): {injected:?}"
+fn records_flag_an_injected_free_of_a_view() {
+    injected_is_reported(
+        "doc/claude/plans/94-cfg-ownership-dataflow/probes/08-overfree-positive-control.loft",
+        ("LOFT_OWN_INJECT_FREE_BORROWED", "bview"),
+        "n_peek",
+        "__vdb_1",
     );
 }
 
-/// One release mechanism per local: a local whose assignments MIX ownership gets an owner
-/// witness (loft#1336) and is never-free, so it must not ALSO be given the loft#1200
-/// displacement flag — that flag's guarded `OpFreeRef` was dropped at codegen by the never-free
-/// veto on both backends, a dead free the IR carried for every witnessed local.  Check D reports
-/// such a dropped free as a `NOTE`; the 1200 guard, whose locals all take the witness, must
-/// produce none.  (Observer-only when the witness is switched off, hence the env pin.)
+/// @PLN153 phase 4 — the same view declared `vector<integer>?` (`@FR-L-Null`: the same
+/// storage) is the same defect.
 #[test]
-fn a_witnessed_local_carries_no_dead_displacement_free() {
-    let guard = "tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft";
-    let mut cmd = loft::platform::process::harness_command(loft_bin());
-    cmd.arg("--check")
-        .arg(root().join(guard))
-        .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_OWN_ORACLE", "check")
-        .env_remove("LOFT_NO_OWNER_WITNESS");
-    let out = cmd.output().expect("run loft check");
-    let notes: Vec<String> = String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| l.starts_with("NOTE ") && l.contains("never-free"))
-        .map(str::to_string)
-        .collect();
-    assert!(
-        notes.is_empty(),
-        "a witnessed local still carries a second, dead release in the IR:\n{}",
-        notes.join("\n")
+fn records_flag_an_injected_free_of_a_nullable_view() {
+    injected_is_reported(
+        "doc/claude/plans/94-cfg-ownership-dataflow/probes/08b-overfree-positive-control-nullable.loft",
+        ("LOFT_OWN_INJECT_FREE_BORROWED", "bview"),
+        "n_peek",
+        "__vdb_1",
+    );
+}
+
+/// `@FR-O-Override`: a free of a never-free binding (`d`, a nullable local that only views a
+/// projection) in a spelling neither backend intercepts releases what it views.
+#[test]
+fn records_flag_an_injected_free_of_a_never_free_binding() {
+    injected_is_reported(
+        "tests/scripts/a-nullable-view-local-does-not-free-what-it-displaces.loft",
+        ("LOFT_OWN_INJECT_FREE_SKIPFREE", "d"),
+        "n_view_arg_field_then_mint",
+        "d",
     );
 }

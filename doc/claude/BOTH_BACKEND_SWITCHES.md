@@ -423,7 +423,7 @@ a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a sto
 local was bound to at its last read here (`scopes::last_use`), while the closure record still
 reads it: a use after free the next allocation exposes (`--native-c` under
 `LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
-reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  Three switches bring back
+reference).  The store records report it (`LOFT_LIFETIME_CHECK`, the L-CapRebind cell).  Three switches bring back
 a re-free at a scope's end (`@FR-H-FreeTwice`, scope pass; `LOFT_DOUBLE_FREE` counts it): a fn-ref
 freeing the local record it was built over (**`LOFT_NO_FNREF_STAND_DOWN=1`**), a record a
 capturing record's cascade adopts (**`LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1`**), and a captured

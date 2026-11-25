@@ -943,6 +943,7 @@ impl Function {
         self.capture_builds = Some(builds);
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn capture_builds(&self) -> Option<&CaptureBuilds> {
         self.capture_builds.as_ref()
     }
@@ -953,6 +954,7 @@ impl Function {
 
     /// Does an owning local's rebinds and free release this literal buffer's store, so the
     /// free emitter gave the buffer no exit free (`Scopes::pair_literal_buffers`)?
+    #[cfg(debug_assertions)]
     pub(crate) fn adopter_released(&self, v: u16) -> bool {
         self.adopter_released.contains(&v)
     }
@@ -5931,8 +5933,8 @@ impl Function {
     /// spellings (`OpSets::frees`), from the scope-exit sweep, a transition free, a pre-`Set`
     /// free or a move alike?  Its contract is that sentence, and nothing weaker; the one
     /// admissible free of a marked binding is the release its marking pass PLACES itself, on
-    /// a consumption fact ([`Self::is_staged_text_temp`]), and `ownership_cfg`'s Check D
-    /// reports every other.
+    /// a consumption fact ([`Self::is_staged_text_temp`]); the store records report what
+    /// any other releases.
     ///
     /// Enforces @FR-O-Override — the never-free veto.
     ///
@@ -6057,7 +6059,7 @@ impl Function {
     /// pass chose: the ncc-orphan pass right after the consuming statement, the return delivery
     /// once the bytes have moved into the caller's buffer.  @FR-O-Override names this as the ONE
     /// admissible free of a never-free binding — a release placed on a CONSUMPTION fact, never
-    /// on the ownership proxy — and `ownership_cfg`'s Check D admits exactly this predicate.
+    /// on the ownership proxy.
     /// Both facts are required, as in [`Self::is_overwritten_view`]: the PREFIX says which pass
     /// staged it, and `skip_free` that the pass did mark it.
     #[must_use]

@@ -85,10 +85,10 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("front", [
         "bind_lowering", "const_fn", "const_literal", "copy_manifest", "copy_view",
         "discharge_into", "empty_slot", "forward_walk", "gen_facts", "host_result", "host_store",
-        "in_range", "ir_node", "ir_read", "ir_store", "lease", "literal_host", "ownership_cfg",
-        "par_facts", "parser", "place_result", "rebind_place", "same_read", "scopes",
-        "single_use", "slice_into", "spent", "store_records", "tail_frame", "typedef",
-        "use_analysis",
+        "in_range", "ir_node", "ir_read", "ir_store", "lease", "lifetime_check", "literal_host",
+        "ownership_cfg", "par_facts", "parser", "place_result", "rebind_place", "same_read",
+        "scope_check", "scopes", "single_use", "slice_into", "spent", "store_records",
+        "tail_frame", "typedef", "use_analysis",
     ]),
     ("opt", [
         "ctor_literal", "exp_pow", "leaf_inline", "lib_ids", "native_gate", "opt", "self_replace",

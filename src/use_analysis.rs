@@ -2641,8 +2641,8 @@ impl<'a> Ownership<'a> {
                 // local minted once and then rebound to a call that may hand back its own
                 // argument (`c = M {…}; c = cond(c, 3)`) or to a capture read `Owned`, the
                 // one verdict that licenses a free, where the flow-sensitive shadow read
-                // `Join`/`Borrowed`; Check A's fact-disagree on 1017b/1326/1331 was that
-                // shortcut, not the shadow (@FR-O-Oracle, QUALITY-history.md B7r).
+                // `Join`/`Borrowed`; the two derivations' disagreement on 1017b/1326/1331 was
+                // that shortcut, not the shadow (@FR-O-Oracle, QUALITY-history.md B7r).
                 let minted = defs.db_vars.contains(v);
                 // A definition that binds NO STORE — `x = null` — says nothing about what
                 // `x` may own on its other definitions and is left out of the join, exactly

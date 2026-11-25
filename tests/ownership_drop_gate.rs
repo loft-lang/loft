@@ -6,8 +6,9 @@
 //! @FR-H-Drop-Not).
 //!
 //! **Why a gate of its own.** The free-side instruments cannot see a drop.  `LOFT_POISON`, the
-//! leak check and the ownership oracle's Check D all ask whether a FREE is sound, and all of
-//! them stay clean on a program that runs a hook twice or never.  A drop also has no safe
+//! leak check and the store records' free checks all ask whether a FREE is sound, and all of
+//! them stay clean on a program that runs a hook twice or never (the records' drop lease,
+//! `copied-lease`, is the static side of this gate's question).  A drop also has no safe
 //! direction to err in: a hook that does not run leaves a handle open, and a hook that runs
 //! twice closes a handle the author already closed.  So this gate scores the release itself.
 //!

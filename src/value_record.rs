@@ -594,6 +594,13 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         // presence word this pass has no spelling for, so the IR keeps the record form there.
         let shape = if arms.contains(&d) {
             Err("a fn-ref arm")
+        } else if data.any_drop_hook() && data.type_owns_droppable_anywhere(data.def(d).returned())
+        {
+            // `@FR-H-Drop`: a record that owns a droppable runs its hook when it is released,
+            // and a tuple holds no record to run it on.  Every local that would carry the tuple
+            // declines at that hook's mention, so a twin would never be served — and its body
+            // frees the droppable bare (the store records' `copied-lease`).
+            Err("its record owns a droppable")
         } else {
             callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp)
         };
@@ -891,13 +898,6 @@ fn callee_shape(
     // all; a twin cloned from it would inherit the symbol (`Definition::native`).
     if !def.native.is_empty() {
         return Err("a native function");
-    }
-    // `@FR-H-Drop`: a record that owns a droppable runs its hook when it is released, and a
-    // tuple holds no record to run it on.  Every local that would carry the tuple declines at
-    // that hook's mention, so a twin would never be served — and its body frees the droppable
-    // bare (the store records' `copied-lease`).
-    if data.any_drop_hook() && data.type_owns_droppable_anywhere(def.returned()) {
-        return Err("its record owns a droppable");
     }
     // The return buffer is the LAST attribute or followed only by hidden work buffers (`Ops::ret_arg`).
     let idx = def.hidden_return_buffer_attr().ok_or("no return buffer")?;

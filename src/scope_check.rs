@@ -30,8 +30,8 @@
 //!
 //! **Independence.**  The check reads only the IR's block nesting (`Block::scope`) and the
 //! variable table's `scope`, never a predicate of `src/scopes/`, the pass whose result it
-//! checks.  It runs under `LOFT_OWN_ORACLE=check` and `=check-records`, the two modes
-//! `scripts/own_sweep.py` scores; it changes nothing it reads.
+//! checks.  It runs under `LOFT_OWN_ORACLE=check-records`, the mode `scripts/own_sweep.py`
+//! scores, and in the lifetime report (`LOFT_LIFETIME_CHECK`); it changes nothing it reads.
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::variables::Function;
@@ -92,7 +92,7 @@ pub fn observe(data: &Data) {
     let Ok(mode) = std::env::var("LOFT_OWN_ORACLE") else {
         return;
     };
-    if mode != "check" && mode != "check-records" {
+    if mode != "check-records" {
         return;
     }
     let mut reds = 0usize;

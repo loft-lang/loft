@@ -92,11 +92,9 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   REASSIGNMENT, after the new value is computed and before anything after the statement; a
   CONTAINER's death through the cascade).  *Gate: `tests/ownership_drop_gate.rs` — 223 generated
   cells on both backends, scored on the release itself (TESTING.md § The drop gate).*  The
-  free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and
-  `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) ask whether a FREE is sound, and each is
-  clean on a program that loses or doubles a hook — Check D read `clean — 0 RED` over the
-  loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
-  in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  The gate's
+  free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and the store
+  records' free checks ask whether a FREE is sound, and each is clean on a program that loses
+  or doubles a hook.  A drop has no safe direction to err in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  The gate's
   baselines are not open defects: their cells run with the lease refusals off, and every one is a
   copy `(H-Copy-Refuse)` or `(H-Spent)` refuses by default
   (`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`).  A cell the rules permit that
@@ -155,8 +153,9 @@ oracle — which is the argument for this section existing.
   `test_the_callee_returns_the_other_parameter` cell is what distinguishes "the result may be the
   destination's store" from "the callee borrows something".*
 - ☐ **O-Override** — no free derived from ownership is emitted for a never-free binding, in any of
-  a free's five spellings.  *Guard: Check D (`LOFT_OWN_ORACLE=check`) — the one rule here that HAS
-  a gate, and it is free-side only, which is the asymmetry the `H-Drop` row above records.*
+  a free's five spellings.  *Guard: the store records report the store such a free ends twice or
+  leaves (`tests/ownership_oracle.rs` injects one) — the one rule here that HAS a gate, and it is
+  free-side only, which is the asymmetry the `H-Drop` row above records.*
 
 ## iteration.md
 

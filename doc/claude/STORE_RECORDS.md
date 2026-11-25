@@ -87,8 +87,8 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 | **out of scope** | a use of a variable lies outside the variable's scope (`@FR-B-Scope`) |
 
 The last kind is not read off a record.  `src/scope_check.rs` walks the closed program's block
-nesting against the variable table's scopes, under both `LOFT_OWN_ORACLE=check` and
-`=check-records`.  A local's value ends with its scope, so a read after that end answers a
+nesting against the variable table's scopes, under `LOFT_OWN_ORACLE=check-records` and in the
+lifetime report.  A local's value ends with its scope, so a read after that end answers a
 released value.  What the check does not report, and why:
 
 - an initialisation to a constant and a release: neither reads the value;
@@ -474,7 +474,7 @@ not a re-free.
 
 ## Measuring: the sweep
 
-`scripts/own_sweep.py` runs language-suite cells with the checker on (the store records and the scope check, `LOFT_OWN_ORACLE=check-records`; `--oracle check` the older shipped checks) and the runtime
+`scripts/own_sweep.py` runs language-suite cells with the checker on (the store records and the scope check, `LOFT_OWN_ORACLE=check-records`) and the runtime
 detectors armed, once per lowering switch asked for, and gives each run a verdict:
 **MISS** (the runtime found a fault, the checker did not), **CAUGHT**, **STATIC** (the
 checker reported something the runtime did not see) or **CLEAN**.  A `LOFT_NO_*` switch from

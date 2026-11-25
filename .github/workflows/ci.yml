@@ -1434,14 +1434,15 @@ jobs:
       - name: Sweep this shard of the corpus through the C backend
         run: python3 scripts/c_sweep.py --shard ${{ matrix.shard }}/4
 
-  # The ownership oracle's leak scan over `tests/scripts` (`LOFT_OWN_ORACLE=check-leak`): a
-  # STATIC check that every store a function owns is freed or handed on, on every path — the
-  # paths the runtime leak check only sees when a test executes them.  Held at 0 findings by
-  # `oracle_leak_scan_ratchet`.  ADVISORY (not in required-status-checks): red on a PR that adds
-  # a finding, never blocking the merge.
+  # The store records' lifetime report over `tests/scripts` and the suite (`LOFT_LIFETIME_CHECK`,
+  # compile-only): a STATIC check of every store a function makes — a leak, a double or wrong
+  # end, a use after end, a variable read outside its scope, a drop lease run twice or never —
+  # on every path, where the runtime detectors only see the paths a test executes.  Held at its
+  # baseline by `records_lifetime_ratchet`.  ADVISORY (not in required-status-checks): red on a
+  # PR that adds a problem, never blocking the merge.
   leak-scan:
-    # @windows-exempt: a platform-independent invariant sweep (ownership leaks); the corpus runs on windows-latest daily
-    name: ownership leak scan (ubuntu, advisory)
+    # @windows-exempt: a platform-independent invariant sweep (store lifetimes); the corpus runs on windows-latest daily
+    name: store lifetime scan (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -1473,8 +1474,8 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Build the release loft binary the scan runs
         run: cargo build --release --bin loft
-      - name: Leak scan over tests/scripts (0 findings)
-        run: cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored
+      - name: Lifetime report over tests/scripts and the suite (at its baseline)
+        run: cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored
 
   # The front end's allocation pins (`tests/frontend_counts.rs`, `bench/frontend/allocations.tsv`):
   # an exact count per compile that may only fall.  ADVISORY (not in required-status-checks): a

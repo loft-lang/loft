@@ -98,6 +98,8 @@ mod inline_returns;
 mod insert_free;
 mod join_rewrite;
 mod last_use;
+// The debug build's leak asserts (`check_ref_leaks`, `check_arg_ref_allocs`).
+#[cfg(debug_assertions)]
 mod leak_check;
 mod move_elide;
 mod owner_handover;
@@ -135,7 +137,6 @@ use last_use::{
     drop_bearing_stores, last_use_guard, lastuse_reclaim, reclaim_free_intent,
     reclaim_unfreed_eligible, tag_stores,
 };
-pub(crate) use leak_check::FrameReleases;
 use move_elide::{elide_borrows, move_elide};
 pub use par_safety::{
     analyse_par_safety_fixpoint, is_par_safe, par_unsafe_reason, sub_rule_is_pure,
@@ -1011,9 +1012,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         }
         assign_function_slots(data, d_nr);
     }
-    // @PLN94 C.0 (DEV tier) — the POST-codegen free-based checks (over-free / under-free), now that
-    // `get_free_vars` has inserted the frees into `def.code` above. Self-gates on
-    // `LOFT_OWN_ORACLE=check-dev`; observer only (SI-1), a no-op on the default `check` path.
     // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
     // that the deps say who owns and the frees say who releases.
     if crate::keys::buffer_detach_enabled() {
@@ -1028,6 +1026,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // loft#2363, `@FR-L-CapOne` — a record that owns a capture through its owner slot passes
     // that ownership to another record holding the same store when it is released first.
     owner_handover::hand_over_owned_captures(data, &fresh);
+    // The licence census (`LOFT_OWN_ORACLE=census`), an observer, now that every free is in.
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the

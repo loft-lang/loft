@@ -13,8 +13,8 @@ All notable changes to the loft language and interpreter.
 ### A variable read outside its scope is reported (@PLN228)
 
 - The store-records checker reports a use of a variable outside its scope (`@FR-B-Scope`) as
-  `store-out-of-scope`, on the closed program's IR, under `LOFT_OWN_ORACLE=check` and
-  `=check-records` (`src/scope_check.rs`).  The value of a store-holding local ends with its
+  `store-out-of-scope`, on the closed program's IR, under `LOFT_OWN_ORACLE=check-records`
+  (`src/scope_check.rs`).  The value of a store-holding local ends with its
   scope, so such a read answers a released value with nothing at run time to say so: loft#2636's
   vector read back empty.  With that fix reversed the check reports the local in every function
   of its cell; over the language suite and the gate corpus at HEAD it reports nothing.
@@ -31,6 +31,19 @@ All notable changes to the loft language and interpreter.
   that does: `(R-ForwardWalk)`'s counted index takes the loop's scope, not its `Iter range`
   block's; `(R-LiftReuse)`'s shared lift takes the body's; a vector literal hoisted out of a
   call argument gives its element records the enclosing scope, as its view already had.
+- The store records follow a droppable value's drop LEASE (its hook runs once) per store:
+  reported as `copied-lease` are a hook run on a value already handed on or on a store whose
+  lease a code-generator copy took, a return of a store every path ran the hook on, and a
+  release of such a store with no hook on any path (`@FR-H-Lease`, `@FR-H-DropOnce`,
+  `@FR-H-Drop`; loft#2552's three cure switches each read caught).  On by default;
+  `LOFT_RECORDS_NO_LEASE=1` turns it off.
+- The value-record pass (@PLN180) no longer makes a tuple twin of a function whose record owns
+  a droppable: a tuple holds no record for the hook to run on, and the twin was never served.
+- `LOFT_OWN_ORACLE=check`, `check-dev` and `check-leak` are gone: the store records caught
+  everything they did, and their gates moved to the lifetime report — `tests/ownership_oracle.rs`
+  (clean corpus, fuzz cells, five injected defects, observer), `tests/placement_parity.rs`, and
+  CI's advisory `leak-scan`, now a ratchet of every problem line over `tests/scripts` and the
+  language suite.  The `cfg`, `rd`, `own` dumps and the `census` report stay.
 
 ### No state is a thread-local (@PLN226)
 

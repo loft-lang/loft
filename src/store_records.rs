@@ -191,6 +191,15 @@ struct State {
     lease_copied: BTreeMap<SKey, u16>,
 }
 
+/// The stores a code-generator copy took the lease of on either side (`State::lease_copied`).
+fn join_lease_copied(a: &State, b: &State) -> BTreeMap<SKey, u16> {
+    let mut m = a.lease_copied.clone();
+    for (k, c) in &b.lease_copied {
+        m.entry(*k).or_insert(*c);
+    }
+    m
+}
+
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
 /// join is read, so two states equal in everything else are equal: a loop's head converges
 /// although every pass counts on.
@@ -757,13 +766,7 @@ fn join_state(a: &State, b: &State) -> State {
         placed: a.placed.union(&b.placed).copied().collect(),
         dropped: a.dropped.union(&b.dropped).copied().collect(),
         dropped_unless: a.dropped_unless.union(&b.dropped_unless).copied().collect(),
-        lease_copied: {
-            let mut m = a.lease_copied.clone();
-            for (k, c) in &b.lease_copied {
-                m.entry(*k).or_insert(*c);
-            }
-            m
-        },
+        lease_copied: join_lease_copied(a, b),
         dropped_must: {
             let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
             let mut m: BTreeSet<SKey> = a
