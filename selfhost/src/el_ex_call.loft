@@ -2295,6 +2295,12 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           continue;
         }
         x = un_ref(e, vars, el_ex_assign::expression(e, vars, he!));
+        // (A slice in a hole is formatted from its iterator, element by element — `append_iter`'s
+        // "Append Iter" — not from a materialised copy: not carried yet, refused by name.)
+        if !e.first_pass && match el_ir::unspan(x.code) { NdBlock { block: ivb } => ivb[0].name == "iter_vec", _ => false } {
+          el::refuse(e, "a formatted slice");
+          return ex(ir::NdNull, ir::TyText { dep: [] });
+        }
         f = hole_spec(e, vars, spec, spec_end);
         if f == null {
           return ex(ir::NdNull, ir::TyText { dep: [] });
