@@ -570,7 +570,12 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
         x = ex(fgx!, x.tp);
       }
     }
-    if push != "" {
+    // (A function value's element is its four-byte definition number: a local's `FnRefDnr`, a
+    // named function's number as it is.  A closure built in place would lose its record.)
+    fn_item = if el_types::base(inner) is TyFunction { match el_ir::unspan(x.code) { NdVar { n: fiv } => ir::NdFnRefDnr { n: fiv }, NdInt { n: fin } => ir::NdInt { n: fin }, _ => ir::NdNull } } else { ir::NdNull };
+    if el_types::base(inner) is TyFunction && !(fn_item is NdNull) {
+      ls += [el_ir::cl(e, "OpPushInt4", [place, fn_item])];
+    } else if push != "" {
       ls += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, inner, place, x.code))];
     } else if inner is TyText || elem_size(inner) == 2 {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
