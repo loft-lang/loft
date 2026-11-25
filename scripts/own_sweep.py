@@ -88,9 +88,15 @@ ANSWERS = {"uaf": {"use-after-end", "wrong-end", "re-free", "double-end"},
 
 
 def matched(faults, red_kinds):
-    """Does every runtime fault kind have a finding of a kind that answers it?"""
+    """Does every runtime fault kind have a finding of a kind that answers it?
+
+    A wrong value beside a store fault (`uaf,wrong`) is that fault's symptom: answering the
+    store fault answers it."""
     rk = set(filter(None, red_kinds.split(",")))
-    return all(ANSWERS.get(f, set()) & rk for f in filter(None, faults.split(",")))
+    fs = [f for f in faults.split(",") if f]
+    if "wrong" in fs and len(fs) > 1:
+        fs.remove("wrong")
+    return all(ANSWERS.get(f, set()) & rk for f in fs)
 ARMED = re.compile(r"@ARMED:(.*)")
 # The checker mode: `check` (the shipped checks) or `check-records` (the store records).
 ORACLE = ["check-records"]
