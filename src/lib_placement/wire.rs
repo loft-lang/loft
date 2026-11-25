@@ -779,6 +779,11 @@ impl Worker {
             .arg("--default")
             .arg(stdlib_dir)
             .tree(Tree::Foreground);
+        // The worker names a source file as this program does: it parses the library alone and
+        // cannot know the program's roots (`source_name::roots_env`).
+        if let Some(roots) = crate::source_name::roots_env() {
+            command = command.env("LOFT_SOURCE_ROOTS", roots);
+        }
         if !cwd.as_os_str().is_empty() {
             command = command.cwd(&crate::file_access::PathText::from_os(cwd));
         }
@@ -1242,6 +1247,9 @@ const MAX_MESSAGE_BYTES: usize = 256 << 20;
 /// caller as an error, which is what makes a placed library's error behaviour
 /// match an in-process one.
 pub fn serve(wire_path: &Path, pkg_dir: &Path, stdlib_dir: &Path) -> ! {
+    // A fault the worker renders names its file from the program's roots, as the program's own
+    // would (`source_name::adopt_roots_env`).
+    crate::source_name::adopt_roots_env();
     // Die with the caller. A worker is meaningless without the process that
     // started it, and the caller cannot be relied on to say goodbye: it may
     // `exit` from any of a dozen places, or be killed outright. Without this a

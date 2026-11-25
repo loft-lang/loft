@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native generators: the name a source file is given in what a build writes
 
 //! The name a source file is given in what a build writes and in what a program prints when
 //! it faults: relative to the file's ROOT, never to where the checkout happens to be, so the
 //! same program builds to the same bytes in any directory (@PLN229, reproducible builds).
 //!
 //! - a standard-library file is `default/<file>`;
-//! - a file beneath the main file's directory is named from that directory;
+//! - a file beneath the program's directory ([`program_dir`]: its project root, else the main
+//!   file's directory) is named from that directory;
 //! - any other file — a library found elsewhere — from its package's parent directory (the
 //!   directory above the nearest `loft.toml`), and by its file name when it has none;
 //! - a name that is already relative is kept: a built program's names arrive named.
@@ -79,9 +81,45 @@ pub fn roots_of(data: &crate::data::Data, hosted_root: Option<String>) -> Roots 
     let mut roots = Roots::of("", &std_file);
     roots.main_dir = match hosted_root {
         Some(root) => root,
-        None => Roots::of(&file_of(data.def_nr("n_main")).unwrap_or_default(), "").main_dir,
+        None => program_dir(&file_of(data.def_nr("n_main")).unwrap_or_default()),
     };
     roots
+}
+
+/// The directory a program's files are named from: its project's root (the nearest directory
+/// above the main file holding a `loft.toml`), else the main file's own directory — the base the
+/// logger has always named a record's file from (LOGGER.md, `logger::source_base_for`), so a
+/// `[levels]` path-prefix key (`sub/`) matches the names a fault prints.  Empty for no file.
+#[must_use]
+pub fn program_dir(main_file: &str) -> String {
+    if main_file.is_empty() {
+        return String::new();
+    }
+    if let Some(root) = crate::resolution_scope::project_root(main_file) {
+        return root.to_string_lossy().into_owned();
+    }
+    Roots::of(main_file, "").main_dir
+}
+
+/// The program roots as the environment of a process this one starts carries them
+/// (`LOFT_SOURCE_ROOTS`: the main directory, a newline, the standard library's), so a placed
+/// library's worker names a file as the program does (`lib_placement::wire::serve`).
+#[must_use]
+pub fn roots_env() -> Option<String> {
+    program_roots().map(|r| format!("{}\n{}", r.main_dir, r.std_dir))
+}
+
+/// Take the program roots a starting process was handed in `LOFT_SOURCE_ROOTS` ([`roots_env`]);
+/// nothing when it was handed none.
+pub fn adopt_roots_env() {
+    if let Ok(v) = std::env::var("LOFT_SOURCE_ROOTS")
+        && let Some((main_dir, std_dir)) = v.split_once('\n')
+    {
+        set_program_roots(Roots {
+            main_dir: main_dir.to_string(),
+            std_dir: std_dir.to_string(),
+        });
+    }
 }
 
 /// `rest` when `file` lies beneath directory `dir`.  Both are compared in their `/` spelling: on
@@ -121,8 +159,7 @@ pub fn name(file: &str, roots: &Roots) -> String {
     {
         return rest.to_string_lossy().into_owned();
     }
-    path.file_name()
-        .map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned())
+    crate::file_access::file_name(path).unwrap_or_else(|| file.to_string())
 }
 
 /// The file a printed `name` stands for, to show its source line: the name itself when it can
