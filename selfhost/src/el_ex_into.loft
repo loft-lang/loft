@@ -485,7 +485,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     ops = guarded;
   }
   staged += ops;
-  literal_route(e, n, "literal_into_place=in_place(local)");
+  literal_route(e, n, "literal_into_place=in_place(local{primed_notes(e, n, d)})");
   ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
 }
 
@@ -501,6 +501,33 @@ fn literal_route(e: el::El, n: integer, route: text) {
   if lat >= 0 {
     el_trace::route_after_literal(e, lat, route);
   }
+}
+
+// `literal_into_place`'s field notes for a literal built into a local: a field primed with a
+// non-empty vector literal whose elements are built as records (`_elm_N` — any element no
+// push op writes: a text, a record, a struct enum, a vector) reads the place through its
+// elements (`{field}:element_primed`), in the literal's field order.
+fn primed_notes(e: el::El, n: integer, d: integer) -> text {
+  fs = match e.p.nodes[n] { SStructLit { fields } => fields, _ => return "" };
+  notes: vector<text> = [];
+  for f in fs {
+    match e.p.nodes[f] {
+      SFieldInit { name, e: fv } => {
+        if fv != null && match e.p.nodes[fv!] { SVecLit { items } => len(items) > 0, _ => false } {
+          for a in el::def(e, d).attributes {
+            if a.name == name {
+              elem = match el_types::base(a.typedef[0] ?? ir::TyVoid) { TyVector { inner } => inner, _ => ir::TyVoid };
+              if !(elem is TyVoid) && el_ex_pattern::push_op(el_types::base(elem)) == "" {
+                notes += ["{name}:element_primed"];
+              }
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  if len(notes) == 0 { "" } else { ";{notes.join(",")}" }
 }
 
 // Is there, anywhere in `n`, a call of a loft function whose arguments read `v`?
@@ -1188,6 +1215,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           lw = el_vars::work_ref(vars, x.tp);
           vars.lit_stage += [el_ir::v_set(lw, fc!)];
           fc = ir::NdVar { n: lw };
+          vars.lit_notes += ["{fname}:staged"];
         }
         list += [el_ex_object::set_field(e, d, a, r, fc!)];
         found += [fname];

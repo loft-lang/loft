@@ -3581,6 +3581,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   record_tail = el_types::base(result) is TyReference && !bind && subj_param;
   if !sunk && !record_tail {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
+    // (Delivered arm by arm into the buffer, as Rust's `Materialize` of a match tail is — the
+    // return-promotion report asks no ladder there, also where this port refuses the arms.)
+    if len(arms) > 0 {
+      vars.buffer_arms_at += [arms[0]!];
+    }
     tb = buffer_arms(e, vars, out, elm);
     if tb == null {
       el::refuse(e, "a vector match answering a record or a vector");

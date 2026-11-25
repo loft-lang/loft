@@ -1160,7 +1160,7 @@ pub fn unqualify_literal(e: el::El, n: integer) {
 // program declared).  `apart` is the reason this road builds it apart, "" where it is built in
 // place — but for Rust's one place decline the road need not know: a variant literal written
 // into an out-of-line place whose fields read that place (`variant_reads_place`).
-pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs: integer, apart: text) {
+pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs: integer, apart: text, notes: text = "") {
   if !el_trace::on() || e.first_pass || !(e.p.nodes[rhs] is SStructLit) {
     return;
   }
@@ -1176,7 +1176,7 @@ pub fn place_literal_route(e: el::El, vars: el_vars::Vars, place: ir::Node, rhs:
     }
   }
   lat = match e.p.nodes[rhs] { SStructLit { at: la } => la, _ => -1 };
-  el_trace::route_after_literal(e, lat, if why == "" { "literal_into_place=in_place(place)" } else { "literal_into_place=apart({why})" });
+  el_trace::route_after_literal(e, lat, if why == "" { "literal_into_place=in_place(place{notes})" } else { "literal_into_place=apart({why})" });
 }
 
 pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integer, rhs: integer) -> Ex {
@@ -1229,7 +1229,10 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // (`literal_into_place`, as Rust's trace prints it at the literal's end — the projection
   // road is the second pass's: every reason this port builds such a literal apart is a primed
   // collection field reading the place.)
-  place_literal_route(e, vars, place, rhs, if apart { "apart(decline_place:primed_reads_place)" } else { "" });
+  // (Built in place, the route is printed once the fields are, with their notes.)
+  if apart {
+    place_literal_route(e, vars, place, rhs, "apart(decline_place:primed_reads_place)");
+  }
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
   if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) {
@@ -1325,12 +1328,17 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   }
   outer_place = vars.lit_place;
   outer_lstage = vars.lit_stage;
+  outer_notes = vars.lit_notes;
   vars.lit_place = [place];
   vars.lit_stage = [];
+  vars.lit_notes = [];
   built = el_ex_into::fields_at(e, vars, root, place, rd, fields);
   lstage = vars.lit_stage;
+  lnotes = vars.lit_notes;
   vars.lit_place = outer_place;
   vars.lit_stage = outer_lstage;
+  vars.lit_notes = outer_notes;
+  place_literal_route(e, vars, place, rhs, "", notes: if len(lnotes) == 0 { "" } else { ";{lnotes.join(",")}" });
   if built == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
