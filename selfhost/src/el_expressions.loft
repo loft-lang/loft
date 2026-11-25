@@ -411,6 +411,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             lam_param = lv;
           }
         },
+        // (A vector field of a parameter, `q.items`, is that parameter too: `arm_delivery`
+        // copies the field in.)
+        SMember { e: lme, call: lmc } => {
+          if !lmc && lme != null {
+            match e.p.nodes[lme!] {
+              SName { name: lmn, member: lmm } => {
+                lmv = el_vars::var(vars, lmn);
+                if lmm == "" && lmv >= 0 && vars.vars[lmv]!.argument && !hidden_param(e, vars, lmv) {
+                  lam_param = lmv;
+                }
+              },
+              _ => {}
+            }
+          }
+        },
         _ => {}
       }
     }
