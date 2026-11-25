@@ -892,6 +892,13 @@ fn callee_shape(
     if !def.native.is_empty() {
         return Err("a native function");
     }
+    // `@FR-H-Drop`: a record that owns a droppable runs its hook when it is released, and a
+    // tuple holds no record to run it on.  Every local that would carry the tuple declines at
+    // that hook's mention, so a twin would never be served — and its body frees the droppable
+    // bare (the store records' `copied-lease`).
+    if data.any_drop_hook() && data.type_owns_droppable_anywhere(def.returned()) {
+        return Err("its record owns a droppable");
+    }
     // The return buffer is the LAST attribute or followed only by hidden work buffers (`Ops::ret_arg`).
     let idx = def.hidden_return_buffer_attr().ok_or("no return buffer")?;
     let buf = def.variables.var(&def.attributes[idx].name);

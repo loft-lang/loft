@@ -305,6 +305,15 @@ impl Run<'_> {
                 // A heap member of a tuple PARAMETER lies in a store the caller holds, as the
                 // parameter's own would: a callee that answers it borrows argument `t`
                 // (`fn first(p: (R, integer)) -> R { p.0 }`).
+                // A member of a nested tuple held WHOLE (`_tuphold_1 = t.0`, a tuple member's
+                // move one level down: no member of its own here) names what its holder names.
+                None if !self.params.contains(t)
+                    && st.vars.contains_key(t)
+                    && self.member_is_nested_tuple(*t, *i) =>
+                {
+                    let val = Self::read(&st, *t);
+                    Some((st, val))
+                }
                 None if self.params.contains(t) && self.member_is_heap(*t, *i) => Some((
                     st,
                     Val {
@@ -1606,6 +1615,14 @@ impl Run<'_> {
     }
 
     /// Is member `i` of tuple variable `t` a store reference?
+    /// Is member `i` of tuple local `t` itself a tuple?
+    pub(super) fn member_is_nested_tuple(&self, t: u16, i: u16) -> bool {
+        let vars = &self.data.def(self.d_nr).variables;
+        t < vars.count()
+            && matches!(vars.tp(t).base(), crate::data::Type::Tuple(elems)
+                if elems.get(i as usize).is_some_and(|e| matches!(e.base(), crate::data::Type::Tuple(_))))
+    }
+
     pub(super) fn member_is_heap(&self, t: u16, i: u16) -> bool {
         let vars = &self.data.def(self.d_nr).variables;
         t < vars.count()

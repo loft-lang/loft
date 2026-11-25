@@ -519,6 +519,16 @@ impl Run<'_> {
         let ops = self.ops;
         let mut st = st;
         self.handed_off_drop(d, args, &mut st);
+        // An append moves the source's elements, and their lease with them, into the
+        // destination (a tuple member's move, `OpAppendVector(_tupcopy_N, t.0)`): the source's
+        // wrapper is freed bare after it.
+        if self.data.def(d).name() == "OpAppendVector"
+            && let Some(src) = args.get(1)
+        {
+            for k in Self::stores_of(&Self::copy_source_pts(&st, src)) {
+                st.dropped.insert(k);
+            }
+        }
         if d == ops.copy_record
             && let Some(src) = args.first()
         {
@@ -1059,6 +1069,19 @@ impl Run<'_> {
                 for (k, offs) in freed {
                     self.end_record_slots(&mut s, k, &offs, &name);
                 }
+            }
+        }
+        // A copy's source computed by its argument (a literal built in a work reference and
+        // copied into a field, `OpCopyRecord({ …; __ref_p2_3 }, o.inner.h)`) names its store
+        // only once evaluated: its lease moves to the copy as a variable's does (`call`).
+        if d == ops.copy_record
+            && args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Block(_) | Value::Insert(_)))
+            && let Some(v) = vals.first()
+        {
+            for k in Self::stores_of(&v.pts) {
+                s.dropped.insert(k);
             }
         }
         // `OpCopyRecord(src, dst, tp)` copies the record's reference fields: a closure record
