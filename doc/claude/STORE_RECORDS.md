@@ -437,7 +437,7 @@ not a re-free.
 
 ## Measuring: the sweep
 
-`scripts/own_sweep.py` runs language-suite cells with the checker on and the runtime
+`scripts/own_sweep.py` runs language-suite cells with the checker on (the store records and the scope check, `LOFT_OWN_ORACLE=check-records`; `--oracle check` the older shipped checks) and the runtime
 detectors armed, once per lowering switch asked for, and gives each run a verdict:
 **MISS** (the runtime found a fault, the checker did not), **CAUGHT**, **STATIC** (the
 checker reported something the runtime did not see) or **CLEAN**.  A `LOFT_NO_*` switch from

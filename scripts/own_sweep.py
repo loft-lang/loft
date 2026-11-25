@@ -4,7 +4,7 @@
 """Does the static ownership checker see every store fault the runtime sees?
 
 Runs language-suite cells on the interpreter with the static checker on
-(`LOFT_OWN_ORACLE=check`) and the runtime fault detectors armed
+(`LOFT_OWN_ORACLE=check-records`, the store records and the scope check) and the runtime fault detectors armed
 (`LOFT_LEAK_CHECK`, `LOFT_STRICT_STORES`, `LOFT_POISON`), once per lowering
 switch asked for.  A `LOFT_NO_*` switch turns one of the compiler's ownership
 lowerings off, so it re-creates a class of defect on today's build.
@@ -31,7 +31,7 @@ A switched run is judged against the cell's no-switch run when the sweep has one
   scripts/own_sweep.py --chapter ownership
   scripts/own_sweep.py --switch '' --switch LOFT_NO_JOIN_OWN --out sweep.tsv
   scripts/own_sweep.py --cell path/to/prog.loft     # any program, not only cells
-  scripts/own_sweep.py --oracle check-records       # judge the store records instead
+  scripts/own_sweep.py --oracle check                # judge the older shipped checks instead
   scripts/own_sweep.py --wrong --chapter binding     # a failed test is a fault too
 
 The table goes to --out (TSV); the summary and every MISS and MASKED go to stdout.
@@ -93,7 +93,7 @@ def matched(faults, red_kinds):
     return all(ANSWERS.get(f, set()) & rk for f in filter(None, faults.split(",")))
 ARMED = re.compile(r"@ARMED:(.*)")
 # The checker mode: `check` (the shipped checks) or `check-records` (the store records).
-ORACLE = ["check"]
+ORACLE = ["check-records"]
 # `--wrong`: a failed test is a run-time fault of kind `wrong`.
 WRONG = [False]
 FAILED_TEST = re.compile(r"^test result: FAILED", re.M)
@@ -247,8 +247,9 @@ def main():
     ap.add_argument("--out", default="")
     ap.add_argument("--compare", default="",
                     help="a previous --out table: print each run whose verdict or red count changed")
-    ap.add_argument("--oracle", default="check", choices=["check", "check-records"],
-                    help="the static checker: the shipped checks, or the store records")
+    ap.add_argument("--oracle", default="check-records", choices=["check", "check-records"],
+                    help="the static checker: the store records (default; the scope check runs with them),"
+                         " or the older shipped checks (@PLN228 P7: they catch nothing the records do not)")
     ap.add_argument("--wrong", action="store_true",
                     help="a failed test is a run-time fault (kind `wrong`)")
     a = ap.parse_args()
