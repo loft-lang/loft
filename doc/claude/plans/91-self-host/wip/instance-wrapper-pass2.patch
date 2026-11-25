@@ -1,0 +1,91 @@
+diff --git a/selfhost/src/el.loft b/selfhost/src/el.loft
+index 022a3dfcf..25e73096f 100644
+--- a/selfhost/src/el.loft
++++ b/selfhost/src/el.loft
+@@ -145,6 +145,9 @@ pub struct El {
+   // `Function::loops` as pass 1 left it, per function (`context * 65536 + count`): pass 2's loop
+   // numbers continue after them (`start_loop`).
+   pub loops_p1: vector<integer>,
++  // The token the call being instantiated ends at (`instantiate`'s `call_end`), -1 for none:
++  // where a wrapper the instance needs is registered (`instance_vector_wrapper`).
++  pub inst_call_end: integer = -1,
+   // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
+   // pass, read as the typed declaration on both).
+   pub cast_decls: vector<integer>,
+diff --git a/selfhost/src/el_ex_call.loft b/selfhost/src/el_ex_call.loft
+index f7f991f5b..1c2a854aa 100644
+--- a/selfhost/src/el_ex_call.loft
++++ b/selfhost/src/el_ex_call.loft
+@@ -55,9 +55,10 @@ pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
+ 
+ // The instance of template `g` these argument types bind: the one the program holds, or a new
+ // one (`instantiate`).
+-pub fn instance_for(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
++// (`at`: the token the call ends at, where a wrapper the instance needs is registered.)
++pub fn instance_for(e: el::El, g: integer, types: vector<ir::TypeT>, at: integer = -1) -> integer {
+   inst = el_ex_object::generic_instance(e, g, types);
+-  if inst < 0 { instantiate(e, g, types) } else { inst }
++  if inst < 0 { instantiate(e, g, types, call_end: at) } else { inst }
+ }
+ 
+ // Does this call bind each of template `g`'s variables to a type naming one of its own
+@@ -134,7 +135,15 @@ pub fn fill_all(e: el::El, d: integer, g: integer, hs: vector<integer>, bounds:
+ // its parameters and result the template's with the variable replaced; its body is filled by
+ // `fill_instance`, at once or — for a template declared below the call — after the pass.
+ // -1, refused by name, for a binding or a signature shape this port does not carry.
+-pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
++pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>, call_end: integer = -1) -> integer {
++  outer_end = e.inst_call_end;
++  e.inst_call_end = call_end;
++  made = instantiate_at(e, g, types);
++  e.inst_call_end = outer_end;
++  made
++}
++
++fn instantiate_at(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+   if el_trace::on() {
+     el_trace::route(e, "try_generic_instantiation");
+   }
+@@ -306,6 +315,20 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
+     if wd >= 0 {
+       welem = match el_types::base(substitute(el::def(e, wd).attributes[0]!.typedef[0] ?? ir::TyVoid, h, bound)) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
+       wr = vector_rows(e, el_types::without_deps(welem), 0, true);
++      // (`instance_vector_wrapper`: a wrapper over the bound element the program never made is
++      // made here — `vector_def` where the call ends — and laid out at once
++      // (`vector_wrapper_known_type`).)
++      wnm = el_types::elem_name(e, el_types::without_deps(welem));
++      if wr == null && e.inst_call_end >= 0 && wnm != "" {
++        if el::def_nr(e, "main_vector<{wnm}>") < 0 {
++          el_schema::make_vector_def(e, el_types::without_deps(welem), wnm, el::pos_at(e, e.inst_call_end), true);
++        }
++        wmd = el::def_nr(e, "main_vector<{wnm}>");
++        if wmd >= 0 && el::def(e, wmd).known_type == el_schema::NO_TYPE {
++          el_schema::fill_database(e, wmd);
++        }
++        wr = vector_rows(e, el_types::without_deps(welem), 0, true);
++      }
+       if wr == null {
+         el::refuse(e, "a generic local over the type variable in another shape or of a function type");
+         return false;
+@@ -1600,7 +1623,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
+         }
+       }
+     }
+-    inst = instance_for(e, d, types);
++    inst = instance_for(e, d, types, if vars.call_tok >= 0 { el_ex_object::past_call(e, vars.call_tok) } else { -1 });
+     if inst < 0 {
+       return null;
+     }
+diff --git a/selfhost/src/el_schema.loft b/selfhost/src/el_schema.loft
+index 1ab9475e0..e597d0598 100644
+--- a/selfhost/src/el_schema.loft
++++ b/selfhost/src/el_schema.loft
+@@ -452,7 +452,7 @@ pub fn lay_out_late(e: el::El, d: integer) {
+   }
+ }
+ 
+-fn fill_database(e: el::El, d: integer) {
++pub fn fill_database(e: el::El, d: integer) {
+   def = el::def(e, d);
+   // `main_vector<unknown>` — a first-pass literal's wrapper whose element was not typed yet — is
+   // never laid out: its field's content has no definition (`fill_database` skips it).
