@@ -424,6 +424,11 @@ adopted and freed again by the buffer.  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds
 call whose literal arguments were hoisted through its preamble (`o = { INSERT …; f(…) }`) instead
 of as the call: the bind adopts, and a second argument the callee answers is freed twice.
 
+**`LOFT_NO_SHADOW_CELL_OWNER=1`** (`@FR-L-CapOwn`, scope pass, BOTH backends) stops naming the
+closure record that takes a mutated parameter's cell (`__bx_<name>`, whose record attribute keeps
+the parameter's name): a run that builds no closure releases the cell nowhere
+(`closures/L-CapBox/2639-…`).
+
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
 (`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
