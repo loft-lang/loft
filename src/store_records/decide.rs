@@ -43,19 +43,20 @@ impl Run<'_> {
                 (join_opt_arms(tt, et), join_opt_arms(tf, ef))
             }
             // `OpEqInt(OpGetInt4(x, 0), 0)`: a nullable struct-enum's absent tag, the second half
-            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  No local OWNS a
-            // tag-0 COPY — copying an absent field answers null — so the absent side drops `x`'s copies.  Without it
-            // the `x == null` arm kept `x`'s copy and a rebind there read as a leak (`cond =
-            // mc.cond` under `if cond == null`).  OPT-IN (`LOFT_RECORDS_TAG_NULL_TEST=1`): a MINTED record
-            // can carry a non-absent variant the records do not know, so the absent side keeps it,
-            // and suite B-Copy/a-branch-handing-back-… then reads one false finding where the
-            // default reads none — the precise answer needs the variant a mint writes.
+            // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  The absent side
+            // drops a store whose tag this path wrote a present variant into (`State::tagged`: a
+            // variant literal's mint), so a rebind under `if cond == null` does not read the
+            // record `cond` built on an earlier pass as lost (`LOFT_RECORDS_NO_TAGGED_NULL_TEST=1`
+            // keeps it).  `LOFT_RECORDS_TAG_NULL_TEST=1` also drops `x`'s copies — copying an
+            // absent field answers null, so no local owns a tag-0 copy — but a copy taken into a
+            // return buffer is not told apart yet, and suite B-Copy/a-binding-from-a-value-branch-…
+            // then reads one false re-free; so that half stays opt-in.
             Value::Call(op, a)
                 if a.len() == 2
                     && self.data.def(*op).name() == "OpEqInt"
                     && matches!(a[1].unspan(), Value::Int(0))
-                    && crate::env_once!(
-                        std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some()
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_TAGGED_NULL_TEST").is_some()
                     )
                     && let Value::Call(g, ga) = a[0].unspan()
                     && self.data.def(*g).name() == "OpGetInt4"
@@ -77,7 +78,12 @@ impl Run<'_> {
                     .into_iter()
                     .filter(|p| match p {
                         Pt::Store(k) => {
-                            !matches!(self.sites[k.site as usize].origin, Some(Origin::Copy))
+                            !absent.tagged.contains(k)
+                                && (!copies_never_absent()
+                                    || !matches!(
+                                        self.sites[k.site as usize].origin,
+                                        Some(Origin::Copy)
+                                    ))
                         }
                         _ => true,
                     })
@@ -992,4 +998,10 @@ impl Run<'_> {
             st.vars.insert(x, to);
         }
     }
+}
+
+/// `LOFT_RECORDS_TAG_NULL_TEST=1`: the absent half of a null test also drops the tested local's
+/// copies (see the tag test in `decide`).
+fn copies_never_absent() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some())
 }
