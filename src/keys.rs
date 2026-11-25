@@ -187,22 +187,30 @@ pub struct Str {
 }
 
 impl Str {
-    /// The null text as a view (`crate::text_null`).
+    /// The null text as a view: a null pointer, as the C runtime's `loft_null_text` spells it
+    /// (`crate::text_null`).
     #[inline]
     #[must_use]
     pub fn null() -> Str {
-        Str::new(crate::text_null::null_str())
+        Str {
+            ptr: std::ptr::null(),
+            len: 0,
+        }
     }
 
     /// Is this view the null text?
     #[inline]
     #[must_use]
     pub fn is_null(&self) -> bool {
-        crate::text_null::is_null(self.str())
+        self.ptr.is_null()
     }
 
+    /// A view of `v`; the null text ([`crate::text_null::null_str`]) becomes [`Str::null`].
     #[must_use]
     pub fn new(v: &str) -> Str {
+        if crate::text_null::is_null(v) {
+            return Str::null();
+        }
         Str {
             ptr: v.as_ptr(),
             len: v.len() as u32,
@@ -224,7 +232,10 @@ impl Str {
         // is on the value-read hot path and must return the real bytes.  If a
         // genuinely corrupt `Str` ever reaches here, a loud fault surfaces the
         // producing bug — strictly better than silent corruption of valid data.
-        if self.ptr.is_null() || (self.ptr as usize) < (1 << 16) {
+        if self.ptr.is_null() {
+            return crate::text_null::null_str();
+        }
+        if (self.ptr as usize) < (1 << 16) {
             return "";
         }
         unsafe {
@@ -4850,7 +4861,7 @@ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple>
     for f in k {
         match f {
             Content::Long(l) => result.push(Simple::Number(l)),
-            Content::Str(s) => result.push(Simple::Text(s.str().to_string())),
+            Content::Str(s) => result.push(Simple::Text(crate::text_null::own(s.str()))),
             _ => {}
         }
     }

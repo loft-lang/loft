@@ -1287,6 +1287,11 @@ static loft_text loft_trim_end(loft_cx *cx, loft_str s) { return loft_text_own(c
 static loft_text loft_replace(loft_cx *cx, loft_str s, loft_str v, loft_str w) {
     loft_text out = { 0, 0, 0 };
     size_t at = 0;
+    /* `@FR-E-NullArg` — a null text answers null. */
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &out);
+        return out;
+    }
     if (v.len == 0) {
         while (at < s.len) {
             size_t n;
@@ -1618,9 +1623,17 @@ static void loft_set_store_lock(loft_cx *cx, loft_ref r, uint8_t locked) {
  * tuple, which no one frees or writes. */
 static loft_text loft_text_lend(loft_cx *cx, loft_str s) {
     loft_text t;
-    t.p = (char *) s.p;
-    t.len = s.len;
+    t.p = 0;
+    t.len = 0;
     t.cap = 0;
+    if (loft_str_is_null(cx, s)) {
+        loft_text_set_null(cx, &t);
+        return t;
+    }
+    /* "" lends as the empty text, which has no pointer: one with a pointer and neither
+     * length nor room is the null text. */
+    t.p = s.len ? (char *) s.p : 0;
+    t.len = s.len;
     return t;
 }
 

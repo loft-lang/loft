@@ -1,0 +1,709 @@
+diff --git b/src/c/hosted.rs a/src/c/hosted.rs
+index 28b8f4aa6..a066515a7 100644
+--- b/src/c/hosted.rs
++++ a/src/c/hosted.rs
+@@ -120,12 +120,9 @@ static void loft_la_set_bits(loft_cx *cx, unsigned char *a, int64_t v) {
+  * held until its next text answer. */
+ static const char loft_br_empty[1] = { 0 };
+ static void loft_la_set_text(loft_cx *cx, unsigned char *a, loft_str s) {
+-    /* The null text crosses as no bytes and the length no text has (`host_abi::TEXT_NULL_LEN`):
+-     * a null pointer here already says the call answered no text. */
+-    const char *p = s.len && s.p ? s.p : loft_br_empty;
+-    size_t len = s.p ? s.len : (size_t) -1;
++    const char *p = s.len ? s.p : loft_br_empty;
+     memcpy(a + LOFT_LA_TPTR, &p, sizeof p);
+-    memcpy(a + LOFT_LA_TLEN, &len, sizeof len);
++    memcpy(a + LOFT_LA_TLEN, &s.len, sizeof s.len);
+ }
+ static void loft_la_set_ref(loft_cx *cx, unsigned char *a, loft_ref r) {
+     loft_db_write(cx, a + LOFT_LA_DBREF, r);
+diff --git b/src/c/loft_paged_load.h a/src/c/loft_paged_load.h
+index 3cf748739..9fc992d03 100644
+--- b/src/c/loft_paged_load.h
++++ a/src/c/loft_paged_load.h
+@@ -168,11 +168,6 @@ static uint32_t loft_pg_trie_find(loft_cx *cx, loft_pg *r, uint32_t root_rec, ui
+     probe.text = 1;
+     probe.bytes = (const uint8_t *) key.p;
+     probe.len = key.len;
+-    /* A token-1 image filed its null key in the tree, as the one byte its null text was. */
+-    if (r->trie_v1 && loft_str_is_null(cx, key)) {
+-        probe.bytes = (const uint8_t *) "";
+-        probe.len = 1;
+-    }
+     /* A null key is filed in the slot ahead of the tree (`@FR-Col-Trie`); a token-1 image has
+      * none, and reads its keys raw. */
+     if (!r->trie_v1 && loft_rx_null_key(cx, probe.bytes, probe.len)) {
+diff --git b/src/c/loft_rt.h a/src/c/loft_rt.h
+index 5cb26751d..bf96e4973 100644
+--- b/src/c/loft_rt.h
++++ a/src/c/loft_rt.h
+@@ -1287,11 +1287,6 @@ static loft_text loft_trim_end(loft_cx *cx, loft_str s) { return loft_text_own(c
+ static loft_text loft_replace(loft_cx *cx, loft_str s, loft_str v, loft_str w) {
+     loft_text out = { 0, 0, 0 };
+     size_t at = 0;
+-    /* `@FR-E-NullArg` — a null text answers null. */
+-    if (loft_str_is_null(cx, s)) {
+-        loft_text_set_null(cx, &out);
+-        return out;
+-    }
+     if (v.len == 0) {
+         while (at < s.len) {
+             size_t n;
+@@ -1623,17 +1618,9 @@ static void loft_set_store_lock(loft_cx *cx, loft_ref r, uint8_t locked) {
+  * tuple, which no one frees or writes. */
+ static loft_text loft_text_lend(loft_cx *cx, loft_str s) {
+     loft_text t;
+-    t.p = 0;
+-    t.len = 0;
+-    t.cap = 0;
+-    if (loft_str_is_null(cx, s)) {
+-        loft_text_set_null(cx, &t);
+-        return t;
+-    }
+-    /* "" lends as the empty text, which has no pointer: one with a pointer and neither
+-     * length nor room is the null text. */
+-    t.p = s.len ? (char *) s.p : 0;
++    t.p = (char *) s.p;
+     t.len = s.len;
++    t.cap = 0;
+     return t;
+ }
+ 
+diff --git b/src/c/loft_text.h a/src/c/loft_text.h
+index c076ece06..92247b1ee 100644
+--- b/src/c/loft_text.h
++++ a/src/c/loft_text.h
+@@ -14,27 +14,21 @@ static loft_str loft_lit(loft_cx *cx, const char *p, size_t len) {
+     return s;
+ }
+ 
+-static int loft_text_is_null(loft_cx *cx, const loft_text *t);
+-static loft_str loft_null_text(loft_cx *cx);
+-
+ static loft_str loft_view(loft_cx *cx, const loft_text *t) {
+-    if (loft_text_is_null(cx, t)) return loft_null_text(cx);
+     return loft_lit(cx, t->p ? t->p : "", t->len);
+ }
+ 
+ /* The null text (`@FR-L-Null-Text`).  Every producer of an absent text takes it from
+  * `loft_null_text` (a view) or `loft_text_set_null` (an owned text), and every reader asks
+- * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.  It
+- * is an identity, never a content — a text of one NUL byte is an ordinary text: a view is null
+- * when it has no pointer (the interpreter's `Str::null`), an owned text when it has a pointer
+- * and neither length nor room (`loft_text_set_null`).  Neither test compares an address, so
+- * both hold across every unit a program is built from. */
++ * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.
++ * Today it is the one byte "\0". */
+ static loft_str loft_null_text(loft_cx *cx) {
+-    return loft_lit(cx, 0, 0);
++    static const char zero[1] = { 0 };
++    return loft_lit(cx, zero, 1);
+ }
+ 
+ static int loft_str_is_null(loft_cx *cx, loft_str s) {
+-    return s.p == 0;
++    return s.len == 1 && s.p[0] == 0;
+ }
+ 
+ /* A thread's freed text buffers by power-of-two capacity (16 .. 4096 bytes), handed to the next
+@@ -96,7 +90,7 @@ static void loft_reserve(loft_cx *cx, loft_text *t, size_t extra) {
+     while (cap < need) cap = cap > SIZE_MAX / 2 ? need : cap * 2;
+     char *p = loft_tp_take(cx, cap);
+     if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
+-    if (t->p && t->cap) {
++    if (t->p) {
+         if (t->len) memcpy(p, t->p, t->len);
+         loft_tp_give(cx, t->p, t->cap);
+     }
+@@ -168,19 +162,13 @@ static void loft_push_char(loft_cx *cx, loft_text *t, char c) {
+ /* An owned text's absence: is it the null text, make it the null text, make it "" (a null
+  * one too — the start of every assignment). */
+ static int loft_text_is_null(loft_cx *cx, const loft_text *t) {
+-    return t->p && t->cap == 0 && t->len == 0;
++    return t->p && t->len == 1 && t->p[0] == 0;
+ }
+-/* The owned null: a pointer, no length, no room.  Every fast path sees no room and goes the
+- * slow way; nothing frees or pools a buffer of capacity 0. */
+ static void loft_text_set_null(loft_cx *cx, loft_text *t) {
+-    static const char none[1] = { 0 };
+-    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
+-    t->p = (char *) none;
+     t->len = 0;
+-    t->cap = 0;
++    loft_push_char(cx, t, 0);
+ }
+ static inline void loft_text_clear(loft_cx *cx, loft_text *t) {
+-    if (loft_text_is_null(cx, t)) t->p = 0;
+     t->len = 0;
+ }
+ 
+@@ -226,12 +214,11 @@ LOFT_TEXT_INLINE void loft_text_concat(loft_cx *cx, loft_text *t, loft_str s) {
+ }
+ 
+ LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
++    if (t->p && s.p == t->p && s.len == t->len) return;
+     if (loft_str_is_null(cx, s)) {
+         loft_text_set_null(cx, t);
+         return;
+     }
+-    if (loft_text_is_null(cx, t)) t->p = 0;
+-    if (t->p && s.p == t->p && s.len == t->len) return;
+     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
+         memmove(t->p, s.p, s.len);
+         t->len = s.len;
+@@ -242,7 +229,7 @@ LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
+ }
+ 
+ static void loft_text_free(loft_cx *cx, loft_text *t) {
+-    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
++    if (t->p) loft_tp_give(cx, t->p, t->cap);
+     t->p = 0;
+     t->len = 0;
+     t->cap = 0;
+diff --git b/src/c_call.rs a/src/c_call.rs
+index ca2678d49..3d4caaa42 100644
+--- b/src/c_call.rs
++++ a/src/c_call.rs
+@@ -446,7 +446,10 @@ fn dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef
+             );
+         };
+         let s = c_text(raw);
+-        crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &s);
++        stores
++            .store_mut(&dest)
++            .addr_mut::<String>(dest.rec, dest.pos)
++            .push_str(&s);
+         return;
+     }
+     // The declared width is what makes this right; read raw, a negative `int`
+diff --git b/src/extensions.rs a/src/extensions.rs
+index 11b5fc322..c2fd77a96 100644
+--- b/src/extensions.rs
++++ a/src/extensions.rs
+@@ -1427,15 +1427,6 @@ fn shared_store_dispatch_raw(
+         stores.bridge_text_dest = None;
+     }
+     if let Some(dest) = text_dest_of_call
+-        && !ret.text_ptr.is_null()
+-        && ret.text_len == crate::host_abi::TEXT_NULL_LEN
+-    {
+-        crate::text_null::set_null(
+-            stores
+-                .store_mut(&dest)
+-                .addr_mut::<String>(dest.rec, dest.pos),
+-        );
+-    } else if let Some(dest) = text_dest_of_call
+         && !ret.text_ptr.is_null()
+         && ret.text_len > 0
+     {
+diff --git b/src/host_abi.rs a/src/host_abi.rs
+index b8882d90a..688f77a78 100644
+--- b/src/host_abi.rs
++++ a/src/host_abi.rs
+@@ -95,13 +95,8 @@ pub struct HostTable {
+     pub hosted: &'static HostedTable,
+ }
+ 
+-/// The [`HostTable`] layout version; a cdylib refuses a table of another.  9: a null text
+-/// crosses as [`TEXT_NULL_LEN`].
+-pub const HOST_ABI: u32 = 9;
+-
+-/// The `text_len` of a text answer that is the null text (`@FR-L-Null-Text`): its pointer is
+-/// not null, because a null `text_ptr` says the call answered no text at all.
+-pub const TEXT_NULL_LEN: usize = usize::MAX;
++/// The [`HostTable`] layout version; a cdylib refuses a table of another.
++pub const HOST_ABI: u32 = 8;
+ 
+ /// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
+ /// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set
+diff --git b/src/keys.rs a/src/keys.rs
+index c32dcb0ce..78c32ae55 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -187,30 +187,22 @@ pub struct Str {
+ }
+ 
+ impl Str {
+-    /// The null text as a view: a null pointer, as the C runtime's `loft_null_text` spells it
+-    /// (`crate::text_null`).
++    /// The null text as a view (`crate::text_null`).
+     #[inline]
+     #[must_use]
+     pub fn null() -> Str {
+-        Str {
+-            ptr: std::ptr::null(),
+-            len: 0,
+-        }
++        Str::new(crate::text_null::null_str())
+     }
+ 
+     /// Is this view the null text?
+     #[inline]
+     #[must_use]
+     pub fn is_null(&self) -> bool {
+-        self.ptr.is_null()
++        crate::text_null::is_null(self.str())
+     }
+ 
+-    /// A view of `v`; the null text ([`crate::text_null::null_str`]) becomes [`Str::null`].
+     #[must_use]
+     pub fn new(v: &str) -> Str {
+-        if crate::text_null::is_null(v) {
+-            return Str::null();
+-        }
+         Str {
+             ptr: v.as_ptr(),
+             len: v.len() as u32,
+@@ -232,10 +224,7 @@ impl Str {
+         // is on the value-read hot path and must return the real bytes.  If a
+         // genuinely corrupt `Str` ever reaches here, a loud fault surfaces the
+         // producing bug — strictly better than silent corruption of valid data.
+-        if self.ptr.is_null() {
+-            return crate::text_null::null_str();
+-        }
+-        if (self.ptr as usize) < (1 << 16) {
++        if self.ptr.is_null() || (self.ptr as usize) < (1 << 16) {
+             return "";
+         }
+         unsafe {
+@@ -4861,7 +4850,7 @@ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple>
+     for f in k {
+         match f {
+             Content::Long(l) => result.push(Simple::Number(l)),
+-            Content::Str(s) => result.push(Simple::Text(crate::text_null::own(s.str()))),
++            Content::Str(s) => result.push(Simple::Text(s.str().to_string())),
+             _ => {}
+         }
+     }
+diff --git b/src/native.rs a/src/native.rs
+index 7137321df..dd6dfb609 100644
+--- b/src/native.rs
++++ a/src/native.rs
+@@ -924,13 +924,16 @@ fn n_c_library_available(stores: &mut Stores, stack: &mut DbRef) {
+     stores.put(stack, ok);
+ }
+ 
+-// @PLN10 Phase 2 — destination-passing variant of `n_env_variable`: the variable's value, or
+-// null when it is unset.  Routed by `is_text_dest_native`.
++// @PLN10 Phase 2 — destination-passing variant of `n_env_variable`.
++// Always-non-null (the env value, "" if unset).  Routed by `is_text_dest_native`.
+ fn n_env_variable_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let dest = stores.get::<DbRef>(stack);
+     let v_name = stores.get::<Str>(stack);
+     let value = stores.os_variable(v_name.str());
+-    crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &value);
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&value);
+ }
+ 
+ // Reads all program input as one text: stdin on native/WASI, the JS host on
+@@ -1059,37 +1062,31 @@ fn t_4text_replace_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let v_with = stores.get::<Str>(stack);
+     let v_value = stores.get::<Str>(stack);
+     let v_self = stores.get::<Str>(stack);
+-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+-    // `@FR-E-NullArg` — a null text answers null.
+-    if v_self.is_null() {
+-        crate::text_null::set_null(out);
+-        return;
+-    }
+-    out.push_str(&v_self.str().replace(v_value.str(), v_with.str()));
++    let new_value = v_self.str().replace(v_value.str(), v_with.str());
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&new_value);
+ }
+ 
+ fn t_4text_to_lowercase_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let dest = stores.get::<DbRef>(stack);
+     let v_self = stores.get::<Str>(stack);
+-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+-    // `@FR-E-NullArg` — a null text answers null.
+-    if v_self.is_null() {
+-        crate::text_null::set_null(out);
+-        return;
+-    }
+-    out.push_str(&v_self.str().to_lowercase());
++    let new_value = v_self.str().to_lowercase();
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&new_value);
+ }
+ 
+ fn t_4text_to_uppercase_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let dest = stores.get::<DbRef>(stack);
+     let v_self = stores.get::<Str>(stack);
+-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+-    // `@FR-E-NullArg` — a null text answers null.
+-    if v_self.is_null() {
+-        crate::text_null::set_null(out);
+-        return;
+-    }
+-    out.push_str(&v_self.str().to_uppercase());
++    let new_value = v_self.str().to_uppercase();
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&new_value);
+ }
+ 
+ fn t_9character_is_lowercase(stores: &mut Stores, stack: &mut DbRef) {
+@@ -2190,7 +2187,7 @@ fn reflect_field_at(
+                 // Copied into the ANSWER's store rather than pointed at: the
+                 // caller owns the `FieldValue` and may outlive the record it
+                 // was read from.
+-                let s = crate::text_null::own(stores.store(value).get_str(t_ref));
++                let s = stores.store(value).get_str(t_ref).to_string();
+                 let copy = stores.store_mut(&out).set_str(&s);
+                 stores
+                     .store_mut(&out)
+@@ -3256,9 +3253,12 @@ fn n_json_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
+         .push_str(&msg);
+ }
+ 
+-// @PLN10 Phase 2 — destination-passing variant of `n_as_text`: a `JString`'s value, null for
+-// any other variant; the dest carries the null as the null text (`text_null::put`).  Per-call
+-// dests retire the @P354 sibling-aliasing scratch hazard.
++// @PLN10 Phase 2 — destination-passing variant of `n_as_text`.  text-null is
++// CONTENT-based (`conv_bool_from_text`: content == "\0"), so the dest carries
++// null by holding the `STRING_NULL` ("\0") bytes — `?? ` / `!` / format all read
++// it identically to the old sentinel (probed on both backends).  So `as_text`
++// dest-passes like any other producer; no "null-aware primitive" is needed.
++// Bonus: per-call dests retire the @P354 sibling-aliasing scratch hazard.
+ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let dest = stores.get::<DbRef>(stack);
+     let v = stores.get::<DbRef>(stack);
+@@ -3267,11 +3267,14 @@ fn n_as_text_dest(stores: &mut Stores, stack: &mut DbRef) {
+         let str_tp = stores.name("JString");
+         let value_pos = u32::from(stores.position(str_tp, "value")) + v.pos;
+         let s_rec = stores.store(&v).get_u32_raw(v.rec, value_pos);
+-        crate::text_null::own(stores.store(&v).get_str(s_rec))
++        stores.store(&v).get_str(s_rec).to_string()
+     } else {
+         crate::text_null::null_string()
+     };
+-    crate::text_null::put(stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos), &out);
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&out);
+ }
+ 
+ fn n_as_number(stores: &mut Stores, stack: &mut DbRef) {
+@@ -4165,7 +4168,7 @@ fn n_json_number(stores: &mut Stores, stack: &mut DbRef) {
+ /// text independently of the input's lifetime.
+ fn n_json_string(stores: &mut Stores, stack: &mut DbRef) {
+     let v = stores.get::<Str>(stack);
+-    let s_owned = crate::text_null::own(v.str());
++    let s_owned = v.str().to_owned();
+     let result = jv_alloc(stores);
+     let pos = result.pos;
+     let str_tp = stores.name("JString");
+diff --git b/src/native_adopt.rs a/src/native_adopt.rs
+index 6c1b12611..158382269 100644
+--- b/src/native_adopt.rs
++++ a/src/native_adopt.rs
+@@ -295,9 +295,6 @@ impl crate::coroutine_host::LoftCoroutine for HostedGen {
+ 
+     fn next_text(&mut self, stores: &mut Stores) -> String {
+         match self.step(stores) {
+-            Some(a) if a.text_len == crate::host_abi::TEXT_NULL_LEN => {
+-                crate::text_null::null_string()
+-            }
+             Some(a) if !a.text_ptr.is_null() => {
+                 // SAFETY: the unit's yielded bytes, valid until its next step.
+                 let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
+@@ -469,7 +466,7 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
+         return crate::text_null::null_string();
+     }
+     let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
+-    crate::text_null::own(s.str())
++    s.str().to_string()
+ }
+ 
+ pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {
+diff --git b/src/paged_reader.rs a/src/paged_reader.rs
+index 91a1cfcbf..fb07f9c05 100644
+--- b/src/paged_reader.rs
++++ a/src/paged_reader.rs
+@@ -1581,12 +1581,7 @@ pub fn trie_find_rec<P: PageProvider>(
+     if !src.v1 && crate::text_null::is_null(key) {
+         return src.null_rec();
+     }
+-    // A token-1 image filed its null key in the tree, as the one byte its null text was.
+-    let raw = if src.v1 && crate::text_null::is_null(key) {
+-        vec![0]
+-    } else {
+-        key.as_bytes().to_vec()
+-    };
++    let raw = key.as_bytes().to_vec();
+     let q = src.filed(&raw).into_owned();
+     let probe = |w: u32| crate::trie_db::bytes_word(&q, w);
+     let probe_bits = q.len() as u32 * 8;
+diff --git b/src/parallel.rs a/src/parallel.rs
+index ce49e087d..e5b7ab7ab 100644
+--- b/src/parallel.rs
++++ a/src/parallel.rs
+@@ -441,7 +441,7 @@ pub fn run_parallel_text(
+         let slot_store = &worker_db.allocations[slot_nr as usize];
+         for local_idx in 0..count {
+             let s_pos = slot_store.get_u32_raw(array_rec, 4 + (local_idx as u32) * 4);
+-            results[start + local_idx] = crate::text_null::own(slot_store.get_str(s_pos));
++            results[start + local_idx] = slot_store.get_str(s_pos).to_string();
+         }
+     }
+     results
+diff --git b/src/parallel_natives.rs a/src/parallel_natives.rs
+index 3206057ae..227715189 100644
+--- b/src/parallel_natives.rs
++++ a/src/parallel_natives.rs
+@@ -574,7 +574,7 @@ fn n_parallel_queue_text(stores: &mut Stores, stack: &mut DbRef) {
+ }
+ 
+ /// @PLN10 Phase 1 — destination-passing variant of `n_parallel_buf_get_text`.
+-/// Copies the worker's answer out of the par text buffer; a null answer stays null.
++/// Always-non-null (clones an owned `String` from the par text buffer).
+ /// Routed by `is_text_dest_native`.
+ fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
+     let dest = stores.get::<DbRef>(stack);
+@@ -584,15 +584,12 @@ fn n_parallel_buf_get_text_dest(stores: &mut Stores, stack: &mut DbRef) {
+             .par_text_buffer_stack
+             .last()
+             .expect("parallel_buf_get_text: par_text_buffer_stack is empty");
+-        crate::text_null::own(&buf[idx as usize])
++        buf[idx as usize].clone()
+     };
+-    let out = stores.store_mut(&dest).addr_mut::<String>(dest.rec, dest.pos);
+-    // A worker's null answer stays null (`@FR-L-Null-Text`): a clone or a push would make it "".
+-    if crate::text_null::is_null(&s_owned) {
+-        crate::text_null::set_null(out);
+-    } else {
+-        out.push_str(&s_owned);
+-    }
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&s_owned);
+ }
+ 
+ /// Plan-06 spine step 8c — pop the active par text buffer.  Called
+diff --git b/src/state/handover.rs a/src/state/handover.rs
+index e3f396b65..cb36a1624 100644
+--- b/src/state/handover.rs
++++ a/src/state/handover.rs
+@@ -214,9 +214,6 @@ fn slot_write(tp: &Type, size: u32, str_slot: bool, e: &HandoverEntry) -> Option
+             };
+             if str_slot {
+                 SlotWrite::View(e.p, u32::try_from(e.len).ok()?)
+-            } else if e.p.is_null() {
+-                // The unit's null text: no pointer (`loft_null_text`).
+-                SlotWrite::Text(crate::text_null::null_string())
+             } else {
+                 SlotWrite::Text(String::from_utf8_lossy(bytes).into_owned())
+             }
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index c5c4fac20..8996aa82c 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -6597,17 +6597,12 @@ impl State {
+             // true width — reading a local's `String` as a `Str` mis-takes the
+             // capacity word for the length and renders garbage / `""`.
+             Type::Text(_) => {
+-                // The null text renders as `null`, asked of the slot itself
+-                // (`@FR-L-Null-Text`): its bytes, `""`, are an empty text's too.
+                 let raw = if is_arg {
+-                    let v = self
+-                        .database
++                    self.database
+                         .store(&self.stack_cur)
+-                        .read::<crate::keys::Str>(rec, at);
+-                    if v.is_null() {
+-                        return "null".to_string();
+-                    }
+-                    v.str().to_string()
++                        .read::<crate::keys::Str>(rec, at)
++                        .str()
++                        .to_string()
+                 } else {
+                     // `reserve_frame` does not zero locals, so a text local shown
+                     // at its own (not-yet-run) assignment op holds stack garbage.
+@@ -6616,9 +6611,6 @@ impl State {
+                     // the slice, rather than `.clone()` (which would deref).
+                     let s = self.database.store(&self.stack_cur).addr::<String>(rec, at);
+                     let (ptr, len) = (s.as_ptr(), s.len());
+-                    if std::ptr::eq(ptr, crate::text_null::NULL_TEXT.as_ptr()) {
+-                        return "null".to_string();
+-                    }
+                     if ptr.is_null() || (ptr as usize) < (1 << 16) || len > 10_000_000 {
+                         String::new()
+                     } else {
+@@ -6725,7 +6717,19 @@ impl State {
+                 if absent {
+                     return "null".to_string();
+                 }
+-                self.render_frame_local(frame_base, off, inner, is_arg, data, narrow)
++                let rendered =
++                    self.render_frame_local(frame_base, off, inner, is_arg, data, narrow);
++                // A null `text` is the `STRING_NULL` sentinel — a single NUL byte — and the
++                // Text arm renders it as a literal that LOOKS like a one-character string
++                // (`" "` on a terminal).  That is worse than printing the type: it claims a
++                // value.  Compared against the same renderer that produced it, so the two
++                // cannot drift the way a hand-written `"\0"` literal here would.
++                if matches!(inner.base(), Type::Text(_))
++                    && rendered == loft_text_literal(crate::text_null::null_str())
++                {
++                    return "null".to_string();
++                }
++                rendered
+             }
+             // Nothing above renders this kind — a keyed collection, an iterator, a fn-ref.
+             // Name it the way the AUTHOR wrote it (`hash<P[a]>`), not by the schema key
+@@ -8870,9 +8874,6 @@ impl State {
+                 match a.typedef.base() {
+                     Type::Float => st.put_stack(f64::from_bits(arg.scalar as u64)),
+                     Type::Boolean => st.put_stack(arg.scalar != 0),
+-                    Type::Text(_) if arg.text_len == crate::host_abi::TEXT_NULL_LEN => {
+-                        st.put_stack(Str::null());
+-                    }
+                     Type::Text(_) => st.put_stack(Str {
+                         ptr: arg.text_ptr,
+                         len: arg.text_len as u32,
+@@ -8907,12 +8908,11 @@ impl State {
+             Type::Text(_) => {
+                 let s = self.reenter_ret::<Str>(d_nr, pos, push);
+                 // Copied out before the buffers it points into are dropped; the compiled
+-                // caller copies it again before its next call back.  The null text crosses
+-                // as no pointer, the C runtime's own spelling of it.
++                // caller copies it again before its next call back.
+                 let t = &mut self.call_back_text;
+                 t.clear();
+                 t.push_str(s.str());
+-                ret.text_ptr = if s.is_null() { std::ptr::null() } else { t.as_ptr() };
++                ret.text_ptr = t.as_ptr();
+                 ret.text_len = t.len();
+             }
+             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
+@@ -10146,7 +10146,7 @@ impl State {
+         self.run_to_return(Self::WORKER_OP_CEILING);
+         // Pop the Str return value (16 bytes) and copy into owned String.
+         let s = self.get_stack::<Str>();
+-        let result = crate::text_null::own(s.str());
++        let result = s.str().to_owned();
+         // Drop the String buffers to free their heap allocations.
+         for cr in work_crs.iter().rev() {
+             unsafe {
+diff --git b/src/text_null.rs a/src/text_null.rs
+index d07da56c4..13d9fe790 100644
+--- b/src/text_null.rs
++++ a/src/text_null.rs
+@@ -7,11 +7,8 @@
+ //! Every place that MAKES a null text takes it from [`null_str`] (or [`Str::null`] for a view),
+ //! and every place that ASKS goes through [`is_null`] (or [`Str::is_null`]), so how absence is
+ //! spelled is decided here and nowhere else.  Absence is the one value no byte string can
+-//! produce, and a byte string may hold NUL bytes anywhere, so it is an IDENTITY, never a
+-//! content: the null text is whatever points at [`NULL_TEXT`] — the zero-length `&str` there
+-//! ([`null_str`]), and the owned `String` of capacity 0 there ([`null_string`]).  A view
+-//! (`Str`) spells it as a null pointer, the C runtime's spelling, and converts at
+-//! `Str::new` / `Str::str`.  A text of one NUL byte is an ordinary text.
++//! produce, and a byte string may hold NUL bytes anywhere, so a reader must never decide it
++//! from a text's bytes of its own accord.
+ //!
+ //! [`Str::null`]: crate::keys::Str::null
+ //! [`Str::is_null`]: crate::keys::Str::is_null
+@@ -20,49 +17,32 @@
+ /// address, and the null text is told apart by where it points.
+ pub static NULL_TEXT: [u8; 1] = [0];
+ 
+-/// The null text, as a borrowed `&str`: the zero-length slice at [`NULL_TEXT`].
++/// The null text, as a borrowed `&str`.
+ #[inline]
+ #[must_use]
+ pub fn null_str() -> &'static str {
+-    // SAFETY: an empty slice of a live static is valid UTF-8.
+-    unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(NULL_TEXT.as_ptr(), 0)) }
++    // SAFETY: one NUL byte is valid UTF-8.
++    unsafe { std::str::from_utf8_unchecked(&NULL_TEXT) }
+ }
+ 
+-/// The null text as an owned `String`: capacity 0 at [`NULL_TEXT`].  It is never freed — a
+-/// `String` of capacity 0 owns no allocation — and a push gives it a buffer of its own.
++/// The null text as an owned `String`.
+ #[inline]
+ #[must_use]
+ pub fn null_string() -> String {
+-    // SAFETY: with capacity 0 the pointer needs only be non-null and aligned
+-    // (`Vec::from_raw_parts`), and nothing is ever written through it.
+-    unsafe { String::from_raw_parts(NULL_TEXT.as_ptr().cast_mut(), 0, 0) }
++    null_str().to_owned()
+ }
+ 
+ /// Make `s` the null text.
+ #[inline]
+ pub fn set_null(s: &mut String) {
+-    *s = null_string();
++    s.clear();
++    s.push_str(null_str());
+ }
+ 
+ /// Make `s` the empty text `""`, a null one too: the start of every assignment to a text.
+ #[inline]
+ pub fn clear(s: &mut String) {
+-    if is_null(s) {
+-        *s = String::new();
+-    } else {
+-        s.clear();
+-    }
+-}
+-
+-/// Write `s` into a native's fresh destination `dst`: its bytes, or the null text when `s` is
+-/// null — a push of the null text's no bytes would leave `""`.
+-#[inline]
+-pub fn put(dst: &mut String, s: &str) {
+-    if is_null(s) {
+-        set_null(dst);
+-    } else {
+-        dst.push_str(s);
+-    }
++    s.clear();
+ }
+ 
+ /// An owned copy of `s` that keeps a null text null.
+@@ -76,7 +56,7 @@ pub fn own(s: &str) -> String {
+ #[inline]
+ #[must_use]
+ pub fn is_null(s: &str) -> bool {
+-    std::ptr::eq(s.as_ptr(), NULL_TEXT.as_ptr())
++    s.as_bytes() == NULL_TEXT
+ }
+ 
+ /// The bytes a text key's digest is taken over (`@FR-S-Digest`): a null key digests as one
+@@ -93,5 +73,5 @@ pub fn digest_text(s: &str) -> &str {
+ #[inline]
+ #[must_use]
+ pub fn is_null_bytes(b: &[u8]) -> bool {
+-    std::ptr::eq(b.as_ptr(), NULL_TEXT.as_ptr())
++    b == NULL_TEXT
+ }
+diff --git b/src/vector.rs a/src/vector.rs
+index 894add2d3..cf4d95386 100644
+--- b/src/vector.rs
++++ a/src/vector.rs
+@@ -2404,11 +2404,11 @@ pub fn sort_text_vector(db: &DbRef, stores: &mut [Store]) {
+         .map(|i| {
+             let off = store.get_u32_raw(v_rec, 8 + (i as u32) * 4);
+             let s = store.get_str(off);
+-            (off, crate::text_null::own(s))
++            (off, s.to_string())
+         })
+         .collect();
+-    // `@FR-E-NullArg`: the order `<` answers — a null text before every text, `""` included —
+-    // asked of `<`'s own home rather than of the bytes (loft#2236).
++    // `@FR-E-NullArg`: the order `<` answers — a null text (the sentinel `"\0"`) before every
++    // text, `""` included — asked of `<`'s own home rather than of the bytes (loft#2236).
+     entries.sort_by(|a, b| text_order(&a.1, &b.1));
+     for (i, (off, _)) in entries.iter().enumerate() {
+         store.set_u32_raw(v_rec, 8 + (i as u32) * 4, *off);

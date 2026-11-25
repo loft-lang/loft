@@ -78,9 +78,10 @@ fn an_enum_holds_254_variants_and_reads_the_last_one_back() {
   assert(sf_hit == "own arm", "the last variant fell through to the wildcard: {sf_hit}");
 }
 
-// The reserved value of every scalar, one cell per row of the page's table.  Four of them
+// The reserved value of every scalar, one cell per row of the page's table.  Three of them
 // are values a program can WRITE, which is what makes them a trap: nothing distinguishes
-// the reserved one from a computed one.  `boolean` is the row that is different and the
+// the reserved one from a computed one.  `text` reserves none (`@FR-L-Null-Text`): a NUL
+// text is a text.  `boolean` is the row that is different and the
 // row the page had wrong — its null is a third byte state, so `false` stays a value.
 fn the_reserved_null_of_each_scalar_is_the_value_the_page_names() {
   sf_zero = 0;
@@ -99,9 +100,9 @@ fn the_reserved_null_of_each_scalar_is_the_value_the_page_names() {
   assert((sf_char ?? 'x') == 'x', "`??` does not discharge the NUL character");
 
   sf_text = "\0";
-  assert(!sf_text, "a single NUL is not the text null");
-  assert((sf_text ?? "d") == "d", "`??` does not discharge the NUL text");
-  assert(len(sf_text) == 0, "the NUL text, being null, has characters: {len(sf_text)}");
+  assert(sf_text != null, "a single NUL is the text null");
+  assert((sf_text ?? "d") == "\0", "`??` discharges the NUL text");
+  assert(len(sf_text) == 1, "the NUL text has no character: {len(sf_text)}");
   assert(!(!""), "the empty string reads as null");
 
   // Three states, and each pair of them is distinguishable.

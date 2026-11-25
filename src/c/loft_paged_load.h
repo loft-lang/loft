@@ -168,6 +168,11 @@ static uint32_t loft_pg_trie_find(loft_cx *cx, loft_pg *r, uint32_t root_rec, ui
     probe.text = 1;
     probe.bytes = (const uint8_t *) key.p;
     probe.len = key.len;
+    /* A token-1 image filed its null key in the tree, as the one byte its null text was. */
+    if (r->trie_v1 && loft_str_is_null(cx, key)) {
+        probe.bytes = (const uint8_t *) "";
+        probe.len = 1;
+    }
     /* A null key is filed in the slot ahead of the tree (`@FR-Col-Trie`); a token-1 image has
      * none, and reads its keys raw. */
     if (!r->trie_v1 && loft_rx_null_key(cx, probe.bytes, probe.len)) {

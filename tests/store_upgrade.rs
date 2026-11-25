@@ -2303,6 +2303,8 @@ fn cell_a_qualified_type_whose_field_changed_is_still_refused() {
 ///   hash lookups       -> the null key finds 1, `""` 2, `b` 3
 ///   sorted and index   -> walked null first: `N '' 'b'`
 /// and the reading leaves the image's bytes as they were.
+/// Falsified with `schema_sidecar::nul_is_null` answering false: every null reads back as a
+/// one-NUL text and the null hash key is not found (`' ' ' ' '' 'a' ' ' 7 | … | -123 | …`).
 #[test]
 fn cell_an_image_holding_the_nul_record_reads_null() {
     let images =

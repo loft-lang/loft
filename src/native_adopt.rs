@@ -295,6 +295,9 @@ impl crate::coroutine_host::LoftCoroutine for HostedGen {
 
     fn next_text(&mut self, stores: &mut Stores) -> String {
         match self.step(stores) {
+            Some(a) if a.text_len == crate::host_abi::TEXT_NULL_LEN => {
+                crate::text_null::null_string()
+            }
             Some(a) if !a.text_ptr.is_null() => {
                 // SAFETY: the unit's yielded bytes, valid until its next step.
                 let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
@@ -466,7 +469,7 @@ pub(crate) fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> S
         return crate::text_null::null_string();
     }
     let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
-    s.str().to_string()
+    crate::text_null::own(s.str())
 }
 
 pub(crate) fn host_coroutine_exhausted(gen_ref: DbRef, stores: &Stores) -> bool {

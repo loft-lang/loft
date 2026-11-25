@@ -150,6 +150,14 @@ fn sig(t: text) -> text {
 '''
 
 
+# The build before a null text was an identity (sec#61's switch): every place answers the four
+# rows holding a lone NUL piece as null there, on both backends.
+RECEIPT = ("// @falsified-at: c138d6feb — interpret exit 1 -> 0, native exit 1 -> 0; each place's four\n"
+           "//   rows holding a lone NUL piece (nul, slice, bytes0, nulnul's first byte) answered null")
+PATCH_RECEIPT = ("// @falsified-by: tests/falsified/null-text-through-a-field.patch — interpret exit 1 -> 0, "
+                 "interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0")
+
+
 def cell(place, decls, body, pending):
     title = place.replace("-", " ")
     out = [
@@ -170,6 +178,8 @@ def cell(place, decls, body, pending):
         "// ARMED: no instrument.",
         "// WITNESS: each message names the value, the place and every reader's answer.",
         "// HOLDS: the null, \"\", \"x\" and trailing-NUL rows, which answer the same in every place.",
+        RECEIPT,
+    ] + ([PATCH_RECEIPT] if place == "a-field" else []) + [
         "",
         decls + COMMON,
         "fn through(t: text) -> text {",

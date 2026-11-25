@@ -1447,6 +1447,15 @@ fn shared_store_dispatch_raw(
     }
     if let Some(dest) = text_dest_of_call
         && !ret.text_ptr.is_null()
+        && ret.text_len == crate::host_abi::TEXT_NULL_LEN
+    {
+        crate::text_null::set_null(
+            stores
+                .store_mut(&dest)
+                .addr_mut::<String>(dest.rec, dest.pos),
+        );
+    } else if let Some(dest) = text_dest_of_call
+        && !ret.text_ptr.is_null()
         && ret.text_len > 0
     {
         let text = unsafe {

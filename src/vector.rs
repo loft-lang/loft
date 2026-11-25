@@ -2404,11 +2404,11 @@ pub fn sort_text_vector(db: &DbRef, stores: &mut [Store]) {
         .map(|i| {
             let off = store.get_u32_raw(v_rec, 8 + (i as u32) * 4);
             let s = store.get_str(off);
-            (off, s.to_string())
+            (off, crate::text_null::own(s))
         })
         .collect();
-    // `@FR-E-NullArg`: the order `<` answers — a null text (the sentinel `"\0"`) before every
-    // text, `""` included — asked of `<`'s own home rather than of the bytes (loft#2236).
+    // `@FR-E-NullArg`: the order `<` answers — a null text before every text, `""` included —
+    // asked of `<`'s own home rather than of the bytes (loft#2236).
     entries.sort_by(|a, b| text_order(&a.1, &b.1));
     for (i, (off, _)) in entries.iter().enumerate() {
         store.set_u32_raw(v_rec, 8 + (i as u32) * 4, *off);

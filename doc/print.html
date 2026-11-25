@@ -2031,7 +2031,7 @@ elapsed_ms  = elapsed_us / 1000
   calls += <span class="nm">1</span>;
   value
 }</code></pre>
-<p>Used to obtain a null text value (an uninitialized field is the NUL sentinel).</p>
+<p>Used to obtain a missing text field.</p>
 <pre><code><span class="kw">struct</span> <span class="en">NullTextHolder</span> {
   s: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
@@ -2062,12 +2062,12 @@ elapsed_ms  = elapsed_us / 1000
 <li><code>integer</code>         — the most negative 64-bit integer (-9 223 372 036 854 775 808) is null</li>
 <li><code>float</code>/<code>single</code>  — <code>NaN</code> (Not a Number) is null</li>
 <li><code>character</code>       — the NUL character (code point 0) is null</li>
-<li><code>text</code>            — a single NUL character (<code>'\0'</code>) is null; the empty string <code>""</code> is NOT null</li>
+<li><code>text</code>            — no text at all; <code>""</code> and a NUL character (<code>"\0"</code>) are texts like any other</li>
 <li><code>reference</code>       — record 0 is null</li>
 <li><code>boolean</code>         — a third byte state, which is neither <code>false</code> nor <code>true</code></li>
 <li>plain <code>enum</code>      — both the 0 byte and the 255 byte are reserved, so an enum holds at most 254 variants</li>
 </ul>
-<p>For the first four, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with <code>?? null</code> (or a following null-check), division by zero produces this same value, so both paths look the same to your code:</p>
+<p>For the first three, the reserved value is a value you can write, so there is one value per type that you cannot tell apart from null. For integers, that is -9 223 372 036 854 775 808. When defended with <code>?? null</code> (or a following null-check), division by zero produces this same value, so both paths look the same to your code:</p>
 <pre><code>  zero = <span class="nm">0</span>;
   n = <span class="nm">1</span> / zero ?? <span class="kw">null</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!n, <span class="st">"div-by-zero defended with `?? null` is null"</span>);
@@ -2075,7 +2075,7 @@ elapsed_ms  = elapsed_us / 1000
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n &lt; <span class="nm">0</span>, <span class="st">"i64::MIN is the most negative 64-bit integer"</span>);</code></pre>
 <p>Arithmetic on null propagates: null plus anything is null.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(! (n + <span class="nm">1</span>), <span class="st">"null + 1 is still null"</span>);</code></pre>
-<p>Text null is the NUL character (<code>\0</code>), not the empty string. A <code>text?</code> local or field can hold it; a plain <code>text</code> cannot, and a parse respects that.</p>
+<p>Text null is no text at all, not the empty string and not a NUL character. A <code>text?</code> local or field can hold it; a plain <code>text</code> cannot, and a parse respects that.</p>
 <pre><code>  holder = <span class="en">NullTextHolder</span>.<span class="fn-call">parse</span>(`{{}}`);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(holder.s == <span class="st">""</span>, <span class="st">"a missing `text` field is empty, because it cannot be null"</span>);
   opt = <span class="en">OptTextHolder</span>.<span class="fn-call">parse</span>(`{{}}`);

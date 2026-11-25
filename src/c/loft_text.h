@@ -14,21 +14,27 @@ static loft_str loft_lit(loft_cx *cx, const char *p, size_t len) {
     return s;
 }
 
+static int loft_text_is_null(loft_cx *cx, const loft_text *t);
+static loft_str loft_null_text(loft_cx *cx);
+
 static loft_str loft_view(loft_cx *cx, const loft_text *t) {
+    if (loft_text_is_null(cx, t)) return loft_null_text(cx);
     return loft_lit(cx, t->p ? t->p : "", t->len);
 }
 
 /* The null text (`@FR-L-Null-Text`).  Every producer of an absent text takes it from
  * `loft_null_text` (a view) or `loft_text_set_null` (an owned text), and every reader asks
- * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.
- * Today it is the one byte "\0". */
+ * `loft_str_is_null` / `loft_text_is_null`: how absence is spelled is decided here alone.  It
+ * is an identity, never a content — a text of one NUL byte is an ordinary text: a view is null
+ * when it has no pointer (the interpreter's `Str::null`), an owned text when it has a pointer
+ * and neither length nor room (`loft_text_set_null`).  Neither test compares an address, so
+ * both hold across every unit a program is built from. */
 static loft_str loft_null_text(loft_cx *cx) {
-    static const char zero[1] = { 0 };
-    return loft_lit(cx, zero, 1);
+    return loft_lit(cx, 0, 0);
 }
 
 static int loft_str_is_null(loft_cx *cx, loft_str s) {
-    return s.len == 1 && s.p[0] == 0;
+    return s.p == 0;
 }
 
 /* A thread's freed text buffers by power-of-two capacity (16 .. 4096 bytes), handed to the next
@@ -90,7 +96,7 @@ static void loft_reserve(loft_cx *cx, loft_text *t, size_t extra) {
     while (cap < need) cap = cap > SIZE_MAX / 2 ? need : cap * 2;
     char *p = loft_tp_take(cx, cap);
     if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-    if (t->p) {
+    if (t->p && t->cap) {
         if (t->len) memcpy(p, t->p, t->len);
         loft_tp_give(cx, t->p, t->cap);
     }
@@ -162,13 +168,19 @@ static void loft_push_char(loft_cx *cx, loft_text *t, char c) {
 /* An owned text's absence: is it the null text, make it the null text, make it "" (a null
  * one too — the start of every assignment). */
 static int loft_text_is_null(loft_cx *cx, const loft_text *t) {
-    return t->p && t->len == 1 && t->p[0] == 0;
+    return t->p && t->cap == 0 && t->len == 0;
 }
+/* The owned null: a pointer, no length, no room.  Every fast path sees no room and goes the
+ * slow way; nothing frees or pools a buffer of capacity 0. */
 static void loft_text_set_null(loft_cx *cx, loft_text *t) {
+    static const char none[1] = { 0 };
+    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
+    t->p = (char *) none;
     t->len = 0;
-    loft_push_char(cx, t, 0);
+    t->cap = 0;
 }
 static inline void loft_text_clear(loft_cx *cx, loft_text *t) {
+    if (loft_text_is_null(cx, t)) t->p = 0;
     t->len = 0;
 }
 
@@ -214,11 +226,12 @@ LOFT_TEXT_INLINE void loft_text_concat(loft_cx *cx, loft_text *t, loft_str s) {
 }
 
 LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
-    if (t->p && s.p == t->p && s.len == t->len) return;
     if (loft_str_is_null(cx, s)) {
         loft_text_set_null(cx, t);
         return;
     }
+    if (loft_text_is_null(cx, t)) t->p = 0;
+    if (t->p && s.p == t->p && s.len == t->len) return;
     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
         memmove(t->p, s.p, s.len);
         t->len = s.len;
@@ -229,7 +242,7 @@ LOFT_TEXT_INLINE void loft_text_set(loft_cx *cx, loft_text *t, loft_str s) {
 }
 
 static void loft_text_free(loft_cx *cx, loft_text *t) {
-    if (t->p) loft_tp_give(cx, t->p, t->cap);
+    if (t->p && t->cap) loft_tp_give(cx, t->p, t->cap);
     t->p = 0;
     t->len = 0;
     t->cap = 0;

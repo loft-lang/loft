@@ -441,7 +441,7 @@ pub fn run_parallel_text(
         let slot_store = &worker_db.allocations[slot_nr as usize];
         for local_idx in 0..count {
             let s_pos = slot_store.get_u32_raw(array_rec, 4 + (local_idx as u32) * 4);
-            results[start + local_idx] = slot_store.get_str(s_pos).to_string();
+            results[start + local_idx] = crate::text_null::own(slot_store.get_str(s_pos));
         }
     }
     results

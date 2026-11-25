@@ -1581,7 +1581,12 @@ pub fn trie_find_rec<P: PageProvider>(
     if !src.v1 && crate::text_null::is_null(key) {
         return src.null_rec();
     }
-    let raw = key.as_bytes().to_vec();
+    // A token-1 image filed its null key in the tree, as the one byte its null text was.
+    let raw = if src.v1 && crate::text_null::is_null(key) {
+        vec![0]
+    } else {
+        key.as_bytes().to_vec()
+    };
     let q = src.filed(&raw).into_owned();
     let probe = |w: u32| crate::trie_db::bytes_word(&q, w);
     let probe_bits = q.len() as u32 * 8;
