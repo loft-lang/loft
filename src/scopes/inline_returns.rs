@@ -523,6 +523,19 @@ impl Scopes<'_> {
     /// SUBJECT reaches the tail as `Var(__ncc_N)`, so its own assignment is substituted in —
     /// the temp is a name, and the question is about what the call behind it produced.
     pub(super) fn ncc_arms_are_all_owned(bl: &Block, data: &Data) -> bool {
+        let mut arms: Vec<(&Value, bool)> = Vec::new();
+        Self::ncc_flat_arms(bl, &mut arms)
+            && arms
+                .iter()
+                .all(|(a, _)| crate::use_analysis::view_root_slots(data, a).is_none())
+    }
+
+    /// Every arm a chain of `??` can answer with, the nested `ncc` blocks flattened: each block's
+    /// SUBJECT stands in for its `Var(__ncc_N)` (the name; the question is about the value behind
+    /// it), and an arm that is itself an `ncc` block contributes its own arms.  Read whole, the
+    /// inner block of `f() ?? g() ?? d` looked like one owned store, and a lift freed `d`
+    /// (loft#2647).
+    fn ncc_flat_arms<'a>(bl: &'a Block, out: &mut Vec<(&'a Value, bool)>) -> bool {
         let Some(last) = bl.operators.last() else {
             return false;
         };
@@ -535,13 +548,18 @@ impl Scopes<'_> {
         if arms.len() < 2 {
             return false;
         }
-        arms.iter().all(|a| {
-            let effective = match (a.unspan(), subject) {
-                (Value::Var(v), Some((sv, val))) if *v == sv => val,
-                _ => *a,
-            };
-            crate::use_analysis::view_root_slots(data, effective).is_none()
-        })
+        for a in arms {
+            match (a.unspan(), subject) {
+                (Value::Var(v), Some((sv, val))) if *v == sv => out.push((val, true)),
+                (Value::Block(inner), _) if inner.name == "ncc" && !ncc_chain_flat_off() => {
+                    if !Self::ncc_flat_arms(inner, out) {
+                        out.push((a, false));
+                    }
+                }
+                _ => out.push((a, false)),
+            }
+        }
+        true
     }
 
     /// The one variable whose store a borrowed arm of this `ncc` block answers, where every
@@ -562,24 +580,21 @@ impl Scopes<'_> {
                 crate::use_analysis::Own::Owned
             )
         };
-        let last = bl.operators.last()?;
-        let subject = bl.operators.iter().find_map(|op| match op.unspan() {
-            Value::Set(v, val) if !matches!(val.unspan(), Value::Null) => Some((*v, val.as_ref())),
-            _ => None,
-        })?;
-        let mut arms: Vec<&Value> = Vec::new();
-        Self::ncc_tail_arms(last, &mut arms);
-        if arms.len() < 2 {
+        let mut arms: Vec<(&Value, bool)> = Vec::new();
+        if !Self::ncc_flat_arms(bl, &mut arms) {
             return None;
         }
         let mut base = None;
-        for a in arms {
-            match a.unspan() {
-                Value::Var(v) if *v == subject.0 => {
-                    if !owned(subject.1) {
-                        return None;
-                    }
+        for (a, is_subject) in arms {
+            // A subject must be a store the frame owns: a borrowed subject (`h.ws[9].items ?? f()`)
+            // is a view whose consumer (a `for`) releases the default arm itself.
+            if is_subject {
+                if !owned(a) {
+                    return None;
                 }
+                continue;
+            }
+            match a.unspan() {
                 Value::Var(v) => {
                     if base.is_some_and(|b| b != *v) {
                         return None;
@@ -1121,4 +1136,9 @@ const DELEGATION_DEPTH: usize = 8;
 /// store records must then report.
 fn ncc_lift_beside_owner() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NCC_LIFT_BESIDE_OWNER").is_some())
+}
+
+/// `LOFT_NO_NCC_CHAIN_FLAT=1`: the lift reads a nested `??` block as one arm again (loft#2647).
+fn ncc_chain_flat_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_NCC_CHAIN_FLAT").is_some())
 }
