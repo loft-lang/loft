@@ -2592,6 +2592,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
   if kind == "continue" {
     return ex(ir::NdContinue { n: 0 }, ir::TyNever);
   }
+  // (`break <value>` returns the value from the enclosing function: loft's loops are
+  // void-typed, so Rust desugars it to `return <value>`.)
+  if kind == "break" {
+    return jump(e, vars, "return", x);
+  }
   if kind == "return" {
     result = el::def(e, e.context).returned[0];
     if x == null {
