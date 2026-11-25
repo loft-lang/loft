@@ -5,6 +5,7 @@
 #            or a prelude helper is missing) | needs-axis (it turns on something the tool
 #            does not vary) | outside (not about evaluating an operand)
 #   missing  what the tables or the tool lacked for it
+2648	needs-axis	an argument of a call, inside a loop	a `??` chain of a call and two different variables	axis: two operands (two borrowed variables in one chain)	leak	Values agree; only the leak channel sees it, one store per pass that takes the call.
 2647	fits-rows	an argument of a call, inside a loop	a chain of two `??` over calls answering an absent-or-fresh keyed collection, ending in a variable	prelude helper (a call answering `KIND?`)	leak	A double free, not a value: the plain run aborts; the bound twin is clean.
 2645	needs-axis	the tail of a function returning `text`	an element of a parameter the body rebound	axis: a sequence of statements (the rebind before the read)	value	A read after free a plain run hides; binding the element first (`t = v[0]; t`) is clean.
 2646	needs-axis	the tail of a function returning a plain record	a `??` of two record parameters	axis: a rewrite of the function's own signature (the value-record tuple)	leak	Interpreter only; the bound twin (`r = o ?? s; r`) is clean, and the record form leaks nothing.

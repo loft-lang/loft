@@ -453,6 +453,11 @@ function gets no text buffer and answers a view into the copy it frees
 as one owned arm of the lift again: `ch(f() ?? g() ?? d)` then frees `d`, which the frame frees
 again at exit (`heap/H-FreeTwice/2647-…`).
 
+**`LOFT_NO_NCC_MULTI_WITNESS=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the lift of an
+inline keyed `??` chain through two different variables (`ch(f() ?? dn ?? d)`), as it did when the
+lift compared with one variable only: the store the call answered then leaks
+(`heap/H-Free/2648-…`).
+
 **`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
 literal's argument-block locals to the enclosing scope only for a vector literal: a struct
 literal's vector field then leaves its element records at a scope no emitted code opens, which
