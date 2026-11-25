@@ -371,7 +371,7 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     }
     sd = struct_literal_def(e, it);
     if sd >= 0 {
-      if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
+      if !el_types::is_equal(e, el_types::adopted(e, inner), ir::TyReference { n: sd, dep: [] }) {
         el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {el::def(e, sd).name}");
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -538,7 +538,7 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     x = el_ex_assign::expression(e, vars, it);
     // (A value typed by one of a struct enum's variants — `sh = Circle { … }` — is an item of
     // the enum's vector: Rust's append asks no type of it.)
-    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) && !variant_of(e, inner, x.tp) {
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, el_types::adopted(e, inner), x.tp) && !variant_of(e, inner, x.tp) {
       el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
