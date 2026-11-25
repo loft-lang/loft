@@ -38,6 +38,7 @@ fn rule_of(kind: &str) -> &'static str {
         "re-free" => "@FR-H-FreeTwice",
         "use-after-end" => "@FR-H-Read",
         "out-of-scope" => "@FR-B-Scope",
+        "copied-lease" => "@FR-H-Lease",
         // A double end and a wrong end both break the single owner's one release.
         _ => "@FR-O-Borrow",
     }

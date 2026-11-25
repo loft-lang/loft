@@ -172,6 +172,18 @@ struct State {
     /// names (`@FR-H-RefHome`), until `r` is bound again.  A re-mint of that store
     /// (`OpDatabase(h)` on a live store re-initialises it in place) ends such a record.
     placed: BTreeSet<(u16, u16)>,
+    /// The stores whose lease may be settled along the paths reaching here: a drop hook ran on
+    /// it (`t_<T>_OpDrop(v)`, a cascade), or a copy took it over (`OpCopyRecord(v, w)`, the
+    /// displacement before a rebind: the hook runs on the copy, and the source is freed bare).
+    /// One handed to the caller from here may get its hook run a second time there
+    /// (`@FR-H-DropOnce`); one freed bare from here has had its hook.
+    dropped: BTreeSet<SKey>,
+    /// A hook run under `OpDistinctStore(v, w)`: `v`'s store settled except where it is `w`'s,
+    /// `(store, w)`.  Returning `w` then hands on no settled lease.
+    dropped_unless: BTreeSet<(SKey, u16)>,
+    /// The MUST twin of `dropped`: a hook ran on it on every path reaching here where it is
+    /// live (a null side of `if bool(x) drop(x)` does not count against it).
+    dropped_must: BTreeSet<SKey>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -732,6 +744,19 @@ fn join_state(a: &State, b: &State) -> State {
         views: join_views(a, b),
         records: a.records.union(&b.records).copied().collect(),
         placed: a.placed.union(&b.placed).copied().collect(),
+        dropped: a.dropped.union(&b.dropped).copied().collect(),
+        dropped_unless: a.dropped_unless.union(&b.dropped_unless).copied().collect(),
+        dropped_must: {
+            let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
+            let mut m: BTreeSet<SKey> = a
+                .dropped_must
+                .intersection(&b.dropped_must)
+                .copied()
+                .collect();
+            m.extend(a.dropped_must.iter().filter(|k| !live(b, k)).copied());
+            m.extend(b.dropped_must.iter().filter(|k| !live(a, k)).copied());
+            m
+        },
         mints: a.mints.clone(),
     }
 }
@@ -1037,6 +1062,8 @@ struct Run<'a> {
     /// The ended generations a re-mint made of a store records were placed in
     /// (`remint_ends_placed`): a reference to one written into a field is a use after its end.
     reminted: BTreeSet<SKey>,
+    /// The `OpDistinctStore(v, w)` tests whose THEN branch is being read, `(v, w)`.
+    distinct_guards: Vec<(u16, u16)>,
     /// The function's answer, joined over every return.
     answer: Summary,
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
@@ -1370,6 +1397,7 @@ fn run_fn<'a>(
         line: 0,
         end_lines: BTreeMap::new(),
         reminted: BTreeSet::new(),
+        distinct_guards: Vec::new(),
         answer: Summary::Bottom,
         imprecise: false,
         in_field_reset: 0,

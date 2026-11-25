@@ -169,7 +169,14 @@ impl Run<'_> {
             Value::If(cond, then_v, else_v) => {
                 let (s, _) = self.eval(cond, st)?;
                 let (then_st, else_st) = self.decide(cond, s);
+                let guard = self.distinct_guard(cond);
+                if let Some(g) = guard {
+                    self.distinct_guards.push(g);
+                }
                 let then_out = then_st.and_then(|s| self.eval(then_v, s));
+                if guard.is_some() {
+                    self.distinct_guards.pop();
+                }
                 let else_out = else_st.and_then(|s| self.eval(else_v, s));
                 let mut out = join_out(then_out, else_out)?;
                 Self::normalize(&mut out.0);
@@ -185,6 +192,7 @@ impl Run<'_> {
                     Value::Var(x) => Some(*x),
                     _ => None,
                 };
+                self.returned_after_drop(&s, &value, x);
                 self.leaving(&s, &value, x);
                 Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
@@ -340,6 +348,7 @@ impl Run<'_> {
     /// per pass (loft-suite O-Borrow/2338's `looped`).  `LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints
     /// every copy.
     pub(super) fn copied(&mut self, st: &mut State, node: &Value) -> Val {
+        self.lease_copy(node);
         let site = self.site(node, Origin::Copy);
         // A loop's head joins the null of the first pass with the store an earlier pass copied
         // in here: the null path mints that same store and the others re-initialise it, so the
@@ -368,6 +377,89 @@ impl Run<'_> {
         Val {
             pts: [Pt::Store(k)].into(),
             corr: [k].into(),
+        }
+    }
+
+    /// `(H-Lease)`: a copy makes a second structure, and a second structure is a second drop.
+    /// The program may not write a copy of a type that owns a droppable and declares no `OpCopy`
+    /// (`(H-Copy-Refuse)`), so one the code generator makes runs the hook twice for one value —
+    /// a join's copy arm where the value had to move (loft#2552).  The type facts only: which
+    /// copies the compiler meant to be moves is its own decision, not read here; a copy whose
+    /// source's drop a hand-off flag guards is read as the move it is.
+    /// Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    pub(super) fn lease_copy(&mut self, node: &Value) {
+        let Value::Set(x, val) = node.unspan() else {
+            return;
+        };
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        // A copy of a variable whose own drop a hand-off flag guards (`__hoff_<src>`, set as the
+        // copy runs) is the move it stands for: the source's hook does not run.
+        if let Value::Var(src) = val.unspan()
+            && function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX
+        {
+            return;
+        }
+        let tp = function.tp(*x).clone();
+        let Some(def) = tp.heap_def_nr() else {
+            return;
+        };
+        if !data.any_drop_hook()
+            || !data.type_owns_droppable_anywhere(&tp)
+            || crate::lease::copy_cascade_nr(data, def) != u32::MAX
+            || crate::lease::copy_hook_nr(data, def) != u32::MAX
+            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
+        {
+            return;
+        }
+        let (name, ty) = (self.var_name(*x), data.def(def).name().to_string());
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!(
+                "`{name}` is a copy the code generator makes of a `{ty}`, which owns a droppable \
+                 and declares no OpCopy: the copy and its source each run the drop hook"
+            ),
+        );
+    }
+
+    /// `OpDistinctStore(v, w)` over two variables (a fn-ref's closure, `OpFnRefClosure(f)`, read as
+    /// `f`): its THEN branch runs only where `v` and `w` name different stores.
+    pub(super) fn distinct_guard(&self, cond: &Value) -> Option<(u16, u16)> {
+        let Value::Call(op, args) = cond.unspan() else {
+            return None;
+        };
+        if self.data.def(*op).name() != "OpDistinctStore" || args.len() != 2 {
+            return None;
+        }
+        let var = |a: &Value| match a.unspan() {
+            Value::Var(v) => Some(*v),
+            Value::Call(c, xs) if self.data.def(*c).name() == "OpFnRefClosure" => {
+                Self::first_var(xs, 0)
+            }
+            _ => None,
+        };
+        Some((var(&args[0])?, var(&args[1])?))
+    }
+
+    /// `@FR-H-DropOnce`: a return that hands the caller a store this path already ran a drop hook
+    /// on — the caller's release of the answer runs it again (loft#2552: a `return` path whose
+    /// guard against dropping the answer was lost).  Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    pub(super) fn returned_after_drop(&mut self, st: &State, value: &Val, val_var: Option<u16>) {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none()) {
+            return;
+        }
+        let x = val_var.unwrap_or(u16::MAX);
+        if Self::stores_of(&value.pts).iter().any(|k| {
+            st.dropped_must.contains(k) || st.dropped_unless.iter().any(|(d, w)| d == k && *w != x)
+        }) {
+            self.find(
+                "copied-lease",
+                u32::MAX,
+                "the function returns a record whose drop hook it already ran: the caller's \
+                 release runs it again"
+                    .to_string(),
+            );
         }
     }
 

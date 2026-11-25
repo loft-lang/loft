@@ -81,7 +81,7 @@ def red_identity(line):
 # Which checker kinds answer a runtime fault kind: a CAUGHT whose findings answer none of the
 # run's faults is a coincidence, and `matched` says so.
 ANSWERS = {"uaf": {"use-after-end", "wrong-end", "re-free", "double-end"},
-           "wrong": {"out-of-scope", "use-after-end"},
+           "wrong": {"out-of-scope", "use-after-end", "copied-lease"},
            "re-free": {"re-free", "double-end", "wrong-end"},
            "leak": {"leak"},
            "wrong-free": {"wrong-end"}}

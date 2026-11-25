@@ -169,6 +169,7 @@ impl Run<'_> {
 
     pub(super) fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
+        self.hook_skipped(d, args, &st);
 
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
@@ -353,6 +354,100 @@ impl Run<'_> {
         }
     }
 
+    /// `(H-Lease)`, `(H-DropOnce)`: a drop hook run on a variable whose value this path has
+    /// handed on (its hand-off flag `__hoff_<v>` written true: the value moved into another
+    /// structure, which drops it) runs the hook a second time for one value (loft#2552: a
+    /// `return` path's release that lost the flag's guard).  The path's hooks are recorded here
+    /// too, for the other lease checks.  Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    pub(super) fn handed_off_drop(&mut self, d: u32, args: &[Value], st: &mut State) {
+        if !self.data.is_drop_function(d)
+            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
+        {
+            return;
+        }
+        let Some(v) = Self::first_var(args, 0) else {
+            return;
+        };
+        let unless = self
+            .distinct_guards
+            .iter()
+            .rev()
+            .find(|(g, _)| *g == v)
+            .map(|(_, w)| *w);
+        for k in Self::stores_of(&Self::pts(st, v)) {
+            if let Some(w) = unless {
+                st.dropped_unless.insert((k, w));
+            } else {
+                st.dropped.insert(k);
+                st.dropped_must.insert(k);
+            }
+        }
+        let function = &self.data.def(self.d_nr).variables;
+        let flag = function.var(&format!("__hoff_{}", function.name(v)));
+        if flag == u16::MAX || st.flags.get(&flag) != Some(&true) {
+            return;
+        }
+        let name = self.var_name(v);
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!(
+                "`{name}`'s value was handed on, and {} runs its drop hook again: one value, two \
+                 drops",
+                self.data.def(d).name()
+            ),
+        );
+    }
+
+    /// `@FR-H-Drop`: a record whose type owns a droppable is released with its hook — the hook
+    /// (or its cascade) runs, then the store goes.  An `OpFreeRef` of such a variable on a store
+    /// no path here ran the hook on releases the resource's record without running it
+    /// (loft#2552: a fallback literal freed beside a chain arm, its hook dropped with the guard
+    /// around it).  Not inside a drop function: its own frees are the cascade.
+    /// Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
+    pub(super) fn hook_skipped(&mut self, d: u32, args: &[Value], st: &State) {
+        if self.data.def(d).name() != "OpFreeRef"
+            || !self.data.any_drop_hook()
+            || self.data.is_drop_function(self.d_nr)
+            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
+        {
+            return;
+        }
+        let Some(v) = Self::first_var(args, 0) else {
+            return;
+        };
+        let function = &self.data.def(self.d_nr).variables;
+        let tp = function.tp(v).clone();
+        if tp.heap_def_nr().is_none() || !self.data.type_owns_droppable_anywhere(&tp) {
+            return;
+        }
+        // A value handed on (its hand-off flag may be true here) is freed bare: its lease went
+        // with it to the structure that took it.
+        let flag = function.var(&format!("__hoff_{}", function.name(v)));
+        if flag != u16::MAX && st.flags.get(&flag) != Some(&false) {
+            return;
+        }
+        let stores = Self::stores_of(&Self::pts(st, v));
+        let live: Vec<SKey> = stores
+            .iter()
+            .copied()
+            .filter(|k| info_of(st, *k).has(LIVE) && !info_of(st, *k).has(HANDED))
+            .collect();
+        if live.is_empty()
+            || live
+                .iter()
+                .any(|k| st.dropped.contains(k) || st.dropped_unless.iter().any(|(d, _)| d == k))
+        {
+            return;
+        }
+        let name = self.var_name(v);
+        self.find(
+            "copied-lease",
+            u32::MAX,
+            format!("`{name}` is released by OpFreeRef without its drop hook: the resource leaks"),
+        );
+    }
+
     /// What the slot at `off` of the record `w` holds names, as this frame's records know it:
     /// a capture slot's store, or a reference this frame wrote into the holder (`a.next = b`).
     pub(super) fn slot_names_at(st: &State, w: u16, off: Option<i32>) -> Pts {
@@ -378,6 +473,25 @@ impl Run<'_> {
         st: State,
     ) -> Option<(State, Val)> {
         let ops = self.ops;
+        let mut st = st;
+        self.handed_off_drop(d, args, &mut st);
+        if d == ops.copy_record
+            && let Some(src) = Self::first_var(args, 0)
+        {
+            // Only the displacement before a rebind (`OpCopyRecord(x, __disp_N)`) moves the
+            // lease: `x` is re-minted or freed bare after it, and the hook runs on the copy.
+            for k in Self::stores_of(&Self::pts(&st, src)) {
+                st.dropped.insert(k);
+            }
+            // The destination holds new content, with a lease of its own.
+            if let Some(dst) = Self::first_var(args, 1) {
+                for k in Self::stores_of(&Self::pts(&st, dst)) {
+                    st.dropped.remove(&k);
+                    st.dropped_must.remove(&k);
+                    st.dropped_unless.retain(|(d, _)| *d != k);
+                }
+            }
+        }
         // `@FR-R-HostStore`: a result its function drops is released by record — its store whole
         // where that is not the answer's, as `OpFreeRefIfDistinct(rec, answer)` frees it; a record
         // of the answer's store goes and the store lives on.
@@ -562,6 +676,12 @@ impl Run<'_> {
                 .collect();
             let mut st = st;
             self.remint_ends_placed(&mut st, x, &kept);
+            // A re-minted store holds new content, with a lease of its own.
+            for k in Self::stores_of(&kept) {
+                st.dropped.remove(&k);
+                st.dropped_must.remove(&k);
+                st.dropped_unless.retain(|(d, _)| *d != k);
+            }
             // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
             // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in
             // place on the first paths and minted on the others, `x` names a live store from
