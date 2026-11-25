@@ -2143,11 +2143,24 @@ pub fn format_for_carried(e: el::El, vars: el_vars::Vars, n: integer) -> boolean
         },
         _ => {}
       }
-      if e.p.nodes[sr] is SRange {
+      if e.p.nodes[sr] is SRange || vector_call_source(e, sr) {
         return true;
       }
       sv = match e.p.nodes[sr] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
       sv >= 0 && (el_vars::tp(vars, sv) is TyVector || el_vars::tp(vars, sv) is TyText || el_vars::tp(vars, sv) is TyHash || el_vars::tp(vars, sv) is TySorted || el_vars::tp(vars, sv) is TyIndex)
+    },
+    _ => false
+  }
+}
+
+// A call of a program function declared to answer a vector (`mk(3)`): a format walk holds its
+// answer in `_vector_N` (`hold_loop_source`).
+fn vector_call_source(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SCall { f: cf } => {
+      cn = match e.p.nodes[cf ?? 0] { SName { name: fnm, member: fm } => if fm == "" && cf != null { fnm } else { "" }, _ => "" };
+      d = if cn == "" { -1 } else { el::def_nr(e, "n_{cn}") };
+      d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector
     },
     _ => false
   }
@@ -2182,9 +2195,10 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   sv = match e.p.nodes[source] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 };
   st = if sv >= 0 { el_vars::tp(vars, sv) } else { ir::TyVoid };
   range = e.p.nodes[source] is SRange;
+  call_src = !range && sv < 0 && vector_call_source(e, source);
   walks_text = !range && st is TyText;
   keyed = !range && (st is TyHash || st is TySorted || st is TyIndex);
-  if len(binds) != 1 || par != null || body == null || (!range && (sv < 0 || !(st is TyVector || walks_text || keyed))) {
+  if len(binds) != 1 || par != null || body == null || (!range && !call_src && (sv < 0 || !(st is TyVector || walks_text || keyed))) {
     el::refuse(e, "a `for` in a format hole over a source other than a vector local or a range");
     return null;
   }
@@ -2199,7 +2213,28 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   extra: vector<ir::Node> = [];
   scratch = -1;
   el_d = -1;
-  if keyed {
+  if call_src {
+    // (`hold_loop_source`: `{id}#index`, the call — its own work refs — then `_vector_N`
+    // holding its answer, which the walk reads.)
+    idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
+    el_vars::set_defined(vars, idx);
+    el_ex_base::start_loop(e, vars);
+    cx = el_ex_assign::expression(e, vars, source);
+    if !(el_types::base(cx.tp) is TyVector) {
+      if !e.first_pass {
+        el::refuse(e, "a `for` in a format hole over a call answering this type: {type_kind(cx.tp)}");
+      }
+      return null;
+    }
+    sv = el_vars::create_unique(vars, "vector", el_types::base(cx.tp));
+    if !e.first_pass {
+      el_vars::set_var_type(vars, sv, cx.tp);
+    }
+    el_vars::set_defined(vars, sv);
+    st = el_types::base(cx.tp);
+    lt = match st { TyVector { inner } => el_types::with_deps(el_types::without_deps(inner), [sv]), _ => ir::TyVoid };
+    init = [ir::NdInsert { items: [el_ir::v_set(sv, cx.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] }];
+  } else if keyed {
     // (`iter_for` over `keyed_snapshot`: `{id}#index`, then a hash's sorted scratch copy of
     // its records, `_hash_scratch_N`; `{id}#iter_state` on the second pass, after the rest.)
     idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
