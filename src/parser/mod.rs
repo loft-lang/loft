@@ -2143,7 +2143,7 @@ impl Parser {
     /// directory is the program entry's; before there is one (the standard library's own
     /// parse) only the standard library's directory names anything.
     pub(crate) fn site_file(&self, file: &str) -> Value {
-        let mut roots = crate::source_name::roots_of(&self.data, None);
+        let mut roots = self.data.source_roots(None);
         if let Some(entry) = self.program_entry {
             roots.main_dir = crate::source_name::Roots::of(entry.as_str(), "").main_dir;
         }

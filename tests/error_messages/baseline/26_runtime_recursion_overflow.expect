@@ -2,7 +2,7 @@
 ==== stdout ====
 ==== stderr ====
 error: call stack overflow — exceeded 10000 stack frames
-  --> <cases>/26_runtime_recursion_overflow.loft:3:1
+  --> 26_runtime_recursion_overflow.loft:3:1
   |
 3 | fn bomb() -> integer {
   | ^

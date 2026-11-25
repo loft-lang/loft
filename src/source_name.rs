@@ -63,28 +63,6 @@ pub fn program_roots() -> Option<Roots> {
         .clone()
 }
 
-/// The roots a unit or a generated program names its sources from: `hosted_root` for a hosted
-/// unit (its package's parent), else the directory of the program's `main`; and the directory
-/// the standard library was read from.  Either is empty when the definitions hold none.
-#[must_use]
-pub fn roots_of(data: &crate::data::Data, hosted_root: Option<String>) -> Roots {
-    let file_of = |d: u32| {
-        (d < data.definitions())
-            .then(|| data.def(d).position.file.to_string())
-            .filter(|f| !f.is_empty())
-    };
-    let std_file = (0..data.definitions())
-        .find(|&d| data.def(d).source == crate::data::STD_SOURCE && file_of(d).is_some())
-        .and_then(file_of)
-        .unwrap_or_default();
-    let mut roots = Roots::of("", &std_file);
-    roots.main_dir = match hosted_root {
-        Some(root) => root,
-        None => Roots::of(&file_of(data.def_nr("n_main")).unwrap_or_default(), "").main_dir,
-    };
-    roots
-}
-
 /// `rest` when `file` lies beneath directory `dir`.  Both are compared in their `/` spelling: on
 /// Windows a package directory arrives with the host's separator and a source position may hold
 /// either, so a bare prefix test would miss and name the machine's path.

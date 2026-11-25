@@ -483,7 +483,7 @@ impl<'a> Cx<'a> {
             source_lines: false,
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_roots: crate::source_name::roots_of(data, None),
+            source_roots: data.source_roots(None),
             type_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2329,7 +2329,7 @@ fn emit_unit_with(
     cx.source_lines = shape.source_lines;
     cx.whole |= shape.whole;
     if shape.source_root.is_some() {
-        cx.source_roots = crate::source_name::roots_of(data, shape.source_root.clone());
+        cx.source_roots = data.source_roots(shape.source_root.clone());
     }
     cx.c_twins = twins;
     cx.open = hosted.is_some();
