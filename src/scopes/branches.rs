@@ -526,11 +526,15 @@ impl Scopes<'_> {
                 // frees it on the paths through the other arms that never reached its init —
                 // a free of whatever the slot held (often another local's record, the slots
                 // being shared), where `@FR-H-FreeNull` frees nothing (loft#2417).
-                let deps_ready = function
-                    .tp(resolved)
-                    .depend()
-                    .iter()
-                    .all(|d| self.var_scope.contains_key(d) || result.contains(d));
+                // The local's OWN name among its deps is ready: it is the slot this pre-init
+                // declares.  A rebind from itself later in the body (`v = keep(v)`, `v = v +
+                // [3]`) gives the local that self-dep, and refused for it the local was homed in
+                // the arm that first bound it — `@FR-B-Scope` puts it at the statement — so a
+                // `for` loop after the `if` took its slot and the arm's value read back empty
+                // (loft#2636).
+                let deps_ready = function.tp(resolved).depend().iter().all(|d| {
+                    *d == resolved || self.var_scope.contains_key(d) || result.contains(d)
+                });
                 if !self.var_scope.contains_key(&resolved)
                     && needs_pre_init(function.tp(resolved))
                     && deps_ready
