@@ -2338,7 +2338,7 @@ pub fn amp_declaration(e: el::El, vars: el_vars::Vars, name: text, tn: integer, 
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
 
-pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn: integer?, rhs: integer?) -> Ex {
+pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn: integer?, rhs: integer?, value_const: boolean = false) -> Ex {
   if rhs != null {
     unqualify_literal(e, rhs!);
   }
@@ -2368,6 +2368,10 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   }
   if !vars.annotated.contains(v) {
     vars.annotated += [v];
+  }
+  // (`x: const T = v` — `@FR-Const-Value`: the local itself is value-const.)
+  if value_const {
+    el_vars::set_value_const(vars, v, "parse_assign_inner");
   }
   // A literal bound to a local declared as a nullable VARIANT (`p: Fireball? = Fireball { … }`)
   // is built in the local itself in Rust (`parse_object` into the declared slot), where one

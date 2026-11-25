@@ -18,7 +18,7 @@ source file is named from its root, in everything a build writes and in every ru
 | File | Name |
 |---|---|
 | a standard-library file | `default/<file>` |
-| a file beneath the main file's directory | its path from that directory: `main.loft`, `lib/shapes.loft` |
+| a file beneath the program's directory — its project root (the nearest directory above the main file holding a `loft.toml`), else the main file's own directory | its path from that directory: `main.loft`, `lib/shapes.loft`, `sub/app.loft` |
 | any other file (a library found elsewhere) | its path from its package's parent (the directory above its `loft.toml`), else its file name |
 | a name already relative | itself |
 
@@ -37,6 +37,11 @@ found, in order:
 3. beneath the program's roots — the interpreter, which knows them.
 
 When none holds it, the fault prints its location without the source line.
+
+A placed library's worker parses the library alone, so the program hands it its roots in
+`LOFT_SOURCE_ROOTS` (the main directory, a newline, the standard library's), and a fault inside
+the library reads the same placed or in-process.  The logger names a record's file from the same
+directory, so a `[levels]` path-prefix key (`sub/`) addresses what a fault prints.
 
 ## What is not reproducible yet
 
