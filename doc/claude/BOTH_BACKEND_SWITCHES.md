@@ -439,6 +439,10 @@ lift of an inline keyed `??` whose borrowed arm is one variable or a projection 
 (`ch(maybe(c) ?? d)`, `?? o.m`): the store the call answered on a present pass is then owned by
 nothing (`heap/H-Free/2643-…`).
 
+**`LOFT_NO_VIEW_TAIL_BIND=1`** (`@FR-F-Ret`, parse time, BOTH backends) answers an element read
+of a local vector (`vv[k]`) at the tail of a `vector<T>?` function raw again: a view into a store
+the frame frees before the caller reads it (`calls/F-Ret/2644-…`).
+
 **`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
 literal's argument-block locals to the enclosing scope only for a vector literal: a struct
 literal's vector field then leaves its element records at a scope no emitted code opens, which
