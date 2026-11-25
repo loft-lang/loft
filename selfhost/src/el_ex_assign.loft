@@ -1091,6 +1091,13 @@ fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   el_ex_name::capture_target_placeholder(e, vars, target);
+  // (A shared record capture written whole by a literal: built into the record it points at.)
+  if rhs != null {
+    rcl = el_ex_closure::record_capture_literal(e, vars, op, target, rhs!);
+    if rcl != null {
+      return rcl!;
+    }
+  }
   // (`parse_var_inner`: Rust parses the target as an expression, so the target's variable —
   // a bare name or the root of a projected place, `t.0`, `g.by_k`, `v[i].f` — is a user's
   // mention of it, parameters included: marked on every route, whichever lowering the place

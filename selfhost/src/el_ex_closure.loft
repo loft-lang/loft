@@ -169,6 +169,12 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           caps += [el::Capture { name: c, tp: if e.first_pass { if (ct is TyUnknown) { ct } else { ir::TyUnknown { n: 0 } } } else { el_types::without_deps(ct) } }];
           continue;
         }
+        // (A record the lambda writes whole is shared as a read one is: the write builds into the
+        // record the capture points at — `plain_capture_write`.)
+        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && record_type(e, ct) && !(ct is TyOptional) {
+          caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+          continue;
+        }
         if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
@@ -604,6 +610,28 @@ pub fn fn_record_def(e: el::El, pos: ir::Position) -> integer {
 // `x = v` / `x op= v` in a lambda where `x` is a capture held as a plain field of its closure
 // record (no cell): the field set from the value, a compound reading the field first.  Null
 // where the target is no such capture.
+// `p = S { … }` in a lambda where `p` is a SHARED record capture (a pointer field of the closure
+// record): the literal is built into the record the field points at, field by field
+// (`literal_into_place` on `OpGetDbRef(__closure, pos)`).  Second pass only; null otherwise.
+pub fn record_capture_literal(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
+  name = match e.p.nodes[target] { SName { name: tn, member: tm } => if tm == "" { tn } else { "" }, _ => "" };
+  if e.first_pass || op != "=" || name == "" || e.closure_var < 0 || e.closure_rec < 0 || !(e.p.nodes[rhs] is SStructLit) || len([for c in e.captures if c.name == name { 1 }]) == 0 {
+    return null;
+  }
+  a = attr_nr(el::def(e, e.closure_rec), name);
+  if a < 0 {
+    return null;
+  }
+  ft = el::def(e, e.closure_rec).attributes[a]!.typedef[0] ?? ir::TyVoid;
+  srd = match el_types::base(ft) { TyReference { n: fn0, dep: fd0 } => if len(fd0) > 0 && el::def(e, fn0).def_type == el::DT_STRUCT { fn0 } else { -1 }, _ => -1 };
+  if srd < 0 || struct_literal_def(e, rhs) != srd {
+    return null;
+  }
+  el_vars::in_use(vars, e.closure_var, true);
+  place = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: e.closure_var }, ir::NdInt { n: field_position(e, e.closure_rec, name) }]);
+  el_ex_place::literal_into_place(e, vars, place, srd, rhs, in_place: true)
+}
+
 pub fn plain_capture_write(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
   name = match e.p.nodes[target] { SName { name: tn, member: tm } => if tm == "" { tn } else { "" }, _ => "" };
   if name == "" || el_vars::var(vars, name) >= 0 || len([for c in e.captures if c.name == name { 1 }]) == 0 {
