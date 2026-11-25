@@ -174,7 +174,7 @@ off any other parameter (`h.link`) names the record that slot holds, a store of 
 the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
 reads the answer as what its records know that slot of the argument holds — so a join whose
 witness is the holder adopts the record, and the two holders' frees are one store's
-(`@FR-F-Ret`, loft#2511; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
 the callee such a record is judged only where it is answered: who owns a field's value is not
 one fact here (a record a stored reference names, a generator a hand-off flag guards).
 A fn-ref a callee hands
@@ -222,8 +222,8 @@ copy into one local is one store across its passes, as `OpDatabase`'s is
 A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@FR-H-RefHome`) is
 gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
 `r` names an ended generation from there, and writing it into a field is a use after its end —
-every later read of that field finds the wiped record (loft#2621;
-`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
+every later read of that field finds the wiped record
+(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
 A bind that joins at run time, first or a reassignment, copies what lies in its witness's
 store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second

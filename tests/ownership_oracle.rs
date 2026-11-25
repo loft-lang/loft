@@ -264,7 +264,7 @@ fn records_clean_on_generated_fuzz_corpus() {
 /// The problem count over `tests/scripts` and every language-suite program may only fall.
 /// Each line is a records gap or a compiler defect (STORE_RECORDS.md § Every new defect); one
 /// resolved lowers the baseline.
-const LIFETIME_BASELINE: usize = 12;
+const LIFETIME_BASELINE: usize = 10;
 
 /// The programs the ratchet must read a report of, at least: every compiling program of
 /// `tests/scripts` and the suite reports, so a sweep that read far fewer read silence.

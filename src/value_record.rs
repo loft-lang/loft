@@ -914,6 +914,20 @@ fn callee_shape(
     let Type::Reference(record, _) = def.returned().peel_link().base() else {
         return Err("no record result");
     };
+    // A VALUE struct read out of a parameter is copied (@PLN107), so a body answering one of
+    // its parameters binds each arm by a copy, which the record form hands to the caller as
+    // its answer.  Read field-wise into a tuple, that copy has no owner and leaks once per call
+    // (loft#2641).  `LOFT_NO_VALUE_PARAM_DECLINE=1` admits it as before.
+    if data.is_value_struct(*record)
+        && !crate::env_once!(std::env::var_os("LOFT_NO_VALUE_PARAM_DECLINE").is_some())
+        && def.returned().depend().iter().any(|&a| {
+            def.attributes
+                .get(a as usize)
+                .is_some_and(|attr| !attr.hidden)
+        })
+    {
+        return Err("a value struct answering a parameter");
+    }
     let layout =
         flat_layout(data, stores, *record, tp, vr.view_offs.get(&tp)).ok_or("no flat layout")?;
     let key = key_of(*record, tp);

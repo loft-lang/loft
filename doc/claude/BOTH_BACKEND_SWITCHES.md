@@ -429,6 +429,11 @@ closure record that takes a mutated parameter's cell (`__bx_<name>`, whose recor
 the parameter's name): a run that builds no closure releases the cell nowhere
 (`closures/L-CapBox/2639-…`).
 
+**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, the value-record pass, BOTH backends)
+admits a function whose value-struct answer names a parameter into the tuple rewrite again: its
+body's copy of that parameter then has no owner and leaks once per call
+(`rewrites/R-ValueRecord/2641-…`).
+
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
 (`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
