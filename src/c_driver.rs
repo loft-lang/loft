@@ -441,6 +441,21 @@ pub(crate) enum Placement {
     Shipped { dynamic: bool },
 }
 
+/// Where the C source of one build is written: ONE name in a directory of the process's own.
+/// The compiler writes the file's name into the executable (its symbol table), so a name that
+/// carried the process id made two builds of one program two different executables (@PLN229,
+/// reproducible builds).
+fn source_place(
+    scratch: &std::path::Path,
+    pid: u32,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), BuildError> {
+    let dir = scratch.join(format!("loft_native_c_{pid}"));
+    fa::create_dir_all(&dir)
+        .map_err(|e| BuildError::Rejected(format!("cannot create {}: {e}", dir.display())))?;
+    let src = dir.join("loft_native_c.c");
+    Ok((dir, src))
+}
+
 /// The content key of one build: the C text, the compiler — the program named and its
 /// identity — the flags, and each linked input's size and modification time (an archive is
 /// content-addressed by its name already; a raw shim source is not).  The name is keyed beside
@@ -1255,13 +1270,7 @@ pub(crate) fn build(
     }
     let scratch = loft::platform::scratch_dir();
     let pid = std::process::id();
-    // The source keeps ONE name in a directory of its own: the compiler writes the file's name
-    // into the executable (its symbol table), so a name that carried the process id made two
-    // builds of one program two different executables (@PLN229, reproducible builds).
-    let src_dir = scratch.join(format!("loft_native_c_{pid}"));
-    fa::create_dir_all(&src_dir)
-        .map_err(|e| BuildError::Rejected(format!("cannot create {}: {e}", src_dir.display())))?;
-    let src = src_dir.join("loft_native_c.c");
+    let (src_dir, src) = source_place(&scratch, pid)?;
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
     // A unit written with source lines (the debug tier) hands the code between its loft
     // functions back to this file, under the name it is written as here.
