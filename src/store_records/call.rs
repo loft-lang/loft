@@ -167,6 +167,23 @@ impl Run<'_> {
         }
     }
 
+    /// The stores a copy's source names: a variable's, a tuple member's — and a member of a
+    /// nested tuple held whole (`_tuphold_1 = t.0`, then `_tuphold_1.0`), which has no member of
+    /// its own here, every store its holder names.
+    pub(super) fn copy_source_pts(st: &State, src: &Value) -> Pts {
+        match src.unspan() {
+            Value::TupleGet(t, _) if Self::named_var(st, src).is_none() => Self::pts(st, *t),
+            _ => Self::named_var(st, src).map_or_else(Pts::new, |v| Self::pts(st, v)),
+        }
+    }
+
+    /// The code generator emits no `OpFreeRef` of a never-free variable
+    /// (`Codegen::generate_call`, S34), including one a move made never-free.
+    pub(super) fn free_not_emitted(&self, x: u16) -> bool {
+        x < MEMBER_BASE
+            && (self.data.def(self.d_nr).variables.is_skip_free(x) || self.moved_away.contains(&x))
+    }
+
     pub(super) fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
         self.hook_skipped(d, args, &st);
@@ -187,12 +204,7 @@ impl Run<'_> {
                 return st;
             }
             if let Some(x) = args.first().and_then(|a| Self::named_var(&st, a)) {
-                // The code generator emits no `OpFreeRef` of a never-free variable
-                // (`Codegen::generate_call`, S34), including one a move made never-free.
-                let dropped = name == "OpFreeRef"
-                    && x < MEMBER_BASE
-                    && (self.data.def(self.d_nr).variables.is_skip_free(x)
-                        || self.moved_away.contains(&x));
+                let dropped = name == "OpFreeRef" && self.free_not_emitted(x);
                 // A text free of a tuple member releases the text in it; a nested member's
                 // record stores (`u.2` of `(s, w, (h, w))`) are their work-refs' to free.
                 let text_of_member = d == ops.text_free && x >= MEMBER_BASE;
@@ -374,6 +386,27 @@ impl Run<'_> {
             .rev()
             .find(|(g, _)| *g == v)
             .map(|(_, w)| *w);
+        // A hook on a store whose lease a code-generator copy took runs it a second time for
+        // one value: the copy's own release runs it too (`(H-Lease)`, loft#2552's copy arm).
+        let twice = Self::stores_of(&Self::pts(st, v))
+            .into_iter()
+            .find_map(|k| {
+                let c = *st.lease_copied.get(&k)?;
+                (info_of(st, k).has(LIVE) && unless != Some(c) && c != v).then_some(c)
+            });
+        if let Some(c) = twice {
+            let (name, copy) = (self.var_name(v), self.var_name(c));
+            self.find(
+                "copied-lease",
+                u32::MAX,
+                format!(
+                    "`{copy}` is a copy the code generator makes of `{name}`'s value, which owns a \
+                     droppable and declares no OpCopy, and {} runs its drop hook on `{name}` too: \
+                     one value, two drops",
+                    self.data.def(d).name()
+                ),
+            );
+        }
         for k in Self::stores_of(&Self::pts(st, v)) {
             if let Some(w) = unless {
                 st.dropped_unless.insert((k, w));
@@ -416,9 +449,20 @@ impl Run<'_> {
         let Some(v) = Self::first_var(args, 0) else {
             return;
         };
+        // A free the code generator does not emit releases nothing.
+        if self.free_not_emitted(v) {
+            return;
+        }
         let function = &self.data.def(self.d_nr).variables;
         let tp = function.tp(v).clone();
-        if tp.heap_def_nr().is_none() || !self.data.type_owns_droppable_anywhere(&tp) {
+        // A type with no release function (a closure record that only borrows its captures)
+        // holds no lease: its drop site runs nothing.
+        let Some(def) = tp.heap_def_nr() else {
+            return;
+        };
+        if !self.data.type_owns_droppable_anywhere(&tp)
+            || self.data.drop_cascade_nr(def) == u32::MAX
+        {
             return;
         }
         // A value handed on (its hand-off flag may be true here) is freed bare: its lease went
@@ -476,19 +520,29 @@ impl Run<'_> {
         let mut st = st;
         self.handed_off_drop(d, args, &mut st);
         if d == ops.copy_record
-            && let Some(src) = Self::first_var(args, 0)
+            && let Some(src) = args.first()
         {
-            // Only the displacement before a rebind (`OpCopyRecord(x, __disp_N)`) moves the
-            // lease: `x` is re-minted or freed bare after it, and the hook runs on the copy.
-            for k in Self::stores_of(&Self::pts(&st, src)) {
-                st.dropped.insert(k);
+            // A record copy moves the source's lease to the copy: the displacement before a
+            // rebind (`OpCopyRecord(x, __disp_N)`, `x` re-minted after it) and a tuple member's
+            // fill (`OpCopyRecord(t.0, __ref_p2_N)`, the source freed bare) both run the hook
+            // on the copy alone.
+            let from = Self::stores_of(&Self::copy_source_pts(&st, src));
+            for k in &from {
+                st.dropped.insert(*k);
             }
-            // The destination holds new content, with a lease of its own.
+            // The destination holds new content, with a lease of its own — or the lease a
+            // code-generator copy already took, carried on (a displacement of that copy's
+            // source still names it).
+            let carried = from.iter().find_map(|k| st.lease_copied.get(k).copied());
             if let Some(dst) = Self::first_var(args, 1) {
                 for k in Self::stores_of(&Self::pts(&st, dst)) {
                     st.dropped.remove(&k);
                     st.dropped_must.remove(&k);
                     st.dropped_unless.retain(|(d, _)| *d != k);
+                    st.lease_copied.remove(&k);
+                    if let Some(c) = carried {
+                        st.lease_copied.insert(k, c);
+                    }
                 }
             }
         }
@@ -681,6 +735,7 @@ impl Run<'_> {
                 st.dropped.remove(&k);
                 st.dropped_must.remove(&k);
                 st.dropped_unless.retain(|(d, _)| *d != k);
+                st.lease_copied.remove(&k);
             }
             // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
             // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in

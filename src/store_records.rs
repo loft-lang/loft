@@ -184,6 +184,11 @@ struct State {
     /// The MUST twin of `dropped`: a hook ran on it on every path reaching here where it is
     /// live (a null side of `if bool(x) drop(x)` does not count against it).
     dropped_must: BTreeSet<SKey>,
+    /// The stores whose lease a code-generator copy took (`x = y` of a type that owns a
+    /// droppable and declares no `OpCopy`), with the copy's variable: the copy is the move it
+    /// stands for while the source is freed bare, and a hook run on one of them later is the
+    /// second drop of one value (`(H-Lease)`).
+    lease_copied: BTreeMap<SKey, u16>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -746,6 +751,13 @@ fn join_state(a: &State, b: &State) -> State {
         placed: a.placed.union(&b.placed).copied().collect(),
         dropped: a.dropped.union(&b.dropped).copied().collect(),
         dropped_unless: a.dropped_unless.union(&b.dropped_unless).copied().collect(),
+        lease_copied: {
+            let mut m = a.lease_copied.clone();
+            for (k, c) in &b.lease_copied {
+                m.entry(*k).or_insert(*c);
+            }
+            m
+        },
         dropped_must: {
             let live = |st: &State, k: &SKey| st.stores.get(k).is_some_and(|i| i.has(LIVE));
             let mut m: BTreeSet<SKey> = a

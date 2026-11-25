@@ -348,7 +348,7 @@ impl Run<'_> {
     /// per pass (loft-suite O-Borrow/2338's `looped`).  `LOFT_RECORDS_NO_COPY_IN_PLACE=1` mints
     /// every copy.
     pub(super) fn copied(&mut self, st: &mut State, node: &Value) -> Val {
-        self.lease_copy(node);
+        self.lease_copy(st, node);
         let site = self.site(node, Origin::Copy);
         // A loop's head joins the null of the first pass with the store an earlier pass copied
         // in here: the null path mints that same store and the others re-initialise it, so the
@@ -384,31 +384,54 @@ impl Run<'_> {
     /// The program may not write a copy of a type that owns a droppable and declares no `OpCopy`
     /// (`(H-Copy-Refuse)`), so one the code generator makes runs the hook twice for one value —
     /// a join's copy arm where the value had to move (loft#2552).  The type facts only: which
-    /// copies the compiler meant to be moves is its own decision, not read here; a copy whose
-    /// source's drop a hand-off flag guards is read as the move it is.
+    /// copies the compiler meant to be moves is its own decision, not read here.  A copy whose
+    /// source's drop a hand-off flag guards is read as the move it is; a copy out of a local is
+    /// judged where its source's store ends — bare, a move; under a hook, the second drop.
     /// Only under `LOFT_RECORDS_LEASE=1`: the lease checks are a ratchet (`@PLN228` P9).
-    pub(super) fn lease_copy(&mut self, node: &Value) {
+    pub(super) fn lease_copy(&mut self, st: &mut State, node: &Value) {
         let Value::Set(x, val) = node.unspan() else {
             return;
         };
-        let data = self.data;
-        let function = &data.def(self.d_nr).variables;
-        // A copy of a variable whose own drop a hand-off flag guards (`__hoff_<src>`, set as the
-        // copy runs) is the move it stands for: the source's hook does not run.
-        if let Value::Var(src) = val.unspan()
-            && function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX
-        {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none()) {
             return;
         }
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
         let tp = function.tp(*x).clone();
         let Some(def) = tp.heap_def_nr() else {
             return;
         };
+        // A type with no release function runs no hook on either structure.
         if !data.any_drop_hook()
             || !data.type_owns_droppable_anywhere(&tp)
-            || crate::lease::copy_cascade_nr(data, def) != u32::MAX
-            || crate::lease::copy_hook_nr(data, def) != u32::MAX
-            || crate::env_once!(std::env::var_os("LOFT_RECORDS_LEASE").is_none())
+            || data.drop_cascade_nr(def) == u32::MAX
+        {
+            return;
+        }
+        // A type that declares `OpCopy` gives a copy a lease of its own (the hook runs on it).
+        let own_lease = crate::lease::copy_cascade_nr(data, def) != u32::MAX
+            || crate::lease::copy_hook_nr(data, def) != u32::MAX;
+        if let Value::Var(src) = val.unspan()
+            && !function.is_argument(*src)
+        {
+            // A copy out of a local takes its stores' lease: a move while the source is freed
+            // bare (a whole-value copy of a droppable, a literal built in a work reference and
+            // copied into its local), two drops where a hook still runs on one of them
+            // (`handed_off_drop`).  An argument's hook is its caller's, out of sight here.  A
+            // copy whose source's drop a hand-off flag guards (`__hoff_<src>`, set as the copy
+            // runs) is the move it stands for: the source's hook does not run.
+            let moved = function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX;
+            for k in Self::stores_of(&Self::pts(st, *src)) {
+                st.dropped.insert(k);
+                if !own_lease && !moved {
+                    st.lease_copied.insert(k, *x);
+                }
+            }
+            return;
+        }
+        if own_lease
+            || matches!(val.unspan(), Value::Var(src)
+                if function.var(&format!("__hoff_{}", function.name(*src))) != u16::MAX)
         {
             return;
         }
