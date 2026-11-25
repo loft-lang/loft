@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a nested vector literal in VALUE position — a template's argument, a `for`'s
+// source — is typed `vector<vector<integer>>` on the first pass, as a bound one is, so the
+// generic call predicts its result and the loop variable has its type before the second pass.
+// Prints: [[2],[3]] / [1] / [2]
+
+fn tail<T>(a: vector<T>, n: integer) -> vector<T> { a[n..] }
+fn main() {
+  vv = tail([[1], [2], [3]], 1);
+  println("{vv}");
+  for xx in [[1], [2]] { println("{xx}"); }
+}

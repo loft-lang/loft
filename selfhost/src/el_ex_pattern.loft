@@ -2878,8 +2878,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
-  // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.)
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t))) {
+  // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.  So
+  // does a vector element in value position — a `for`'s source, an argument, a subscript's
+  // receiver: `vector<vector<integer>>`.)
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && el_types::base(in_t) is TyVector)) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
