@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `h` captures `g`, a function LOCAL bound to a lambda that captures nothing:
+// its closure half is typed `__fn_record`, as a parameter's is (`fn_lambda_of` names no
+// capturing lambda).  A local bound to a capturing lambda stays refused.
+// Prints: q! q! | 5
+
+fn inner() -> text { g = fn() -> text { "q" }; h = fn() -> text { g() + "!" }; t = ""; t += h() + " "; t += h(); "{t} | {len(t)}" }
+fn main() { println(inner()); }

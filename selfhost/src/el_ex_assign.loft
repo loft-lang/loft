@@ -919,6 +919,13 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   // (`set_closure_var_of`: a local assigned while a capturing lambda's record is pending holds
   // that record — what a void call through it writes its by-value captures back from.)
+  if op == "=" && vars.closure_made {
+    cbv = match e.p.nodes[target] { SName { name: cbn, member: cbm } => if cbm == "" { el_vars::var(vars, cbn) } else { -1 }, _ => -1 };
+    if cbv >= 0 && !vars.closure_bound.contains(cbv) {
+      vars.closure_bound += [cbv];
+    }
+    vars.closure_made = false;
+  }
   if op == "=" && vars.last_closure_w >= 0 {
     av = match e.p.nodes[target] { SName { name: an, member: am } => if am == "" { el_vars::var(vars, an) } else { -1 }, _ => -1 };
     if av >= 0 {

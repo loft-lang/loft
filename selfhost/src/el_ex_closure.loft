@@ -191,7 +191,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // (loft#1869: a function-valued PARAMETER is captured as its definition number beside
         // its closure record, `<name>__clos` — whose lambda is a run-time fact, `__fn_record`.
         // A local's, whose lambda the bind may know, is not carried yet.)
-        fn_cap = el_types::base(ct) is TyFunction && vars.vars[cv].argument;
+        fn_cap = el_types::base(ct) is TyFunction && (vars.vars[cv].argument || !vars.closure_bound.contains(cv));
         if !heap && !scalar_cap && !fn_cap {
           return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
         }
@@ -394,6 +394,7 @@ fn walk_mutations(e: el::El, n: ir::Node, cand: vector<text>, cp: integer, f: ir
 
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   vars.last_closure = d;
+  vars.closure_made = true;
   vars.last_closure_body = body;
   // `collect_mutated_captures`: the captures the lambda's body writes, on its definition — the
   // fact a call through it (`fn_ref_call` choosing the cell-reading form) and the closure's
