@@ -150,3 +150,4 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C167](DESIGN_DECISIONS_PLATFORM.md#c167--a-security_critical-advisory-refuses-the-package-release-it-names) — A `security_critical` advisory refuses the package release it names
 - [C169](DESIGN_DECISIONS_PLATFORM.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart) — A C unit carries its whole runtime; no build compiles the runtime apart
 - [C170](DESIGN_DECISIONS_PLATFORM.md#c170--a-backend-stays-only-while-it-is-semantically-equal-to-the-others) — A backend stays only while it is semantically equal to the others
+- [C172](DESIGN_DECISIONS_PLATFORM.md#c172--a-debug-session-answers-only-whoever-holds-its-runs-token) — A debug session answers only whoever holds its run's token

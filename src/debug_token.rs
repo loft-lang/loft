@@ -53,7 +53,15 @@ fn well_formed(t: &str) -> bool {
 fn drawn() -> Option<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::getrandom(&mut bytes).ok()?;
-    Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    Some(
+        bytes
+            .iter()
+            .fold(String::with_capacity(2 * TOKEN_BYTES), |mut s, b| {
+                use std::fmt::Write as _;
+                let _ = write!(s, "{b:02x}");
+                s
+            }),
+    )
 }
 
 /// A wasm build opens no debug listener, so it draws nothing.

@@ -18,7 +18,7 @@ LOFT_LOG=full cargo test -- my_test 2>&1
 ## Contents
 
 - [Interactive debugging (`loft debug`)](#interactive-debugging-loft-debug)
-- Moved to their own guides: [`LOFT_LOG` presets and traces](DEBUG_TRACE.md) · [probe matrices](DEBUG_PROBES.md) · [introspection CLI](DEBUG_INTROSPECT.md) · [store faults](DEBUG_STORES.md) · [index and viewer](DEBUG_VIEW.md)
+- Moved to their own guides: [`LOFT_LOG` presets and traces](DEBUG_TRACE.md) · [probe matrices](DEBUG_PROBES.md) · [introspection CLI](DEBUG_INTROSPECT.md) · [store faults](DEBUG_STORES.md) · [index and viewer](DEBUG_VIEW.md) · [who may drive a session](DEBUG_CHANNELS.md)
 - [Debugging a Parse Error or Wrong IR](#debugging-a-parse-error-or-wrong-ir)
 - [Debugging a Runtime Crash or Wrong Result](#debugging-a-runtime-crash-or-wrong-result)
 - [When it fails in CI but passes locally](#when-it-fails-in-ci-but-passes-locally)
@@ -65,7 +65,8 @@ surface* is the canonical guide with a worked example; the wire contract is
 there: `launch` loads, `run` starts, and breakpoints go between them.
 
 The same protocol in a browser: `loft debug prog.loft --serve [--port <n>]` (8770
-unless named) prints the page's address.  The session runs code with your file
+unless named) prints the page's address, which carries the session's token: who may drive a
+session, and how, is [DEBUG_CHANNELS.md](DEBUG_CHANNELS.md).  The session runs code with your file
 access, so the server answers only a page it served itself, addressed as
 `127.0.0.1:<port>` or `localhost:<port>`; any other name or port gets a 403.  From
 another machine, forward the SAME port number, so the address the browser uses is
