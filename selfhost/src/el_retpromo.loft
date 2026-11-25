@@ -488,7 +488,9 @@ pub fn classify(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer, tran
   if record_ret && !e.first_pass && buf_attr >= 0 && buf_var >= 0 && buf_var != v {
     // (The port's IR of a mid-body `return` is its delivery already, a copy naming the buffer;
     // Rust asks before it.  A returned plain local reads no buffer.)
-    lt: ir::Node? = if ctx.site == MID_RETURN { ctx.tail_ir } else { last_operator(code) };
+    // (At the tail, the value before this port's delivery copied it into the buffer — the copy
+    // reads the buffer, the value Rust asks about does not.)
+    lt: ir::Node? = if ctx.site == MID_RETURN { ctx.tail_ir } else if !(vars.ret_src is NdNull) { vars.ret_src } else { last_operator(code) };
     plain_local = ctx.site == MID_RETURN && ctx.tail_syn >= 0 && match e.p.nodes[ctx.tail_syn] { SName { member } => member == "", _ => false };
     if lt != null && !plain_local && delivered_leaf_reads(e, lt!, buf_var) {
       return says("SkipJoinArm", -1);
@@ -1652,9 +1654,20 @@ fn syn_read_roots(e: el::El, vars: el_vars::Vars, n: integer) -> vector<integer>
   }
 }
 
+// The variable a spelling names at the body's end, or — where its binding has ended, a pattern's
+// binding (`[a, ..] => a`, named `a#1`) — the one `name#k` binding of it, if there is exactly one.
+fn syn_var(vars: el_vars::Vars, name: text) -> integer {
+  v = el_vars::var(vars, name);
+  if v >= 0 {
+    return v;
+  }
+  c = [for x in vars.vars if starts_with(x.name, "{name}#") && !x.name.ends_with("#bind") { x#index }];
+  if len(c) == 1 { c[0]! } else { -1 }
+}
+
 fn syn_root_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
   match e.p.nodes[n] {
-    SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 },
+    SName { name, member } => if member == "" { syn_var(vars, name) } else { -1 },
     SMember { e: me, call } => if !call && me != null { syn_root_local(e, vars, me!) } else { -1 },
     // (An element read borrows what it is read from, `p[0]` the vector `p`.)
     SIndex { e: ie, range } => if !range && ie != null { syn_root_local(e, vars, ie!) } else { -1 },
