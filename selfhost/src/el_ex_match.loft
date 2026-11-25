@@ -2695,8 +2695,10 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
             tuple_joined = true;
           }
         } else if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
-          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
-          result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`) — `?` where
+          // either arm may be absent (`@FR-N-Join`): two variant-or-null `if` arms.
+          sje = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+          result = if b.tp is TyOptional || result is TyOptional { ir::TyOptional { inner: sje } } else { sje };
         } else if arm_settles(result, b.tp) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
           // join (`arm_join_type`).
