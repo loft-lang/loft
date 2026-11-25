@@ -1272,7 +1272,11 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   }
   // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
   // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
-  if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) {
+  // (Built apart from a place in a local, a scalar or text field reading the place is staged
+  // first, as in place — `k: v[1].k + 1` into a `__ref_N` ahead of the record's writes.  The
+  // ELEMENT form only: a field place keeps the refusal, Rust's head lists its unused `_elm_N` by
+  // when it was registered.)
+  if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) && !calls(e, place, "OpGetVector") {
     el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1323,11 +1327,30 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     }
     // (Named apart from the `built` below, so a loft without the `@FR-B-Scope` split fix
     // (2e7b305c7) builds this file: the first pass types only the later binding there.)
+    aouter_place = vars.lit_place;
+    aouter_stage = vars.lit_stage;
+    aouter_notes = vars.lit_notes;
+    aouter_root = vars.lit_root;
+    if !e.first_pass {
+      vars.lit_place = [place];
+      vars.lit_stage = [];
+      vars.lit_notes = [];
+      vars.lit_root = aroot;
+    }
     rec = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
+    vars.lit_root = aouter_root;
+    astage = vars.lit_stage;
+    vars.lit_place = aouter_place;
+    vars.lit_stage = aouter_stage;
+    vars.lit_notes = aouter_notes;
     if el_types::is_unknown(rec.tp) {
       return ex(ir::NdNull, ir::TyVoid);
     }
-    return ex(el_ir::cl(e, "OpCopyRecord", [rec.code, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
+    rcode = rec.code;
+    if len(astage) > 0 {
+      rcode = match rec.code { NdBlock { block: ob } => { obl = ob[0]; obl.operators = astage + obl.operators; ir::NdBlock { block: [obl] } }, _ => rec.code };
+    }
+    return ex(el_ir::cl(e, "OpCopyRecord", [rcode, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
   }
   // `@FR-H-RefSet`: a `reference<T>` field (`h.r`, the pointer read `OpGetDbRef(<owner>,
   // <pos>)`) is RE-POINTED by a literal: the record built apart in its own `__ref_p2_N` — its
