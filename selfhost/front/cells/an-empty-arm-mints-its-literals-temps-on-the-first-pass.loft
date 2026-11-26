@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: an empty `[]` arm mints its `_vec_N`/`_elm_N` on the first pass, the temp typed by the vector the arm becomes.
+// @FR-T-Chk-Vec: an `[]` arm is checked against the vector type its `if`/`match` answers.
+// @FR-M-Expr: the selected arm's value is the `match`'s value.
 // Prints: [1] 1 0 [1] ["a"]
 
 struct P { x: integer }

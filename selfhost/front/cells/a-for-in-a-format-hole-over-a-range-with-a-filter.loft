@@ -4,6 +4,8 @@
 // Gate E cell: a format-hole `for` over an integer range walks it through an "Iter range" block
 // (`n#index` started one below the start), and a filter (`if x > 1`) continues the walk where
 // it does not hold, ahead of the body.
+// @FR-I-Range: `1..4` walks 1, 2, 3 ([2,4,6]).
+// @FR-I-Filter: the `if x > 1` filter keeps only the elements it holds for ([2,3,4]).
 // Prints: [2,4,6] / [2,3,4]
 
 fn main() {

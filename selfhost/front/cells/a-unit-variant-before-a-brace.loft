@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a unit variant directly before a `{` (`if e == Owned { … }`) leaves an unused `__ref_p2_N` declared: Rust's second pass first reads it as an object literal and backs out.  `Owned == e` mints none.
+// @FR-E-Eq: `e == Owned` and `Owned == e` compare a struct enum by its variant.
 // Prints: 10 10 10
 
 enum P { Owned, Borrowed { base: integer } }

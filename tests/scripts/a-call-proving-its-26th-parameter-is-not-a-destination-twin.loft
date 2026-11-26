@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Fact-Twin: a twin is keyed by exactly the assumptions its call site proves, whatever the parameter count.
 //
 // The C's twin bits: a call whose arguments prove a parameter non-sentinel goes to an `__nn`
 // twin, one mask bit per parameter from bit 32, and the named twins (`__d`, `__ap`, …) take

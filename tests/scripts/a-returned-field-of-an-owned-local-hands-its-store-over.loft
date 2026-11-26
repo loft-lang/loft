@@ -1,3 +1,5 @@
+// @FR-R-ReturnField: the returned field of an owned local hands its store to the caller, and a parameter's field is still copied.
+//
 // `(R-ReturnField)`: `p = mk(…); return p.a` — the returned FIELD of an owned local is
 // answered as the local's own store at the field's position, instead of a fresh store minted
 // for the return and the field deep-copied into it.  The parser materialises such an exit

@@ -16,6 +16,9 @@
 //   as "bare variant 'BvcNil' has no type here", so the program does not run there.
 //   HOLDS: leak, panic and refusals are clean here on both backends.
 //   Score it again with `make falsify GUARD=<this file> REF=0b1c81580`.
+//
+// @FR-T-Chk-Var: a bare `BvcNil` checks against the operand's enum, declared across a module cycle.
+// @FR-F-Package: the `#package` modules read each other's items as their own.
 
 use bvc2501_ctx::*;
 

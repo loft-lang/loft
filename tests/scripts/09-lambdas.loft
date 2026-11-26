@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Lambda expressions: full-form fn(…), short-form |…|, and use with map/filter/reduce.
+//
+// @FR-L-Fn: `fn(x: integer) -> integer { … }` and `|x| { … }` both evaluate to a closure.
+// @FR-L-Apply: calling a closure held in a local or a `fn(…)` parameter binds its arguments and
+//   answers its body.
+// @FR-T-Chk-Lam: `apply(|x| { x + 10 }, 5)` checks the untyped lambda against `fn(integer) ->
+//   integer`.
 
 fn apply(f: fn(integer) -> integer, x: integer) -> integer {
   f(x)

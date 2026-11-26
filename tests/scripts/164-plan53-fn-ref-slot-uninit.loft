@@ -22,6 +22,9 @@
 // bytes happen to be zero from the zeroed store backing), but Miri aborts
 // with "uninitialized memory" because it tracks init status per byte.
 // On the fixed (MaybeUninit) code, Miri accepts the copy unconditionally.
+//
+// @FR-L-FnRef: `f = double` makes a fn-ref value of the bare function name.
+// @FR-L-Apply: `apply(f, 7)` and `add100(3)` bind the argument and answer the body.
 
 fn double(x: integer) -> integer {
   x * 2

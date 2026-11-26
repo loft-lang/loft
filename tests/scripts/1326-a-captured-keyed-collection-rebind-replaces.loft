@@ -44,6 +44,9 @@
 //   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.
+//
+// @FR-L-CapHeap: a captured keyed collection, vector or struct field is shared — `m += [...]`
+//   inside the closure is seen outside.
 
 struct Rw1326 { k: integer, v: integer }
 struct Tx1326 { k: text, v: integer }

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Surface: a name a library only imports for its own use is refused, naming the library that owns it.
 //
 // @ARGS: --lib tests/lib
 // @falsified-by: tests/falsified/c98-a-name-kept-below-a-facade-names-the-library-that-kept-it.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)

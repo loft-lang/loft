@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Tests for map, filter, and reduce higher-order functions.
+//
+// @FR-I-Map: `map(nums, double)` is `[for x in nums { double(x) }]`, element for element.
+// @FR-I-Filter: `filter(mixed, is_positive)` keeps exactly the passing elements in order.
+// @FR-I-Reduce: `reduce(nums, 100, add)` folds from the given initial value (115).
+// @FR-F-ParamHeap: a struct element handed to the callback is the caller's record, so `r.n = 99`
+//   reaches the source.
 fn double(x: integer) -> integer {
   x * 2
 }

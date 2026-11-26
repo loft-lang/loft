@@ -4,6 +4,8 @@
 // Gate E cell: `m = v[1..3]` in a generic — the element read at the variable's stride marker,
 // written in the fresh-copy shape each instance re-lowers, a vector bound read as its handle, and
 // the local's element keeping its borrow of `v` through the substitution.
+// @FR-Slice-Value: `v[1..3]` and `v[from..len(v)]` are fresh vectors of those ranges.
+// @FR-G-Mono: each instance (integer, text, record, vector element) slices at its bound type.
 // Prints: [6,7] ["b","c"] 2 [[2],[3]]
 
 struct Pt { x: integer, y: integer }

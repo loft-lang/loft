@@ -44,6 +44,11 @@
 //   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
 //   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
 //   those is clean on both. The native side was not scored in this sweep.
+//
+// @FR-Slice-KeyedIter: `a.m[1..4]` visits exactly the keys 1..3 (descending bounds on `[-nr]`),
+//   even while removing.
+// @FR-Col-RemoveKeyed: `r#remove` inside the range removes that key only; every other key stays
+//   reachable and in order.
 
 struct Rec  { nr: integer }
 struct Asc  { m: index<Rec[nr]> }

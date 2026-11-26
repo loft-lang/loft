@@ -5,6 +5,8 @@
 // literal bound to it is built in a store minted after its items and its element borrows that
 // store; a typed `v: vector<T> = []` in a sibling block does not, and the element borrows the
 // local.  The mark only grows: a later literal does not take it back.
+// @FR-B-Scope: `ops` bound in sibling blocks and in a loop body is a new binding in each.
+// @FR-O-Latest: the loop's `ops = []` frees what the latest assignment owned.
 // Prints: 1 2
 
 enum Nd { NdInt { n: integer }, NdSet { v: integer } }

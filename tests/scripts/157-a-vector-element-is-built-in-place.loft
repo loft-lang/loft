@@ -29,6 +29,11 @@
 // the same numbers, and that IS the claim.  The evidence that the delivery moved is the
 // A/B on one binary (`LOFT_NO_APPEND_IN_PLACE=1`, `smooth(20000)` 15.2M → 3.2M ns/op on
 // native, hashes equal) and `tests/append_in_place.rs`, which pins the emitted shape.
+//
+// @FR-F-Ret: a callee that returns its parameter hands the element a copy, so `p.a = 1` afterwards
+//   leaves the vector (a3 == 22).
+// @FR-R-Escape: building the element in place changes where the record lives, never what any cell
+//   answers.
 struct S { a: integer, b: integer }
 struct Box { s: S }
 struct Holder { items: vector<S> = [] }

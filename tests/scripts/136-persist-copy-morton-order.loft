@@ -25,6 +25,9 @@
 //   LOFT_PERSIST_TEST_PATH   a first image, written before the reference is taken
 //   LOFT_PERSIST_TEST_COPY   a second image, written while it is held (Morton order)
 //   LOFT_PERSIST_TEST_MODE   "write" | "read"
+//
+// @FR-S-Image: the spatial is rebuilt into the image while a held record keeps its value.
+// @FR-Slice-Box: a box answers exactly the records inside it — the gap box answers none.
 
 struct Pin {
   x: integer,

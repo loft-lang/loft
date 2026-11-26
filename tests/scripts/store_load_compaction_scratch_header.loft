@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: the rebuild into scratch keeps each claimed block's full extent, so the image loads and reads back.
 //
 // Regression — `store_load` must RETURN.  Compaction-on-load rebuilds the image
 // into a scratch store, and it wrote the root block's header back as the word

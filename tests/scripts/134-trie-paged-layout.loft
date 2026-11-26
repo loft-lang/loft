@@ -19,6 +19,10 @@
 // Env in:
 //   LOFT_PERSIST_TEST_PATH   the store file
 //   LOFT_PERSIST_TEST_MODE   "fresh" | "reload"
+//
+// @FR-S-Image: the writer lays the trie's nodes out in an order no reader can see.
+// @FR-Col-Trie: key order, `t["kerkweg"]`, `t["kerkwe"]` (absent) and the `kerk` prefix (not
+//   `kerx`) agree before and after.
 
 struct PWord {
   w: text,

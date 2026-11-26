@@ -20,6 +20,9 @@
 // worked on both backends.
 //
 // The fixture package is `tests/lib/p248_pkg/`.
+//
+// @FR-F-ParamRef: `s.p248_load(99, make_keys())` writes through the receiver to the caller's `s`.
+// @FR-F-Args: the inline call argument is reduced to a value before the body runs.
 
 use p248_pkg;
 

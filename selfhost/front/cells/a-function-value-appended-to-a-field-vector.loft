@@ -3,6 +3,8 @@
 //
 // Gate E cell: `r.hs += [f]` on a `vector<fn(integer)>` field pushes the function value's
 // four-byte definition number, `OpPushInt4(OpGetField(r, …), FnRefDnr(f))`.
+// @FR-F-ParamGrow: `r.hs += [f]` in the callee grows the caller's vector field.
+// @FR-L-FnRef: the appended function value is called through the element (say 2).
 // Prints: say 2
 
 struct Reg { hs: vector<fn(integer)> }

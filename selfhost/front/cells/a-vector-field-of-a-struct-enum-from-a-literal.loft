@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector field of a struct enum written from a literal: a variant literal is built in the element, a unit variant copied into it (`EnumUnitLit`); the field's vector row is laid out with the struct, after the enum's variants.
+// @FR-T-Chk-Vec: the field's literal is checked against `vector<Part>`, each item against `Part`.
+// @FR-T-Chk-Var: unit and data variants check against their enum.
 // Prints: 2 4 3
 
 struct P { n: integer }

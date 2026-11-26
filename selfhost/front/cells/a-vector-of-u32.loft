@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `vector<u32>` is its own vector (`vector<integer(0, 4294967295)>` over `int_raw<0,false>`) at stride 4: each element built as a record (`OpSetInt4Raw`), read whole (`OpGetInt4Full`), written raw — a parameter, a literal, an append, an element write, a loop, a formatted vector.
+// @FR-L-Narrow: a `vector<u32>` element stores at 4 bytes.
+// @FR-L-Narrow-Enc: values past the signed maximum (4000000000) decode unsigned.
 // Prints: 7 4000000000 3 5 [4000000000,3000000000,7]
 
 fn tot(v: vector<u32>) -> integer { s = 0; for x in v { s += x % 1000; } s }

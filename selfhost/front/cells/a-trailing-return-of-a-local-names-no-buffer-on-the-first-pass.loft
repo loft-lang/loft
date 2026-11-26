@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: `return v;` at the end names no buffer on the first pass; a tail `v` does, and its caller borrows the call's buffer.
+// @FR-F-Return: a trailing `return v;` and a tail `v` both answer the local.
+// @FR-F-Ret: each call's vector is the caller's own value.
 // Prints: [1] [1] [0,1] [0,1]
 
 fn a1() -> vector<integer> { v: vector<integer> = []; v += [1]; return v; }

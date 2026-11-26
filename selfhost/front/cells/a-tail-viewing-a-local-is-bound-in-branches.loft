@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tail answering a local that views another local, in branches and under `vector<T>?`, binds the buffer on the first pass.
+// @FR-F-Ret: a returned local viewing another local (`e = vv[0]`) is handed out as an owned value, in branches and under `vector<T>?`.
 // Prints: [11,22,33] [11,22,33] [1,2] [11,22,33] [11,22,33]
 
 fn b1(k: integer) -> vector<integer>? { if k < 0 { null } else { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e } }

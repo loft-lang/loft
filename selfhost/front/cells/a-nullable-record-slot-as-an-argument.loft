@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tagged `S?` slot — a vector element, a field — handed to an `S?` parameter is read through its tag (`convert`'s tagged arm, loft#1138): absence arrives as the reference null.
+// @FR-L-Null-Tag: a tagged `S?` element or field handed to an `S?` parameter arrives absent as null (-1) and present as the record (3, 6).
+// @FR-E-Record: a field left out of the literal takes its declared default, null.
 // Prints: 3 -1 6 -1
 
 struct S { a: integer }

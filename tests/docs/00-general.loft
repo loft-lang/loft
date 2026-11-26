@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Loft Language
 // @TITLE: A statically-typed scripting language inspired by Rust.
+// @FR-F-Interp: a template's holes are evaluated expressions, spliced into the text.
+// @FR-E-Uncomp: an integer division by zero is null, not a fault.
 // Welcome to Loft! Loft is a concise, statically-typed language designed to be
 // safe and easy to embed in larger Rust projects. It is great for scripting
 // game logic, configuration, data transformations, and anywhere you want a

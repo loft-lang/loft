@@ -32,6 +32,9 @@
 //
 // Also not covered here: `rev(coll[lo..])` ignores its lower bound on BOTH backends — a
 // separate defect this fix made reachable (the crash used to hide it), filed on its own.
+//
+// @FR-Slice-KeyedIter: `s[1..3]`, `s[1..]`, `s[..3]`, `s[..]` walk exactly the keys inside, in key order.
+// @FR-Col-Lookup: `s[2]` finds its record and `s[9]` is null.
 
 struct R689 { k: integer, v: integer }
 struct T689 { k: text,    v: integer }

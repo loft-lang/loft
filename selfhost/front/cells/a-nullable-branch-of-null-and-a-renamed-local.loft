@@ -3,6 +3,8 @@
 //
 // Gate E cell: a `vector<T>?` branch of `null` and a local the buffer was renamed onto builds the
 // local in place; the body answers the buffer's `?`.
+// @FR-F-Ret: a `vector<integer>?` function answers its local's value or null.
+// @FR-F-Render: a present vector renders as `[1,2]`, an absent one as `null`.
 // Prints: [1,2] null
 
 fn b3(k: integer) -> vector<integer>? { if k < 0 { null } else { e = [1, 2]; e } }

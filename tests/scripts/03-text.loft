@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Text: concatenation, length, indexing, slicing, UTF-8, iteration, search.
+//
+// @FR-I-Text: `for c in t` visits each codepoint, `c#index` / `c#next` its byte offsets, zero times
+//   over "".
+// @FR-E-Concat: `"abc" + 'd'` and `ca += 'x'` join a character onto a text.
+// @FR-Slice-Value: `s[a..b]`, `s[a..]`, `s[..b]` answer the substring, "" when the bounds are
+//   equal.
 fn main() {
   // --- Concatenation ---
   assert("hello" + " world" == "hello world", "text concat");

@@ -16,6 +16,11 @@
 //   (the same lines with the view on and off, both backends) and a sabotage: with
 //   `foreign_span`'s offset struck (`base` not advanced by `lo`) v1's comparison against
 //   the copying path fails — the view of m[10..30] answered m[0..20] (2026-09-28).
+//
+// @FR-Slice-Value: a slice of the mapping answers the same values as the copying path's slice
+//   (negative, clamped, empty bounds included).
+// @FR-Const-Foreign: the view presents as a plain vector and outlives the handle it was cut from.
+// @FR-B-Copy: `w10 = s10` binds an independent writable copy; the view keeps its bytes.
 
 struct Chunk { bytes: vector<u8>, tag: integer }
 

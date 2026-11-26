@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // I13: Iterator protocol — for x in val when val's type has operator next(self) -> Item?
+//
+// @FR-Op-Back: `for x in c` is `c.next()` until it answers null (0 + 1 + 2 = 3).
+// @FR-Op-Fold: the loop reaches the `operator next` definition.
 
 struct Counter {
   current: integer,

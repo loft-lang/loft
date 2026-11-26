@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // C56: ?? return expr — null-coalesce with early return.
+//
+// @FR-E-Coalesce: the right of `??` runs only when the left is null, so `return -1` fires only then.
+// @FR-C-Never: `return …` stands where the integer value goes.
 
 fn maybe_int(x: integer) -> integer? {
   if x < 0 { return null; }

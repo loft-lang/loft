@@ -25,6 +25,9 @@
 // functions below do exactly that — which also makes the rebind observable and
 // turns it into the test's own oracle: after `read_one`, the caller's handle is
 // the FRESH one, and the format it carries is the one that function set.
+//
+// @FR-B-Ref-Uniform: `f#read`, `f#format =`, `f +=` and `f#exists` work through `&File` as on a `File`.
+// @FR-F-ParamRef: `f = file(p)` inside the callee rebinds the CALLER's handle (reads record one again).
 
 // @PLN9: cwd-relative paths — this test does cwd-relative file I/O.
 #cwd

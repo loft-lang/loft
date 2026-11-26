@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector of records formatted after the literal that made its definitions: the first pass knows no row.
+// @FR-F-Render: a vector of records renders as `[` the elements `]`.
+// @FR-F-Render-Fields: each record renders every field in declaration order ({x:5,y:6}).
 // Prints: [{x:5,y:6}]
 struct Pt { x: integer, y: integer }
 

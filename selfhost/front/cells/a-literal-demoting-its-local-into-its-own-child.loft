@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a literal rebound into its own local with that local as the whole value of an out-of-line field demotes the old record into the field (demote_prelude: OpDemoteRec where the local holds a record, the literal's own prelude where it is absent).
+// @FR-B-OutOfLine: `h = N { v: i, next: h }` puts the old value of `h` into the new child (h.next.v = 3).
+// @FR-E-Asgn: the literal reads `h` (and a null `r`) before the rebind writes it (4 3 7).
 // Prints: 4 3 7
 struct N { v: integer, next: N? }
 

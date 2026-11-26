@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Boolean logic, comparisons, and truthiness.
+//
+// @FR-G-Prec: `&&`/`and` bind tighter than `||`/`or`, and `!` tighter than both.
+// @FR-E-Truthy: a null in an `assert` condition or under `!` reads as false.
 fn main() {
   // --- Literals ---
   assert(true, "true is truthy");

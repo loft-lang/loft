@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a struct field whose record holds its host is laid out of line (child_rec<S>): read through OpRefFromChildRec; in a literal an omitted child is the null sentinel, a child literal whose values read no record is built in the child (OpChildRecInPlace), any other apart and copied in (OpSetChildRec).
+// @FR-T-Recursive: a struct reaching itself through a `Tree?` field is admitted.
+// @FR-L-OutOfLine: its child fields are child records: an omitted child is absent, a literal one read back.
 // Prints: 15 2 8
 struct Tree { key: integer, left: Tree?, right: Tree? }
 

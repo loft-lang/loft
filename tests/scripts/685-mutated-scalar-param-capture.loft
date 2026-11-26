@@ -26,6 +26,10 @@
 //   * CARDINALITY: a parameter capture beside a local one, and two parameter captures
 //   * the SEMANTIC edge a fix must not break: a scalar parameter is by value, so the
 //     writes must stay inside the callee
+//
+// @FR-L-CapWrite: the closure's writes to the captured parameter are seen by the enclosing body.
+// @FR-F-ParamScalar: the parameter is a copy, so the caller's `v` stays 10.
+// @FR-L-CapBox: each captured type keeps its declared type (float, boolean, character).
 
 // ── the reported shape, per type ───────────────────────────────────────────────
 

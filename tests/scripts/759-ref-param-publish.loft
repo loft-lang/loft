@@ -18,6 +18,9 @@
 // have not been reused yet — which is why `make ci` was 3705/3705 with this
 // present.  `tests/ref_param_publish.rs` runs this file under the poison gate on
 // both backends; that is what makes it a guard rather than a hope.
+//
+// @FR-F-ParamRef: `b = mk_adopt(n)` writes through to the caller, who then reads 23, 34, 104, n22.
+// @FR-O-Derived: a buffer published through `&` is transferred, so it is not freed at the callee's exit.
 
 // @PLN9: cwd-relative paths — the File cell does cwd-relative file I/O.
 #cwd

@@ -25,6 +25,9 @@
 // value, the parent's RETURN type, and cardinality (one returned and one not, in one
 // function).  Non-text captures are here too: the retired proxy only ever skipped text,
 // so they must keep boxing.
+//
+// @FR-L-CapWrite: `n = n + k` inside the closure reaches the enclosing text, returned or not.
+// @FR-F-ParamText: the text parameter is the argument's value, so the caller's `t` stays "a".
 
 // ── THE CASE and its immediate neighbours ─────────────────────────────────────
 

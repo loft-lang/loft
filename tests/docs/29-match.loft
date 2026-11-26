@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Match
 // @TITLE: Pattern matching with match expressions
+// @FR-M-Match: the first arm that matches is taken.
+// @FR-P-Guard: a guard that fails moves on to the next arm.
+// @FR-P-Multi: `a | b` and `a, b` arms, a field bound from either variant.
+// @FR-P-Rest: `[x, ..rest]` binds the head and a fresh vector of the rest.
+// @FR-M-Total: a scalar match no arm selects answers null.
 // The `match` expression lets you compare a value against a series of patterns
 // and run different code for each case.  It is similar to `switch` in other
 // languages but more powerful: patterns can destructure structs, bind fields to

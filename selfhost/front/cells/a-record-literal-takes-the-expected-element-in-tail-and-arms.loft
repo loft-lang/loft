@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a literal of records at the tail, in `if` and `match` arms, types its element temp from the expected plain vector; an argument, a bind and a `vector<T>?` result do not.
+// @FR-T-Chk-Vec: a record literal at a tail or in `if`/`match` arms is checked against the expected `vector<P>`.
 // Prints: 1 1 1 1 1 1
 
 struct P { x: integer }

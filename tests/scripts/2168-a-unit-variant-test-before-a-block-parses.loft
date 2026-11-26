@@ -15,6 +15,8 @@
 // ARMED: no instrument.
 // WITNESS: each message prints the value the block answered.
 // HOLDS: `test_a_payload_capture` — the documented capture list on a payload variant.
+//
+// @FR-E-Is: `t is A` answers whether the variant is A, with the block after it taken as the body.
 
 enum T { A, B { x: integer } }
 enum Plain { P, Q }

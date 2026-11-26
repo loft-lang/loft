@@ -3,6 +3,12 @@
 // Integer arithmetic, bitwise ops, null, and conversions.
 // @FTR-080 — the per-opcode behaviour itself: integer arithmetic, the bitwise operators,
 // the null sentinel, and every conversion between widths
+//
+// @FR-E-Op-IntDivMod: `/` truncates and `%` takes the dividend's sign (-10 % 3 == -1, 10 % -3 ==
+//   1).
+// @FR-E-NullArg: a null operand makes every arithmetic, bitwise and shift result null; a comparison
+//   with null stays definite.
+// @FR-E-Uncomp: `1 / 0` and `12 % 0` answer null and the run continues.
 fn main() {
   // --- Arithmetic ---
   assert(1 + 2 == 3, "int add");

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a keyed local bound from a record's keyed field, and from an `if` whose arms answer keyed locals, takes its own copy (`OpReplaceKeyed`) and borrows nothing of the source.
+// @FR-Col-Copy: a keyed local bound from a record's keyed field or from an `if` of keyed locals is its own copy.
+// @FR-B-Copy: the copies read their own records (1 2 10).
 // Prints: 1 2 10
 
 struct E { k: integer, v: integer }

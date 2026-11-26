@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Col-Assign: a keyed write places a copy under its key and replaces the record already there.
+// @FR-H-TextReplace: writing the key text over the copy's key field releases the text the field held.
 //
 // `c[k] = r` into a collection keyed by a TEXT deep-copies `r`, its key text included, then
 // writes the subscript's key over the copy's key field; a key already there is replaced, which

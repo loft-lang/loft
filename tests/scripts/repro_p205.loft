@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Ret: a text a generic returns is an owned value that outlives the callee's frame.
+// @FR-G-Mono: the bounded generic specialises at the struct and calls its own method.
+//
 // P205 minimal reproducer — bounded-generic function returning `text`
 // emits `Str::new(&local_String)` in native specialised codegen.  The
 // local String drops at function return, leaving the returned Str's

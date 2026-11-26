@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record match whose arm can `return` is copied arm by arm, the exit building into the return buffer.
+// @FR-F-Return: a match arm that can `return` and one that falls through both answer the function (5).
+// @FR-F-Ret: the record answered is independent of the caller's vector it was read from.
 // Prints: 5 / 5 / 5 / 5
 
 enum T { TInt { lo: integer }, TVec { inner: T } }

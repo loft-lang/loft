@@ -10,6 +10,8 @@
 //
 // The @ARGS line above points the test runner at tests/lib/ where
 // the `importlib.loft` fixture (already used by imports.rs) lives.
+//
+// @FR-F-Surface: `use importlib::*` reaches the library's `pub` items: add, mul, Point.
 
 use importlib::*;
 

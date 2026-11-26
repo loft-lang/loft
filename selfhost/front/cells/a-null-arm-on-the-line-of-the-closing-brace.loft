@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a block's closing brace moves the line on only after a ';'-ended last statement, so '} else { null }' after a value arm is marked with its line.
+// @FR-E-IfT: an `if` answers the arm its condition selects, a `null` else arm included (1 1 4).
+// @FR-E-Coalesce: `i(false) ?? 0` answers the default for the null arm (0).
 // Prints: 1 1 0 4
 struct S { x: integer }
 fn a(c: boolean) -> S {

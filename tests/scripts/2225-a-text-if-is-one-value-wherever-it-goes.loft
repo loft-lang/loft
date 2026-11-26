@@ -29,6 +29,9 @@
 //   ARMED: nothing.
 //   HOLDS: the interpreter, which answered every cell before the fix; the control cell
 //   (`param_vs_literal`), whose two borrowed arms always compiled.
+//
+// @FR-F-Block: the `if`'s value flows into whatever reads it — an argument, a stdlib op, a `+=`.
+// @FR-F-ParamText: `echo(if … )` binds the text parameter to the chosen arm's value.
 
 enum T { W { s: text }, N { v: integer } }
 

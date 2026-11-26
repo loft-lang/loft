@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a text? function's early returns of null, a literal, a parameter, a format and a local beside each tail.
+// @FR-F-Return: a `text?` function's early return of null, a literal, a parameter, a format or a local is its answer.
+// @FR-E-Coalesce: `?? "-"` answers the default exactly where the call answered null.
 // Prints: - x early - s n=3 a1 a2z p
 fn nul(c: boolean) -> text? {
   if c { return null; }

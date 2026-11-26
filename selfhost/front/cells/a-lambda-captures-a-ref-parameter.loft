@@ -4,6 +4,8 @@
 // Gate E cell: a lambda capturing a `&S` parameter shares the record it names, as an `S`
 // capture does — a pointer field of the closure record (`s: S["#65535"]`), read through
 // `__closure`.
+// @FR-L-CapRef: a lambda capturing a `&S` parameter shares the caller's record: it sees the append made before it (32).
+// @FR-F-ParamRef: the append through the `&S` parameter reaches the caller (len 2).
 // Prints: 32 2
 
 struct S { v: integer, w: vector<integer> }

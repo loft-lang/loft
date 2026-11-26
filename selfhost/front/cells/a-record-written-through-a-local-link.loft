@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a whole record written through a local `&` link to a place (`copy_ref`, loft#1376): a literal and a fresh call's record are copied into the place (`OpCopyRecord`, the call's store given away); a bare record local re-points the link.
+// @FR-B-Ref-Write: a literal and a call result written through `l = &h.a` / `e = &v[0]` replace the source's contents.
 // Prints: 9nine 9m 9
 
 struct P { x: integer, s: text }

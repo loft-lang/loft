@@ -24,6 +24,9 @@
 // Driven by tests/store_persist_loft.rs with a scratch path, because a relative
 // path resolves against the PROGRAM's directory (@PLN9) and a suite script must
 // not write beside itself. No path, nothing to do.
+//
+// @FR-S-Paged: the paged reader serves a hash, a trie and a spatial and no index, so index binds false.
+// @FR-S-Paged-Same: a served lookup answers the stored record (hits 7, v 1020, v 4200).
 
 struct RfWord { const w: text, hits: integer }
 struct RfPt { const x: integer, const y: integer, v: integer }

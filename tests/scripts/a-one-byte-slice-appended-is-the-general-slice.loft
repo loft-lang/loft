@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Slice-Value: a text slice is a substring; an index outside the text answers the empty text and -1 counts from the end.
+// @FR-E-NullArg: a null text appended makes the destination null, and a null destination stays null.
 //
 // The C runtime's short-append fast paths: a one-byte slice `s[k..k + 1]` of an ASCII
 // character answers that byte before any boundary snapping (`loft_text_sub`), a one-byte

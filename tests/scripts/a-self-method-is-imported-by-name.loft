@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-OneBody: the self method is the one definition that answers both x.m() and m(x), imported by name.
+// @FR-F-Surface: a selective use of the library reaches its pub self method by its bare name.
 //
 // A package's `self` method is imported by name, `use lib::(twice)`, and then answers both call
 // spellings (DESIGN_DECISIONS.md C123, `formal/calls.md` (F-Recv)).

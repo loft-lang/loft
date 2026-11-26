@@ -9,6 +9,10 @@
 // follows a literal, build it into a fresh synthetic local (the same fresh-temp path
 // the already-working inline forms — `for x in [..].map(..)`, a call argument — use),
 // so the literal receiver behaves identically to a variable receiver. Both backends.
+//
+// @FR-I-Map: `[1, 2, 3].map(…)` is the comprehension over the literal (sum 12).
+// @FR-I-Filter: `.filter(…)` keeps the elements the predicate admits (sum 12, 19).
+// @FR-I-Reduce: `.reduce(0, …)` folds the literal (10).
 fn vsum(v: vector<integer>) -> integer {
   s = 0; for x in v { s += x; } s
 }

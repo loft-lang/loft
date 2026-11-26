@@ -12,6 +12,9 @@
 //
 // Env in:
 //   LOFT_PERSIST_TEST_IMG   the image to query
+//
+// @FR-Slice-Box: every record a box query returns lies inside the box, both corners inclusive.
+// @FR-S-Paged: `store_load_box` serves a spatial box from the image by byte range.
 
 struct Pin {
   x: integer,

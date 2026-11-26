@@ -37,6 +37,11 @@
 // the interpreter agreed with Python each time.  Restored byte-identically (`git diff`
 // empty against the pre-sabotage commit): interpret / native / every switch / every
 // falsifier green.
+//
+// @FR-R-BoundedNest: the reduction clause sums admitted blocks plain and answers the checked value
+//   on every input.
+// @FR-E-Uncomp: `[MAX, 1, -1]` overflows on a prefix, so the sum is null; reordered it is MAX.
+// @FR-E-NullArg: a null element anywhere makes the sum null.
 
 fn tot(v: const vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
 

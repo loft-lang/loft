@@ -1,3 +1,6 @@
+// @FR-I-For: a walk of a vector of functions visits each element in order.
+// @FR-L-Apply: each fn-ref element read by the walk is called with its argument.
+//
 // @P343 regression: iterating a `vector<fn(...)>` of named fn-refs with a
 // `for` loop must dispatch each element (was: interp returned 0 because the
 // loop broke on iteration 0; --native failed E0600 / called an invalid d_nr).

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: an element of a vector<integer?> read in a counted loop, at a negative index, and written — a value, and null (its own sentinel).
+// @FR-H-Index: a negative index counts from the end (v[-1] = 3, w[-1] = 6).
+// @FR-L-Null: a null element of `vector<integer?>` is its sentinel: read null, written null and a value (21, 4).
 // Prints: 21 3 6 4
 fn main() {
   v: vector<integer?> = [null, 3];

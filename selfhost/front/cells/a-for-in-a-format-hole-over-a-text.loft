@@ -3,6 +3,8 @@
 //
 // Gate E cell: a format-hole `for` over a text local walks its characters as `iter_text` does —
 // `c#index`, `c#next`, the text held in `_for_text_N` — with a filter skipping `'l'`.
+// @FR-I-Text: a `for` over a text walks its characters left to right.
+// @FR-I-Filter: the filter skips each `'l'` ([h,e,o]).
 // Prints: [h,e,o]
 
 fn main() {

@@ -12,6 +12,9 @@
 // default on, LOFT_NO_A1B opts out) keeps the three stores DISTINCT: the subject
 // work-ref is skipped (kept a local, freed after the copy) and the buffer work-ref
 // materialises an owned copy into a separate `__retbuf`. Pins both backends.
+//
+// @FR-O-Move: a return that borrows a temporary of the callee is materialised into the caller's own store.
+// @FR-F-Ret: the returned vector is independent: 10, 11, 12 survive allocation churn.
 struct E {
   hp: integer,
   name: text,

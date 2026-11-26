@@ -7,6 +7,8 @@
 // (`read_through_tag`); a loop's element is the slot, and `e == null` proves it present on the
 // else side (`heap_null_test`); an element is written and set absent; a struct's `vector<S?>`
 // field is filled from its literal and appended to.
+// @FR-L-Null-Tag: a `vector<S?>` element is the tagged `__nullable<S>`: written, set absent, read through the tag.
+// @FR-N-Dense: a `vector<S?>` holds absent elements beside present ones.
 // Prints: 2 true 209 5 9 true 9 2 | 3 5 true
 
 struct S { a: integer }

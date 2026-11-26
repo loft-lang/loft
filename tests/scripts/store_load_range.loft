@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged: a range of a sorted's integer key is served by binary search over the image.
+// @FR-S-Sound: the range the loader built passes store_verify.
 //
 // @PLN97 arc G Phase 4 / 3b.7 — store_load_range over a SORTED collection. Fetch
 // the entries whose integer key is in [lo, hi] into the local sorted

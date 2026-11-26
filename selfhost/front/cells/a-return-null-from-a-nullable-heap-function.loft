@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: 'return null' from a function of a nullable vector, record or struct enum answers the reference null sentinel; a literal tail of a vector<T>? takes the buffer (Rename onto its __vdb_N), not cleared at the head.
+// @FR-H-RefNull: `return null` from a vector/record/struct-enum `?` function answers the reference null.
+// @FR-F-Return: `return e` exits the call with that value before the tail.
 // Prints: true false true true
 struct Node { a: integer }
 enum Sh { Circle { r: integer }, Dot }

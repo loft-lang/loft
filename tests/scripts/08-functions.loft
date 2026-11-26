@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Functions: default args, reference params, early return, recursion.
+//
+// @FR-F-Default: `greet("World")` and `connect("example.com", tls: false)` fill the omitted
+//   parameters from their defaults.
+// @FR-F-ParamRef: `add(v, 2)` on `a: &integer` and `append_to(s, …)` on `buf: &text` write back to
+//   the caller.
+// @FR-F-Rec: `fib` and the mutually recursive `is_even` / `is_odd` answer through fresh frames.
 fn greet(name: text, greeting: text = "Hello") -> text {
   greeting + ", " + name + "!"
 }

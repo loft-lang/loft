@@ -40,6 +40,11 @@
 //     a doubled release is not a leak, which is why the count is asserted directly.
 //   HOLDS: leak, panic, refusals and expectations are equal on both trees; the memory
 //     channel for this family lives in the 889 poison cells, referenced above.
+//
+// @FR-H-Drop: `mk().h.id` runs the hook once per resource at its owner's death — the traced ids say
+//   which.
+// @FR-H-DropOnce: no projection spelling releases a value twice (one "9" per record, "1,2" for two
+//   fields).
 fn trace_path() -> text { return "loft_1506_trace.tmp"; }
 
 fn note(s: text) {

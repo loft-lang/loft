@@ -19,6 +19,11 @@
 //
 // The cells move order, the kind of last use, nesting and multiplicity together — a sweep over
 // one axis reads as proof and is not. Boundary: `probes/39-f2-liveness-boundary.loft`.
+//
+// @FR-H-Materialise: a view still used after `v.remove(…)` is materialised, so its later writes
+//   leave `v` alone.
+// @FR-B-View: a view whose last use precedes the removal aliases `v[0]`, so `c.n = 99` lands in
+//   `v`.
 
 struct Box { n: integer, tag: integer = 0 }
 

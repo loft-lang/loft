@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged-Same: a paged key load answers every element's scalar and text a whole load answers.
+// @FR-S-Sound: the loaded collection passes store_verify.
 //
 // @PLN97 arc G Phase 3b.4b — vector<struct> RELOCATION. A hash whose entry has a
 // `vector<Item>` field (elements that carry their own `text` pointers) can now be

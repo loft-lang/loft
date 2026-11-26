@@ -96,6 +96,15 @@ CITES it, so "which sites enforce this rule?" is a grep: `scripts/rule_tags.py` 
 and `B-Ref`/`D-op`/`D-own` are family prefixes, not rules — [formal/README.md § Rule
 tags](doc/claude/formal/README.md), [formal/IMPLEMENTATIONS.md](doc/claude/formal/IMPLEMENTATIONS.md).
 
+**No test runs without a link to a rule** (owner): every test program names, in its header,
+the `@FR-` rule its assertions or expected output guard; a language rule's test is a suite
+cell under that rule.  One that names none is READ before anything moves
+(`suite_curate.py attribute`, `verdict`): it links, or it describes behaviour no rule states
+(a new rule is its formal text, citations at the sites that enforce it and a falsified guard —
+the owner's call), or it moves to the suite's attic, which is still tested nightly.  The
+count of unlinked programs is a ratchet ([TESTING.md § Curating the
+suite](doc/claude/TESTING.md)).
+
 ## Architecture — execution path
 
 ```

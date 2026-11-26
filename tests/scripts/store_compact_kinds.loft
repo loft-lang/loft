@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: a persisted image is a rebuilt copy, and loading it back gives a value-identical collection of every kind.
 //
 // @PLN123 — compaction across COLLECTION KINDS.
 //

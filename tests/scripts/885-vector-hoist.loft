@@ -24,6 +24,10 @@
 // `LOFT_NO_VECTOR_HOIST=1` emits the pre-loft#885 form, so this file run under it
 // is the before-half of its own comparison. `LOFT_HOIST_VERIFY=1` emits the form
 // that re-derives the header at every lifted read and panics on a mismatch.
+//
+// @FR-R-Header: a loop that writes no store reads with one header and gets the same values.
+// @FR-R-Refresh: a loop that grows, removes, rebinds or calls a grower re-reads the header (363, 38, 27).
+// @FR-H-Index: `v[i - 3]` counts from the end and `v[i + 3]` is absent inside the held loop.
 
 // ---------- loops that MUST keep the same answer while being lifted
 

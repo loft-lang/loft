@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-L-Scalar: boolean 1, single 4, float and integer 8 bytes, written and reported by sizeof alike.
+// @FR-L-Narrow: u8/i8 take 1 byte, u16/i16 2, u32/i32 4.
 //
 // How many bytes `f += value` writes, for every scalar the File chapter says you can append.
 //

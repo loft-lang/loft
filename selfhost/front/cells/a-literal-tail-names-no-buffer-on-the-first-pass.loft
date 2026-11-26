@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a function whose vector tail is a literal names no buffer on the first pass, so a caller's bind borrows nothing there; a local tail does.
+// @FR-F-Ret: each function answers an independent vector: a literal, a local, a call, an if, an early return, a comprehension.
+// @FR-O-Move: the caller's binding owns each result (2 1 1 2 1 1 3 3).
 // Prints: 2 1 1 2 1 1 3 3
 
 struct P { x: integer }

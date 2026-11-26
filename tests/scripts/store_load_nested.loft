@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged-Same: a paged key load answers the nested struct's scalar and text a whole load answers.
+// @FR-S-Sound: the collection the paged load built passes store_verify.
 //
 // @PLN97 arc G Phase 3b.4 — recurse into an INLINE nested struct. A hash whose
 // entry has a nested struct field (`sub: Inner`, itself holding a `text`) can now

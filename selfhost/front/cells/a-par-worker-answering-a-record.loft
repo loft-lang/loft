@@ -4,6 +4,8 @@
 // Gate E cell: a `par` worker answering a record rides the ref lane (`route_ref_queue`):
 // `n_parallel_queue_ref` with the row size unknown (-1), each result read as
 // `n_parallel_buf_get_ref(idx)`, the buffer dropped by `n_parallel_buf_drop_ref`.
+// @FR-C-Par: a record worker answer is bound to `r` for each element.
+// @FR-C-Order: results are consumed in the vector's order (`p0 q2 p4 q6`).
 // Prints: p0 q2 p4 q6
 
 struct Pt { name: text, x: integer }

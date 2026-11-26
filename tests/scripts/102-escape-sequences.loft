@@ -11,6 +11,9 @@
 // Pre-fix: only \n / \t / \r / \" / \' / \\ were accepted.
 // scan.loft used `' '` (space) as a "won't appear" sentinel
 // because '\0' didn't lex; the workaround removed in phase 10.16.
+//
+// @FR-E-Null: the character null is codepoint 0, so `'\0' as integer` and `'\x00' as integer` are
+//   null.
 
 // @FTR-072 — the character-level details the lexer settles before the parser sees anything:
 // every escape sequence, in a string and in a character literal

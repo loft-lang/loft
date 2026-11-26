@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a member of a tuple local declared with its type is written in place where no declared member is narrow.
+// @FR-T-Record: a tuple member is a field: `r.0 = 9`, `r.1 = "b"` write the member, a u8 member holds 250.
+// @FR-E-Asgn-Compound: `r.0 += 2` reads and writes the member once (11).
 // Prints: 11 b 250
 
 fn main() {

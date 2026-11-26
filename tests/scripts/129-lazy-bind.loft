@@ -11,6 +11,9 @@
 // path resolves against the PROGRAM's directory (@PLN9) and a suite script must
 // not write beside itself. No path, nothing to do — so loft_suite runs this
 // clean and the driver is what exercises it.
+//
+// @FR-S-Paged-Same: a lazily fetched record answers the field values the written image holds
+//   ("grace", "alan").
 
 struct LzPerson { id: integer, name: text }
 

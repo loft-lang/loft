@@ -3,6 +3,7 @@
 //
 // Gate E cell: `s += [Rec { … }]` into a sorted collection types its element temp as the
 // collection's record from the first pass on (`_elm_N: ref(Rec)["s"]`).
+// @FR-Col-Insert: `s += [Rec…]` places each record into the sorted collection.
 // Prints: 2
 
 struct Rec { k: integer, v: integer }

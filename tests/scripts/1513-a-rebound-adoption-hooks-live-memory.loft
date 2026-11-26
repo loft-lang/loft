@@ -32,6 +32,8 @@
 //     poison runs in tests/store_lifetime_1512_1513.rs are this guard's own channel.
 //   HOLDS: the plain-run exit, every count, leak, panic, refusals and expectations are
 //     equal on both trees — the defect is WHICH bytes the hook reads, nothing a count sees.
+//
+// @FR-H-Drop: `u = (CfS { … }, 9)` runs the member's hook exactly once, reading the live record.
 fn trace_path() -> text { return "loft_1513_trace.tmp"; }
 
 fn note(s: text) {

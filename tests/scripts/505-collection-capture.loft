@@ -9,6 +9,9 @@
 // ownership (Parts::DbRef is a non-owning leaf, freed once at the owner).  Runs on BOTH
 // backends.  Mutating a collection WRAPPED IN A STRUCT field works the same way and is
 // guarded here too.
+//
+// @FR-L-CapHeap: a captured collection is SHARED, so `h[k] = …` and `h += …` inside reach the outer `h`.
+// @FR-L-CapOwn: the outer scope keeps ownership; iterating it in two closures leaves it intact.
 
 struct K {
   id: integer,

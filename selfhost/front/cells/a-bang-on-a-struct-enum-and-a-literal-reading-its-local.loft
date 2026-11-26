@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: '!' on a struct enum tests its own null (a null handle or a zero first word); a literal rebinding a local stages the items that read it (_build_val_N) before the fresh store.
+// @FR-N-Present: `t!` on a present struct-enum value answers that value (4).
+// @FR-E-Asgn: `v = [len(v), 2]` reduces its right-hand side before the write, so it reads the old `v` (12).
 // Prints: 4 12
 enum E { A { n: integer }, B { t: text } }
 

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `match` over a call answering `T?` holds the answer as a `ref(T)`, with a `null` arm or without.
+// @FR-N-Match: a match over a `T?` call, with a `null` arm or without one, binds the present variant (3 3).
+// @FR-M-Variant: the `TInt { lo }` arm binds the payload field.
 // Prints: 3 3
 
 enum T { TInt { lo: integer }, TVec { inner: T } }
