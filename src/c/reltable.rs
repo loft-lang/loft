@@ -96,25 +96,9 @@ fn release(line: &str) -> Option<Release> {
     }
 }
 
-/// `parts` — the text `(R-CSplit)` wrote for function `fr` (its frame struct `<fr>__frame`) —
-/// with every run of [`MIN_RUN`] or more releases written as one `loft_release_run` call over
-/// tables placed after the frame struct.  `parts` as it is when the pass is off, finds no run,
-/// or cannot place its tables.
-pub(crate) fn tables(fr: &str, parts: &str) -> String {
-    if off() {
-        return parts.to_string();
-    }
-    let frame = format!("struct {fr}__frame {{");
-    let lines: Vec<&str> = parts.split_inclusive('\n').collect();
-    // The struct's end: the tables follow it, beside every name they take the place of.
-    let Some(open) = lines.iter().position(|l| l.trim_end() == frame) else {
-        return parts.to_string();
-    };
-    let Some(close) = lines[open..].iter().position(|l| l.trim_end() == "};") else {
-        return parts.to_string();
-    };
-    let after_struct = open + close;
-    // The runs: (first line, its releases).
+/// The runs of [`MIN_RUN`] or more release statements in `lines`: the first line of each and its
+/// releases, in order.
+fn find_runs(lines: &[&str]) -> Vec<(usize, Vec<Release>)> {
     let mut runs: Vec<(usize, Vec<Release>)> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -133,30 +117,12 @@ pub(crate) fn tables(fr: &str, parts: &str) -> String {
             i += 1;
         }
     }
-    if runs.is_empty() {
-        return parts.to_string();
-    }
-    crate::rewrite_census::fired("R-CTable", runs.len());
-    let mut alphabet: Vec<Release> = Vec::new();
-    let mut index: HashMap<Release, usize> = HashMap::new();
-    let mut coded: Vec<Vec<usize>> = Vec::with_capacity(runs.len());
-    for (_, run) in &runs {
-        coded.push(
-            run.iter()
-                .map(|r| {
-                    *index.entry(r.clone()).or_insert_with(|| {
-                        alphabet.push(r.clone());
-                        alphabet.len() - 1
-                    })
-                })
-                .collect(),
-        );
-    }
-    if alphabet.len() > usize::from(u16::MAX) {
-        return parts.to_string();
-    }
-    // The run store: the longest runs first, and a run that ends one already stored is that
-    // one's tail.
+    runs
+}
+
+/// The run store for `coded` (each run as alphabet indices): the longest runs first, and a run
+/// that ends one already stored is that one's tail.  The store, and each run's (offset, length).
+fn place_runs(coded: &[Vec<usize>]) -> (Vec<usize>, Vec<(usize, usize)>) {
     let mut order: Vec<usize> = (0..coded.len()).collect();
     order.sort_by_key(|&k| std::cmp::Reverse(coded[k].len()));
     let mut store: Vec<usize> = Vec::new();
@@ -176,6 +142,11 @@ pub(crate) fn tables(fr: &str, parts: &str) -> String {
         });
         placed[k] = (at, run.len());
     }
+    (store, placed)
+}
+
+/// The C of function `fr`'s two tables: the alphabet and the run store.
+fn tables_text(fr: &str, alphabet: &[Release], store: &[usize]) -> String {
     let mut tables_text = String::new();
     let _ = write!(tables_text, "static const loft_rel loft_rels_{fr}[] = {{");
     for (n, r) in alphabet.iter().enumerate() {
@@ -200,6 +171,52 @@ pub(crate) fn tables(fr: &str, parts: &str) -> String {
         let _ = write!(tables_text, "{sep}{v},");
     }
     tables_text.push_str("\n};\n");
+    tables_text
+}
+
+/// `parts` — the text `(R-CSplit)` wrote for function `fr` (its frame struct `<fr>__frame`) —
+/// with every run of [`MIN_RUN`] or more releases written as one `loft_release_run` call over
+/// tables placed after the frame struct.  `parts` as it is when the pass is off, finds no run,
+/// or cannot place its tables.
+pub(crate) fn tables(fr: &str, parts: &str) -> String {
+    if off() {
+        return parts.to_string();
+    }
+    let frame = format!("struct {fr}__frame {{");
+    let lines: Vec<&str> = parts.split_inclusive('\n').collect();
+    // The struct's end: the tables follow it, beside every name they take the place of.
+    let Some(open) = lines.iter().position(|l| l.trim_end() == frame) else {
+        return parts.to_string();
+    };
+    let Some(close) = lines[open..].iter().position(|l| l.trim_end() == "};") else {
+        return parts.to_string();
+    };
+    let after_struct = open + close;
+    let runs = find_runs(&lines);
+    if runs.is_empty() {
+        return parts.to_string();
+    }
+    crate::rewrite_census::fired("R-CTable", runs.len());
+    let mut alphabet: Vec<Release> = Vec::new();
+    let mut index: HashMap<Release, usize> = HashMap::new();
+    let mut coded: Vec<Vec<usize>> = Vec::with_capacity(runs.len());
+    for (_, run) in &runs {
+        coded.push(
+            run.iter()
+                .map(|r| {
+                    *index.entry(r.clone()).or_insert_with(|| {
+                        alphabet.push(r.clone());
+                        alphabet.len() - 1
+                    })
+                })
+                .collect(),
+        );
+    }
+    if alphabet.len() > usize::from(u16::MAX) {
+        return parts.to_string();
+    }
+    let (store, placed) = place_runs(&coded);
+    let tables_text = tables_text(fr, &alphabet, &store);
     // The text: the tables after the struct, each run replaced by its call.
     let mut out = String::with_capacity(parts.len() / 2);
     let mut next_run = 0;
@@ -287,7 +304,7 @@ mod tests {
         assert!(out.contains("loft_relrun_n_g__fr + 0, 10);"), "{out}");
         assert!(out.contains("loft_relrun_n_g__fr + 2, 8);"), "{out}");
         assert_eq!(
-            out.matches("},").count() - 0,
+            out.matches("},").count(),
             10,
             "the alphabet holds each release once: {out}"
         );
