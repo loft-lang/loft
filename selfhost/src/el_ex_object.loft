@@ -1316,7 +1316,10 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       bnm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
       bsd = struct_ref(e, bt);
       plain = (bt is TyText || el_convert::plain_scalar(bt)) && read_op(bt) != "" && match bt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true };
-      if bnm == "" || bnm == "_" || !(plain || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
+      // (A vector member is copied out into the local's own store, as a whole-vector bind is
+      // (`lower_vec_copy_bind`): `OpAppendVector(v, OpGetField(tmp, pos, vector), row)`.)
+      bvec = bt is TyVector;
+      if bnm == "" || bnm == "_" || !(plain || bvec || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
         el::refuse(e, "a destructure of a boxed tuple into a place that is not a name, or of a member that is no plain scalar or record");
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -1333,6 +1336,19 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       bpos = ir::NdInt { n: if e.first_pass { 0 } else { field_position(e, btd, ba.name) } };
       if plain {
         bsteps += [el_ir::v_set(bv, el_ir::cl(e, read_op(bt), [ir::NdVar { n: btmp }, bpos]))];
+      } else if bvec {
+        bvin = match bt { TyVector { inner: bvi } => bvi, _ => ir::TyVoid };
+        bvnm = el_types::elem_name(e, bvin);
+        bvk = if e.first_pass || bvnm == "" { 0 } else { el_ex_base::vector_store(e, bvin, bvnm) };
+        if !e.first_pass {
+          brec = el_ex_vector::append_row(e, bvin);
+          bops = el_ex_bind::vec_copy_ops(e, vars, bv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: btmp }, bpos, ir::NdInt { n: bvk }]), bvin, brec);
+          if bops == null || brec < 0 {
+            el::refuse(e, "a destructure of a boxed tuple's vector member of this element type");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          bsteps += bops!;
+        }
       } else {
         bw = el_vars::work_ref(vars, ir::TyReference { n: bsd, dep: [] });
         bk = ir::NdInt { n: el::def(e, bsd).known_type };

@@ -622,6 +622,11 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
             mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
             // (A record member is read where it lies: a view of the tuple's local.)
             rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
+            // (…and so is a vector member: its field, `OpGetField(t, pos, vector)`, a view of the
+            // tuple's local.)
+            if mt is TyVector {
+              rec = true;
+            }
             if !(mt is TyText || el_convert::plain_scalar(mt) || rec || (mt is TyOptional && el_convert::plain_scalar(el_types::base(mt)))) {
               el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
