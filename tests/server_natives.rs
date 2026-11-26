@@ -303,6 +303,43 @@ struct Ports {
     rsa: u16,
 }
 
+/// A request that keeps arriving, one byte per 100 ms (a fifth of the server's 500 ms read
+/// timeout), for up to 15 s; the answer must be a 408 that comes within 12 s.
+///
+/// @falsified-at: PENDING
+fn slow_peer_is_told_408(port: u16) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut slow = connect(port);
+    let mut drip = slow.try_clone().expect("a second handle on the socket");
+    let answered = Arc::new(AtomicBool::new(false));
+    let stop = Arc::clone(&answered);
+    let dripping = std::thread::spawn(move || {
+        let _ = drip.write_all(b"GET /slow HTTP/1.1\r\nX-Pad: ");
+        let end = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < end && !stop.load(Ordering::Relaxed) {
+            if drip.write_all(b"a").is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let started = Instant::now();
+    let mut answer = Vec::new();
+    let _ = slow.read_to_end(&mut answer);
+    answered.store(true, Ordering::Relaxed);
+    let took = started.elapsed();
+    let _ = dripping.join();
+    assert!(
+        answer.starts_with(b"HTTP/1.1 408 "),
+        "a request still arriving after its budget is told so: {:?} after {took:?}",
+        String::from_utf8_lossy(&answer)
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "and the pump gives up on it within its budget, not when the peer stops: {took:?}"
+    );
+}
+
 /// The client's side of the script, in the program's order; it panics on the first answer
 /// that differs.
 fn client(p: &Ports) {
@@ -410,6 +447,11 @@ fn client(p: &Ports) {
         "an oversized request is told so: {}",
         String::from_utf8_lossy(&answer)
     );
+    // A peer that sends its request a byte at a time, each byte well inside the read timeout,
+    // for longer than a request may take to arrive: the pump answers it 408 once the request's
+    // five seconds are spent, and serves on.  A pump that bounds only each read waits on such
+    // a peer for as long as it keeps sending, and answers it nothing.
+    slow_peer_is_told_408(p.plain);
     // A peer that connects and says nothing, held open across the next exchange: the pump
     // gives it one read timeout and serves on.  A pump that waits for its request never
     // answers `a1` (this client's own read timeout ends the test).
