@@ -2509,14 +2509,14 @@ fn emit_unit_with(
     Ok(out)
 }
 
-/// @PLN229 B1 — the opt-in split build (`LOFT_C_SPLIT=1`): one C unit per source file, compiled
+/// @PLN229 B1 — the opt-in split build (`LOFT_C_UNITS=1`): one C unit per source file, compiled
 /// apart and linked.  For a development pass of a large program: no inlining between files and no
 /// whole-program optimisation, so it is never the shipped tier (`--ship` keeps one unit), nor a
 /// hosted unit, a page or a wasm module.
 fn split_units_asked(other_kind: bool) -> bool {
     !other_kind
         && !crate::ship_tier::shipped_units()
-        && crate::env_once!(std::env::var("LOFT_C_SPLIT").is_ok_and(|v| v != "0"))
+        && crate::env_once!(std::env::var("LOFT_C_UNITS").is_ok_and(|v| v != "0"))
 }
 
 /// Where the split build's shared part starts (`units::into_units`).

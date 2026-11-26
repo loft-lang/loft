@@ -1101,10 +1101,10 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
     out
 }
 
-/// @PLN229 B1 — a split build (`LOFT_C_SPLIT=1`): each unit of `text` (`loft::c::SPLIT_UNIT`
+/// @PLN229 B1 — a split build (`LOFT_C_UNITS=1`): each unit of `text` (`loft::c::SPLIT_UNIT`
 /// lines) written beside `src_dir`'s source and compiled to an object on its own — the shared one
 /// owning the runtime's state (`LOFT_SPLIT_OWN`), every other using it (`LOFT_SPLIT_USE`) — a few
-/// at once (`LOFT_C_SPLIT_JOBS`), then the objects linked into `binary`.  No whole-program
+/// at once (`LOFT_C_UNITS_JOBS`), then the objects linked into `binary`.  No whole-program
 /// optimisation (`-flto`): it would undo what compiling apart saves.  Answers the first unit's
 /// compile that fails, else the link's.  gcc and clang only (`Dialect::Gnu`).
 fn split_build(
@@ -1137,11 +1137,11 @@ fn split_build(
         };
         jobs.push((c, o, role));
     }
-    // At most 4 compiles at once unless `LOFT_C_SPLIT_JOBS` says otherwise: every unit's compile
+    // At most 4 compiles at once unless `LOFT_C_UNITS_JOBS` says otherwise: every unit's compile
     // parses the whole head (~150 MB of gcc for a small program), and a runner building many
     // programs at once (the suite runs 8) multiplies it.  A single large build — the gate's
     // tools — sets it to the cores it has.
-    let width = std::env::var("LOFT_C_SPLIT_JOBS")
+    let width = std::env::var("LOFT_C_UNITS_JOBS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
