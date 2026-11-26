@@ -932,7 +932,23 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   senum = el_convert::struct_enum(b);
   code = if record || vec || senum { x.code } else { nullable_arith(e, x.code, true) };
   // An element under `!` is read with the nullable getter: the `!` answers its absence.
-  if record || senum {
+  // (A struct enum's `E?` FIELD is read through its slot's tag (`read_through_enum_slot`,
+  // `(L-Null-Which)`) as the `??` road reads it: the null sentinel where the first word is zero,
+  // the field otherwise — what the `!` then tests.  Its place is read as written: the `!` is the
+  // field's, not its element's.)
+  tagged = false;
+  if senum && x.tp is TyOptional {
+    match el_ir::unspan(code) {
+      NdCall { def_nr: sgd, args: sga } => {
+        if el::def(e, sgd).name == "OpGetField" && len(sga) == 3 {
+          code = el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [sga[0]!, sga[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), code);
+          tagged = true;
+        }
+      },
+      _ => {}
+    }
+  }
+  if (record || senum) && !tagged {
     code = el_ex_call::nullable_getter(e, code);
   }
   held = -1;
