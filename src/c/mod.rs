@@ -1975,7 +1975,7 @@ pub fn c_name(data: &Data, d: u32) -> String {
     let held = data.fn_dups_memo.with(|m: &mut FnDups| m.clone());
     let dups =
         held.unwrap_or_else(|| std::sync::Arc::new(crate::opt::names::duplicate_fn_names(data)));
-    crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
+    crate::opt::names::disambiguated_fn_ident(&dups, data, data.def(d))
 }
 
 /// The function names two definitions share ([`crate::opt::names::duplicate_fn_names`]), kept
@@ -2880,9 +2880,16 @@ fn c_libraries(
     {
         links.push(arg.to_string());
     }
-    // A shim is linked into the binary: its symbols are there, and asked for nothing.
+    // A shim is linked into the binary: its symbols are there, and asked for nothing.  A hosted
+    // unit opens it by its path (`loft_host_bind_libraries`); a program only compares a name with
+    // it (`c_library_available`), so its entry is the file's name, which is the same in every
+    // checkout (REPRODUCIBLE_OUTPUT.md).
     for lib in data.c_libraries.iter().filter(|l| !l.shim.is_empty()) {
-        carried.push(body::c_string(&lib.name));
+        carried.push(body::c_string(&if hosted {
+            lib.name.clone()
+        } else {
+            crate::file_access::file_name(lib.name.as_str()).unwrap_or_else(|| lib.name.clone())
+        }));
         syms.push(Vec::new());
     }
     for (i, own) in syms.iter().enumerate() {

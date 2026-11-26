@@ -8,9 +8,11 @@
 #
 #   scripts/repro-output.sh [--loft BIN] [PROGRAM_DIR [MAIN]]
 #
-# Copies PROGRAM_DIR (default: a small built-in program with a library) to two directories of
-# different path lengths, emits the C (`--native-c --native-emit`) and builds the executable
-# (`--native-c --out`) in each, twice in the first, and compares all three byte for byte.
+# Copies PROGRAM_DIR (default: a small built-in program: a library, a `[c] shim` package and two
+# libraries defining one function name, all outside the main file's directory) to two
+# directories of different path lengths, emits the C (`--native-c --native-emit`) and builds
+# the executable (`--native-c --out`) in each, twice in the first, by absolute paths, and
+# compares all three byte for byte.
 # Silent and exit 0 when they agree; otherwise names each artefact that differs, with its
 # first differing lines, and exits 1.
 set -u
@@ -25,20 +27,49 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/loft-repro-XXXXXX")
 
 if [ -z "$src" ]; then
     src="$work/program"
-    mkdir -p "$src/lib"
+    main=app/main.loft
+    mkdir -p "$src/app" "$src/lib/twice/c" "$src/lib/twice/src"
     cat > "$src/lib/shapes.loft" <<'EOF'
 pub struct Shape { pub name: text, pub sides: integer }
 pub fn describe(s: Shape) -> text { "{s.name}:{s.sides}" }
 EOF
-    cat > "$src/main.loft" <<'EOF'
+    # one function name in two libraries: its C name carries a hash of the defining file's name
+    echo 'pub fn helper(n: integer) -> integer { n + 1 }' > "$src/lib/alpha.loft"
+    echo 'pub fn helper(n: integer) -> integer { n * 3 }' > "$src/lib/beta.loft"
+    cat > "$src/lib/twice/loft.toml" <<'EOF'
+[package]
+name = "twice"
+version = "0.1.0"
+loft = ">=2026.10.0"
+
+[library]
+entry = "src/twice.loft"
+
+[c]
+shim = "c/twice.c"
+EOF
+    cat > "$src/lib/twice/c/twice.c" <<'EOF'
+#include <stdint.h>
+int64_t tw_twice(int64_t v);
+int64_t tw_twice(int64_t v) { return v * 2; }
+EOF
+    cat > "$src/lib/twice/src/twice.loft" <<'EOF'
+fn tw_twice(v: integer) -> integer;
+#c "tw_twice" "int64_t(int64_t)"
+pub fn twice(v: integer) -> integer { tw_twice(v) }
+EOF
+    cat > "$src/app/main.loft" <<'EOF'
 use shapes;
+use alpha;
+use beta;
+use twice;
 struct Tally { key: text, n: integer }
 fn main() {
   v = [shapes::Shape { name: "tri", sides: 3 }, shapes::Shape { name: "sq", sides: 4 }];
   h: hash<Tally[key]> = [];
   for s in v { h += [Tally { key: s.name, n: s.sides }]; }
   t = h["tri"];
-  println("{shapes::describe(v[1])} {t.n}");
+  println("{shapes::describe(v[1])} {t.n} {alpha::helper(4)} {beta::helper(5)} {twice::twice(21)}");
   assert(len(v) == 2, "two shapes");
 }
 EOF
@@ -52,9 +83,9 @@ cp -r "$src/." "$a/"
 cp -r "$src/." "$b/"
 
 build() { # DIR TAG
-    ( cd "$1" && LOFT_TIMEOUT=300 "$loft" --native-c --lib lib --native-emit "$work/$2.c" "$main" ) \
+    ( cd "$1" && LOFT_TIMEOUT=300 "$loft" --native-c --lib "$1/lib" --native-emit "$work/$2.c" "$1/$main" ) \
         > "$work/$2.emit.log" 2>&1 || { echo "repro-output: the C of $2 was not written:"; tail -5 "$work/$2.emit.log"; exit 2; }
-    ( cd "$1" && LOFT_TIMEOUT=300 "$loft" --native-c --lib lib --out "$work/$2.out" "$main" ) \
+    ( cd "$1" && LOFT_TIMEOUT=300 "$loft" --native-c --lib "$1/lib" --out "$work/$2.out" "$1/$main" ) \
         > "$work/$2.build.log" 2>&1 || { echo "repro-output: $2 did not build:"; tail -5 "$work/$2.build.log"; exit 2; }
 }
 build "$a" a1
