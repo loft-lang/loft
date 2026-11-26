@@ -792,7 +792,8 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
     // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
     SVecLit { items } => {
-      kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      // (An empty `[]` where a keyed collection is expected is that collection, empty.)
+      kl = if len(items) == 0 && !(vars.expect_node == n && keyed_kind(vars.expect)) { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
       // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
       tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
       // `parse_vector`'s `vector_def`: an empty `[]` whose element the position expects registers

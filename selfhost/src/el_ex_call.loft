@@ -3638,10 +3638,13 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
   first_new = len(vars.vars);
-  d = match e.p.nodes[r] {
+  // (A keyed subject's literal default is read as that collection: `parse_vector` under the
+  // subject's type, `keyed_literal`.)
+  kdef = match e.p.nodes[r] { SVecLit { items: kits } => if len(kits) > 0 && keyed_kind(el_types::base(x.tp)) { el_ex_vector::keyed_literal(e, vars, r, el_types::without_deps(el_types::base(x.tp))) } else { null }, _ => null };
+  d = if kdef != null { kdef! } else { match e.p.nodes[r] {
     SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: [], elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
     _ => el_ex_assign::expression(e, vars, r)
-  };
+  } };
   // (The first pass builds a literal default's value into a `_vec_N` whose code it leaves out;
   // `build_null_coalesce_default_inner` decides that buffer's flags on this pass all the same.)
   if e.first_pass && el_types::base(x.tp) is TyVector && el_ex_place::vec_lit_len(e, r) > 0 {

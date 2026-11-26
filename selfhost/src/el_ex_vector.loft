@@ -1033,13 +1033,35 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
 pub fn keyed_tail_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex? {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   if result is TyOptional || !keyed_kind(result) || el_ex_deliver::tail_syntax(e, vars.body) != n {
+    // (…or a literal read where its position expects a keyed collection — an arm of a keyed
+    // join (`arm_expect`), a keyed `??` default: `parse_vector` is handed that type.)
+    et = el_types::base(vars.expect);
+    if vars.expect_node == n && keyed_kind(et) {
+      return keyed_literal(e, vars, n, if vars.expect is TyOptional { ir::TyOptional { inner: el_types::without_deps(et) } } else { el_types::without_deps(et) });
+    }
     return null;
   }
-  ct = el_types::without_deps(result);
-  kvb = el_vars::create_unique(vars, "_kvb", ct);
+  keyed_literal(e, vars, n, el_types::without_deps(result))
+}
+
+// `parse_vector` under a keyed hint `ct`: the literal built as that collection in a `__kvb_N` of
+// its own — nulled, given its store, each item a record of it — and answered ("Vector").
+pub fn keyed_literal(e: el::El, vars: el_vars::Vars, n: integer, ct: ir::TypeT) -> Ex? {
+  // (`parse_vector` with the element known mints its temp even for an empty `[]`, `unique_elm_var`:
+  // it is minted after the accumulator, below.)
+  empty = match e.p.nodes[n] { SVecLit { items } => len(items) == 0, _ => false };
+  // (Under an expected `τ?` the accumulator is typed `τ?` — its store given where it holds
+  // none — and the literal answers `τ`.)
+  kvt = ct;
+  ct = el_types::base(ct);
+  kvb = el_vars::create_unique(vars, "_kvb", kvt);
   // Nulled at the function's head as a work reference is.
   if !e.first_pass {
     el_vars::register_work_ref(vars, kvb);
+  }
+  if empty && el_types::keyed_elem(ct) >= 0 {
+    eelm = el_vars::create_unique(vars, "elm", ir::TyReference { n: el_types::keyed_elem(ct), dep: [kvb] });
+    el_vars::mark_inline(vars, eelm, "unique_elm_var");
   }
   items = keyed_items(e, vars, kvb, n);
   if items == null {
@@ -1049,7 +1071,13 @@ pub fn keyed_tail_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex? {
     return ex(ir::NdNull, ct);
   }
   w = ir::NdVar { n: kvb };
-  ops = [el_ir::v_set(kvb, ir::NdNull), el_ir::cl(e, "OpDatabase", [w, ir::NdInt { n: el_schema::keyed_type(e, ct) }])] + items! + [w];
+  alloc = el_ir::cl(e, "OpDatabase", [w, ir::NdInt { n: el_schema::keyed_type(e, ct) }]);
+  ops = [el_ir::v_set(kvb, ir::NdNull), alloc];
+  // (A `τ?` accumulator is given its store again where it holds none, as Rust's literal does.)
+  if kvt is TyOptional {
+    ops += [el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [w]), alloc, ir::NdNull)];
+  }
+  ops = ops + items! + [w];
   ex(el_ir::v_block(ops, ct, "Vector"), ct)
 }
 

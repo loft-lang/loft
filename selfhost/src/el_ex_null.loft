@@ -1629,12 +1629,13 @@ pub fn arm_expect(e: el::El, vars: el_vars::Vars, arm: integer, expected: ir::Ty
       vars.bare_literal = bt;
     }
   }
-  if !rec {
+  // (Under an expected KEYED collection the arm's literal is built as it, `keyed_literal`.)
+  if !rec && !keyed_kind(el_types::base(expected)) {
     return;
   }
   // (A bare arm — a `match` arm's `[…]` — is the literal itself.)
   at = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
-  if at >= 0 && match e.p.nodes[at] { SVecLit { items } => len(items) > 0, _ => false } {
+  if at >= 0 && match e.p.nodes[at] { SVecLit { items } => len(items) > 0 || keyed_kind(el_types::base(expected)), _ => false } {
     vars.expect_node = at;
     vars.expect = expected;
   }
