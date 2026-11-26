@@ -222,9 +222,10 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
     },
     _ => { return; }
   }
+  // (Refused, but read as Rust reads it — a package module's `use` loads its sibling — so the
+  // definitions it brings register as Rust's do: register, then refuse.)
   if package {
     el::refuse(e, "a `#package` file in a `use`");
-    return;
   }
   if own {
     el::refuse(e, "a `use self::` of a package's own module");
@@ -288,7 +289,6 @@ fn load_library(e: el::El, id: text, alias: text, f: text) {
   }
   if has_package_directive(p, file_items(p, tree!)) {
     el::refuse(e, "a `#package` file in a `use`");
-    return;
   }
   // A copy (a record update), not `keep_p = e.p`: a struct field's plain bind views its place,
   // which the library's tree is about to overwrite (`@FR-B-View`).
