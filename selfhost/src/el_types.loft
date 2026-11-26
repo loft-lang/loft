@@ -988,7 +988,7 @@ pub fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
   }
 }
 
-fn any_names_type_var(e: el::El, ts: vector<ir::TypeT>) -> boolean {
+pub fn any_names_type_var(e: el::El, ts: vector<ir::TypeT>) -> boolean {
   for t in ts {
     if names_type_var(e, t) {
       return true;
