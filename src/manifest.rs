@@ -146,6 +146,23 @@ pub struct EmbedDecl {
     pub root: String,
 }
 
+/// The `[android]` table: the key a `--native-android --ship` APK is signed with.  Each value
+/// is as written; `android::signing` in the binary checks them, and refuses a password written
+/// into the manifest itself (`pass:`).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AndroidSigning {
+    /// `keystore = "release.jks"` — the keystore, relative to the `loft.toml` that names it.
+    pub keystore: Option<String>,
+    /// `key_alias = "release"` — the key in that keystore.
+    pub key_alias: Option<String>,
+    /// `ks_pass = "env:NAME"` — where apksigner reads the keystore's password, in its own
+    /// `--ks-pass` syntax (`env:NAME`, `file:PATH`, `stdin`); loft passes it on unread.
+    pub ks_pass: Option<String>,
+    /// `key_pass = "env:NAME"` — the key's password, the same way; apksigner uses the
+    /// keystore's when it is absent.
+    pub key_pass: Option<String>,
+}
+
 /// Content of a library's `loft.toml` manifest file.
 #[derive(Debug, Default)]
 pub struct Manifest {
@@ -350,6 +367,8 @@ pub struct Manifest {
     pub fonts: Vec<FontDecl>,
     /// @PLN146 F4 — the `[[embed]]` declarations, in file order.
     pub embeds: Vec<EmbedDecl>,
+    /// The `[android]` table: the key a `--ship` APK is signed with.
+    pub android: AndroidSigning,
     /// What the lexer could not read, each a value this manifest does not hold.  A parse
     /// reports them at the manifest's line (`Parser::read_manifest`).
     pub errors: Vec<ManifestError>,
@@ -838,6 +857,10 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("wasm.bridge.routes", _) => m.wasm_bridge_routes.push((key.to_string(), value.scalar())),
         ("triggers", "enabled") => m.trigger_enabled = value.is_true(),
         ("triggers", "builders") => m.trigger_builders = value.list(),
+        ("android", "keystore") => m.android.keystore = Some(value.scalar()),
+        ("android", "key_alias") => m.android.key_alias = Some(value.scalar()),
+        ("android", "ks_pass") => m.android.ks_pass = Some(value.scalar()),
+        ("android", "key_pass") => m.android.key_pass = Some(value.scalar()),
         _ => {}
     }
 }
