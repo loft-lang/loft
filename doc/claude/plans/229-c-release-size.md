@@ -103,8 +103,45 @@ this unit); a line limit on files does not reach it either (the file is 2870 lin
 | D1 the table | a parted function's exit run of N ≥ 8 releases written as `loft_release(cx, loft_fr, loft_rel_<n>, N)`; the kinds the runs hold (`free_var`, `free_var_distinct` with its slot, `text_free`, `wpark_put`) | the suite in C and split C, `c_emit`, ASan and the leak report unchanged; the elaborator's gate verdicts identical; its C size and gcc time measured |
 | D2 the receipts | `(R-CTable)` stated beside `(R-CTail)` in `formal/rewrites.md`, its switch `LOFT_NO_C_RELTABLE=1`, a guard that a parted function's release runs leave the code | the guard FAILS with the switch set |
 
+## D0 — measured
+
+**Where the release code is** (the elaborator's 111 MB of C in functions, `scripts/c_release_share.py`
+over the split units):
+
+| Functions | C | of it, release | in runs of 8 or more |
+|---|---|---|---|
+| `(R-CSplit)` parts (locals in `loft_fr`) | 55.3 MB | 36.8 MB (66 %) | 36.1 MB — 32 % of all the C |
+| unparted | 49.5 MB | 15.9 MB (32 %) | 14.7 MB — 13 % of all the C |
+| parted functions' own bodies | 6.2 MB | 0.4 MB | 0.2 MB |
+
+Release code is 48 % of the program's C.  D1 reaches the parts' 36.1 MB: their variables have
+a static place in the frame struct.  The unparted functions' 14.7 MB would need their owned
+locals gathered into a struct first (an open question below).  By form, in the runs D1 takes:
+`loft_free_var_distinct` 196 488, `loft_free_var` 161 230, `loft_wpark_put` 46 797,
+`loft_text_free` 36 004 — so an entry carries its kind, its slot, and for the distinct form
+the slot of the value the exit returns.
+
+**What a table costs** (a standalone replica of the two inline release forms, 5 % of the
+buffers holding a store, `-O1` unless named; times per exit, best of three):
+
+| Shape | Statements | Table |
+|---|---|---|
+| 40 exits × 1013 releases (`assignment_inner`'s scale) | 7.9 µs; gcc 27.8 s, 1.84 MB of object (`-O3`: 51.8 s) | 1.4 µs; gcc 0.17 s, 0.33 MB (`-O3`: 0.19 s) |
+| 4 exits × 256 releases | 396 ns | 378 ns |
+| 4 exits × 64 | 77 ns | 89 ns |
+| 4 exits × 8 | 8.4 ns | 12.2 ns |
+
+At the scale of a parted function the table is five times faster: the straight-line releases
+miss the instruction cache at every exit, the loop stays in it.  Where the code is small and
+hot, the statements win (1.4x per release up to 64).  So D1 takes the release runs of PARTED
+functions only — large by construction, so cold — of eight releases or more, and leaves every
+other function's releases as statements.  The assumption a replica cannot settle (how many
+buffers hold a store at a real exit) is D1's to measure, on the gate's own run time.
+
 ## Open questions
 
 - Phase 0 of A, whenever it is taken up: the path-sensitive share, from the IR.
 - Whether a table run can carry `(R-CTail)`'s sharing (two exits naming one table) or makes it
   unnecessary.
+- The unparted functions' 14.7 MB: gather a long function's owned locals into a struct so a
+  table can name them, or leave them — measured after D1, by what remains.
