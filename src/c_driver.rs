@@ -1528,7 +1528,15 @@ pub(crate) fn build(
     let out = if text.contains(loft::c::SPLIT_UNIT) && dialect(&cc) == Dialect::Gnu {
         // A lint compiles afresh, so its warnings are seen; no cache, no shared objects.
         let units = (!no_cache && !linting).then(|| cache_dir.join("units"));
-        split_build(&cc, &flags, &src_dir, &text, &binary, &link_args, units.as_deref())
+        split_build(
+            &cc,
+            &flags,
+            &src_dir,
+            &text,
+            &binary,
+            &link_args,
+            units.as_deref(),
+        )
     } else {
         let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
         run_cc(&mut cmd)

@@ -9216,17 +9216,31 @@ fn a_split_build_compiles_only_the_units_a_change_reaches() {
         );
     };
     let objects = || {
-        fa::read_dir(fa::PathText::from_os(&dir.join(".loft").join("cache").join("units")))
-            .map(|e| e.len())
-            .unwrap_or(0)
+        fa::read_dir(fa::PathText::from_os(
+            &dir.join(".loft").join("cache").join("units"),
+        ))
+        .map(|e| e.len())
+        .unwrap_or(0)
     };
-    lib("pub a: integer, pub b: integer", "a: x * 10, b: x + 7", "geo{x}");
+    lib(
+        "pub a: integer, pub b: integer",
+        "a: x * 10, b: x + 7",
+        "geo{x}",
+    );
     run("30 10 geo5\n");
     let cold = objects();
     assert!(cold >= 3, "every unit is cached: {cold}");
-    lib("pub a: integer, pub b: integer", "a: x * 10, b: x + 7", "geo-{x}!");
+    lib(
+        "pub a: integer, pub b: integer",
+        "a: x * 10, b: x + 7",
+        "geo-{x}!",
+    );
     run("30 10 geo-5!\n");
-    assert_eq!(objects(), cold + 1, "a body edit compiles its own unit only");
+    assert_eq!(
+        objects(),
+        cold + 1,
+        "a body edit compiles its own unit only"
+    );
     lib(
         "pub z: float, pub a: integer, pub b: integer",
         "z: 1.5, a: x * 10, b: x + 7",

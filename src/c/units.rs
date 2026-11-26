@@ -420,17 +420,9 @@ fn unit_head(items: &[Item], names: &HashSet<&str>, own: bool) -> String {
         .collect()
 }
 
-/// The written `unit` as the units of a split build, each starting with a
-/// `SPLIT_UNIT <name>*/` line: the shared unit first, then one per file in a fixed order.
-/// `runtime_end` closes the runtime in the head: nothing before it is rewritten.  A unit with no
-/// `SPLIT_SHARED` mark is returned as it is.
-pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
-    let Some(at) = unit.find(SPLIT_SHARED) else {
-        return unit.to_string();
-    };
-    let head = &unit[..at];
-    let rest = &unit[at + SPLIT_SHARED.len()..];
-    // What no file owns, and each file's functions, in the order the writer wrote them.
+/// `rest` — the unit past its `SPLIT_SHARED` mark — cut into what no file owns and each file's
+/// functions, in the order the writer wrote them.
+fn by_file(rest: &str) -> (String, BTreeMap<String, String>) {
     let mut shared = String::new();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let mut cursor = rest;
@@ -452,8 +444,11 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
         cursor = &body_start[close + SPLIT_FN_END.len()..];
     }
     shared.push_str(cursor);
-    // The functions each unit defines, and which unit that is.
-    let bodies: Vec<&String> = std::iter::once(&shared).chain(files.values()).collect();
+    (shared, files)
+}
+
+/// The unit each function of `bodies` is defined in, and the first line of its definition.
+fn definers(bodies: &[&String]) -> (HashMap<String, usize>, HashMap<String, String>) {
     let mut definer: HashMap<String, usize> = HashMap::new();
     let mut heads: HashMap<String, String> = HashMap::new();
     for (u, text) in bodies.iter().enumerate() {
@@ -469,6 +464,105 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
             }
         }
     }
+    (definer, heads)
+}
+
+/// `kept` (the head past the runtime) without the definitions of `callbacks`, each replaced by its
+/// prototype, and those definitions apart: the shared unit's.
+fn take_callbacks(kept: &str, callbacks: &HashSet<String>) -> (String, String) {
+    let mut called_back = String::new();
+    let mut rest_of_head = String::with_capacity(kept.len());
+    let mut lines = kept.split_inclusive('\n');
+    while let Some(line) = lines.next() {
+        let bare = without_storage(line);
+        let named = function_name(bare).is_some_and(|n| callbacks.contains(n));
+        // The head keeps the callback's prototype, unconditionally: the runtime's own may sit in
+        // a conditional group this build leaves out (`loft_text_lower` under `LOFT_PATH_FOLD`),
+        // where the one-unit build was declared by this definition.
+        if named && !is_definition(bare) && !bare.trim_end().ends_with(';') {
+            // a whole definition on its line
+            if let Some(end) = bare.find(") {") {
+                rest_of_head.push_str(&bare[..=end]);
+                rest_of_head.push_str(";\n");
+            }
+            called_back.push_str(bare);
+        } else if named && is_definition(bare) {
+            rest_of_head.push_str(bare.trim_end().trim_end_matches('{').trim_end());
+            rest_of_head.push_str(";\n");
+            called_back.push_str(bare);
+            for body in lines.by_ref() {
+                called_back.push_str(body);
+                if body.starts_with('}') {
+                    break;
+                }
+            }
+        } else {
+            rest_of_head.push_str(line);
+        }
+    }
+    (rest_of_head, called_back)
+}
+
+/// The mutable `static` variables of `hot` (the runtime every unit carries) and `kept` (the
+/// head past it): each would be a copy per unit.
+fn unshared_statics(hot: &str, kept: &str) -> Vec<String> {
+    let mut unshared: Vec<String> = Vec::new();
+    for line in hot.lines().chain(kept.lines()) {
+        if let Some(rest) = line.strip_prefix("static ")
+            && !rest.starts_with("inline ")
+            && function_name(rest).is_none()
+            && !is_constant(rest)
+            && let Some(name) = rest
+                .split(['=', '[', ';'])
+                .next()
+                .and_then(|d| d.trim_end().rsplit([' ', '*']).next())
+        {
+            unshared.push(name.to_string());
+        }
+    }
+    unshared
+}
+
+/// The functions that need external linkage: those named outside the unit that defines them —
+/// from another unit (`bodies`), from the head (`head_names`), or by the cold runtime
+/// (`callbacks`).
+fn exported_fns(
+    bodies: &[&String],
+    definer: &HashMap<String, usize>,
+    head_names: &HashSet<&str>,
+    callbacks: &HashSet<String>,
+) -> HashSet<String> {
+    let mut exported: HashSet<String> = HashSet::new();
+    for (u, text) in bodies.iter().enumerate() {
+        for n in identifiers(text) {
+            if definer.get(n).is_some_and(|&home| home != u) {
+                exported.insert(n.to_string());
+            }
+        }
+    }
+    exported.extend(
+        definer
+            .keys()
+            .filter(|n| head_names.contains(n.as_str()) || callbacks.contains(n.as_str()))
+            .cloned(),
+    );
+    exported
+}
+
+/// The written `unit` as the units of a split build, each starting with a
+/// `SPLIT_UNIT <name>*/` line: the shared unit first, then one per file in a fixed order.
+/// `runtime_end` closes the runtime in the head: nothing before it is rewritten.  A unit with no
+/// `SPLIT_SHARED` mark is returned as it is.
+pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
+    let Some(at) = unit.find(SPLIT_SHARED) else {
+        return unit.to_string();
+    };
+    let head = &unit[..at];
+    let rest = &unit[at + SPLIT_SHARED.len()..];
+    let (shared, files) = by_file(rest);
+    // The functions each unit defines, and which unit that is.
+    let bodies: Vec<&String> = std::iter::once(&shared).chain(files.values()).collect();
+    let (definer, heads) = definers(&bodies);
     let runtime_at = head.find(runtime_end).map_or(0, |a| a + runtime_end.len());
     let (hot, cold, callbacks) = split_runtime(&head[..runtime_at]);
     // The prototypes of the units' functions leave the head: each unit gets those its body names,
@@ -491,47 +585,13 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
         }
     }
     // A callback the head defines (`loft_init`) is called by the cold runtime: its definition is
-    // the shared unit's, with external linkage, and every other unit keeps the runtime's prototype.
-    let mut called_back = String::new();
-    let mut rest_of_head = String::with_capacity(kept.len());
-    let mut lines = kept.split_inclusive('\n');
-    while let Some(line) = lines.next() {
-        let bare = without_storage(line);
-        let named = function_name(bare).is_some_and(|n| callbacks.contains(n));
-        if named && !is_definition(bare) && !bare.trim_end().ends_with(';') {
-            // a whole definition on its line
-            called_back.push_str(bare);
-        } else if named && is_definition(bare) {
-            called_back.push_str(bare);
-            for body in lines.by_ref() {
-                called_back.push_str(body);
-                if body.starts_with('}') {
-                    break;
-                }
-            }
-        } else {
-            rest_of_head.push_str(line);
-        }
-    }
-    let mut kept = rest_of_head;
+    // the shared unit's, with external linkage, and every other unit gets its prototype.
+    let (mut kept, called_back) = take_callbacks(&kept, &callbacks);
     // A variable the head declares `static` is a copy in every unit: one unit's write is not
     // another's read.  Program state is declared through `LOFT_STATE` (one definition, `extern`
     // elsewhere); a mutable `static` left in the head stops the build here, loudly, rather than
     // leaving each unit its own copy.
-    let mut unshared: Vec<String> = Vec::new();
-    for line in hot.lines().chain(kept.lines()) {
-        if let Some(rest) = line.strip_prefix("static ")
-            && !rest.starts_with("inline ")
-            && function_name(rest).is_none()
-            && !is_constant(rest)
-            && let Some(name) = rest
-                .split(['=', '[', ';'])
-                .next()
-                .and_then(|d| d.trim_end().rsplit([' ', '*']).next())
-        {
-            unshared.push(name.to_string());
-        }
-    }
+    let unshared = unshared_statics(&hot, &kept);
     if let Some(name) = unshared.first() {
         let _ = writeln!(
             kept,
@@ -542,20 +602,7 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
     // A function needs external linkage only when something outside its own unit names it: the
     // head, or another unit.  Every other keeps its storage, so the C compiler still inlines it
     // and drops what nothing calls, as in the one-unit build.
-    let mut exported: HashSet<String> = HashSet::new();
-    for (u, text) in bodies.iter().enumerate() {
-        for n in identifiers(text) {
-            if definer.get(n).is_some_and(|&home| home != u) {
-                exported.insert(n.to_string());
-            }
-        }
-    }
-    exported.extend(
-        definer
-            .keys()
-            .filter(|n| head_names.contains(n.as_str()) || callbacks.contains(n.as_str()))
-            .cloned(),
-    );
+    let exported = exported_fns(&bodies, &definer, &head_names, &callbacks);
     // A function another unit names that the head declares nowhere (a helper the writer defined
     // before its callers, as the function-value calls are) is declared from its definition.
     let declared: HashSet<String> = moved.iter().map(|(n, _)| n.clone()).collect();
@@ -694,8 +741,14 @@ mod tests {
                 && cold.contains("\nconst loft_tdesc *loft_parse_types(loft_cx *cx);\n")
         );
         // a function returning a `const` pointer is cold like any other
-        assert!(hot.contains("\nconst char *loft_name(int64_t a);\n"), "{hot}");
-        assert!(cold.contains("\nconst char *loft_name(int64_t a) {\n"), "{cold}");
+        assert!(
+            hot.contains("\nconst char *loft_name(int64_t a);\n"),
+            "{hot}"
+        );
+        assert!(
+            cold.contains("\nconst char *loft_name(int64_t a) {\n"),
+            "{cold}"
+        );
         // tables and variables keep their `static` in every unit
         for t in [
             "static const char *const loft_names[]",
@@ -720,6 +773,46 @@ mod tests {
             hot.contains("static const int loft_table[1]")
                 && cold.contains("static const int loft_table[1]")
         );
+    }
+
+    #[test]
+    fn a_callback_the_head_defines_is_declared_in_every_unit() {
+        // the runtime declares `loft_cb` only under a switch this build leaves out; the program's
+        // head defines it, and a file's function calls it
+        let unit = format!(
+            "#ifdef LOFT_OFF\nstatic int64_t loft_cb(int64_t a);\n#endif\nEND\n\
+             static int64_t loft_cb(int64_t a) {{ return a + 1; }}\nstatic int64_t n_a(void);\n\
+             {SPLIT_SHARED}int main(void) {{ return (int) n_a(); }}\n\
+             {SPLIT_FN}one.loft*/\nstatic int64_t n_a(void) {{\n  return loft_cb(2);\n}}\n{SPLIT_FN_END}\n"
+        );
+        let units = into_units(&unit, "END\n");
+        let parts: Vec<&str> = units.split(SPLIT_UNIT).filter(|p| !p.is_empty()).collect();
+        let one = parts
+            .iter()
+            .find(|p| p.contains("n_a(void) {"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "one.loft's unit: {:?}",
+                    parts
+                        .iter()
+                        .map(|p| &p[..p.len().min(40)])
+                        .collect::<Vec<_>>()
+                )
+            });
+        // past the runtime (so outside its switched-off group), before the call
+        let head = &one[one.find("END\n").expect("the runtime's end")..];
+        let at = head
+            .find("\nint64_t loft_cb(int64_t a);\n")
+            .unwrap_or(usize::MAX);
+        assert!(
+            head.find("loft_cb(2)").is_some_and(|call| at < call),
+            "{one}"
+        );
+        assert!(
+            !one.contains("return a + 1"),
+            "the definition is the shared unit's: {one}"
+        );
+        assert!(parts[0].contains("int64_t loft_cb(int64_t a) { return a + 1; }"));
     }
 
     #[test]
