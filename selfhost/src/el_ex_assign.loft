@@ -1155,6 +1155,68 @@ fn keyed_group_member(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   }
 }
 
+// `assign_keyed_rebind` for a JOIN (an `if`, or a `??`'s `ncc` block): copied into the local as a
+// whole — the source-free bit set where an arm is a call that may free its source, every other
+// arm's stores protected around the copy.  Null where no such join is read.
+fn keyed_join_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, kcur: ir::TypeT, kg: vector<ir::Node>) -> Ex? {
+  // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
+  // arm is a call that may free its source, the source-free bit is set and every arm's
+  // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
+  // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
+  jpd = el::def_nr(e, "n_protect_store_frees");
+  jud = el::def_nr(e, "n_unprotect_store_frees");
+  if jpd >= 0 && jud >= 0 && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
+    jarms: vector<ir::Node> = [];
+    el_ex_bind::join_arms(e, x.code, jarms);
+    if len(jarms) >= 2 {
+      el_vars::drop_use(vars, v);
+      jkt = el_schema::keyed_type(e, el_types::base(kcur));
+      jdefs = own::new_defs();
+      jops = own::ops_of(e.b);
+      jw: vector<integer> = [];
+      jfree = false;
+      jok = true;
+      for ja in jarms {
+        if el_ex_bind::struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
+          jfree = true;
+          jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
+          continue;
+        }
+        jvs: vector<integer> = [];
+        if !own::view_root_slots(e.b, ja, jvs) {
+          jok = false;
+        }
+        jw += jvs;
+      }
+      jfrees = jok && jfree;
+      jg: vector<integer> = [];
+      if jfrees {
+        jinner: vector<integer> = [];
+        el_ex_bind::bound_to_a_value_in(x.code, jinner);
+        for gs in jw {
+          if !jinner.contains(gs) {
+            jg += [gs];
+          }
+        }
+      }
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+      jseq = kg;
+      if !el_ir::reads_var(x.code, v) {
+        jseq += [el_ir::v_set(v, ir::NdNull)];
+      }
+      for gs in jg {
+        jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
+      }
+      jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
+      for gs in jg {
+        jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
+      }
+      return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
+    }
+  }
+  null
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   via_link = -1;
   el_ex_name::capture_target_placeholder(e, vars, target);
@@ -2584,65 +2646,21 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           }
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
-        // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
-        // arm is a call that may free its source, the source-free bit is set and every arm's
-        // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
-        // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
-        jpd = el::def_nr(e, "n_protect_store_frees");
-        jud = el::def_nr(e, "n_unprotect_store_frees");
-        if jpd >= 0 && jud >= 0 && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
-          jarms: vector<ir::Node> = [];
-          el_ex_bind::join_arms(e, x.code, jarms);
-          if len(jarms) >= 2 {
-            el_vars::drop_use(vars, v);
-            jkt = el_schema::keyed_type(e, el_types::base(kcur));
-            jdefs = own::new_defs();
-            jops = own::ops_of(e.b);
-            jw: vector<integer> = [];
-            jfree = false;
-            jok = true;
-            for ja in jarms {
-              if el_ex_bind::struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
-                jfree = true;
-                jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
-                continue;
-              }
-              jvs: vector<integer> = [];
-              if !own::view_root_slots(e.b, ja, jvs) {
-                jok = false;
-              }
-              jw += jvs;
-            }
-            jfrees = jok && jfree;
-            jg: vector<integer> = [];
-            if jfrees {
-              jinner: vector<integer> = [];
-              el_ex_bind::bound_to_a_value_in(x.code, jinner);
-              for gs in jw {
-                if !jinner.contains(gs) {
-                  jg += [gs];
-                }
-              }
-            }
-            el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
-            jseq = kg;
-            if !el_ir::reads_var(x.code, v) {
-              jseq += [el_ir::v_set(v, ir::NdNull)];
-            }
-            for gs in jg {
-              jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
-            }
-            jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
-            for gs in jg {
-              jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
-            }
-            return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
-          }
+        jcopy = keyed_join_copy(e, vars, v, x, kcur, kg);
+        if jcopy != null {
+          return jcopy!;
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
       },
       _ => {
+        // (A `??`'s `ncc` block — `h = pick(c) ?? [R {…}]` — is such a join.)
+        if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+          ncopy = keyed_join_copy(e, vars, v, x, kcur, kg);
+          if ncopy != null {
+            return ncopy!;
+          }
+        }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
       }
