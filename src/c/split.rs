@@ -832,12 +832,20 @@ fn split_at(
         let _ = writeln!(out, "    {ret} loft_split_ret;");
     }
     let _ = writeln!(out, "    char loft_unused;\n}};");
+    // The function's context, under its own name in every part: a statement's `cx` is written
+    // `loft_fr->cx`, but a runtime macro names `cx` in its expansion (`LOFT_WRITE_REFUSED`,
+    // `LOFT_HOLD`, `LOFT_KNOWN`), which no rewrite of the statement's text can reach.  The
+    // parameter is copied into the frame once and never assigned, so the two are one value.
+    let has_cx = frame_members.iter().any(|m| m.trim_end().ends_with("*cx"));
     for (pi, p) in parts.iter().enumerate() {
         let kind = if returns[pi] { "int" } else { "void" };
         let _ = writeln!(
             out,
             "static LOFT_NOINLINE {kind} {name}__part{pi}(void *loft_frv) {{\n    struct {frame} *const loft_fr = (struct {frame} *) loft_frv;"
         );
+        if has_cx {
+            let _ = writeln!(out, "    loft_cx *const cx = loft_fr->cx;\n    (void) cx;");
+        }
         for d in &part_locals[pi] {
             let _ = writeln!(out, "    {d};");
         }

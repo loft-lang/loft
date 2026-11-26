@@ -2562,7 +2562,9 @@ fn emit_unit_with(
     }
     out.push_str(&dispatch);
     // The closure release only where something calls it: a unit with no function value
-    // holding a closure writes none.
+    // holding a closure writes none.  A call is looked for by its name alone: a part of
+    // `(R-CSplit)` spells the context `loft_fr->cx`, and a check on `(cx, ` missed every call
+    // there, which left the release undeclared.
     let calls_drop = [
         &bodies,
         &*cx.gen_bodies.borrow(),
@@ -2570,7 +2572,7 @@ fn emit_unit_with(
         &cx.tr_bodies(),
     ]
     .iter()
-    .any(|t| t.contains("loft_drop_closure(cx, "));
+    .any(|t| t.contains("loft_drop_closure("));
     if calls_drop {
         out.push_str(&cx.drop_code(&fns));
     }

@@ -9432,3 +9432,51 @@ fn a_parted_function_releases_through_its_table() {
     assert_eq!(statements, "102 1644\n");
     assert_eq!(none, 0, "the switch writes the statements");
 }
+
+/// `@FR-R-CSplit` — a part names the function's context the way the whole body does: a
+/// closure's release, called in a part as `loft_drop_closure(loft_fr->cx, …)`, is written (its
+/// presence was looked for under the `(cx, ` spelling alone), and a runtime macro that names
+/// `cx` in its expansion (`LOFT_WRITE_REFUSED`, a keyed collection's write) finds it in the
+/// part.  Both programs, every function of twelve sites in parts (`LOFT_C_SPLIT=12`), compile
+/// and answer what the interpreter answers.
+#[test]
+fn a_part_reaches_the_closure_release_and_the_context_a_macro_names() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-context");
+    let closure = "struct E73 { a: integer }\nfn in_frame(p: boolean) -> integer {\n  \
+        e: E73 = E73 { a: 2 };\n  g: fn() -> integer = if p { fn() -> integer { 3 + e.a } } \
+        else { fn() -> integer { 5 + e.a } };\n  g()\n}\nfn main() {\n  \
+        println(\"{in_frame(true)} {in_frame(false)}\");\n}\n";
+    let keyed = "struct E { key: integer, val: integer, name: text, link: reference<E>? }\n\
+        struct F { key: integer, val: integer }\nstruct H { es: hash<E[key]>, other: hash<F[key]> }\n\
+        fn main() {\n  f = H { };\n  q = 41;\n  f.es += [E { key: q, val: 1, name: \"a\" }];\n  \
+        m = f.es[q];\n  if m != null { m.val = 77; }\n  r = 40;\n  \
+        f.es += [E { key: 42, val: 2, name: \"b\" }];\n  m2 = f.es[r];\n  \
+        f.es += [E { key: 41, val: 3, name: \"c\" }];\n  m3 = f.es[q];\n  \
+        f.es += [E { key: 50, val: 4, name: \"d\" }];\n  f.es[50] = null;\n  w = 50;\n  \
+        m4 = f.es[w];\n  m5 = f.other[q];\n  \
+        println(\"{m3!.val} {len(f.es)} {m2 == null} {m4 == null} {m5 == null}\");\n}\n";
+    for (name, src, want) in [
+        ("closure", closure, "5 7\n"),
+        ("keyed", keyed, "3 2 true true true\n"),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .arg("--native-c")
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
