@@ -297,6 +297,8 @@ pub struct Vars {
   pub arg_syntax: vector<integer> = [],
   // A local a `&` bound to a keyed FIELD (`a = &b.h`): a `+=` through it is the field's
   // (`set_amp_link`'s place) — the field's syntax, by local.
+  // The empty `[]` tail of a vector body with early returns, built into a store of its own.
+  pub empty_tail: integer = -1,
   pub field_links: vector<integer> = [],
   pub field_link_syn: vector<integer> = [],
   // `Function::fn_lambda_map`'s question on both passes: the locals a capturing lambda was
