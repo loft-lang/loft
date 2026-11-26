@@ -664,9 +664,10 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       td = el_types::tuple_def_of(e, ee);
       elem_read = match el_ir::unspan(x.code) { NdCall { def_nr: xd } => el::def(e, xd).name == "OpGetVector", _ => false };
       mt = ee[index] ?? ir::TyVoid;
-      // A member of a tuple that is itself a tuple's member (`n.0.1`): the inner tuple held in
-      // a work ref first (`tuple_tmp`).
-      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
+      // A member of a tuple that is itself a tuple's member (`n.0.1`), or a loft function's answer
+      // (`pair().1`): the tuple held in a work ref first (`tuple_tmp`).
+      tcall_subj = match el_ir::unspan(x.code) { NdCall { def_nr: tcd } => !starts_with(el::def(e, tcd).name, "Op"), _ => false };
+      if (el_ir::unspan(x.code) is NdTupleGet || tcall_subj) && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
         tw = el_vars::work_ref(vars, x.tp);
         // (Through an OPTIONAL tuple local the member may be absent: `τ?`.)
         outer_opt = match el_ir::unspan(x.code) { NdTupleGet { var: otg } => el_vars::tp(vars, otg) is TyOptional, _ => false };

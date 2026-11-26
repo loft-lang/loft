@@ -1464,7 +1464,8 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   }
   if !plain || (slot && !unit_variant) {
     el::refuse(e, "a field default of this kind: {el_ex_base::type_kind(x.tp)}");
-    return null;
+    // (The first pass still registers the field: a refused default is no reason to drop it.)
+    return if e.first_pass { ir::NdNull } else { null };
   }
   if e.first_pass {
     return x.code;
