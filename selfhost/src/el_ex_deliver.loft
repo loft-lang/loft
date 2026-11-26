@@ -954,7 +954,16 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
         return code;
       }
       lrec = element_content(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+      // (The store the local owns: its literal's backing, or the buffer a call built it in —
+      // `r = dec(s); r ?? []` frees `__ref_1` where `r` is present.)
       lbk = el_ex_copy::literal_backing(vars, cl);
+      if lbk < 0 {
+        for lsd in el_types::deps(el_vars::tp(vars, cl)) {
+          if lbk < 0 && starts_with(el_vars::name_of(vars, lsd), "__ref_") && !vars.vars[lsd].argument {
+            lbk = lsd;
+          }
+        }
+      }
       match tail {
         NdIf { cond: lcond, t: lt, f: lf } => {
           match lf {
@@ -1204,14 +1213,15 @@ pub fn coalesce_param_tail(e: el::El, vars: el_vars::Vars, n: integer) -> intege
   }
 }
 
-// `coalesce_param_tail`'s twin for a nullable vector LOCAL of the body: `v ?? [literal]`.
+// `coalesce_param_tail`'s twin for a nullable vector LOCAL of the body: `v ?? [literal]`, the
+// empty `[]` too.
 pub fn coalesce_local_tail(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
   if n < 0 {
     return -1;
   }
   match e.p.nodes[n] {
     SBin { op, l, r } => {
-      if op != "??" || !match e.p.nodes[r] { SVecLit { items } => len(items) > 0 && !(e.p.nodes[items[-1]!] is SRepeat), _ => false } {
+      if op != "??" || !match e.p.nodes[r] { SVecLit { items } => len(items) == 0 || !(e.p.nodes[items[-1]!] is SRepeat), _ => false } {
         return -1;
       }
       match e.p.nodes[l] {
