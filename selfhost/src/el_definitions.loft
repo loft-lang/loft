@@ -2336,7 +2336,9 @@ pub fn reserve_late_return_buffers(e: el::El) {
 
 fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
   match t {
-    TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT,
+    // (A struct enum's VARIANT is a record result too — `-> Bin`, `-> Bin?` — as Rust's
+    // `Type::Reference` arm takes it.)
+    TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE,
     TyEnum { is_ref } => is_ref,
     TyVector { inner: _ } => true,
     _ => false
