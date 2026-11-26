@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector literal written into a field declared `vector<T>?` is written as into
+// its dense twin — the field emptied where it lies, each item built into it — where the `?` is
+// the field's own (its receiver a local that is no `τ?`); an empty literal empties it.  A record
+// item's element temp is typed by its record on both passes (`ref(S)["h"]`), a scalar's by the
+// placeholder.
+// Prints: [1,2] [] [{x:4}] ["a","b"] [{x:4},{x:5}]
+
+struct S { x: integer }
+struct H { g: vector<integer>?, k: integer }
+struct HS { g: vector<S>?, k: integer }
+struct HT { g: vector<text>?, k: integer }
+struct HD { g: vector<S>, k: integer }
+fn main() {
+  a = H { g: null, k: 1 };
+  a.g = [1, 2];
+  b = H { g: [9], k: 1 };
+  b.g = [];
+  c = HS { g: null, k: 1 };
+  c.g = [S { x: 4 }];
+  d = HT { g: null, k: 1 };
+  d.g = ["a", "b"];
+  e = HD { g: [], k: 1 };
+  e.g += [S { x: 4 }, S { x: 5 }];
+  println("{a.g} {b.g} {c.g} {d.g} {e.g}");
+}

@@ -357,6 +357,16 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(el_types::base(p.tp)) {
     return el_ex_append::field_append(e, vars, p, rhs);
   }
+  // (A FIELD declared `vector<T>?` given a vector literal is written as its dense twin — Rust's
+  // build is the same, the literal's items making it present — where the `?` is the field's own:
+  // its receiver a local that is no `τ?`.)
+  if op == "=" && p.tp is TyOptional && el_types::base(p.tp) is TyVector && e.p.nodes[rhs] is SVecLit {
+    vop = el_ir::unspan(p.code);
+    vrecv = match vop { NdCall { def_nr: vfd, args: vfa } => if el::def(e, vfd).name == "OpGetField" && len(vfa) == 3 { match el_ir::unspan(vfa[0]!) { NdVar { n: vrv } => vrv, _ => -1 } } else { -1 }, _ => -1 };
+    if vrecv >= 0 && !(el_vars::tp(vars, vrecv) is TyOptional) {
+      p.tp = el_types::base(p.tp);
+    }
+  }
   // An empty literal into a vector place empties it where it lies (`clear_vector_field`, an
   // insert of `OpClearVector` the block splices, its end marked): the place's type is the
   // literal's, which on its own has none.
