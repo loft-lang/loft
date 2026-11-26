@@ -1106,7 +1106,8 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
 /// (`LOFT_SPLIT_OWN`), every other using it (`LOFT_SPLIT_USE`) — then the objects linked into
 /// `binary`.  No whole-program optimisation (`-flto`): it would undo what compiling apart saves.
 ///
-/// With `cache` (a directory), each object is kept there under its unit's [`build_key`] — its
+/// With `cache` (a directory; none with `LOFT_NO_CACHE`, or under a lint, which compiles afresh
+/// so its warnings are seen), each object is kept there under its unit's [`build_key`] — its
 /// text, the compiler and its identity, every flag and its role — so a unit whose C did not
 /// change is linked from the cache, not compiled.  The key is the C a unit IS, never the sources
 /// it came from: a unit carries the types and prototypes of other files, so a change to one
@@ -1463,6 +1464,24 @@ fn reuse_cached(cached: &std::path::Path) -> bool {
     false
 }
 
+/// Write the unit `c` to `src`, the file the compiler reads, and answer the text written.  A unit
+/// written with source lines (the debug tier) hands the code between its loft functions back to
+/// this file, under the name it is written as here.
+fn write_source<'a>(
+    c: &'a str,
+    tier: Tier,
+    src: &std::path::Path,
+) -> Result<std::borrow::Cow<'a, str>, BuildError> {
+    let text = if tier == Tier::Debug {
+        std::borrow::Cow::Owned(loft::c::resolve_line_resets(c, &src.to_string_lossy()))
+    } else {
+        std::borrow::Cow::Borrowed(c)
+    };
+    fa::write(src, &*text)
+        .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
+    Ok(text)
+}
+
 /// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path,
 /// placed as [`Placement`] says.
 /// The binary is compiled under the scratch directory and published by an atomic rename, so
@@ -1515,18 +1534,9 @@ pub(crate) fn build(
     let pid = std::process::id();
     let (src_dir, src) = source_place(&scratch, pid)?;
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
-    // A unit written with source lines (the debug tier) hands the code between its loft
-    // functions back to this file, under the name it is written as here.
-    let text = if tier == Tier::Debug {
-        std::borrow::Cow::Owned(loft::c::resolve_line_resets(c, &src.to_string_lossy()))
-    } else {
-        std::borrow::Cow::Borrowed(c)
-    };
-    fa::write(&src, &*text)
-        .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
+    let text = write_source(c, tier, &src)?;
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
     let out = if text.contains(loft::c::SPLIT_UNIT) && dialect(&cc) == Dialect::Gnu {
-        // A lint compiles afresh, so its warnings are seen; no cache, no shared objects.
         let units = (!no_cache && !linting).then(|| cache_dir.join("units"));
         split_build(
             &cc,
@@ -1577,21 +1587,31 @@ pub(crate) fn build(
             cached: false,
         });
     }
+    Ok(publish(binary, cached, cache_dir))
+}
+
+/// The freshly built `binary` published to the cache as `cached`, and the one to run: the
+/// cached copy, or the scratch binary where publishing failed.
+fn publish(
+    binary: std::path::PathBuf,
+    cached: std::path::PathBuf,
+    cache_dir: &std::path::Path,
+) -> Built {
     if fa::create_dir_all(cache_dir).is_ok() {
         crate::native_utils::tighten_cache_dir(cache_dir);
         crate::native_utils::publish_cached_binary(&binary, &cached, cache_dir, "native");
     }
     if fa::exists(&cached) {
         let _ = fa::remove_file(&binary);
-        Ok(Built {
+        Built {
             binary: cached,
             cached: false,
-        })
+        }
     } else {
-        Ok(Built {
+        Built {
             binary,
             cached: false,
-        })
+        }
     }
 }
 
