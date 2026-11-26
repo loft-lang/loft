@@ -138,6 +138,21 @@ functions only — large by construction, so cold — of eight releases or more,
 other function's releases as statements.  The assumption a replica cannot settle (how many
 buffers hold a store at a real exit) is D1's to measure, on the gate's own run time.
 
+## D1 — measured
+
+The elaborator (porter commit 36f3b0f19), built cold (`LOFT_NO_CACHE=1`) with the build before
+D1 and with D1, at the semantics tier, one build at a time:
+
+| Build | C | gcc | wall | peak memory |
+|---|---|---|---|---|
+| split, before | 166 MB | 114 s | 194 s | 1.8 GB |
+| split, D1 | 137 MB | 54 s | 147 s | 1.1 GB |
+| one unit, before | | 202 s | 281 s | 5.9 GB |
+| one unit, D1 | | 88 s | 203 s | 3.5 GB |
+
+4255 release runs are table calls.  gcc's time falls by more than half in both builds, and so
+does the memory a build needs: the one-unit build no longer needs 6 GB.
+
 ## Open questions
 
 - Phase 0 of A, whenever it is taken up: the path-sensitive share, from the IR.
