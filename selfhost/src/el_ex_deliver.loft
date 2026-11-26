@@ -544,10 +544,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       match tail {
         NdCall { def_nr: rcd, args: rca } => {
           rw = match el_ir::unspan(rca[-1] ?? ir::NdNull) { NdVar { n: rwn } => if starts_with(el_vars::name_of(vars, rwn), "__ref_") && !vars.vars[rwn].argument { rwn } else { -1 }, _ => -1 };
-          // (Only where the tail borrows nothing, `ls.is_empty()`: a call whose answer may view
-          // an argument — `g(Filled { items: inner })` — is copied, `CopyBorrow`, not carried.
-          // Taken conservatively: every visible argument a scalar.)
-          rheap = len([for ra in el::def(e, rcd).attributes if !ra.hidden && !is_scalar(el_types::base(ra.typedef[0] ?? ir::TyVoid)) { 1 }]) > 0;
+          // (Only where the tail borrows nothing, `ls.is_empty()`: the call's first-pass type
+          // names no store — `mk("q")` over a text parameter answers a fresh vector, `gb(b)` over a
+          // record parameter borrows `b`.  A temporary subject, `g(Filled { items: inner })`, is
+          // `Bind` above: `tail_call_borrows_temp_subject`.)
+          // (…and a first-pass struct temporary — a literal at a record parameter, which Rust's
+          // first pass decides nothing for, `gb(Box { items: v })` — declines the rename too.)
+          rheap = len(el_types::deps(bl.result[0] ?? ir::TyVoid)) > 0 || len([for rta in rca if rta#index < len(el::def(e, rcd).attributes) && !el::def(e, rcd).attributes[rta#index]!.hidden && !is_scalar(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid)) && !(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid) is TyText) && !(el_ir::unspan(rta) is NdVar) { 1 }]) > 0;
           if rw >= 0 && !rheap && !((el::def(e, rcd).code[0] ?? ir::NdNull) is NdNull) && !el_expressions::forwards_foreign_store(e, rcd, 0) && attr_nr(el::def(e, d), "__retbuf") >= 0 && !el_expressions::buffer_bound(e) {
             rename_onto(e, vars, rb, rw);
           }
