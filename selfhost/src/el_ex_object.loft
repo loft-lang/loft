@@ -419,12 +419,26 @@ pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fi
 // first field whose declared type mentions it and whose value resolves it (`resolve_type_var`),
 // and the instance is minted (`instance_def`).  Register, then refuse: the literal itself is
 // refused by the caller.  Not ported: the expected instance a declaration or a parameter gives.
-pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>) {
+pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, expected: ir::TypeT = ir::TyUnknown { n: 0 }) {
   if d < 0 {
     return;
   }
   template = if el::def(e, d).def_type == el::DT_TYPE_TEMPLATE { d } else if el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 && el::def(e, el::def(e, d).parent).def_type == el::DT_TYPE_TEMPLATE { el::def(e, d).parent } else { -1 };
   if template < 0 || len(el::def(e, template).type_params) == 0 {
+    return;
+  }
+  // The position's own instance of this template (`w: TBox<u8> = TBox { … }`) is the literal's:
+  // nothing is read off the values (`literal_instance`'s `expected`; an open one only inside a
+  // template).
+  xp = expected;
+  if el_types::is_unknown(xp) && vars.expect_node >= 0 {
+    same = match e.p.nodes[vars.expect_node] { SStructLit { fields: xf } => xf == fields, _ => false };
+    if same {
+      xp = vars.expect;
+    }
+  }
+  ei = match el_types::base(xp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+  if ei >= 0 && el::def(e, ei).instance_of == template && (!el_types::is_open_instance(e, ei) || (e.context >= 0 && el::def(e, e.context).def_type == el::DT_GENERIC)) {
     return;
   }
   // The values' types, read as Rust's discovery reads them.
