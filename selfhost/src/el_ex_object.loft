@@ -998,6 +998,11 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
     SMember { at: ra, e: rre, name: rn, args: rargs, call: rc } => if is_field_step(e, re!) { member(e, vars, ra, rre, rn, rargs, rc, true) } else { el_ex_assign::expression(e, vars, re!) },
     _ => el_ex_assign::expression(e, vars, re!)
   };
+  // (A METHOD call's record answer — `c.run().ok` — borrows nothing, and the chain goes on: it is
+  // held in an inline ref (`parse_part_inner`'s hold, `.` next), as a field step's record is.)
+  if !e.first_pass && match e.p.nodes[re!] { SMember { call: mcall } => mcall, _ => false } {
+    x = chain_hold(e, vars, x, true);
+  }
   // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
   // (A guard's proof is of the slot — the receiver as it was written, before the tag's read.)
   slot_code = x.code;
