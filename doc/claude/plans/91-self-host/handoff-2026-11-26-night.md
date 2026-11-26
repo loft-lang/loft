@@ -5,15 +5,10 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## State — START HERE
 
-- **int32** = 2f5eda504 (CLEAN: 1646/2269, 0 differ).  The tester's loft30-gate 419b7e1d6
-  (refused lambdas register their nested lambdas and records; cascades declared unfilled) is
-  merged in (67f84f773).
-- **Gating:** `git diff 419b7e1d6 67f84f773 -- selfhost/` on a02409221 — 5ecc7f876, links to a
-  function value (`&g`, a call through `pd()`) and the captured-text borrow.  A try is a
-  `selfhost/` diff on the tester's last clean base.
-- **The port-only ratchet (owner, 2026-11-26):** a definition only the port registers makes a try
-  `issues`.  The list is `port-only-definitions.md`; the keyed-destination literal family is
-  lowered (6c9ef580c), the keyed link of a LOCAL too (92a0e6f54).
+- **int32** = 1b6753fae (loft30-gate, CLEAN: 1660/2277, 0 differ).  Both branches were rebased
+  onto main 9e84211ef (2026-11-26) and are linear; promotions fast-forward int32 to loft30-gate.
+- **Gating:** `git diff 1b6753fae 2feb51a44 -- selfhost/` — `par` lanes (1948 refused → agree).  It
+  carries ONE expected differ, a Rust deviation (below); the tester decides how the gate counts it.
 - **The tester's backlog** is `refusal-worklist.md` on loft30-gate (re-ranked by topic):
   T1 records answered from something other than a literal (current), T2 `par` workers, T3 tuples.
   T8 is not a lever.  The tester ports generic-template REGISTRATION itself (el_types.loft,
@@ -49,6 +44,16 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   source or source 0 (`hook_of`, `make_global`): cross "declared in a library" in any matrix.
 
 ## Open, measured (next)
+
+- **A Rust deviation, not to mirror:** `t2 = 0; if b.mid != null { t2 += b.mid.leaf.v; }` with
+  `mid: reference<Mid>?` — Rust widens `t2` to `integer?` UNDER the guard and not without it,
+  backwards from `(N-Guard)` (types.md): the port keeps `integer`.  It makes
+  tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft differ once
+  its `par` lanes are read.  Reported to the tester (2026-11-26); for whoever fixes Rust.
+- A nullable keyed join (`if c { x } else { [R {…}] }` under `-> hash<…>?`, `x: hash<…>?`): the
+  `(N-Join)` arm is simple, but it exposes three older differences in
+  a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin (a vector parameter's tail, the
+  dense accumulator, a two-parameter join's borrows) — held back.
 
 - A link to a keyed FIELD (`a = &b.h`): Rust reads and writes through the field place
   (`t_4hash_len(OpGetField(b, …))`, `OpNewRecord(b, B, field)`) — the port has no link-place
