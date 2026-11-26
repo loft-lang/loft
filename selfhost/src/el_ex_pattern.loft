@@ -1264,7 +1264,15 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[body!] is SBlock {
+    // (Under a keyed expectation the block arm's literal is built as the collection, `arm_expect`.)
+    bkn = vars.expect_node;
+    bkt = vars.expect;
+    if keyed_kind(el_types::base(vars.arm_expect)) {
+      el_ex_null::arm_expect(e, vars, body!, vars.arm_expect);
+    }
     b = el_ex_assign::parse_block(e, vars, body!, "match_arm", expected);
+    vars.expect_node = bkn;
+    vars.expect = bkt;
     // (A block arm answering a vector where the siblings settled on its `?` is typed as that `?`,
     // its borrows kept: `{ x = [n]; x }` is `vector<integer>["x"]?`.)
     // (…and so is a plain scalar one, `{ x = n + 10; x }` beside `num(3)`'s `integer?`.)
@@ -1302,10 +1310,11 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   // (An `if` arm of a match answering into an expected vector takes that vector, `arm_expect`.)
   kept_node = vars.expect_node;
   kept_tp = ex(ir::NdNull, vars.expect);
-  if e.p.nodes[body!] is SIf && el_types::base(vars.arm_expect) is TyVector {
+  // (…a keyed collection the same way: each literal is built as it.)
+  if e.p.nodes[body!] is SIf && (el_types::base(vars.arm_expect) is TyVector || keyed_kind(el_types::base(vars.arm_expect))) {
     vars.expect_node = body!;
     vars.expect = vars.arm_expect;
-  } else if el_types::base(vars.arm_expect) is TyVector {
+  } else if el_types::base(vars.arm_expect) is TyVector || keyed_kind(el_types::base(vars.arm_expect)) {
     // (A literal of records answering the arm is read against the expected vector too.)
     el_ex_null::arm_expect(e, vars, body!, vars.arm_expect);
   }

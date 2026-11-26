@@ -128,7 +128,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   // (Kept in an `Ex`: a struct-enum field read into a local is a VIEW the write below
   // overwrites, `view-written-back`.)
   kept_arm = ex(ir::NdNull, vars.arm_expect);
-  vars.arm_expect = if node >= 0 && vars.expect_node == node && el_types::base(vars.expect) is TyVector { vars.expect } else { ir::TyVoid };
+  vars.arm_expect = if node >= 0 && vars.expect_node == node && (el_types::base(vars.expect) is TyVector || keyed_kind(el_types::base(vars.expect))) { vars.expect } else { ir::TyVoid };
   r = match_expr_inner(e, vars, subject, arms, node);
   vars.arm_expect = kept_arm.tp;
   r
