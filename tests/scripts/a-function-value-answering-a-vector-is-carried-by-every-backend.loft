@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-L-Apply: a call through a function value runs the function and yields its vector result as the direct call does.
+// @FR-L-FnRef: a bare function name is a value that can be called.
 
 // A function value whose function answers a vector: the call through it makes the answer's
 // buffer through the unit's type table, which a C unit must therefore write even when nothing

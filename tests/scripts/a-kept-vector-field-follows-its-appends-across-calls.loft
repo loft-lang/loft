@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-ParamGrow: an append to a parameter's vector field in one callee is seen by every later read in the caller and other callees.
+// @FR-F-ParamHeap: the record parameter shares the caller's store, so walks in callees read the appended chunks.
 //
 // A vector FIELD of a record parameter — `m.cs` — that a chain of calls walks and appends to
 // answers what the store holds at every read, across the calls that walk it and the appends and

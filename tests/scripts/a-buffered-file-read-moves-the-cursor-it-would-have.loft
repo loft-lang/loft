@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-R-TypedRead: a fixed-width integer read decodes its bytes and advances #next exactly as the generic read, across a buffer refill and after a seek.
 //
 // A BUFFERED FILE READ MOVES THE CURSOR IT WOULD HAVE.  A read the file's 64 KiB buffer
 // already holds is answered with one copy instead of the general fill loop; the bytes and the

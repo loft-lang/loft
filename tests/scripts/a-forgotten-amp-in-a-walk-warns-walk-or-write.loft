@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-B-Ref-Write: a whole write through a field link replaces the linked field, dropping the node's other subtrees.
+// @FR-B-Ref-Repoint: a walk step written with & re-points the link and writes nothing.
 //
 // Inside a loop, a whole write `cur = cur.f` through a field link or a `&` slot parameter
 // writes the field and drops the node's other subtrees, where a walk meant the step

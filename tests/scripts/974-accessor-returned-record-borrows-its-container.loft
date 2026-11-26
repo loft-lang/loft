@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Move: a nullable accessor's record result borrows its parameter, and the return type records it.
+// @FR-O-Borrow: the caller's binding of that result is skip-free, so the container's owner frees it once.
 //
 // loft#974 — a record handed back BY A FUNCTION out of one of its parameters is a VIEW
 // into that parameter's store, and until this landed the signature did not say so.

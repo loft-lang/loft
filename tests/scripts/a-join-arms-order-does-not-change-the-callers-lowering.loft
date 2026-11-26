@@ -1,3 +1,6 @@
+// @FR-O-Move: a tail that joins a literal with a parameter borrows the parameter, whichever arm comes first.
+// @FR-F-Ret: the caller's bind copies that borrowed result, so writing through it leaves the argument alone.
+//
 // A function whose tail joins a struct literal with a parameter BORROWS the parameter on
 // every path (`(O-Move)`), whichever arm comes first.  The literal's built-in-place marker
 // is a fact about that arm alone, so the join's borrow reaches the signature on pass 1 for

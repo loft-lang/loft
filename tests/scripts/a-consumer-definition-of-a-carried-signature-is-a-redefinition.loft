@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Disp-Key: a consumer's definition of a spelling the imported set already carries is a redefinition.
+//
 // A consumer's definition whose parameter spelling a `use`d library's overload set ALREADY
 // carries is a redefinition (`Disp-Key`, @PLN162) — the same refusal a single imported free
 // function gives, and the one `shadows_a_method` gives a method.  Until this held, `hit(f:
