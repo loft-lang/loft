@@ -153,7 +153,12 @@ fn release_key(
     let ks_pass = ks_pass.ok_or_else(|| missing("ks_pass", "env:ANDROID_KS_PASS"))?;
     Ok(Some(ReleaseKey {
         dir: root.to_path_buf(),
-        keystore: root.join(keystore),
+        // In the host's spelling: `keys/release.jks` as written, joined part by part, so on
+        // Windows apksigner is handed one separator throughout.
+        keystore: {
+            use crate::file_access::HostPath as _;
+            root.to_path_text().join(keystore).os_spelling()
+        },
         alias,
         ks_pass,
         key_pass,
