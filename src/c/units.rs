@@ -95,15 +95,12 @@ fn give_linkage(text: &str, defined: &HashSet<String>, prototypes: bool) -> Stri
 /// spells otherwise keeps its `static` in every unit, which costs time, never correctness.
 fn split_runtime(runtime: &str) -> (String, String, HashSet<String>) {
     let lines: Vec<&str> = runtime.split_inclusive('\n').collect();
+    // A `static` function that is not inline-hinted.  Its return type may start with `const` or
+    // `struct` (`static const loft_tdesc *loft_parse_types(loft_cx *cx);`, a callback): a table
+    // or a variable is told apart by `function_name`, which finds no function in it.
     let plain = |line: &str| -> Option<String> {
         let rest = line.strip_prefix("static ")?;
-        if rest.starts_with(|c: char| c.is_ascii_uppercase())
-            || rest.starts_with("inline ")
-            || rest.starts_with("const ")
-            || rest.starts_with("struct ")
-            || rest.starts_with("union ")
-            || rest.starts_with("enum ")
-        {
+        if rest.starts_with(|c: char| c.is_ascii_uppercase()) || rest.starts_with("inline ") {
             return None;
         }
         function_name(rest).map(str::to_string)
@@ -657,6 +654,10 @@ mod tests {
     #[test]
     fn the_cold_runtime_is_one_unit_and_the_hot_part_stays_in_every_unit() {
         let rt = "static void loft_init(loft_cx *cx);\n\
+                  static const loft_tdesc *loft_parse_types(loft_cx *cx);\n\
+                  static const char *loft_name(int64_t a) {\n    return \"n(\";\n}\n\
+                  static const char *const loft_names[] = { \"a(b\" };\n\
+                  static struct loft_pair loft_pair_zero = { 0 };\n\
                   static inline int64_t loft_hot(int64_t a) { return a; }\n\
                   static int64_t loft_cold(int64_t a);\n\
                   static int64_t loft_cold(int64_t a) {\n    return loft_hot(a) + 1;\n}\n\
@@ -664,10 +665,28 @@ mod tests {
                   LOFT_HOT_INLINE int64_t loft_fast(void) {\n    return 2;\n}\n";
         let (hot, cold, callbacks) = split_runtime(rt);
         // a function the runtime declares and the program defines is external in both halves
-        assert_eq!(callbacks, HashSet::from(["loft_init".to_string()]));
+        // — whatever its return type is spelled with (a `const` pointer)
+        assert_eq!(
+            callbacks,
+            HashSet::from(["loft_init".to_string(), "loft_parse_types".to_string()])
+        );
         assert!(
             hot.starts_with("void loft_init(loft_cx *cx);") && cold.starts_with("void loft_init(")
         );
+        assert!(
+            hot.contains("\nconst loft_tdesc *loft_parse_types(loft_cx *cx);\n")
+                && cold.contains("\nconst loft_tdesc *loft_parse_types(loft_cx *cx);\n")
+        );
+        // a function returning a `const` pointer is cold like any other
+        assert!(hot.contains("\nconst char *loft_name(int64_t a);\n"), "{hot}");
+        assert!(cold.contains("\nconst char *loft_name(int64_t a) {\n"), "{cold}");
+        // tables and variables keep their `static` in every unit
+        for t in [
+            "static const char *const loft_names[]",
+            "static struct loft_pair loft_pair_zero",
+        ] {
+            assert!(hot.contains(t) && cold.contains(t), "{t}");
+        }
         // the hot part keeps the inline helpers whole and declares the cold function
         assert!(hot.contains("static inline int64_t loft_hot(int64_t a) { return a; }"));
         assert!(hot.contains("LOFT_HOT_INLINE int64_t loft_fast(void) {\n    return 2;\n}"));
