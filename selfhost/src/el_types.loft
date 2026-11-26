@@ -649,7 +649,9 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         if inner == null {
           return null;
         }
-        rd = match inner! { TyReference { n } => n, _ => -1 };
+        // (`sub_nr`: the definition the element names — a record, or an enum such as an enum
+        // template's instance, `reference<Tree<T>>`; the result is a `Reference` to it either way.)
+        rd = match inner! { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
         if rd < 0 {
           el::refuse(e, "a `reference<…>` of something other than a record");
           return null;
