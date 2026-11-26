@@ -912,7 +912,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // it — the deps the first pass gave it, in attribute numbering.  So is a template's answering
   // its variable, which takes none of the record delivery (`generic_promote_ok`).
   templated = el::def(e, e.context).def_type == el::DT_GENERIC && el_types::type_var(e, el_types::base(result)) >= 0;
-  if (rb >= 0 && !e.first_pass && el_ex_copy::record_result(result) && !view_answer) || templated {
+  // (…and a `-> E?` struct enum's whose arms are the answer: the body is the declared `E?`,
+  // whichever variant or `null` its arms answer.)
+  enum_arms_answer = arms_answer && result is TyOptional && el_types::struct_enum_def(result) >= 0;
+  if (rb >= 0 && !e.first_pass && (el_ex_copy::record_result(result) || enum_arms_answer) && !view_answer) || templated {
     match code {
       NdBlock { block } => {
         bl = block[0];

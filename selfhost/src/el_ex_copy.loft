@@ -646,7 +646,9 @@ fn if_tail_params_in(e: el::El, vars: el_vars::Vars, code: ir::Node, sets: vecto
       if block[0].name == "join-arm-owner" {
         return [];
       }
-      if block[0].name == "scalar_match" {
+      // (…a plain enum's `match` alike, past its `_match_subj_N` bind; a struct enum's arms are
+      // `match_arm` blocks, refused at the `if`.)
+      if block[0].name == "scalar_match" || block[0].name == "match" {
         mps = if_tail_params_in(e, vars, el_ir::last(block[0].operators), inner_sets, in_arm);
         return mps;
       }
