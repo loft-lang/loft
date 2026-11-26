@@ -659,6 +659,11 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         ctx = if e.context >= 0 { el::def(e, e.context).def_type } else { el::DT_UNKNOWN };
         field = ctx == el::DT_STRUCT || ctx == el::DT_ENUM_VALUE || ctx == el::DT_TYPE_TEMPLATE;
         r = ir::TyReference { n: rd, dep: if field { [MARKER] } else { [] } };
+        // A reference to an enum is registered with Rust's type and refused: its reads are not
+        // ported (Rust reads the element as a reference, `OpVectorRefNullable`; try 67a732976).
+        if inner! is TyEnum {
+          el::refuse(e, "a `reference<…>` of an enum");
+        }
         return if nullable { ir::TyOptional { inner: r } } else { r };
       }
       // `parse_type_inner`'s `integer` arm: `limit(lo, hi)` names the range, and `not null`
