@@ -1628,6 +1628,25 @@ pub fn materialize_collection(e: el::El, vars: el_vars::Vars, code: ir::Node, t:
   }
 }
 
+// The syntax of argument `i` where it is an empty `[]` (`Vars.arg_syntax`), else -1.
+fn empty_arg_syntax(e: el::El, vars: el_vars::Vars, i: integer, pname: text) -> integer {
+  // (A named argument, `g(v: [])`, is found by its parameter's name; a positional one by its
+  // place — its `SArg`'s expression.)
+  sn = -1;
+  for a in vars.arg_syntax {
+    if a >= 0 {
+      match e.p.nodes[a] { SArg { name: an, e: ae } => { if an != "" && an == pname { sn = ae ?? -1; } }, _ => {} }
+    }
+  }
+  if sn < 0 {
+    sn = vars.arg_syntax[i] ?? -1;
+    if sn >= 0 {
+      match e.p.nodes[sn] { SArg { name: an, e: ae } => { sn = if an == "" { ae ?? -1 } else { -1 }; }, _ => {} }
+    }
+  }
+  if sn >= 0 && match e.p.nodes[sn] { SVecLit { items } => len(items) == 0, _ => false } { sn } else { -1 }
+}
+
 // `Parser::call` (loft#2146): an argument linked through a slot is stored back once the call
 // returns — the call held in `_amp_ret_N` (none for a void call), the stores after it, in an
 // "amp slot write-back" block.
@@ -1782,7 +1801,7 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
     // (An empty `[]` is read at its parameter's vector on pass 1 too — `parse_vector` under the
     // parameter's hint — its `_vec_N` and `_elm_N` minted there.)
     if e.first_pass && el_ex_pattern::is_empty_literal(arg) && el_types::base(pt) is TyVector && !el_types::is_unknown(pt) {
-      conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt))];
+      conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt), lit: empty_arg_syntax(e, vars, a#index, a.name))];
       continue;
     }
     // Pass 1 converts nothing: an argument it could not type yet is taken as it is, so the

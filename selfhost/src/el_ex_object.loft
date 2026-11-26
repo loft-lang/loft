@@ -2078,7 +2078,9 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   }
   vars.call_at = at;
   vars.call_tok = at;
+  vars.arg_syntax = args;
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.arg_syntax = [];
   vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -3119,7 +3121,9 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   }
   vars.call_at = at;
   vars.call_tok = at;
+  vars.arg_syntax = if len(list) == len(args) + 1 { [-1] + args } else { args };
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.arg_syntax = [];
   vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
