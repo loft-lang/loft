@@ -576,8 +576,10 @@ fn echoes_within(udp: &UdpSocket, seat: &Seat, window: Duration) -> Vec<String> 
 /// without the session key (under another key, reflected, untagged), must not be applied —
 /// and must not make the next genuine sample stale.
 ///
-/// @falsified-at: FALSIFY_FREEZE
-// @speed 3
+/// @falsified-at: 0c122ca5a — red on the tree before the seal (the forged sample was echoed);
+/// by hand on d64be8dd2 (the tag check in `seal::open` off: red) and on 60acdddde (the C
+/// `loft_eh_open` tag check off: red on the `--native-c` leg).
+// @speed 5
 #[test]
 fn a_forged_max_seq_sample_freezes_no_slot() {
     for (backend, base) in backends(18160) {
@@ -613,8 +615,10 @@ fn a_forged_max_seq_sample_freezes_no_slot_on(backend: &str, port: u16) {
 /// does a forged one: the second socket gets no ack and none of the client's state, and the
 /// client keeps its path.
 ///
-/// @falsified-at: FALSIFY_REPLAY
-// @speed 3
+/// @falsified-at: 0c122ca5a — red on the tree before the seal (the second socket was acked);
+/// by hand on 0fc5b13fa (the tag check off: red; `Replay::admit` taking every seq as the newest:
+/// red) and on 60acdddde (the C tag check off: red on the `--native-c` leg).
+// @speed 5
 #[test]
 fn a_replayed_hello_from_another_address_takes_no_seat() {
     for (backend, base) in backends(18161) {
@@ -658,8 +662,9 @@ fn a_replayed_hello_from_another_address_takes_no_seat_on(backend: &str, port: u
 /// The source address is a routing hint: the client's next genuine datagram from a new address
 /// (a NAT that rebound its port) moves the path there, and the server's datagrams follow it.
 ///
-/// @falsified-at: FALSIFY_REBIND
-// @speed 3
+/// @falsified-at: 60acdddde — by hand: the path never moving after it binds, in
+/// `pump_udp` (on d64be8dd2) and in `loft_ehk_pump_udp`: red on each backend's leg.
+// @speed 5
 #[test]
 fn a_genuine_datagram_from_a_new_address_moves_the_path() {
     for (backend, base) in backends(18163) {
@@ -703,8 +708,11 @@ fn a_genuine_datagram_from_a_new_address_moves_the_path_on(backend: &str, port: 
 /// genuine client goes quiet, sends fall back to the WebSocket on time (`UDP_TIMEOUT_US`, 3 s)
 /// while the false keepalives keep coming.
 ///
-/// @falsified-at: FALSIFY_KEEP
-// @speed 5
+/// @falsified-at: 0c122ca5a — red on the tree before the seal (the path never timed out);
+/// by hand on d64be8dd2 (the replay window's seen-bit check off: red), on 0fc5b13fa (the tag
+/// check off: red; every seq taken as the newest: red) and on 60acdddde (the C tag check and
+/// seen-bit check off: red on the `--native-c` leg).
+// @speed 12
 #[test]
 fn forged_keepalives_do_not_hold_a_path_open() {
     for (backend, base) in backends(18162) {

@@ -7376,7 +7376,10 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
 /// as a datagram the listener opened; the listener answers `7:back`, a sync kind, on a path
 /// that sample just proved, so the answer can only arrive as a datagram the seat opened.
 ///
-/// @falsified-at: FALSIFY_TWINS
+/// @falsified-at: 60acdddde — by hand: the C runtime's direction byte toward the listener
+/// changed (`LOFT_EH_TO_LISTENER`), so C seals what the Rust kernel does not open: red on both
+/// pairs, while the all-C seat cell stays green.  The C tag check off reddens the kernel cell
+/// above, whose forged sample is then applied.
 #[test]
 fn a_seat_and_a_listener_on_different_backends_share_the_sealed_datagram() {
     use std::time::{Duration, Instant};
