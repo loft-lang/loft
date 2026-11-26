@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: JSON
 // @TITLE: JSON parsing and generation
+// @FR-F-Render-Fields: `:j` writes every field, an absent collection as `null`.
+// @FR-F-Render-Ref: a stored reference is written as a JSON pointer.
+// @FR-F-Render-Refs: a reference to an outside record brings it along under `$refs`.
+// @FR-F-Read-Ref: parsing reads both pointer forms back as links.
+// @FR-D-Opt: a `text?` field a document leaves out is null.
 // Loft has built-in JSON support, and there are two ways in. Reach for the one
 // that matches what you know about the document:
 //
