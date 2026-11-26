@@ -26,3 +26,20 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   integer widths and the type table).  The key had held four hand-picked switches; it now holds
   every `LOFT_*` setting that is not inert (`INERT_SWITCHES`), and the rule was written then,
   as this chapter.
+- **The component's place (loft#2654, 2026-11-26).**  The key named the library's path as well
+  as its stamp, because a unit's C opened a component by the path the generating machine found
+  it at.  A move kept the unit right but cost a rebuild — and a unit the release built for a
+  package binding a component (`server`, `web`, `ssh` bind `net`) never matched a user's
+  machine, so it was built again there, which needs a C compiler the release publishes the
+  units to spare.  A hosted unit now asks the running loft where the component is
+  (`HostedTable::component`), and the key names the stamp alone.
+
+## Deviations carried by artifacts.md until 2026-11-26
+
+- **D-art-1 (CLOSED, [loft#2654](https://github.com/loft-lang/loft/issues/2654))** — violated
+  (Art-Inert)'s last clause in effect: a published unit for a package binding a component
+  carried the build machine's path of it, and its C opened the component by that path alone
+  on a desktop (`loft_ffi_sym` in `src/c/loft_ffi_host.h`; only an Android app found it by
+  file name), so its key named the path and a user's run built it again.  Closed when the
+  hosted unit asks `HostedTable::component` and the key dropped the path; guarded by the
+  moved cell of `a_unit_is_keyed_on_the_components_it_binds` (one unit after the move).

@@ -195,6 +195,12 @@ pub struct HostedTable {
         make: unsafe extern "C" fn() -> *mut std::ffi::c_void,
         end: unsafe extern "C" fn(*mut std::ffi::c_void),
     ) -> *mut std::ffi::c_void,
+    /// The path of the component library named `file` (`len` bytes) where this loft finds it
+    /// (`components::path_of_file`), its length in `*out_len`; null when it finds none.  A unit
+    /// opens its component here rather than where the machine that built it found one
+    /// (`@FR-Art-Key`, loft#2654).  Appended last, as `cx_of` was.
+    pub component:
+        unsafe extern "C" fn(file: *const u8, len: usize, out_len: *mut usize) -> *const u8,
 }
 
 /// `@FR-C-Boundary` — the store contexts hosted C units keep for one `Stores`, one per unit it called

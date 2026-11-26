@@ -21,8 +21,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                inputs.  Its key covers every input its code is built from:
                  the loft that generates it — its build and its executable;
                  the packages whose code it carries — by name and version, and the target;
-                 the components its C binds — absent, or which library, with the stamp
-                   beside it (the C opens a component by the path it was built with);
+                 the components its C binds — absent, or which build of it (the stamp
+                   beside the library), never where it lies: a unit opens a component
+                   where the running loft finds it, so its code does not hold the place;
                  every switch in force that can change the code it is generated with —
                    each `LOFT_*` setting of the environment that is not inert (Art-Inert).
                Nothing a unit is generated from lies outside its key.  What the key leaves
@@ -48,24 +49,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Deviations
 
-OPEN: **1**
+OPEN: **0**
 
-- **D-art-1 (OPEN, [loft#2654](https://github.com/loft-lang/loft/issues/2654)) — read in code, not reproduced** — violates (Art-Inert)'s last clause in
-  effect, not in letter: a unit the release builds for a package that binds a component
-  (`server`, `web`, `ssh` bind `net`) carries the BUILD machine's path of that component, and
-  its C opens the component by that path alone on a desktop (`loft_ffi_sym` in
-  `src/c/loft_ffi_host.h`; only an Android app finds it by file name).  On a user's machine the
-  component lies elsewhere, so the published unit could not open it; by (Art-Key) its key
-  names the path, so it is not adopted and is built again, which needs a C compiler.  The
-  release publishes these units for machines without one.  Closes when a unit opens a component
-  where the running loft finds it (`components::path`), and the key then names the component's
-  stamp alone.  The owner decides the route.
+None.  The closed entries are in [artifacts-history.md](artifacts-history.md).
 
 ## Conformance
 
 | rule | guard |
 |---|---|
-| (Art-Key) — components | `tests/ffi_c_library.rs::a_unit_is_keyed_on_the_components_it_binds` |
+| (Art-Key) — components, and a moved component keeps the unit | `tests/ffi_c_library.rs::a_unit_is_keyed_on_the_components_it_binds` |
 | (Art-Key), (Art-Inert) — switches | `tests/ffi_c_library.rs::a_unit_is_keyed_on_the_switches_that_change_its_code` |
 | (Art-Inert) — the release | `tests/ffi_c_library.rs::the_release_builds_its_units_under_inert_switches_only` |
 | (Art-Name) | the content-addressed name and the probe that asks a unit its key, in `adopt_shared_cdylib` |

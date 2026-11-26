@@ -222,7 +222,39 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     pause: &crate::debugger::INTERRUPT,
     handover: hosted_handover,
     cx_of: hosted_cx_of,
+    component: hosted_component,
 };
+
+/// `HostedTable::component` — where this loft finds the component library `file`.  Each answer
+/// is kept for the process, so the pointer handed out stays valid: a component does not move
+/// under a running program, and there are a handful.
+unsafe extern "C" fn hosted_component(
+    file: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    static FOUND: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Option<&'static str>>>,
+    > = std::sync::OnceLock::new();
+    // SAFETY: the unit's file name, `len` bytes, valid for this call.
+    let name =
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(file, len) }).into_owned();
+    let map = FOUND.get_or_init(Default::default);
+    let mut map = map
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let found = *map.entry(name.clone()).or_insert_with(|| {
+        crate::components::path_of_file(&name).map(|p| &*Box::leak(p.into_boxed_str()))
+    });
+    match found {
+        Some(p) => {
+            // SAFETY: the unit's answer slot.
+            unsafe { *out_len = p.len() };
+            p.as_ptr()
+        }
+        None => std::ptr::null(),
+    }
+}
 
 /// `HostedTable::cx_of` — the unit's store context for the `Stores` of the calling thread.
 unsafe extern "C" fn hosted_cx_of(
