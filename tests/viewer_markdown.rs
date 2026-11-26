@@ -38,6 +38,9 @@ use std::time::{Duration, Instant};
 /// started (fixed 2026-08-22, after 240 s of waiting on a box where 8765 was free).
 const VIEWER_PORT: u16 = 18765;
 
+/// The port the path test's viewer serves on: its own, so the two tests run side by side.
+const PATHS_PORT: u16 = 18766;
+
 fn loft_bin() -> PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
@@ -136,13 +139,17 @@ struct ViewerGuard {
 
 impl ViewerGuard {
     fn spawn() -> Self {
+        Self::spawn_on(VIEWER_PORT)
+    }
+
+    fn spawn_on(port: u16) -> Self {
         build_component();
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(project_root().join("lib"))
             .arg(project_root().join("tools/viewer/src/main.loft"))
-            .env("LOFT_VIEW_PORT", VIEWER_PORT.to_string())
+            .env("LOFT_VIEW_PORT", port.to_string())
             .current_dir(project_root())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -200,6 +207,21 @@ impl Drop for ViewerGuard {
             let _ = c.wait();
         }
     }
+}
+
+/// The whole response to `GET path`: its status line, headers and body; "" on a transient error.
+fn http_get_raw(path: &str, port: u16) -> String {
+    use std::io::Write;
+    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+        return String::new();
+    };
+    let req = format!("GET {path} HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    let _ = stream.read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn http_get(path: &str, port: u16) -> String {
@@ -320,4 +342,64 @@ fn markdown_renderer_pins_high_impact_features() {
     // P272 regression — em-dash NOT tripled.
     let triple = body.matches("———").count();
     assert_eq!(triple, 0, "P272 em-dash widening regressed");
+}
+
+/// The viewer serves files from the project root and nothing outside it.  A request's path is
+/// written by whoever sent the request, so `/raw/`, `/file/` and `/tree/` read theirs as a path
+/// UNDER the root: an absolute one, or one whose `..` steps above the root, is answered 403 and
+/// never opened, while a `..` that stays inside still reaches its file.  The outside paths
+/// name files that exist (this checkout itself, reached from its parent, and `/etc/hosts`),
+/// so a viewer that opened them would answer 200, and one that merely missed them 404.
+///
+/// @falsified-at: PENDING
+#[test]
+fn the_viewer_serves_only_paths_under_the_project_root() {
+    if registry_predates_dn1() || !fa::exists(loft_bin()) {
+        return;
+    }
+    let mut viewer = ViewerGuard::spawn_on(PATHS_PORT);
+    if !viewer.wait_listening(PATHS_PORT) {
+        panic!(
+            "viewer did not start listening on {PATHS_PORT} within 240s\n{}",
+            viewer.diagnose()
+        );
+    }
+    // The inside case first, retried until the viewer serves (the start race of the test
+    // above): it is also the proof that a 403 below is a refusal, not a viewer that answers
+    // nothing.
+    let inside = "/raw/tests/../Cargo.toml";
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut got = http_get_raw(inside, PATHS_PORT);
+    while !got.starts_with("HTTP/1.1 200") && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+        got = http_get_raw(inside, PATHS_PORT);
+    }
+    assert!(
+        got.starts_with("HTTP/1.1 200") && got.contains("[package]"),
+        "a `..` that stays inside the root reaches its file: {got:.300}\n{}",
+        viewer.diagnose()
+    );
+    let here = project_root();
+    let name = here
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("the checkout's directory name");
+    for outside in [
+        format!("/raw/../{name}/Cargo.toml"),
+        format!("/file/tests/../../{name}/README.md"),
+        "/raw//etc/hosts".to_string(),
+        "/file//etc/hosts".to_string(),
+        "/tree/..".to_string(),
+        "/tree/../..".to_string(),
+    ] {
+        let got = http_get_raw(&outside, PATHS_PORT);
+        assert!(
+            got.starts_with("HTTP/1.1 403"),
+            "`{outside}` names a path outside the project root and is refused: {got:.300}"
+        );
+        assert!(
+            !got.contains("[package]"),
+            "`{outside}`: nothing of the file is sent"
+        );
+    }
 }
