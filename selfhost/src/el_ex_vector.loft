@@ -1055,7 +1055,8 @@ pub fn keyed_literal(e: el::El, vars: el_vars::Vars, n: integer, ct: ir::TypeT) 
   empty = match e.p.nodes[n] { SVecLit { items } => len(items) == 0, _ => false };
   // (Under an expected `τ?` the accumulator is typed `τ?` — its store given where it holds
   // none — and the literal answers `τ`.)
-  kvt = ct;
+  // (An empty `[]` keeps the dense accumulator, `τ?` or not: there is nothing to re-give a store.)
+  kvt = if empty { el_types::base(ct) } else { ct };
   ct = el_types::base(ct);
   kvb = el_vars::create_unique(vars, "_kvb", kvt);
   // Nulled at the function's head as a work reference is.
