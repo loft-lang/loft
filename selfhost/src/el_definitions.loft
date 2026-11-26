@@ -2966,6 +2966,11 @@ pub fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos
   if len(arguments) > 0 && arguments[0].name == "self" {
     t = arguments[0].typedef;
     tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+    // (`method_family`: a method on a generic instance takes its member on the TEMPLATE —
+    // `at: fn t_4Grid_at` on `Grid`, not on `Grid<T>`.)
+    if tn >= 0 && el::def(e, tn).instance_of >= 0 {
+      tn = el::def(e, tn).instance_of;
+    }
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {
