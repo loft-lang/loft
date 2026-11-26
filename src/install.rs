@@ -54,6 +54,10 @@ pub struct InstallOptions {
     /// next to the script) and by future project-mode walk-up
     /// resolution (writes to the project root's `loft.lock`).
     pub lock_path: Option<PathBuf>,
+    /// Install with an index or advisory feed that was last read from the registry more than
+    /// [`REFUSE_AGE_SECS`](crate::registry_cache::REFUSE_AGE_SECS) ago, when the registry
+    /// cannot be reached to read it again.  Mirrors `--allow-stale`; `offline` waives it too.
+    pub allow_stale: bool,
     /// Install the package(s) but write NO lockfile.  Set when a resolution
     /// originates INSIDE the registry cache — a transitive dep auto-installed
     /// while parsing an already-cached package (`~/.loft/registry/<pkg>/src`).
@@ -211,21 +215,30 @@ fn shim_note(dir: &std::path::Path, m: &crate::manifest::Manifest, name: &str) -
 
 /// @C167 — the advisories, before anything is fetched or written: the feed refreshed when its
 /// cache is stale (so the load, which only reads the cache, sees it), and each package of
-/// `graph` assessed by the same verdict the load reads.  A feed that cannot be had or does not
-/// verify is no feed here; `loft audit` reports why.
+/// `graph` assessed by the same verdict the load reads.
+///
+/// Nothing is installed without the advisories.  A feed that cannot be had from a registry
+/// that publishes one stops the install: installing as if there were no advisories is exactly
+/// what keeping the feed from arriving would buy.  A copy that could not be read again is
+/// used, and its age decides ([`registry_cache::age_verdict`](crate::registry_cache::age_verdict)).
+/// Only a registry that publishes no feed and is not known to (one's own) installs with none.
 ///
 /// # Errors
-/// The refusals, when an advisory forbids a package release of `graph`.
+/// The refusals, when an advisory forbids a package release of `graph`, no feed could be had,
+/// or the feed in use is too old.
 fn refuse_by_advisories(graph: &[ResolvedPackage], opts: &InstallOptions) -> Result<(), String> {
-    let Ok(Some(feed)) =
+    let loaded =
         crate::registry_advisories::load_or_fetch(&crate::registry_advisories::LoadOptions {
             allow_unsigned: opts.allow_unsigned,
             offline: opts.offline,
             refresh: false,
         })
-    else {
+        .map_err(|e| format!("{e}; nothing is installed without the advisories"))?;
+    let Some(feed) = loaded else {
         return Ok(());
     };
+    let (feed_path, _) = crate::registry_advisories::advisories_paths();
+    report_age("advisory feed", &feed_path, opts)?;
     let mut refused = Vec::new();
     for r in graph {
         let verdict = crate::registry_advisories::assess(&r.name, &r.version.semver, &feed);
@@ -241,6 +254,26 @@ fn refuse_by_advisories(graph: &[ResolvedPackage], opts: &InstallOptions) -> Res
     }
 }
 
+/// The age of the cached `what` at `path` an install relies on: silent when recent, a line past
+/// a week, and past a month a refusal unless `--offline` or `--allow-stale` waives it
+/// ([`registry_cache::age_verdict`](crate::registry_cache::age_verdict)).  A copy read from the
+/// registry in this run is recent.
+fn report_age(what: &str, path: &Path, opts: &InstallOptions) -> Result<(), String> {
+    use crate::registry_cache::{Age, age_secs, age_verdict};
+    match age_verdict(
+        what,
+        age_secs(path).unwrap_or(0),
+        opts.offline || opts.allow_stale,
+    ) {
+        Age::Fresh => Ok(()),
+        Age::Old(line) => {
+            eprintln!("{line}");
+            Ok(())
+        }
+        Age::TooOld(why) => Err(why),
+    }
+}
+
 /// [`install_one`], saying whether the packages `package_name` pulls in keep their lock pins
 /// ([`resolve_named`]'s `keep_locked`).
 fn install_resolved(
@@ -251,6 +284,7 @@ fn install_resolved(
     root_line: Option<&str>,
 ) -> Result<InstallReport, String> {
     let index = load_index(opts)?;
+    report_age("registry index", &registry_index::index_paths().0, opts)?;
     let graph = resolve_named(
         &index,
         package_name,
@@ -490,6 +524,13 @@ fn load_index_inner(
 ) -> Result<LoadedIndex, String> {
     let url = registry_index::registry_url();
     let (idx_path, sig_path, _) = registry_index::index_paths();
+    // A machine with no copy, or a stale one, first takes the one its loft bundle carries,
+    // which only ever moves the cache forward (`registry_cache::seed_into`).
+    if index_stale(&idx_path) {
+        crate::registry_cache::seed_into("index.json", &idx_path, &sig_path, &mut |c, s| {
+            verify_or_explain(c, s, opts).is_ok()
+        });
+    }
     let fetch = !opts.offline && (opts.refresh || index_stale(&idx_path));
     // Taken BEFORE the read: a file that changes between the two is stored under the old
     // stamps, which the next call no longer computes — a miss, never a stale hit.
@@ -562,6 +603,7 @@ fn load_index_inner(
                     &fetched.signature,
                 )
                 .map_err(|e| format!("cache index: {e}"))?;
+                crate::registry_cache::stamp(&idx_path, crate::registry_cache::now_secs());
                 (fetched.content, false)
             }
             Err(fetch_err) => {
@@ -767,17 +809,11 @@ fn read_cached_index_verified(
     Ok(settled.content)
 }
 
+/// Whether the cached index is past its 1-hour TTL (PKG_REGISTRY.md), counted from when that
+/// copy was last known current, never from when the file was written
+/// ([`registry_cache`](crate::registry_cache)); an absent one is.
 fn index_stale(idx_path: &Path) -> bool {
-    let Ok(meta) = crate::file_access::metadata(idx_path) else {
-        return true;
-    };
-    let Ok(modified) = meta.modified() else {
-        return true;
-    };
-    let Ok(age) = modified.elapsed() else {
-        return true;
-    };
-    age.as_secs() > 60 * 60 // 1-hour TTL per PKG_REGISTRY.md
+    crate::registry_cache::older_than(idx_path, 60 * 60)
 }
 
 /// The lockfile whose entries this resolution is bound by — @PLN143.
@@ -839,6 +875,7 @@ pub fn options_for_use(
         // air-gapped box) wants.  Mirrors the CLI paths that already honour it.
         offline,
         allow_prerelease: false,
+        allow_stale: false,
     }
 }
 
@@ -1653,6 +1690,7 @@ mod tests {
             refresh: false,
             offline: false,
             allow_prerelease: false,
+            allow_stale: false,
             skip_lockfile: false,
             lock_path: None,
         }

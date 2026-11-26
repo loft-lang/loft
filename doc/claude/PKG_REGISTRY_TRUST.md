@@ -181,6 +181,30 @@ weekly publishes that's negligible.  When the ecosystem
 outgrows laptop signing, the architecture migrates to Path 1
 (real server) and signing follows.
 
+### The heartbeat — a signed `updated` at least weekly
+
+A signature says who wrote a document, not when it was read: an old signed `advisories.json`
+served again verifies as well as the current one, and hides every advisory published since.
+So the registry re-signs `index.json` and `advisories.json` at least weekly, with their
+`updated` set to the moment of signing.  A signed `updated` then means "current no earlier than
+this", which no one without the key can move.
+
+- **`scripts/registry-heartbeat.sh`** restamps the two documents and signs them (`.sig` and the
+  purpose-prefixed `.sig2`) with the signer a publish uses — the YubiKey, four touches — and
+  no review prompt: what it signs is checked mechanically, not reviewed.  The only change it may make is each document's `updated`
+  line; anything else in the checkout, or in the restamp, is refused, and the signatures must
+  verify under a client-trusted key before it commits.  It does nothing when both were signed
+  within the last 20 hours.  The PR routine runs it before a PR is opened
+  ([DEVELOPMENT.md § Opening a PR](DEVELOPMENT.md#opening-a-pr-is-the-owners-call)).  A
+  publish (`registry-sign.sh`) is reviewed by a human because it changes content; the
+  heartbeat changes none.
+- **The PR check** `registry re-signed this week` (`registry-heartbeat` in `ci.yml`,
+  `scripts/check-registry-heartbeat.py`) reads both stamps.  Under 6 days it is silent.  At 6
+  days, the last day, it stays green with a warning annotation and a run summary naming the
+  moment the block starts.  From 7 days it is red, and a PR cannot merge.  On the daily
+  schedule and on `main`, from 6 days it opens or updates an issue labelled
+  `registry-heartbeat`, and the first run that finds the registry re-signed closes it.
+
 ### Two-stage bootstrap — interim `K_tmp` → permanent `K_real`
 
 The registry MVP needs a single Ed25519 secret to sign

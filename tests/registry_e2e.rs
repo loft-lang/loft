@@ -111,6 +111,10 @@ impl Drop for FixtureServer {
     }
 }
 
+/// A fixture file with these bytes is answered `500`: a request that gets no usable answer,
+/// where an unknown path is a `404` the host speaks for.
+const SERVER_ERROR: &[u8] = b"<answer 500>";
+
 fn handle_request(
     mut stream: TcpStream,
     files: &HashMap<String, Vec<u8>>,
@@ -139,7 +143,10 @@ fn handle_request(
             break;
         }
     }
-    let response: Vec<u8> = if let Some(data) = files.get(&path) {
+    let response: Vec<u8> = if files.get(&path).is_some_and(|d| d == SERVER_ERROR) {
+        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_vec()
+    } else if let Some(data) = files.get(&path) {
         let mut r = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
             data.len()
@@ -355,6 +362,7 @@ fn end_to_end_install_against_fixture_server() {
         refresh: true, // skip TTL on first run
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -478,6 +486,7 @@ fn skip_lockfile_installs_without_writing_a_lockfile() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: true,
         lock_path: None,
     };
@@ -559,6 +568,7 @@ fn install_rejects_tarball_with_wrong_sha256() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -601,6 +611,7 @@ fn install_rejects_missing_package_in_index() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -685,6 +696,7 @@ fn concurrent_installs_of_one_package_all_succeed() {
                         refresh: true,
                         offline: false,
                         allow_prerelease: false,
+                        allow_stale: false,
                         skip_lockfile: false,
                         lock_path: Some(lock_path),
                     };
@@ -850,6 +862,7 @@ fn end_to_end_install_with_transitive_dep() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -941,6 +954,7 @@ fn a_librarys_range_stays_in_the_api_line_of_its_floor() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -1040,6 +1054,7 @@ fn a_security_critical_advisory_refuses_the_install() {
         refresh: true,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: true,
         lock_path: None,
     };
@@ -1303,6 +1318,7 @@ fn load_index_reporting_falls_back_to_cache_when_registry_unreachable() {
         refresh: true, // force a fetch attempt each call (bypass the TTL)
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2334,4 +2350,290 @@ fn an_index_older_than_the_cached_one_is_refused() {
         rollback_refusal("index", none, new).is_none(),
         "no stamp: nothing to compare"
     );
+}
+
+// ── The advisories an install relies on ────────────────────────────
+//
+// A signature proves who wrote a feed, not that it is the latest: an old signed feed served
+// again, or a feed kept from arriving, would let a release an advisory names be installed.
+// The cells below hold the install to the feed it already has, to the seed its loft bundle
+// carries, and to the age of the copy in use.  Every feed here is unsigned, read with
+// `allow_unsigned`: no test can sign with the registry's keys.
+//
+// @falsified-at: d57c5b799 — by hand, one part switched off at a time: the feed loader
+// dropping the verified copy on a refused fetch fails the replayed cell; an install reading an
+// error as no feed fails the unreadable cell; no seed fails the blocked and month cells; ages
+// read from the files' mtime fail the month cell; a seed and an import written over a newer
+// copy (both forward-only checks off) fail the never-back cell.
+
+/// Atomically swap `LOFT_REGISTRY_SEED`.
+struct SeedGuard {
+    prev: Option<String>,
+}
+static SEED_LOCK: Mutex<()> = Mutex::new(());
+
+impl SeedGuard {
+    fn set(dir: Option<&Path>) -> (Self, std::sync::MutexGuard<'static, ()>) {
+        let lock = SEED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = env::var("LOFT_REGISTRY_SEED").ok();
+        unsafe {
+            match dir {
+                Some(d) => env::set_var("LOFT_REGISTRY_SEED", d),
+                None => env::remove_var("LOFT_REGISTRY_SEED"),
+            }
+        }
+        (Self { prev }, lock)
+    }
+}
+
+impl Drop for SeedGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.prev {
+                Some(p) => env::set_var("LOFT_REGISTRY_SEED", p),
+                None => env::remove_var("LOFT_REGISTRY_SEED"),
+            }
+        }
+    }
+}
+
+/// A feed of `updated`; with `affected`, one `security_critical` advisory `LOFT-TEST-0035`
+/// on `ax` in that range, fixed in 0.1.1.
+fn feed_of(updated: &str, affected: Option<&str>) -> String {
+    let advisories = affected.map_or(String::new(), |range| {
+        format!(
+            r#"{{"id": "LOFT-TEST-0035",
+              "packages": [{{"name": "ax", "affected": "{range}", "fixed_in": "0.1.1"}}],
+              "severity": "security_critical", "summary": "a test vulnerability",
+              "published": "{updated}", "references": []}}"#
+        )
+    });
+    format!(
+        r#"{{"schema_version": 1, "updated": "{updated}", "retention_days": 90,
+            "advisories": [{advisories}]}}"#
+    )
+}
+
+/// A fixture registry serving `ax` 0.1.0 and 0.1.1, and `/advisories.json` as `feed` says:
+/// `Some(bytes)` served, `None` absent (a 404).
+fn ax_registry(tmp: &Path, feed: Option<&[u8]>) -> FixtureServer {
+    let entries = publish_versions(tmp, "ax", &["0.1.0", "0.1.1"], "");
+    let mut files = HashMap::new();
+    files.insert(
+        "/index.json".to_string(),
+        index_of(&[("ax", &entries)]).into_bytes(),
+    );
+    if let Some(f) = feed {
+        files.insert("/advisories.json".to_string(), f.to_vec());
+    }
+    FixtureServer::new(files)
+}
+
+fn unsigned_install_opts(allow_stale: bool) -> loft::install::InstallOptions {
+    loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        allow_stale,
+        skip_lockfile: true,
+        ..Default::default()
+    }
+}
+
+/// A seed directory for the registry at `index_url`: its advisory feed `feed`, read
+/// `days_ago` days ago.
+fn seed_dir(dir: &Path, index_url: &str, feed: &str, days_ago: u64) {
+    write_file(&dir.join("source"), index_url);
+    write_file(&dir.join("advisories.json"), feed);
+    let at = loft::registry_cache::now_secs() - days_ago * 86_400;
+    write_file(&dir.join("verified_at"), &at.to_string());
+}
+
+/// The cache's feed: `feed`, last known current `days_ago` days ago.
+fn cached_feed(home: &Path, feed: &str, days_ago: u64) -> PathBuf {
+    let path = home.join(".loft").join("registry").join("advisories.json");
+    write_file(&path, feed);
+    loft::registry_cache::stamp(&path, loft::registry_cache::now_secs() - days_ago * 86_400);
+    path
+}
+
+/// An older signed feed served again does not hide the advisory the newer feed already here
+/// names: the install is refused, and the cache keeps the newer feed.  Fails on a build whose
+/// install reads a refused fetch as no feed (`let Ok(Some(feed)) = … else { return Ok(()) }`).
+#[test]
+fn a_replayed_older_feed_does_not_hide_the_advisory_already_here() {
+    let tmp = tmpdir("replayed_older_feed");
+    let home = tmpdir("replayed_older_feed_home");
+    let newer = feed_of("2026-11-16T00:00:00Z", Some("<0.1.1"));
+    let older = feed_of("2026-11-01T00:00:00Z", None);
+    let server = ax_registry(&tmp, Some(older.as_bytes()));
+    let (_home, _lh) = HomeGuard::set(&home);
+    let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+    let (_seed, _ls) = SeedGuard::set(None);
+    // Two days old, so the install asks the registry for a fresh one.
+    let cache = cached_feed(&home, &newer, 2);
+    let refused = loft::install::install_one("ax", Some("0.1.0"), &unsigned_install_opts(false));
+    let kept = fa::read_to_string(&cache).unwrap_or_default();
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home);
+    let why = refused.expect_err("the release the cached feed names is refused");
+    assert!(why.contains("LOFT-TEST-0035"), "by that advisory: {why}");
+    assert_eq!(kept, newer, "the cache keeps the newer feed");
+}
+
+/// A machine with no cache, whose feed request is answered `404`, reads the feed its loft
+/// bundle carries: the release it names is refused.  Without a seed, a registry of one's own
+/// that answers `404` publishes no feed and the install goes on (the control).  Fails on a
+/// build with no seed (the install reads a 404 as no advisories).
+#[test]
+fn a_blocked_feed_on_a_fresh_machine_reads_the_seed() {
+    let tmp = tmpdir("blocked_feed_seed");
+    let server = ax_registry(&tmp, None);
+    let url = server.url_for("/index.json");
+    let seed = tmp.join("seed");
+    seed_dir(
+        &seed,
+        &url,
+        &feed_of("2026-11-20T00:00:00Z", Some("<0.1.1")),
+        0,
+    );
+    // The guards in the order every test takes them: home, registry, seed.
+    let install = |home: &Path, seed: Option<&Path>| {
+        let (_home, _lh) = HomeGuard::set(home);
+        let (_reg, _lr) = RegUrlGuard::set(&url);
+        let (_seed, _ls) = SeedGuard::set(seed);
+        loft::install::install_one("ax", Some("0.1.0"), &unsigned_install_opts(false))
+    };
+    let with_seed = tmpdir("blocked_feed_seed_home");
+    let refused = install(&with_seed, Some(&seed));
+    let without = tmpdir("blocked_feed_no_seed_home");
+    let installed = install(&without, None);
+    for d in [&tmp, &with_seed, &without] {
+        let _ = fa::remove_dir_all(d);
+    }
+    let why = refused.expect_err("the seed's advisory refuses the release");
+    assert!(why.contains("LOFT-TEST-0035"), "by that advisory: {why}");
+    installed.expect("a registry of one's own with no feed and no seed installs");
+}
+
+/// A feed request that gets no usable answer (a `500`), with nothing cached and no seed,
+/// stops the install: no install runs without the advisories.  Fails on a build that reads a
+/// failed fetch as no feed.
+#[test]
+fn a_feed_that_cannot_be_read_stops_the_install() {
+    let tmp = tmpdir("feed_cannot_be_read");
+    let home = tmpdir("feed_cannot_be_read_home");
+    let server = ax_registry(&tmp, Some(SERVER_ERROR));
+    let (_home, _lh) = HomeGuard::set(&home);
+    let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+    let (_seed, _ls) = SeedGuard::set(None);
+    let outcome = loft::install::install_one("ax", Some("0.1.1"), &unsigned_install_opts(false));
+    let extracted = fa::exists(home.join(".loft").join("registry").join("ax-0.1.1"));
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home);
+    let why = outcome.expect_err("an unreadable feed stops the install");
+    assert!(
+        why.contains("advisory feed could not be read")
+            && why.contains("nothing is installed without the advisories"),
+        "and says why: {why}"
+    );
+    assert!(!extracted, "nothing was extracted");
+}
+
+/// The copy in use is as old as the moment it was last read from the registry, not as the
+/// moment it was copied: a seed read 31 days ago, freshly placed, refuses the install when
+/// the registry cannot be reached, and `--allow-stale` lets it through.  Eight days old, it
+/// installs (with a warning).  Fails on a build that ages the cache by its files' mtime.
+#[test]
+fn a_seed_read_a_month_ago_is_too_old_to_install_with() {
+    let tmp = tmpdir("seed_too_old");
+    let server = ax_registry(&tmp, None);
+    let url = server.url_for("/index.json");
+    let install = |days: u64, allow_stale: bool| {
+        let seed = tmp.join(format!("seed-{days}"));
+        seed_dir(&seed, &url, &feed_of("2026-10-20T00:00:00Z", None), days);
+        let home = tmp.join(format!("home-{days}-{allow_stale}"));
+        fa::create_dir_all(&home).unwrap();
+        let (_home, _lh) = HomeGuard::set(&home);
+        let (_reg, _lr) = RegUrlGuard::set(&url);
+        let (_seed, _ls) = SeedGuard::set(Some(&seed));
+        loft::install::install_one("ax", Some("0.1.1"), &unsigned_install_opts(allow_stale))
+    };
+    let month = install(31, false);
+    let waived = install(31, true);
+    let week = install(8, false);
+    let _ = fa::remove_dir_all(&tmp);
+    let why = month.expect_err("a feed read 31 days ago is refused");
+    assert!(
+        why.contains("31 days ago") && why.contains("--allow-stale"),
+        "naming its age and the waiver: {why}"
+    );
+    waived.expect("--allow-stale installs with it");
+    week.expect("eight days old installs");
+}
+
+/// The cache only moves forward, whatever brings the copy: a seed older than the cached
+/// feed leaves it standing, and `loft bundle import` of a bundle whose index is older than
+/// the cached one imports nothing.  Fails on a build whose seed or import writes over a
+/// newer copy.
+#[test]
+fn a_seed_or_a_bundle_never_moves_the_cache_back() {
+    let tmp = tmpdir("never_back");
+    let home = tmp.join("home");
+    // The seed: an older feed than the cache's, for a registry that is never reached.
+    let url = common::file_url(&tmp.join("absent").join("index.json"));
+    let seed = tmp.join("seed");
+    let older = feed_of("2026-11-01T00:00:00Z", None);
+    let newer = feed_of("2026-11-16T00:00:00Z", Some("<0.1.1"));
+    seed_dir(&seed, &url, &older, 0);
+    let cache = cached_feed(&home, &newer, 2);
+    let loaded = {
+        let (_home, _lh) = HomeGuard::set(&home);
+        let (_reg, _lr) = RegUrlGuard::set(&url);
+        let (_seed, _ls) = SeedGuard::set(Some(&seed));
+        loft::registry_advisories::load_or_fetch(&loft::registry_advisories::LoadOptions {
+            allow_unsigned: true,
+            offline: true,
+            refresh: false,
+        })
+    };
+    let feed_kept = fa::read_to_string(&cache).unwrap_or_default();
+
+    // The bundle: an index of 2026-11-21 against a cached one of 2026-11-25.
+    let bundle = tmp.join("bundle");
+    unsigned_bundle(
+        &bundle,
+        &tar_gz(&[("demo-1.0.0/loft.toml", "[package]\nname = \"demo\"\n")]),
+    );
+    let cached_index = home.join(".loft").join("registry").join("index.json");
+    let newer_index = r#"{"schema_version": 1, "updated": "2026-11-25T00:00:00Z", "packages": {}}"#;
+    write_file(&cached_index, newer_index);
+    let out = bundle_import(&home, &["--allow-unsigned", bundle.to_str().unwrap()]);
+    let index_kept = fa::read_to_string(&cached_index).unwrap_or_default();
+    let placed = fa::exists(home.join(".loft").join("registry").join("demo-1.0.0"));
+    let _ = fa::remove_dir_all(&tmp);
+
+    let feed = loaded
+        .expect("the offline load reads the cache")
+        .expect("a feed");
+    assert_eq!(
+        feed.updated, "2026-11-16T00:00:00Z",
+        "the newer feed is read"
+    );
+    assert_eq!(feed_kept, newer, "the seed did not replace it");
+    assert!(
+        !out.status.success(),
+        "an older bundle is refused: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("older than the one already verified"),
+        "for that reason: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(index_kept, newer_index, "the cached index is unchanged");
+    assert!(!placed, "and no package was imported");
 }
