@@ -12,7 +12,6 @@
 //
 // @FR-L-Enum: each variant lays its fields out on its own; `score` is read at its variant's offset.
 // @FR-Col-Lookup: a sorted lookup by the variant's key answers the record holding it.
-// @FR-Col-Order: a full walk of each sorted visits every record.
 
 enum Shape {
   Circle { radius: float, score: integer },

@@ -9,7 +9,6 @@
 // Tracked as roadmap item S16b.
 //
 // @FR-Slice-KeyedIter: `circles[15..25]` walks exactly the records keyed in that interval.
-// @FR-Col-Order: a full walk of the sorted variant collection visits every record.
 
 enum Shape {
   Circle { radius: float, score: integer },

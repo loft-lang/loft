@@ -6,8 +6,6 @@
 // hidden __closure). Both backends.
 //
 // @FR-L-Fn: `|y| { y + x }` and `fn(y) { y + x }` are both closures capturing `x`.
-// @FR-L-CapScalar: the captured scalar `x` reads 10.
-// @FR-L-CapHeap: the captured struct `b` is shared, so `b.v` reads 8.
 struct Box {
   v: integer,
 }

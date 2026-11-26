@@ -19,8 +19,6 @@
 // no leak. See plans/25-nullable-sequences/index-f1a-landing.md § Step 1.
 //
 // @FR-H-Copy: `xs = g.c` is a fresh vector, so `e.v = 99` through its element leaves g.c alone.
-// @FR-B-View: `e = xs[i]` reads the element it names (90, 50 + 90).
-// @FR-F-Ret: the returned element is an independent value.
 
 struct Item {
   v: integer,

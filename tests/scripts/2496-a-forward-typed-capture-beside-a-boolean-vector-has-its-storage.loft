@@ -13,7 +13,6 @@
 //   the exit is the whole measurement.
 // CHANNEL: the asserts; before the fix the file does not compile.
 //
-// @FR-L-CapScalar: `count` is captured by value and bounds each test.
 // @FR-L-CapHeap: `marks[n] = true` inside the closure is seen by the outer walk of `marks`.
 
 fn each(v: vector<integer>, f: fn(integer)) {
