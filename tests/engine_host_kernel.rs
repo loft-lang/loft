@@ -2995,3 +2995,172 @@ fn main() {{
         let _ = fa::remove_file(&prog);
     }
 }
+
+/// The kernel serves every peer from one thread, so a message gets a budget of its own once
+/// its first bytes are in: five seconds for an upgrade request's head and for a frame.  A peer
+/// that sends one byte per read, each well inside the read timeout, is dropped when the budget
+/// is spent, and the peers behind it are served from then on.  Two such peers, each dripping
+/// for about fifteen seconds, are measured by how long a well-behaved peer waits for its answer
+/// meanwhile: about five seconds with the budget, the whole drip without one.  Both kernels:
+/// the interpreter's (`src/engine_host.rs`) and the compiled program's (`src/c/loft_engine.h`).
+///
+/// @falsified-at: 5dca7ca2f — by hand, each kernel apart: the frame budget made 500 s →
+/// the next peer waited 18 s; the upgrade head's budget made 100× → it waited 20 s.
+#[test]
+fn a_message_that_trickles_in_holds_the_kernel_no_longer_than_its_budget() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: loft not built");
+        return;
+    }
+    for (base, interpret) in [(18160, true), (18161, false)] {
+        let leg = if interpret { "interpreter" } else { "C" };
+        let port = common::bind_port(base);
+        let (_guard, prog) = echo_kernel(port, interpret);
+        let peer = ws_connect(port);
+        ws_send(&peer, "ready");
+        assert_eq!(ws_recv(&peer), "got:ready", "{leg}: the kernel answers");
+
+        // A frame: its two header bytes at once (the kernel starts reading it), then a
+        // 3000-byte masked payload one byte per 5 ms, where a read waits 20 ms.
+        let slow = ws_connect(port);
+        let mut frame = vec![0x81u8, 0x80 | 126];
+        frame.extend(3000u16.to_be_bytes());
+        frame.extend([1u8, 2, 3, 4]);
+        frame.extend(std::iter::repeat_n(b'x' ^ 1, 3000));
+        let waited = trickle_while_asking(&slow, &frame, Duration::from_millis(5), &peer, "f");
+        assert!(
+            waited < Duration::from_secs(10),
+            "{leg}: a frame still arriving after five seconds is dropped, and the next peer \
+             is answered then; it waited {waited:?}"
+        );
+
+        // An upgrade request's head, one byte per 100 ms, where a read waits 500 ms.
+        let raw = TcpStream::connect(("127.0.0.1", port)).expect("the kernel listens");
+        let mut head = b"GET /ws HTTP/1.1\r\nHost: localhost\r\nX-Pad: ".to_vec();
+        head.extend(std::iter::repeat_n(b'a', 150));
+        let waited = trickle_while_asking(&raw, &head, Duration::from_millis(100), &peer, "h");
+        assert!(
+            waited < Duration::from_secs(10),
+            "{leg}: an upgrade request still arriving after five seconds is dropped, and the \
+             next peer is answered then; it waited {waited:?}"
+        );
+        let _ = fa::remove_file(&prog);
+    }
+}
+
+/// A kernel that answers every peer message `m` with `got:m` to that peer, on `port`: the
+/// interpreter's or the C.  Answers its guard and the program file.
+fn echo_kernel(port: u16, interpret: bool) -> (Guard, PathBuf) {
+    let prog = test_tmp().join(format!("eh_trickle_{port}_{}.loft", std::process::id()));
+    fa::write(
+        &prog,
+        r#"use engine_host;
+
+fn main() {
+  engine_host::run((env_variable("EH_PORT") ?? "0") as integer ?? 0, 100,
+    fn(ev: engine_host::Event) {
+      if ev.kind == 1 { engine_host::send(ev.cid, "got:{ev.payload}"); }
+    },
+    fn() {});
+}
+"#,
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    if interpret {
+        cmd.arg("--interpret");
+    }
+    cmd.process_group(0);
+    let child = cmd
+        .env("LOFT_OFFLINE", "1")
+        .env("EH_PORT", port.to_string())
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn kernel");
+    (Guard(Some(child)), prog)
+}
+
+/// A client's frame must be masked (RFC 6455 § 5.1): the kernel closes a connection whose
+/// client sends an unmasked one, and does not take its payload as a message, where a masked
+/// one is answered and the kernel serves on.  Both kernels.
+///
+/// @falsified-at: 73a36d058 — by hand, each kernel apart: the `from_client && !masked`
+/// refusal disabled → `got:unmaskd` came back.
+#[test]
+fn an_unmasked_client_frame_closes_the_connection() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: loft not built");
+        return;
+    }
+    for (base, interpret) in [(18162, true), (18163, false)] {
+        let leg = if interpret { "interpreter" } else { "C" };
+        let port = common::bind_port(base);
+        let (_guard, prog) = echo_kernel(port, interpret);
+        let peer = ws_connect(port);
+        ws_send(&peer, "masked");
+        assert_eq!(
+            ws_recv(&peer),
+            "got:masked",
+            "{leg}: a masked frame is answered"
+        );
+        let mut bare = ws_connect(port);
+        bare.write_all(&[0x81, 7, b'u', b'n', b'm', b'a', b's', b'k', b'd'])
+            .unwrap();
+        let mut rest = Vec::new();
+        let _ = bare.read_to_end(&mut rest);
+        assert!(
+            !String::from_utf8_lossy(&rest).contains("got:unmaskd"),
+            "{leg}: an unmasked client frame is not taken as a message: {rest:02x?}"
+        );
+        // The kernel goes on serving the peer that keeps to the protocol.
+        ws_send(&peer, "after");
+        assert_eq!(ws_recv(&peer), "got:after", "{leg}: the kernel serves on");
+        let _ = fa::remove_file(&prog);
+    }
+}
+
+/// Send `msg` on `slow`, its first two bytes at once and the rest one byte per `gap` until the
+/// kernel closes the connection; meanwhile ask `peer` a question.  Answers how long the answer
+/// took.
+fn trickle_while_asking(
+    slow: &TcpStream,
+    msg: &[u8],
+    gap: Duration,
+    peer: &TcpStream,
+    question: &str,
+) -> Duration {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut drip = slow.try_clone().expect("a second handle");
+    let msg = msg.to_vec();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stopped = std::sync::Arc::clone(&stop);
+    let dripping = std::thread::spawn(move || {
+        if drip.write_all(&msg[..2]).is_err() {
+            return;
+        }
+        for b in &msg[2..] {
+            if stopped.load(Ordering::Relaxed) || drip.write_all(&[*b]).is_err() {
+                return;
+            }
+            std::thread::sleep(gap);
+        }
+    });
+    // The kernel is inside the message once its first bytes are read.
+    std::thread::sleep(Duration::from_millis(300));
+    let asked = Instant::now();
+    peer.set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    ws_send(peer, question);
+    assert_eq!(ws_recv(peer), format!("got:{question}"));
+    let waited = asked.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    let _ = dripping.join();
+    waited
+}
