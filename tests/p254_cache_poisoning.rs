@@ -483,6 +483,9 @@ fn assert_private_placement(tmp: &std::path::Path, path: &std::path::Path, plant
 /// A native build stages its C source and binary in the user's private temp directory, and
 /// never in a `loft-<uid>` it did not make private itself.  `LOFT_KEEP_NATIVE_C` keeps the
 /// source and names where it was written.
+/// @falsified-at: f13fd9ac6 — by hand: scratch_dir() on std::env::temp_dir() → Nothing: the
+/// source landed in tmp/loft_native_c_<pid>; private_temp_dir() taking an existing loft-<uid>
+/// unchecked → OpenDir: the planted directory was used.
 // approved exemption: POSIX owner and mode bits have no Windows equivalent; Windows substitute: none (the temp dir there is the user's own profile directory)
 #[cfg(unix)]
 #[test]
@@ -520,6 +523,9 @@ fn native_build_stages_in_a_directory_private_to_the_user() {
 /// With neither `HOME` nor `XDG_CACHE_HOME` set, the cache — `cache_dir()`, and the stdlib
 /// image the run stores there — falls back to the user's private temp directory, never to
 /// the temp directory itself or a `loft-<uid>` it did not make private.
+/// @falsified-at: f13fd9ac6 — by hand: cache_base_dir() falling back to std::env::temp_dir()
+/// → Nothing: the cache was tmp/loft, directly in the temp dir; private_temp_dir() reading
+/// loft-<uid> through a link → Link: the planted link was used.
 // approved exemption: POSIX owner and mode bits have no Windows equivalent; Windows substitute: none (the temp dir there is the user's own profile directory)
 #[cfg(unix)]
 #[test]
@@ -555,11 +561,7 @@ fn cache_without_a_home_falls_back_to_a_directory_private_to_the_user() {
                 )
             });
         let at = std::path::Path::new(at.trim());
-        assert_eq!(
-            at.file_name().and_then(|n| n.to_str()),
-            Some("loft"),
-            "{plant:?}"
-        );
+        assert_eq!(fa::file_name(at).as_deref(), Some("loft"), "{plant:?}");
         assert_private_placement(&tmp, at, plant);
     }
     let _ = fa::remove_dir_all(&dir);

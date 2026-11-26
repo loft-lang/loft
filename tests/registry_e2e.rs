@@ -2348,6 +2348,8 @@ fn an_index_older_than_the_cached_one_is_refused() {
 /// index; `LOFT_LEGACY_REGISTRY`, the switch that once routed installs through the list, is
 /// set.  The install fails, the zip is never asked for, and no `flat` reaches the library
 /// directory or the registry cache.
+/// @falsified-at: f13fd9ac6 — by hand: the LOFT_LEGACY_REGISTRY route restored (download the
+/// listed zip, install it) → the install succeeded.
 #[test]
 fn install_never_fetches_a_package_only_the_unsigned_list_names() {
     let tmp = tmpdir("install_unsigned_list");
