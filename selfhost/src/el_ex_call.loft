@@ -2153,12 +2153,17 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
 pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vector<ir::Node>, bt: ir::TypeT, visible: integer) -> Ex? {
   inner = match bt { TyVector { inner } => inner, _ => ir::TyVoid };
   ret = el::def(e, d).returned[0];
+  // (A result that borrows a visible parameter — `fn named(q: vector<T>?) -> vector<T> { q ?? [..] }`
+  // — borrows the argument handed it, as on the first pass (`call_dependencies`); refused where
+  // that argument is no local.)
+  pborrow = false;
   for i in el_types::deps(el_types::base(ret)) {
-    // (Asked on the second pass: the first sees a callee's pass-1 borrow of a parameter its
-    // own second pass replaces by the buffer, `q ?? [literal]`.)
     if i < visible && !e.first_pass {
-      el::refuse(e, "a call whose vector result borrows a parameter");
-      return null;
+      pborrow = true;
+      if !(i < len(list) && el_ir::unspan(list[i]!) is NdVar) {
+        el::refuse(e, "a call whose vector result borrows a parameter");
+        return null;
+      }
     }
   }
   nm = el_types::elem_name(e, inner);
@@ -2175,7 +2180,7 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   // (`call_dependencies` on the first pass: a callee whose result borrows a parameter there —
   // `fn keep(x) -> vector<T> { x }`, `MergeAttr` — answers a borrow of the argument handed it.)
   p1: vector<integer> = [];
-  if e.first_pass {
+  if e.first_pass || pborrow {
     for pi in el_types::deps(el_types::base(ret)) {
       if pi >= 0 && pi < visible && pi < len(list) {
         match el_ir::unspan(list[pi]!) {
@@ -2192,7 +2197,7 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   // (`caller_vector_retbuf_dep`: a callee not finished parsing this pass — itself, or declared
   // below — whose result names nothing yet borrows the buffer handed it all the same.)
   unfinished = d >= e.context && len(el_types::deps(el_types::base(ret))) == 0;
-  rt = if e.first_pass { el_types::with_deps(ret, p1) } else if len(el_types::deps(el_types::base(ret))) > 0 || unfinished { el_types::with_deps(ret, [buf]) } else { ret };
+  rt = if e.first_pass || pborrow { el_types::with_deps(ret, p1) } else if len(el_types::deps(el_types::base(ret))) > 0 || unfinished { el_types::with_deps(ret, [buf]) } else { ret };
   ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: buf }] }, rt)
 }
 
