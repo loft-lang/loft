@@ -578,6 +578,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // collection as it is.)
   if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && !kcopied && len(el_types::deps(b.tp)) > 0 {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
+    // (…and a join whose every leaf is such a local or a keyed literal: each arm hands up its own
+    // store, the body typed without a borrow and each arm keeping its own.)
+    if kv < 0 && !(result is TyOptional) && body_tail(code) is NdIf && keyed_owned_leaves(e, vars, body_tail(code)) {
+      kv = 0;
+    }
     // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
     klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
     if klit {
@@ -1410,6 +1415,16 @@ pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::
     _ => {}
   }
   null
+}
+
+// Is every leaf of this join a keyed LOCAL that is no parameter, or a keyed literal (`Vector`)?
+pub fn keyed_owned_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => keyed_owned_leaves(e, vars, t) && keyed_owned_leaves(e, vars, f),
+    NdBlock { block } => if block[0].name == "Vector" { keyed_kind(block[0].result[0] ?? ir::TyVoid) } else { len(block[0].operators) > 0 && keyed_owned_leaves(e, vars, el_ir::last(block[0].operators)) },
+    NdVar { n: lv } => lv >= 0 && lv < len(vars.vars) && !vars.vars[lv]!.argument && keyed_kind(el_types::base(el_vars::tp(vars, lv))),
+    _ => false
+  }
 }
 
 // The roots of the keyed field leaves `keyed_field_copy_out` copied (each `__blk_val_N`'s
