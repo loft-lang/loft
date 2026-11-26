@@ -5,12 +5,11 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## State — START HERE
 
-- **int32** = 5aa112b50 (CLEAN on the tester's stack ec2d7a451: 1638/2269, 0 differ).  The
-  tester's loft30-gate 13a8d4d67 (packages, generic instance registration) is merged in.
-- **Gating:** b5ad08833 (a library's element type, hook and qualified literal found from the
-  program: H-Drop/2436 and tests/docs/17-libraries.loft refused → agree), sent as a `selfhost/`
-  diff from 5aa112b50.  **Next try:** 07b68dd55 (an enum-qualified variant literal, `[Ch::Beta {…}]`,
-  built in place).  A try is a `selfhost/` diff on the tester's last clean base.
+- **int32** = b5ad08833 (CLEAN: 1641/2269, 0 differ).  The tester's loft30-gate fac638920
+  (nested instances of refused fills, a package's `lib_path`) is merged in (5aed61d10).
+- **Gating:** `git diff fac638920 5aed61d10 -- selfhost/` on the tester's 65c3397d1 — 07b68dd55
+  (an enum-qualified variant literal built in place) and b28e5e145 (an `E?` slot off a call's
+  answer named once: 2561 refused → agree).  A try is a `selfhost/` diff on the last clean base.
 - **The tester's backlog** is `refusal-worklist.md` on loft30-gate (re-ranked by topic):
   T1 records answered from something other than a literal (current), T2 `par` workers, T3 tuples.
   T8 is not a lever.  The tester ports generic-template REGISTRATION itself (el_types.loft,
@@ -45,9 +44,11 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
-- T1: 2561's last refusal, `enum_call` (`shapes(3)[i]` answered as `Shape?`): Rust names the
-  slot first (`enum_slot_read_named`, `__ref_2 = OpGetVector(inline_container …)`) and copies
-  behind its tag test.  The local form (`v[i]`, a `Shape?` field) agrees since aad53c89c.
+- An empty `[]` ARGUMENT to a `vector<lib::T>` parameter (`x = mine([])`, `ltl3::count([])`):
+  Rust makes the program's `vector<T>` at the `]`, the port at the statement's end — a silent
+  position difference (refused for a program-local struct).  Passing the argument syntax to
+  `empty_literal_to` (`lit:`) changed nothing: the first pass does not reach that road.  The
+  parked attempt is `empty-arg-syntax.patch` in the d87d338a scratchpad.
 - A fieldless enum-qualified variant as a value (`[Ch::Alpha, …]`): refused "qualified name".
 - A local then-arm beside a variant (`if (s is V) { s } else { V {…} }`): Rust's `Bind` delivery.
 - `nr_g`: `[for x in a.. { x }]` with `a: u8` — schema rows 100/101 in the other order.
