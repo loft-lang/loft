@@ -356,11 +356,11 @@ static void loft_print(loft_cx *cx, loft_str s) {
 
 /* c_library_available (c_libs::library_available): a library this unit carries — the names
  * the unit lists after the runtime (`c_libraries` in mod.rs), bound by its `main`. */
-static const char *const *loft_cl = 0;
+LOFT_STATE const char *const *loft_cl LOFT_INIT(0);
 LOFT_STATE uint32_t loft_ncl LOFT_INIT(0);
 /* Each carried library's declared symbols, which a POSIX host asks the running program for
  * (`dlsym` over its own handle): a library missing one is not available. */
-static const char *const *const *loft_cls = 0;
+LOFT_STATE const char *const *const *loft_cls LOFT_INIT(0);
 /* Opening a library and finding a symbol in it, or in the running program (@PLN203 C5, C8):
  * `dlopen` / `dlsym` on a POSIX host; `LoadLibraryA` / `GetProcAddress` on Windows, where "the
  * program" is every module it has loaded (`dlopen(0)`'s global scope).  `LOFT_DL` says the host
@@ -436,7 +436,7 @@ static const char *loft_dl_error(loft_cx *cx) {
  * entry: its declared name, its package, where to look (the file the package ships, else the
  * soname's spellings) and its package's declared symbols.  Bound by a unit's `main`. */
 typedef struct { const char *name, *pkg; const char *const *cands; const char *const *syms; } loft_c_optlib;
-static const loft_c_optlib *loft_col = 0;
+LOFT_STATE const loft_c_optlib *loft_col LOFT_INIT(0);
 LOFT_STATE uint32_t loft_ncol LOFT_INIT(0);
 
 #if defined(LOFT_DL)
@@ -458,7 +458,7 @@ static void *loft_c_optlib_open(loft_cx *cx, uint32_t i) {
  * that built it.  `shim` marks a `[c] shim`'s own library, which only a `--dynamic` build opens
  * (LOFT_BIND_SHIMS): a static one carries the shim inside.  Bound by a unit's `main`. */
 typedef struct { const char *pkg, *version, *file; uint8_t shim; } loft_c_boundlib;
-static const loft_c_boundlib *loft_cbl = 0;
+LOFT_STATE const loft_c_boundlib *loft_cbl LOFT_INIT(0);
 LOFT_STATE uint32_t loft_ncbl LOFT_INIT(0);
 #if defined(LOFT_DL)
 LOFT_STATE void *loft_cbl_handles[64];
@@ -1741,7 +1741,7 @@ typedef struct {
     /* `@PLN226` — this unit's store context for `stores` (`loft_host_cx`). */
     void *(*cx_of)(void *stores, const void *unit, void *(*make)(void), void (*end)(void *));
 } loft_hosted_table;
-static const loft_hosted_table *loft_hosted = 0;
+LOFT_STATE const loft_hosted_table *loft_hosted LOFT_INIT(0);
 /* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
 /* A hand-over the interpreter refused holds for the rest of the bridge call: the routine runs on
  * compiled, and the interpreter takes the pause once it returns.  Asking again each round would
@@ -3803,7 +3803,7 @@ typedef struct loft_tdesc_s {
 
 /* The program's type table, bound at start (`loft_bind_tables`) for what a store's FREE walks:
  * the `File` leases its records hold.  0 in a runtime built without a unit. */
-static const loft_tdesc *loft_T = 0;
+LOFT_STATE const loft_tdesc *loft_T LOFT_INIT(0);
 LOFT_STATE uint32_t loft_T_n LOFT_INIT(0);
 /* `@FR-H-Handle` (loft_io.h, which sets them): a `File` record's lease on its OS handle, taken
  * by a copy and returned by a record's death; the handle closes at the last return.  Null in a

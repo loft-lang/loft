@@ -222,6 +222,22 @@ fn brace_delta(line: &str, comment: &mut bool) -> i32 {
     d
 }
 
+/// Is the file-scope variable `decl` (its line after `static `) a constant, which every unit may
+/// hold a copy of?  Only when the object itself is `const`: `const int n`, `const char *const p`,
+/// or a table (`const char *names[]`, whose rows nothing assigns).  `const loft_tdesc *p` is a
+/// MUTABLE pointer to constant data: assigned at start (`loft_init`) in one unit, it would stay
+/// null in every other.
+fn is_constant(decl: &str) -> bool {
+    let head = decl.split(['=', ';']).next().unwrap_or_default();
+    if head.contains('[') {
+        return head.trim_start().starts_with("const ");
+    }
+    match head.rfind('*') {
+        Some(star) => head[star + 1..].trim_start().starts_with("const "),
+        None => head.split_whitespace().any(|w| w == "const"),
+    }
+}
+
 /// The names declaration `text` declares: a function's name, a variable's, a type's (its
 /// `typedef` name and its tag), a macro's, and every name inside an `enum`'s braces (its
 /// constants — and possibly more, which only puts the item in more units).
@@ -505,9 +521,9 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
     let mut unshared: Vec<String> = Vec::new();
     for line in hot.lines().chain(kept.lines()) {
         if let Some(rest) = line.strip_prefix("static ")
-            && !rest.starts_with("const ")
             && !rest.starts_with("inline ")
             && function_name(rest).is_none()
+            && !is_constant(rest)
             && let Some(name) = rest
                 .split(['=', '[', ';'])
                 .next()
@@ -704,6 +720,28 @@ mod tests {
             hot.contains("static const int loft_table[1]")
                 && cold.contains("static const int loft_table[1]")
         );
+    }
+
+    #[test]
+    fn a_pointer_to_constant_data_is_no_constant() {
+        // shared by copy: the object is const, or a table
+        for c in [
+            "const int loft_n = 3;",
+            "const uint32_t loft_cwords_C[] = { 1, 2 };",
+            "const char *const loft_name = \"x\";",
+            "const char *loft_kinds[] = { \"a\", \"b\" };",
+        ] {
+            assert!(is_constant(c), "{c}");
+        }
+        // state: one unit's write must be every unit's read
+        for v in [
+            "const loft_c_boundlib *loft_cbl = 0;",
+            "const char *loft_anchor = \"\";",
+            "const loft_lg_site *loft_lg_sites;",
+            "uint32_t loft_count = 0;",
+        ] {
+            assert!(!is_constant(v), "{v}");
+        }
     }
 
     #[test]

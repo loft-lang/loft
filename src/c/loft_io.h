@@ -138,7 +138,7 @@ static void loft_wfind_close(loft_wfind *f) {
  * program written out with `--out` or run on its own anchors where it lies, as the Rust
  * writer's standalone binary does.  No unit bakes a directory of the machine that built it.
  * `#cwd` turns the anchoring off. */
-static const char *loft_anchor = "";
+LOFT_STATE const char *loft_anchor LOFT_INIT("");
 LOFT_STATE int loft_program_relative LOFT_INIT(1);
 
 static loft_text loft_program_directory(loft_cx *cx, loft_str sub);

@@ -55,9 +55,9 @@ typedef struct { loft_ref coll; int64_t count; loft_text reason; } loft_lazy_err
  * the reason the program's drivers were refused, which every miss then reports. */
 typedef int64_t (*loft_lazy_driver_fn)(loft_cx *cx, loft_ref coll, loft_str source, int64_t key_int, loft_str key_text);
 typedef struct { const char *element; loft_lazy_driver_fn fn; } loft_lazy_driver;
-static const loft_lazy_driver *loft_lazy_drivers = 0;
+LOFT_STATE const loft_lazy_driver *loft_lazy_drivers LOFT_INIT(0);
 LOFT_STATE uint32_t loft_nlazy_drivers LOFT_INIT(0);
-static const char *loft_lazy_driver_refusal = 0;
+LOFT_STATE const char *loft_lazy_driver_refusal LOFT_INIT(0);
 
 static loft_lazy_driver_fn loft_lazy_driver_for(loft_cx *cx, const char *element) {
     for (uint32_t i = 0; element && i < loft_nlazy_drivers; i++)

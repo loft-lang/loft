@@ -1447,7 +1447,7 @@ static void loft_perrs_deliver(loft_cx *cx, loft_ref data, loft_ref to, uint16_t
 }
 
 /* The parse table the last parse read, for the deliveries that ask a store's parsed type. */
-static const loft_ptype *loft_ptab = 0;
+LOFT_STATE const loft_ptype *loft_ptab LOFT_INIT(0);
 
 /* Whether type `tp` is a vector variable's own store (`main_vector<T>`), emitted with the
  * table. */

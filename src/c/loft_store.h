@@ -365,7 +365,7 @@ static inline void loft_h_reshaped(loft_cx *cx, loft_store_t *s) { s->hgen = ++c
  * that would cross the ceiling stops the run with the store as it was, and the report names the
  * growth that was refused.  The names are the unit's type table, which a generated `main` binds
  * (`loft_bind_tables`); a runtime built without a unit names no type. */
-static const char *const *loft_tn = 0;
+LOFT_STATE const char *const *loft_tn LOFT_INIT(0);
 LOFT_STATE uint32_t loft_ntn LOFT_INIT(0);
 /* Each thread counts its own stores' bytes; the limit is the program's. */
 LOFT_STATE uint64_t loft_heap_limit LOFT_INIT(0);
