@@ -79,6 +79,21 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   if !e.first_pass {
     bl = match code { NdBlock { block } => block[0], _ => return code };
     tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
+    // `Rename` over a tail call of a function the first pass had not finished — declared below
+    // (`tracked_files() { tracked_files_in("") }`): its `__ref_N` only shows on this pass, where
+    // Rust's `ref_return` first meets it, and the buffer is renamed onto it now — the call then
+    // handed the caller's, as below.
+    late_tail = false;
+    match tail {
+      NdCall { def_nr: lcd, args: lca } => {
+        lrw = match el_ir::unspan(lca[-1] ?? ir::NdNull) { NdVar { n: lrn } => if starts_with(el_vars::name_of(vars, lrn), "__ref_") && !vars.vars[lrn].argument { lrn } else { -1 }, _ => -1 };
+        if lrw >= 0 && lcd >= d && len(el::def(e, d).returned) > 0 && len(el_types::deps(el::def(e, d).returned[0]!)) == 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && !el_expressions::buffer_bound(e) && !((el::def(e, lcd).code[0] ?? ir::NdNull) is NdNull) && !el_expressions::forwards_foreign_store(e, lcd, 0) && temp_subject_call(e, vars, tail) < 0 && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) == 0 {
+          rename_onto(e, vars, rb, lrw);
+          late_tail = true;
+        }
+      },
+      _ => {}
+    }
     // A `return` before the body's end delivers into the buffer itself
     // (`deliver_mid_vector_returns`): a local is copied in (`OpReplaceVector`), and every exit
     // answers the buffer.  Carried where the first pass renamed the buffer onto the tail local;
@@ -213,7 +228,8 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // pass, the call handed it — the body opens by clearing it, and answers it.
     rcall = match tail { NdCall { args: tca } => match el_ir::unspan(tca[-1] ?? ir::NdNull) { NdVar { n: tcv } => if vars.vars[tcv].argument && hidden_param(e, vars, tcv) { tcv } else { -1 }, _ => -1 }, _ => -1 };
     if rcall >= 0 {
-      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      // (Renamed on this pass, the body keeps the bare result: Rust's block names no buffer.)
+      bl.result = [if late_tail { el_types::without_deps(el_types::base(result)) } else { el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]) }];
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rcall }]), bl.operators[0]] };
       return ir::NdBlock { block: [bl] };
     }
@@ -544,13 +560,16 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       match tail {
         NdCall { def_nr: rcd, args: rca } => {
           rw = match el_ir::unspan(rca[-1] ?? ir::NdNull) { NdVar { n: rwn } => if starts_with(el_vars::name_of(vars, rwn), "__ref_") && !vars.vars[rwn].argument { rwn } else { -1 }, _ => -1 };
-          // (Only where the tail borrows nothing, `ls.is_empty()`: the call's first-pass type
-          // names no store — `mk("q")` over a text parameter answers a fresh vector, `gb(b)` over a
-          // record parameter borrows `b`.  A temporary subject, `g(Filled { items: inner })`, is
-          // `Bind` above: `tail_call_borrows_temp_subject`.)
+          // (`ls` holds the call's own buffer and what its answer borrows: the rename is declined
+          // only where that answer borrows a VISIBLE parameter's argument — `gb(b)` borrows `b`.
+          // A callee whose answer names its hidden buffer (`fill`, `sfill`, `hello()`: a
+          // loop-built local copied in at its tail) puts that buffer in `ls`, which is the
+          // candidate itself, still renamed; so is `mk("q")` answering a literal.  A temporary
+          // subject, `g(Filled { items: inner })`, is `Bind` above: `tail_call_borrows_temp_subject`.)
           // (…and a first-pass struct temporary — a literal at a record parameter, which Rust's
           // first pass decides nothing for, `gb(Box { items: v })` — declines the rename too.)
-          rheap = len(el_types::deps(bl.result[0] ?? ir::TyVoid)) > 0 || len([for rta in rca if rta#index < len(el::def(e, rcd).attributes) && !el::def(e, rcd).attributes[rta#index]!.hidden && !is_scalar(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid)) && !(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid) is TyText) && !(el_ir::unspan(rta) is NdVar) { 1 }]) > 0;
+          rcdef = el::def(e, rcd);
+          rheap = len([for rdp in el_types::deps(el_types::base(rcdef.returned[0] ?? ir::TyVoid)) if rdp >= 0 && rdp < len(rcdef.attributes) && !rcdef.attributes[rdp]!.hidden { 1 }]) > 0 || len([for rta in rca if rta#index < len(el::def(e, rcd).attributes) && !el::def(e, rcd).attributes[rta#index]!.hidden && !is_scalar(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid)) && !(el_types::base(el::def(e, rcd).attributes[rta#index]!.typedef[0] ?? ir::TyVoid) is TyText) && !(el_ir::unspan(rta) is NdVar) { 1 }]) > 0;
           if rw >= 0 && !rheap && !((el::def(e, rcd).code[0] ?? ir::NdNull) is NdNull) && !el_expressions::forwards_foreign_store(e, rcd, 0) && attr_nr(el::def(e, d), "__retbuf") >= 0 && !el_expressions::buffer_bound(e) {
             rename_onto(e, vars, rb, rw);
           }
