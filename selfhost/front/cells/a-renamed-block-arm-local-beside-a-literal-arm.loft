@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a match tail whose block arm builds a local the buffer is renamed onto
+// (`buf: vector<u8> = []; … buf`) beside a literal arm (`_ => []`): the local's arm is the
+// answer as it stands, the literal copied into the buffer and its store freed.
+// Prints: 104,105, / 
+
+enum V { VText { s: text }, VNone }
+fn bytes(v: V) -> vector<u8> {
+  match v {
+    VText { s } => {
+      buf: vector<u8> = [];
+      for i in 0..size(s) { buf += [(s.byte_at(i) & 255) as u8]; }
+      buf
+    },
+    _ => [],
+  }
+}
+fn show(b: vector<u8>) -> text { t = ""; for x in b { t += "{x as integer},"; } t }
+fn main() { println("{show(bytes(VText { s: "hi" }))} / {show(bytes(VNone))}"); }
