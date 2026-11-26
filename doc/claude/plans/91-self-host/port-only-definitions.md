@@ -2,32 +2,21 @@
 
 **The rule (owner, 2026-11-26):** a definition only the port registers is the port creating a new
 language instead of porting one; a try that adds one is `TRYRESULT issues` (refusal-worklist.md).
-These are the ones that exist, measured at try 8e161452b (on 4d83248cc), 85 rows.  Each
-family names who removes it.  Remove a row's line once a try shows it gone.
+These are the ones left, measured at try 2be44f5a6 (on 8e161452b), 71 rows (85 at
+8e161452b).  Each family names who removes it; a row goes once a try shows it gone.
 
-## vector type — 68 (porter (keyed-destination lowering) and tester (the rest, below))
+**Removed by the tester (refused before read, no lowering):** a `[…]` whose destination is a keyed
+collection — a refused `&` of a keyed collection keeps its link type (el_ex_vector), a keyed
+subject's non-empty `??` default (el_ex_call), a literal whose position expects a keyed collection
+that `keyed_tail_literal` declines (el_ex_assign).  The porter's keyed-literal lowering replaces
+the last two refusals.
 
-Most are a `[…]` read as a vector where Rust reads it against a KEYED destination and mints no
-vector: an `if` arm of a `-> hash/sorted/index/spatial/trie` tail (nullable or not), `+=` onto a
-keyed place or through a link to one, a keyed `??` default.  The tester's try 944afe2d7 refuses
-those before the literal is read (el_ex_vector `&` keeps its link type; el_ex_call keyed `??`
-default; el_ex_assign SVecLit keyed expectation): the porter's lowering replaces those three
-refusals.  Not that family: `an-expected-element-type-reaches-every-literal-position` (a declared
-element type not passed into the literal), 2500's `vector<__typevar_Hit>` (a dropped field makes
-`Hit` look like a placeholder), 923's `vector<>`.
+## vector type — 54
 
 | program | definition |
 |---|---|
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `main_vector<Pt>` |
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `main_vector<Row>` |
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `main_vector<Wrd>` |
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `vector<Pt>` |
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `vector<Row>` |
-| 1433-a-keyed-alias-is-a-link-not-a-copy.loft | `vector<Wrd>` |
 | a-null-written-to-a-collection-reaches-every-name-for-it.loft | `main_vector<Lh>` |
 | a-null-written-to-a-collection-reaches-every-name-for-it.loft | `vector<Lh>` |
-| a-link-variable-reads-and-writes-its-place.loft | `main_vector<K>` |
-| a-link-variable-reads-and-writes-its-place.loft | `vector<K>` |
 | a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft | `main_vector<Room>` |
 | a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft | `vector<Room>` |
 | 2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft | `main_vector<Fr2562E>` |
@@ -61,14 +50,10 @@ element type not passed into the literal), 2500's `vector<__typevar_Hit>` (a dro
 | 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnP>` |
 | 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnS>` |
 | 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnT>` |
-| 2382-an-early-return-releases-a-lifted-argument-of-its-block.loft | `main_vector<K>` |
-| 2382-an-early-return-releases-a-lifted-argument-of-its-block.loft | `vector<K>` |
 | 164-consumed-keyed-lift-rebind.loft | `main_vector<Lr1H>` |
 | 164-consumed-keyed-lift-rebind.loft | `main_vector<Lr1S>` |
 | 164-consumed-keyed-lift-rebind.loft | `vector<Lr1H>` |
 | 164-consumed-keyed-lift-rebind.loft | `vector<Lr1S>` |
-| 1320-a-branch-joined-binding-frees-the-arm-that-minted.loft | `main_vector<K1320>` |
-| 1320-a-branch-joined-binding-frees-the-arm-that-minted.loft | `vector<K1320>` |
 | a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `main_vector<Cp>` |
 | a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `main_vector<Cw>` |
 | a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `vector<Cp>` |
@@ -82,12 +67,10 @@ element type not passed into the literal), 2500's `vector<__typevar_Hit>` (a dro
 | an-expected-element-type-reaches-every-literal-position.loft | `vector<vector<integer>>` |
 | 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `main_vector<K>` |
 | 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `vector<K>` |
-| 1322-a-default-arm-mint-is-freed-once.loft | `main_vector<Rw1322>` |
-| 1322-a-default-arm-mint-is-freed-once.loft | `vector<Rw1322>` |
 | 923-nullable-vector-element-schema.loft | `main_vector<>` |
 | 923-nullable-vector-element-schema.loft | `vector<>` |
 
-## generic function instance — 9 (tester)
+## generic function instance — 9
 
 | program | definition |
 |---|---|
@@ -101,7 +84,7 @@ element type not passed into the literal), 2500's `vector<__typevar_Hit>` (a dro
 | 100-enhancements.loft | `i_15integer#integer_t_6vector_map` |
 | 100-enhancements.loft | `i_7integer_t_6vector_filter` |
 
-## lambda / closure — 3 (tester)
+## lambda / closure — 3
 
 | program | definition |
 |---|---|
@@ -109,21 +92,21 @@ element type not passed into the literal), 2500's `vector<__typevar_Hit>` (a dro
 | 2435-two-modules-types-of-one-name-key-two-instances.loft | `n___lambda_answers_1#2` |
 | a-lambda-body-converts-into-its-expected-return.loft | `n___lambda___dflt_takes_f_0` |
 
-## interface stub — 2 (tester)
+## interface stub — 2
 
 | program | definition |
 |---|---|
 | a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft | `__iface_948#1_weight` |
 | pln125-a2c-companion.loft | `__iface_911#1_plain_relay` |
 
-## function — 2 (tester)
+## function — 2
 
 | program | definition |
 |---|---|
 | a-lambda-body-converts-into-its-expected-return.loft | `n___dflt_takes_f` |
 | a-library-carries-generics-across-the-boundary.loft | `n_describe` |
 
-## tuple record — 1 (tester)
+## tuple record — 1
 
 | program | definition |
 |---|---|
