@@ -292,6 +292,9 @@ pub struct Vars {
   // `Parser::pending_arg_posts` (loft#2146): what a call's arguments store back once it returns
   // (a slot link read again, `n = OpRefFromChildRec(_slot_n_N)`), taken by `call_args`.
   pub arg_posts: vector<ir::Node> = [],
+  // The syntax of the call's arguments, in `call_args`' order (-1 for a receiver): an untyped
+  // `[]` is read against its parameter at its own `]` (`parse_vector` under the hint).
+  pub arg_syntax: vector<integer> = [],
   // `Function::fn_lambda_map`'s question on both passes: the locals a capturing lambda was
   // bound to (`closure_made` is the pending build, taken by the bind).
   pub closure_bound: vector<integer> = [],
