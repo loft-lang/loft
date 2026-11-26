@@ -794,6 +794,15 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SVecLit { items } => {
       // (An empty `[]` where a keyed collection is expected is that collection, empty.)
       kl = if len(items) == 0 && !(vars.expect_node == n && keyed_kind(vars.expect)) { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      // A non-empty literal whose position expects a KEYED collection, which `keyed_tail_literal`
+      // still does not build (a nullable tail result): Rust reads it as that collection
+      // (`parse_vector`'s keyed arm) and registers no vector for it, so it is refused before it
+      // is read as a vector — read, it minted a `vector<E>` / `main_vector<E>` Rust never has.
+      kres = if e.context >= 0 { el::def(e, e.context).returned[0] ?? ir::TyVoid } else { ir::TyVoid };
+      if kl == null && len(items) > 0 && ((vars.expect_node == n && keyed_kind(el_types::base(vars.expect))) || (keyed_kind(el_types::base(kres)) && el_ex_deliver::tail_syntax(e, vars.body) == n)) {
+        el::refuse(e, "a vector literal answered as a keyed collection");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
       // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
       tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
       // `parse_vector`'s `vector_def`: an empty `[]` whose element the position expects registers
