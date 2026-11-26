@@ -18,25 +18,33 @@
 //! fragmentation, or congestion machinery:
 //!
 //! - One UDP socket on the SAME port number as the TCP listener (zero config).
-//! - Identity = the datagram source address bound by a **cookie handshake**:
-//!   the kernel issues a per-connection cookie (`n_kernel_udp_cookie`); the
-//!   loft side transports it inside its own protocol (cookie *issuance* is
-//!   mechanics, cookie *transport* is meaning); the client echoes it in a
-//!   `H:<cookie>` datagram; the kernel binds the source addr to that cid and
-//!   acks `A:<cid>`.
-//! - Inbound `S:<seq>:<payload>` datagrams **conflate to newest per sender**
-//!   (a higher seq overwrites the slot; stale/reordered seqs are discarded —
-//!   never apply an old pose).  The loft side drains the dirty slots at tick
+//! - Identity = a per-connection **session key**: at the WebSocket upgrade the
+//!   kernel draws 32 random bytes from the OS and hands them over with the cid
+//!   in the 101 response (`X-Loft-UDP: <cid>:<64 hex digits>` — issuance and
+//!   transport both kernel-internal).  Every datagram, both ways, is sealed
+//!   under it ([`seal`]: kind, cid, seq, payload and a 16-byte HMAC-SHA256
+//!   tag); one that does not open, or whose seq was taken already, changes no
+//!   slot, path or keepalive.  The client's sealed hello binds its source addr
+//!   and is acked with a sealed `A`; from then on the source address is a
+//!   routing hint — the newest authenticated datagram moves the path (NAT
+//!   rebinding).  The seal protects the seat and the samples' integrity, not
+//!   their confidentiality, and it is as strong as the channel that carried the
+//!   key: under `ws://` the key crosses the network in plain text, so such a
+//!   session is LAN-grade.  The C runtime (`loft_engine.h`) speaks the same
+//!   datagram; the two interoperate.
+//! - Inbound sync datagrams **conflate to newest per sender** (a higher
+//!   authenticated seq overwrites the slot; stale/reordered seqs are discarded
+//!   — never apply an old pose).  The loft side drains the dirty slots at tick
 //!   time via `n_kernel_sync_next` — late-latch by construction.
 //! - Outbound `n_kernel_sync_send` stamps a per-cid seq and sends a datagram
 //!   when the client has a live UDP path, else falls back to a WS frame —
 //!   phones stay `wss`, native peers ride UDP, same world.
-//! - Any datagram refreshes the path's keepalive; a silent path unbinds after
-//!   [`UDP_TIMEOUT_US`] and sends fall back to WS (the client keeps a steady
-//!   keepalive cadence — which doubles as the phone radio wake).
-//! - Datagrams are capped at [`UDP_MAX_DATAGRAM`] bytes (overlay-shaved MTUs
-//!   fragment silently above ~1200): oversized sync sends are dropped with a
-//!   once-per-kernel warning, never a halt.
+//! - Any authenticated datagram refreshes the path's keepalive; a silent path
+//!   unbinds after [`UDP_TIMEOUT_US`] and sends fall back to WS (the client
+//!   keeps a steady keepalive cadence — which doubles as the phone radio wake).
+//! - Datagrams are capped at [`UDP_MAX_DATAGRAM`] bytes, seal included
+//!   (overlay-shaved MTUs fragment silently above ~1200): oversized sync sends
+//!   are dropped with a once-per-kernel warning, never a halt.
 //!
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
@@ -203,7 +211,7 @@ pub fn n_kernel_event_status(stores: &mut Stores, stack: &mut DbRef) {
 /// (~500 ms — also the phone radio wake) keeps a live path far inside it.
 const UDP_TIMEOUT_US: i64 = 3_000_000;
 #[cfg(not(target_arch = "wasm32"))]
-/// The whole datagram's cap, seal included ([`seal::OVERHEAD`] bytes, so a payload gets
+/// The whole datagram's cap, seal included (`seal::OVERHEAD` bytes, so a payload gets
 /// 1171) — overlay/VPN-shaved MTUs fragment silently above ~1200 bytes, and a fragmented
 /// "fast path" is slower than the WS one.
 const UDP_MAX_DATAGRAM: usize = 1200;
@@ -430,7 +438,11 @@ mod seal {
         fn an_offer_round_trips() {
             let key: Key = std::array::from_fn(|i| i as u8 * 9);
             assert_eq!(parse_offer(&offer(12, &key)), Some((12, key)));
-            assert_eq!(parse_offer("0123456789abcdef"), None, "a cookie of old");
+            assert_eq!(
+                parse_offer("0123456789abcdef"),
+                None,
+                "16 hex digits with no cid is no offer"
+            );
         }
     }
 }

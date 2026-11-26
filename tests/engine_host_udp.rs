@@ -83,7 +83,8 @@ fn free_port() -> u16 {
 }
 
 fn ws_connect(port: u16) -> (TcpStream, String) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // A `--native-c` kernel compiles before it listens.
+    let deadline = Instant::now() + Duration::from_secs(90);
     let stream = loop {
         if let Ok(s) = TcpStream::connect(("127.0.0.1", port)) {
             break s;
@@ -439,8 +440,12 @@ fn probe_server_poses_ride_the_fastest_path_per_client() {
 // nobody holding the session sent.  The wire helpers are the only part that knows the format.
 
 /// The echo kernel: tick beacons (`8:<n>`) and every conflated client sample echoed as `9:…`.
-fn start_echo_kernel(port: u16, tag: &str) -> (Guard, PathBuf) {
-    let prog = std::env::temp_dir().join(format!("eh_udp_{tag}_{}.loft", std::process::id()));
+fn start_echo_kernel(port: u16, tag: &str, backend: &str) -> (Guard, PathBuf) {
+    let prog = std::env::temp_dir().join(format!(
+        "eh_udp_{tag}_{}_{}.loft",
+        &backend[2..],
+        std::process::id()
+    ));
     fa::write(
         &prog,
         format!(
@@ -470,17 +475,32 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let child = loft::platform::process::harness_command(loft_bin())
-        .arg("--interpret")
+        .arg(backend)
         .arg("--no-warnings")
         .arg("--lib")
         .arg(root.join("lib"))
         .arg(&prog)
         .current_dir(&root)
+        .env("LOFT_TIMEOUT", "120")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn kernel");
     (Guard(Some(child)), prog)
+}
+
+/// The backends a cell runs on, each with its own port base: the interpreter (the Rust kernel)
+/// and, where a C compiler and sockets are at hand, the C runtime's twin (`loft_engine.h`).
+fn backends(base: u16) -> Vec<(&'static str, u16)> {
+    let mut v = vec![("--interpret", base)];
+    let have_cc = loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if have_cc && loft::platform::c_runtime_has_sockets() {
+        v.push(("--native-c", base + 20));
+    }
+    v
 }
 
 use udp_wire::Seat;
@@ -560,13 +580,18 @@ fn echoes_within(udp: &UdpSocket, seat: &Seat, window: Duration) -> Vec<String> 
 // @speed 3
 #[test]
 fn a_forged_max_seq_sample_freezes_no_slot() {
-    let port = common::bind_port(18160);
-    let (_guard, prog) = start_echo_kernel(port, "freeze");
+    for (backend, base) in backends(18160) {
+        a_forged_max_seq_sample_freezes_no_slot_on(backend, common::bind_port(base));
+    }
+}
+
+fn a_forged_max_seq_sample_freezes_no_slot_on(backend: &str, port: u16) {
+    let (_guard, prog) = start_echo_kernel(port, "freeze", backend);
     let (_ws, udp, seat, _) = seated(port);
     udp.send(&sync(&seat, 100, "alive")).unwrap();
     assert!(
         echoes_within(&udp, &seat, Duration::from_millis(800)).contains(&"alive".to_string()),
-        "the genuine sample is echoed"
+        "{backend}: the genuine sample is echoed"
     );
     for d in forged(&seat, b'S', i64::MAX as u64, "frozen") {
         udp.send(&d).unwrap();
@@ -575,11 +600,11 @@ fn a_forged_max_seq_sample_freezes_no_slot() {
     let echoes = echoes_within(&udp, &seat, Duration::from_millis(800));
     assert!(
         !echoes.contains(&"frozen".to_string()),
-        "a forged sample was applied: {echoes:?}"
+        "{backend}: a forged sample was applied: {echoes:?}"
     );
     assert!(
         echoes.contains(&"moved".to_string()),
-        "the genuine sample after a forged one was dropped: {echoes:?}"
+        "{backend}: the genuine sample after a forged one was dropped: {echoes:?}"
     );
     let _ = fa::remove_file(&prog);
 }
@@ -592,8 +617,13 @@ fn a_forged_max_seq_sample_freezes_no_slot() {
 // @speed 3
 #[test]
 fn a_replayed_hello_from_another_address_takes_no_seat() {
-    let port = common::bind_port(18161);
-    let (_guard, prog) = start_echo_kernel(port, "replay");
+    for (backend, base) in backends(18161) {
+        a_replayed_hello_from_another_address_takes_no_seat_on(backend, common::bind_port(base));
+    }
+}
+
+fn a_replayed_hello_from_another_address_takes_no_seat_on(backend: &str, port: u16) {
+    let (_guard, prog) = start_echo_kernel(port, "replay", backend);
     let (_ws, udp, seat, seen_hello) = seated(port);
     let thief = UdpSocket::bind("127.0.0.1:0").unwrap();
     thief.connect(("127.0.0.1", port)).unwrap();
@@ -608,7 +638,7 @@ fn a_replayed_hello_from_another_address_takes_no_seat() {
     while Instant::now() < until {
         if let Some(d) = udp_recv_raw(&thief) {
             panic!(
-                "the replayed hello took the seat: {:?}",
+                "{backend}: the replayed hello took the seat: {:?}",
                 String::from_utf8_lossy(&d)
             );
         }
@@ -621,7 +651,7 @@ fn a_replayed_hello_from_another_address_takes_no_seat() {
             .and_then(|d| open(&seat, &d))
             .is_some_and(|(k, _, p)| k == 'S' && p.starts_with("8:"));
     }
-    assert!(beacon, "the genuine client lost its path");
+    assert!(beacon, "{backend}: the genuine client lost its path");
     let _ = fa::remove_file(&prog);
 }
 
@@ -632,8 +662,13 @@ fn a_replayed_hello_from_another_address_takes_no_seat() {
 // @speed 3
 #[test]
 fn a_genuine_datagram_from_a_new_address_moves_the_path() {
-    let port = common::bind_port(18163);
-    let (_guard, prog) = start_echo_kernel(port, "rebind");
+    for (backend, base) in backends(18163) {
+        a_genuine_datagram_from_a_new_address_moves_the_path_on(backend, common::bind_port(base));
+    }
+}
+
+fn a_genuine_datagram_from_a_new_address_moves_the_path_on(backend: &str, port: u16) {
+    let (_guard, prog) = start_echo_kernel(port, "rebind", backend);
     let (_ws, old, seat, _) = seated(port);
     let moved = UdpSocket::bind("127.0.0.1:0").unwrap();
     moved.connect(("127.0.0.1", port)).unwrap();
@@ -650,7 +685,7 @@ fn a_genuine_datagram_from_a_new_address_moves_the_path() {
     }
     assert!(
         beacon,
-        "the path did not follow the client to its new address"
+        "{backend}: the path did not follow the client to its new address"
     );
     // The old address hears nothing more once the beacons in flight are drained.
     while udp_recv_raw(&old).is_some() {}
@@ -658,7 +693,7 @@ fn a_genuine_datagram_from_a_new_address_moves_the_path() {
         .unwrap();
     assert!(
         udp_recv_raw(&old).is_none(),
-        "the old address still gets datagrams"
+        "{backend}: the old address still gets datagrams"
     );
     let _ = fa::remove_file(&prog);
 }
@@ -672,8 +707,13 @@ fn a_genuine_datagram_from_a_new_address_moves_the_path() {
 // @speed 5
 #[test]
 fn forged_keepalives_do_not_hold_a_path_open() {
-    let port = common::bind_port(18162);
-    let (_guard, prog) = start_echo_kernel(port, "keep");
+    for (backend, base) in backends(18162) {
+        forged_keepalives_do_not_hold_a_path_open_on(backend, common::bind_port(base));
+    }
+}
+
+fn forged_keepalives_do_not_hold_a_path_open_on(backend: &str, port: u16) {
+    let (_guard, prog) = start_echo_kernel(port, "keep", backend);
     let (ws, udp, seat, _) = seated(port);
     let seen = keepalive(&seat);
     udp.send(&seen).unwrap();
@@ -698,7 +738,7 @@ fn forged_keepalives_do_not_hold_a_path_open() {
     loop {
         assert!(
             Instant::now() < until,
-            "forged keepalives held the path open (last UDP beacon {last_udp_tick})"
+            "{backend}: forged keepalives held the path open (last UDP beacon {last_udp_tick})"
         );
         forged_seq += 1;
         for d in forged(&seat, b'K', forged_seq, "") {
