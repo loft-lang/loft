@@ -3607,6 +3607,19 @@ pub fn bind_tail_call(e: el::El, vars: el_vars::Vars, code: ir::Node, buf: integ
       bl.operators[-1] = el_ir::respan(bl.operators[-1], bound!);
       ir::NdBlock { block: [bl] }
     },
+    // (A body that is a plain block ending in the call — `{ { …; ex(n, 1) } }` — hands the call
+    // the buffer there, the block keeping its own type.)
+    NdBlock { block: ib } => {
+      if ib[0].name != "block" {
+        return null;
+      }
+      inner = bind_tail_call(e, vars, t, buf);
+      if inner == null {
+        return null;
+      }
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], inner!);
+      ir::NdBlock { block: [bl] }
+    },
     _ => null
   }
 }
