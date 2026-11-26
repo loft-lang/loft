@@ -1713,6 +1713,39 @@ pub struct FetchedIndex {
 /// Returns a `String` error when the index cannot be fetched, and when the signature
 /// request got no usable answer ([`Miss::Failed`]).
 pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
+    fetch_document(url).map_err(FetchMiss::message)
+}
+
+/// Why [`fetch_document`] answered no document.  Only one of the two speaks for the file: a
+/// host that says it does not serve it (403, 404, 410, an unreadable `file://` path), against
+/// a request that got no usable answer — the one a host that cannot be reached, or someone
+/// between it and the reader, produces.
+#[derive(Debug)]
+pub enum FetchMiss {
+    /// The host answered that it does not serve the document.
+    Absent(String),
+    /// No usable answer, for the document or for its signature.
+    Failed(String),
+}
+
+impl FetchMiss {
+    /// The reason, in words.
+    #[must_use]
+    pub fn message(self) -> String {
+        match self {
+            FetchMiss::Absent(why) | FetchMiss::Failed(why) => why,
+        }
+    }
+}
+
+/// [`fetch_index`] for any signed registry document, telling a document the host does not
+/// serve from a request that failed ([`FetchMiss`]).
+///
+/// # Errors
+///
+/// [`FetchMiss::Absent`] when the host does not serve the document; [`FetchMiss::Failed`] when
+/// the request for it or for its signature got no usable answer.
+pub fn fetch_document(url: &str) -> Result<FetchedIndex, FetchMiss> {
     fetch_index_through(url, &mut |u| {
         if u.ends_with(REF_ADVERTISEMENT) {
             // Asked only to learn which commit to read.  When the host is unreachable
@@ -1734,20 +1767,25 @@ pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
 fn fetch_index_through(
     url: &str,
     get: &mut dyn FnMut(&str) -> Result<Vec<u8>, Miss>,
-) -> Result<FetchedIndex, String> {
+) -> Result<FetchedIndex, FetchMiss> {
     let (from, commit) = match pin_to_commit(url, get) {
         Some((pinned, commit)) => (pinned, Some(commit)),
         None => (url.to_string(), None),
     };
     // The error names the address the caller asked for: the pinned one is this
     // function's own business, and a file missing at the commit is missing at the branch.
-    let content = get(&from).map_err(|miss| format!("fetching {url}: {}", miss.message()))?;
+    let content = get(&from).map_err(|miss| match miss {
+        Miss::Absent(why) => FetchMiss::Absent(format!("fetching {url}: {why}")),
+        Miss::Failed(why) => FetchMiss::Failed(format!("fetching {url}: {why}")),
+    })?;
     let mut signatures = Vec::with_capacity(2);
     for ext in ["sig", "sig2"] {
         signatures.push(match get(&format!("{from}.{ext}")) {
             Ok(signature) => signature,
             Err(Miss::Absent(_)) => Vec::new(),
-            Err(Miss::Failed(why)) => return Err(format!("fetching {url}.{ext}: {why}")),
+            Err(Miss::Failed(why)) => {
+                return Err(FetchMiss::Failed(format!("fetching {url}.{ext}: {why}")));
+            }
         });
     }
     // The raw signature and the purpose-prefixed one (`registry_signing`), carried as one.
@@ -3237,6 +3275,7 @@ mod tests {
                     .map(|(_, bytes)| bytes.clone())
                     .ok_or_else(|| Miss::Absent(format!("HTTP 404 for {u}")))
             })
+            .map_err(FetchMiss::message)
         }
     }
 

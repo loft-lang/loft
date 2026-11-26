@@ -7,6 +7,10 @@
 // NEGATIVE cells (a later `t.field = …` reassignment is a compile error) are
 // parse-time diagnostics, guarded by the `pln40_const_*` tests in tests/issues.rs.
 // Runs through interp + native + wasm.
+//
+// @FR-Const-Bind: a binding-const field's contents still grow and change in place.
+// @FR-Const-Value: a value-const field may be rebound whole.
+// @FR-Const-ConstructExempt: construction (and a rebuilt literal into a slot) sets a const field.
 
 struct Cell {
   const c_color: integer,

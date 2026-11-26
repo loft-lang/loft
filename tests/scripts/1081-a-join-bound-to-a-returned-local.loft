@@ -30,6 +30,11 @@
 // DELIVERED store would pass the leak gate and fail every assertion here, which is the
 // over-free this shape sits one step away from.  The values are distinct per call on
 // purpose: equal ones would have agreed with the bug.
+//
+// @FR-O-Move: the returned join local transfers to the caller, so three calls keep three distinct
+//   vectors.
+// @FR-O-Complete: each arm of the bound join is owned per path, so neither the delivered arm nor a
+//   borrowed source is freed.
 
 fn pick1081(m: boolean, a: float, b: float) -> vector<float> {
   v: vector<float> = if m { [a, b] } else { [a] };

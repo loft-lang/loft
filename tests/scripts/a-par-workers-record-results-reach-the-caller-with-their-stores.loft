@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-C-Adopt: a worker's record result is taken into the starter's table with its stores, references renumbered with it.
+// @FR-C-Par: each row's worker result reaches the loop body in source order.
 //
 // STORE_MODEL D46, loft#2611 — a `par` worker's record result reaches the loop with the store the worker
 // made it in, taken into the caller's store table on both backends; every stored reference it

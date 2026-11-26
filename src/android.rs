@@ -29,6 +29,7 @@
 
 use crate::file_access::PathText;
 use crate::platform::process::{Program, Spawn};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// The oldest NDK release `--native-android` is built and tested with: its `clang` wrappers and
@@ -36,18 +37,205 @@ use std::path::{Path, PathBuf};
 pub(crate) const NDK_MIN: &str = "r26";
 
 /// How an activity library is packaged: where the APK is staged, where the debug keystore
-/// lives (it stays, so every later build of the app signs with the same key), whether the
-/// app is debuggable (a build that is not `--ship`), the program's files it carries
-/// ([`app_assets`]: each path relative to the program, and the file on this machine), the
-/// libraries it ships beside its own (the components the C binds, `c_driver::build_android`),
-/// and whether it asks for the network ([`needs_internet`]).
+/// lives (it stays, so every later build of the app signs with the same key), how the APK is
+/// signed ([`signing`]), whether the app is debuggable (a build that is not `--ship`), the
+/// program's files it carries ([`app_assets`]: each path relative to the program, and the file
+/// on this machine), the libraries it ships beside its own (the components the C binds,
+/// `c_driver::build_android`), and whether it asks for the network ([`needs_internet`]).
 pub(crate) struct Package<'a> {
     pub(crate) staging: &'a Path,
     pub(crate) keystore_dir: &'a Path,
+    pub(crate) signing: &'a Signing,
     pub(crate) debuggable: bool,
     pub(crate) assets: &'a [(String, std::path::PathBuf)],
     pub(crate) libs: &'a [std::path::PathBuf],
     pub(crate) internet: bool,
+}
+
+/// How a packaged APK is signed.  A debug build signs with the per-tree debug key, whose
+/// password is the public `android`; a `--ship` build never does: it signs with the key the
+/// program's `loft.toml` names, or is written unsigned with the command that signs it.
+pub(crate) enum Signing {
+    /// A build that is not `--ship`: the debug key in [`Package::keystore_dir`].
+    Debug,
+    /// A `--ship` build whose `loft.toml` names its key in `[android]`.
+    Release(ReleaseKey),
+    /// A `--ship` build with no key named: the APK is aligned, not signed, and the
+    /// `apksigner` command that signs it is printed.
+    Unsigned,
+}
+
+/// The release key from a program's `[android]` table.  The passwords are apksigner's own
+/// `--ks-pass` / `--key-pass` values (`env:NAME`, `file:PATH`, `stdin`): loft hands them on
+/// and never reads the secret.
+#[derive(Debug)]
+pub(crate) struct ReleaseKey {
+    /// The directory of the `loft.toml` that names the key.  apksigner runs there, so a
+    /// `file:` password resolves against the same directory the keystore does.
+    dir: PathBuf,
+    keystore: PathBuf,
+    alias: String,
+    ks_pass: String,
+    key_pass: Option<String>,
+}
+
+/// How a `--native-android` build of `program` is signed: [`Signing::Debug`] unless `ship`;
+/// with `ship`, the key the nearest `loft.toml`'s `[android]` table names, else
+/// [`Signing::Unsigned`].  The table is checked on every build, so a password written into
+/// the manifest is refused before a debug build goes on to ship.
+pub(crate) fn signing(ship: bool, program: &Path) -> Result<Signing, String> {
+    let Some(root) = loft::resolution_scope::project_root(&program.to_string_lossy()) else {
+        return Ok(if ship {
+            Signing::Unsigned
+        } else {
+            Signing::Debug
+        });
+    };
+    let manifest = root.join("loft.toml");
+    let table = loft::manifest::read_manifest(&manifest.to_string_lossy())
+        .map(|m| m.android)
+        .unwrap_or_default();
+    let key = release_key(&table, &root, &manifest)?;
+    Ok(match key {
+        _ if !ship => Signing::Debug,
+        None => Signing::Unsigned,
+        Some(key) => {
+            if !crate::file_access::is_file(&key.keystore) {
+                return Err(format!(
+                    "loft: the keystore {} that `[android] keystore` in {} names is not there",
+                    key.keystore.display(),
+                    manifest.display()
+                ));
+            }
+            Signing::Release(key)
+        }
+    })
+}
+
+/// The release key `table` names, its keystore resolved against `root` (the directory of
+/// `manifest`), or `None` when it names none.  A password must say where apksigner reads it;
+/// one written into the manifest (`pass:`) is refused.
+fn release_key(
+    table: &loft::manifest::AndroidSigning,
+    root: &Path,
+    manifest: &Path,
+) -> Result<Option<ReleaseKey>, String> {
+    let ks_pass = table
+        .ks_pass
+        .as_deref()
+        .map(|v| password("ks_pass", v, manifest))
+        .transpose()?;
+    let key_pass = table
+        .key_pass
+        .as_deref()
+        .map(|v| password("key_pass", v, manifest))
+        .transpose()?;
+    let Some(keystore) = &table.keystore else {
+        if table.key_alias.is_some() || ks_pass.is_some() || key_pass.is_some() {
+            return Err(format!(
+                "loft: `[android]` in {} names no `keystore`; add `keystore = \"<file>.jks\"`, \
+                 relative to that loft.toml",
+                manifest.display()
+            ));
+        }
+        return Ok(None);
+    };
+    let missing = |key: &str, example: &str| {
+        format!(
+            "loft: `[android]` in {} names a keystore but no `{key}`; add `{key} = \"{example}\"`",
+            manifest.display()
+        )
+    };
+    let alias = table
+        .key_alias
+        .clone()
+        .ok_or_else(|| missing("key_alias", "release"))?;
+    let ks_pass = ks_pass.ok_or_else(|| missing("ks_pass", "env:ANDROID_KS_PASS"))?;
+    Ok(Some(ReleaseKey {
+        dir: root.to_path_buf(),
+        keystore: root.join(keystore),
+        alias,
+        ks_pass,
+        key_pass,
+    }))
+}
+
+/// A password value from `[android]` in `manifest`, as apksigner reads it: `env:NAME`,
+/// `file:PATH` or `stdin`.  `pass:<password>` is refused: written into a manifest the
+/// password goes wherever the manifest goes, and with it the power to sign as the app.
+fn password(field: &str, value: &str, manifest: &Path) -> Result<String, String> {
+    if value.starts_with("pass:") {
+        return Err(format!(
+            "loft: `[android] {field}` in {} holds the password itself (`pass:`), and a \
+             password in a manifest goes wherever the manifest goes; name where apksigner \
+             reads it instead: `env:NAME`, `file:PATH` or `stdin`",
+            manifest.display()
+        ));
+    }
+    let named = |prefix: &str| value.strip_prefix(prefix).is_some_and(|r| !r.is_empty());
+    if value == "stdin" || named("env:") || named("file:") {
+        Ok(value.to_string())
+    } else {
+        Err(format!(
+            "loft: `[android] {field}` in {} is `{value}`; apksigner reads a password from \
+             `env:NAME`, `file:PATH` or `stdin`",
+            manifest.display()
+        ))
+    }
+}
+
+/// apksigner's arguments for the debug key at `keystore` (password `android`).
+fn debug_key_args(keystore: &Path) -> Vec<OsString> {
+    vec![
+        "--ks".into(),
+        keystore.into(),
+        "--ks-pass".into(),
+        "pass:android".into(),
+        "--key-pass".into(),
+        "pass:android".into(),
+    ]
+}
+
+/// apksigner's arguments for the release `key`: its passwords as the manifest wrote them.
+fn release_key_args(key: &ReleaseKey) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![
+        "--ks".into(),
+        key.keystore.clone().into(),
+        "--ks-key-alias".into(),
+        key.alias.clone().into(),
+        "--ks-pass".into(),
+        key.ks_pass.clone().into(),
+    ];
+    if let Some(pass) = &key.key_pass {
+        args.push("--key-pass".into());
+        args.push(pass.into());
+    }
+    args
+}
+
+/// What a `--ship` build with no key named prints: the APK at `out_apk` is unsigned, the
+/// `apksigner` command that signs it in place, and the `[android]` table that makes `--ship`
+/// sign it.
+fn unsigned_notice(apksigner: &Path, min_sdk: u32, out_apk: &Path) -> String {
+    format!(
+        "loft: {out} is aligned but not signed: a --ship build signs only with the key its \
+         loft.toml names, and none is named.  Sign it with\n  \
+         {signer} sign --ks <release.jks> --ks-key-alias <alias> --ks-pass env:<VAR> \
+         --min-sdk-version {min_sdk} {out}\n\
+         or name the key beside the program, and --ship signs with it:\n  \
+         [android]\n  keystore = \"release.jks\"\n  key_alias = \"release\"\n  \
+         ks_pass = \"env:ANDROID_KS_PASS\"",
+        out = out_apk.display(),
+        signer = apksigner.display(),
+    )
+}
+
+/// `path` made absolute against the current directory, for a tool run elsewhere.
+fn absolute(path: &Path) -> PathBuf {
+    if crate::file_access::is_absolute(path) {
+        return path.to_path_buf();
+    }
+    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |d| d.join(path))
 }
 
 /// Does the program's C `c` reach the network — a URL fetch of the runtime (`LOFT_NET`), the
@@ -249,8 +437,8 @@ impl AndroidTarget {
             .join("libc++_shared.so")
     }
 
-    /// The activity library `built` delivered as `out_path`: packaged into a signed APK when
-    /// the output names one, else copied as the bare `.so`.  Shared by the rustc path and the
+    /// The activity library `built` delivered as `out_path`: packaged into an APK, signed as
+    /// `package.signing` says, when the output names one, else copied as the bare `.so`.  Shared by the rustc path and the
     /// C path: neither the manifest nor the signing knows which compiler wrote the library.
     pub(crate) fn finish(
         &self,
@@ -283,11 +471,10 @@ impl AndroidTarget {
         }
     }
 
-    /// Package the built `so_path` into a signed, installable APK at `out_apk`,
-    /// using the discovered `sdk`. Mirrors the proven `b2-spike/build_apk.sh`
-    /// recipe: `aapt2 link` the generated manifest against `android.jar`, add the
-    /// `.so` under `lib/<abi>/`, `zipalign`, then `apksigner` with a per-tree debug
-    /// keystore (generated once). The `.so` is compressed with
+    /// Package the built `so_path` into an APK at `out_apk`, using the discovered `sdk`.
+    /// Mirrors the proven `b2-spike/build_apk.sh` recipe: `aapt2 link` the generated
+    /// manifest against `android.jar`, add the `.so` under `lib/<abi>/`, `zipalign`, then
+    /// sign it as `package.signing` says ([`Self::sign`]). The `.so` is compressed with
     /// `android:extractNativeLibs="true"`, so it is unpacked at install and needs
     /// no page alignment.
     fn package_apk(
@@ -377,23 +564,70 @@ impl AndroidTarget {
             "zipalign",
         )?;
 
-        let keystore = ensure_debug_keystore(sdk, package.keystore_dir)?;
-        run_tool(
-            Spawn::new(Program::os(sdk.apksigner()))
-                .arg("sign")
-                .arg("--ks")
-                .arg(&keystore)
-                .arg("--ks-pass")
-                .arg("pass:android")
-                .arg("--key-pass")
-                .arg("pass:android")
-                .arg("--min-sdk-version")
-                .arg(self.api.to_string())
-                .arg("--out")
-                .arg(out_apk)
-                .arg(&aligned),
-            "apksigner sign",
+        self.sign(
+            &sdk.apksigner(),
+            |dir| ensure_debug_keystore(sdk, dir),
+            package,
+            &aligned,
+            out_apk,
         )
+    }
+
+    /// Sign the zipaligned `aligned` into `out_apk` as `package.signing` says: the debug key
+    /// (`debug_key` finds or makes it in the keystore directory), the release key, or not at
+    /// all — the APK copied unsigned and the command that signs it printed.
+    fn sign(
+        &self,
+        apksigner: &Path,
+        debug_key: impl FnOnce(&Path) -> Result<PathBuf, String>,
+        package: &Package,
+        aligned: &Path,
+        out_apk: &Path,
+    ) -> Result<(), String> {
+        let tail = |args: &mut Vec<OsString>, out: &Path, input: &Path| {
+            args.extend([
+                "--min-sdk-version".into(),
+                self.api.to_string().into(),
+                "--out".into(),
+                out.into(),
+                input.into(),
+            ]);
+        };
+        match package.signing {
+            Signing::Debug => {
+                let mut args = debug_key_args(&debug_key(package.keystore_dir)?);
+                tail(&mut args, out_apk, aligned);
+                run_tool(
+                    Spawn::new(Program::os(apksigner)).arg("sign").args(args),
+                    "apksigner sign",
+                )
+            }
+            Signing::Release(key) => {
+                let mut args = release_key_args(key);
+                tail(&mut args, &absolute(out_apk), &absolute(aligned));
+                // On loft's own streams: a `stdin` password is read from the terminal.
+                let status = Spawn::new(Program::os(apksigner))
+                    .cwd(&PathText::from_os(&key.dir))
+                    .arg("sign")
+                    .args(args)
+                    .status()
+                    .map_err(|e| format!("loft: cannot run apksigner sign: {e}"))?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "loft: apksigner sign with {} failed ({status})",
+                        key.keystore.display()
+                    ))
+                }
+            }
+            Signing::Unsigned => {
+                crate::file_access::copy(aligned, out_apk)
+                    .map_err(|e| format!("loft: copy to {}: {e}", out_apk.display()))?;
+                eprintln!("{}", unsigned_notice(apksigner, self.api, out_apk));
+                Ok(())
+            }
+        }
     }
 }
 
@@ -648,7 +882,263 @@ fn host_tag() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{app_assets, needs_internet};
+    use super::{AndroidTarget, Package, Signing, app_assets, needs_internet, signing};
+    use std::path::{Path, PathBuf};
+
+    /// A fresh directory holding a program, with `toml` as its `loft.toml` when given.
+    fn app_dir(tag: &str, toml: Option<&str>) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("loft_android_{tag}_{}", std::process::id()));
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).expect("mkdir");
+        let program = dir.join("app.loft");
+        crate::file_access::write(&program, "fn main() {}").expect("write program");
+        if let Some(toml) = toml {
+            crate::file_access::write(dir.join("loft.toml"), toml).expect("write loft.toml");
+        }
+        (dir, program)
+    }
+
+    const RELEASE_TOML: &str = "[package]\nname = \"app\"\n\n[android]\n\
+        keystore = \"keys/release.jks\"\nkey_alias = \"release\"\n\
+        ks_pass = \"env:APP_KS_PASS\"\nkey_pass = \"file:keys/key.pass\"\n";
+
+    /// A stand-in `apksigner` that writes its working directory and arguments, one a line,
+    /// to `<dir>/apksigner.log`.
+    #[cfg(unix)]
+    fn fake_apksigner(dir: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let log = dir.join("apksigner.log");
+        let script = dir.join("apksigner");
+        crate::file_access::write(
+            &script,
+            format!(
+                "#!/bin/sh\npwd > '{log}'\nfor a in \"$@\"; do echo \"$a\" >> '{log}'; done\n",
+                log = log.display()
+            ),
+        )
+        .expect("write fake apksigner");
+        crate::file_access::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod");
+        (script, log)
+    }
+
+    fn target() -> AndroidTarget {
+        AndroidTarget {
+            ndk: PathBuf::new(),
+            api: 24,
+            triple: "aarch64-linux-android".to_string(),
+        }
+    }
+
+    fn package<'a>(dir: &'a Path, signing: &'a Signing) -> Package<'a> {
+        Package {
+            staging: dir,
+            keystore_dir: dir,
+            signing,
+            debuggable: matches!(signing, Signing::Debug),
+            assets: &[],
+            libs: &[],
+            internet: false,
+        }
+    }
+
+    /// A `--ship` build signs with the key `[android]` names: the keystore resolved against the
+    /// loft.toml, the alias, and both passwords handed to apksigner exactly as written, with
+    /// apksigner run in the loft.toml's directory so a `file:` password resolves as the
+    /// keystore does.  The debug key is never asked for.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering `Signing::Debug` for a
+    /// `--ship` build (what it did before), the `Release` match fails; with `release_key_args`
+    /// dropping `--ks-key-alias`, the argument list differs.
+    #[cfg(unix)]
+    #[test]
+    fn a_ship_build_signs_with_the_key_its_manifest_names() {
+        let (dir, program) = app_dir("release", Some(RELEASE_TOML));
+        // The keystore is checked for before the build.
+        assert!(
+            signing(true, &program).is_err_and(|e| e.contains("is not there")),
+            "a named keystore that is missing is refused"
+        );
+        crate::file_access::create_dir_all(dir.join("keys")).expect("mkdir keys");
+        crate::file_access::write(dir.join("keys").join("release.jks"), "ks").expect("ks");
+        let s = signing(true, &program).expect("a configured key");
+        assert!(
+            matches!(s, Signing::Release(_)),
+            "--ship takes the release key"
+        );
+        let (apksigner, log) = fake_apksigner(&dir);
+        let aligned = dir.join("aligned.apk");
+        let out = dir.join("app.apk");
+        target()
+            .sign(
+                &apksigner,
+                |_| panic!("a release build asked for the debug key"),
+                &package(&dir, &s),
+                &aligned,
+                &out,
+            )
+            .expect("signed");
+        let root = crate::file_access::plain_canonical(&dir);
+        let ran = crate::file_access::read_to_string(&log).expect("apksigner ran");
+        let ran: Vec<&str> = ran.lines().collect();
+        assert_eq!(
+            crate::file_access::plain_canonical(Path::new(ran[0])),
+            root,
+            "apksigner runs in the loft.toml's directory"
+        );
+        let ks = root.join("keys").join("release.jks");
+        let want = [
+            "sign",
+            "--ks",
+            &ks.to_string_lossy(),
+            "--ks-key-alias",
+            "release",
+            "--ks-pass",
+            "env:APP_KS_PASS",
+            "--key-pass",
+            "file:keys/key.pass",
+            "--min-sdk-version",
+            "24",
+            "--out",
+            &out.to_string_lossy(),
+            &aligned.to_string_lossy(),
+        ];
+        assert_eq!(&ran[1..], &want[..]);
+        let _ = crate::file_access::remove_dir_all(&dir);
+    }
+
+    /// A password written into the manifest (`pass:`) is refused, for either password and on a
+    /// debug build too; so is a value apksigner does not read a password from.  `env:`,
+    /// `file:` and `stdin` are taken.
+    /// @falsified-at: 04818af26 — by hand: with `password` taking `pass:` as apksigner does,
+    /// the `pass:` manifests are taken; with only its `pass:` refusal removed, the refusal
+    /// that is left echoes the password.
+    #[test]
+    fn a_password_written_into_the_manifest_is_refused() {
+        let toml = |ks_pass: &str, key_pass: &str| {
+            format!(
+                "[android]\nkeystore = \"r.jks\"\nkey_alias = \"r\"\nks_pass = \"{ks_pass}\"\n{key_pass}"
+            )
+        };
+        for (tag, manifest, refused) in [
+            ("ks", toml("pass:hunter2", ""), true),
+            ("key", toml("env:KS", "key_pass = \"pass:hunter2\"\n"), true),
+            ("bare", toml("hunter2", ""), true),
+            ("env", toml("env:KS", "key_pass = \"file:k.pass\"\n"), false),
+            ("stdin", toml("stdin", ""), false),
+        ] {
+            let (dir, program) = app_dir(&format!("pass_{tag}"), Some(&manifest));
+            crate::file_access::write(dir.join("r.jks"), "ks").expect("ks");
+            for ship in [true, false] {
+                let got = signing(ship, &program);
+                if refused {
+                    let e = got.err().unwrap_or_else(|| panic!("{tag}: taken"));
+                    assert!(e.contains("env:NAME"), "{tag}: {e}");
+                    assert!(
+                        !e.contains("hunter2") || tag == "bare",
+                        "{tag}: echoes it: {e}"
+                    );
+                } else {
+                    assert!(got.is_ok(), "{tag}: {:?}", got.err());
+                }
+            }
+            let _ = crate::file_access::remove_dir_all(&dir);
+        }
+    }
+
+    /// A `--ship` build of a program whose manifest names no key is aligned and left unsigned:
+    /// the APK is the aligned one, the debug key is never made or read, and the notice names
+    /// the apksigner command that signs it.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering `Signing::Debug` for a
+    /// `--ship` build, the `Unsigned` match fails; with the `Unsigned` arm asking for the debug
+    /// key, the panic fires.
+    #[test]
+    fn a_ship_build_without_a_key_is_left_unsigned() {
+        for (tag, toml) in [
+            ("unsigned_none", None),
+            ("unsigned_bare", Some("[package]\nname = \"app\"\n")),
+        ] {
+            let (dir, program) = app_dir(tag, toml);
+            let s = signing(true, &program).expect("no key is not an error");
+            assert!(matches!(s, Signing::Unsigned), "{tag}");
+            let keys = dir.join("keys");
+            crate::file_access::create_dir_all(&keys).expect("mkdir");
+            let aligned = dir.join("aligned.apk");
+            crate::file_access::write(&aligned, "aligned bytes").expect("aligned");
+            let out = dir.join("app.apk");
+            let mut p = package(&dir, &s);
+            p.keystore_dir = &keys;
+            target()
+                .sign(
+                    Path::new("/no/apksigner"),
+                    |_| panic!("an unsigned build asked for the debug key"),
+                    &p,
+                    &aligned,
+                    &out,
+                )
+                .expect("written unsigned");
+            assert_eq!(
+                crate::file_access::read_to_string(&out).ok().as_deref(),
+                Some("aligned bytes")
+            );
+            assert_eq!(
+                crate::file_access::read_dir(&keys).map(|v| v.len()).ok(),
+                Some(0)
+            );
+            let _ = crate::file_access::remove_dir_all(&dir);
+        }
+        let notice = super::unsigned_notice(Path::new("/sdk/apksigner"), 24, Path::new("a.apk"));
+        assert!(
+            notice.contains(
+                "/sdk/apksigner sign --ks <release.jks> --ks-key-alias <alias> \
+                 --ks-pass env:<VAR> --min-sdk-version 24 a.apk"
+            ),
+            "{notice}"
+        );
+        assert!(notice.contains("[android]"), "{notice}");
+    }
+
+    /// A debug build signs with the per-tree debug key, also when the manifest names a
+    /// release key.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering the release key for a
+    /// debug build, the `Debug` match fails.
+    #[cfg(unix)]
+    #[test]
+    fn a_debug_build_signs_with_the_debug_key() {
+        let (dir, program) = app_dir("debug", Some(RELEASE_TOML));
+        let s = signing(false, &program).expect("a debug build");
+        assert!(matches!(s, Signing::Debug));
+        let (apksigner, log) = fake_apksigner(&dir);
+        let debug_ks = dir.join("loft-debug.keystore");
+        let mut asked = false;
+        target()
+            .sign(
+                &apksigner,
+                |d| {
+                    asked = true;
+                    Ok(d.join("loft-debug.keystore"))
+                },
+                &package(&dir, &s),
+                &dir.join("aligned.apk"),
+                &dir.join("app.apk"),
+            )
+            .expect("signed");
+        assert!(asked, "the debug key was asked for");
+        let ran = crate::file_access::read_to_string(&log).expect("apksigner ran");
+        let args: Vec<&str> = ran.lines().skip(1).take(7).collect();
+        assert_eq!(
+            args,
+            [
+                "sign",
+                "--ks",
+                &debug_ks.to_string_lossy(),
+                "--ks-pass",
+                "pass:android",
+                "--key-pass",
+                "pass:android"
+            ]
+        );
+        let _ = crate::file_access::remove_dir_all(&dir);
+    }
 
     /// The C the C backend writes for the program `src`.
     fn emitted_c(src: &str) -> String {

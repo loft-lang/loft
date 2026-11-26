@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a struct-enum parameter rebound whole — by a variant literal, a variable, a call — frees an earlier rebind against the entry witness, detaches and binds (rebind_local_heap_param); a local holding one variant given a sibling's literal is its enum's.
+// @FR-F-ParamRebind: a struct-enum parameter rebound whole stays local: the caller's `a`, `b` print unchanged.
+// @FR-C-Var: a local given one variant then a sibling's literal holds its enum.
 // Prints: 14 6 200 8 10 {x:3} {y:100}
 enum S { P { x: integer }, Q { y: integer } }
 

@@ -8,6 +8,7 @@
 #   bin/loft(.exe)        the binary
 #   default/*.loft        the standard library (resolved at <exe-dir>/../default)
 #   lib/loft/components/  the prebuilt components (`libloft_net`: web/server/ssh natives)
+#   registry/             the registry's signed index and advisory feed (the seed)
 #   examples/*.loft       runnable sample programs
 #   loft-reference.pdf    the full reference (if built)
 #   README / LICENSE / CHANGELOG / QUICKSTART
@@ -143,6 +144,53 @@ build_components() {
   done
 }
 
+# The seed (src/registry_cache.rs): the registry's signed index and advisory feed, as the
+# registry serves them, so a machine with no registry cache never installs without the
+# advisories — a feed someone keeps from arriving must not read as a feed with nothing in it.
+# Read once per run at ONE commit of the registry, so each pair is one generation and every
+# target of the run ships the same seed.  Copied, never re-signed: this build holds no
+# registry key.  `source` must be the URL loft reads by default (DEFAULT_REGISTRY_URL in
+# src/registry_index.rs), or no loft uses the seed.
+REGISTRY_REPO="https://github.com/loft-lang/registry"
+REGISTRY_DEFAULT_URL="https://raw.githubusercontent.com/loft-lang/registry/main/index.json"
+SEED="$DIST/registry-seed"
+fetch_registry_seed() {
+  rm -rf "$SEED"
+  mkdir -p "$SEED"
+  local commit f
+  commit=$(git ls-remote "$REGISTRY_REPO" refs/heads/main | cut -f1)
+  [ -n "$commit" ] || { echo "make-release: cannot read the registry's commit" >&2; exit 1; }
+  local base="https://raw.githubusercontent.com/loft-lang/registry/$commit"
+  for f in index.json index.json.sig advisories.json advisories.json.sig; do
+    curl -fsSL --retry 3 -o "$SEED/$f" "$base/$f" \
+      || { echo "make-release: cannot fetch the registry's $f" >&2; exit 1; }
+  done
+  # The purpose-prefixed signatures, where the registry publishes one.
+  for f in index.json.sig2 advisories.json.sig2; do
+    curl -fsSL --retry 3 -o "$SEED/$f" "$base/$f" 2>/dev/null || rm -f "$SEED/$f"
+  done
+  printf '%s\n' "$REGISTRY_DEFAULT_URL" > "$SEED/source"
+  date +%s > "$SEED/verified_at"
+}
+fetch_registry_seed
+
+# The seed's signatures, checked by the bundle's own loft (`verify-self`) where it runs on
+# this host; only its seed lines are judged here.  A cross-built bundle cannot be run, and
+# its loft checks the seed again before it uses it.
+check_registry_seed() {
+  local loft="$1" out
+  "$loft" --version >/dev/null 2>&1 || {
+    echo "   (the seed's signatures are checked where this bundle runs: a cross build)"
+    return 0
+  }
+  out=$("$loft" verify-self 2>&1 || true)
+  if [ "$(grep -c '^  ok      registry seed: ' <<<"$out")" != 2 ]; then
+    echo "make-release: the registry seed does not verify:" >&2
+    grep 'registry seed' <<<"$out" >&2 || echo "  (verify-self reported no seed)" >&2
+    exit 1
+  fi
+}
+
 for TRIPLE in "${TARGETS[@]}"; do
   echo ">> building loft for $TRIPLE"
   # The production build (scripts/lean_build.sh): no development aids.  Always with
@@ -171,6 +219,7 @@ for TRIPLE in "${TARGETS[@]}"; do
   # `repro-verify.sh` rebuilds with `--bin loft` alone.
   CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft-components --target "$TRIPLE"
   build_components "$TRIPLE" "$stage/lib/loft/components"
+  cp -R "$SEED" "$stage/registry"
 
   cat > "$stage/QUICKSTART.md" <<QS
 # loft $VERSION — quick start ($TRIPLE)
@@ -224,6 +273,7 @@ QS
   } > "$stage/BUILD-INFO"
 
   ( cd "$stage" && find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||' | xargs $SHA256 > SHA256SUMS )
+  check_registry_seed "$stage/bin/$exe"
 
   ( cd "$DIST" && rm -f "$name.zip" && zip_dir "$name.zip" "$name" )
   ( cd "$DIST" && $SHA256 "$name.zip" > "$name.zip.sha256" )

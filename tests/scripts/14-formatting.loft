@@ -3,6 +3,13 @@
 // Format specifiers: integers, floats, booleans, text, long, single, vectors.
 // @FTR-044 — `{expr}` interpolation and the format specifiers: width, fill, precision,
 // sign, and the radix forms
+//
+// @FR-F-Spec: `{42:#x}`, `{1.2:4.2}`, `{vr:>7}`, `{fplus:+8.3}` render width, alignment, precision
+//   and sign as specified.
+// @FR-F-Escape: `"ab{{cd}}e"` is the literal text `ab{cd}e`.
+// @FR-F-Interp: a string or backtick literal inside a hole is itself a template (`"{"{y}"}"` is
+//   "5").
+// @FR-F-Spec-Zero: `{-1:03}` pads the number after its sign, `-01`.
 fn main() {
   // --- Brace escaping ---
   // "ab{cd}e" would treat {cd} as a format expression in loft.

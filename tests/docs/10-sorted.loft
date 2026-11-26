@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Sorted
 // @TITLE: Keeping records in sorted order automatically
+// @FR-Col-Lookup: a missing or null key reads null.
+// @FR-Col-Order-Sign: a `-key` collection walks descending, `rev` ascending.
+// @FR-Col-RemoveKeyed: removing by key leaves every other key reachable.
+// @FR-Slice-KeyedIter: a key range walks `..` exclusive and `..=` inclusive, in key order.
 // A 'sorted' collection holds records in order by one or more fields you choose
 // as the sort criteria (called "key fields"). You can look up a record by those
 // fields instantly and iterate all records in that order.

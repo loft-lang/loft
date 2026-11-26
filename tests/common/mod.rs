@@ -21,6 +21,9 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod corpus;
 
+#[allow(dead_code)]
+pub mod c_sanitized;
+
 /// Hold this while a corpus program RUNS: a cross-process advisory lock keyed by the program's
 /// absolute path (loft#1724).
 ///

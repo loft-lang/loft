@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Enums: plain, struct variants, polymorphic dispatch, ordering.
+//
+// @FR-Disp-Select: `area`/`describe` declared once per variant reach that variant's body.
+// @FR-F-Render: a plain enum renders as its variant name, an absent one (`"Purple" as Direction?`)
+//   as `null`.
+// @FR-F-FaultSafe: `"{dirs[10]}"` renders plain `null` and the run continues.
 enum Direction {
   North,
   East,

@@ -14,6 +14,9 @@
 //   HOLDS: leak, panic and refusals are clean on both trees (`falsify` requires HERE clean);
 //   the exit is the whole measurement.
 // CHANNEL: the asserts; before the fix the C backend's unit does not compile.
+//
+// @FR-R-Transient: the comprehension's records and the joined variant read as their store form.
+// @FR-E-Eq: `a == not_yet()` compares a struct-enum by content: Unknown is not Borrowed{3}.
 struct Held { has: boolean, lo: integer, hi: integer }
 struct Ranges { vars: vector<Held>, steps: vector<boolean> }
 enum Own { Unknown, Borrowed { base: integer } }

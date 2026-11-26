@@ -14,6 +14,10 @@
 // Changing a key keeps its supported spelling, `s[key] = value`, which re-indexes properly.
 //
 // Guards all three keyed kinds, because the defect was uniform across them.
+//
+// @FR-H-Materialise: `c = s[30]; c.key = 5` re-keys, so `c` becomes its own copy and `s[30]` stays
+//   reachable.
+// @FR-B-View: `c = s[30]; c.tag = 999` writes through to the collection's record.
 
 struct Elm { key: integer, tag: integer = 0 }
 

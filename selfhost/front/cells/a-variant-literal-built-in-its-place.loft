@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a variant literal written into a struct-enum field or vector element is built there (its fields set in place, then its ordinal); a unit variant, a local and a fresh call are copied into the place.
+// @FR-H-Write: a variant literal, a unit variant, a local and a call written into a struct-enum field or element are what the place holds after.
 // Prints: 0 4 9
 
 enum Sh { Dot, Circle { r: integer }, Rect { w: integer, h: integer } }

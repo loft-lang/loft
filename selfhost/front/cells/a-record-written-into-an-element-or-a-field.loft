@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record literal written into a vector element at an index nothing proves is written field by field into the element (no copy, no work ref); a call's record is copied in, its store given away — in a local vector, a vector field and a record field.
+// @FR-H-Write: a record literal or call result written into an element or field is what that place holds after.
 // Prints: 5z 8 6
 
 struct It { n: integer, t: text }

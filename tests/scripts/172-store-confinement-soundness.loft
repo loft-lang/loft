@@ -10,6 +10,11 @@
 // tests/leak.rs catches UNDER-freeing (leaks); THIS file catches OVER-freeing,
 // which is the fix's risk direction.  Promoted from probes/cluster-I/ (CI does
 // not run the probes dir).  Must stay green before AND after the fix.
+//
+// @FR-O-Derived: a block-local vector that does not transfer out is freed at the block's exit and
+//   answers right until then.
+// @FR-O-Complete: on every path a vector that escapes its block (outer assign, block result, struct
+//   field) keeps its store.
 
 // ---- CONFINED: read only inside the block → fix frees at block exit, stays correct ----
 

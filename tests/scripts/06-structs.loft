@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Error tests moved to 102-expected-errors.loft
 // Structs: field types, constructors, methods, virtual fields, null defaults.
+//
+// @FR-D-Rec: an omitted field takes its type's default (`Point { r: 128, b: 64 }.g == 0`, `Pos
+//   {}`).
+// @FR-F-Default-Field: `name_length: integer = len($.name)` is filled at construction from the
+//   record.
+// @FR-B-Copy: `sc_copy = sc_orig` copies; growing the copy's text leaves the original's.
+// @FR-F-Render-Fields: `"{p}"`, `"{o:j}"` and `"{pp:#}"` render every declared field in declaration
+//   order.
 struct Pos {
   x: integer,
   y: integer,

@@ -5,6 +5,8 @@
 // parameter keeps the field in `_slot_n_N`; the call takes a cell naming the slot
 // (`OpSlotTag`), and the link is read again after it in an "amp slot write-back" block
 // (`_amp_ret_N` for a call that answers).  `late` hands one to a callee declared below it.
+// @FR-F-ParamRef: a local `&` link to an out-of-line field handed to a `&Tree?` parameter: `slot = null` and `tm_s = tm_s.right` write the caller's field (true, true).
+// @FR-B-Ref-Write: a whole write through the link replaces the field it names (80, then null).
 // Prints: 80 true / 0 true
 
 struct Tree { k: integer, left: Tree?, right: Tree? }

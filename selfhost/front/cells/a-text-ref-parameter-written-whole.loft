@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a text reference parameter written whole is a plain set of the link (F-ParamRef).
+// @FR-F-ParamRef: a whole write to a `&text` parameter reaches the caller's text.
+// @FR-B-Ref-Write: writing the link replaces the source text (`t` ends `a12b`).
 // Prints: 3 2 4 a12b
 fn overwrite(s: &text) -> integer {
   s = "zzz";

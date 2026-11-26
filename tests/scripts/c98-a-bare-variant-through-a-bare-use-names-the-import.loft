@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Surface: an enum reached only by a bare use is not visible, so its bare variant is refused naming the import.
 //
 // @ARGS: --lib tests/lib
 //

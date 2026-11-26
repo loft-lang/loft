@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: File
 // @TITLE: File system — text, binary, and directory access.
+// @FR-R-TypedRead: a fixed-width integer read decodes in the file's byte order.
+// @FR-Path-Sep: the paths `files()` hands out use `/`.
 // A file handle lets you read and write files without worrying about when the
 // OS opens or closes them. The file opens on the first read or write and
 // closes automatically when the handle goes out of scope.

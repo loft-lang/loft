@@ -5,6 +5,8 @@
 // (`materialise_keyed_for_par`: the store, `___par_mat_idx_N` and its `#iter_state`, the
 // element `___par_mat_e_N`, each record appended through `___par_mat_t_N`) and runs over that,
 // the wrapper's field typed as the element borrowing the collection.
+// @FR-C-Par: a `par` loop over a sorted collection runs the worker on every record.
+// @FR-C-Det: with a pure worker the sum equals the sequential one (80).
 // Prints: 80
 
 struct Rec { k: integer, v: integer }

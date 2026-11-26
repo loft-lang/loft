@@ -13,6 +13,13 @@
 // `log(0.0, base)` is negative infinity and `1.0/0.0` is positive infinity, so `??`
 // never fires on either, while `sqrt(-1.0)` and `asin(2.0)` are null and it does.
 // Asserted both ways below.
+//
+// @FR-N-Domain: sqrt(<0), asin/acos outside [-1,1], pow(neg, frac) and log(<0) answer null, on
+//   float and single.
+// @FR-E-Uncomp: `1.0 / 0.0` and `log(0.0, b)` keep IEEE's infinity (not null); `0.0 / 0.0`, `inf -
+//   inf` and `inf * 0.0` are the NaN null.
+// @FR-E-NullArg: a null float equals null, differs from every real value and orders at the low
+//   extreme.
 fn main() {
   // --- Arithmetic (f64) ---
   assert(1.5 + 0.5 == 2.0, "float add");

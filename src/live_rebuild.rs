@@ -147,7 +147,8 @@ fn spawn_build(
     let snapshot = crate::file_access::read(src).map_err(|e| format!("cannot read {e}"))?;
     *seq += 1;
     let seq = *seq;
-    let base = std::env::temp_dir().join(format!("loft_rebuild_{}_{seq}", std::process::id()));
+    let base =
+        crate::platform::scratch_dir().join(format!("loft_rebuild_{}_{seq}", std::process::id()));
     let out_path = crate::file_access::with_extension(&base, "out");
     let err_path = crate::file_access::with_extension(&base, "err");
     let out = crate::file_access::create(&out_path).map_err(|e| e.to_string())?;

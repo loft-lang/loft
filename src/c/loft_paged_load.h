@@ -40,6 +40,7 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
     if (local.store_nr == 0xFFFF || local.store_nr >= cx->nstores) return 0;
     char *p = loft_cpath(cx, path, 0);
     int url = loft_pg_is_url(cx, p);
+    if (url) loft_pg_note_plain_http(p);
     if (!url && loft_path_refused(cx, path)) {
         free(p);
         return 0;

@@ -4,6 +4,8 @@
 // Gate E cell: after `return deeper` renamed the return buffer onto `deeper`, a branch tail
 // answering another local (`if pos.line != 0 { pos } else { null }` in a match arm) is copied
 // into that buffer arm by arm, as Rust's `materialize_return_into` does.
+// @FR-F-Return: after a `return deeper` that is not taken, the branch tail is the function's answer.
+// @FR-F-Ret: the answered `pos` arrives as an independent value (a:3).
 // Prints: a:3
 
 struct Pos { file: text, line: integer }

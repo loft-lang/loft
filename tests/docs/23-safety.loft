@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Safety
 // @TITLE: Language traps and how to avoid them
+// @FR-E-Uncomp: an overflow and a division by zero are null, not wrapped.
+// @FR-N-Prop: null plus one is still null.
+// @FR-E-Once: the left side of `??` is evaluated once.
+// @FR-I-Text: a text walk yields characters and `#index` is the byte offset.
+// @FR-F-ParamRebind: a plain parameter grows the caller's vector but a whole replace stays local.
+// @FR-B-Copy: a plain bind of a vector copies it.
 // Loft catches most mistakes at compile time. The ones that get through are
 // surprises rather than crashes: a value that reads as null, a count in the
 // wrong unit, a write that lands somewhere else than you meant. This page

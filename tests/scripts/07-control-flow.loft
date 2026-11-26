@@ -4,6 +4,9 @@
 // @FTR-033 — `if`/`else` as an expression, and every for-loop form: exclusive and
 // inclusive ranges, `rev()`, a filter guard, `#first`/`#count`/`#index`, break by label,
 // continue, and an empty range
+//
+// @FR-I-Range: `1..6` visits 1..5; `5..5` and `5..1` run zero times.
+// @FR-I-RangeIncl: `1..=5` includes 5, `5..=5` runs once, `1..=0` runs zero times.
 fn main() {
   // --- If / else if / else ---
   a = 12;

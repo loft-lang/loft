@@ -4,6 +4,8 @@
 // Gate E cell: `[for p in mk_sorted(3) { p.k }]` evaluates the call once, holding its answer
 // in `_vector_N` before the loop's index (`hold_loop_source`), and walks the holder as a sorted
 // local is walked; `p#iter_state` is a second-pass mint there.
+// @FR-I-Comp: `[for p in mk_sorted(3) { p.k }]` builds a fresh vector of the body values.
+// @FR-Col-Order: a sorted source is walked in key order ([3,4]).
 // Prints: [3,4]
 
 struct P { k: integer }

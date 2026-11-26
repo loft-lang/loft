@@ -4,6 +4,8 @@
 // Gate E cell: a format-hole `for` over a hash walks a sorted scratch copy of its records
 // (`_hash_scratch_N = n_hash_sorted(h, …)`, kept after the walk), over a sorted local the
 // collection itself — `OpIterate` / `OpStep` with `{id}#iter_state`, as the statement walks.
+// @FR-Col-Order: a format-hole `for` over a hash and over a sorted walks in key order ([1,3] both).
+// @FR-F-Interp: the hole's `for` renders as a list, a filter included.
 // Prints: [1,3] / [1,3]
 
 struct E { k: integer, v: integer }

@@ -10,6 +10,10 @@
 // of every element written before it (silent data loss; SIGSEGV under churn).
 // Fix: in copy_ref, set 0x8000 only for a struct-returning CALL source (an
 // unowned temporary), never for a Block literal (which owns a scope free).
+//
+// @FR-H-Move: a fresh literal or call result written into an element moves there once.
+// @FR-O-Owner: each element's nested store has one owner, so a later iteration does not free an
+//   earlier element's vector.
 
 struct V {
   a: vector<integer>,

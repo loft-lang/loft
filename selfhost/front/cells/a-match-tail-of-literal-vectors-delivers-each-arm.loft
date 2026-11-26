@@ -3,6 +3,8 @@
 //
 // Gate E cell: a vector function whose tail is a `match` of literal arms delivers each arm into the
 // return buffer (clear, append, free the literal's store), the match block keeping its type.
+// @FR-M-Expr: the selected arm's literal is the match's value, the function's answer ([1] [1,2] []).
+// @FR-F-Ret: each call answers an independent vector.
 // Prints: [1] [1,2] []
 
 fn e4(c: boolean) -> vector<integer> { match c { true => [1], _ => [] } }

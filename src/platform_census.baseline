@@ -24,7 +24,7 @@
 3 tests/native.rs
 11 tests/native_source_key.rs
 2 tests/ownership_drop_gate.rs
-3 tests/p254_cache_poisoning.rs
+4 tests/p254_cache_poisoning.rs
 1 tests/placement_parity.rs
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs

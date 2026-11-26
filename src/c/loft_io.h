@@ -1258,11 +1258,20 @@ static int64_t loft_fs_mkdir(loft_cx *cx, loft_str raw, int all) {
     char *path = loft_resolve(cx, raw);
     if (!path) return LOFT_FS_OTHER;
     int64_t code = LOFT_FS_OTHER;
-    /* A path that resolves to nothing names no directory; the walks below start one past
-     * its first character. */
+    /* A path that resolves to nothing (`.`, `q/..` or "" under `#cwd`) is the working
+     * directory, as the interpreter reads it: the walks below start one past the path's first
+     * character, so they are given that directory's own name.  An empty name makes no single
+     * directory, as the interpreter answers it. */
     if (!path[0]) {
-        free(path);
-        return loft_fs_code(cx, ENOENT);
+        if (!raw.len && !all) {
+            free(path);
+            return loft_fs_code(cx, ENOENT);
+        }
+        char *dot = (char *) realloc(path, 2);
+        if (!dot) { fputs("loft: out of memory\n", stderr); abort(); }
+        path = dot;
+        path[0] = '.';
+        path[1] = 0;
     }
 #if defined(LOFT_POSIX)
     if (all) {
@@ -1651,6 +1660,16 @@ static loft_ref loft_read_bytes(loft_cx *cx, loft_str raw) {
     FILE *h = path ? loft_fopen(path, "rb") : 0;
     free(path);
     if (!h) return loft_ref_null(cx);
+    /* A vector counts its elements in 32 bits: a file with more bytes than that is refused by
+     * its size, before a byte of it is read — the capacity check refuses the count held at the
+     * largest one, as it does below for a file that grew while it was read. */
+#if defined(LOFT_POSIX)
+    struct stat st;
+    if (fstat(fileno(h), &st) == 0 && (uint64_t) st.st_size > UINT32_MAX) (void) loft_vec_cap_words(cx, UINT32_MAX, 1);
+#elif defined(_WIN32)
+    struct _stat64 st;
+    if (_fstat64(_fileno(h), &st) == 0 && (uint64_t) st.st_size > UINT32_MAX) (void) loft_vec_cap_words(cx, UINT32_MAX, 1);
+#endif
     /* The whole file first, then one exact claim of its length, an empty file's included
      * (`vector::alloc_vector_from_bytes`, `@FR-Col-Capacity`): appended a byte at a time, the
      * vector took the growth step's room instead. */
@@ -1896,6 +1915,41 @@ static loft_text loft_os_temp_dir(loft_cx *cx) {
 #endif
 }
 
+/* platform::private_temp_dir: this user's own directory under the temporary directory —
+ * `loft-<uid>`, made with mode 0700 and used only while it is a real directory (not a link)
+ * owned by this user with no group or other bits; when that name is taken by anything else, a
+ * fresh `loft-<uid>-XXXXXX` this call makes, so nothing in it was placed there by someone else.
+ * The temporary directory itself when neither can be made, and on a host with no other users to
+ * keep out (Windows, where it is already the user's own; WASI; the ESP). */
+static loft_text loft_private_temp_dir(loft_cx *cx) {
+#if defined(LOFT_POSIX_HOST)
+    const char *t = getenv("TMPDIR");
+    const char *sys = t && *t ? t : "/tmp";
+    size_t len = strlen(sys), n;
+    while (len > 1 && sys[len - 1] == '/') len--;
+    n = len + 48;
+    char *dir = (char *) malloc(n);
+    if (!dir) { fputs("loft: out of memory\n", stderr); abort(); }
+    unsigned long owner = (unsigned long) geteuid();
+    snprintf(dir, n, "%.*s/loft-%lu", (int) len, sys, owner);
+    struct stat st;
+    int ok = mkdir(dir, 0700) == 0 && chmod(dir, 0700) == 0;
+    if (!ok)
+        ok = lstat(dir, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 077) == 0;
+    if (!ok) {
+        snprintf(dir, n, "%.*s/loft-%lu-XXXXXX", (int) len, sys, owner);
+        ok = mkdtemp(dir) != 0;
+    }
+    if (ok) {
+        loft_text r = loft_given(cx, dir);
+        free(dir);
+        return r;
+    }
+    free(dir);
+#endif
+    return loft_os_temp_dir(cx);
+}
+
 /* `dir_with_sub`: `base` in the portable form, `sub` joined to it as `Path::join` does. */
 static loft_text loft_dir_with_sub(loft_cx *cx, const char *base, loft_str sub) {
     if (!sub.len || loft_str_is_null(cx, sub) || !*base) return loft_given(cx, base);
@@ -1977,20 +2031,19 @@ static loft_text loft_program_directory(loft_cx *cx, loft_str sub) {
     return loft_dir_with_sub(cx, buf, sub);
 }
 
-/* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else the
- * temporary directory's. */
+/* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else
+ * `loft` in this user's private temporary directory (`loft_private_temp_dir`): a cache in the
+ * shared one is one another local user can fill first. */
 static loft_text loft_os_cache_dir(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME"), *tmp = getenv("TMPDIR");
+    const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME");
     if (x) {
         loft_push_cstr(cx, &t, x);
     } else if (h) {
         loft_push_cstr(cx, &t, h);
         loft_push_cstr(cx, &t, "/.cache");
     } else {
-        /* `std::env::temp_dir`, as `loft_os_temp_dir` answers it on this host. */
-        loft_text td = loft_os_temp_dir(cx);
-        (void) tmp;
+        loft_text td = loft_private_temp_dir(cx);
         loft_text_append(cx, &t, loft_view(cx, &td));
         loft_text_free(cx, &td);
     }

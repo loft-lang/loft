@@ -25,6 +25,10 @@
 // Run under `LOFT_POISON=1` — `tests/collection_through_call_field.rs` sets it.  Bare,
 // freed bytes are usually still intact and every cell passes on value alone.  Elements
 // are seeded `q = i + 7`; the `??` fallback is -1, which no element can hold.
+//
+// @FR-B-View-Depth: `mk_bag(n).b_vec[0]` is a view, through the field, of the call's result.
+// @FR-O-Borrow: the view names the bag as its source, so it is not read after the bag is freed.
+// @FR-O-Move: returning that view delivers an owned copy (7, and 15 in an expression).
 
 struct I889Cell { q: integer, r: integer }
 struct I889Txt { tq: text, tr: integer }

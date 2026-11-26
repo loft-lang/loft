@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a member of a tuple's tuple member is read through a work ref (`tuple_tmp`); a vector of tuples with a record member names its rows by the struct, copies the record into its slot of each element, and its loop variable and its elements read the record where it lies.
+// @FR-T-Proj: `n.0.1` reads a member of a tuple member; `e.1.x` / `v[1].1.x` read a record member.
+// @FR-T-Record: a record member of a vector's tuple element is read where it lies.
 // Prints: 5 18 8
 
 struct P { x: integer }

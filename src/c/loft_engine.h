@@ -2,9 +2,10 @@
  * The natives behind `lib/engine_host`, which owns no game meaning: the socket pump (non-blocking,
  * a peek before every frame read), the event queue, drift-free ticks, class-routed send and
  * broadcast, and the state-sync channel over UDP — one datagram socket on the listener's port, a
- * per-connection cookie handed over in the 101 response (`X-Loft-UDP`), `H:<cookie>` binding a
- * source address to its connection, `S:<seq>:<payload>` conflating to the newest per sender, kind
- * and (for a keyed kind) entity.  Both roles share one queue and one conflation machinery: the
+ * per-connection session key handed over with the cid in the 101 response (`X-Loft-UDP`), every
+ * datagram sealed under it (`loft_eh_seal`: the format is `engine_host.rs` § the seal, and the two
+ * runtimes speak it to each other), a sealed hello binding a source address to its connection, and
+ * sync samples conflating to the newest per sender, kind and (for a keyed kind) entity.  Both roles share one queue and one conflation machinery: the
  * listener (`run`) and the connector (`run_client`, or a transportless local kernel).  The
  * `D!:` debug control channel answers as a build with no live tier does, but for the rebuild
  * and the swap, which a C build carries (below).  `http_fetch` returns at
@@ -21,7 +22,16 @@
 #endif
 
 #define LOFT_EH_UDP_TIMEOUT_US 3000000
+/* The whole datagram's cap, seal included (`LOFT_EH_SEAL` bytes: a payload gets 1171). */
 #define LOFT_EH_UDP_MAX 1200
+/* The sealed datagram (`engine_host.rs` § the seal): kind, cid (4 bytes) and seq (8) before the
+ * payload, a 16-byte tag after it; the session key is 32 bytes. */
+#define LOFT_EH_KEY 32
+#define LOFT_EH_HEAD 13
+#define LOFT_EH_TAG 16
+#define LOFT_EH_SEAL (LOFT_EH_HEAD + LOFT_EH_TAG)
+#define LOFT_EH_TO_LISTENER 'c'
+#define LOFT_EH_TO_CLIENT 's'
 #define LOFT_EH_HELLO_US 200000
 #define LOFT_EH_KEEPALIVE_US 500000
 #define LOFT_EH_SLOTS_MAX 256
@@ -29,6 +39,8 @@
 /* One pumped event: connect (0), message (1), disconnect (2), an HTTP completion (3). */
 typedef struct { int64_t cid, kind, status; loft_text payload; } loft_eh_event;
 typedef struct { loft_eh_event *v; size_t head, n, cap; } loft_eh_queue;
+/* The authenticated seqs a receiver has taken: the highest, and which of the 63 below it. */
+typedef struct { int64_t hi; uint64_t seen; } loft_eh_replay;
 
 static void loft_eh_push(loft_cx *cx, loft_eh_queue *q, int64_t cid, int64_t kind, int64_t status, const char *p, size_t n) {
     if (q->head > 0 && q->head == q->n) q->head = q->n = 0;
@@ -407,11 +419,12 @@ static int loft_eh_foreign_origin(loft_cx *cx, const char *v, size_t n) {
 }
 
 /* Upgrade a freshly accepted stream: read the request head (bounded), answer the handshake, the
- * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection;
+ * UDP offer (`<cid>:<session key>`, `loft_eh_offer`) riding the 101 as `X-Loft-UDP` when there
+ * is one.  0 drops the connection;
  * `*foreign_page` says whether the request came from a page of another site, which a game takes
  * as a peer and the debug control channel does not: `control_only` drops it unanswered, and a
  * request that does not name this run's debug token (`*agent`, `@C172`) too. */
-static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int control_only, int *foreign_page, int *agent) {
+static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *offer, int control_only, int *foreign_page, int *agent) {
     loft_sock_blocking(cx, fd, 1);
     loft_sock_timeout(cx, fd, 500);
     loft_text head = { 0, 0, 0 };
@@ -434,7 +447,7 @@ static int loft_eh_ws_upgrade(loft_cx *cx, int fd, const char *cookie, int contr
     int n = snprintf(resp, sizeof resp,
                      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                      "Sec-WebSocket-Accept: %s\r\n%s%s%s\r\n",
-                     accept, *cookie ? "X-Loft-UDP: " : "", cookie, *cookie ? "\r\n" : "");
+                     accept, *offer ? "X-Loft-UDP: " : "", offer, *offer ? "\r\n" : "");
     if (!loft_eh_write_all(cx, fd, resp, (size_t) n)) return 0;
     loft_sock_timeout(cx, fd, 20);
     return 1;
@@ -579,19 +592,112 @@ static int loft_eh_same_addr(loft_cx *cx, const struct sockaddr_storage *a, sock
     return al == bl && memcmp(a, b, al) == 0;
 }
 
-/* 16 hex characters from the OS's random source, the clock and `cid`: spoof-resistant on a LAN,
- * not cryptographic (the cookie the Rust kernel mints from a seeded hasher). */
-static void loft_eh_cookie(loft_cx *cx, size_t cid, char out[17]) {
-    uint64_t x = 0;
-    if (!loft_eh_os_random((uint8_t *) &x, sizeof x)) x = 0;
-#if defined(_WIN32)
-    uint64_t pid = (uint64_t) GetCurrentProcessId();
-#else
-    uint64_t pid = (uint64_t) getpid();
-#endif
-    x ^= (uint64_t) loft_now_us(cx) * 0x9E3779B97F4A7C15ull ^ (uint64_t) cid * 0xBF58476D1CE4E5B9ull ^ pid;
-    x ^= x >> 31;
-    snprintf(out, 17, "%016llx", (unsigned long long) x);
+/* The first 16 bytes of HMAC-SHA256 (RFC 2104) under `key` over the direction byte `dir` and
+ * `body`: the tag of a sealed datagram. */
+static void loft_eh_tag(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir, const uint8_t *body, size_t n,
+                        uint8_t out[LOFT_EH_TAG]) {
+    uint8_t *m = (uint8_t *) malloc(64 + 1 + n);
+    if (!m) { fputs("loft: out of memory\n", stderr); abort(); }
+    uint8_t outer[64 + 32], mac[32];
+    for (int i = 0; i < 64; i++) {
+        uint8_t k = i < LOFT_EH_KEY ? key[i] : 0;
+        m[i] = k ^ 0x36;
+        outer[i] = k ^ 0x5c;
+    }
+    m[64] = dir;
+    if (n) memcpy(m + 65, body, n);
+    loft_sha256(cx, m, 65 + n, outer + 64);
+    free(m);
+    loft_sha256(cx, outer, sizeof outer, mac);
+    memcpy(out, mac, LOFT_EH_TAG);
+}
+
+/* A datagram of `kind` carrying `p`, sealed under `key` for direction `dir`, appended to `out`. */
+static void loft_eh_seal(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir, uint8_t kind, uint32_t cid,
+                         int64_t seq, const char *p, size_t n, loft_text *out) {
+    char head[LOFT_EH_HEAD];
+    head[0] = (char) kind;
+    for (int i = 0; i < 4; i++) head[1 + i] = (char) (uint8_t) (cid >> (24 - 8 * i));
+    for (int i = 0; i < 8; i++) head[5 + i] = (char) (uint8_t) ((uint64_t) seq >> (56 - 8 * i));
+    size_t at = out->len;
+    loft_push(cx, out, head, sizeof head);
+    loft_push(cx, out, p, n);
+    uint8_t t[LOFT_EH_TAG];
+    loft_eh_tag(cx, key, dir, (const uint8_t *) out->p + at, out->len - at, t);
+    loft_push(cx, out, (const char *) t, sizeof t);
+}
+
+/* The connection a datagram names, read before its key is known: 0 for a runt. */
+static int loft_eh_cid_of(loft_cx *cx, const uint8_t *d, size_t n, uint32_t *cid) {
+    if (n < LOFT_EH_SEAL) return 0;
+    *cid = (uint32_t) d[1] << 24 | (uint32_t) d[2] << 16 | (uint32_t) d[3] << 8 | (uint32_t) d[4];
+    return 1;
+}
+
+/* 1 and the kind, seq (in 1..=INT64_MAX) and payload of a datagram whose tag holds under `key` for
+ * direction `dir`; 0 for anything else.  The tags compare in constant time. */
+static int loft_eh_open(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir, const uint8_t *d, size_t n,
+                        uint8_t *kind, int64_t *seq, const char **body, size_t *bl) {
+    if (n < LOFT_EH_SEAL) return 0;
+    uint8_t want[LOFT_EH_TAG], diff = 0;
+    loft_eh_tag(cx, key, dir, d, n - LOFT_EH_TAG, want);
+    for (int i = 0; i < LOFT_EH_TAG; i++) diff |= (uint8_t) (want[i] ^ d[n - LOFT_EH_TAG + i]);
+    if (diff) return 0;
+    uint64_t q = 0;
+    for (int i = 0; i < 8; i++) q = q << 8 | d[5 + i];
+    if (q == 0 || q > (uint64_t) INT64_MAX) return 0;
+    *kind = d[0];
+    *seq = (int64_t) q;
+    *body = (const char *) d + LOFT_EH_HEAD;
+    *bl = n - LOFT_EH_SEAL;
+    return 1;
+}
+
+/* Take `seq` once: 2 when it is the newest yet, 1 when it is an older one not seen before
+ * (reordered on the way), 0 when it was seen already or is older than the window. */
+static int loft_eh_admit(loft_cx *cx, loft_eh_replay *r, int64_t seq) {
+    if (seq > r->hi) {
+        int64_t shift = seq - r->hi;
+        r->seen = shift >= 64 ? 0 : r->seen << shift;
+        r->seen |= 1;
+        r->hi = seq;
+        return 2;
+    }
+    int64_t back = r->hi - seq;
+    if (back >= 64 || (r->seen & ((uint64_t) 1 << back))) return 0;
+    r->seen |= (uint64_t) 1 << back;
+    return 1;
+}
+
+/* The `X-Loft-UDP` value for connection `cid`: `<cid>:<key as 64 lowercase hex digits>`, after
+ * drawing the session key from the OS's random source.  0 when it gave none: the connection then
+ * gets no UDP path, and everything rides the WebSocket. */
+static int loft_eh_offer(loft_cx *cx, size_t cid, uint8_t key[LOFT_EH_KEY], char out[96]) {
+    if (!loft_eh_os_random(key, LOFT_EH_KEY)) return 0;
+    int n = snprintf(out, 96, "%zu:", cid);
+    for (int i = 0; i < LOFT_EH_KEY; i++) n += snprintf(out + n, (size_t) (96 - n), "%02x", key[i]);
+    return 1;
+}
+
+/* The cid and key an `X-Loft-UDP` value offers: 0 for anything malformed. */
+static int loft_eh_parse_offer(loft_cx *cx, const char *v, size_t n, uint32_t *cid, uint8_t key[LOFT_EH_KEY]) {
+    const char *colon = (const char *) memchr(v, ':', n);
+    if (!colon || colon == v || (size_t) (v + n - colon - 1) != 2 * LOFT_EH_KEY) return 0;
+    uint64_t c = 0;
+    for (const char *p = v; p < colon; p++) {
+        if (*p < '0' || *p > '9' || c > 0xFFFFFFFFull / 10) return 0;
+        c = c * 10 + (uint64_t) (*p - '0');
+    }
+    if (c > 0xFFFFFFFFull) return 0;
+    for (int i = 0; i < 2 * LOFT_EH_KEY; i++) {
+        char h = colon[1 + i];
+        int x = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
+        if (x < 0) return 0;
+        if (i % 2 == 0) key[i / 2] = (uint8_t) (x << 4);
+        else key[i / 2] |= (uint8_t) x;
+    }
+    *cid = (uint32_t) c;
+    return 1;
 }
 #endif
 
@@ -599,7 +705,9 @@ static void loft_eh_cookie(loft_cx *cx, size_t cid, char out[17]) {
 
 typedef struct {
     int fd; /* -1: a free slot (cid = index, reused) */
-    char cookie[17];
+    int keyed;                     /* a UDP session key was offered at the upgrade */
+    uint8_t key[LOFT_EH_KEY];      /* that key */
+    loft_eh_replay rx;             /* the authenticated seqs taken from this client */
     int bound;
     struct sockaddr_storage addr;
     socklen_t alen;
@@ -626,7 +734,10 @@ static int64_t loft_ehk_now(loft_cx *cx) { return loft_now_us(cx) - loft_ehk.sta
 
 static void loft_eh_conn_reset(loft_cx *cx, loft_eh_conn *c) {
     c->fd = -1;
-    c->cookie[0] = 0;
+    c->keyed = 0;
+    memset(c->key, 0, sizeof c->key);
+    c->rx.hi = 0;
+    c->rx.seen = 0;
     c->bound = 0;
     c->alen = 0;
     c->last_seen = 0;
@@ -640,7 +751,10 @@ static void loft_eh_conn_reset(loft_cx *cx, loft_eh_conn *c) {
 
 static struct {
     int up, alive, conn, udp, udp_bound, ctl;
-    char cookie[64];
+    int keyed;                     /* the server offered a UDP path: its cid and session key */
+    uint32_t cid;
+    uint8_t key[LOFT_EH_KEY];
+    loft_eh_replay rx;             /* the authenticated seqs taken from the server */
     int64_t last_hello, last_keepalive, out_seq;
     loft_eh_slots slots;
     int64_t sync_seq;
@@ -810,13 +924,10 @@ static void loft_eh_close_at_exit(loft_cx *cx) {
 static int loft_ehk_deliver(loft_cx *cx, size_t cid, const char *msg, size_t n, int sync) {
     if (cid >= loft_ehk.nconns) return 0;
     loft_eh_conn *c = &loft_ehk.conns[cid];
-    if (sync && c->bound && loft_ehk.udp >= 0) {
+    if (sync && c->bound && c->keyed && loft_ehk.udp >= 0) {
         c->out_seq += 1;
         loft_text d = { 0, 0, 0 };
-        char seq[32];
-        snprintf(seq, sizeof seq, "S:%lld:", (long long) c->out_seq);
-        loft_push_cstr(cx, &d, seq);
-        loft_push(cx, &d, msg, n);
+        loft_eh_seal(cx, c->key, LOFT_EH_TO_CLIENT, 'S', (uint32_t) cid, c->out_seq, msg, n, &d);
         int ok = 0;
         if (d.len > LOFT_EH_UDP_MAX) {
             if (!loft_ehk.warned_oversize) {
@@ -939,37 +1050,39 @@ static void loft_ehk_pump_udp(loft_cx *cx) {
         socklen_t fl = sizeof from;
         long len = loft_sock_recvfrom(cx, loft_ehk.udp, buf, sizeof buf, (struct sockaddr *) &from, &fl);
         if (len < 0) break;
-        if (!loft_utf8_valid(cx, (const unsigned char *) buf, (size_t) len)) continue;
-        if (len >= 2 && buf[0] == 'H' && buf[1] == ':') {
-            const char *cookie = buf + 2;
-            size_t cn = (size_t) len - 2;
-            for (size_t i = 0; i < loft_ehk.nconns; i++) {
-                loft_eh_conn *c = &loft_ehk.conns[i];
-                if (c->cookie[0] && strlen(c->cookie) == cn && memcmp(c->cookie, cookie, cn) == 0) {
-                    if (c->fd >= 0) {
-                        c->bound = 1;
-                        c->addr = from;
-                        c->alen = fl;
-                        c->last_seen = now;
-                        char ack[32];
-                        int an = snprintf(ack, sizeof ack, "A:%zu", i);
-                        loft_sock_sendto(cx, loft_ehk.udp, ack, (size_t) an, (struct sockaddr *) &from, fl);
-                    }
-                    break;
-                }
-            }
-            continue;
-        }
-        size_t cid = loft_ehk.nconns;
-        for (size_t i = 0; i < loft_ehk.nconns && cid == loft_ehk.nconns; i++)
-            if (loft_ehk.conns[i].bound && loft_eh_same_addr(cx, &loft_ehk.conns[i].addr, loft_ehk.conns[i].alen, &from, fl))
-                cid = i;
-        if (cid == loft_ehk.nconns) continue;
-        loft_ehk.conns[cid].last_seen = now;
+        /* The tag is checked before anything else: a datagram that does not open under its
+         * connection's key changes no path, keepalive or slot. */
+        const uint8_t *d = (const uint8_t *) buf;
+        uint32_t cid;
+        if (!loft_eh_cid_of(cx, d, (size_t) len, &cid) || cid >= loft_ehk.nconns) continue;
+        loft_eh_conn *c = &loft_ehk.conns[cid];
+        if (c->fd < 0 || !c->keyed) continue;
+        uint8_t kind;
         int64_t seq;
         const char *body;
         size_t bl;
-        if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) loft_eh_conflate(cx, &loft_ehk.conns[cid].slots, seq, body, bl);
+        if (!loft_eh_open(cx, c->key, LOFT_EH_TO_LISTENER, d, (size_t) len, &kind, &seq, &body, &bl)) continue;
+        if (kind != 'H' && kind != 'K' && kind != 'S') continue;
+        /* A seq taken once is never taken again: a replay changes nothing either. */
+        int fresh = loft_eh_admit(cx, &c->rx, seq);
+        if (!fresh) continue;
+        /* The source address is where to send, not who is speaking: the newest datagram moves
+         * the path (NAT rebinding), any authenticated one keeps it alive. */
+        if (fresh == 2) {
+            c->bound = 1;
+            c->addr = from;
+            c->alen = fl;
+        }
+        if (c->bound) c->last_seen = now;
+        if (kind == 'H' && c->bound) {
+            c->out_seq += 1;
+            loft_text ack = { 0, 0, 0 };
+            loft_eh_seal(cx, c->key, LOFT_EH_TO_CLIENT, 'A', cid, c->out_seq, "", 0, &ack);
+            loft_sock_sendto(cx, loft_ehk.udp, ack.p, ack.len, (struct sockaddr *) &c->addr, c->alen);
+            free(ack.p);
+        } else if (kind == 'S' && loft_utf8_valid(cx, (const unsigned char *) body, bl)) {
+            loft_eh_conflate(cx, &c->slots, seq, body, bl);
+        }
     }
     for (size_t i = 0; i < loft_ehk.nconns; i++)
         if (loft_ehk.conns[i].bound && now - loft_ehk.conns[i].last_seen > LOFT_EH_UDP_TIMEOUT_US) loft_ehk.conns[i].bound = 0;
@@ -1049,10 +1162,12 @@ static int64_t loft_kernel_pump(loft_cx *cx) {
         loft_sock_cloexec(cx, fd);
         size_t cid = 0;
         while (cid < loft_ehk.nconns && loft_ehk.conns[cid].fd >= 0) cid++;
-        char cookie[17] = { 0 };
-        if (loft_ehk.udp >= 0) loft_eh_cookie(cx, cid, cookie);
+        /* The session key is drawn BEFORE the upgrade, so the 101 carries the key the slot keeps. */
+        char offer[96] = { 0 };
+        uint8_t key[LOFT_EH_KEY];
+        int keyed = loft_ehk.udp >= 0 && loft_eh_offer(cx, cid, key, offer);
         int foreign_page = 0, agent = 0;
-        if (!loft_eh_ws_upgrade(cx, fd, cookie, 0, &foreign_page, &agent)) {
+        if (!loft_eh_ws_upgrade(cx, fd, offer, 0, &foreign_page, &agent)) {
             loft_sock_close(cx, fd);
             continue;
         }
@@ -1067,7 +1182,8 @@ static int64_t loft_kernel_pump(loft_cx *cx) {
         loft_ehk.conns[cid].fd = fd;
         loft_ehk.conns[cid].foreign_page = foreign_page;
         loft_ehk.conns[cid].debug_agent = agent;
-        memcpy(loft_ehk.conns[cid].cookie, cookie, sizeof cookie);
+        loft_ehk.conns[cid].keyed = keyed;
+        if (keyed) memcpy(loft_ehk.conns[cid].key, key, sizeof key);
         loft_eh_push(cx, &loft_ehk.events, (int64_t) cid, 0, 0, "", 0);
         added++;
     }
@@ -1380,7 +1496,11 @@ static void loft_ehc_reset(loft_cx *cx, int64_t tick_us) {
     loft_ehc.alive = 1;
     loft_ehc.conn = loft_ehc.udp = loft_ehc.ctl = -1;
     loft_ehc.udp_bound = 0;
-    loft_ehc.cookie[0] = 0;
+    loft_ehc.keyed = 0;
+    loft_ehc.cid = 0;
+    memset(loft_ehc.key, 0, sizeof loft_ehc.key);
+    loft_ehc.rx.hi = 0;
+    loft_ehc.rx.seen = 0;
     loft_ehc.last_hello = INT64_MIN / 2;
     loft_ehc.last_keepalive = 0;
     loft_ehc.out_seq = 0;
@@ -1416,7 +1536,8 @@ static uint8_t loft_kernel_local(loft_cx *cx, int64_t tick_us) {
 }
 
 /* `kernel_connect`: dial (retried across a swap's gap, five seconds), upgrade with the RFC's
- * sample key (anti-cache, not auth), take the `X-Loft-UDP` cookie, prepare the UDP socket.  A
+ * sample key (anti-cache, not auth), take the `X-Loft-UDP` cid and session key, prepare the UDP
+ * socket.  A
  * kind-0 event marks the connect, as the listener's does. */
 static uint8_t loft_kernel_connect(loft_cx *cx, loft_str host, int64_t port, int64_t tick_us) {
 #if defined(LOFT_SOCKETS)
@@ -1473,14 +1594,19 @@ static uint8_t loft_kernel_connect(loft_cx *cx, loft_str host, int64_t port, int
     head.len--;
     const char *v;
     size_t vn;
-    char cookie[64] = { 0 };
-    if (loft_http_header(cx, &head, "x-loft-udp", &v, &vn) && vn < sizeof cookie) memcpy(cookie, v, vn);
+    uint32_t ucid = 0;
+    uint8_t key[LOFT_EH_KEY];
+    int keyed = loft_http_header(cx, &head, "x-loft-udp", &v, &vn) && loft_eh_parse_offer(cx, v, vn, &ucid, key);
     free(head.p);
     loft_sock_timeout(cx, fd, 20);
     loft_ehc_reset(cx, tick_us);
     loft_ehc.conn = fd;
-    memcpy(loft_ehc.cookie, cookie, sizeof cookie);
-    if (cookie[0]) {
+    if (keyed) {
+        loft_ehc.keyed = 1;
+        loft_ehc.cid = ucid;
+        memcpy(loft_ehc.key, key, sizeof key);
+    }
+    if (keyed) {
         int u = loft_sock_open(cx, family, SOCK_DGRAM, 0);
         if (u >= 0) {
             loft_sock_cloexec(cx, u);
@@ -1564,13 +1690,20 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
         for (;;) {
             long len = loft_sock_recv(cx, loft_ehc.udp, buf, sizeof buf, 0);
             if (len < 0) break;
-            if (!loft_utf8_valid(cx, (const unsigned char *) buf, (size_t) len)) continue;
+            /* The server's datagrams carry this connection's cid and open under its key, each seq
+             * once; anything else changes nothing. */
+            const uint8_t *d = (const uint8_t *) buf;
+            uint32_t cid;
+            uint8_t kind;
             int64_t seq;
             const char *body;
             size_t bl;
-            if (len >= 2 && buf[0] == 'A' && buf[1] == ':') {
+            if (!loft_ehc.keyed || !loft_eh_cid_of(cx, d, (size_t) len, &cid) || cid != loft_ehc.cid) continue;
+            if (!loft_eh_open(cx, loft_ehc.key, LOFT_EH_TO_CLIENT, d, (size_t) len, &kind, &seq, &body, &bl)) continue;
+            if ((kind != 'A' && kind != 'S') || !loft_eh_admit(cx, &loft_ehc.rx, seq)) continue;
+            if (kind == 'A') {
                 loft_ehc.udp_bound = 1;
-            } else if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) {
+            } else if (loft_utf8_valid(cx, (const unsigned char *) body, bl)) {
                 uint64_t nth = 0;
                 if (drop_nth > 0) LOFT_PUB_ADD(received, 1u, nth);
                 if (drop_nth > 0 && nth % (uint64_t) drop_nth == 0) continue;
@@ -1578,15 +1711,17 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
             }
         }
         int64_t now = loft_ehc_now(cx);
-        if (!loft_ehc.udp_bound && loft_ehc.cookie[0] && now - loft_ehc.last_hello > LOFT_EH_HELLO_US) {
-            char hello[80];
-            int hn = snprintf(hello, sizeof hello, "H:%s", loft_ehc.cookie);
-            loft_sock_send(cx, loft_ehc.udp, hello, (size_t) hn, 0);
-            loft_ehc.last_hello = now;
-        }
-        if (loft_ehc.udp_bound && now - loft_ehc.last_keepalive > LOFT_EH_KEEPALIVE_US) {
-            loft_sock_send(cx, loft_ehc.udp, "K:", 2, 0);
-            loft_ehc.last_keepalive = now;
+        /* Every datagram takes the next seq of the one outbound space. */
+        int hello = !loft_ehc.udp_bound && now - loft_ehc.last_hello > LOFT_EH_HELLO_US;
+        int keep = loft_ehc.udp_bound && now - loft_ehc.last_keepalive > LOFT_EH_KEEPALIVE_US;
+        if (loft_ehc.keyed && (hello || keep)) {
+            loft_text d = { 0, 0, 0 };
+            loft_ehc.out_seq += 1;
+            loft_eh_seal(cx, loft_ehc.key, LOFT_EH_TO_LISTENER, hello ? 'H' : 'K', loft_ehc.cid, loft_ehc.out_seq, "", 0, &d);
+            loft_sock_send(cx, loft_ehc.udp, d.p, d.len, 0);
+            free(d.p);
+            if (hello) loft_ehc.last_hello = now;
+            else loft_ehc.last_keepalive = now;
         }
     }
 #endif
@@ -1623,13 +1758,11 @@ static uint8_t loft_kernel_client_send(loft_cx *cx, loft_str msg) {
     int sync = loft_eh_is_sync(cx, msg.p, msg.len);
     if (sync) loft_ehc.out_seq += 1;
 #if defined(LOFT_SOCKETS)
-    if (sync && loft_ehc.udp_bound && loft_ehc.udp >= 0) {
+    if (sync && loft_ehc.udp_bound && loft_ehc.keyed && loft_ehc.udp >= 0) {
+        if (msg.len + LOFT_EH_SEAL > LOFT_EH_UDP_MAX) return 0; /* state frames must stay small */
         loft_text d = { 0, 0, 0 };
-        char seq[32];
-        snprintf(seq, sizeof seq, "S:%lld:", (long long) loft_ehc.out_seq);
-        loft_push_cstr(cx, &d, seq);
-        loft_push(cx, &d, msg.p, msg.len);
-        uint8_t ok = d.len <= LOFT_EH_UDP_MAX && loft_sock_send(cx, loft_ehc.udp, d.p, d.len, 0) >= 0;
+        loft_eh_seal(cx, loft_ehc.key, LOFT_EH_TO_LISTENER, 'S', loft_ehc.cid, loft_ehc.out_seq, msg.p, msg.len, &d);
+        uint8_t ok = loft_sock_send(cx, loft_ehc.udp, d.p, d.len, 0) >= 0;
         free(d.p);
         return ok;
     }
@@ -1756,10 +1889,15 @@ static int loft_sw_exists(loft_cx *cx, const char *path) {
     return f != 0;
 }
 
-/* `std::env::temp_dir`: TMPDIR, else /tmp. */
-static const char *loft_sw_tmp(loft_cx *cx) {
-    const char *t = getenv("TMPDIR");
-    return t && *t ? t : "/tmp";
+/* Where a swap's snapshot and a rebuild's output are staged: this user's private temporary
+ * directory (`loft_private_temp_dir`, the Rust side's `platform::scratch_dir`), malloc'd.  The
+ * successor reads the snapshot back and the ready file hands the process over, so neither name
+ * may be one another local user can take first. */
+static char *loft_sw_tmp(loft_cx *cx) {
+    loft_text td = loft_private_temp_dir(cx);
+    char *r = loft_cstr_own(cx, loft_view(cx, &td));
+    loft_text_free(cx, &td);
+    return r;
 }
 
 /* A snapshot and the layout sidecar a store image has beside it. */
@@ -1991,7 +2129,9 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
         /* The frame boundary: meaning is frozen from here on, so this snapshot is THE world
          * state the new build resumes. */
         char base[1024];
-        snprintf(base, sizeof base, "%s/loft_swap_%ld", loft_sw_tmp(cx), (long) getpid());
+        char *tmp = loft_sw_tmp(cx);
+        snprintf(base, sizeof base, "%s/loft_swap_%ld", tmp, (long) getpid());
+        free(tmp);
         loft_sw.ready = loft_sw_join(cx, base, ".ready");
         remove(loft_sw.ready);
         loft_sw.snap = loft_sw_snapshot(cx, base);
@@ -2105,7 +2245,9 @@ static int loft_rb_spawn(loft_cx *cx, const char *driver, const char *src, char 
     }
     loft_rb.seq++;
     char base[1024];
-    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", loft_sw_tmp(cx), (long) getpid(), loft_rb.seq);
+    char *tmp = loft_sw_tmp(cx);
+    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", tmp, (long) getpid(), loft_rb.seq);
+    free(tmp);
     free(loft_rb.out);
     free(loft_rb.err);
     loft_rb.out = loft_sw_join(cx, base, ".out");

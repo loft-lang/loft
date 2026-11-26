@@ -7,6 +7,10 @@
 // (the token-stream cases); plain enum / vector / tuple ride a different coroutine channel and are
 // deferred with a clean diagnostic.  Graduates the golden
 // `doc/claude/plans/35-match-peg/probes/g-p7-iterator-match.loft`.  Cross-mode + leak-checked.
+//
+// @FR-P-Rep-Scalar: `args: integer *` over the pulled items is the typed rest (call/2).
+// @FR-P-Rep: `(x: Num)*` collects the leading Num tokens (2).
+// @FR-P-Rest: `..rest` takes the tokens the repetition left (1).
 
 enum Tok {
   Num { n: integer },

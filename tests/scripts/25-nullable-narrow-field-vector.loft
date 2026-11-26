@@ -10,6 +10,10 @@
 // index 0 read back null. Fixed by peeling the `Optional` + folding it into
 // `nullable` in `emit_field` (generation/mod.rs) so the field takes the narrow
 // `db.short(min, true)` path. Gate-OFF the `?` is a no-op → identical.
+//
+// @FR-N-Reserve: a full-range `limit(0, 255)?` must hold 255 AND its null, so it takes a wider code.
+// @FR-L-Narrow: the field's width is the smallest that holds that range.
+// @FR-H-Stride: every element, not only index 0, reads back at the struct's stride.
 
 struct FullU8 {
   x: integer limit(0, 255)?,

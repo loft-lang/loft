@@ -13,6 +13,11 @@
 // key was absent (it copied into a null lookup) — there was no working
 // dedup-insert idiom.  Fixed with a new `OpSetKeyed(coll, value, tp)` op
 // (find-or-insert, dedup by value's key) emitted for keyed `coll[key] =`.
+//
+// @FR-Col-Assign: `h[k] = Ent { … }` places a copy under the key, inserting when absent and
+//   replacing when present.
+// @FR-Col-Insert: `dh += [Ent { ck: 1, v: 99 }]` over a present key replaces it — len stays 2,
+//   latest wins.
 
 struct Ent {
   ck: integer,

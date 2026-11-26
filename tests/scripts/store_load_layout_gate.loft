@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Gate: a reader whose identity equals the sidecar's reads the image.
+// @FR-S-Sidecar: persisting writes the .dschema sidecar the gate reads.
 //
 // @PLN97 3b.5 — the layout-identity gate (matching half). Persisting a
 // hash<Tile[id]> now writes a `.dschema` sidecar recording the store's layout.

@@ -10,6 +10,9 @@
 //
 // Gate-OFF the `?` is a no-op, so this self-asserts identically gate-OFF (script
 // sweep) and gate-ON (tests/pln25_dn1_consumption.rs, both backends).
+//
+// @FR-E-Null: a `character?` null is the reserved codepoint 0, and `== null` finds it in every shape.
+// @FR-E-Coalesce: `nc() ?? 'z'` falls to the default.
 
 fn nc() -> character? {
   return null;

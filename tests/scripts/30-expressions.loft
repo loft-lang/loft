@@ -1,6 +1,9 @@
 // Copyright (c) 2021-2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Expression evaluation: arithmetic, function calls, control flow, recursion.
+//
+// @FR-E-Concat: `"abc_de" + ch` and `s += ch` join a character onto a text.
+// @FR-F-Rec: `first`/`second` recurse mutually, each call in its own frame (12).
 
 // @EXPECT_WARNING: Division by constant zero
 fn test_div_by_const_zero() {

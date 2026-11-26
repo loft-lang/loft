@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: prefix '!' is the negation of presence: a record's, nullable or not (OpConvBoolFromRef); a nullable scalar's; a struct enum's own null test.
+// @FR-E-Truthy: `!e` on a record, a nullable scalar or a struct enum reads absence as false.
+// @FR-E-Truthy-1: a present value of any kind is true there, so `!` of it is false.
 // Prints: -1 3 true -1 false true false
 struct S { a: integer }
 enum E { A { n: integer }, B }

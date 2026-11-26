@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record, null, a call and a literal written into a nullable record field.
+// @FR-E-Default: `b.one?.x` on a null field reads the type's default record (0).
+// @FR-H-Write: a record, null, a call and a literal written into a nullable field are what it holds after.
 // Prints: 50 0 3 8 50
 struct Pt { x: integer, y: integer }
 struct Box { one: Pt?, n: integer }

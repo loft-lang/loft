@@ -4,6 +4,8 @@
 // Gate E cell: `p = S { … }` in a lambda over a captured `&S` builds the literal into the record
 // the capture points at, field by field (`OpGetDbRef(__closure, 0)` as the place), so the
 // caller sees the new value; the capture is shared, not boxed.
+// @FR-L-CapRef: a lambda over a captured `&S` writes the caller's record.
+// @FR-B-Ref-Write: the whole-value write through the link replaces the source's contents (42 2).
 // Prints: 42 2
 
 struct S { n: integer, v: vector<integer> }

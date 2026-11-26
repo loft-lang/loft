@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: null into a declared local is the declared type's own null (Parser::null_value): a record's, a struct enum's or a vector's reference sentinel, a plain enum's, a text's or a scalar's OpConv…FromNull.
+// @FR-E-Null: `null` stored into a declared local is that type's own reserved null, so `== null` holds at every kind.
+// @FR-N-Store: null stored into a non-null declared slot is a warning, not a refusal, and the slot holds null.
 // Prints: true true true true true true true true / false false
 struct S { a: integer }
 enum E { A { n: integer }, B }

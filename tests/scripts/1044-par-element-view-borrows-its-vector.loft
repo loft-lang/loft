@@ -15,6 +15,11 @@
 // unused-variable warning, which is why the shape is easy to write and was easy to miss.
 // Reading a FIELD (`e.v`) never tripped it, and a non-`par` loop with the identical body
 // never tripped it — both are kept below as in-file controls.
+//
+// @FR-O-Borrow: a `par` element aliases the caller's vector and never frees it, whatever the body
+//   binds.
+// @FR-B-Copy: `keep = e` / `_ = e` binds an independent copy, so the source vector stays readable
+//   after the loop.
 
 struct Cell { v: integer }
 

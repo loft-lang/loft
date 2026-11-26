@@ -14,6 +14,10 @@
 // vector non-`&` rebind (P2.4), vector `&` write-back, and the struct `&`
 // write-back store leak (P2.2) — are pinned as lock-in tests in tests/issues.rs
 // (search @PLN87) until they land, then move here.
+//
+// @FR-F-ParamRebind: `o = Obj {…}` / `v = [7, 8, 9]` on a non-`&` parameter leave the caller alone.
+// @FR-F-ParamRef: the same reassign through `&` reaches the caller (9, [7, 8, 9], 5).
+// @FR-F-ParamHeap: a field or element write and `+=` through the parameter reach the caller.
 
 struct Obj {
   x: integer,

@@ -10,6 +10,9 @@
 //
 // @falsified-at: none — the coercion has no earlier build to catch: before it, every cell
 //   here was a compile error (measured on the probe that became this file, 2026-09-28).
+//
+// @FR-Slice-Value: `v[a..b]` is a fresh vector wherever a vector is expected; a by-value callee
+//   growing it leaves the source.
 
 struct Bag { items: vector<integer>, tag: text }
 fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }

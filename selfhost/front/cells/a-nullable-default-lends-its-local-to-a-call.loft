@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: 'c ?? Rec {..}' on a local borrows the local: bound, the local types by its arms and borrows nothing; as an argument, the call's result borrows it (call_dependencies).
+// @FR-E-Coalesce: `c ?? Canvas {..}` answers the present `c` (1), bound and as an argument.
+// @FR-O-Move: a call answering its argument borrows it and the caller copies (`(k?).w` = 1).
 // Prints: 1 1
 struct Canvas { data: vector<integer>, w: integer }
 fn keepn(a: Canvas) -> Canvas? { a }

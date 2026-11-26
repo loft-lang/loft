@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Integers
 // @TITLE: Whole numbers and arithmetic
+// @FR-N-Cast: `text as integer?` is the checked parse: the number, or null.
+// @FR-E-Uncomp: a division by zero and an overflowing `u8?` are null.
+// @FR-E-Uncomp-NN: an overflowing non-nullable `u8` takes its default, 0.
+// @FR-F-Spec: the `#x` `o` `b` `+` width and `0N` specs of an integer hole.
+// @FR-G-Prec: `*` binds tighter than `+`, and `+` tighter than `<<`.
 // Numbers are at the heart of almost every program. This page covers the
 // integer types Loft provides, the arithmetic and bitwise operations you can
 // perform on them, how to convert between numbers and text, and what Loft

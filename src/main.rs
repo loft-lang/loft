@@ -342,7 +342,8 @@ fn print_help() {
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
     println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
-    println!("                                backend; a *.so output builds just the library");
+    println!("                                backend; a *.so output builds just the library;");
+    println!("                                with --ship, signed by loft.toml's [android] key");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -592,6 +593,9 @@ fn print_help() {
     println!("  --refresh                     force re-fetch the registry index");
     println!("  --offline                     use cache only; fail if anything's missing");
     println!("  --prerelease                  resolve prerelease versions too");
+    println!(
+        "  --allow-stale                 install with an index or advisory feed over 30 days old"
+    );
     println!(
         "  --allow-unsigned              proceed when the index carries no signature (a mirror"
     );
@@ -1378,6 +1382,7 @@ fn package_info(name: &str) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -1593,6 +1598,7 @@ fn api_registry_catalog(refresh: bool) {
         refresh,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -1652,6 +1658,7 @@ fn write_api_stubs(lock_path: &std::path::Path, project_dir: &std::path::Path) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2009,7 +2016,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
-            let tmp = std::env::temp_dir().join(format!(
+            let tmp = loft::platform::scratch_dir().join(format!(
                 "loft-self-update-{to}-{}-{nanos:09}",
                 std::process::id()
             ));
@@ -2109,6 +2116,19 @@ fn verify_self_cmd() -> i32 {
     // verification and then segfaulted in `OpFreeText` on `println("hello")`.
     let loaded = stdlib_default_dir();
     let mut checks = local_checks(&root, Some(loaded.as_path()));
+    // The registry index and advisory feed the bundle ships for a machine with none.
+    #[cfg(feature = "registry")]
+    checks.extend(
+        loft::registry_cache::seed_checks(&root)
+            .into_iter()
+            .map(|(ok, line)| {
+                if ok {
+                    Check::Ok(line)
+                } else {
+                    Check::Failed(line)
+                }
+            }),
+    );
     // Only consult the registry for something that IS a bundle; a source checkout has
     // no manifest to anchor, and a network round-trip to say so would be noise.
     if !checks.iter().all(|c| matches!(c, Check::Skipped(_))) {
@@ -2217,6 +2237,7 @@ fn list_installed() {
         refresh: false,
         offline: true, // never hit the network for this query
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2375,6 +2396,7 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
         refresh: false,
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: Some(lock_path.clone()),
     };
@@ -2584,6 +2606,7 @@ fn bundle_export(
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2682,8 +2705,18 @@ fn bundle_copy_feeds(out: &std::path::Path) -> Result<(), String> {
             out.join("index.json.sig2"),
         );
     }
+    // When each copy was last known current, so the import measures its age from that and not
+    // from the day it is unpacked (`registry_cache`).
+    let _ = fa::copy(
+        loft::registry_cache::verified_at_path(&idx_path),
+        loft::registry_cache::verified_at_path(&out.join("index.json")),
+    );
     let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
     if fa::exists(&adv_path) {
+        let _ = fa::copy(
+            loft::registry_cache::verified_at_path(&adv_path),
+            loft::registry_cache::verified_at_path(&out.join("advisories.json")),
+        );
         let _ = fa::copy(&adv_path, out.join("advisories.json"));
         if fa::exists(&adv_sig_path) {
             let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
@@ -2781,15 +2814,70 @@ fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
         eprintln!("loft bundle import: cannot create {e}");
         return 1;
     }
+    // The cache only moves forward: a bundle older than what is here would put back fewer
+    // yanks and fewer advisories, so it is refused before anything is written.
     let (idx_path, sig_path, _) = registry_index::index_paths();
-    if let Err(e) = registry_index::write_signed_pair(&idx_path, &sig_path, &idx_bytes, &idx_sig) {
+    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
+    let index_verifies =
+        &mut |c: &[u8], s: &[u8]| loft::install::verify_or_explain(c, s, &opts).is_ok();
+    let feed_opts = loft::registry_advisories::LoadOptions {
+        allow_unsigned,
+        ..Default::default()
+    };
+    let feed_verifies =
+        &mut |c: &[u8], s: &[u8]| loft::registry_advisories::verify_feed(c, s, feed_opts).is_ok();
+    let older = loft::registry_cache::newer_copy_cached(
+        "bundle's index",
+        &idx_path,
+        &sig_path,
+        &idx_bytes,
+        index_verifies,
+    )
+    .or_else(|| {
+        feed.as_ref().and_then(|(content, _)| {
+            loft::registry_cache::newer_copy_cached(
+                "bundle's advisory feed",
+                &adv_path,
+                &adv_sig_path,
+                content,
+                feed_verifies,
+            )
+        })
+    });
+    if let Some(why) = older {
+        eprintln!("loft bundle import: {why}\n  nothing was imported.");
+        return 1;
+    }
+    // Known current when the bundle was exported, or at the latest when the registry wrote it.
+    let known_at = |doc: &str, content: &[u8]| {
+        fa::read_to_string(loft::registry_cache::verified_at_path(&inp.join(doc)))
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok())
+            .or_else(|| loft::registry_cache::updated_secs(content))
+            .unwrap_or(0)
+    };
+    if let Err(e) = loft::registry_cache::place_pair(
+        "bundle's index",
+        &idx_path,
+        &sig_path,
+        &idx_bytes,
+        &idx_sig,
+        known_at("index.json", &idx_bytes),
+        index_verifies,
+    ) {
         eprintln!("loft bundle import: cannot write the index: {e}");
         return 1;
     }
     if let Some((content, sig)) = feed {
-        let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-        if let Err(e) = registry_index::write_signed_pair(&adv_path, &adv_sig_path, &content, &sig)
-        {
+        if let Err(e) = loft::registry_cache::place_pair(
+            "bundle's advisory feed",
+            &adv_path,
+            &adv_sig_path,
+            &content,
+            &sig,
+            known_at("advisories.json", &content),
+            feed_verifies,
+        ) {
             eprintln!("loft bundle import: cannot write the advisories: {e}");
             return 1;
         }
@@ -3950,6 +4038,7 @@ fn pin_script(script: &str, allow_unsigned: bool) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -3966,6 +4055,7 @@ fn pin_script(script: &str, allow_unsigned: bool) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: Some(sidecar.clone()),
     };
@@ -4730,6 +4820,7 @@ fn registry_sync(allow_unsigned: bool) {
             refresh: true,
             offline: false,
             allow_prerelease: false,
+            allow_stale: false,
             skip_lockfile: false,
             lock_path: None,
         };
@@ -4974,7 +5065,7 @@ fn registry_list(installed_only: bool) {
 #[cfg(feature = "registry")]
 fn chrono_date() -> String {
     // Use file modification time of a temp file as a proxy for "now".
-    let tmp = std::env::temp_dir().join(".loft_date_probe");
+    let tmp = loft::platform::scratch_dir().join(".loft_date_probe");
     let _ = fa::write(&tmp, "");
     let date = fa::metadata(&tmp)
         .ok()
@@ -6240,7 +6331,8 @@ fn compat_test_verdict(name: &str, version: &str, published: &std::path::Path) -
         eprintln!("loft compat: `{name}` {version} ships no tests/ — nothing to check against");
         return TestVerdict::CouldNotRun;
     }
-    let base = std::env::temp_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
+    let base =
+        loft::platform::scratch_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
     let _ = fa::remove_dir_all(&base);
 
     // CONTROL: the published tests against the published source. Establishes that this corpus
@@ -8224,6 +8316,7 @@ fn main() {
                 refresh: false,
                 offline: false,
                 allow_prerelease: false,
+                allow_stale: false,
                 skip_lockfile: false,
                 lock_path: None,
             };
@@ -8246,6 +8339,12 @@ fn main() {
                     #[cfg(feature = "registry")]
                     {
                         install_opts.allow_prerelease = true;
+                    }
+                    i += 1;
+                } else if a2 == "--allow-stale" {
+                    #[cfg(feature = "registry")]
+                    {
+                        install_opts.allow_stale = true;
                     }
                     i += 1;
                 } else if a2 == "--allow-unsigned" {
@@ -10522,6 +10621,15 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        // How the APK is signed, settled before the build: a `--ship` build signs with the
+        // key the program's loft.toml names, or is left unsigned; never with the debug key.
+        let signing = match android::signing(ship_build, std::path::Path::new(&abs_file)) {
+            Ok(s) => s,
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        };
         let end_def = p.data.definitions();
         // The generated `android_main` runs the program's `fn main`, so an Android
         // app needs one (unlike a `--native` test file, which can be entry-less).
@@ -10576,6 +10684,7 @@ fn main() {
             let package = android::Package {
                 staging: &staging,
                 keystore_dir: &work,
+                signing: &signing,
                 debuggable: !ship_build,
                 assets: &assets,
                 libs: &libs,

@@ -4,6 +4,8 @@
 // Gate E cell: a lambda whose tail is a call building into its buffer: a declared result grows the
 // call's `__ref_N` into a hidden parameter on the first pass (`Grow`); a short lambda's late
 // `__retbuf` is handed to the call (`one_buffer_chain`); a literal tail is copied in.
+// @FR-F-Ret: a lambda whose tail is a call or a literal answers an independent vector ([1,10] [1]).
+// @FR-I-Map: `xs.map` over such lambdas appends each answer (2 2).
 // Prints: [1,10] [1] 2 2 1
 
 fn pair(x: integer) -> vector<integer> { [x, x * 10] }

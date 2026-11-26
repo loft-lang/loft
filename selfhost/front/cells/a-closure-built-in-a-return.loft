@@ -3,6 +3,8 @@
 //
 // Gate E cell: `return fn() -> integer { 100 + e.a }` returns the closure it builds
 // (`fn_ref_with_closure`) as it is; a lambda capturing nothing returns its number.
+// @FR-L-Escape: a closure returned by `return fn …` keeps its capture `e` (102).
+// @FR-L-CapOwn: the captured record leaves the frame with the closure that adopted it.
 // Prints: 102 204
 
 struct E { a: integer }

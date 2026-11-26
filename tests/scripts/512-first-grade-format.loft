@@ -8,6 +8,10 @@
 // its own spec DSL, while built-in `{n:05d}` / `{n:x}` grammar is untouched.
 // A struct with no `to_text` falls back to the generic field dump. All three
 // backends; the raw-vs-grammar branch is two-pass stable.
+//
+// @FR-Op-Back: `{m}` / `{m:dollars}` are `m.to_text()` / `m.to_text("dollars")`.
+// @FR-Op-Fold: `{p}` reaches the one-argument `operator to_text`.
+// @FR-F-Spec: the built-in width and radix grammar still applies to integers.
 
 struct Money {
   cents: integer not null,

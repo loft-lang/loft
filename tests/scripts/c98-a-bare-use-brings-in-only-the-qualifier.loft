@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Surface: a bare use brings in only the lib:: qualifier, so a bare library name is refused naming its library.
 //
 // @ARGS: --lib tests/lib
 // @falsified-by: tests/falsified/c98-import-rules.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)

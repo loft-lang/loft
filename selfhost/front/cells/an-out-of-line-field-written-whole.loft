@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a whole write to an out-of-line field goes through its child record (out_of_line_set): a literal built in the child, null releasing it, a fresh call copied in and its store freed, a local copied in.
+// @FR-B-OutOfLine: an out-of-line field written whole by a literal, null, a call and a local copies into the host; null releases the child.
 // Prints: 2 true 3 9 5 9
 struct N { v: integer, next: N? }
 

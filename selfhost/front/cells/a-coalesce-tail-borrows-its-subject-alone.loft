@@ -4,6 +4,8 @@
 // Gate E cell: a record function whose tail is `o ?? s` borrows its subject alone (`-> Vo["o"]`):
 // the `??`'s value is its subject's, so its default is no candidate of the parameter-join
 // return; an `if` over the same parameters borrows both.
+// @FR-E-Coalesce: `o ?? s` with `o` null answers `s` (1).
+// @FR-O-Move: the result borrows a parameter, so the caller copies it to own a store.
 // Prints: 1
 
 struct Vo { x: integer }

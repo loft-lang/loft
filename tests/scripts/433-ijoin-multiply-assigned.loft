@@ -10,6 +10,8 @@
 // u8" on BOTH backends (and the cbor `read_value` shape E0308'd on native).  An
 // inferred local now widens to the join (`integer`); an explicitly annotated `arg: u8`
 // would stay constrained (still an error).  Must run identically on interpret + native.
+//
+// @FR-I-Join: `arg` takes the join of its writes (u8 then integer), so 1*256+2 = 258 fits.
 
 fn second(b: vector<u8>) -> integer {
   arg = b[0];

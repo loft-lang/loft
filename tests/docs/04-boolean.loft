@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Boolean
 // @TITLE: True, false, and null
+// @FR-E-Truthy: a null in a condition or under `!` reads as false.
+// @FR-E-Uncomp: a division by zero is null.
+// @FR-F-Render: a boolean renders `true`/`false`, a null integer `null`.
+// @FR-F-Spec: `^` centres a boolean in its field.
 // A boolean value is either 'true' or 'false'. Booleans appear naturally
 // wherever you make a decision: in 'if' conditions, loop filters, and
 // comparisons. Declared as 'boolean?', a boolean gets a third state called

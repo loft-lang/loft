@@ -1740,6 +1740,8 @@ typedef struct {
                          const unsigned char *entries, uint32_t n);
     /* `@PLN226` — this unit's store context for `stores` (`loft_host_cx`). */
     void *(*cx_of)(void *stores, const void *unit, void *(*make)(void), void (*end)(void *));
+    /* `@FR-Art-Key` — where the running loft finds a component library, by its file name. */
+    const unsigned char *(*component)(const char *file, size_t len, size_t *out_len);
 } loft_hosted_table;
 static const loft_hosted_table *loft_hosted = 0;
 /* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */

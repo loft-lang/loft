@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector of tuples with narrow integer members: each member written and read at its width in the element (`OpSetByte`, `OpGetShortRaw`), the rows named by the members' ranges.
+// @FR-T-Record: a narrow tuple member is narrow, in a vector element too.
+// @FR-L-Narrow: `u8` and `u16` members keep 250 and 65000.
 // Prints: 250 65000
 
 fn main() {

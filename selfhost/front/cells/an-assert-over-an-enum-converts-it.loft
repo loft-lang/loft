@@ -3,6 +3,8 @@
 //
 // Gate E cell: `assert(delete(p), …)` over a `FileResult` converts the condition to a boolean,
 // a plain enum's truth its ordinal's (`OpConvBoolFromEnum`, `convert`'s `conv_bool_call`).
+// @FR-E-Assert: `assert(c, m)` continues when its condition holds.
+// @FR-E-Truthy-1: a present plain enum value is true in the assert condition.
 // Prints:
 
 fn main() {

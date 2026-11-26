@@ -56,6 +56,52 @@ typedef struct {
     int legacy_nul;
 } loft_pg;
 
+#if !defined(LOFT_BROWSER)
+/* `paged_reader::plain_http_remote_host`: whether `url` is plain `http://` to a host that is not
+ * this machine (`localhost`, `127.*`, `[::1]`); the host's span in `*host` / `*n` when it is. */
+static int loft_pg_plain_http_remote(const char *url, const char **host, size_t *n) {
+    if (strncmp(url, "http://", 7) != 0) return 0;
+    const char *a = url + 7, *end = a + strcspn(a, "/?#");
+    for (const char *p = a; p < end; p++)
+        if (*p == '@') a = p + 1;
+    const char *h = a, *he;
+    if (*h == '[') {
+        h++;
+        he = memchr(h, ']', (size_t) (end - h));
+        if (!he) he = end;
+    } else {
+        he = memchr(h, ':', (size_t) (end - h));
+        if (!he) he = end;
+    }
+    size_t len = (size_t) (he - h);
+    if (len == 0) return 0;
+    int localhost = len == 9;
+    for (size_t i = 0; localhost && i < 9; i++)
+        localhost = (h[i] | 0x20) == "localhost"[i];
+    if (localhost || (len >= 4 && strncmp(h, "127.", 4) == 0) || (len == 3 && strncmp(h, "::1", 3) == 0))
+        return 0;
+    *host = h;
+    *n = len;
+    return 1;
+}
+
+/* A paged store trusts its server the way a mapped file trusts its filesystem (REMOTE_STORES.md
+ * § Trust): the first plain-`http://` read of another machine in a run says so, once.  Not in a
+ * page, whose own code came from that origin.  `@FR-C-Publish` for the once. */
+static void loft_pg_note_plain_http(const char *url) {
+    static int once = 0;
+    const char *h;
+    size_t n;
+    if (loft_pg_plain_http_remote(url, &h, &n) && loft_once_begin(&once)) {
+        fprintf(stderr, "loft: %.*s is read over plain http: anyone on the network path can change "
+                        "what is read; serve it over https\n", (int) n, h);
+        loft_once_end(&once);
+    }
+}
+#else
+static void loft_pg_note_plain_http(const char *url) { (void) url; }
+#endif
+
 /* PageSource::open: the image, refused when it does not begin with the store signature — 1, else
  * 0 with `err` saying why.  A URL is sized by its probe and its first four bytes range-read
  * (`HttpRangeProvider::open`). */

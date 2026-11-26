@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: an image is a rebuilt copy, so insertion order changes no value a reload reads.
 //
 // @PLN123 B0 — the oracle arc B is built against, and its calibration.
 //

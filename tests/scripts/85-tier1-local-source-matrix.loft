@@ -15,6 +15,9 @@
 // keep COPY semantics — Tier 1 refuses to borrow them, so they also agree. The
 // values are chosen so a WRONG borrow would diverge (d2 would read 99, not 10).
 // See doc/claude/plans/25-nullable-sequences/copy-elision-design.md § Tier 1.
+//
+// @FR-H-Copy: `v = x.c` is a fresh vector: `x.c[0] = 99` or `bump(x)` later leaves v[0] at 10.
+// @FR-B-Copy: a write through `v` does not reach `x.c`.
 
 struct G {
   c: vector<integer>,

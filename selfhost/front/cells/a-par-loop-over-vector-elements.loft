@@ -3,6 +3,8 @@
 //
 // Gate E cell: a `par` loop whose element is a vector queues each element as its four-byte handle
 // (`element_store_size`), the bare `vector` row made where it is missing.
+// @FR-C-Par: a `par` loop whose elements are vectors hands each whole to the worker.
+// @FR-C-Det: with a pure worker the sum equals the sequential one (21).
 // Prints: 21
 
 fn total(v: vector<integer>) -> integer { s = 0; for x in v { s += x; } s }

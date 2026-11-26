@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged: the paged reader finds the collection at its field's position in the root record and serves the hash.
 //
 // #632 — a collection declared as a struct FIELD records the WRAPPER STRUCT as
 // its bound store's type. The paged working-set loaders now DESCEND the wrapper

@@ -204,9 +204,10 @@ fn kernel_frame();
 // transport negotiation is FULLY kernel-internal — the developer never sees
 // it (a core lavition/loft value: never bother the developer with details
 // that don't aid them; the server takes the fastest path available,
-// automatically).  The handshake cookie rides the WS 101 upgrade response as
-// an `X-Loft-UDP` header; a native client's kernel reads it and hellos
-// (`H:<cookie>` → `A:<cid>`).  The developer declares per message KIND, not
+// automatically).  A per-connection session key rides the WS 101 upgrade
+// response as an `X-Loft-UDP` header; a native client's kernel reads it and
+// seals every datagram under it, the hello first.  Under `ws://` that key
+// crosses the network in plain text, so such a session is LAN-grade.  The developer declares per message KIND, not
 // per call: `sync_class(msg_id)` marks a kind as latest-value state, and the
 // ordinary `send`/`broadcast` then ride UDP for that kind whenever the client
 // can.  Web pages cannot send UDP, never hello, and the same calls keep
@@ -422,7 +423,7 @@ pub fn run(port: integer, tick_interval_us: integer, on_event: fn(Event), on_tic
 //
 // A native client's half of the auto-path, with the same zero-transport
 // surface as the listener: `run_client` connects, upgrades, reads the
-// kernel-negotiated UDP cookie from the 101 head, hellos until acked and
+// kernel-negotiated UDP session key from the 101 head, hellos until acked and
 // keepalives after — all invisible.  `client_send` routes by the SAME
 // wire-schema table (`sync_class`): declared kinds ride datagrams once the
 // path is live, everything else (and everything before) rides WS.  Inbound

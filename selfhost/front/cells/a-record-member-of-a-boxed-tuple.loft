@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record member of a boxed tuple is read where it lies in the tuple's record (`OpGetField`), a view of the tuple's local: bound to a local, and read through to its own fields.
+// @FR-T-Proj: `b.1` answers the record member, read through to its fields.
+// @FR-T-Record: a record member of a tuple is what a record field is: bound and read like one.
 // Prints: 4 8 t 8
 
 struct P { id: integer, tag: text }

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // P5.2: Generic function call-site instantiation.
 // Generics support pass-through operations: assign and return.
+//
+// @FR-G-Gen: `identity<T>` is an unbounded type variable.
+// @FR-G-Mono: each call specialises it at its argument's type (42, 3.14, hello, true).
 
 fn identity < T > (x: T) -> T {
   x

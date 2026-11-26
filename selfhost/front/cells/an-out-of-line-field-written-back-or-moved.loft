@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: an out-of-line field written from a call that answers its argument (write_back_call: bound as a borrow of the host, a store minted for the call released) and from a read of its own child (move_child: OpMoveChildRec); a literal an early return answers is built into the buffer beside a parameter tail.
+// @FR-B-OutOfLine: `t.left = insert(t.left, k)` and `t.left = t.left.left` write an out-of-line field; the value is read before the old child goes.
+// @FR-T-Recursive: a struct reaching itself through `Tree?` fields.
 // Prints: 5 8 true
 struct Tree { k: integer, left: Tree?, right: Tree? }
 

@@ -9,6 +9,9 @@
 // full range, so the field was under-allocated to 1 byte and the write stored the
 // 1-byte `255` sentinel into a field the read decoded as a 2-byte Short — null
 // read back as `max-1` (e.g. `255`/`126`).  Both backends must agree.
+//
+// @FR-N-Reserve: a full-range nullable field must hold every value AND its null.
+// @FR-L-Narrow: its width is the smallest that holds that range plus the null.
 
 // Full byte range (256 distinct values) — must widen to hold the null sentinel.
 struct FullU8 {

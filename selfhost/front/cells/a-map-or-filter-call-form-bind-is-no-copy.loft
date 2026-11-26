@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: the free-function spelling `map(nums, f)` / `filter(nums, f)` binds no copy_bound local; the method spelling over a local does.
+// @FR-I-Map: `map(nums, f)` and `nums.map(f)` answer the same fresh vector ([2,4,6] twice).
+// @FR-I-Filter: `filter(nums, f)` keeps the elements the predicate holds for ([2,3]).
 // Prints: [2,4,6] [2,4,6] [2,3]
 
 fn main() {

@@ -285,6 +285,70 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check-release-published.py
 
+  # The registry's signed index and advisory feed are re-signed at least weekly
+  # (scripts/registry-heartbeat.sh, run before a PR is opened), so a signed `updated` says
+  # the document was current no earlier than that and a client can refuse one too old to be
+  # the current document (PKG_REGISTRY_TRUST.md § The heartbeat).  This job keeps it going.
+  # On a PR: silent under 6 days; on the LAST day, 6 days, loud but green — a warning
+  # annotation and the run's summary name the moment the block starts; from 7 days red, which
+  # blocks the merge.  On the daily schedule and on main: from 6 days an issue labelled
+  # `registry-heartbeat` names that moment, so the re-sign happens before any PR is blocked;
+  # it is closed by the first run that finds the registry re-signed.
+  registry-heartbeat:
+    # @windows-exempt: platform-free — reads the registry
+    name: registry re-signed this week
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: How long ago the registry was signed
+        id: age
+        shell: bash
+        run: |
+          set +e
+          out=$(python3 scripts/check-registry-heartbeat.py)
+          code=$?
+          set -e
+          [ -z "$out" ] || echo "$out"
+          { echo "code=$code"; echo "message<<HEARTBEAT_EOF"; echo "$out"; echo "HEARTBEAT_EOF"; } >> "$GITHUB_OUTPUT"
+          [ "$code" = 0 ] || echo "### $out" >> "$GITHUB_STEP_SUMMARY"
+          case "$code" in
+            0) ;;
+            2) echo "::warning title=Registry heartbeat: last day::$out" ;;
+            *) echo "::error title=Registry heartbeat::$out"; exit 1 ;;
+          esac
+      - name: Keep the heartbeat issue current
+        # Never from a PR: a pull request must not open issues on the repo.
+        if: always() && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CODE: ${{ steps.age.outputs.code }}
+          MESSAGE: ${{ steps.age.outputs.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create registry-heartbeat --color d93f0b \
+            --description "The registry must be re-signed before PRs are blocked" --force >/dev/null 2>&1 || true
+          existing=$(gh issue list --state open --label registry-heartbeat \
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ "$CODE" = 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --reason completed \
+                --comment "Re-signed: the registry was signed less than 6 days ago ($RUN_URL)."
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$MESSAGE ($RUN_URL)"
+          else
+            gh issue create --title "Re-sign the registry before PRs are blocked" \
+              --label registry-heartbeat \
+              --body "$MESSAGE ($RUN_URL)
+
+          Run \`scripts/registry-heartbeat.sh\` on the machine that holds the registry key; this issue closes itself on the next run that finds the registry re-signed."
+          fi
+
   # Shim for the complementary (docs-only) case — see the `changes` comment.
   # Emits the required per-OS `Test (<os>)` contexts as trivially green so branch
   # protection is satisfied without spinning up the real matrix.  Windows is NOT

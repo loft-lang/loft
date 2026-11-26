@@ -25,6 +25,11 @@
 //   WITNESS: *p1 a loop's push: 3331520* where 3 330 102 is due: the two defaulted entries read
 //     the cleared entries' 7 and 9 (709 each).
 //   HOLDS: leak, panic and free-refusal equal and clean on both backends.
+//
+// @FR-H-Claim: a field the construction does not write from its source is written to its type's
+//   default (h 0, text null), @C137.
+// @FR-H-NewRec: every fresh element's fields are written before any read, so no refilled entry
+//   reads a cleared entry's 7/9.
 
 struct Hx { h: integer, m: integer }
 struct Ht { h: integer, t: text }

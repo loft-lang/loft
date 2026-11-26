@@ -10,6 +10,9 @@
 // allocation handed the SAME store to a second owner, whose writes wiped the
 // first's record (the File record clobbered by the result vector: every
 // `.lines()` after the first returned empty).
+//
+// @FR-H-Alloc: each iteration's `lines()` result is a FRESH store, distinct from every live one.
+// @FR-O-Owner: no store has two owners, so a later result cannot wipe the File record.
 
 // @PLN9: cwd-relative paths — this test does cwd-relative file I/O.
 #cwd

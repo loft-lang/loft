@@ -22,6 +22,10 @@
 // The axes below are one composition each; every expected value is hand-computed
 // (both backends were wrong the SAME way, so agreement is not a pass).  Full
 // matrix + the 24-probe suite: doc/claude/plans/nested-narrow-width/.
+//
+// @FR-H-Stride: an inner narrow vector's elements are read at their declared width at every depth.
+// @FR-F-Render: `"{v}"` renders every inner element ([[1001,2002],[3003,4004]]).
+// @FR-Slice-Value: `a[1..3]` keeps the rows and their contents.
 
 fn fmt_nest(v: vector<vector<integer>>) -> text {
   out = "";

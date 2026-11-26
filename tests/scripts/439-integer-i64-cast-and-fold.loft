@@ -3,6 +3,9 @@
 // integer — via a `float as integer` cast or a const-folded arithmetic result — must keep
 // its full i64 value, identically on interp and --native.  Companion to 438 (storage
 // round-trips); this one guards the CONSTRUCTION sites `Value::int_const` covers.
+//
+// @FR-E-Op: `2147483647 + 1` is representable, so it is 2147483648, never a wrapped i32.
+// @FR-W-Name: outside the 32-bit regime `integer` is 64-bit, so the casts keep 9000000000.
 
 // @FTR-074 — the resolver's constant work: a cast and a folded arithmetic result keep the
 // full i64 value, identically on both backends

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Move: a return of a parameter records the borrow, whatever the callee appended to it.
+// @FR-F-Ret: the caller's bind of that borrowed result copies or keeps, never frees the caller's store.
 //
 // Regression (loft#677): a function that appends to TWO fields of a struct parameter and
 // then returns that parameter lost the `["o"]` borrow from its return type, so callers

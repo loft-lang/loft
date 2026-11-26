@@ -330,7 +330,7 @@ consumer's machine.  Layout:
 │   └── <registry-url-hash>/
 │       ├── index.json                 (cached registry index)
 │       ├── index.json.sig             (signature, verified on every load)
-│       ├── index.json.fetched_at      (ISO-8601 — staleness clock)
+│       ├── index.json.verified_at     (Unix seconds — the staleness clock)
 │       └── index.json.etag            (HTTP conditional-GET hint)
 ├── packages/
 │   └── <package>/
@@ -367,7 +367,8 @@ consumer's machine.  Layout:
 **Index refresh policy** (per registry URL):
 
 - TTL: 1 hour by default.
-- Re-fetched when `index.json.fetched_at` is older than 1 hour, OR
+- Re-fetched when the copy was last known current more than 1 hour
+  ago ([§ The age of a cached copy](#the-age-of-a-cached-copy-and-the-seed)), OR
   when `loft install --refresh` is passed, OR when the cached index
   cannot satisfy a `use` — the package is missing from it, or no version
   in range is (`install::auto_install_if_in_catalog`; only that miss pays
@@ -415,6 +416,34 @@ consumer's machine.  Layout:
   read with proves both came from the same generation — so a pair
   accepted after settling is matched, and one that never agrees is
   refused in the words it would have used anyway.
+
+### The age of a cached copy, and the seed
+
+A signature says who wrote the index or the advisory feed, not when the copy was read.  So
+each cached document has a stamp beside it, `<doc>.verified_at` (Unix seconds): the moment
+that copy was last known current.  A fetch that verifies writes it; a seed or a bundle brings
+its own (`src/registry_cache.rs`).  Every age is measured from the stamp: the TTLs above (the
+index's hour, the feed's 24 hours) and the install's limits below.  It is not the file's
+modification time, which copying resets, and not the document's `updated`, which says when
+the registry last changed it.
+
+- **The seed.**  A loft bundle ships the registry's signed index and feed in `registry/`
+  beside `bin/`, read at one registry commit when the bundle was built
+  (`scripts/make-release.sh`), with `source` (the registry URL) and `verified_at`.  A machine
+  whose cache has no copy, or a stale one, places the seed's copy first, verified as a fetch
+  is.  `LOFT_REGISTRY_SEED=<dir>` names another seed directory.  A seed is used only for the
+  registry its `source` names.  `loft verify-self` checks its signatures, and the release
+  build fails when they do not verify.
+- **The cache only moves forward.**  A fetch, a seed or `loft bundle import` that would
+  replace a verified copy with one whose `updated` is older is refused, and the cache keeps
+  its copy.
+- **Nothing is installed without the advisories.**  A fetched feed that is refused leaves the
+  verified copy here in use.  A feed that cannot be read is an error that stops `loft install`,
+  except for a registry that publishes none: one that is not the default and that this loft
+  carries no seed of, and that answers the request with "not there".
+- **The age of the copy in use.**  Past 7 days, `loft install` prints its age.  Past 30 days
+  it refuses, unless `--offline` or `--allow-stale` is given.  A copy read in the same run is
+  never old: the age only grows while the registry cannot be reached.
 
 **Download ceiling.**  A single HTTP response is capped at 512 MiB
 (`DEFAULT_MAX_DOWNLOAD`), overridable with `LOFT_MAX_DOWNLOAD=<size>`
@@ -548,6 +577,8 @@ writes a minimal one first, so the lock it writes has a root that governs it —
 |---|---|
 | Registry URL unreachable | Use cached index if not stale; else fail with "registry unreachable, try `--offline` if you have a cache" |
 | `--offline` flag | Never fetch; use cache; fail if a requested package isn't cached |
+| Advisory feed cannot be read | Use the cached or seeded copy; with none, fail — nothing installs without the advisories ([§ The age of a cached copy](#the-age-of-a-cached-copy-and-the-seed)) |
+| Cached index or feed over 30 days old | Fail, naming its age; `--allow-stale` or `--offline` installs with it (a warning past 7 days) |
 | Package not in registry | Fail with available alternatives (Levenshtein distance ≤ 2 on package names) |
 | No version satisfies constraint | Print conflicting constraints with package + dep chain |
 | sha256 mismatch | Delete partial download; fail; do NOT retry (could be a real attack) |
@@ -563,6 +594,7 @@ writes a minimal one first, so the lock it writes has a root that governs it —
 | `loft install <name>@<version>` | Add `<name> = "<version>"` to loft.toml, install. |
 | `loft install --refresh` | Force re-fetch the registry index. |
 | `loft install --offline` | Use cache only; fail if anything's missing. |
+| `loft install --allow-stale` | Install with an index or advisory feed last read over 30 days ago. |
 | `loft install --frozen` | Fail if loft.lock would change.  CI mode. |
 | `loft update` | Re-resolve all deps; rewrite loft.lock. |
 | `loft update <name>` | Re-resolve only `<name>`. |

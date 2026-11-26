@@ -1370,7 +1370,7 @@ pub(crate) fn loft_written_unit(
             )));
         }
     };
-    let stem = std::env::temp_dir().join(format!("loft_cgen_{}", std::process::id()));
+    let stem = loft::platform::scratch_dir().join(format!("loft_cgen_{}", std::process::id()));
     let image = format!("{}.store", stem.display());
     let unit = format!("{}.c", stem.display());
     let written = (|| {

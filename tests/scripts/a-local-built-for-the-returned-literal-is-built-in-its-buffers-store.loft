@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-R-ExitVector: a vector local returned only inside the exit literal moves into the buffer's field, and the declined shapes keep the copy.
 //
 // `(R-ExitVector)` — a vector local returned inside the exit literal is claimed in the return
 // buffer's store and moved into its field by a handle move.  These cells pin the rule's REACH as

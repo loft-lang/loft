@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: `d#lock` reads and `d#lock = b` sets a record's or a vector's store lock (`n_get_store_lock`, `n_set_store_lock`); an append onto a nullable vector local first builds the empty vector, in a backing of its own, where the local holds null.
+// @FR-H-WriteLocked: `#lock` set reads back true, and released it admits the write `d.n = 4`.
 // Prints: true 4 [1,2] [3,4,7]
 
 struct D { n: integer }

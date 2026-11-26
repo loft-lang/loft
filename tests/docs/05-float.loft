@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Float
 // @TITLE: Floating point operations and math functions
+// @FR-N-Domain: sqrt of a negative and 0.0/0.0 are null; 1.0/0.0 is inf.
+// @FR-N-Prop: a null float carries through arithmetic.
+// @FR-E-Uncomp: a float division by zero is IEEE's infinity, which `??` does not replace.
+// @FR-F-Float-Text: a float and a single render in their shortest form, `.P` fixes digits.
 // A 'float' stores a number with a decimal point, like 3.14 or -0.001.
 // It gives you about 15 significant digits of precision — enough for scientific
 // work, games, and most real-world maths.

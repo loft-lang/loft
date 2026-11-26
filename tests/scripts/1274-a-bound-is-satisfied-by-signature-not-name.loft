@@ -24,6 +24,11 @@
 // @falsified-at: INERT by construction, and that is the point. These rows PASS on both trees;
 //   the row that moves is the refusal in `parse_errors.rs`, which the pre-fix build accepts
 //   and answers `-9` for. A control that also moved would not be a control.
+//
+// @FR-G-Sat: `Numeric`'s unary `-` and `*`, `Ordered`'s `<` (and the derived `<=`, `>`, `>=`)
+//   resolve at their declared arity.
+// @FR-G-Gen: inside `fn f<T: I>` the body calls what I declares and answers per instantiation
+//   (integer and float).
 
 fn nmul<T: Numeric>(a: T, b: T) -> T { a * b }
 fn nneg<T: Numeric>(a: T) -> T { -a }

@@ -3,6 +3,8 @@
 //
 // Gate E cell: `map` to and `filter` over vector elements copy each element whole at the element
 // vector's own type (`vector<text>`, `vector<P>`), not the generic vector's.
+// @FR-I-Map: `map` to vector, text-vector and record-vector bodies appends each whole.
+// @FR-I-Filter: `filter` over a vector of text vectors keeps the whole elements it holds for (1).
 // Prints: 2 2 2 1
 
 struct P { n: integer }

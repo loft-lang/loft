@@ -10,6 +10,10 @@
 // reason this file keeps to scalars — a tuple VARIABLE with a text element passed to a
 // function does not compile on `--native` (loft#1005), and a `&(text, text)` reference-tuple
 // parameter is an internal compiler error (loft#1006).
+//
+// @FR-T-Proj: `t.0` / `t.1` read the members; `v.0 = 10` writes one.
+// @FR-T-Ref: a `&(integer, integer)` parameter names the caller's tuple, so `swap` swaps it.
+// @FR-T-Destr: `(da, db) = make_pair(5, 8)` binds the members positionally.
 
 // T1.5: reference-tuple parameter — swap elements in place.
 fn swap(pair: &(integer, integer)) {

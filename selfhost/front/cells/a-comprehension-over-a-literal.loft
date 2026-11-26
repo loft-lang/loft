@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a comprehension over a literal vector walks the literal's value block as it walks a local's vector.
+// @FR-I-Comp: a comprehension over a vector literal walks it as over a local ([8,10] [3,6]).
 // Prints: [8,10] [3,6]
 
 fn main() {

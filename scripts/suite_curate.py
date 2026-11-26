@@ -4,8 +4,10 @@
 """Work through every formal rule's suite cells, one rule at a time, towards a small set that
 still covers the rule totally — and record which rules are done.
 
-    scripts/suite_curate.py status            # how far: rules done, per state and chapter
-    scripts/suite_curate.py next [N]          # the next N rules in the fixed order (default 3)
+    scripts/suite_curate.py status            # how far: rules done, per state and chapter, and the
+                                              # rules that GREW since their pass (more citing files)
+    scripts/suite_curate.py next [N]          # the next N rules: `todo` in the fixed order, then the
+                                              # grown ones, most grown first (default 3)
     scripts/suite_curate.py plan <rule>       # one rule's evidence and the proposed core
     scripts/suite_curate.py related <rule> <regex>   # every test home's programs matching the rule's
                                               # construct, and the code sites that enforce it
@@ -20,6 +22,19 @@ still covers the rule totally — and record which rules are done.
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
     scripts/suite_curate.py done <rule> --structural <why>   # a rule no program can observe
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
+    scripts/suite_curate.py uncited [--list] [--check | --write-baseline]   # the test programs that
+                                              # cite no rule, per home; --check fails when a home has
+                                              # more than index/uncited_tests.baseline records
+    scripts/suite_curate.py attribute [--home H] [--tsv]   # for each program that cites no rule and
+                                              # has no verdict yet, the rules the rule-citing programs
+                                              # it most resembles test, and the rules its defect's
+                                              # fix cites: the leads for reading it
+    scripts/suite_curate.py verdict <program> link <Rule>… | new-rule <Name> | attic  <why>
+                                              # record what reading it found (index/attribution.tsv)
+    scripts/suite_curate.py verdicts          # how far the evaluation is, per home and verdict
+    scripts/suite_curate.py dups [<rule>] [--min F]   # programs whose code is mostly inside ANOTHER
+                                              # test program (a duplicate to fold or retire), with
+                                              # whether that one passes gate E; <rule>: its cells only
 
 THE LEDGER is `index/suite_curation.tsv`: one row per defined rule (`rule_tags.py list`, all of
 them — not only the cited ones), with its state, the cell count when it was done, and a note.
@@ -52,6 +67,24 @@ A rule is `done` only after the suite passes on both backends with the curated c
 THE ORDER is fixed — chapter, then rule, alphabetically — so a pass over the 642 rules is
 complete by construction and its position is one row.  A rule with one cell or none is quick
 (confirm, or mark `needs-cell`); the effort sits in the ~60 rules with eight cells or more.
+
+CURATION IS CONTINUOUS, NOT ONE PASS.  A defect adds a cell, so a curated rule grows again; a rule
+whose citing files outnumber the count `done` recorded is back in the queue (`status` lists them,
+`next` takes them after the `todo` rules, most grown first), and `done` re-records it.
+
+NO TEST RUNS WITHOUT A LINK TO A RULE (owner).  `uncited` counts the test programs that cite no
+`@FR-` rule — `tests/scripts`, `tests/docs`, `selfhost/front/cells` — against a baseline that may
+only go down, to zero.  A program whose rule cannot be found moves to the suite's attic, which
+runs nightly as a report and never gates, and leaves it only when a rule claims it.
+Nothing moves before it is READ (owner): a program may describe a rule whose link was missed,
+or one no formal chapter states yet.  Each reading is recorded with `verdict` in
+`index/attribution.tsv` — `link <Rule>…` (it tests that rule: name it in the header),
+`new-rule <Name>` (it describes behaviour no rule states: write the rule, then link), or
+`attic` (read, and no rule describes it: it moves) — and only an `attic` verdict moves a
+program.  `attribute` gives the leads for the programs not yet read: the rules the rule-citing
+programs it most resembles test, and for a defect's regression (`<issue>-…`) the rules its fix
+commit cites.  `dups` is the evidence for a fold: a program whose code (5-token windows, comments off)
+sits mostly inside another one.
 """
 import collections
 import datetime
@@ -104,10 +137,33 @@ def order(rows):
     return sorted(rows, key=lambda t: (rows[t][1], t))
 
 
+_GUARD = None
+
+
+def guard():
+    """`rule_tags.guard_citations()`, read once per run: it walks every test home, and `next`,
+    `status` and `uncited` ask it for every rule."""
+    global _GUARD
+    if _GUARD is None:
+        _GUARD = rule_tags.guard_citations()
+    return _GUARD
+
+
 def cells_of(tag):
     """The cells (and other guard files) that cite `@FR-<tag>`."""
-    guard = rule_tags.guard_citations()
-    return sorted({f for f, _ in guard.get(tag, [])})
+    return sorted({f for f, _ in guard().get(tag, [])})
+
+
+def grown(rows):
+    """[(added, rule, then, now)] for every worked-through rule with more citing files than `done`
+    recorded, most grown first: the re-curation queue."""
+    out = []
+    for t, r in rows.items():
+        if r[2] in ("curated", "needs-cell") and r[3].isdigit():
+            now = len(cells_of(t))
+            if now > int(r[3]):
+                out.append((now - int(r[3]), t, int(r[3]), now))
+    return sorted(out, key=lambda g: (-g[0], g[1]))
 
 
 def features(path, axes):
@@ -815,17 +871,368 @@ def status():
     for ch, (d, n) in sorted(per.items()):
         if 0 < d < n:
             print(f"  {ch:<14} {d}/{n}")
-    nxt = [t for t in order(rows) if rows[t][2] == "todo"][:1]
-    if nxt:
-        print(f"next: @FR-{nxt[0]} ({rows[nxt[0]][1]})")
+    g = grown(rows)
+    if g:
+        print(f"grown since their pass: {len(g)} rules, +{sum(x[0] for x in g)} citing files "
+              "(back in the queue; `next` takes them after the todo rules)")
+        for added, t, then, now in g[:10]:
+            print(f"  @FR-{t:<26} {then:>4} -> {now:<4} {rows[t][1]}")
+    queue = [t for t in order(rows) if rows[t][2] == "todo"] + [x[1] for x in g]
+    if queue:
+        print(f"next: @FR-{queue[0]} ({rows[queue[0]][1]})")
     return 0
 
 
 def nxt(n):
     rows = read_ledger()
-    todo = [t for t in order(rows) if rows[t][2] == "todo"][:n]
-    for t in todo:
+    todo = [t for t in order(rows) if rows[t][2] == "todo"]
+    for t in todo[:n]:
         print(f"@FR-{t:<28} {rows[t][1]:<14} {len(cells_of(t))} cell(s)")
+    for added, t, then, now in grown(rows)[:max(0, n - len(todo))]:
+        print(f"@FR-{t:<28} {rows[t][1]:<14} {now} cell(s), {then} when curated (+{added})")
+    return 0
+
+
+# ---- the programs no rule claims ----
+
+UNCITED_BASELINE = os.path.join(ROOT, "index", "uncited_tests.baseline")
+
+
+def program_homes():
+    """The in-tree homes of loft test programs, by name: each program in them should name the
+    rule it tests (the language suite's cells live under their rule, and are curated there)."""
+    return {
+        "tests/scripts": os.path.join(ROOT, "tests", "scripts"),
+        "tests/docs": os.path.join(ROOT, "tests", "docs"),
+        "selfhost/front/cells": os.path.join(ROOT, "selfhost", "front", "cells"),
+    }
+
+
+def uncited_programs():
+    """{home: [path]} — the programs in each home that cite no `@FR-` rule."""
+    homes = {h: d for h, d in program_homes().items() if os.path.isdir(d)}
+    cited = set()
+    for where in rule_tags.citations_in(list(homes.values()), [".loft"]).values():
+        cited |= {os.path.normpath(rule_depth.abs_path(f)) for f, _ in where}
+    out = {}
+    for h, d in homes.items():
+        out[h] = []
+        for name in sorted(os.listdir(d)):
+            path = os.path.normpath(os.path.join(d, name))
+            # A program is a FILE: a run leaves a `.loft/` cache directory beside the programs.
+            if name.endswith(".loft") and os.path.isfile(path) and path not in cited:
+                out[h].append(path)
+    return out
+
+
+def read_uncited_baseline():
+    base = {}
+    if os.path.exists(UNCITED_BASELINE):
+        for line in open(UNCITED_BASELINE, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            h, n = line.rstrip("\n").split("\t")
+            base[h] = int(n)
+    return base
+
+
+def uncited(args):
+    found = uncited_programs()
+    if "--write-baseline" in args:
+        with open(UNCITED_BASELINE, "w", encoding="utf-8") as out:
+            out.write("# Test programs that cite no @FR- rule, per home (scripts/suite_curate.py uncited).\n"
+                      "# A ratchet: a home may hold fewer, never more.  Lower a number in the commit that\n"
+                      "# makes a program name its rule, or moves it to the suite's attic.\n")
+            for h, paths in found.items():
+                out.write(f"{h}\t{len(paths)}\n")
+        print(f"wrote {os.path.relpath(UNCITED_BASELINE, ROOT)}")
+        return 0
+    base = read_uncited_baseline()
+    worse = []
+    for h, paths in found.items():
+        total = len([n for n in os.listdir(program_homes()[h])
+                     if n.endswith(".loft") and os.path.isfile(os.path.join(program_homes()[h], n))])
+        b = base.get(h)
+        mark = "" if b is None else f"   (baseline {b})"
+        print(f"{h:<22} {len(paths):>4} of {total} cite no rule{mark}")
+        if b is not None and len(paths) > b:
+            worse.append(h)
+        elif b is not None and len(paths) < b:
+            print(f"  progress: lower its baseline to {len(paths)} (uncited --write-baseline)")
+        if "--list" in args:
+            for p in paths:
+                print(f"    {rel(p)}")
+    if "--check" in args and worse:
+        print("\nmore programs cite no rule than the baseline allows, in: " + ", ".join(worse) +
+              "\nNo test runs without a link to a rule: a new test program names the rule it tests\n"
+              "(`@FR-<Rule>` in its header; `suite_curate.py attribute` gives the lead), and a test of a\n"
+              "language rule belongs in the suite under that rule.")
+        return 1
+    return 0
+
+
+# ---- where an uncited program fits ----
+
+def rules_by_file():
+    """{normalised path: {rule}} — every rule each guard file cites, plus the rule a suite cell
+    sits under (`rules/<chapter>/<Rule>/`)."""
+    out = collections.defaultdict(set)
+    for tag, where in guard().items():
+        for f, _ in where:
+            out[os.path.normpath(rule_depth.abs_path(f))].add(tag)
+    defined_rules = set(defined())
+    for p in corpus_programs():
+        parts = p.split(os.sep)
+        if "rules" in parts:
+            i = len(parts) - 1 - parts[::-1].index("rules")
+            if i + 2 < len(parts) and parts[i + 2] in defined_rules:
+                out[p].add(parts[i + 2])
+    return out
+
+
+ATTRIBUTION = os.path.join(ROOT, "index", "attribution.tsv")
+VERDICTS = ("link", "new-rule", "attic")
+
+
+def read_verdicts():
+    out = {}
+    if os.path.exists(ATTRIBUTION):
+        for line in open(ATTRIBUTION, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            f = line.rstrip("\n").split("\t")
+            f += [""] * (5 - len(f))
+            out[f[0]] = f
+    return out
+
+
+def write_verdicts(rows):
+    with open(ATTRIBUTION, "w", encoding="utf-8") as out:
+        out.write("# What reading each test program that cited no rule found (scripts/suite_curate.py verdict;\n"
+                  "# TESTING.md § Curating the suite).  link: it tests these rules; new-rule: it describes\n"
+                  "# behaviour no rule states yet; attic: read, no rule describes it — only these move.\n"
+                  "# program\tverdict\trules\tdate\tnote\n")
+        for k in sorted(rows):
+            out.write("\t".join(rows[k]) + "\n")
+
+
+def verdict(args):
+    if len(args) < 3 or args[1] not in VERDICTS:
+        print("verdict <program> link <Rule>… <why> | new-rule <Name> <why> | attic <why>")
+        return 2
+    program, kind = rel(os.path.abspath(args[0])) if os.path.exists(args[0]) else args[0], args[1]
+    rest = args[2:]
+    known = set(defined())
+    rules = []
+    if kind == "link":
+        while rest and rest[0].removeprefix("@FR-") in known:
+            rules.append(rest.pop(0).removeprefix("@FR-"))
+        if not rules:
+            print("link names at least one defined rule (rule_tags.py list)")
+            return 2
+    elif kind == "new-rule":
+        rules = [rest.pop(0)] if rest else []
+    note = " ".join(rest).replace("\t", " ")
+    if not note:
+        print("a verdict says WHY: what the program checks, against which rule text")
+        return 2
+    rows = read_verdicts()
+    rows[program] = [program, kind, ",".join(rules), datetime.date.today().isoformat(), note]
+    write_verdicts(rows)
+    print(f"{program}: {kind} {' '.join(rules)}")
+    return 0
+
+
+def verdicts_status():
+    rows = read_verdicts()
+    found = uncited_programs()
+    for h, paths in found.items():
+        done = collections.Counter(rows[rel(p)][1] for p in paths if rel(p) in rows)
+        open_ = len(paths) - sum(done.values())
+        print(f"{h:<22} {len(paths):>4} cite no rule: {open_} not read yet"
+              + "".join(f", {n} {k}" for k, n in sorted(done.items())))
+    return 0
+
+
+def fix_rules(path):
+    """The rules the fix of a defect's regression cites: for `<issue>-…`, the `@FR-` tags on the
+    lines added by the commits that carry a `Fixes #<issue>` trailer — not merges, not joins, and
+    not a commit citing more than a dozen rules (a sweep says nothing about one defect)."""
+    m = re.match(r"^(\d{3,4})[a-z]?-", os.path.basename(path))
+    if not m:
+        return set()
+    n = m.group(1)
+    log = subprocess.run(["git", "log", "--all", "--no-merges", "-E", f"--grep=Fixes:? #{n}([^0-9]|$)",
+                          "--format=%H%x09%s"], cwd=ROOT, capture_output=True, text=True).stdout
+    known = set(defined())
+    tags = set()
+    for line in log.split("\n"):
+        if not line.strip() or "\t" not in line:
+            continue
+        sha, subject = line.split("\t", 1)
+        if subject.startswith("Join"):
+            continue
+        diff = subprocess.run(["git", "show", "--format=", sha, "--", "src", "default", "doc/claude/formal"],
+                              cwd=ROOT, capture_output=True, text=True).stdout
+        mine = set()
+        for d in diff.split("\n"):
+            if d.startswith("+") and not d.startswith("+++"):
+                mine |= set(re.findall(r"@FR-([A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])", d))
+        mine &= known
+        if len(mine) <= 12:
+            tags |= mine
+    return tags
+
+
+def attribute(args):
+    """For each program that cites no rule, the rules most likely to be its: each rule-citing
+    program scores by the share of the uncited program's 5-token windows it holds, and a rule
+    scores the best of its programs.  A LEAD: the link is made by reading the program against
+    the rule's formal text, then naming it (`@FR-<Rule>` in the header) — or the program moves
+    to the attic."""
+    home = args[args.index("--home") + 1] if "--home" in args else None
+    tsv = "--tsv" in args
+    by_file = rules_by_file()
+    cited = [p for p in by_file if p.endswith(".loft") and os.path.exists(p)]
+    sh = {p: shingles(p) for p in cited}
+    index = collections.defaultdict(set)
+    for p, s in sh.items():
+        for x in s:
+            index[x].add(p)
+    found = uncited_programs()
+    read = read_verdicts()
+    found = {h: [p for p in ps if rel(p) not in read] for h, ps in found.items()}
+    if tsv:
+        print("program\tbest_rule\tscore\tevidence\tother_rules\tfix_rules")
+    strong = weak = 0
+    for h, paths in found.items():
+        if home and h != home:
+            continue
+        if not tsv:
+            print(f"== {h}: {len(paths)} program(s) cite no rule")
+        for p in paths:
+            mine = shingles(p)
+            hits = collections.Counter()
+            for x in mine:
+                for q in index.get(x, ()):
+                    hits[q] += 1
+            score = {}
+            for q, n in hits.items():
+                share = n / max(1, len(mine))
+                for r in by_file[q]:
+                    if share > score.get(r, (0, ""))[0]:
+                        score[r] = (share, q)
+            ranked = sorted(score.items(), key=lambda kv: -kv[1][0])[:3]
+            fixed = sorted(fix_rules(p))
+            if (ranked and ranked[0][1][0] >= 0.3) or fixed:
+                strong += 1
+            else:
+                weak += 1
+            if tsv:
+                best = ranked[0] if ranked else ("", (0, ""))
+                print(f"{rel(p)}\t{best[0]}\t{best[1][0]:.2f}\t{rel(best[1][1]) if best[1][1] else ''}\t"
+                      + ",".join(f"{r}:{v[0]:.2f}" for r, v in ranked[1:]) + "\t" + ",".join(fixed))
+            else:
+                lead = ", ".join(f"@FR-{r} {v[0]:.0%}" for r, v in ranked) or "no lead"
+                print(f"  {rel(p)}\n      {lead}" + (f"   (via {rel(ranked[0][1][1])})" if ranked else ""))
+                if fixed:
+                    print(f"      its fix cites: {', '.join('@FR-' + t for t in fixed)}")
+    if not tsv:
+        print(f"\n{strong} with a lead (30% shared code or more, or a fix that cites rules); {weak} "
+              "without — read every one before its verdict (`verdict`); only `attic` moves")
+    return 0
+
+
+# ---- programs whose code sits inside another program ----
+
+TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|==|!=|<=|>=|->|=>|\?\?|&&|\|\||\S')
+
+
+def shingles(path, k=5):
+    try:
+        src = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return set()
+    toks = TOKEN.findall(re.sub(r"//[^\n]*", "", src))
+    return {tuple(toks[i:i + k]) for i in range(max(0, len(toks) - k + 1))}
+
+
+def corpus_programs():
+    """Every loft test program the curation weighs: the suite's rule cells and attic, and the
+    in-tree program homes."""
+    suite = os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite")
+    dirs = [os.path.join(suite, "rules"), os.path.join(suite, "attic")] + list(program_homes().values())
+    out = []
+    for d in dirs:
+        for dirpath, _dirs, files in os.walk(d):
+            out += [os.path.normpath(os.path.join(dirpath, f)) for f in files if f.endswith(".loft")]
+    return sorted(set(out))
+
+
+def gate_e_refused():
+    """The programs gate E does not agree on as a whole (its baseline's `elab` layer)."""
+    out = set()
+    if os.path.exists(GATE_E):
+        for line in open(GATE_E, encoding="utf-8"):
+            p = line.rstrip("\n").split("\t")
+            if len(p) == 3 and p[0] == "elab":
+                out.add(p[2].split("::")[0])
+    return out
+
+
+def dups(args):
+    """A program whose code is mostly inside another — the share of its 5-token windows that
+    other program holds (`--min`, default 0.6) — is a fold or retire candidate: read the part it
+    does NOT share before deciding.  `other passes gate E` says the larger program is compiled
+    whole by the self-host gate, so a gate cell duplicating it adds nothing there either."""
+    minimum = 0.6
+    if "--min" in args:
+        minimum = float(args[args.index("--min") + 1])
+    rule = next((a.removeprefix("@FR-") for a in args if not a.startswith("--")
+                 and not re.fullmatch(r"[0-9.]+", a)), None)
+    programs = corpus_programs()
+    sh = {p: shingles(p) for p in programs}
+    index = collections.defaultdict(set)
+    for p, s in sh.items():
+        for x in s:
+            index[x].add(p)
+    subjects = programs
+    if rule:
+        subjects = [os.path.normpath(rule_depth.abs_path(c)) for c in cells_of(rule) if c.endswith(".loft")]
+    refused = gate_e_refused()
+    expects = re.compile(r"@EXPECT_ERROR|@EXPECT_FAIL|@EXPECT_WARNING")
+
+    def expecting(path):
+        try:
+            return bool(expects.search(open(path, encoding="utf-8", errors="replace").read()))
+        except OSError:
+            return False
+    rows = []
+    for p in subjects:
+        mine = sh.get(p) or shingles(p)
+        if len(mine) < 8:
+            continue
+        hits = collections.Counter()
+        for x in mine:
+            for q in index.get(x, ()):
+                if q != p:
+                    hits[q] += 1
+        if not hits:
+            continue
+        q, n = hits.most_common(1)[0]
+        share = n / len(mine)
+        if share >= minimum:
+            passes = not any(r.endswith(rel(q).removeprefix("suite:")) or rel(q) == r for r in refused)
+            # A program that expects a refusal or a failure and one that runs cannot share a
+            # file: a twin, kept apart by construction, not a fold.
+            twin = expecting(p) != expecting(q)
+            rows.append((share, p, q, passes, twin))
+    rows.sort(key=lambda r: (-r[0], rel(r[1])))
+    scope = f"@FR-{rule}'s cells" if rule else f"{len(programs)} programs"
+    print(f"{len(rows)} of {scope} have >= {minimum:.0%} of their code inside another program")
+    for share, p, q, passes, twin in rows:
+        notes = ([] if passes else ["gate E refuses it"]) + (["a refusal twin: cannot share a file"] if twin else [])
+        print(f"  {share:4.0%}  {rel(p)}\n          inside {rel(q)}" + (f"  ({'; '.join(notes)})" if notes else ""))
     return 0
 
 
@@ -865,6 +1272,16 @@ def main():
         return init()
     if cmd == "status":
         return status()
+    if cmd == "uncited":
+        return uncited(a[1:])
+    if cmd == "dups":
+        return dups(a[1:])
+    if cmd == "attribute":
+        return attribute(a[1:])
+    if cmd == "verdict" and len(a) > 1:
+        return verdict(a[1:])
+    if cmd == "verdicts":
+        return verdicts_status()
     if cmd == "next":
         return nxt(int(a[1]) if len(a) > 1 else 3)
     if cmd == "plan" and tag:

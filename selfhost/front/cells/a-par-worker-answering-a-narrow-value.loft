@@ -5,6 +5,7 @@
 // (`narrow_route_for`): rows of 1 or 4 bytes read back by `n_parallel_buf_get_narrow(idx, width,
 // signed)`, a boolean through `OpNeInt(_, 0)` with its row byte 255 the null, a character
 // through `OpConvCharacterFromInt`.
+// @FR-C-Par: a boolean, `u8` and character worker answer reaches the body as worker(v[i]).
 // Prints: 2 10 3
 
 fn odd(i: integer) -> boolean { i % 2 == 1 }

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-G-Select: a library generic beside a concrete definition and a same-named method is reached by the argument types.
+// @FR-G-Mono: a two-variable library generic specialises at swapped and crossing types in the consumer.
 //
 // @PLN165 C4 — a `use`d library's generics behave as the same generics written in the
 // program: several type variables (two instances at swapped types, a nested call whose

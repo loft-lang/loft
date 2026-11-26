@@ -3,6 +3,7 @@
 //
 // Gate E cell: a lambda made inside a lambda is numbered in its enclosing FUNCTION's sequence,
 // a sibling of the outer one (`__lambda_f3_1` beside `__lambda_f3_0`), three levels deep included.
+// @FR-L-Apply: each nested lambda, three levels deep and inside `map`, runs its own body when applied (6 3 11).
 // Prints: 6 3 11
 
 fn f1() -> integer {

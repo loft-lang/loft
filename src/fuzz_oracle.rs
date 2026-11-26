@@ -117,7 +117,7 @@ pub fn classify_source_with(src: &[u8], poison: bool) -> Outcome {
     // two-pass reset discipline that the file path (the CLI/wrap path) does
     // not, so the file path is the faithful production entry.
     // Site 1: an I/O error is a harness condition, not a language finding.
-    let tmp = std::env::temp_dir().join(format!(
+    let tmp = crate::platform::scratch_dir().join(format!(
         "loft_f1_{}_{}.loft",
         std::process::id(),
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)

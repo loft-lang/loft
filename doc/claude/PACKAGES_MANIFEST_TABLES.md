@@ -1,7 +1,7 @@
 
-# Manifest tables — `[[font]]`, `[[embed]]`, `placement`
+# Manifest tables — `[[font]]`, `[[embed]]`, `placement`, `[android]`
 
-Manifest keys that reach beyond the interpreter: browser fonts, embedded files, and where a library runs.  Split out of [PACKAGES.md § Manifest: `loft.toml`](PACKAGES.md#manifest-lofttoml).
+Manifest keys that reach beyond the interpreter: browser fonts, embedded files, where a library runs, and the key a shipped Android app is signed with.  Split out of [PACKAGES.md § Manifest: `loft.toml`](PACKAGES.md#manifest-lofttoml).
 
 ---
 
@@ -48,6 +48,34 @@ Embedding is for what a page needs before its first fetch, and for a page that h
 be one self-contained file. The bytes go in base64, so the page grows by about 4/3 of
 the file. Full reference:
 [plans/146-content-delivery/F4.md](plans/146-content-delivery/F4.md).
+
+### `[android]` — the key a shipped Android app is signed with
+
+A program's `loft.toml` names the key `loft --native-android --ship` signs the APK with:
+
+```toml
+[android]
+keystore = "release.jks"      # relative to this loft.toml
+key_alias = "release"         # the key in that keystore
+ks_pass = "env:MY_KS_PASS"    # the keystore's password: env:NAME | file:PATH | stdin
+key_pass = "env:MY_KEY_PASS"  # optional; the key's password, default ks_pass
+```
+
+- The passwords use `apksigner`'s own `--ks-pass` / `--key-pass` syntax and are handed to
+  it unread: loft never sees the secret.  `apksigner` runs in the `loft.toml`'s directory,
+  so a `file:` path resolves the way `keystore` does, and a `stdin` password is read from
+  the terminal.
+- A password written into the manifest (`pass:…`) is refused on every build: the
+  manifest is committed, and a password in it signs for whoever reads it.
+- **`--ship` signs only with this key.**  With no `keystore` named, it writes the aligned
+  but unsigned APK and prints the `apksigner sign --ks … --ks-key-alias … --ks-pass env:…`
+  command that signs it.
+- A debug build (no `--ship`) ignores the table's key and signs with the per-tree debug
+  keystore in `.loft/android/` beside the program, whose password is `android`: an APK
+  signed with it is for testing, never for publishing.
+
+Checked by the `android::tests` unit tests in `src/android.rs`.  The build itself:
+[NATIVE.md § Android target](NATIVE.md#android-target).
 
 ### `placement` — where the library runs
 

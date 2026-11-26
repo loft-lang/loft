@@ -31,6 +31,10 @@
 // it does not), whether the early branch is ever TAKEN, the NUMBER of candidate
 // locals, and the return type (struct / struct-with-vector).  Controls at the end
 // pin the shapes that must keep their NRVO rename.
+//
+// @FR-O-Complete: every return path decides the local's free, not only the one returning it.
+// @FR-O-Derived: a local is freed iff it owns its store and that path does not transfer it.
+// @FR-H-FreeAll: the run's exit check finds no orphaned store across 20 calls per shape.
 
 struct P688    { lat: float, lon: float }
 struct Way688  { name: text, coords: vector<P688> }

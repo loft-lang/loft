@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Slice-Value: a slice bound to a local is a fresh vector holding the slice until the local is rebound, and appending to it leaves the source alone.
 //
 // A vector local first bound to a slice and later emptied (`s = []`, `s = [x]`) holds the
 // slice until then (loft#2038's fixed half).  The first pass's `s = []` builds the literal in

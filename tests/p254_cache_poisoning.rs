@@ -373,3 +373,207 @@ fn no_cache_env_var_skips_cache() {
 
     let _ = fa::remove_dir_all(&dir);
 }
+
+// ── Where loft stages what it runs and caches, when the temp directory is shared ─────────
+//
+// Without `LOFT_TMPDIR`, a native build's scratch (the C source, the binary it then executes)
+// and, with neither `HOME` nor `XDG_CACHE_HOME` set, the cache (the stdlib image, compiled
+// binaries) live under the system temp directory.  There they go into `loft-<uid>`, a
+// directory only this user can enter, and only while it is one: a real directory (not a
+// link), owned by the user, with no group or other bits.  When the name is taken by anything
+// else, a fresh directory is made instead.  Nothing is written directly into the temp
+// directory, where a name another account can predict is a name it can take first.
+//
+// Each run points `TMPDIR` at a scratch directory of its own, in which `loft-<uid>` is:
+// absent; an open directory (mode 0777 — another account's directory looks the same from
+// here, apart from the owner a test cannot change); or a link to a private-looking directory
+// elsewhere.
+// approved exemption: POSIX owner and mode bits have no Windows equivalent; Windows substitute: none (the temp dir there is the user's own profile directory)
+#[cfg(unix)]
+mod private_temp_placement {
+    use super::{loft_bin, tmp_subdir, write_marker_script};
+    use loft::file_access as fa;
+    use std::path::PathBuf;
+
+    /// What sits at `loft-<uid>` in the temp directory before loft runs.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Plant {
+        Nothing,
+        OpenDir,
+        Link,
+    }
+
+    /// A fresh temp directory under `dir` with `plant` at `loft-<uid>`; answers that temp
+    /// directory, the planted name and the directory a planted link points at.
+    fn shared_temp(dir: &std::path::Path, plant: Plant) -> (PathBuf, PathBuf, PathBuf) {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let tmp = dir.join(format!("tmp_{plant:?}"));
+        fa::create_dir_all(&tmp).expect("make the temp dir");
+        let uid = fa::metadata(&tmp).expect("stat the temp dir").uid();
+        let name = tmp.join(format!("loft-{uid}"));
+        let elsewhere = dir.join(format!("elsewhere_{plant:?}"));
+        fa::create_dir_all(&elsewhere).expect("make the link target");
+        fa::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        match plant {
+            Plant::Nothing => {}
+            Plant::OpenDir => {
+                fa::create_dir(&name).expect("plant the open directory");
+                fa::set_permissions(&name, std::fs::Permissions::from_mode(0o777)).expect("chmod");
+            }
+            Plant::Link => fa::symlink(&elsewhere, &name).expect("plant the link"),
+        }
+        (tmp, name, elsewhere)
+    }
+
+    /// `path` lies in a directory directly under `tmp` that is this user's alone — a real
+    /// directory, owned by the user, mode 0700 — which is `loft-<uid>` itself only when nothing
+    /// was planted there; the planted directory and the link's target stay empty, and every
+    /// other entry loft left in `tmp` is private the same way.
+    fn assert_private_placement(tmp: &std::path::Path, path: &std::path::Path, plant: Plant) {
+        use std::os::unix::fs::MetadataExt;
+        let uid = fa::metadata(tmp).expect("stat the temp dir").uid();
+        let name = tmp.join(format!("loft-{uid}"));
+        let rel = path.strip_prefix(tmp).unwrap_or_else(|_| {
+            panic!(
+                "{plant:?}: {} is not under {}",
+                path.display(),
+                tmp.display()
+            )
+        });
+        let first = tmp.join(rel.components().next().expect("a path below the temp dir"));
+        assert!(
+            rel.components().count() > 1,
+            "{plant:?}: {} lies directly in the temp dir",
+            path.display()
+        );
+        if plant == Plant::Nothing {
+            assert_eq!(
+                first, name,
+                "{plant:?}: the user's own directory is loft-<uid>"
+            );
+        } else {
+            assert_ne!(first, name, "{plant:?}: the planted loft-<uid> is not used");
+        }
+        for entry in fa::read_dir(tmp).expect("list the temp dir") {
+            let entry = entry.os_spelling();
+            if entry == name && plant != Plant::Nothing {
+                if plant == Plant::OpenDir {
+                    assert!(
+                        fa::read_dir(&entry).expect("list the plant").is_empty(),
+                        "{plant:?}: nothing is written into the planted directory"
+                    );
+                }
+                continue;
+            }
+            let md = fa::symlink_metadata(&entry).expect("stat an entry");
+            assert!(
+                md.is_dir() && md.uid() == uid && md.mode() & 0o777 == 0o700,
+                "{plant:?}: {} in the temp dir is not a directory private to the user (mode {:o})",
+                entry.display(),
+                md.mode() & 0o7777
+            );
+        }
+        let elsewhere = tmp.parent().unwrap().join(format!("elsewhere_{plant:?}"));
+        assert!(
+            fa::read_dir(&elsewhere)
+                .expect("list the link target")
+                .is_empty(),
+            "{plant:?}: nothing is written through the planted link"
+        );
+    }
+
+    /// A native build stages its C source and binary in the user's private temp directory, and
+    /// never in a `loft-<uid>` it did not make private itself.  `LOFT_KEEP_NATIVE_C` keeps the
+    /// source and names where it was written.
+    /// @falsified-at: f13fd9ac6 — by hand: scratch_dir() on std::env::temp_dir() → Nothing: the
+    /// source landed in tmp/loft_native_c_<pid>; private_temp_dir() taking an existing loft-<uid>
+    /// unchecked → OpenDir: the planted directory was used.
+    #[test]
+    fn native_build_stages_in_a_directory_private_to_the_user() {
+        let dir = tmp_subdir("private_scratch");
+        let marker = "PRIVATE_SCRATCH_RAN";
+        let script = write_marker_script(&dir, marker);
+        for plant in [Plant::Nothing, Plant::OpenDir, Plant::Link] {
+            let (tmp, _, _) = shared_temp(&dir, plant);
+            let out = loft::platform::process::harness_command(loft_bin())
+                .arg("--native")
+                .arg(&script)
+                .env("TMPDIR", &tmp)
+                .env_remove("LOFT_TMPDIR")
+                .env("HOME", dir.join("home"))
+                .env("XDG_CACHE_HOME", dir.join("cache"))
+                .env("LOFT_KEEP_NATIVE_C", "1")
+                .env("LOFT_NATIVE_NO_CACHE", "1")
+                .output()
+                .expect("run loft --native");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                out.status.success() && String::from_utf8_lossy(&out.stdout).contains(marker),
+                "{plant:?}: the build ran: {stderr}"
+            );
+            let kept = stderr
+                .lines()
+                .find_map(|l| l.strip_prefix("loft: C source preserved at "))
+                .unwrap_or_else(|| panic!("{plant:?}: the kept source is named: {stderr}"));
+            assert_private_placement(&tmp, std::path::Path::new(kept.trim()), plant);
+        }
+        let _ = fa::remove_dir_all(&dir);
+    }
+
+    /// With neither `HOME` nor `XDG_CACHE_HOME` set, the cache — `cache_dir()` on both backends,
+    /// and the stdlib image and binaries the run stores there — falls back to the user's private temp directory, never to
+    /// the temp directory itself or a `loft-<uid>` it did not make private.
+    /// @falsified-at: f13fd9ac6 — by hand: cache_base_dir() falling back to std::env::temp_dir()
+    /// → Nothing: the cache was tmp/loft, directly in the temp dir; private_temp_dir() reading
+    /// loft-<uid> through a link → Link: the planted link was used.  The `--native` leg failed
+    /// unaltered at af86f9d23 (the C cache_dir() fell back to tmp/loft) until 17356a5db.
+    #[test]
+    fn cache_without_a_home_falls_back_to_a_directory_private_to_the_user() {
+        let dir = tmp_subdir("private_cache");
+        let script = dir.join("cache_dir.loft");
+        fa::write(
+            &script,
+            "fn main() {\n  println(\"at {cache_dir()}\");\n}\n",
+        )
+        .expect("write");
+        for (backend, plant) in [
+            ("--interpret", Plant::Nothing),
+            ("--interpret", Plant::OpenDir),
+            ("--interpret", Plant::Link),
+            ("--native", Plant::Nothing),
+            ("--native", Plant::OpenDir),
+            ("--native", Plant::Link),
+        ] {
+            let (tmp, _, _) = shared_temp(&dir.join(&backend[2..]), plant);
+            let out = loft::platform::process::harness_command(loft_bin())
+                .arg(backend)
+                .arg(&script)
+                .current_dir(&dir)
+                .env("TMPDIR", &tmp)
+                .env_remove("LOFT_TMPDIR")
+                .env_remove("HOME")
+                .env_remove("XDG_CACHE_HOME")
+                .env("LOFT_HOME", dir.join("loft_home"))
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let at = stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("at "))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{backend} {plant:?}: the program printed its cache dir: {stdout}{}",
+                        String::from_utf8_lossy(&out.stderr)
+                    )
+                });
+            let at = std::path::Path::new(at.trim());
+            assert_eq!(
+                fa::file_name(at).as_deref(),
+                Some("loft"),
+                "{backend} {plant:?}"
+            );
+            assert_private_placement(&tmp, at, plant);
+        }
+        let _ = fa::remove_dir_all(&dir);
+    }
+}

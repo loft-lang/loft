@@ -255,6 +255,10 @@ interpreter: `scripts/c_sweep.py` runs every corpus program both ways
 the C backend: the C unit, loft's Android entry (`src/c/android/loft_android_main.c`) and the
 NDK's app glue, compiled by the NDK's clang and packaged as a signed APK by `src/android.rs`
 (design: [plans/106-android-build-target/c-backend.md](plans/106-android-build-target/c-backend.md)).
+A debug build signs with a per-tree debug keystore (`.loft/android/`, password `android`); a
+`--ship` build signs only with the key the program's `loft.toml` names in `[android]`, and
+without one is left unsigned with the `apksigner` command printed
+([PACKAGES_MANIFEST_TABLES.md § `[android]`](PACKAGES_MANIFEST_TABLES.md)).
 Env: `ANDROID_NDK_HOME`, `ANDROID_HOME`, `JAVA_HOME`; `LOFT_ANDROID_TARGET` (default
 `aarch64-linux-android`; `x86_64-linux-android` for the KVM emulator), `LOFT_ANDROID_API`
 (default 24).  Needs a `fn main`.  A library's `[c] shim` compiles for the device: `graphics`

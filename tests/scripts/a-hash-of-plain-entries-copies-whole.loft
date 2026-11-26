@@ -1,3 +1,6 @@
+// @FR-Col-Copy: a whole-value bind of a record holding a hash copies every entry; the copy ignores later changes to the source.
+// @FR-E-Eq: == compares two hashes entry by entry, so one changed entry makes them differ.
+//
 // A hash whose entries own no heap is copied, compared and released whole: a copy files every
 // entry, an equality compares every entry, and releasing it frees its arena and empties its
 // field.  The release skips the per-entry walk for such a type (`Stores::remove_claims_mode`);

@@ -327,6 +327,24 @@ That last point is worth leaning on. Because the file never changes, anything
 cheap to publish, cheap to revise, and cannot corrupt the dataset. Derived data
 over an immutable artifact is the cheap thing to iterate on; the artifact is not.
 
+## Trust
+
+A paged read trusts its server the way a mapped file trusts its filesystem.  Nothing checks
+a page's bytes against what the publisher wrote: a server, or anyone who can change what it
+sends, decides the values a lookup answers.  Two things hold whatever the server sends:
+
+- **A bad page stays a wrong value.**  Every read is held inside the file, and a record is
+  copied field by field into the local store, so a page with wrong numbers cannot make a
+  read land outside its own data (`store_verify(local)` proves the copy is sound).
+- **The channel is the server's.**  Over `https://` only the server can change a page.  Over
+  plain `http://` anyone on the network path can, so the first plain-`http://` paged read of
+  another machine in a run prints one line saying so (`localhost`, `127.*` and `[::1]` are
+  this machine; a browser page is not told, its own code came from that origin).
+
+For a source you do not control, load the whole image with `store_load_url` and its SHA-256
+pin, which checks every byte.  A paged store whose pages are encrypted and authenticated, so
+that no server is trusted, is [@PLN230](plans/230-zero-trust-paged-stores.md).
+
 ## Failure modes worth knowing
 
 - **A short read at EOF is not an error.** A range that overhangs the end returns
@@ -335,8 +353,8 @@ over an immutable artifact is the cheap thing to iterate on; the artifact is not
   collection that is not the right kind — check the boolean.
 - **A truncated or malformed image is REJECTED, never adopted.** Both URL loaders
   validate structure; `store_load_url` additionally pins the SHA-256.
-- **`store_verify(local)` proves the load produced a sound heap**, which is worth
-  asserting after a paged read from an untrusted origin.
+- **`store_verify(local)` proves the load produced a sound heap**: no read left the
+  file.  It does not prove the values are the publisher's ([§ Trust](#trust)).
 - **Native builds need the bytes-fetching feature** — `remote-store` (the paged
   loaders' own) or `registry`. Without either, a URL is a clear "unavailable"
   error rather than a silent wrong answer.

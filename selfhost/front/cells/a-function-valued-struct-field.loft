@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a function-valued struct field is its function's number in four bytes (`int<0,false>`): a named function written through a `__fn_ref_tmp` (`fn_number_write`, `FnRefDnr`), read as the number beside a null closure (`fn_ref_field_read`), called through a temporary (`fn_call_tmp`), and bound to a local.
+// @FR-L-FnRef: a named function stored in a field, replaced, and read into a local is called as that function (8 5 11).
+// @FR-L-Escape: a function value is stored in a struct field and bound to a local like any value.
 // Prints: 8 5 11 d
 
 struct Op { name: text, f: fn(integer) -> integer }

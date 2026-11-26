@@ -16,6 +16,10 @@
 // `OpDatabase` keep their IR position (allocation timing unchanged).  These
 // stores are reclaim-eligible again.  Both backends + the --native compile
 // must succeed; the wrap leak gate confirms zero leaked stores.
+//
+// @FR-F-Return: `if early { return 0; }` exits with 0 before the locals are bound.
+// @FR-O-Derived: the body-scoped vectors are freed once on both exits and read intact on the full
+//   path.
 
 fn run(early: boolean) -> integer {
   if early { return 0; } // early-return free of a/b/c's body-scoped __vdb

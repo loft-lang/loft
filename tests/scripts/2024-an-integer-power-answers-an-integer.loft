@@ -18,6 +18,10 @@
 // WITNESS: on the patched tree both backends stop at `cannot change type from integer to
 //   single` on `c: integer = a ** b`; with the annotation dropped, `3 ** 20` prints 3486784500.
 // HOLDS: the float cell (`2.0 ** 10.0 == 1024.0`) and the exit code of a refused program.
+//
+// @FR-E-Op: `3 ** 20` is 3486784401 exactly, as an integer.
+// @FR-E-Uncomp: `2 ** 63` overflows and `2 ** -1` has no integer answer — both null, the run
+//   continues.
 
 fn main() {
   a = 3;

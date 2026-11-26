@@ -4,6 +4,8 @@
 // Gate E cell: a nested vector literal in VALUE position — a template's argument, a `for`'s
 // source — is typed `vector<vector<integer>>` on the first pass, as a bound one is, so the
 // generic call predicts its result and the loop variable has its type before the second pass.
+// @FR-G-Mono: a generic called with a nested vector literal specialises at `vector<vector<integer>>`.
+// @FR-Slice-Value: `a[n..]` answers the tail [[2],[3]]; a `for` over a nested literal binds each inner vector.
 // Prints: [[2],[3]] / [1] / [2]
 
 fn tail<T>(a: vector<T>, n: integer) -> vector<T> { a[n..] }

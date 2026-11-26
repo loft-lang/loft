@@ -5,6 +5,10 @@
 // @PLN25 nullable sequences — a vector<T> can be null (absent), distinct from
 // an empty []. Null tests via the store_nr sentinel, NOT rec==0 (which empty
 // also has), so `[] == null` is false. Runs on both --interpret and --native.
+//
+// @FR-I-NullSrc: iterating a null vector runs the body zero times.
+// @FR-Slice-Value: negative bounds count from the end, out-of-range bounds clamp, reversed is empty.
+// @FR-N-Dense: a `vector<τ?>` element holds null and the walk still visits every element.
 fn maybe(b: boolean) -> vector<integer> {
   if b { [10, 20] } else { null }
 }

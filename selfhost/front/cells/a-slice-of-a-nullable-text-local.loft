@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a slice of a text? local read first into a bind borrows the local; one of a plain text local does not (parse_var's into arm asks the exact type).
+// @FR-Slice-Value: a slice of a text (nullable or not) is its substring; an open end runs to the end.
 // Prints: hello hello 3
 fn recv(c: boolean) -> text? { if c { return null; } "MAP:hello" }
 fn plain() -> text { "MAP:hello" }

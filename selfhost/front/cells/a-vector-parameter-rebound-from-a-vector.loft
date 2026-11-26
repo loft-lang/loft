@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: each whole rebind of a vector parameter from a vector — twice, in a branch, in a loop, of records, of texts, a nullable one (OpReplaceVector) — allocates; the callers keep theirs.
+// @FR-F-ParamRebind: each whole rebind of a vector parameter (twice, in a branch, in a loop, records, texts, nullable) stays local.
 // Prints: 10 33 3 91 [1,2] [30,40,50] / 72 [{x:5,y:6}] 3 bb 30
 struct Pt { x: integer, y: integer }
 

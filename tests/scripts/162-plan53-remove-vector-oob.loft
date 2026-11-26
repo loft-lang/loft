@@ -17,6 +17,8 @@
 // Guard: on the pre-fix code, the ASan CI job (`asan` job in ci.yml) fires an
 // OOB-read on the copy_block source pointer.  On the fixed code this passes
 // cleanly.
+//
+// @FR-Col-RemoveDense: `v.remove(5)` renumbers every later element down one, len 11 -> 10.
 
 fn main() {
   // Build a vector of exactly 11 integers — fills the initial allocation

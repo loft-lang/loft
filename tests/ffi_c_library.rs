@@ -547,3 +547,258 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
         );
     }
 }
+
+/// `@FR-Art-Inert`: the release builds the library units it publishes under inert switches only.
+/// A switch the release sets that counts for a unit (`cache::INERT_ENV` does not leave it out
+/// for `EnvKey::Unit`) is in those units' keys and in no user's, so no user would ever adopt a
+/// published unit — they would all rebuild, and a machine with no C compiler would interpret,
+/// with nothing reporting it.  Every `LOFT_*` name the release workflow or its library-artifact
+/// script sets is inert for a unit.
+/// @falsified-at: 7f512272d — by hand: with `LOFT_NO_CACHE` off `INERT_SWITCHES`, the test
+/// fails naming it (`scripts/release-lib-artifacts.sh` sets it).
+#[test]
+fn the_release_builds_its_units_under_inert_switches_only() {
+    let root = root();
+    let mut named = Vec::new();
+    for (file, sep) in [
+        (".github/workflows/release.yml", ':'),
+        ("scripts/release-lib-artifacts.sh", '='),
+    ] {
+        let text = fa::read_to_string(root.join(file)).expect(file);
+        let mut at = 0;
+        while let Some(i) = text[at..].find("LOFT_") {
+            let start = at + i;
+            let end = start
+                + text[start..]
+                    .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(text.len() - start);
+            if text[end..].starts_with(sep) {
+                named.push((file, text[start..end].to_string()));
+            }
+            at = end;
+        }
+    }
+    assert!(
+        !named.is_empty(),
+        "the release sets no LOFT_ switch: the scan reads nothing"
+    );
+    let live: Vec<_> = named
+        .iter()
+        .filter(|(_, n)| loft::cache::env_counts_for(n, loft::cache::EnvKey::Unit))
+        .collect();
+    assert!(
+        live.is_empty(),
+        "the release builds its units under switches that are in their keys: {live:?}"
+    );
+}
+
+/// `@FR-Art-Key`, `@FR-Art-Inert`: a library's compiled unit is keyed on every switch in force that
+/// can change the code it is generated with, and on none that cannot.  One plain package, one
+/// program, five runs on the interpreter in one `native-auto/`: no switch, an inert one
+/// (`LOFT_TIMEOUT`, which the program cache leaves out too), a trace (`LOFT_TRACE_NATIVE_GATE`,
+/// which the program cache counts, since a traced run must parse, but which generates nothing),
+/// a cure switch (`LOFT_NO_PUSH_FILL`, whose generated C differs) and a width (`LOFT_WIDTH=32`).
+/// Each answers 135 (0 + 3 + … + 27); the plain, the inert and the traced run share one unit and
+/// the other two have one each, so three units.  The C backend keys its program build on
+/// its C text, so only the interpreter adopts a unit by this key.
+/// @falsified-at: ebe1bd76b — the four runs leave 1 unit, 3 wanted.
+/// @falsified-at: 03f985719 — the traced run builds its own: 4 units, 3 wanted.
+#[test]
+fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
+    let dir = std::env::temp_dir().join(format!("loft_unit_switch_key_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    let pkg = dir.join("lib").join("keyed");
+    fa::create_dir_all(pkg.join("src")).expect("the package");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"keyed\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/keyed.loft\"\n",
+    )
+    .expect("write the manifest");
+    fa::write(
+        pkg.join("src/keyed.loft"),
+        "pub fn grow(n: integer) -> integer {\n  v: vector<integer> = [];\n  \
+         for i in 0..n { v += [i * 3]; }\n  sum_of(v)\n}\n",
+    )
+    .expect("write the library");
+    let file = dir.join("prog.loft");
+    fa::write(
+        &file,
+        "use keyed;\nfn main() { println(\"{keyed::grow(10)}\"); }\n",
+    )
+    .expect("write the program");
+    let home = dir.join("home");
+    for (k, v) in [
+        ("", ""),
+        ("LOFT_TIMEOUT", "77"),
+        ("LOFT_TRACE_NATIVE_GATE", "1"),
+        ("LOFT_NO_PUSH_FILL", "1"),
+        ("LOFT_WIDTH", "32"),
+    ] {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(dir.join("lib"))
+            .arg(&file)
+            .env("LOFT_HOME", &home)
+            .env("XDG_CACHE_HOME", home.join("cache"));
+        if !k.is_empty() {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("loft runs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "135\n",
+            "{k}={v}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
+        .expect("the package's native-auto")
+        .into_iter()
+        .filter_map(|e| fa::file_name(&e.os_spelling()))
+        .filter(|n| {
+            n.contains("loft_auto_keyed")
+                && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+        })
+        .collect();
+    let _ = fa::remove_dir_all(&dir);
+    assert_eq!(
+        units.len(),
+        3,
+        "one unit for the plain, the inert and the traced run, one per code-changing switch: {units:?}"
+    );
+}
+
+/// A library's compiled unit (`native-auto/`) is keyed on the components its C binds: whether
+/// each is installed, and which one.  A package wraps a component's native in a loft function of
+/// its own (`twice(21)` = 21 + 21 + 1 = 43) and a program is run twice, the component installed
+/// or not, or moved, between the runs.  Keyed without the component, the second run adopted the
+/// first run's unit and, after an install, kept refusing.  The runs share the package, its
+/// `native-auto/`, a scratch `LOFT_HOME` and program cache, as two runs of one program on one
+/// machine do.  A move keeps the unit: it opens the component where the running loft finds it,
+/// so the key names the component's build, not its place (loft#2654).  The uninstall passes on
+/// the old key too — the interpreter refuses or
+/// finds the component at start, and the C backend keys its build on its C text, which holds what
+/// the search found — so that cell, and the C backend's, guard.  `@FR-Art-Key`.
+/// @falsified-at: 3fd0586f2 — `--interpret`, installed after a refused run: run 2 prints
+/// nothing and exits 1 (it adopted the refusing unit).
+/// @falsified-at: ca63d583f — `--interpret`, moved after a run that called it: 2 units, 1
+/// wanted (the moved run built its own).
+#[test]
+fn a_unit_is_keyed_on_the_components_it_binds() {
+    // (what the run finds, whether its program calls the native, what it prints, whether it is
+    // refused).  A program that can reach a missing native does not start, so the one that does
+    // not call it is another program, which uses the package all the same.
+    type Run = (Found, bool, &'static str, bool);
+    #[derive(Clone, Copy)]
+    enum Found {
+        Absent,
+        Installed,
+        Moved,
+    }
+    const CELLS: [(&str, Run, Run); 4] = [
+        (
+            "installed after a refused run",
+            (Found::Absent, true, "", true),
+            (Found::Installed, true, "TWICE 43\n", false),
+        ),
+        (
+            "installed after another program that does not call it",
+            (Found::Absent, false, "IDLE\n", false),
+            (Found::Installed, true, "TWICE 43\n", false),
+        ),
+        (
+            "uninstalled after a run that called it",
+            (Found::Installed, true, "TWICE 43\n", false),
+            (Found::Absent, true, "", true),
+        ),
+        (
+            "moved after a run that called it",
+            (Found::Installed, true, "TWICE 43\n", false),
+            (Found::Moved, true, "TWICE 43\n", false),
+        ),
+    ];
+    const WRAP: &str = "pub fn add(a: integer, b: integer) -> integer;\n#native\n\n\
+                        pub fn twice(a: integer) -> integer {\n  add(a, a) + 1\n}\n";
+    const PROG: &str = "use cwrap;\nfn main() { println(\"TWICE {cwrap::twice(21)}\"); }\n";
+    const IDLE: &str = "use cwrap;\nfn main() { println(\"IDLE\"); }\n";
+    for backend in ["--interpret", "--native"] {
+        for (k, (cell, first, second)) in CELLS.iter().enumerate() {
+            let (libs, components) = published(&format!("ckey{k}_{}", &backend[2..]));
+            let pkg = libs.join("cwrap");
+            fa::create_dir_all(pkg.join("src")).expect("the wrapping package");
+            fa::write(
+                pkg.join("loft.toml"),
+                "[package]\nname = \"cwrap\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+                 [library]\nentry = \"src/cwrap.loft\"\n\n[native]\ncomponent = \"ffi_c_library\"\n",
+            )
+            .expect("write the manifest");
+            fa::write(pkg.join("src/cwrap.loft"), WRAP).expect("write the library");
+            let file = libs.join("prog.loft");
+            fa::write(&file, PROG).expect("write the program");
+            let idle = libs.join("idle.loft");
+            fa::write(&idle, IDLE).expect("write the other program");
+            let absent = libs.join("no_components");
+            fa::create_dir_all(&absent).expect("an empty components directory");
+            let moved = libs.join("moved_components");
+            let home = libs.join("home");
+            for (nr, &(found, call, want, refused)) in [first, second].into_iter().enumerate() {
+                let dir = match found {
+                    Found::Absent => absent.clone(),
+                    Found::Installed => components.clone(),
+                    Found::Moved => {
+                        fa::rename(&components, &moved).expect("move the component");
+                        moved.clone()
+                    }
+                };
+                let out = loft_in(&libs, &dir, &[backend], if call { &file } else { &idle })
+                    .env("LOFT_HOME", &home)
+                    .env("XDG_CACHE_HOME", &home)
+                    .output()
+                    .expect("loft runs");
+                let err = String::from_utf8_lossy(&out.stderr).to_string();
+                let ok = String::from_utf8_lossy(&out.stdout) == want
+                    && out.status.success() != refused
+                    && (!refused || err.contains("component `ffi_c_library`"));
+                if !ok {
+                    let _ = fa::remove_dir_all(&libs);
+                }
+                assert!(
+                    ok,
+                    "{backend}, {cell}, run {}: want {want:?}{}, got {:?} (exit {:?})\nstderr:\n{err}",
+                    nr + 1,
+                    if refused {
+                        " and a refusal naming the component"
+                    } else {
+                        ""
+                    },
+                    String::from_utf8_lossy(&out.stdout),
+                    out.status.code()
+                );
+            }
+            // A moved component is the same build of it, so the unit the first run built is
+            // adopted: it opens the component where this run finds it, not where the first run
+            // did (loft#2654) — what lets a unit the release built run on a user's machine.
+            // The C backend keys its build on its C text, so only the interpreter adopts.
+            if matches!(second.0, Found::Moved) && backend == "--interpret" {
+                let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
+                    .expect("the package's native-auto")
+                    .into_iter()
+                    .filter_map(|e| fa::file_name(&e.os_spelling()))
+                    .filter(|n| {
+                        n.contains("loft_auto_cwrap")
+                            && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+                    })
+                    .collect();
+                let _ = fa::remove_dir_all(&libs);
+                assert_eq!(
+                    units.len(),
+                    1,
+                    "{cell}: the moved run adopts the first run's unit: {units:?}"
+                );
+            }
+            let _ = fa::remove_dir_all(&libs);
+        }
+    }
+}

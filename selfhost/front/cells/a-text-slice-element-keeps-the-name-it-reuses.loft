@@ -4,6 +4,7 @@
 // Gate E cell: a text slice copy's element temp is a pass-2 mint that takes a name pass 1 gave
 // a vector literal's element (`_elm_2`); it keeps that type (`add_variable(reuse)` refines only
 // an unknown), its borrow the slice's store (`depend`) — not re-typed as a text element.
+// @FR-Slice-Value: a slice of a text vector and of a vector of vectors is a fresh vector of that range.
 // Prints: ["bb","ccc"] / [[2,2],[3,3,3]]
 
 fn main() {

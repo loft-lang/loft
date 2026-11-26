@@ -5,6 +5,9 @@
 // bytes) and over-read across rows, giving garbage.  Kept separate from
 // 22c-par-sources.loft (which already has many par loops) to avoid the
 // unrelated "many par loops in one fn" corruption.
+//
+// @FR-C-Par: each body gets worker(v[i]) for the element at that position.
+// @FR-H-Stride: a narrow vector's elements are read at the stride of the declared type.
 
 fn dbl(x: integer) -> integer {
   return x * 2;
