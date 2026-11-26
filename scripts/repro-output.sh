@@ -103,8 +103,13 @@ compare() { # WHAT X Y
         esac
     fi
 }
-compare "C, one directory twice:" "$work/a1.c" "$work/a2.c"
-compare "C, two directories:" "$work/a1.c" "$work/b.c"
+# The C driver's directive lines name where this checkout keeps a program's inputs (a shim's
+# archive, sources and package, a library to link): instructions to the driver, never compiled.
+# The C is compared without them; the executables, compared whole, hold what they led to.
+program() { grep -v -E '^/\* (link|shim-archive|shim-source|bound): |^/\* `\[c\] shim` of package ' "$work/$1.c" > "$work/$1.program.c"; }
+program a1; program a2; program b
+compare "C, one directory twice:" "$work/a1.program.c" "$work/a2.program.c"
+compare "C, two directories:" "$work/a1.program.c" "$work/b.program.c"
 compare "executables, one directory twice:" "$(exe a1)" "$(exe a2)"
 compare "executables, two directories:" "$(exe a1)" "$(exe b)"
 exit $bad

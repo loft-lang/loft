@@ -1,7 +1,8 @@
 # Reproducible output
 
 One loft binary, given the same program, produces the same C and the same executable — built
-twice, and built from another directory.  The loft binary itself is reproducible too; that is
+twice, and built from another directory.  The C's driver lines are the one exception: they name
+where this checkout keeps a program's inputs (below).  The loft binary itself is reproducible too; that is
 [RELEASE_PUBLISH.md](RELEASE_PUBLISH.md)'s `repro-verify.sh`.  This page is about what loft
 PRODUCES.
 
@@ -26,6 +27,27 @@ The sites that apply it: the C writer (`Cx::source_name`), the parser where it m
 `assert`, a `panic` or a field check (`Parser::site_file`), and the interpreter's fault
 rendering (`RuntimeError::render`).  Compile-time diagnostics keep the absolute path: they
 are written into nothing, and an editor opens the file from it.
+
+## Names that carry a hash
+
+- **A function name two definitions share** is written with a hash of the defining file
+  (`n_helper_m<hash>`, `opt::names::disambiguated_fn_ident`).  The hash is over the file's
+  NAME, by the rule above: over the program's roots, or over the roots a placed worker is
+  handed, so the host and its worker name the function alike.
+- **A `[c] shim`'s library and archive** are named from a hash of what they compile from
+  (`c_shim::identity`): each source by its path from the package (`c/twice.c`), however the
+  caller spelled it, its bytes and headers, the compiler, the width, the bodies and the
+  dependencies' headers.  The shared library and the archive of one source carry one key.
+
+## The C driver's lines
+
+A few lines of the C are instructions to the C driver, not program: `/* link: … */`,
+`/* bound: … */`, `/* shim-archive: … */`, `/* shim-source: … */` and the
+``/* `[c] shim` of package … */`` line before them.  They name the files the driver links and
+compiles where this checkout keeps them, so they hold absolute paths, and nothing of them is
+compiled.  `repro-output.sh` compares the C without them, and the executables whole.  A
+program's own table of the shims it links (`loft_clibs`) holds each library's file name; a
+hosted unit, which opens its shims by path (`loft_host_bind_libraries`), holds the path.
 
 ## Where a fault finds its source line
 
@@ -56,8 +78,6 @@ Guard: `a_warm_load_whose_shim_is_gone_writes_the_same_c` in `tests/arc_e_progra
 
 ## What is not reproducible yet
 
-- A program with a `[c] shim` names the shim library by its absolute path (`loft_clibs`,
-  under the package's `native-auto/`); `repro-output.sh`'s program has no shim.
 - The debug tier (`#line` marks) names the C source it was written as, which carries the
   process id.
 - A `--native-wasm` build names its C source with the process id; whether the module records
