@@ -179,26 +179,36 @@ pub fn locate(name: &str, roots: &Roots) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// `p` as an absolute path on this host: a path with no drive is relative on Windows, and
+    /// `name` keeps a relative path as written.
+    fn abs(p: &str) -> String {
+        if crate::platform::is_windows_fs() {
+            format!("C:{p}")
+        } else {
+            p.to_string()
+        }
+    }
+
     fn roots() -> Roots {
         Roots {
-            main_dir: "/work/app".into(),
-            std_dir: "/opt/loft/default".into(),
+            main_dir: abs("/work/app"),
+            std_dir: abs("/opt/loft/default"),
         }
     }
 
     #[test]
     fn a_standard_library_file_is_named_from_default() {
         assert_eq!(
-            name("/opt/loft/default/02_files.loft", &roots()),
+            name(&abs("/opt/loft/default/02_files.loft"), &roots()),
             "default/02_files.loft"
         );
     }
 
     #[test]
     fn a_program_file_is_named_from_the_main_directory() {
-        assert_eq!(name("/work/app/main.loft", &roots()), "main.loft");
+        assert_eq!(name(&abs("/work/app/main.loft"), &roots()), "main.loft");
         assert_eq!(
-            name("/work/app/lib/shapes.loft", &roots()),
+            name(&abs("/work/app/lib/shapes.loft"), &roots()),
             "lib/shapes.loft"
         );
     }
@@ -210,12 +220,12 @@ mod tests {
 
     #[test]
     fn a_file_outside_every_root_without_a_package_is_its_file_name() {
-        assert_eq!(name("/elsewhere/odd/x.loft", &roots()), "x.loft");
+        assert_eq!(name(&abs("/elsewhere/odd/x.loft"), &roots()), "x.loft");
     }
 
     #[test]
     fn a_directory_prefix_is_not_a_root() {
         // `/work/application` is not beneath `/work/app`.
-        assert_eq!(name("/work/application/m.loft", &roots()), "m.loft");
+        assert_eq!(name(&abs("/work/application/m.loft"), &roots()), "m.loft");
     }
 }
