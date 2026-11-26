@@ -1117,13 +1117,21 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nchdr /pkgs/my db\tlayer\t/pkgs/layer one/c\t/pkgs/layer one/inc\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nchdr /pkgs/my db\tlayer\t/pkgs/layer one/c\t/pkgs/layer one/inc\ncfnd -\t-\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
         );
         crate::file_access::write(&manifest, &content).unwrap();
 
+        // A manifest whose `[c]` libraries carry no `cfnd` line (written before it existed)
+        // cannot say which files the C was written against: a miss.
+        crate::file_access::write(&manifest, content.replace("cfnd -\t-\n", "")).unwrap();
+        assert!(
+            manifest_state(&manifest, "k").is_none(),
+            "no cfnd line: a miss"
+        );
+        crate::file_access::write(&manifest, &content).unwrap();
         let state = manifest_state(&manifest, "k").expect("valid manifest hit");
         assert_eq!(
             state.native_crate_regs,
