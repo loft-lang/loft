@@ -521,9 +521,9 @@ fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
     x.lazy_fetchers = k + 1;
     head = "loft_types, coll, path, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
     load = if radix {
-      "n > 0 ? loft_pg_load_box_kv(cx, {head}, key, n, key, n, -1, {plan.coll_name}) : 0"
+      "n > 0 ? loft_pg_load_box_kv(cx, {head}, key, n, key, n, -1, {plan.coll_name}, 0) : 0"
     } else {
-      "n == 1 ? loft_pg_load_keys(cx, {head}, {plan.kind}, key, 1) : 0"
+      "n == 1 ? loft_pg_load_keys_as(cx, {head}, {plan.kind}, key, 1, 0) : 0"
     };
     f = "loft_lazy_fetch{k}";
     sig = "static int64_t {f}(loft_cx *cx, loft_ref coll, loft_str path, const loft_kv *key, int n)";

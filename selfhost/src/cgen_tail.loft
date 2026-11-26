@@ -163,6 +163,17 @@ fn no_exit() -> TailExit {
   TailExit { ok: false, from: 0, stmts: [] }
 }
 
+// Does statement `t` name identifier `name`?
+fn names_in(t: text, name: text) -> boolean {
+  ids = idents(t);
+  for a in ids {
+    if a#index % 2 == 0 && t[a..ids[a#index + 1]!] == name {
+      return true;
+    }
+  }
+  false
+}
+
 // `exit_at`: the exit ending at the `return` on line `ret` returning `x`, when it may share.
 fn exit_at(lines: vector<text>, ret: integer, x: text, nested: hash<TailNode[k]>) -> TailExit {
   assign = "{x} = ";
@@ -191,11 +202,13 @@ fn exit_at(lines: vector<text>, ret: integer, x: text, nested: hash<TailNode[k]>
       return no_exit();
     }
   }
-  writes = "(&{x}";
+  // A release names what it writes first after the store context: `loft_free_var(cx, &x)`.
+  writes = "(cx, &{x}";
   stmts: vector<text> = [];
-  if x != "" && !assigned {
-    stmts += ["loft_rv = {x};"];
-  }
+  // The tail's read of the result moves to the front when no other statement of the tail names
+  // what it reads: a release writes only what it names, so the value is the one the read saw
+  // at its own place, and exits returning different names share every release.
+  read_first = "";
   for i in from..ret {
     t = lines[i]!.trim();
     ids = idents(t);
@@ -205,7 +218,19 @@ fn exit_at(lines: vector<text>, ret: integer, x: text, nested: hash<TailNode[k]>
       }
     }
     if x != "" && t.starts_with(assign) {
-      stmts += ["loft_rv = {t[assign.size()..t.size()]}"];
+      value = t[assign.size()..t.size()];
+      read = if value.ends_with(";") { value[0..value.size() - 1] } else { value };
+      named_elsewhere = false;
+      for j in from..ret {
+        if j != i && names_in(lines[j]!.trim(), read) {
+          named_elsewhere = true;
+        }
+      }
+      if named_elsewhere {
+        stmts += ["loft_rv = {value}"];
+      } else {
+        read_first = "loft_rv = {value}";
+      }
     } else {
       if x != "" {
         p = t.find(writes) ?? -1;
@@ -215,6 +240,13 @@ fn exit_at(lines: vector<text>, ret: integer, x: text, nested: hash<TailNode[k]>
       }
       stmts += [t];
     }
+  }
+  if read_first != "" {
+    stmts = [read_first] + stmts;
+  }
+  if x != "" && !assigned {
+    // Assigned before the tail: read where the tail starts, which no release changes.
+    stmts = ["loft_rv = {x};"] + stmts;
   }
   stmts += [if x == "" { "return;" } else { "return loft_rv;" }];
   TailExit { ok: true, from: from, stmts: stmts }

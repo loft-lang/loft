@@ -31,6 +31,7 @@ use cgen_bind;
 use cgen_cold;
 use cgen_split;
 use cgen_reltable;
+use cgen_switch;
 use cgen_tail;
 use cgen_recptr;
 use cgen_hoist;
@@ -2813,6 +2814,10 @@ fn block_stmt(x: Cx, w: W, node: ir::Node, name: text, ops: vector<ir::Node>, in
   // `@FR-R-RetAdopt` — inside the exit delivery of an adopted result local the buffer's
   // clear and its append emit nothing.
   delivery = w.adopt_v >= 0 && name == "one_buffer_vec_copy";
+  // A long integer `match` as one C `switch` (`switch_match`).
+  if name == "scalar_match" && !delivery && cgen_switch::switch_match(x, w, ops, ind) {
+    return;
+  }
   if delivery {
     w.in_delivery += 1;
   }

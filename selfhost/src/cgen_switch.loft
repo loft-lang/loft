@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// A statement `match` over an integer subject, written as a C `switch` (src/c/body/switch.rs).
+//
+// The parser lowers `match x { 0 => a, 1 => b, … }` to a `scalar_match` block: the subject bound
+// once, then an `if` chain with each arm in the previous arm's `else`.  Written that way the C
+// nests one level per arm, and MSVC's `cl` refuses a block nested past 128 levels (`C1061`): the
+// runner's operator dispatch has some 250 arms.  A `switch` holds every arm at one level.
+
+use ir;
+use loop_shape;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_cold;
+use cgen_hoist;
+
+// A chain shorter than this keeps its nested `if`: so short a chain stays far under `cl`'s
+// limit, and its C stays what every compiler already reads.
+SWITCH_MIN_ARMS = 16;
+
+// One case: the literal, the test that compared it, and the arm it runs.
+struct Case {
+  k: integer,
+  cond: ir::Node,
+  arm: ir::Node,
+}
+
+// The literal `test` compares the subject with — `OpEqInt(subj, k)` or `OpEqLong(subj, k)`, the
+// literal a 32-bit `Int` or, past that range, a `Long` under either operator — or null for any
+// other test, a null literal included.
+fn case_literal(x: Cx, subj: integer, test: ir::Node) -> integer? {
+  match loop_shape::unspan(test) {
+    NdCall { def_nr, args } => {
+      if len(args) != 2 {
+        return null;
+      }
+      on_subject = match loop_shape::unspan(args[0]!) {
+        NdVar { n } => n == subj,
+        _ => false,
+      };
+      name = x.b.data.definitions[def_nr]!.name;
+      if !on_subject || (name != "OpEqInt" && name != "OpEqLong") {
+        return null;
+      }
+      match loop_shape::unspan(args[1]!) {
+        NdInt { n } => if n != -2147483648 { n } else { null },
+        NdLong { n } => n,
+        _ => null,
+      }
+    },
+    _ => null,
+  }
+}
+
+// `switch_match`: write the `scalar_match` block of `ops` as the subject's bind and a `switch`,
+// answering whether it did.  The cases are the chain's leading arms that test the bound subject
+// against an integer literal with `==`; the chain from the first arm that does not (a guard, a
+// range, an or-pattern, a repeated literal) is the `default`.  Each arm runs exactly when the
+// `if` chain runs it: the case literals are distinct and none is the null sentinel, so at most
+// one equals the subject, and a null subject reaches `default` as it fails every `==`.  A block
+// of any other shape answers false and is written as before.  An arm the cold-path writer claims
+// ends the whole attempt: its `if` keeps the placement that writer gives it.
+pub fn switch_match(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) -> boolean {
+  if len(ops) != 2 {
+    return false;
+  }
+  bind = ops[0]!;
+  subj = match loop_shape::unspan(bind) {
+    NdSet { var, inner: _ } => var,
+    _ => -1,
+  };
+  if subj < 0 {
+    return false;
+  }
+  arms: vector<Case> = [];
+  seen: vector<integer> = [];
+  cur = ops[1]!;
+  for _ in 0..100000 {
+    stop = true;
+    match loop_shape::unspan(cur) {
+      NdIf { cond, t, f } => {
+        if len(w.cold) > 0 && cgen_cold::cold_index(w, t) >= 0 {
+          return false;
+        }
+        k = case_literal(x, subj, cond);
+        repeated = false;
+        if k != null {
+          for s in seen {
+            if s == k! {
+              repeated = true;
+            }
+          }
+        }
+        if k != null && !repeated {
+          seen += [k!];
+          arms += [Case { k: k!, cond: cond, arm: t }];
+          cur = f;
+          stop = false;
+        }
+      },
+      _ => {},
+    }
+    if stop {
+      break;
+    }
+  }
+  if len(arms) < SWITCH_MIN_ARMS {
+    return false;
+  }
+  cgen_fn::ops_stmt(x, w, [bind], ind);
+  s = cgen_fn::expr(x, w, NdVar { n: subj }, ind).code;
+  line(w, ind, "switch ({bare(s)}) {{");
+  for a in arms {
+    line(w, ind, "case INT64_C({a.k}): {{");
+    facts = len(w.grid_facts);
+    if plain_rules() {
+      cgen_hoist::grid_test_facts(x, w, a.cond, a.arm);
+    }
+    cgen_fn::stmt(x, w, a.arm, ind + 1);
+    w.grid_facts = w.grid_facts[0..facts];
+    line(w, ind, "}} break;");
+  }
+  if loop_shape::unspan(cur) != NdNull {
+    line(w, ind, "default: {{");
+    cgen_fn::stmt(x, w, cur, ind + 1);
+    line(w, ind, "}} break;");
+  }
+  line(w, ind, "}}");
+  flush(w, ind);
+  true
+}

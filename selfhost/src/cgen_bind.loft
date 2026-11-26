@@ -417,7 +417,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     };
     if is_call && swap_safe(b, bytes, []) {
       cgen_tables::copy_type(x, bytes);
-      line(w, ind, "{null_keeps_entry}if (!({keep} && loft_swap_rebind(cx, {bytes}, {r}, &{name}))) {{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref(cx, {r}); }}");
+      line(w, ind, "{null_keeps_entry}if (!({keep} && loft_swap_rebind(cx, loft_types, {bytes}, {r}, &{name}))) {{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref(cx, {r}); }}");
     } else {
       cgen_tables::copy_type(x, bytes);
       line(w, ind, "{null_keeps_entry}{{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref(cx, {r}); }}");

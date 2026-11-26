@@ -1975,7 +1975,9 @@ fn read_file(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   line(w, ind + 1, "uint8_t *loft_d;");
   line(w, ind + 1, "int64_t loft_n = loft_read_file_in(cx, {fr}, {nr}, {if is_text { 1 } else { 0 }}, {width}, loft_b, sizeof loft_b, &loft_d);");
   line(w, ind + 1, "int loft_le = loft_file_le(cx, {fr});");
-  ok = if is_text { "loft_n >= 0" } else { "loft_n >= {width} && loft_n == {nr}" };
+  // A text is UTF-8: bytes that are not leave it as the read declared it (empty), as the
+  // interpreter's read does.
+  ok = if is_text { "loft_n >= 0 && loft_utf8_valid(cx, loft_d, (size_t) loft_n)" } else { "loft_n >= {width} && loft_n == {nr}" };
   line(w, ind + 1, "if ({ok}) {set}");
   line(w, ind + 1, "(void) loft_le;");
   line(w, ind + 1, "if (loft_d != loft_b) free(loft_d);");

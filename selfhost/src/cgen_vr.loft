@@ -425,7 +425,7 @@ fn write_fields(x: Cx, w: W, key: integer, d: text, s: text, base: integer, end:
     at = "loft_rec_w(cx, {d})";
     if held_at != "" {
       parts = held_at.split('|');
-      at = "({parts[0]!} && !(LOFT_UNLIKELY({parts[1]!}) && loft_locked_write())) ? {parts[0]!} + {parts[2]!} : (uint8_t *) 0";
+      at = "({parts[0]!} && !(LOFT_UNLIKELY({parts[1]!}) && loft_locked_write_on(cx, (uint8_t) {parts[1]!}))) ? {parts[0]!} + {parts[2]!} : (uint8_t *) 0";
     }
     line(w, ind, "{{ uint8_t *loft_w = {at}; if (loft_w) {{");
     for i in sel {

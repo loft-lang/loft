@@ -324,7 +324,9 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
 
 // `drop_code`: `loft_drop_closure`, a value's closure record released through its cascade.
 pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
-  out = "\nstatic void loft_drop_closure(loft_cx *cx, loft_fn f) {{\n    if (!loft_store_live(cx, f.clos)) return;\n    switch (f.d) {{\n";
+  // A hosted unit's value carries the interpreter's number; one the interpreter made has its
+  // closure released there.
+  out = "\nstatic void loft_drop_closure(loft_cx *cx, loft_fn f) {{\n    if (!loft_store_live(cx, f.clos)) return;\n#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(cx, f.d);\n    if (loft_ud < 0) return; /* the interpreter's closure */\n    switch (loft_ud) {{\n#else\n    switch (f.d) {{\n#endif\n";
   for v in x.fn_values {
     if !v {
       continue;
