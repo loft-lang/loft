@@ -480,11 +480,14 @@ fn fill_database(e: el::El, d: integer) {
     reg = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
   }
   if schema_type(e, reg) >= 0 {
-    // @P379: a second definition of a name the schema has is registered qualified — for a
-    // generic instance's own definitions (the standard library's source, which no `use` names)
-    // as `src<source>::<name>`, else under its parent enum's row (`variant_parent_qualified_name`).
-    // A library's same-named type, qualified by its `use` name, is not carried.
-    if def.source != el::STD_SOURCE {
+    // @P379: a second definition of a name the schema has is registered qualified — for an enum
+    // INSTANCE's variant (bare-named, so every instance's `Leaf` is `Leaf`; the standard
+    // library's source, which no `use` names) as `src<source>::<name>`, else under its parent
+    // enum's row (`variant_parent_qualified_name`).  Any other repeat stays refused: a library's
+    // same-named type (qualified by its `use` name) is not carried, and a second definition the
+    // port made where Rust reuses one (a `main_vector<lib::T>` minted twice) must not be laid out.
+    instance_variant = def.def_type == el::DT_ENUM_VALUE && def.parent >= 0 && el::def(e, def.parent).instance_of >= 0;
+    if def.source != el::STD_SOURCE || !instance_variant {
       el::refuse(e, "a struct named like a type the schema already has");
       return;
     }
