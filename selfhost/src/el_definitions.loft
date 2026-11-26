@@ -1835,7 +1835,17 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
   }
   for m in members {
     match e.p.nodes[m] {
-      SIType { at: mat, name: aname } => {
+      SIType { at: mat, name: aname, bounds: abounds } => {
+        // Refused, but registered first as Rust's `parse_interface` makes it: `<Interface>.<Name>`,
+        // a struct answering itself, the interface its parent, at the token after its bounds.
+        if e.first_pass && d >= 0 {
+          an = "{el::def(e, d).name}.{aname}";
+          if el::def_nr(e, an) < 0 {
+            ad = el::add_def(e, an, el::pos_at(e, mat + 2 + if len(abounds) > 0 { 2 * len(abounds) } else { 0 }), el::DT_STRUCT);
+            el::set_returned(e, ad, ir::TyReference { n: ad, dep: [] });
+            e.b.data.definitions[ad].parent = d;
+          }
+        }
         el::refuse(e, "an interface's associated type");
       },
       SIFn { kind, name: method, params, ret, end: mend } => {
