@@ -213,6 +213,8 @@ pub struct Cx {
   // `Data::source_roots`): the program's directory and the standard library's.
   pub main_dir: text,
   pub std_dir: text,
+  // Each type's part of a C name (`Cx::type_ident`), by type number.
+  pub tids: vector<text>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -263,8 +265,9 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     lazy_fetchers: 0,
     sql_plans: [for _ in 0..len(b.types) { false }],
     delivers: [for _ in 0..len(b.types) { false }],
-    main_dir: program_dir(main_file(b)),
-    std_dir: std_dir(b),
+    main_dir: cgen_names::program_dir(cgen_names::main_file(b)),
+    std_dir: cgen_names::std_dir(b),
+    tids: cgen_names::type_idents(b),
   }
 }
 
@@ -316,76 +319,15 @@ fn bind_tables() -> text {
 // declarations and the two definitions.
 fn empty_function(b: ir::Bundle, d: ir::Definition, decls: &text, bodies: &text) {
   name = d.name;
-  file = name_from(d.position.file, program_dir(main_file(b)), std_dir(b));
+  file = cgen_names::name_from(d.position.file, cgen_names::program_dir(cgen_names::main_file(b)), cgen_names::std_dir(b));
   decls += "LOFT_HOT_INLINE void {name}__fr(loft_cx *cx);\nstatic inline void {name}(loft_cx *cx);\n";
   bodies += "\nLOFT_HOT_INLINE void {name}__fr(loft_cx *cx) {{\n}}\n";
   bodies += "\nstatic inline void {name}(loft_cx *cx) {{\n    loft_frame_push(cx, {c_string(original_name(d))}, {c_string(file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr(cx);\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n}}\n";
 }
 
-// The directory of path `p` (`Path::parent`), "" for a bare name.
-fn parent_of(p: text) -> text {
-  at = -1;
-  for c in p {
-    if c == '/' {
-      at = c#index;
-    }
-  }
-  if at < 0 { "" } else if at == 0 { "/" } else { p[0..at] }
-}
-
-// The file `main` was read from (`Data::source_roots`' `file_of(def_nr("n_main"))`).
-fn main_file(b: ir::Bundle) -> text {
-  m = main_index(b);
-  if m < 0 { "" } else { b.data.definitions[m]!.position.file }
-}
-
-// The directory the standard library was read from: that of the first standard-library
-// definition with a file (`STD_SOURCE`, source 0).
-fn std_dir(b: ir::Bundle) -> text {
-  for d in b.data.definitions {
-    if d.source == 0 && d.position.file != "" {
-      return parent_of(d.position.file);
-    }
-  }
-  ""
-}
-
-// `source_name::program_dir`: the program's project root — the nearest directory at or above
-// its `main`'s that holds a `loft.toml` (`resolution_scope::project_root`) — else `main`'s own
-// directory.  The Rust side starts from the canonical directory; a path is taken here as the
-// definitions spell it, which agrees wherever no part of it is a symbolic link.
-fn program_dir(main_file: text) -> text {
-  if main_file == "" {
-    return "";
-  }
-  start = if is_dir(main_file) { main_file } else { parent_of(main_file) };
-  if start == "" {
-    start = directory();
-  }
-  cur = start;
-  for _ in 0..4096 {
-    if exists("{cur}/loft.toml") {
-      return cur;
-    }
-    up = parent_of(cur);
-    if up == "" || up == cur {
-      break;
-    }
-    cur = up;
-  }
-  parent_of(main_file)
-}
-
-// `file` below directory `dir`: the rest after `dir/`, null when it is not below it.
-fn beneath(file: text, dir: text) -> text? {
-  d = dir;
-  while d.ends_with("/") {
-    d = d[0..d.size() - 1];
-  }
-  if d == "" || !file.starts_with("{d}/") {
-    return null;
-  }
-  file[d.size() + 1..file.size()]
+// The part of a C name that stands for type `tp` (`Cx::type_ident`).
+pub fn type_ident(x: Cx, tp: integer) -> text {
+  x.tids[tp] ?? "{tp}"
 }
 
 // The name a fault site, a frame and a line mark give source `file` (`source_name::name`):
@@ -393,57 +335,10 @@ fn beneath(file: text, dir: text) -> text? {
 // is built.  The standard library's files under `default/`, the program's from its directory,
 // a package's from the directory that holds the package, anything else by its file name.
 pub fn source_name(x: Cx, file: text) -> text {
-  name_from(file, x.main_dir, x.std_dir)
-}
-
-// `source_name` against the roots `main_dir` and `std_dir`.
-fn name_from(file: text, main_dir: text, std_dir: text) -> text {
-  if !file.starts_with("/") {
-    return file;
-  }
-  std_rest = beneath(file, std_dir);
-  if std_rest != null {
-    return "default/{std_rest}";
-  }
-  main_rest = beneath(file, main_dir);
-  if main_rest != null {
-    return main_rest;
-  }
-  cur = parent_of(file);
-  while cur != "" && cur != "/" {
-    if exists("{cur}/loft.toml") {
-      holder = parent_of(cur);
-      rest = beneath(file, holder);
-      if rest != null {
-        return rest;
-      }
-      break;
-    }
-    cur = parent_of(cur);
-  }
-  at = -1;
-  for c in file {
-    if c == '/' {
-      at = c#index;
-    }
-  }
-  file[at + 1..file.size()]
+  cgen_names::name_from(file, x.main_dir, x.std_dir)
 }
 
 // The number of the definition named `name`, -1 for none.
-// `Data::def_nr("n_main")` (`get_or_std`): the program's own `main` — the definition of that
-// name in the program's source — before one of the same name elsewhere (a library's).
-fn main_index(b: ir::Bundle) -> integer {
-  found = -1;
-  for d in b.data.definitions {
-    if d.name == "n_main" && (found < 0 || d.source == b.data.source) {
-      if found < 0 || b.data.definitions[found]!.source != b.data.source {
-        found = d#index;
-      }
-    }
-  }
-  found
-}
 
 // `test_functions`: the program's tests, the way `loft --tests` picks them — its own
 // zero-parameter functions (`MAIN_SOURCE`, not compiler-written, no iterator result), only the
@@ -478,7 +373,7 @@ pub fn test_functions(b: ir::Bundle) -> vector<integer> {
 
 // The roots of the program's unit: its `main`, or — a program without one — its tests.
 pub fn unit_roots(b: ir::Bundle) -> vector<integer> {
-  mi = main_index(b);
+  mi = cgen_names::main_index(b);
   if mi >= 0 { [mi] } else { test_functions(b) }
 }
 
@@ -497,7 +392,7 @@ fn def_index(b: ir::Bundle, name: text) -> integer {
 // statement has none, so what is carried today is the same text in both forms, and the form
 // becomes a parameter with the first statement written.
 pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
-  mi = main_index(b);
+  mi = cgen_names::main_index(b);
   main = if mi < 0 { null } else { b.data.definitions[mi] };
   if main == null {
     return refuse("no main: the tests' unit");
@@ -623,7 +518,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "tables" {
     // `LOFT_TRACE_TABLES`: the unit's type tables as its bodies registered them — for a unit
     // this generator writes whole.
-    root = main_index(b);
+    root = cgen_names::main_index(b);
     if root < 0 {
       return "";
     }

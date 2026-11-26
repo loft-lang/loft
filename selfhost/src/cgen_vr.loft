@@ -457,7 +457,7 @@ fn write_fields(x: Cx, w: W, key: integer, d: text, s: text, base: integer, end:
       cgen_tables::copy_type(x, elem);
       add = if x.b.types[elem].linked { "loft_vec_add_array" } else { "loft_vec_add" };
       line(w, ind, "loft_set_int4(cx, {d}, {a}, INT64_C(0));");
-      line(w, ind, "{add}(loft_types, {elem}, loft_field(cx, {d}, {a}), {s}.f{i});");
+      line(w, ind, "{add}(cx, loft_types, {elem}, loft_field(cx, {d}, {a}), {s}.f{i});");
       continue;
     }
     line(w, ind, if rt == "f64" { "loft_set_float(cx, {d}, {a}, {s}.f{i});" } else if rt == "f32" { "loft_set_single(cx, {d}, {a}, {s}.f{i});" } else if rt == "bool" { "loft_set_byte(cx, {d}, {a}, {s}.f{i});" } else { "loft_set_int(cx, {d}, {a}, {s}.f{i});" });

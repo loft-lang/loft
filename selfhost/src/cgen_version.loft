@@ -161,7 +161,7 @@ pub fn pre(x: Cx, d: integer) -> text {
   l = x.v_leaves[d]!;
   lv = opt_version::leaves(l);
   params: vector<text> = [for i in 0..len(lv) { "int64_t a{i}" }];
-  out = "\n/* @FR-R-Version: {cgen_names::original_name(x.b.data.definitions[d]!)}'s precondition. */\nstatic inline int {name}({if len(params) == 0 { "void" } else { params.join(", ") }}) {{\n    int ok = 1;\n";
+  out = "\n/* @FR-R-Version: {cgen_names::original_name(x.b.data.definitions[d]!)}'s precondition. */\nstatic inline int {name}({cx_params(params)}) {{\n    int ok = 1;\n";
   for t in l.tests {
     op = if t.strict { "<" } else { "<=" };
     out += "    {{ int64_t l = {pre_expr(t.lo, lv)}, h = {pre_expr(t.hi, lv)}; if (!ok || !(l {op} h)) return 0; }}\n";

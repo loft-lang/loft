@@ -203,7 +203,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     } else {
       "loft_text_le"
     };
-    return E { code: "{f}({as_view(w, a)}, {as_view(w, b)})", kind: K_COND };
+    return E { code: "{f}(cx, {as_view(w, a)}, {as_view(w, b)})", kind: K_COND };
   }
   if name == "OpAppendText" {
     if count != 2 {
@@ -324,7 +324,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
   if (name == "OpLengthText" || name == "OpSizeText") && count == 1 {
     a = cgen_fn::arg(x, w, args, 0, ind);
     f = if name == "OpLengthText" { "loft_text_length" } else { "loft_text_size" };
-    return E { code: "{f}({as_view(w, a)})", kind: K_INT };
+    return E { code: "{f}(cx, {as_view(w, a)})", kind: K_INT };
   }
   if name == "OpClearText" && count == 1 {
     dest = text_dest(w, args[0]);

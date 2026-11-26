@@ -293,7 +293,7 @@ pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
     d = v#index;
     cascade = opt_names::drop_cascade_nr(x.b, x.b.data.definitions[d]!.closure_record);
     if cascade >= 0 && cascade < len(x.b.data.definitions) && writes(fns, cascade) {
-      out += "    case INT64_C({d}): {cgen_names::c_name(x.b, x.dups, cascade)}(f.clos); return;\n";
+      out += "    case INT64_C({d}): {cgen_names::c_name(x.b, x.dups, cascade)}(cx, f.clos); return;\n";
     }
   }
   out + "    default:\n        return;\n    }}\n}}\n"

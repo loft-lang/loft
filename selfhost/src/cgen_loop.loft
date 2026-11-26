@@ -839,7 +839,7 @@ fn checked_chain(nodes: vector<SpecNode>, at: integer) -> text {
   } else {
     "loft_xor"
   };
-  "{f}({checked_chain(nodes, n.lhs)}, {checked_chain(nodes, n.rhs)})"
+  "{f}(cx, {checked_chain(nodes, n.lhs)}, {checked_chain(nodes, n.rhs)})"
 }
 
 // `chain_admitted`: does `(R-GuardedChain)` own an operator of the chain under `v`?

@@ -169,7 +169,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     url = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
     sha = if len(args) == 3 { "{as_view(w, cgen_fn::arg(x, w, args, 2, ind))}, " } else { "" };
-    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}({r}, {url}, {sha}{sc})", kind: K_BOOL };
+    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}(cx, {r}, {url}, {sha}{sc})", kind: K_BOOL };
   }
   if route == "n_store_verify" && len(args) == 1 {
     // The walk reads the store's own type: every type the value reaches is described.
@@ -526,7 +526,7 @@ fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
       "n == 1 ? loft_pg_load_keys(cx, {head}, {plan.kind}, key, 1) : 0"
     };
     f = "loft_lazy_fetch{k}";
-    sig = "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)";
+    sig = "static int64_t {f}(loft_cx *cx, loft_ref coll, loft_str path, const loft_kv *key, int n)";
     x.gen_decls += "{sig};\n";
     x.gen_bodies += "\n{sig} {{\n    return {load};\n}}\n";
     fetch = f;

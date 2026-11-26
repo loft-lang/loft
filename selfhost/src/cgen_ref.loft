@@ -39,7 +39,7 @@ use cgen_w::*;
 
 // A program write as its `_at` setter (`set_at`): `f(args…, file, line)`.
 fn set_at(w: W, f: text, args: vector<text>) -> E {
-  E { code: "{f}({args.join(", ")}, {cgen_fn::site(w)})", kind: K_VOID }
+  E { code: "{f}(cx, {args.join(", ")}, {cgen_fn::site(w)})", kind: K_VOID }
 }
 
 // The size a record of type `tp` is allotted with (`Stores::enum_parent_size`): a variant's
@@ -278,6 +278,14 @@ fn ref_ops_1(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       return E { code: "{w.names[f]!}.clos", kind: K_REF };
     }
   }
+  // `@FR-H-DropOnce` — the bracket of the outermost release of a droppable `tp`: the
+  // runtime's `loft_drop_enter` / `loft_drop_leave` (`drop_bracket`).
+  if (name == "OpDropEnter" || name == "OpDropLeave") && count == 2 {
+    tp = cgen_fn::literal(w, args[1], "type") ?? return none();
+    r = cgen_fn::expr(x, w, args[0], ind);
+    f = if name == "OpDropEnter" { "loft_drop_enter" } else { "loft_drop_leave" };
+    return E { code: "{f}(cx, {as_ref(w, r)}, {tp})", kind: K_VOID };
+  }
   if name == "OpStoreLive" && count == 1 {
     r = cgen_fn::expr(x, w, args[0], ind);
     return E { code: "loft_store_live(cx, {as_ref(w, r)})", kind: K_COND };
@@ -369,14 +377,14 @@ fn ref_ops_2(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       return E { code: "loft_vec_push_single(cx, {as_ref(w, v)}, {as_single(w, val)})", kind: K_VOID };
     }
     f = if name == "OpPushInt4" { "loft_vec_push_int4" } else { "loft_vec_push_int" };
-    return E { code: "{f}({as_ref(w, v)}, {as_int(w, val)})", kind: K_VOID };
+    return E { code: "{f}(cx, {as_ref(w, v)}, {as_int(w, val)})", kind: K_VOID };
   }
   if (name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
     f = if name == "OpGetByte" { "loft_get_byte" } else if name == "OpGetByteNullable" { "loft_get_byte_nullable" } else if name == "OpGetShort" { "loft_get_short" } else { "loft_get_short_raw" };
     r = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "{f}({as_ref(w, r)}, {fld}, {c_long(min)})", kind: K_INT };
+    return E { code: "{f}(cx, {as_ref(w, r)}, {fld}, {c_long(min)})", kind: K_INT };
   }
   if (name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetShort" || name == "OpSetShortRaw") && count == 4 {
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
@@ -391,7 +399,7 @@ fn ref_ops_2(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
     f = if name == "OpGetInt4" { "loft_get_int4" } else if name == "OpGetInt4Raw" { "loft_get_int4_raw" } else { "loft_get_int4_full" };
-    return E { code: "{f}({as_ref(w, r)}, {fld})", kind: K_INT };
+    return E { code: "{f}(cx, {as_ref(w, r)}, {fld})", kind: K_INT };
   }
   if name == "OpSizeVector" && count == 2 {
     stride = cgen_fn::literal(w, args[1], "stride") ?? return none();
@@ -507,7 +515,7 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       if kind == "index" || kind == "ordered" {
         cgen_tables::name_types(x);
         cgen_tables::describe_type(x, elem);
-        return E { code: "(void) {if kind == "index" { "loft_ix_insert" } else { "loft_ordered_insert" }}(loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
+        return E { code: "(void) {if kind == "index" { "loft_ix_insert" } else { "loft_ordered_insert" }}(cx, loft_types, {elem}, {place}, {rec}, {keys}, 0)", kind: K_VOID };
       }
       if kind == "array" {
         return E { code: "loft_array_append(cx, {place}, {rec})", kind: K_VOID };
@@ -603,7 +611,7 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     dst = cgen_fn::arg(x, w, pair, 1, ind);
     f = if name == "OpMoveRecord" { "loft_move_record_out" } else { "loft_move_field" };
     cgen_tables::copy_type(x, tp);
-    return E { code: "{f}(loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)})", kind: K_VOID };
+    return E { code: "{f}(cx, loft_types, {tp}, {as_ref(w, src)}, {as_ref(w, dst)})", kind: K_VOID };
   }
   if (name == "OpPrependVector" || name == "OpAppendVector") && count == 3 {
     tp = cgen_fn::literal(w, args[2], "element type") ?? return none();
@@ -682,7 +690,7 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     from = as_ref(w, cgen_fn::arg(x, w, pair, 1, ind));
     f = if name == "OpAdoptVector" { "loft_vec_adopt" } else if linked { "loft_move_vector_array" } else { "loft_move_vector" };
     cgen_tables::copy_type(x, tp);
-    return E { code: "{f}(loft_types, {tp}, {into}, {from})", kind: K_VOID };
+    return E { code: "{f}(cx, loft_types, {tp}, {into}, {from})", kind: K_VOID };
   }
   if (name == "OpSliceVector" || name == "OpSliceView") && count == 5 {
     tp = cgen_fn::literal(w, args[4], "element type") ?? return none();
@@ -704,7 +712,7 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     lo = as_int(w, cgen_fn::arg(x, w, four, 2, ind));
     hi = as_int(w, cgen_fn::arg(x, w, four, 3, ind));
     f = if name == "OpSliceVector" { "loft_vec_slice" } else { "loft_vec_slice_view" };
-    return E { code: "{f}({into}, {from}, {lo}, {hi}, {x.b.types[tp].size})", kind: K_VOID };
+    return E { code: "{f}(cx, {into}, {from}, {lo}, {hi}, {x.b.types[tp].size})", kind: K_VOID };
   }
   if name == "OpAppendCopy" && count == 3 {
     tp = cgen_fn::literal(w, args[2], "vector type") ?? return none();
@@ -961,7 +969,7 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     cgen_tables::name_types(x);
     cgen_tables::describe_type(x, tp);
     d = cgen_fn::expr(x, w, args[1], ind);
-    return E { code: "{call}(loft_types, {tp}, &{w.names[state]!}, {as_ref(w, d)}, {reverse})", kind: K_VOID };
+    return E { code: "{call}(cx, loft_types, {tp}, &{w.names[state]!}, {as_ref(w, d)}, {reverse})", kind: K_VOID };
   }
   // `==` on two records by content, through the type's comparison (`eq.rs`).
   if (name == "OpEqContent" || name == "OpNeContent") && count == 3 {
@@ -1741,7 +1749,7 @@ pub fn show_top_call(x: Cx, w: W, tp: integer, s: text, r: text, fmt: text) -> t
   if ptypes::reaches_reference(x.b.types, tp, []) {
     return "loft_show_top(cx, {s}, {show_fn(tp)}, {r}, {fmt})";
   }
-  "{show_fn(tp)}({s}, {r}, {fmt}, 0)"
+  "{show_fn(tp)}(cx, {s}, {r}, {fmt}, 0)"
 }
 
 // `Cx::default_is_zero` as the writer asks it: the default image is registered for the unit
@@ -1987,7 +1995,7 @@ pub fn keyed_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     }
     h = cgen_fn::expr(x, w, args[0], ind);
     f = if route == "n_hash_sorted" { "loft_hash_sorted" } else { "loft_hash_unsorted" };
-    return E { code: "{f}({as_ref(w, h)}, {cgen_tables::keys_name(x, tp)}, {len(x.b.types[tp].keys)})", kind: K_REF };
+    return E { code: "{f}(cx, {as_ref(w, h)}, {cgen_tables::keys_name(x, tp)}, {len(x.b.types[tp].keys)})", kind: K_REF };
   }
   if route == "n_radix_sorted" && len(args) == 2 {
     r = cgen_fn::expr(x, w, args[0], ind);

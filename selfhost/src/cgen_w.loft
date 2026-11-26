@@ -9,7 +9,7 @@
 // in `cgen.loft`.
 
 use ir;
-use cgen::(Cx);
+use cgen::(Cx, type_ident);
 use cgen_names;
 use loop_shape;
 use opt_frame_calls;
@@ -725,6 +725,16 @@ pub fn number_pending(x: Cx, w: W) {
 pub fn resolve_tuples(x: Cx, code: text) -> text {
   out = "";
   rest = code;
+  // A transient group's struct by its type's identifier (`held`'s `lt_@<g>@`).
+  for _ in 0..code.size() {
+    at = rest.find("lt_@") ?? break;
+    close = rest[at + 4..rest.size()].find("@") ?? break;
+    g = rest[at + 4..at + 4 + close] as integer ?? break;
+    out += "{rest[0..at]}lt_{type_ident(x, g)}";
+    rest = rest[at + 5 + close..rest.size()];
+  }
+  rest = out + rest;
+  out = "";
   for _ in 0..code.size() {
     at = rest.find("loft_tup@") ?? break;
     close = rest[at + 9..rest.size()].find("@") ?? break;
@@ -732,6 +742,72 @@ pub fn resolve_tuples(x: Cx, code: text) -> text {
     id = tuple_id(x, shape);
     out += "{rest[0..at]}loft_tup{id}";
     rest = rest[at + 10 + close..rest.size()];
+  }
+  out + rest
+}
+
+// `Cx::tuple_code` (@PLN229 B0): a tuple's name part, one letter per member's C shape, a nested
+// tuple or a transient record as a letter, its part's length and the part — so two shapes never
+// share a name, and the name does not depend on which tuple the writer met first.
+fn tuple_code(x: Cx, shape: text) -> text {
+  out = "";
+  for m in tuple_members(shape) {
+    if is_tuple(m) {
+      inner = tuple_code(x, m);
+      out += "T{inner.size()}{inner}";
+    } else if m.starts_with("tr") && m != "trvec" {
+      ident = type_ident(x, m[2..m.size()] as integer ?? -1);
+      out += "R{ident.size()}{ident}";
+    } else {
+      out += if m == "int" { "l" } else if m == "int32" { "i" } else if m == "bool" { "b" } else if m == "text" { "t" } else if m == "ref" { "r" } else if m == "enum" { "e" } else if m == "float" { "d" } else if m == "single" { "f" } else if m == "char" { "c" } else if m == "fn" { "n" } else if m == "trvec" { "v" } else { "z" };
+    }
+  }
+  out
+}
+
+// `Cx::name_tuples` (@PLN229 B0): `code` with every tuple struct named from its members' shapes
+// (`loft_tup_<code>`) in place of its number of first use (`loft_tup<n>`, and a cast's
+// `loft_tup<n>_as<m>`), in one pass: a unit's C then changes only where a tuple it uses changes.
+pub fn name_tuples(x: Cx, code: text) -> text {
+  n = len(x.tuples);
+  if n == 0 {
+    return code;
+  }
+  codes: vector<text> = [for t in x.tuples { tuple_code(x, t) }];
+  out = "";
+  rest = code;
+  for _ in 0..code.size() {
+    at = rest.find("loft_tup") ?? break;
+    out += rest[0..at + 8];
+    rest = rest[at + 8..rest.size()];
+    digits = 0;
+    for c in rest {
+      if c < '0' || c > '9' {
+        break;
+      }
+      digits += 1;
+    }
+    i = if digits == 0 { -1 } else { rest[0..digits] as integer ?? -1 };
+    if i < 0 || i >= n {
+      continue;
+    }
+    out += "_{codes[i]!}";
+    rest = rest[digits..rest.size()];
+    if rest.starts_with("_as") {
+      cast = rest[3..rest.size()];
+      cd = 0;
+      for c in cast {
+        if c < '0' || c > '9' {
+          break;
+        }
+        cd += 1;
+      }
+      j = if cd == 0 { -1 } else { cast[0..cd] as integer ?? -1 };
+      if j >= 0 && j < n {
+        out += "_as_{codes[j]!}";
+        rest = cast[cd..cast.size()];
+      }
+    }
   }
   out + rest
 }
@@ -765,7 +841,9 @@ fn held(shape: text) -> text {
   } else if shape == "trvec" {
     "loft_ta_vec *"
   } else if shape.starts_with("tr") {
-    "lt_{shape[2..shape.size()]} *"
+    // The group's number stays in the shape (`TrVar::ctype`'s `tr<g>`); its C name is the
+    // type's identifier, put in where the unit resolves its tuples (`resolve_tuples`).
+    "lt_@{shape[2..shape.size()]}@ *"
   } else if shape == "ref" {
     "loft_ref"
   } else if shape == "fn" {

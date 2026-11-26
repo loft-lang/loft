@@ -10,7 +10,7 @@
 
 use ir;
 use types;
-use cgen::(Cx);
+use cgen::(Cx, type_ident);
 use cgen_w::*;
 use cgen_show;
 use cgen_eq;
@@ -107,7 +107,7 @@ pub fn default_name(x: Cx, tp: integer) -> text {
   } else if tp == 65535 {
     x.tables.default_none = true;
   }
-  "loft_dflt{tp}"
+  "loft_dflt_{type_ident(x, tp)}"
 }
 
 // `enum_names`: the C name of plain enum `tp`'s value names, registered for the unit.
@@ -123,13 +123,13 @@ pub fn keys_name(x: Cx, tp: integer) -> text {
   if tp >= 0 && tp < len(x.b.types) {
     x.tables.keys[tp] = true;
   }
-  "loft_keys{tp}"
+  "loft_keys_{type_ident(x, tp)}"
 }
 
 // `keys_of`: the C name of keyed type `tp`'s key parts and their count, registered.
 fn keys_of(x: Cx, tp: integer) -> text {
   x.tables.keys[tp] = true;
-  "loft_keys{tp}, {len(x.b.types[tp]!.keys)}"
+  "loft_keys_{type_ident(x, tp)}, {len(x.b.types[tp]!.keys)}"
 }
 
 // `type_holds_file`: can a value of `tp` hold or reach a `File` record?
@@ -224,8 +224,8 @@ fn copy_table(x: Cx) -> text {
     head = if r.kind == types::T_STRUCT {
       list: vector<text> = [for f in r.fields { "{{ {f.pos}, {f.tp}, {f.view}, {f.hidden}, {f.group}, {f.target} }}" }];
       body = if len(list) == 0 { "{{ 0, 0, 0, 0, 0, 0xFFFF }}" } else { list.join(", ") };
-      out += "static const loft_fld loft_fields{tp}[] = {{ {body} }};\n";
-      "{tdesc_kind(r.kind)}, {r.size}, 0, {r.n}, loft_fields{tp}, 0"
+      out += "static const loft_fld loft_fields_{type_ident(x, tp)}[] = {{ {body} }};\n";
+      "{tdesc_kind(r.kind)}, {r.size}, 0, {r.n}, loft_fields_{type_ident(x, tp)}, 0"
     } else if r.kind == types::T_ENUM {
       variants = [for v in r.variants { "{v}" }].join(", ");
       out += "static const uint16_t loft_variants{tp}[] = {{ {variants} }};\n";
@@ -257,7 +257,7 @@ pub fn typedefs(x: Cx, names: text) -> text {
     tp = k#index;
     parts: vector<text> = [for p in x.b.types[tp]!.keys { "{{ {p.type_nr}, {p.position}, {p.start} }}" }];
     body = if len(parts) == 0 { "{{ 0, 0, 0 }}" } else { parts.join(", ") };
-    out += "static const loft_key loft_keys{tp}[] = {{ {body} }};\n";
+    out += "static const loft_key loft_keys_{type_ident(x, tp)}[] = {{ {body} }};\n";
   }
   out += table;
   out += cgen_store::sidecar_table(x);
@@ -277,7 +277,7 @@ pub fn typedefs(x: Cx, names: text) -> text {
     bytes = types::default_image(x.b.types, d#index);
     count = if len(bytes) > 0 { len(bytes) } else { 1 };
     list = if len(bytes) == 0 { "0" } else { [for v in bytes { "{v as integer}" }].join(", ") };
-    out += "static const uint8_t loft_dflt{d#index}[{count}] = {{ {list} }};\n";
+    out += "static const uint8_t loft_dflt_{type_ident(x, d#index)}[{count}] = {{ {list} }};\n";
   }
   if x.tables.default_none {
     out += "static const uint8_t loft_dflt65535[1] = {{ 0 }};\n";

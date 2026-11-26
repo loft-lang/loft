@@ -321,11 +321,11 @@ pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
     }
     if count == 2 {
       f = if name == "OpGetInt4" { "loft_pa_int4" } else if name == "OpGetInt4Raw" { "loft_pa_int4_raw" } else { "loft_pa_int4_full" };
-      return E { code: "{f}({pa}, {off})", kind: K_INT };
+      return E { code: "{f}(cx, {pa}, {off})", kind: K_INT };
     }
     min = cgen_fn::literal(w, args[2], "minimum") ?? return none();
     g = if name == "OpGetByte" { "loft_pa_byte" } else if name == "OpGetByteNullable" { "loft_pa_byte_nullable" } else if name == "OpGetShort" { "loft_pa_short" } else { "loft_pa_short_raw" };
-    return E { code: "{g}({pa}, {off}, {c_long(min)})", kind: K_INT };
+    return E { code: "{g}(cx, {pa}, {off}, {c_long(min)})", kind: K_INT };
   }
   val = cgen_fn::expr(x, w, args[2], ind);
   shape = if name == "OpSetInt" { "int" } else if name == "OpSetFloat" { "float" } else if name == "OpSetSingle" { "single" } else { "enum" };

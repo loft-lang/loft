@@ -184,7 +184,7 @@ pub fn par_native(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
   if get != "" && len(args) == 1 {
     kind = if name == "n_parallel_buf_get_float" { K_FLOAT } else if name == "n_parallel_buf_get_single" { K_SINGLE } else if name == "n_parallel_buf_get_ref" { K_REF } else if name == "n_parallel_buf_get_fn" { K_FN } else { K_INT };
     i = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "{get}({as_int(w, i)})", kind: kind };
+    return E { code: "{get}(cx, {as_int(w, i)})", kind: kind };
   }
   if name == "n_parallel_buf_get_text" && len(args) == 1 {
     i = cgen_fn::expr(x, w, args[0], ind);
@@ -294,7 +294,7 @@ fn queue(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
   row_c = if dense == "" { "loft_par_slot" } else { dense };
   push = if dense == "" { "loft_par_push" } else { dense_push(shape) };
-  line(w, ind + 1, "{row_c} *loft_b = {if name == "n_parallel_discard" { "0" } else { "{push}({n})" }};");
+  line(w, ind + 1, "{row_c} *loft_b = {if name == "n_parallel_discard" { "0" } else { "{push}(cx, {n})" }};");
   line(w, ind + 1, "(void) loft_b;");
   line(w, ind + 1, "for (int64_t loft_i = 0; loft_i < {n}; loft_i++) {{");
   line(w, ind + 2, "loft_ref loft_e = loft_vec_get(cx, {input}, {esz}, loft_i);");
@@ -366,7 +366,7 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   n = temp(w, "int");
   line(w, ind, "{n} = loft_vec_len(cx, {input});");
   line(w, ind, "{{");
-  slots = if name == "n_parallel_discard" { "0" } else { "{push}({n})" };
+  slots = if name == "n_parallel_discard" { "0" } else { "{push}(cx, {n})" };
   res = "{{ 0xFFFF, 0, 0, 0 }}";
   if kt >= 0 {
     line(w, ind + 1, "loft_ref loft_res = loft_ref_null(cx);");
@@ -432,8 +432,8 @@ fn fold(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   line(w, ind + 2, "for (uint64_t loft_k = 0; loft_k < loft_t; loft_k++) {{");
   line(w, ind + 3, "int64_t loft_p = {init};");
   line(w, ind + 3, "for (uint64_t loft_i = loft_k * loft_n / loft_t; loft_i < (loft_k + 1) * loft_n / loft_t; loft_i++)");
-  line(w, ind + 4, "loft_p = {f}(loft_p, loft_i64_bits(cx, loft_par_arg(cx, loft_vec_get(cx, {input}, 8, (int64_t) loft_i), 8)));");
-  line(w, ind + 3, "{r} = {f}({r}, loft_p);");
+  line(w, ind + 4, "loft_p = {f}(cx, loft_p, loft_i64_bits(cx, loft_par_arg(cx, loft_vec_get(cx, {input}, 8, (int64_t) loft_i), 8)));");
+  line(w, ind + 3, "{r} = {f}(cx, {r}, loft_p);");
   line(w, ind + 2, "}}");
   line(w, ind + 1, "}}");
   line(w, ind, "}}");

@@ -486,7 +486,8 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     }
     written += table;
   }
-  Assembled { defines: defs, written: written, refused: "", tables: cgen_tables::tables_line(x) }
+  // @PLN229 B0: every tuple struct named from its members' shapes, in one pass at the end.
+  Assembled { defines: defs, written: name_tuples(x, written), refused: "", tables: cgen_tables::tables_line(x) }
 }
 
 // `def_named`: the definition named `name`, or -1.

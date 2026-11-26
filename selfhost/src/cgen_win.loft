@@ -255,7 +255,7 @@ pub fn windowed(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, d
     bits = "loft_byte_raw(cx, {min}, {as_int(w, val)})";
   }
   site = "{cgen_names::original_name(x.b.data.definitions[w.index]!)}:{win}";
-  E { code: "(LOFT_PROVED(loft_win_same(cx, {win}, {pv}, {size}), {c_string(site)}), {put}(&{win}, {pv}, {bits}))", kind: K_VOID }
+  E { code: "(LOFT_PROVED(loft_win_same(cx, {win}, {pv}, {size}), {c_string(site)}), {put}(cx, &{win}, {pv}, {bits}))", kind: K_VOID }
 }
 
 // `counter_step`: `v + 1`, as the loop's own step spells it.
@@ -298,9 +298,9 @@ pub fn fill_head(x: Cx, w: W, lp: ir::Block, ind: integer) -> text {
   incl = if f.inclusive { 1 } else { 0 };
   if f.has_bound {
     line(w, ind, "int64_t flhi_{s} = loft_fill_guard_end(cx, {hi}, {incl}, {bound}, {base}); int64_t fllo_{s} = {lo};");
-    line(w, ind, "int fill_{s} = loft_fill_span(cx, flhi_{s}, fllo_{s}) >= 8 && {func}({hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */");
+    line(w, ind, "int fill_{s} = loft_fill_span(cx, flhi_{s}, fllo_{s}) >= 8 && {func}(cx, {hdr}, {base}, fllo_{s}, flhi_{s}, 0, {val}); /* @FR-R-Fill guarded */");
   } else {
-    line(w, ind, "int fill_{s} = {func}({hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */");
+    line(w, ind, "int fill_{s} = {func}(cx, {hdr}, {base}, {lo}, {hi}, {incl}, {val}); /* @FR-R-Fill */");
   }
   "fill_{s}"
 }

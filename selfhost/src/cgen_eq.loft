@@ -95,7 +95,7 @@ fn eq_fields(fields: vector<ir::DbField>, ind: text) -> text {
     } else if f.target != 65535 {
       "loft_eq_reference(cx, {pa}, {pb}, {f.target}, {eq_fn(f.target)})"
     } else {
-      "{eq_fn(f.content)}({pa}, {pb})"
+      "{eq_fn(f.content)}(cx, {pa}, {pb})"
     };
     out += "{ind}if (!{test}) return 0;\n";
   }

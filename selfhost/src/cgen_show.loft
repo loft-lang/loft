@@ -119,7 +119,7 @@ fn fields_fn(x: Cx, tp: integer, fields: vector<ir::DbField>, chains: boolean) -
     if is_reference_field(x.b, f) {
       out += "    loft_show_ref_field(cx, s, loft_field(cx, r, {f.position}), fmt, ind + 1, {show_fn(f.target)});\n";
     } else {
-      out += "    {show_fn(f.content)}(s, loft_field(cx, r, {f.position}), fmt, ind + 1);\n";
+      out += "    {show_fn(f.content)}(cx, s, loft_field(cx, r, {f.position}), fmt, ind + 1);\n";
     }
     out += "    loft_rr_pop(cx);\n";
   }
@@ -136,7 +136,7 @@ fn enum_body(x: Cx, name: text, values: vector<ir::EnumPair>, complex: integer, 
           PtEnumValue { value: _, fields } => {
             for pf in fields {
               if pf.name == "payload" {
-                out += "    case {v#index + 1}: {show_fn(pf.content)}(s, loft_field(cx, r, {pf.position}), fmt, ind); return;\n";
+                out += "    case {v#index + 1}: {show_fn(pf.content)}(cx, s, loft_field(cx, r, {pf.position}), fmt, ind); return;\n";
                 break;
               }
             }
@@ -186,7 +186,7 @@ fn show_body(x: Cx, tp: integer, chains: boolean) -> text {
     PtDbRef => "    (void) fmt; (void) ind;\n    loft_show_dbref(cx, s, r);\n",
     PtChildRec { content } => {
       if child_is_value(x.b, content) {
-        "    {show_fn(content)}(s, loft_ref_from_child_rec(cx, r), fmt, ind);\n"
+        "    {show_fn(content)}(cx, s, loft_ref_from_child_rec(cx, r), fmt, ind);\n"
       } else {
         "    (void) fmt; (void) ind;\n    loft_show_child(cx, s, r);\n"
       }
@@ -250,7 +250,7 @@ pub fn show_code(x: Cx) -> text {
       out += "static void loft_show{tp}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind) {{\n    loft_show_run(cx, s, loft_show1_{tp}, r, fmt, ind);\n}}\n";
       body = "loft_show1_{tp}";
     }
-    out += "static void {body}(loft_text *s, loft_ref r, int fmt, int ind) {{\n";
+    out += "static void {body}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind) {{\n";
     out += "    if (r.rec == 0) {{ loft_push(cx, s, \"null\", 4); return; }}\n";
     match x.b.types[tp]!.parts[0]! {
       PtStruct { fields: _ } => { out += "    loft_rr_record(cx, r);\n"; },
