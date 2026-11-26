@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Closures
 // @TITLE: Capturing variables from the surrounding scope
+// @FR-L-CapScalar: a captured scalar is the value it had when the closure was made.
+// @FR-L-CapHeap: a captured vector or struct is shared: later appends are seen.
+// @FR-L-CapWrite: a closure's write to a captured scalar reaches the outer variable.
+// @FR-L-CapRef: a captured `&vector` parameter writes through to the caller.
+// @FR-L-Escape: a returned closure, or one in a struct field, keeps its captures.
 // A closure is a lambda that reads variables from the function scope in which
 // it is written.  No explicit capture list is needed — the compiler detects
 // which outer variables the lambda body uses and packages them automatically.

@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Coroutines
 // @TITLE: Lazy sequences with generators and yield
+// @FR-G-Next: a generator's body runs only as far as each value asked for.
+// @FR-G-Done: past the last value `next` is null, and a used generator stays empty.
+// @FR-G-Delegate: `yield from` forwards the inner generator's values in place.
+// @FR-G-For: a `for` over a generator stops at a `break` or when it is done.
 // A generator function produces values one at a time.
 // Declare the return type as 'iterator<T>' and use 'yield' to emit each value.
 // The function body is suspended between yields and resumed when the next

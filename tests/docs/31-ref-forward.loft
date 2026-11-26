@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Reference parameter forwarding
 // @TITLE: What a function can change about the values you hand it
+// @FR-F-ParamScalar: a scalar argument is copied.
+// @FR-F-ParamGrow: an append or clear through a plain parameter reaches the caller.
+// @FR-F-ParamRebind: a plain parameter cannot replace the whole value.
+// @FR-F-ParamRef: a `&` parameter can, also forwarded through another `&`.
 // When you pass a value to a function, what can that function change about
 // it?  The answer depends on the value's type and on one annotation, `&`.
 // This chapter is about the whole of that rule, because the half of it
