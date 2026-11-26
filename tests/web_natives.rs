@@ -13,7 +13,10 @@
 //! pong and the close frame.
 
 use loft::file_access as fa;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[path = "common/web_server.rs"]
 mod web_server;
@@ -42,6 +45,11 @@ fn main() {
   println("AWAY {st} [{web_natives::http_body()}]");
   st = web_natives::http_do("POST", "{base}/away307/{other}", "secret", "X-Mine: v4\n");
   println("AWAY307 {st}");
+  tls = env_variable("WN_TLS") ?? "";
+  st = web_natives::http_do("GET", "{tls}/stay", "", "X-Mine: v5\n");
+  println("STAY {st} {web_natives::http_body()}");
+  st = web_natives::http_do("GET", "{tls}/down/{other}", "", "X-Mine: v6\n");
+  println("DOWN {st}");
   st = web_natives::http_do("GET", "{base}/echo", "", "X-Mine: a\rInjected: 1\n");
   println("CTRL {st}");
   st = web_natives::http_do("GET", "{base}/a b", "", "");
@@ -107,7 +115,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 20] = [
+const WANT: [&str; 22] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
@@ -120,6 +128,11 @@ const WANT: [&str; 20] = [
     "HOP 200 [GET  v2]",
     "AWAY 200 [GET  ]",
     "AWAY307 0",
+    // Over https a redirect on the same server is followed; one to plain http is refused, as
+    // the request was made for a TLS channel (followed, it reads `DOWN 200`).
+    // @falsified-at: PENDING
+    "STAY 200 secure",
+    "DOWN 0",
     // A header holding a bare CR, and a URL holding a space, are refused before anything is
     // sent: written as they are, each would end a request line the program did not end.
     "CTRL 0",
@@ -136,6 +149,75 @@ const WANT: [&str; 20] = [
     "BAD -1",
     "DONE",
 ];
+
+const TLS_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls/");
+
+/// An HTTPS server on a free port, with the certificate of `tests/fixtures/tls/` (it names
+/// `127.0.0.1`): `/stay` redirects to `/home` on itself, `/home` answers `secure`, and
+/// `/down/<port>` redirects to `/echo` over plain http on that port.
+fn start_tls_server() -> u16 {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let certs = CertificateDer::pem_file_iter(format!("{TLS_FIXTURES}server.pem"))
+        .expect("server.pem is readable")
+        .map(|c| c.expect("server.pem parses"))
+        .collect();
+    let key =
+        PrivateKeyDer::from_pem_file(format!("{TLS_FIXTURES}server.key")).expect("server.key");
+    let cfg = Arc::new(
+        rustls::ServerConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default versions")
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("the fixture certificate and key match"),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+    let port = listener.local_addr().expect("local address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(tcp) = stream else { continue };
+            let cfg = Arc::clone(&cfg);
+            std::thread::spawn(move || {
+                let Ok(conn) = rustls::ServerConnection::new(cfg) else {
+                    return;
+                };
+                let mut tls = rustls::StreamOwned::new(conn, tcp);
+                let mut head = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match tls.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&head)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+                let answer = if path == "/stay" {
+                    "HTTP/1.1 302 Found\r\nLocation: /home\r\nContent-Length: 0\r\n\r\n".to_string()
+                } else if path == "/home" {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecure".to_string()
+                } else if let Some(to) = path.strip_prefix("/down/") {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{to}/echo\r\nContent-Length: 0\r\n\r\n"
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()
+                };
+                let _ = tls.write_all(answer.as_bytes());
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            });
+        }
+    });
+    port
+}
 
 fn scratch(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("loft_web_natives_{tag}_{}", std::process::id()));
@@ -166,7 +248,7 @@ fn build_component() {
     );
 }
 
-fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
+fn run(backend: &str, dir: &Path, port: u16, other: u16, tls: u16) -> (String, String) {
     let file = dir.join("web.loft");
     fa::write(&file, PROGRAM).expect("write the program");
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -182,6 +264,9 @@ fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
         .env("WN_BASE", format!("http://127.0.0.1:{port}"))
         .env("WN_WS", format!("ws://127.0.0.1:{port}"))
         .env("WN_OTHER", other.to_string())
+        .env("WN_TLS", format!("https://127.0.0.1:{tls}"))
+        .env("SSL_CERT_FILE", format!("{TLS_FIXTURES}ca.pem"))
+        .env_remove("SSL_CERT_DIR")
         .env("LOFT_MAX_DOWNLOAD", "2000")
         .output()
         .expect("loft runs");
@@ -207,7 +292,8 @@ fn the_web_natives_answer_the_same_on_every_backend() {
         let dir = scratch(&backend[2..]);
         let (port, seen) = web_server::start();
         let (other, _) = web_server::start();
-        let (out, err) = run(backend, &dir, port, other);
+        let tls = start_tls_server();
+        let (out, err) = run(backend, &dir, port, other, tls);
         for want in WANT {
             assert!(
                 out.lines().any(|l| l == want),
