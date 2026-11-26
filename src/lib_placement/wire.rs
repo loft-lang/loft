@@ -750,7 +750,7 @@ impl Worker {
     /// with no error, found by `lib/git` answering "not a git repository" in one
     /// placement and the history in the other.
     pub fn spawn(name: &str, pkg_dir: &Path, stdlib_dir: &Path, cwd: &Path) -> io::Result<Worker> {
-        let path = std::env::temp_dir().join(format!(
+        let path = crate::platform::scratch_dir().join(format!(
             "loft-place-{}-{}.wire",
             std::process::id(),
             name.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
@@ -839,7 +839,7 @@ impl Worker {
         let _ = stream.set_nodelay(true);
         // The arenas are ordinary local scratch here — nobody else maps them,
         // and it is their BYTES that travel.
-        let path = std::env::temp_dir().join(format!(
+        let path = crate::platform::scratch_dir().join(format!(
             "loft-remote-{}-{}.wire",
             std::process::id(),
             name.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
@@ -1580,7 +1580,8 @@ pub fn serve_remote(address: &str, pkg_dir: &Path, stdlib_dir: &Path) -> ! {
         }
     };
     // Scratch of this server's own; the caller's arena bytes land in it.
-    let base = std::env::temp_dir().join(format!("loft-serve-{}.wire", std::process::id()));
+    let base =
+        crate::platform::scratch_dir().join(format!("loft-serve-{}.wire", std::process::id()));
     let (arg_path, ret_path) = arena_paths(&base);
     let mut arenas = match (Arena::create(&arg_path), Arena::create(&ret_path)) {
         (Ok(a), Ok(r)) => (a, r),

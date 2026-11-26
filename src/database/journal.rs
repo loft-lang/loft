@@ -107,13 +107,13 @@ struct Blob {
 }
 
 impl Blob {
-    /// Create a fresh transient blob in the temp dir.
+    /// Create a fresh transient blob in loft's scratch dir (`platform::scratch_dir`).
     fn create_temp() -> io::Result<Blob> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static CTR: AtomicU64 = AtomicU64::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("loft_journal_{}_{n}.blob", std::process::id()));
+        let path = crate::platform::scratch_dir()
+            .join(format!("loft_journal_{}_{n}.blob", std::process::id()));
         let file = OpenOptions::new()
             .read(true)
             .write(true)

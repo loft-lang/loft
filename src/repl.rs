@@ -2661,8 +2661,8 @@ impl ReplSession {
         }
         // @PLN196 — the game writes its world's layout here, so each save is checked against
         // the world the next build has to carry.
-        let world_file =
-            std::env::temp_dir().join(format!("loft_serve_world_{}.dschema", std::process::id()));
+        let world_file = crate::platform::scratch_dir()
+            .join(format!("loft_serve_world_{}.dschema", std::process::id()));
         let _ = crate::file_access::remove_file(&world_file);
         spawn = spawn.env("LOFT_WORLD_LAYOUT_OUT", &world_file);
         self.world_file = Some(world_file);
