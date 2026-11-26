@@ -694,7 +694,15 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
             }
           }
           if len(ats) == len(args) {
-            instance_def(e, tpl, ats);
+            inst = instance_def(e, tpl, ats);
+            // Refused, but answered as Rust answers it — the instance's own type — so the sites
+            // around the type (a vector over it, a typed local, a field) register what Rust
+            // registers there (register, then refuse).
+            if inst >= 0 && len(keys) == 0 && member == "" {
+              el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
+              it = el::def(e, inst).returned[0] ?? ir::TyVoid;
+              return if nullable { ir::TyOptional { inner: it } } else { it };
+            }
           }
         }
       }
