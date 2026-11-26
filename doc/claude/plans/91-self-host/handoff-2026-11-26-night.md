@@ -45,15 +45,14 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
-- **Not a Rust deviation (my mistake, corrected by the tester):** a guard on a field path
-  (`if b.mid != null`) narrows nothing — `(N-Guard)` proves ONE NAME only; Rust's projection
-  narrowing reaches method dispatch, not the read's type.  The port narrowed it (fixed).  Read
-  the rule's own scope line before calling Rust wrong, and probe the unguarded twin's TYPE, not
-  just its verdict: an AGREE can be both sides `integer?`.
-- 1320: a `match` (not an `if`) whose arms call a lambda borrowing a parameter answers only the
-  first arm's borrow (`["n1"]` for Rust's `["n1", "n2"]`) — the arms reach the join with no deps,
-  so the bind derives them elsewhere.  A pass-2 parameter-borrow mapping in `vector_buffer_call`
-  is ready but exposes this, so it was held back.
+- **A guarded projection narrows on PASS 2 only** (measured, 2026-11-26): Rust's
+  `narrowed_non_null_exprs` (`b.mid != null`'s then, `h.r == null`'s else) types a block tail
+  `τ`, while an inferred local keeps the `τ?` its first-pass read gave it (`z = b.mid.n` →
+  `integer?`).  Not a Rust deviation, though I first reported it as one, then removed the port's
+  narrowing outright (both wrong).  Probe the TYPE of each step on both sides, in a tail AND in a
+  bind, before deciding what a rule does.
+- 1320: the `match` arm-borrow union is fixed (both passes, 886b8e0b2); the pass-2 parameter-borrow
+  mapping in `vector_buffer_call` (`named(some)` borrowing `some`) can now be retried.
 - A nullable keyed join (`if c { x } else { [R {…}] }` under `-> hash<…>?`, `x: hash<…>?`): the
   `(N-Join)` arm is simple, but it exposes three older differences in
   a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin (a vector parameter's tail, the
