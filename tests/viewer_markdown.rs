@@ -104,6 +104,31 @@ fn registry_predates_dn1() -> bool {
     false
 }
 
+/// The viewer's packages reach their sockets through loft's `net` component: build it once per
+/// test process where a `loft` beside `loft-components` finds it (`<binary>/../components`), as
+/// `make components` does.  Without it the viewer refuses to start, naming the component.
+fn build_component() {
+    static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| {
+        let out = loft_bin()
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the binary's directory")
+            .join("components");
+        let built = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-components"))
+            .arg("--out")
+            .arg(&out)
+            .arg("net")
+            .output()
+            .expect("loft-components runs");
+        assert!(
+            built.status.success(),
+            "loft-components net:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+    });
+}
+
 struct ViewerGuard {
     child: Option<Child>,
     stderr: Arc<Mutex<String>>,
@@ -111,6 +136,7 @@ struct ViewerGuard {
 
 impl ViewerGuard {
     fn spawn() -> Self {
+        build_component();
         let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
