@@ -58,9 +58,11 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
 #endif
     cx->gate_paged = 0;
     if (ok && !loft_pg_open(cx, r, p, err, sizeof err)) {
-        /* The open's own reason when it gave one (a size this build cannot address, the
-         * connection error): the program reads it from store_lazy_error. */
-        loft_pg_refuse(cx, p, err[0] ? err : "it cannot be opened as a paged source");
+        /* The open's own reason after the loader's line when it gave one (a size this build
+         * cannot address, the connection error): the program reads it from store_lazy_error. */
+        char why[1200];
+        snprintf(why, sizeof why, "it cannot be opened as a paged source%s%s", err[0] ? ": " : "", err);
+        loft_pg_refuse(cx, p, why);
         ok = 0;
     } else if (ok && known == 0xFFFF) {
         loft_pg_refuse(cx, p, "the target collection's store has no recorded type");
