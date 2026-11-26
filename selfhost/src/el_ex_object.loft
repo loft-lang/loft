@@ -3817,11 +3817,16 @@ pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) 
   if b == null {
     return null;
   }
-  r = el::def(e, d).returned[0] ?? ir::TyVoid;
   for t in b!.types {
     if el_types::is_unknown(t) {
       return null;
     }
+  }
+  // `-> Box<T>` predicts the instance the binding names: the open instances it closes are minted
+  // here, as Rust's `open_instance_bindings` does before it substitutes.
+  el_types::open_instance_bindings(e, d, b!.vars, b!.types);
+  r = el::def(e, d).returned[0] ?? ir::TyVoid;
+  for t in b!.types {
     r = substitute(r, b!.vars[t#index] ?? -1, t);
   }
   r

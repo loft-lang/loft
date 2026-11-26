@@ -1506,6 +1506,159 @@ pub fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir:
   }
 }
 
+// `Type::any_node` asking for definition `h`: does `t` name it anywhere.
+fn names_def(t: ir::TypeT, h: integer) -> boolean {
+  match t {
+    TyReference { n } => n == h,
+    TyEnum { n } => n == h,
+    TyOptional { inner } => names_def(inner, h),
+    TyRefVar { inner } => names_def(inner, h),
+    TyRewritten { inner } => names_def(inner, h),
+    TyVector { inner } => names_def(inner, h),
+    TyIterator { step, inner } => names_def(step, h) || names_def(inner, h),
+    TyTuple { elems } => len([for m in elems if names_def(m, h) { 1 }]) > 0,
+    TyFunction { args, result } => names_def(result, h) || len([for a in args if names_def(a, h) { 1 }]) > 0,
+    _ => false
+  }
+}
+
+// The definitions `t` names at any depth — a record, an enum, or a tuple's record by its name.
+fn named_defs(e: el::El, t: ir::TypeT) -> vector<integer> {
+  out: vector<integer> = [];
+  match t {
+    TyReference { n } => { out += [n]; },
+    TyEnum { n } => { out += [n]; },
+    TyOptional { inner } => { out += named_defs(e, inner); },
+    TyRefVar { inner } => { out += named_defs(e, inner); },
+    TyRewritten { inner } => { out += named_defs(e, inner); },
+    TyVector { inner } => { out += named_defs(e, inner); },
+    TyIterator { step, inner } => { out += named_defs(e, step); out += named_defs(e, inner); },
+    TyTuple { elems } => {
+      td = el::def_nr(e, tuple_name(e, elems));
+      if td >= 0 {
+        out += [td];
+      }
+      for m in elems {
+        out += named_defs(e, m);
+      }
+    },
+    TyFunction { args, result } => {
+      for a in args {
+        out += named_defs(e, a);
+      }
+      out += named_defs(e, result);
+    },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs open_instances_named_by
+// The open instances template `g`'s own types name — its parameters, result and variables, and
+// what those instances name in turn (their arguments, fields and variants' fields).
+fn open_instances_named_by(e: el::El, g: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if g < 0 || g >= len(e.b.data.definitions) {
+    return out;
+  }
+  types: vector<ir::TypeT> = [for a in el::def(e, g).attributes { a.typedef[0] ?? ir::TyVoid }];
+  types += [el::def(e, g).returned[0] ?? ir::TyVoid];
+  types += [for v in el::def(e, g).variables.variables { v.type_def[0] ?? ir::TyVoid }];
+  walked = 0;
+  while true {
+    for tp in types {
+      for d in named_defs(e, tp) {
+        if is_open_instance(e, d) && !out.contains(d) {
+          out += [d];
+        }
+      }
+    }
+    if walked == len(out) {
+      return out;
+    }
+    types = [];
+    wi = walked;
+    while wi < len(out) {
+      d = out[wi] ?? -1;
+      types += el::def(e, d).instance_args;
+      for a in el::def(e, d).attributes {
+        at = a.typedef[0] ?? ir::TyVoid;
+        types += [at];
+        v = match base(at) { TyEnum { n } => n, TyReference { n } => n, _ => -1 };
+        if v >= 0 && v != d && el::def(e, v).def_type == el::DT_ENUM_VALUE {
+          types += [for va in el::def(e, v).attributes { va.typedef[0] ?? ir::TyVoid }];
+        }
+      }
+      wi += 1;
+    }
+    walked = len(out);
+  }
+  out
+}
+
+// port: data.rs is_foreign_self_reference
+// Open instance `d` of ANOTHER template than `g`, named by that template's own fields (or its
+// variants' fields): `vector<B<T>>` inside `enum B<T>`.
+fn is_foreign_self_reference(e: el::El, d: integer, g: integer) -> boolean {
+  x = el::def(e, d).instance_of;
+  if x < 0 || x == g || x >= len(e.b.data.definitions) {
+    return false;
+  }
+  for a in el::def(e, x).attributes {
+    if names_def(a.typedef[0] ?? ir::TyVoid, d) {
+      return true;
+    }
+  }
+  c = 0;
+  while c < len(e.b.data.definitions) {
+    if el::def(e, c).parent == x {
+      for a in el::def(e, c).attributes {
+        if names_def(a.typedef[0] ?? ir::TyVoid, d) {
+          return true;
+        }
+      }
+    }
+    c += 1;
+  }
+  false
+}
+
+// port: data.rs open_instance_bindings (@PLN165 D5)
+// Each OPEN instance whose arguments mention a variable this monomorph binds is closed — minted at
+// the bound arguments, in creation order, so a nested one finds its inner argument paired — as
+// Rust does before declaring the monomorph, predicting its result and ranking it.  A tuple or a
+// foreign self-reference closes only where the template's own types name it (loft#2546).  The
+// pairs are not carried: the port substitutes each type where it reads it (`close_open`).
+pub fn open_instance_bindings(e: el::El, g: integer, vars: vector<integer>, bounds: vector<ir::TypeT>) {
+  own = open_instances_named_by(e, g);
+  binds: vector<TypeBinding> = [for h in vars { TypeBinding { holder: h, bound: bounds[h#index] ?? ir::TyVoid } }];
+  n = len(e.b.data.definitions);
+  d = 0;
+  while d < n {
+    if is_open_instance(e, d) {
+      tuple_record = el::def(e, d).instance_of < 0;
+      if own.contains(d) || !(tuple_record || is_foreign_self_reference(e, d, g)) {
+        hit = false;
+        for a in el::def(e, d).instance_args {
+          for h in vars {
+            if names_def(a, h) {
+              hit = true;
+            }
+          }
+        }
+        if hit {
+          args = [for a in el::def(e, d).instance_args { close_open(e, a, binds) }];
+          bound = if tuple_record { tuple_def(e, args, if e.at >= 0 { el::pos_at(e, e.at) } else { ir::Position { ..el::def(e, d).position } }) } else { instance_def(e, el::def(e, d).instance_of, args) };
+          if bound >= 0 && bound != d {
+            binds += [TypeBinding { holder: d, bound: el::def(e, bound).returned[0] ?? ir::TyReference { n: bound, dep: [] } }];
+          }
+        }
+      }
+    }
+    d += 1;
+  }
+}
+
 // The tuple shapes `t` holds, innermost first (`copy_instance_field`'s walk, reversed).
 fn tuples_in(t: ir::TypeT) -> vector<vector<ir::TypeT>> {
   out: vector<vector<ir::TypeT>> = [];

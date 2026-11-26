@@ -163,6 +163,10 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     }
   }
   nm = el_ex_object::instance_name(e, g, b!);
+  // `instantiate_template`: the open instances this binding closes, ahead of the monomorph.
+  if nm != "" && el::def_nr(e, nm) < 0 {
+    el_types::open_instance_bindings(e, g, b!.vars, b!.types);
+  }
   // The shapes this port does not instantiate at, the first one met.  Rust mints the instance at
   // each of them, so it is registered by its signature (register, then refuse) and refused.
   why = "";
