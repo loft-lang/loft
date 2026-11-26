@@ -3392,11 +3392,22 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // (loft#1977: a stored reference — `h.link`, `OpGetDbRef` — names a record no argument owns:
   // copied out the same way, whatever its holder is.)
   dbref_src = match x { NdCall { def_nr: xdr } => el::def(e, xdr).name == "OpGetDbRef", _ => false };
-  if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || el_ex_assign::call_rooted(e, vars, x) || dbref_src) {
+  // (…or the `inline_container` a call was lifted into for its subscript, `cells(3)[i]`.)
+  lroot = el_expressions::read_root(e, x);
+  lifted_src = match lroot { NdBlock { block: lrb } => lrb[0].name == "inline_container", _ => false };
+  if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || el_ex_assign::call_rooted(e, vars, x) || dbref_src || lifted_src) {
     src = x;
     pre: vector<ir::Node> = [];
+    // (`bind_return_source`: a read off a lifted container is read whole, once, into a `τ?`
+    // handle borrowing that container — `__ret_src_N` — which the null test and the copy read.)
+    if lifted_src && !e.first_pass {
+      ltd = heap_def(el_types::base(result));
+      lrs = el_vars::create_unique(vars, "_ret_src", ir::TyOptional { inner: ir::TyReference { n: ltd, dep: match lroot { NdBlock { block: lrb2 } => el_types::deps(lrb2[0].result[0] ?? ir::TyVoid), _ => [] } } });
+      pre = [el_ir::v_set(lrs, x)];
+      src = ir::NdVar { n: lrs };
+    }
     // (`bind_return_source` runs on the second pass alone: `_ret_root_N` is minted there.)
-    if proot < 0 && !e.first_pass && !dbref_src {
+    if proot < 0 && !e.first_pass && !dbref_src && !lifted_src {
       root_call = el_ir::unspan(el_ex_assign::projection_root(e, x) ?? ir::NdNull);
       rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(match root_call { NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid })));
       pre = [el_ir::v_set(rr, root_call)];
