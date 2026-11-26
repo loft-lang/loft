@@ -98,6 +98,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   }
   d = el::qualified_def(e, name, qual);
   if !el_ex_object::literal_def(e, d) {
+    el_ex_object::literal_instance(e, vars, d, fields);
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }

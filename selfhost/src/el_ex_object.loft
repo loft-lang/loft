@@ -413,6 +413,59 @@ pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fi
   out
 }
 
+// port: objects.rs literal_instance
+// A literal of a generic struct, or of a generic enum's variant (`Grid { cells: [m], w: 1 }`),
+// names the instance its field values bind: each type variable, in header order, takes the
+// first field whose declared type mentions it and whose value resolves it (`resolve_type_var`),
+// and the instance is minted (`instance_def`).  Register, then refuse: the literal itself is
+// refused by the caller.  Not ported: the expected instance a declaration or a parameter gives.
+pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>) {
+  if d < 0 {
+    return;
+  }
+  template = if el::def(e, d).def_type == el::DT_TYPE_TEMPLATE { d } else if el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 && el::def(e, el::def(e, d).parent).def_type == el::DT_TYPE_TEMPLATE { el::def(e, d).parent } else { -1 };
+  if template < 0 || len(el::def(e, template).type_params) == 0 {
+    return;
+  }
+  // The values' types, read as Rust's discovery reads them.
+  got: vector<Binding> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fe } => {
+        a = attr_nr(el::def(e, d), fname);
+        if a >= 0 && fe != null {
+          vt = el_ex_assign::expression(e, vars, fe!).tp;
+          b = Binding { vars: [], types: [], ok: true };
+          bind_type_vars(e, el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid, vt, b);
+          if b.ok {
+            got += [b];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  args: vector<ir::TypeT> = [];
+  for v in el::def(e, template).type_params {
+    bound: ir::TypeT? = null;
+    for b in got {
+      if bound == null {
+        for bv in b.vars {
+          t = b.types[bv#index] ?? ir::TyUnknown { n: 0 };
+          if bv == v && bound == null && !el_types::is_unknown(t) && !(t is TyNull) && !(t is TyVoid) && !(t is TyNever) {
+            bound = t;
+          }
+        }
+      }
+    }
+    if bound == null {
+      return;
+    }
+    args += [el_types::without_deps(bound!)];
+  }
+  el_types::instance_def(e, template, args);
+}
+
 pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_object");
@@ -429,6 +482,7 @@ pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, f
   }
   d = el::qualified_def(e, name, member);
   if !literal_def(e, d) {
+    literal_instance(e, vars, d, fields);
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
