@@ -520,7 +520,7 @@ fn not_in_place(b: ir::Bundle, w: Writes, d: integer, node: ir::Node) -> boolean
             _ => {},
           }
         }
-        moves = !(native_op_is_store_free(callee) || in_place_set(callee.name) || file_read || scalar_stack_ref(def, callee.name, args) || allowed(b, def, callee.name, args));
+        moves = !(native_op_is_store_free(callee) || in_place_set_at(b, def, callee.name, args, true) || file_read || scalar_stack_ref(def, callee.name, args) || allowed(b, def, callee.name, args));
       } else {
         moves = call_writes_store(b, w, def_nr) && !in_place_only_writer(b, w, def_nr);
       }
@@ -596,7 +596,9 @@ fn in_place_native(b: ir::Bundle, def: ir::Definition, name: text, args: vector<
   if tier & 3 == 0 {
     return false;
   }
-  if in_place_set(name) || scalar_stack_ref(def, name, args) {
+  // `(R-RecPtr)`'s holder clause (+32): a reader that holds a record's address only, no vector
+  // header, takes a fixed-width set into any slot as in place.
+  if (tier & 32 != 0 && in_place_set(name)) || in_place_set_at(b, def, name, args, tier & 1 != 0) || scalar_stack_ref(def, name, args) {
     return true;
   }
   if name == "OpReadFile" && len(args) > 1 {
@@ -696,6 +698,7 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
     NdBlock { block } => {
       ops = block[0].operators;
       frees = exit_tail_frees(b, b.data.definitions[vd]!, ops);
+      ys = if in_place & 3 != 0 { young_sets(b, len(b.data.definitions[vd]!.variables.variables), ops) } else { [] };
       for op in ops {
         released = false;
         for f in frees {
@@ -703,7 +706,7 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
             released = true;
           }
         }
-        if !released && blocks_tier(b, w, vd, op, in_place, fresh) {
+        if !released && (if ys[op#index] ?? false { young_set_blocks(b, w, vd, op, in_place, fresh) } else { blocks_tier(b, w, vd, op, in_place, fresh) }) {
           return true;
         }
       }
@@ -739,6 +742,11 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
             admitted = true;
           }
         }
+        // …and a set into an element an EARLIER statement of the loop body minted (`@FR-R-Mint`'s
+        // fresh window, which persists across the statements).
+        if in_place & 3 != 0 && in_place_set(name) && len(args) > 0 && fresh_rooted(b, args[0]!, fresh) {
+          admitted = true;
+        }
         if !(admitted || in_place_native(b, def, name, args, in_place) || allowed(b, def, name, args) || (in_place & 4 != 0 && opt_push::mover(b, name, args))) && call_writes_store(b, w, def_nr) && !(in_place & 3 != 0 && !env_on("LOFT_NO_INPLACE_CALLEE_HOIST") && in_place_only_writer(b, w, def_nr)) {
           return true;
         }
@@ -748,9 +756,9 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
     NdCallRef { var: _, args: _ } => true,
     NdParallel { arms: _ } => true,
     NdYield { inner: _ } => true,
-    NdInsert { items } => any_blocks(b, w, vd, items, in_place, fresh),
+    NdInsert { items } => list_blocks(b, w, vd, items, in_place, fresh),
     NdTuple { items } => any_blocks(b, w, vd, items, in_place, fresh),
-    NdLoop { block } => any_blocks(b, w, vd, block[0].operators, in_place, fresh),
+    NdLoop { block } => list_blocks(b, w, vd, block[0].operators, in_place, fresh),
     NdSet { var, inner } => {
       // The element variables the body has minted so far, in the walk's order.
       if in_place & 8 != 0 && var < len(fresh) {
@@ -777,6 +785,241 @@ fn blocks_tier(b: ir::Bundle, w: Writes, vd: integer, node: ir::Node, in_place: 
     NdIf { cond, t, f } => blocks_tier(b, w, vd, cond, in_place, fresh) || blocks_tier(b, w, vd, t, in_place, fresh) || blocks_tier(b, w, vd, f, in_place, fresh),
     NdIter { var: _, create, next, init } => blocks_tier(b, w, vd, create, in_place, fresh) || blocks_tier(b, w, vd, next, in_place, fresh) || blocks_tier(b, w, vd, init, in_place, fresh),
     _ => false,
+  }
+}
+
+// `loop_records::in_place_set` (`@FR-R-InPlace`): a fixed-width scalar set through an existing
+// address — one of `IN_PLACE_SET_OPS` — except an `OpSetInt4` whose slot is no 4-byte number.
+// The same op zeroes a COLLECTION field's header in place (a record literal primes `v: []` with
+// `OpSetInt4(<record>, <pos>, 0)`), which changes that vector's length, so a header a loop
+// holds goes stale (loft#2569).  The slot is read from the receiver's record type when the
+// schema is asked (`typed`); one this cannot type stays a writer, the allow-list's direction.
+pub fn in_place_set_at(b: ir::Bundle, def: ir::Definition, name: text, args: vector<ir::Node>, typed: boolean) -> boolean {
+  if !in_place_set(name) {
+    return false;
+  }
+  name != "OpSetInt4" || (typed && int4_slot_is_number(b, def, args)) || buffer_pool_record(def, args)
+}
+
+// Is the set's receiver a record-buffer pool's own record (`@FR-O-LazyBuffer`)?  The pool's mint
+// takes a fresh store and primes its collection field right after: no header was derived from it.
+fn buffer_pool_record(def: ir::Definition, args: vector<ir::Node>) -> boolean {
+  v = first_var(args);
+  v >= 0 && v < len(def.variables.variables) && def.variables.variables[v]!.lazy_buffer
+}
+
+// The struct type number of `t` (`plain_record_type`), -1 none.
+fn record_type_nr(b: ir::Bundle, t: ir::TypeT) -> integer {
+  if t is TyOptional {
+    return -1;
+  }
+  match opt_names::peel_link(t) {
+    TyReference { n, dep: _ } => {
+      if n < 0 || n >= len(b.data.definitions) || b.data.definitions[n]!.def_type != 5 {
+        return -1;
+      }
+      k = b.data.definitions[n]!.known_type;
+      if k == 65535 { -1 } else { k }
+    },
+    _ => -1,
+  }
+}
+
+// The `OpGetField(…, …, tp)` type operand of `n`, -1 for another node.
+fn field_type_of(b: ir::Bundle, n: ir::Node) -> integer {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "OpGetField" && len(args) > 2 {
+        match loop_shape::unspan(args[2]!) {
+          NdInt { n: tp } => tp,
+          _ => -1,
+        }
+      } else {
+        -1
+      }
+    },
+    _ => -1,
+  }
+}
+
+// Is a type `tp` a number part (`Parts::Int` / `IntRaw`)?
+fn number_part(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match (b.types[tp]!.parts[0] ?? ir::PtBase) {
+    PtInt { start: _, nullable: _ } => true,
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
+  }
+}
+
+// The element type of vector or array type `tp`, -1 for another.
+fn element_part(b: ir::Bundle, tp: integer, arrays: boolean) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return -1;
+  }
+  match (b.types[tp]!.parts[0] ?? ir::PtBase) {
+    PtVector { content } => content,
+    PtArray { content } => if arrays { content } else { -1 },
+    _ => -1,
+  }
+}
+
+// `scalar_element`: is `rec` an element of a vector whose elements are numbers?
+fn scalar_element(b: ir::Bundle, def: ir::Definition, rec: ir::Node) -> boolean {
+  match loop_shape::unspan(rec) {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || len(args) == 0 {
+        return false;
+      }
+      nm = b.data.definitions[def_nr]!.name;
+      if nm != "OpGetVector" && nm != "OpVectorRef" {
+        return false;
+      }
+      v = loop_shape::var_of(loop_shape::unspan(args[0]!));
+      if v >= 0 {
+        return v < len(def.variables.variables) && match cgen_types::base(def.variables.variables[v]!.type_def[0] ?? ir::TyVoid) {
+          TyVector { inner, dep: _ } => is_scalar(inner),
+          _ => false,
+        };
+      }
+      number_part(b, element_part(b, field_type_of(b, args[0]!), false))
+    },
+    _ => false,
+  }
+}
+
+// `record_known_type`: the schema type of the record `rec` addresses — a field read names it,
+// an element read takes its vector's element, a variable its declared type; -1 unknown.
+fn record_known_type(b: ir::Bundle, def: ir::Definition, rec: ir::Node) -> integer {
+  r = loop_shape::unspan(rec);
+  v = loop_shape::var_of(r);
+  if v >= 0 {
+    return if v < len(def.variables.variables) { record_type_nr(b, def.variables.variables[v]!.type_def[0] ?? ir::TyVoid) } else { -1 };
+  }
+  ft = field_type_of(b, r);
+  if ft >= 0 {
+    return ft;
+  }
+  match r {
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || len(args) == 0 {
+        return -1;
+      }
+      nm = b.data.definitions[def_nr]!.name;
+      if nm != "OpGetVector" && nm != "OpVectorRef" {
+        return -1;
+      }
+      ev = loop_shape::var_of(loop_shape::unspan(args[0]!));
+      if ev >= 0 {
+        if ev >= len(def.variables.variables) {
+          return -1;
+        }
+        return match cgen_types::base(def.variables.variables[ev]!.type_def[0] ?? ir::TyVoid) {
+          TyVector { inner, dep: _ } => record_type_nr(b, inner),
+          _ => -1,
+        };
+      }
+      element_part(b, field_type_of(b, args[0]!), true)
+    },
+    _ => -1,
+  }
+}
+
+// `body_writes::fresh_rooted`: is `place` a variable `young` marks, or a field of one?
+fn fresh_rooted(b: ir::Bundle, place: ir::Node, young: vector<boolean>) -> boolean {
+  match loop_shape::unspan(place) {
+    NdVar { n } => n >= 0 && n < len(young) && young[n]!,
+    NdCall { def_nr, args } => def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == "OpGetField" && len(args) > 0 && fresh_rooted(b, args[0]!, young),
+    _ => false,
+  }
+}
+
+// `loop_records::sets_into_new_records`, for one statement list: per statement, is it a setter
+// whose receiver is a record an EARLIER statement of the list created — `v = OpNewRecord(…)`,
+// `v = OpPlaceRecord(…)` or `OpDatabase(v, …)`?  Such a set writes a record younger than anything
+// a loop derived in its prelude, so it stales no header whatever its slot holds.  A later `Set`
+// of the variable from anything else ends its window.
+fn young_sets(b: ir::Bundle, nvars: integer, ops: vector<ir::Node>) -> vector<boolean> {
+  out: vector<boolean> = [for _ in ops { false }];
+  young: vector<boolean> = [for _ in 0..nvars { false }];
+  for op in ops {
+    match loop_shape::unspan(op) {
+      NdSet { var, inner } => {
+        made = match loop_shape::unspan(inner) {
+          NdCall { def_nr, args: _ } => def_nr >= 0 && def_nr < len(b.data.definitions) && (b.data.definitions[def_nr]!.name == "OpNewRecord" || b.data.definitions[def_nr]!.name == "OpPlaceRecord"),
+          _ => false,
+        };
+        if var >= 0 && var < nvars {
+          young[var] = made;
+        }
+      },
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) {
+          nm = b.data.definitions[def_nr]!.name;
+          if in_place_set(nm) && len(args) > 0 && fresh_rooted(b, args[0]!, young) {
+            out[op#index] = true;
+          } else if nm == "OpDatabase" || nm == "OpDatabaseNP" {
+            v = first_var(args);
+            if v >= 0 && v < nvars {
+              young[v] = true;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// Does `OpSetInt4(rec, pos, _)` write a 4-byte NUMBER field (`Parts::Int` / `IntRaw`)?
+fn int4_slot_is_number(b: ir::Bundle, def: ir::Definition, args: vector<ir::Node>) -> boolean {
+  if len(args) < 2 {
+    return false;
+  }
+  pos = match loop_shape::unspan(args[1]!) {
+    NdInt { n } => n,
+    _ => { return false; }
+  };
+  // An element of a vector of numbers IS the slot.
+  if scalar_element(b, def, args[0]!) {
+    return pos == 0;
+  }
+  tp = record_known_type(b, def, args[0]!);
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  fields: vector<ir::DbField> = match (b.types[tp]!.parts[0] ?? ir::PtBase) {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  };
+  for f in fields {
+    if f.position == pos {
+      return number_part(b, f.content);
+    }
+  }
+  false
+}
+
+// A statement list's blocking, its young-record sets admitted (`sets_into_new_records`).
+fn list_blocks(b: ir::Bundle, w: Writes, vd: integer, ops: vector<ir::Node>, in_place: integer, fresh: vector<boolean>) -> boolean {
+  ys = if in_place & 3 != 0 { young_sets(b, len(b.data.definitions[vd]!.variables.variables), ops) } else { [] };
+  for op in ops {
+    if if ys[op#index] ?? false { young_set_blocks(b, w, vd, op, in_place, fresh) } else { blocks_tier(b, w, vd, op, in_place, fresh) } {
+      return true;
+    }
+  }
+  false
+}
+
+// A young-record set: in place itself; its operands are walked as any other.
+fn young_set_blocks(b: ir::Bundle, w: Writes, vd: integer, op: ir::Node, in_place: integer, fresh: vector<boolean>) -> boolean {
+  match loop_shape::unspan(op) {
+    NdCall { def_nr: _, args } => any_blocks(b, w, vd, args, in_place, fresh),
+    _ => blocks_tier(b, w, vd, op, in_place, fresh),
   }
 }
 

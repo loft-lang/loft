@@ -381,7 +381,9 @@ pub fn view_extent_ok(b: ir::Bundle, w: opt_writes::Writes, facts: opt_facts::Fa
   }
   fresh: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
   for op in stmts {
-    if op#index >= from && opt_writes::blocks_under(b, w, vd, op, tier, fresh) {
+    // `(R-RecPtr)`'s holder clause (+32): the reader holds a record's address only, so a
+    // fixed-width set into any slot is in place for it.
+    if op#index >= from && opt_writes::blocks_under(b, w, vd, op, tier + 32, fresh) {
       return false;
     }
   }
