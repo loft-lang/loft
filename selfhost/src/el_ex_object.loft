@@ -3073,6 +3073,14 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   if d < 0 && mset >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // (A builtin the receiver's TYPE decides, met where no definition takes the receiver — `ix.len()`
+  // counts an `index`'s entries — is the call spelling's, `x.m()` being `m(x)`.)
+  if d < 0 {
+    brt = by_receiver_type(e, name, list, x.tp);
+    if brt != null {
+      return brt!;
+    }
+  }
   if d < 0 {
     if !e.first_pass {
       el::refuse(e, "a method call: {name}");
