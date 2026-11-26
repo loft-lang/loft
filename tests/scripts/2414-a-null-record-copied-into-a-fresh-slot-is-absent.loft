@@ -21,6 +21,9 @@
 //   writer without `fresh_default_tp`'s FRESH arm fails B the same on the C.  The installed
 //   2026.11.0 build fails B.  CHANNEL: an assertion.
 // HOLDS: the hand-computed values on the interpreter, the C and rustc.
+//
+// @FR-H-Claim: a field the construction does not write from its source takes the type's default.
+// @FR-H-ReadNull: the null source read past a vector's end reads as an absent record.
 
 enum Col { Red, Green }
 

@@ -6,6 +6,10 @@
 // IdxElm:  val is field 1 (offset 4, after `nr: integer`).
 // All operations that use the key field — lookup, range query, full iteration —
 // must use each struct's OWN offset for `val`, not the other's.
+//
+// @FR-L-Struct: a field access reads its own type's offset, not another struct's same-named field.
+// @FR-Col-Lookup: a keyed lookup answers the record, or null for an absent key.
+// @FR-Slice-KeyedIter: a range slice walks exactly the keys inside its interval.
 
 struct SortElm {
   val: integer,

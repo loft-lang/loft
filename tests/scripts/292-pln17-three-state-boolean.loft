@@ -11,6 +11,10 @@
 // ?? / ?? return, == null, and the boolean-returning fn-ref/closure dispatch
 // (the last one the verification pass caught: `if flip()` lowered to an `if`
 // over a u8-returning dispatch `match` that needed the u8->bool coercion).
+//
+// @FR-E-Truthy: `!nb()` and `if nb()` read a null boolean as false.
+// @FR-E-Eq: `==` is raw: null equals null and differs from false and true.
+// @FR-E-Null: a boolean field, element and return hold null as their reserved pattern.
 
 struct Flag {
   name: text,

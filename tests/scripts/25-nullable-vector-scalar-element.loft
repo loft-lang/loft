@@ -7,6 +7,9 @@
 // Gate-OFF the `?` is a no-op (a bare scalar vector is nullable pre-DN1 anyway),
 // so this file self-asserts identically gate-OFF (auto-run script sweep) and
 // gate-ON (tests/pln25_dn1_consumption.rs drives LOFT_PLN25_DN1=1 both backends).
+//
+// @FR-N-Dense: `vector<τ?>` admits a null element; neighbours keep their values.
+// @FR-E-Null: each scalar's reserved pattern (i64::MIN, NaN, 255, codepoint 0, null text) reads as null.
 
 fn check_int() {
   vi: vector<integer?> = [10, 20, 30];

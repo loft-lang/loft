@@ -16,6 +16,9 @@
 // @falsified-at: 5330b3690 — native exit 1 -> 0; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move), scored on the rustc writer, which is
 //   retired (`@C170`); the cell still runs on the interpreter and the C.
+//
+// @FR-T-Cons: a tuple literal takes its text member's value, wherever the member is read from.
+// @FR-E-Eq: `contains` and `==` compare the tuples by content, text member included.
 
 fn has(v: vector<(integer, integer, text)>, t: (integer, integer, text)) -> boolean {
   v.contains(t)

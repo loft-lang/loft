@@ -21,6 +21,10 @@
 // Hand-computed expected null per type (LOFT.md sentinels):
 //   boolean=255  integer=i64::MIN  float/single=NaN  character='\0'
 //   text=internal-null-ptr  reference/value-enum/vector=DbRef::NULL.
+//
+// @FR-E-Null: each type's reserved null round-trips through returns, if arms, fields and elements.
+// @FR-E-Truthy: `!n_bool()` reads a null boolean as false, while `!= false` stays raw.
+// @FR-E-Coalesce: `?? d` falls to the default for each scalar null.
 
 struct S {
   x: integer,
