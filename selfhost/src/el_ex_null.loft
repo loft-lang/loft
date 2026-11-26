@@ -2679,7 +2679,7 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       // its borrows.)
       coalesced = match el_ir::unspan(v.code) { NdBlock { block: cb } => cb[0].name == "ncc" || cb[0].name == "ncr", _ => false };
       if !(vt is TyOptional) || coalesced {
-        el_expressions::text_return(e, vars, v.tp);
+        el_expressions::text_return(e, vars, v.tp, mid: true);
       }
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
