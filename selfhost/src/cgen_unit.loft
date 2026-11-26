@@ -28,6 +28,9 @@ use cgen_parse;
 use cgen_store;
 use cgen_fnval;
 use cgen_unicode;
+use cgen_decode_view;
+use cgen_decode_structure;
+use opt_decode_structure;
 
 // What the assembly wrote, or why it was not.
 pub struct Assembled {
@@ -85,7 +88,8 @@ fn hands_up(t: ir::TypeT) -> boolean {
 
 // `framed`'s wrapper body: the frame pushed, the texts' hold mark, the call of the body, the
 // function values' guard unless nothing that registers one is reachable (`@FR-R-GuardFree`).
-fn wrapper(x: Cx, d: integer, wr: Written) -> text {
+// `dv_frame`: the frame a `@FR-R-DecodeView` root names for the length of its call ("" none).
+pub fn wrapper(x: Cx, d: integer, wr: Written, dv_frame: text) -> text {
   def = x.b.data.definitions[d]!;
   frame_name = if def.name.starts_with("n_") { def.name[2..def.name.size()] } else { def.name };
   push = "    loft_frame_push(cx, {c_string(frame_name)}, {c_string(source_name(x, def.position.file))}, {def.position.line});\n    LOFT_HOLD_MARK(hm);\n";
@@ -97,10 +101,13 @@ fn wrapper(x: Cx, d: integer, wr: Written) -> text {
     release = "    if (cx->nfnrefs != fm) loft_fnref_release(cx, fm);\n";
   }
   call = "{wr.name}__fr({arg_names(wr.list).join(", ")})";
+  // `@FR-R-DecodeView`: the frame a root's spans read, named for the call and given back after.
+  dv_enter = if dv_frame == "" { "" } else { "    loft_ref dvo = cx->dv_frame;\n    cx->dv_frame = {dv_frame};\n" };
+  dv_leave = if dv_frame == "" { "" } else { "    cx->dv_frame = dvo;\n" };
   if wr.ret == "void" {
-    return "{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n";
+    return "{push}{dv_enter}    {call};\n{dv_leave}{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n";
   }
-  "{push}    {wr.ret} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n"
+  "{push}{dv_enter}    {wr.ret} r = {call};\n{dv_leave}{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n"
 }
 
 // `resolve_hot_helpers`: the helper markers resolved — `static inline` / `LOFT_HOT_INLINE` for a
@@ -387,7 +394,9 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
   x.gen_decls += "{if wr.split || cgen::on_call_cycle(x, t.d) { wr.storage } else { body_storage(wr.storage) }} {wr.ret} {wr.name}__fr({wr.list});\n";
   p.protos += "{wr.storage} {wr.ret} {wr.name}({wr.list});\n";
   x.gen_bodies += "\n{wr.text}";
-  p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr)}}}\n";
+  dv_root = if t.dv { -1 } else { cgen_decode_view::root_frame(x, t.d) };
+  dv_frame = if dv_root < 0 { "" } else { var_name(x.b.data.definitions[t.d]!.variables.variables[dv_root]!.name, dv_root) };
+  p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr, dv_frame)}}}\n";
   ""
 }
 
@@ -411,6 +420,27 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   reached = opt_names::reachable_functions(b, roots);
   candidates: vector<integer> = [];
   pieces = Pieces { decls: "", protos: "", fr_bodies: "", bodies: "" };
+  // `@FR-R-DecodeView`: both clauses' plans before the first body, and the structure clause's
+  // positional twins.  A twin this writer cannot write takes the clause away from the unit,
+  // and everything it wrote with it.
+  cgen_decode_view::plans(x);
+  if len(x.ps.roots) > 0 {
+    marks_decls = x.gen_decls.size();
+    marks_bodies = x.gen_bodies.size();
+    ps_protos = "";
+    ps_bodies = "";
+    ps_why = cgen_decode_structure::functions(x, ps_protos, ps_bodies);
+    if ps_why == "" {
+      pieces.protos = ps_protos;
+      pieces.bodies = ps_bodies;
+    } else {
+      cgen_decode_structure::declined(x, -1, ps_why);
+      x.gen_decls = x.gen_decls[0..marks_decls];
+      x.gen_bodies = x.gen_bodies[0..marks_bodies];
+      x.ps = opt_decode_structure::no_plan();
+      x.ps.asked = true;
+    }
+  }
   for f in opt_names::written_functions_from(b, root, drivers) {
     why = write_one(x, cgen_names::plain(f), pieces, candidates);
     if why != "" {

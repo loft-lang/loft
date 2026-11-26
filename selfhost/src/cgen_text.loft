@@ -21,6 +21,8 @@ use opt_hoist;
 use opt_non_sentinel;
 use cgen_fn;
 use cgen_w::*;
+use cgen_decode_view;
+use cgen_decode_structure;
 
 // One operand read as a text (`text_read`): a text field with nothing written after it is a
 // view of the field in place; anything else is evaluated as `arg_with` does.
@@ -551,6 +553,18 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
       // A lazy loop's piece and a split table's are their own readers' (`lazy_split_op`,
       // `split_tab_op`).
       if cgen_fn::def_name(x.b, def_nr) == "OpGetText" && len(args) == 2 && !cgen_lazy::piece_read(x, w, args[0]!) {
+        // `@FR-R-DecodeView`'s structure clause: a text leaf of a position.
+        if w.ps.mode != PS_NONE {
+          w.field_view = true;
+          ps_done = false;
+          ps_e = cgen_decode_structure::ps_operator(x, w, def_nr, args, ind, ps_done);
+          w.field_view = false;
+          if ps_done {
+            borrowed_assign(x, w, var, value, as_view(w, ps_e), ind);
+            return;
+          }
+        }
+        span = cgen_decode_view::text_spare(x, w, args[0]!, args[1]!);
         fld = cgen_fn::literal(w, args[1], "field") ?? return;
         held_before = len(w.pending);
         r = cgen_fn::expr(x, w, args[0], ind);
@@ -561,7 +575,9 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
           refuse(w, "a borrowed text would view a temporary");
           return;
         }
-        borrowed_assign(x, w, var, value, "loft_get_text(cx, {as_ref(w, r)}, {fld})", ind);
+        // `@FR-R-DecodeView`: a span text field views the frame's bytes.
+        view = if span >= 0 { "loft_dv_text(cx, {as_ref(w, r)}, {fld}, {span})" } else { "loft_get_text(cx, {as_ref(w, r)}, {fld})" };
+        borrowed_assign(x, w, var, value, view, ind);
         return;
       }
     },

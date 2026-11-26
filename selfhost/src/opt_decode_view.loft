@@ -117,7 +117,7 @@ fn mark_tree(n: ir::Node, p: text, marks: vector<Mark>) -> ir::Node {
 }
 
 // `n` with its direct children `cs` (`el_ir::children`'s order).
-fn with_children(n: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+pub fn with_children(n: ir::Node, cs: vector<ir::Node>) -> ir::Node {
   match n {
     NdSpan { pos, inner: _ } => ir::NdSpan { pos: pos, inner: cs[0]! },
     NdCall { def_nr, args: _ } => ir::NdCall { def_nr: def_nr, args: cs },

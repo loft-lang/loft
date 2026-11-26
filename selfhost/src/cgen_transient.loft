@@ -1121,9 +1121,10 @@ pub fn has_roots(tf: TrFn) -> boolean {
   false
 }
 
-// `lean`: a twin or a site, which the store-plan rewrites leave alone.
+// `lean`: a twin or a site, which the store-plan rewrites leave alone — and a producer or
+// consumer twin of `@FR-R-DecodeView`'s structure clause (`ps_lean`), whose loops build nothing.
 pub fn lean(w: W) -> boolean {
-  w.tr.any
+  w.tr.any || w.ps.mode != PS_NONE
 }
 
 // Is shape `s` a transient one (`CType::Tr`, `CType::TrVec`)?

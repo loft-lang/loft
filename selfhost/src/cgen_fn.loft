@@ -73,6 +73,8 @@ use cgen_deferred;
 use cgen_apart;
 use opt_lease;
 use opt_below_len;
+use cgen_decode_view;
+use cgen_decode_structure;
 use opt_destination;
 use opt_append_twin;
 use cgen_rotate;
@@ -1332,6 +1334,11 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if apr_call {
     t.apr = true;
   }
+  // `@FR-R-DecodeView`: a region function called from a twin or a root is its `__dv` twin, with
+  // whatever other variant this call takes.
+  if !tr_named && cgen_decode_view::dv_call(x, w, d) {
+    t.dv = true;
+  }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if tr_named {
     name = trc.name;
@@ -1699,7 +1706,7 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.work_twins[d] = 1;
     return "";
   }
-  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn());
+  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn(), PS_NONE, 0, 0);
   if written.refused != "" {
     x.work_twins[d] = 3;
     x.why_work = written.refused;
@@ -1708,6 +1715,28 @@ fn work_twin(x: Cx, d: integer) -> text {
   // `write_work_twin`: declared and defined with the unit's bodies, as the twin's own
   // `static inline void <name>(<params>)` around the body the writer wrote.
   sig = "static inline void {name}({written.list})";
+  // `@FR-R-DecodeView`: a root's work twin is a root too — its body is written over the plan,
+  // under a wrapper that names the frame for the length of the call.
+  dv_root = cgen_decode_view::root_frame(x, d);
+  if dv_root >= 0 {
+    inner = "{name}__dvw";
+    inner_sig = "static inline void {inner}({written.list})";
+    calls: vector<text> = [];
+    for raw in written.list.split(',') {
+      p = raw.trim();
+      at = 0;
+      for c in p {
+        if c == ' ' || c == '*' {
+          at = c#index + 1;
+        }
+      }
+      calls += [p[at..p.size()]];
+    }
+    frame = var_name(def.variables.variables[dv_root]!.name, dv_root);
+    x.gen_decls += "{inner_sig};\n{sig};\n";
+    x.gen_bodies += "\n{inner_sig} {{\n{written.inner}}}\n\n{sig} {{\n    loft_ref dvo = cx->dv_frame;\n    cx->dv_frame = {frame};\n    {inner}({calls.join(", ")});\n    cx->dv_frame = dvo;\n}}\n";
+    return name;
+  }
   // The body as written, never split: `(R-CSplit)` is the frame body's alone (`framed`).
   x.gen_decls += "{sig};\n";
   x.gen_bodies += "\n{sig} {{\n{written.inner}}}\n";
@@ -2126,6 +2155,22 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     },
     NdCall { def_nr, args } => {
       name = def_name(x.b, def_nr);
+      // `@FR-R-DecodeView`'s structure clause: a read of a position.
+      if w.ps.mode != PS_NONE {
+        ps_done = false;
+        ps_e = cgen_decode_structure::ps_operator(x, w, def_nr, args, ind, ps_done);
+        if ps_done {
+          return ps_e;
+        }
+      }
+      // `@FR-R-DecodeView`: a span field's write, a span text's read.
+      if w.dv_on {
+        dv_done = false;
+        dv_e = cgen_decode_view::dv_operator(x, w, name, def_nr, args, ind, dv_done);
+        if dv_done {
+          return dv_e;
+        }
+      }
       // `@FR-R-Version`'s markers of this call (a fast twin's raw access or plain operator, a
       // caller's site), for the writer of this call alone.
       saved_kind = w.call_kind;
@@ -2193,6 +2238,12 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       none()
     },
   }
+}
+
+// An operator or a call as the ordinary writer writes it, below the hooks of `expr_value`.
+pub fn plain_call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  name = def_name(x.b, d);
+  if !name.starts_with("Op") { call(x, w, d, args, ind) } else { op_call(x, w, name, typed_nulls(x.b, d, args), ind) }
 }
 
 // A compound read as a value: held in a temporary its statements assign.
@@ -2401,6 +2452,11 @@ fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
 }
 
 fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+  // `@FR-R-DecodeView`'s structure clause: a return over positions in value position is written
+  // as the statement it is.
+  if w.ps.mode != PS_NONE && cgen_decode_structure::stmt(x, w, v, ind) {
+    return;
+  }
   node = loop_shape::unspan(v);
   // A function named where a function value is expected.
   if shape == "fn" && function_literal(x.b, node) >= 0 {
@@ -2694,6 +2750,17 @@ fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
 // `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
 // The statements just before a loop seed its counters (`@FR-R-Peel`).
 fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
+  // `@FR-R-DecodeView`'s structure clause: a positional body is its statements one by one — no
+  // run of them is rewritten as a whole, so each meets the clause's hooks.
+  if w.ps.mode != PS_NONE {
+    for o in ops {
+      if o#index >= end || w.why != "" {
+        break;
+      }
+      stmt(x, w, o, ind);
+    }
+    return;
+  }
   // The end of the push run a reservation was made for, and whether a push header is open
   // for it.
   run_end = 0;
@@ -2881,6 +2948,14 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   listed = w.list_stmt;
   w.list_stmt = false;
   if w.why != "" {
+    return;
+  }
+  // `@FR-R-DecodeView`'s structure clause: a statement over positions.
+  if w.ps.mode != PS_NONE && cgen_decode_structure::stmt(x, w, v, ind) {
+    return;
+  }
+  // `@FR-R-DecodeView`: a span local's holder, placed on its slice guard's fallback only.
+  if w.dv_on && cgen_decode_view::stmt(x, w, v, ind) {
     return;
   }
   // What the previous statement filed reaches this one only when it is a lookup's binding;
@@ -3618,31 +3693,48 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // the body did not keep to the plan.
   if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
     // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
-    // without it when the writer declines it.
-    site = cgen_transient::site_plan(x, twin.d);
+    // without it when the writer declines it.  A root of `@FR-R-DecodeView` keeps its decoded
+    // values in the store, where their span words are: it takes no transient site.
+    site = if cgen_decode_view::root_frame(x, twin.d) >= 0 { cgen_transient::no_fn() } else { cgen_transient::site_plan(x, twin.d) };
     if site.any {
-      with_site = write_body(x, twin, -1, false, [], site);
+      with_site = write_body(x, twin, -1, false, [], site, PS_NONE, 0, 0);
       if with_site.refused == "" {
         return with_site;
       }
     }
-    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn());
+    // `@FR-R-DecodeView`'s structure clause: a root whose chain holds every decoded value as a
+    // position is written in its positional form, under its own name; one this writer cannot
+    // write keeps the form it had.
+    if cgen_decode_structure::is_root(x, twin.d) {
+      positional = write_body(x, twin, -1, false, [], cgen_transient::no_fn(), PS_CONSUMER, 0, 0);
+      if positional.refused == "" {
+        return positional;
+      }
+      cgen_decode_structure::declined(x, twin.d, positional.refused);
+    }
+    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn(), PS_NONE, 0, 0);
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
     }
   }
-  write_body(x, twin, -1, false, [], cgen_transient::no_fn())
+  write_body(x, twin, -1, false, [], cgen_transient::no_fn(), PS_NONE, 0, 0)
 }
 
 // `@FR-R-Transient`: the body of definition `d` written with transient facts `tf` — a twin's
 // (its inner body, no frame wrapper) or a site's.
 pub fn write_transient_body(x: Cx, d: integer, tf: cgen_transient::TrFn) -> Written {
-  write_body(x, cgen_names::plain(d), -1, false, [], tf)
+  write_body(x, cgen_names::plain(d), -1, false, [], tf, PS_NONE, 0, 0)
+}
+
+// `@FR-R-DecodeView`'s structure clause: a positional twin of `d` in `mode` (`ps_function`) — a
+// producer's shape twin, its walk twin of the field `(off, vtp)`, a consumer's twin.
+pub fn write_positional(x: Cx, d: integer, mode: integer, off: integer, vtp: integer) -> Written {
+  write_body(x, cgen_names::plain(d), -1, false, [], cgen_transient::no_fn(), mode, off, vtp)
 }
 
 // The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
 // alone, answering nothing, its result the caller's buffer `work_ret`.
-fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn) -> Written {
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn, ps_mode: integer, ps_off: integer, ps_vtp: integer) -> Written {
   index = twin.d;
   // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
   // function is written from (`opt_below_len::mark`).
@@ -3677,6 +3769,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // `@FR-R-ValueRecord`: the value locals and tuple parameters are structs.
   cgen_vr::local_shapes(x, index, shapes);
   number_tuples(x, shapes);
+  // `@FR-R-DecodeView`'s structure clause: a producer twin's call variables hold shapes, a
+  // consumer's position locals the structs they are held in.
+  ps_twin = ps_mode == PS_SHAPE || ps_mode == PS_WALK || (ps_mode == PS_CONSUMER && !cgen_decode_structure::is_root(x, index));
+  if ps_mode != PS_NONE {
+    cgen_decode_structure::shapes(x, ps_mode, index, shapes);
+    number_tuples(x, shapes);
+  }
   // `@FR-R-Transient`: the transient locals are pointers into the arena.
   if tf.any {
     cgen_transient::apply_shapes(tf, shapes);
@@ -3714,6 +3813,15 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // A transient twin answers its result as the arena pointer it built.
   if tf.any && tf.builds {
     ret = tf.ret;
+  }
+  // A positional twin answers its shape, whether its walk stopped, or its position.
+  ps_ret = if ps_twin { cgen_decode_structure::twin_ret(x, ps_mode, index) } else { "" };
+  if ps_twin {
+    if ps_ret == "" {
+      return Written { text: "", refused: "a consumer of an unknown result" };
+    }
+    ret = ps_ret;
+    vr_dropped = -1;
   }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
@@ -3908,12 +4016,16 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     dc_null_only: [],
     dc_pending: 0,
     dc_ctx: [],
-    apv: if plain_rules() && !tf.any { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
-    apr: if plain_rules() && !tf.any { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    apv: if plain_rules() && !tf.any && ps_mode == PS_NONE { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
+    apr: if plain_rules() && !tf.any && ps_mode == PS_NONE { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
     tr: tf,
     wr_call: -1,
     vr: opt_vr_facts::no_fn(),
     vr_fwd: -1,
+    dv_on: false,
+    dv_twin: false,
+    dv_bypass: -1,
+    ps: no_ps(),
     av: opt_apart_value::no_roles(),
     av_twin: false,
     av_rb: -1,
@@ -3943,6 +4055,12 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if cgen_transient::has_roots(tf) {
       w.decls += ["loft_ta_mark_t loft_tmf = loft_ta_mark(cx);"];
     }
+  }
+  // `@FR-R-DecodeView`: a positional body's mode (`structure`), and the view plan a `__dv`
+  // twin or a root takes (`decode_view`) — not a positional twin, which takes none.
+  cgen_decode_structure::setup(x, w, ps_mode, index, ps_off, ps_vtp);
+  if !ps_twin {
+    cgen_decode_view::setup(x, w, twin.dv);
   }
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
@@ -4020,7 +4138,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // `@FR-R-Apart` instance 2: the body's roles; an `__apv` twin takes no return buffer and
   // answers through `loft_apo`.
-  if plain_rules() && !tf.any {
+  if plain_rules() && !tf.any && ps_mode == PS_NONE {
     cgen_apart::value_setup(x, w, index, twin.apv);
   }
   // `@FR-R-ValueRecord` (`FnWriter::new`'s `VrFn::of`): the body's facts — none in a transient
@@ -4054,6 +4172,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       return Written { text: "", refused: "an __apv twin of no apart type" };
     }
     params += ["{apo_t} *loft_apo"];
+  }
+  // A positional twin's parameters (`ps_function`): the store context, a consumer's frame, each
+  // argument but the dropped buffer as its shape, a walk twin's closure and its site.
+  if ps_twin {
+    params = cgen_decode_structure::twin_params(x, w, ps_mode, index);
   }
   cgen_text::declare_owns(w);
   cgen_apart::decls(w);
@@ -4146,6 +4269,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // `@FR-C-Arms`: the arms' functions declare what this function declares.
   armed: vector<text> = if len(w.arm_fns) > 0 { cgen_parallel::arm_functions(w, out) } else { [] };
+  // `@FR-R-DecodeView`'s structure clause: a walk's closures declare what this function does.
+  closed: vector<text> = if len(w.ps.closures) > 0 { cgen_decode_structure::closure_functions(w, out) } else { [] };
   out += cgen_text::hold_line(w);
   body = cgen_text::expand_epilogues(w);
   statements = statement_count(body);
@@ -4156,12 +4281,16 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     x.gen_decls += armed[0]!;
     x.gen_bodies += armed[1]!;
   }
+  if len(closed) == 2 {
+    x.gen_decls += resolve_tuples(x, closed[0]!);
+    x.gen_bodies += resolve_tuples(x, closed[1]!);
+  }
   if len(w.cold) > 0 {
     if cgen_cold::cold_escaped(w, out) {
       return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
     }
     for a in w.cold {
-      part = write_body(x, twin, -1, false, [a], tf);
+      part = write_body(x, twin, -1, false, [a], tf, ps_mode, ps_off, ps_vtp);
       if part.refused != "" {
         return Written { text: "", refused: part.refused };
       }
@@ -4202,6 +4331,12 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // A body whose calls reach it again keeps the wrapper's hint and no more (`on_call_cycle`).
   if cgen::on_call_cycle(x, index) {
     storage = outer;
+  }
+  // A positional twin is framed plainly (`framed_plain`), under its own name.
+  if ps_twin {
+    storage = "static";
+    outer = "static";
+    name = cgen_decode_structure::twin_name(x, ps_mode, index, ps_off, ps_vtp);
   }
   rtext = resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n");
   rret = resolve_tuples(x, held(ret));
@@ -4276,7 +4411,7 @@ fn number_tuples(x: Cx, shapes: vector<text>) {
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
 fn plain_but_rg(t: cgen_names::Twin) -> boolean {
-  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.dv
 }
 
 // Is argument `i` one of a call's tuple parameters (`[idx, key, …]`)?

@@ -220,6 +220,45 @@ struct Seed {
   value: integer,
 }
 
+// `@FR-R-DecodeView`'s structure clause: one walk's closure (`Closure`), written once the
+// enclosing body's declarations are known — its name, its statements, the C names it copies in
+// and back (each at its index in the site's array; a parameter's declaration, "" for a local),
+// the element's C type and the element variable.
+pub struct PsClosure {
+  name: text,
+  text: text,
+  copies: vector<text>,
+  decls: vector<text>,
+  elem_c: text,
+  elem: text,
+}
+
+// What a body of the structure clause holds (`PsBody`): its mode (`PS_NONE`, `PS_SHAPE`,
+// `PS_WALK`, `PS_CONSUMER`), the producer (a twin of it) or the consumer it writes, a walk twin's
+// field, the shapes the enclosing tag-tested arms computed (each value and the local holding its
+// shape), how deep in walk closures the writer is, the statement being written as itself, and
+// the closures written so far.
+pub struct PsBody {
+  mode: integer,
+  d: integer,
+  off: integer,
+  vtp: integer,
+  shape_x: vector<ir::Node>,
+  shape_s: vector<text>,
+  walk: integer,
+  bypass: boolean,
+  closures: vector<PsClosure>,
+}
+
+pub const PS_NONE = 0;
+pub const PS_SHAPE = 1;
+pub const PS_WALK = 2;
+pub const PS_CONSUMER = 3;
+
+pub fn no_ps() -> PsBody {
+  PsBody { mode: PS_NONE, d: -1, off: 0, vtp: 0, shape_x: [], shape_s: [], walk: 0, bypass: false, closures: [] }
+}
+
 // One function's writer (`FnWriter`): what it has written and where a fault reports.
 struct W {
   // The function's definition number and name.
@@ -458,6 +497,13 @@ struct W {
   vr: opt_vr_facts::VrFn,
   // The buffer of the forward call `expr` is writing (`vr_forward_target`), -1 none.
   vr_fwd: integer,
+  // `@FR-R-DecodeView`: this body takes the view plan (a `__dv` twin, or a root's own body),
+  // whether it is a twin, and the lazy holder being written as itself (its mark, -1 none).
+  dv_on: boolean,
+  dv_twin: boolean,
+  dv_bypass: integer,
+  // `@FR-R-DecodeView`'s structure clause: this body's positional mode and state.
+  ps: PsBody,
 }
 
 // `@PLN226`: an argument list with the store context first (`c::cx_args`).

@@ -39,25 +39,27 @@ pub struct Twin {
   pub ds: boolean,
   pub vf: boolean,
   pub rg: boolean,
+  // `@FR-R-DecodeView`: a function of a decode region written over the twin layout (`__dv`).
+  pub dv: boolean,
 }
 
 // The plain function `d`: no twin.
 pub fn plain(d: integer) -> Twin {
-  Twin { d: d, places: 0, nn: 0, inv: false, nk: false, apr: false, apv: false, kh: false, ap: false, ds: false, vf: false, rg: false }
+  Twin { d: d, places: 0, nn: 0, inv: false, nk: false, apr: false, apv: false, kh: false, ap: false, ds: false, vf: false, rg: false, dv: false }
 }
 
 // A twin record of its own, equal to `t`.
 pub fn copy_twin(t: Twin) -> Twin {
-  Twin { d: t.d, places: t.places, nn: t.nn, inv: t.inv, nk: t.nk, apr: t.apr, apv: t.apv, kh: t.kh, ap: t.ap, ds: t.ds, vf: t.vf, rg: t.rg }
+  Twin { d: t.d, places: t.places, nn: t.nn, inv: t.inv, nk: t.nk, apr: t.apr, apv: t.apv, kh: t.kh, ap: t.ap, ds: t.ds, vf: t.vf, rg: t.rg, dv: t.dv }
 }
 
 // Is twin `t` the function itself (`mask == 0`)?
 pub fn is_plain(t: Twin) -> boolean {
-  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.rg
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.rg && !t.dv
 }
 
 pub fn same_twin(a: Twin, b: Twin) -> boolean {
-  a.d == b.d && a.places == b.places && a.nn == b.nn && a.inv == b.inv && a.nk == b.nk && a.apr == b.apr && a.apv == b.apv && a.kh == b.kh && a.ap == b.ap && a.ds == b.ds && a.vf == b.vf && a.rg == b.rg
+  a.d == b.d && a.places == b.places && a.nn == b.nn && a.inv == b.inv && a.nk == b.nk && a.apr == b.apr && a.apv == b.apv && a.kh == b.kh && a.ap == b.ap && a.ds == b.ds && a.vf == b.vf && a.rg == b.rg && a.dv == b.dv
 }
 
 // Is `d` an operator, which a call site writes rather than a function it calls?
@@ -137,6 +139,7 @@ pub fn c_name(b: ir::Bundle, dups: vector<boolean>, d: integer) -> text {
 // The C name of twin `t` (`twin_name`).
 pub fn twin_name(b: ir::Bundle, dups: vector<boolean>, t: Twin) -> text {
   out = c_name(b, dups, t.d);
+  if t.dv { out += "__dv"; }
   if t.places != 0 {
     out += "_pl{t.places}";
   }

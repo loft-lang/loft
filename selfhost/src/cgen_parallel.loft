@@ -28,7 +28,7 @@ fn ident_char(c: character) -> boolean {
 }
 
 // Every C identifier `text` names, once each (`identifiers`).
-fn identifiers(text: text) -> vector<text> {
+pub fn identifiers(text: text) -> vector<text> {
   out: vector<text> = [];
   word = "";
   for c in text + " " {
@@ -57,7 +57,7 @@ fn holds(names: vector<text>, name: text) -> boolean {
 }
 
 // The name a declaration line declares: the last identifier before its initialiser.
-fn declared_name(decl: text) -> text {
+pub fn declared_name(decl: text) -> text {
   head = decl;
   for c in decl {
     if c == '=' || c == ';' {

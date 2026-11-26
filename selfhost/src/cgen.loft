@@ -36,6 +36,8 @@ use cgen_clibs;
 use cgen_tables;
 use opt_destination;
 use opt_version;
+use opt_decode_view;
+use opt_decode_structure;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -224,6 +226,10 @@ pub struct Cx {
   pub cids: vector<text>,
   // Per definition: is it on a call cycle (`Cx::on_cycle`)?  0 not asked, 1 no, 2 yes.
   pub cycles: vector<integer>,
+  // `@FR-R-DecodeView`: the view clause's plan and the structure clause's (`Cx::dv_plan`,
+  // `Cx::ps_plan`), asked once.
+  pub dv: opt_decode_view::DvPlan,
+  pub ps: opt_decode_structure::PsPlan,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -282,6 +288,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     tids: cgen_names::type_idents(b),
     cycles: [for _ in 0..len(b.data.definitions) { 0 }],
     cids: cgen_names::const_idents(b),
+    dv: opt_decode_view::no_plan(),
+    ps: opt_decode_structure::no_plan(),
   }
 }
 
