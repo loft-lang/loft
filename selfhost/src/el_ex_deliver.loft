@@ -1003,9 +1003,13 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
       }
     }
     want = el_types::without_deps(el_types::base(result));
-    // (`ref_return`'s `ls` order, measured whatever the arm order: the named locals first, then
-    // the work refs, ascending — `["x", "__ref_1", "__ref_2"]`.)
-    named_leaves = [for nl in leaves if !starts_with(el_vars::name_of(vars, nl), "__ref_") && !starts_with(el_vars::name_of(vars, nl), "__rref_") { nl }];
+    // (`ref_return`'s `ls` order: the join's borrows in arm order — a local, and a call's
+    // `__ref_N` where the callee's first-pass result names its buffer (`resolve_deps`: a renamed
+    // local's tail, not a literal's) — then the other work refs, ascending: `["x", "__ref_1",
+    // "__ref_2"]` beside `list(n)` calls answering a literal, `["__ref_1", "x"]` beside `mk(…)`
+    // calls answering a local.)
+    published = published_call_refs(e, vars, ptail, []);
+    named_leaves = [for nl in leaves if (!starts_with(el_vars::name_of(vars, nl), "__ref_") && !starts_with(el_vars::name_of(vars, nl), "__rref_")) || published.contains(nl) { nl }];
     ref_leaves: vector<integer> = [];
     for rl in leaves {
       if !named_leaves.contains(rl) {
@@ -1407,6 +1411,36 @@ fn branch_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, out: vector<intege
         pr = place_root(e, n);
         if pr >= 0 && !vars.vars[pr].argument && !r.contains(pr) {
           r += [pr];
+        }
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
+// The calls' own buffers (`__ref_N`) among a branch's leaves whose callee's result names its
+// hidden buffer: the call's answer borrows the buffer handed it (`resolve_deps`), each once.
+fn published_call_refs(e: el::El, vars: el_vars::Vars, n: ir::Node, out: vector<integer>) -> vector<integer> {
+  r = out;
+  match n {
+    NdSpan { inner } => { r = published_call_refs(e, vars, inner, r); },
+    NdIf { cond: _, t, f } => { r = published_call_refs(e, vars, f, published_call_refs(e, vars, t, r)); },
+    NdBlock { block } => { if block[0].name != "Vector" && len(block[0].operators) > 0 { r = published_call_refs(e, vars, block[0].operators[-1]!, r); } },
+    NdInsert { items } => { if len(items) > 0 { r = published_call_refs(e, vars, items[-1]!, r); } },
+    NdCall { def_nr } => {
+      cd = el::def(e, def_nr);
+      pub_buf = false;
+      for pi in el_types::deps(el_types::base(cd.returned[0] ?? ir::TyVoid)) {
+        if pi >= 0 && pi < len(cd.attributes) && cd.attributes[pi]!.hidden {
+          pub_buf = true;
+        }
+      }
+      if pub_buf {
+        for h in hidden_ref_args(e, vars, n) {
+          if !r.contains(h) {
+            r += [h];
+          }
         }
       }
     },
