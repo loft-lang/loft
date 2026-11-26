@@ -531,7 +531,12 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vars.tuple_raw = te!;
+  // (A call answering a boxed tuple, read for a member — `pair(3).1` — takes its buffer as a
+  // destructure's does, `boxed_tuple_return`: the member is read off the call.)
+  tg_outer_boxed = vars.boxed_tuple_at;
+  match e.p.nodes[te!] { SCall { at: tca } => { vars.boxed_tuple_at = tca; }, _ => {} }
   x = el_ex_assign::expression(e, vars, te!);
+  vars.boxed_tuple_at = tg_outer_boxed;
   // The element of a member an assignment writes is its place: read dense (`OpGetVector`).
   if te! == vars.place_tuple_subject && x.tp is TyOptional && el_types::base(x.tp) is TyTuple {
     match el_ir::unspan(x.code) {
@@ -593,6 +598,26 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
   // (`@FR-T-Ref-Rep`: a `&(…)` parameter links the `__tuple<…>` record — its members are read
   // as a boxed tuple's are.)
   xlt = match x.tp { TyRefVar { inner: xli } => if el_types::base(xli) is TyReference { el_types::base(xli) } else { x.tp }, _ => x.tp };
+  // (A boxed tuple a CALL answers is read off the call, its member a field of the record.)
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr: bcd } => {
+      match xlt {
+        TyReference { n: bcn } => {
+          if !starts_with(el::def(e, bcd).name, "Op") && starts_with(el::def(e, bcn).name, "__tuple<") && index >= 0 && index < len(el::def(e, bcn).attributes) {
+            bmt = el::def(e, bcn).attributes[index]!.typedef[0] ?? ir::TyVoid;
+            if bmt is TyText || el_convert::plain_scalar(bmt) {
+              bgot = field_get(e, bcn, index, x.code);
+              if bgot != null {
+                return ex(bgot!, if bmt is TyText { ir::TyText { dep: [] } } else { bmt });
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   match el_ir::unspan(x.code) {
     NdVar { n: tv } => {
       match xlt {
