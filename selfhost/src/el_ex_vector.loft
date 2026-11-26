@@ -1631,10 +1631,12 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       return a;
     }
     el::refuse(e, "a `&` reference to something other than a scalar or a vector place: {type_kind(el_types::base(a.tp))}");
-    // Refused, but typed as Rust types it (`@FR-B-Ref-Uniform`: `&τ` is a link to the place of
-    // any `τ`): an unknown type here made the link's next use read its operand untyped, so an
-    // append through it (`a = &h; a += [Row {…}]`) minted a `vector<Row>` Rust never has.
-    return ex(ir::NdNull, if el_types::is_unknown(a.tp) { ir::TyUnknown { n: 0 } } else { ir::TyRefVar { inner: a.tp } });
+    // Refused; a link to a KEYED collection keeps Rust's type (`@FR-B-Ref-Uniform`: `&τ` is a
+    // link to the place of any `τ`): unknown, the link's next use read its operand untyped, so
+    // an append through it (`a = &h; a += [Row {…}]`) minted a `vector<Row>` Rust never has.
+    // (Every other `τ` stays unknown for now: typed, a link to a function value took a road that
+    // left later closures unregistered, try 3e4ddbdc3.)
+    return ex(ir::NdNull, if keyed_kind(el_types::base(a.tp)) { ir::TyRefVar { inner: a.tp } } else { ir::TyUnknown { n: 0 } });
   }
   x = el_ex_assign::expression(e, vars, n!);
   // `!` of a nullable operand is the negation of its truth: a `boolean?` as it is, anything
