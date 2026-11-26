@@ -1845,6 +1845,18 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
     arg = given[a#index] ?? ir::NdNull;
     // (An empty `[]` is read at its parameter's vector on pass 1 too — `parse_vector` under the
     // parameter's hint — its `_vec_N` and `_elm_N` minted there.)
+    // (An empty `[]` given a KEYED parameter is that collection, empty, in a `__kvb_N` of its own —
+    // `parse_vector` under the parameter's keyed type, on both passes.)
+    if el_ex_pattern::is_empty_literal(arg) && keyed_kind(el_types::base(pt)) && !(el_types::base(pt) is TyVector) {
+      kas = empty_arg_syntax(e, vars, a#index, a.name);
+      if kas >= 0 {
+        kal = el_ex_vector::keyed_literal(e, vars, kas, el_types::without_deps(el_types::base(pt)));
+        if kal != null {
+          conv += [kal!.code];
+          continue;
+        }
+      }
+    }
     if e.first_pass && el_ex_pattern::is_empty_literal(arg) && el_types::base(pt) is TyVector && !el_types::is_unknown(pt) {
       conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt), lit: empty_arg_syntax(e, vars, a#index, a.name))];
       continue;
