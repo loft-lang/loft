@@ -342,7 +342,8 @@ fn print_help() {
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
     println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
-    println!("                                backend; a *.so output builds just the library");
+    println!("                                backend; a *.so output builds just the library;");
+    println!("                                with --ship, signed by loft.toml's [android] key");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -10522,6 +10523,15 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        // How the APK is signed, settled before the build: a `--ship` build signs with the
+        // key the program's loft.toml names, or is left unsigned; never with the debug key.
+        let signing = match android::signing(ship_build, std::path::Path::new(&abs_file)) {
+            Ok(s) => s,
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        };
         let end_def = p.data.definitions();
         // The generated `android_main` runs the program's `fn main`, so an Android
         // app needs one (unlike a `--native` test file, which can be entry-less).
@@ -10576,6 +10586,7 @@ fn main() {
             let package = android::Package {
                 staging: &staging,
                 keystore_dir: &work,
+                signing: &signing,
                 debuggable: !ship_build,
                 assets: &assets,
                 libs: &libs,
