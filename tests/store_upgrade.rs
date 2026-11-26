@@ -2176,6 +2176,9 @@ fn an_added_or_removed_child_field_upgrades() {
 /// this layout wrote 32 entries past it.  The store converts — `a = 5` carried, the added `b`
 /// its zero, three items, the third item's first text `x2` — and under the compiled leg's
 /// allocator the overrun is what stops it.
+///
+/// @falsified-at: 4e992f30d — by hand: the walk pushed per field again, marked on pop, on a
+/// stack of `count * 4 + 8` → the compiled leg crashed (signal 5) converting the store.
 #[test]
 fn cell_a_struct_wider_than_its_layout_has_types() {
     let texts: String = (0..60).map(|i| format!(", t{i:02}: text")).collect();
@@ -2200,6 +2203,10 @@ fn cell_a_struct_wider_than_its_layout_has_types() {
 /// writes 400 entries past the room it made for the second.  The store converts on both
 /// backends — `a = 5` carried, the added `b` its zero, two items, item 2's name `two` — and the
 /// compiled leg, rebuilt under AddressSanitizer where `cc` has one, converts without a report.
+///
+/// @falsified-at: 4e992f30d — by hand: the second `group=` no longer frees the first nor resets
+/// its count → AddressSanitizer: heap-buffer-overflow, a WRITE in `loft_ld_facts` (the plain
+/// compiled leg passes: without the sanitizer the overrun shows nothing).
 #[test]
 fn cell_a_repeated_group_fact_replaces_the_first() {
     let types = "struct T { k: integer, n: text }\nstruct W { a: integer, items: hash<T[k]>, by_n: index<T[n]>";

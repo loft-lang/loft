@@ -30,6 +30,11 @@ fn scratch(name: &str) -> std::path::PathBuf {
 /// (`Other`), and no `q` is made.  The interpreter, the compiled build and the compiled build
 /// under the sanitizers print the same lines; the walk of a path's parents starts one past its
 /// first character, which for a path of no characters was past its end.
+///
+/// @falsified-at: 4e992f30d — by hand: the empty-path case taken out of `loft_fs_mkdir` → the
+/// C leg answered `NotFound` throughout, and under AddressSanitizer a heap-buffer-overflow
+/// READ in `loft_fs_mkdir`; with only the earlier guard (NotFound for an empty path) the C
+/// leg answered `all NotFound NotFound NotFound`.
 #[test]
 fn mkdir_of_a_path_that_names_the_working_directory() {
     let dir = scratch("mkdir");
@@ -107,6 +112,9 @@ fn harness(name: &str, body: &str) -> Option<(std::path::PathBuf, std::path::Pat
 /// A number written with its radix marker and a zero pad (`{255:#06x}`, `0x00ff`) takes the
 /// marker's width from the field's: a null width — no width — stays null and pads nothing,
 /// `0xff`.  Subtracting from it wrapped, past the smallest number, to a width near the largest.
+///
+/// @falsified-at: 4e992f30d — by hand: the null test taken out of `loft_format_prefixed` → UBSan:
+/// signed integer overflow, `-9223372036854775808 - 2`.
 #[test]
 fn a_radix_marker_beside_a_null_width_pads_nothing() {
     let Some((exe, dir)) = harness(
@@ -135,6 +143,9 @@ fn a_radix_marker_beside_a_null_width_pads_nothing() {
 /// here more than can be had, so the run stops with `loft: out of memory` at once.  The
 /// doubling wrapped to zero and doubled zero for ever: the loop a 32-bit target meets once a
 /// text's room passes 2 GiB, met here in 64-bit sizes with the room past half of them.
+///
+/// @falsified-at: 4e992f30d — by hand: `loft_reserve`'s plain doubling loop restored → the run
+/// was still looping at the 30 s deadline.
 #[test]
 fn a_text_whose_room_would_double_past_the_largest_size_is_out_of_memory() {
     let Some((exe, dir)) = harness(

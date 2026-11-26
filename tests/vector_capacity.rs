@@ -9,6 +9,10 @@
 //! fails saying `Vector capacity overflow: count=3000000000 size=8`.  Before the check the
 //! compiled build took the wrapped size as "already large enough", set the length and filled
 //! from a record of a few words; the interpreter's arithmetic wrapped in a release build.
+//!
+//! @falsified-at: 4e992f30d — by hand: `vector_set_size`'s checked sum and product made wrapping
+//! → the interpreter's leg ran on to `Store access out of bounds`; the C's capacity check
+//! clamped, its sum unchecked and its resize read as signed → the C leg died of SIGBUS.
 
 use loft::file_access as fa;
 
@@ -74,6 +78,10 @@ const READ: &str = r#"fn main() {
 /// read, so the run holds no 4 GiB copy.  A file of 10 bytes beside it reads back `read 10`.
 /// The large file is sparse: no disk is spent on it, and a file system that cannot make one
 /// skips the test, saying so.
+///
+/// @falsified-at: 4e992f30d — by hand: the size asked first and the count held at the largest,
+/// both taken out → the interpreter failed on a slice bound (`range end index 4294967306`);
+/// the same two in the C → the C leg died of SIGBUS copying the file into a 10-byte record.
 #[test]
 fn a_file_with_more_bytes_than_a_vector_counts_stops_read_bytes() {
     let dir = std::env::temp_dir().join(format!("loft_read_bytes_capacity_{}", std::process::id()));
