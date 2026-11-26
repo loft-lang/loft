@@ -210,3 +210,85 @@ fn the_ssh_natives_keep_their_promises_on_the_interpreter() {
 fn the_ssh_natives_keep_their_promises_on_the_c() {
     run("--native-c");
 }
+
+/// What `host_keys.loft` prints against a server holding ECDSA, then RSA-1024, then RSA-2048.
+const HOST_KEYS_WANT: &[&str] = &[
+    "SESSION true true",
+    "START READY vt100 80x24",
+    "SAME REKEYED true true",
+    "ECHO still here",
+    "OTHER false []",
+    "RSA1024 -1",
+    "RSA2048 true true 50 true",
+];
+
+/// The host key the client accepted is the one the session keeps: a key exchange the server
+/// starts later with the same key goes on, and one that brings another key ends the session
+/// before anything more is read from it.  And an RSA host key is taken from 2048 bits: a
+/// 1024-bit one is refused at connect, where the same server's 2048-bit key is accepted and
+/// logs in (the control that the RSA path itself works).
+///
+/// @falsified-at: PENDING
+fn host_keys(backend: &str) {
+    if !loft::platform::c_runtime_has_sockets() {
+        return;
+    }
+    build_component();
+    let dir = std::env::temp_dir().join(format!(
+        "loft_ssh_host_keys_{}_{}",
+        &backend[2..],
+        std::process::id()
+    ));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("a scratch directory");
+    let Some(server) = build_server(&dir) else {
+        return;
+    };
+    let mut srv = loft::platform::process::harness_command(&server)
+        .arg("3")
+        .arg("ecdsa,rsa1024,rsa2048")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("the test server starts");
+    let mut said = BufReader::new(srv.stdout.take().expect("the server's stdout"));
+    let mut line = String::new();
+    let port = loop {
+        line.clear();
+        said.read_line(&mut line).expect("the server's port line");
+        if let Some(p) = line.trim().strip_prefix("PORT ") {
+            break p.to_string();
+        }
+        assert!(!line.is_empty(), "the server ended before its port line");
+    };
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg(backend)
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(fixtures())
+        .arg(fixtures().join("ssh_natives/host_keys.loft"))
+        .current_dir(&dir)
+        .env_remove("LOFT_COMPONENTS")
+        .env("LOFT_TIMEOUT", "240")
+        .env("LOFT_SSH_TRACE", "1")
+        .env("SSH_PORT", &port)
+        .output()
+        .expect("loft runs");
+    let _ = srv.kill();
+    let _ = srv.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines, HOST_KEYS_WANT, "{backend}\nstderr:\n{stderr}");
+    let _ = fa::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_ssh_client_holds_the_host_key_it_accepted_on_the_interpreter() {
+    host_keys("--interpret");
+}
+
+#[test]
+fn the_ssh_client_holds_the_host_key_it_accepted_on_the_c() {
+    host_keys("--native-c");
+}
