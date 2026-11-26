@@ -2716,9 +2716,11 @@ fn enum_arms(e: el::El, n: ir::Node, et: ir::TypeT) -> ir::Node {
         return n;
       }
       vd = match el_types::base(b.result[0] ?? ir::TyVoid) { TyReference { n: rn } => rn, _ => -1 };
-      // (A `match` arm keeps the variant its literal is — Rust's `match_arm` block is
-      // `ref(NdInt)` beside a sibling answering the enum; only an `if`'s arms join to the enum.)
-      if b.name == "match_arm" {
+      // (A `match` arm whose value IS the variant literal keeps that variant — Rust's
+      // `match_arm` block is `ref(NdInt)` beside a sibling answering the enum; one whose value is
+      // a block ending in the literal (`NBlk { ops } => { …; NBlk { ops: o2 } }`) joins to the
+      // enum as an `if`'s arms do.)
+      if b.name == "match_arm" && match el_ir::unspan(b.operators[-1]!) { NdBlock { block: mlb } => mlb[0].name == "Object", _ => false } {
         return n;
       }
       if b.name == "scalar_match" {
