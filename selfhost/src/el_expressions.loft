@@ -608,11 +608,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) {
     materialize_view_route(e, vars);
   }
-  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
+  // (…a `-> E?` struct enum's tail too, an element or a field read as the `E?` its slot holds:
+  // the buffer takes the copy behind the slot's tag test, `view_tail`.)
+  // (The first pass's element read is not built yet: the projection test of `mv_tail` decides.)
+  // (On the second pass only a slot rooted at a LOCAL: a slot read off a call's answer is named
+  // first in Rust, `enum_slot_read_named` — not carried, refused as before.)
+  mv_result = el_ex_copy::record_result(result) || (result is TyOptional && el_types::struct_enum_def(result) >= 0 && (e.first_pass || match el_ir::unspan(raw_tail(code)) { NdCall { def_nr: mvd } => el::def(e, mvd).name == "OpGetField" && place_root(e, raw_tail(code)) >= 0 && !vars.vars[place_root(e, raw_tail(code))]!.argument, _ => false }));
+  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && mv_result;
   if !(el_types::base(result) is TyVector) {
     vars.ret_src = raw_tail(code);
   }
-  if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
+  if rb >= 0 && !lambda && expr_tail && mv_result && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
       code = mt!;
@@ -1475,6 +1481,10 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   enum_result = el_types::struct_enum_def(result) >= 0;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
   w = el_vars::work_ref(vars, if enum_result { ir::TyReference { n: td, dep: [] } } else { el_types::without_deps(el_types::base(result)) });
+  // (A `-> E?` struct enum's work ref is `Bind`, substituted by the buffer, on both passes.)
+  if enum_result && result is TyOptional {
+    el_trace::retpromo(e, vars, w, "Bind");
+  }
   if e.first_pass {
     if unrenamed && !buffer_bound(e) && !enum_result {
       rename_onto(e, vars, rb, w);
@@ -1505,6 +1515,18 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [buf]);
   copied = el_ex_copy::copy_arms(e, vars, value, buf, td, owned);
+  // (A `-> E?` struct enum read out of its slot is the `E?` the slot holds: absent where the
+  // slot's first word is zero (`read_through_enum_slot`) — that test before the copy's own.)
+  if copied != null && enum_result && result is TyOptional {
+    match el_ir::unspan(value) {
+      NdCall { def_nr: vfd, args: vfa } => {
+        if el::def(e, vfd).name == "OpGetField" && len(vfa) == 3 {
+          copied = el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [vfa[0]!, vfa[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), copied!);
+        }
+      },
+      _ => {}
+    }
+  }
   if copied == null {
     el::refuse(e, "a record tail reading into a local, copied from a source read once");
     return code;
