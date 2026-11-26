@@ -5,11 +5,15 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## State — START HERE
 
-- **int32** = b5ad08833 (CLEAN: 1641/2269, 0 differ).  The tester's loft30-gate fac638920
-  (nested instances of refused fills, a package's `lib_path`) is merged in (5aed61d10).
-- **Gating:** `git diff fac638920 5aed61d10 -- selfhost/` on the tester's 65c3397d1 — 07b68dd55
-  (an enum-qualified variant literal built in place) and b28e5e145 (an `E?` slot off a call's
-  answer named once: 2561 refused → agree).  A try is a `selfhost/` diff on the last clean base.
+- **int32** = 2f5eda504 (CLEAN: 1646/2269, 0 differ).  The tester's loft30-gate 419b7e1d6
+  (refused lambdas register their nested lambdas and records; cascades declared unfilled) is
+  merged in (67f84f773).
+- **Gating:** `git diff 419b7e1d6 67f84f773 -- selfhost/` on a02409221 — 5ecc7f876, links to a
+  function value (`&g`, a call through `pd()`) and the captured-text borrow.  A try is a
+  `selfhost/` diff on the tester's last clean base.
+- **The port-only ratchet (owner, 2026-11-26):** a definition only the port registers makes a try
+  `issues`.  The list is `port-only-definitions.md`; the keyed-destination literal family is
+  lowered (6c9ef580c), the keyed link of a LOCAL too (92a0e6f54).
 - **The tester's backlog** is `refusal-worklist.md` on loft30-gate (re-ranked by topic):
   T1 records answered from something other than a literal (current), T2 `par` workers, T3 tuples.
   T8 is not a lever.  The tester ports generic-template REGISTRATION itself (el_types.loft,
@@ -36,6 +40,8 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   Rust keys on the WRITTEN `null` (3440f55ec → 9697ee9ff).
 - A method-spelled receiver is not always a call: `T.parse(…)` is a cast (86459b16a → f8f97e90d).
 - Lifting a refusal exposes OLDER differences: hold the enabling change back until they are fixed.
+  Before sending, score the programs a change reaches (the refusal text's programs on the base)
+  and fix or re-refuse any refused → differ (2066, 2562, the `&fn` program this round).
 - A shared predicate is Rust's: widening one for one road (OpVectorRef in
   `copy_source_may_be_absent`) changes every road that reads it (96a436cc3 → 5aa112b50).  And a
   container matrix crosses the LINKED layout: a keyed collection over the element anywhere.
@@ -44,17 +50,17 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
-- An empty `[]` ARGUMENT to a `vector<lib::T>` parameter (`x = mine([])`, `ltl3::count([])`):
-  Rust makes the program's `vector<T>` at the `]`, the port at the statement's end — a silent
-  position difference (refused for a program-local struct).  Passing the argument syntax to
-  `empty_literal_to` (`lit:`) changed nothing: the first pass does not reach that road.  The
-  parked attempt is `empty-arg-syntax.patch` in the d87d338a scratchpad.
-- A fieldless enum-qualified variant as a value (`[Ch::Alpha, …]`): refused "qualified name".
-- A local then-arm beside a variant (`if (s is V) { s } else { V {…} }`): Rust's `Bind` delivery.
-- `nr_g`: `[for x in a.. { x }]` with `a: u8` — schema rows 100/101 in the other order.
-- The tester's T9/T8 note: a record declared BELOW the function that builds it (`fn mk() -> X {
-  X { a: n } } struct X …`): `literal_def` takes DT_STRUCT only, the name is a DT_UNKNOWN stub
-  on pass 1.
+- A link to a keyed FIELD (`a = &b.h`): Rust reads and writes through the field place
+  (`t_4hash_len(OpGetField(b, …))`, `OpNewRecord(b, B, field)`) — the port has no link-place
+  substitution.  Refused by name today; 1433's last function, 1836, a-null-written-….  A
+  nullable keyed local's link (`h: hash<…>? ; a = &h`) is refused too.
+- `g([], [Q { a: 1 }])`: the port builds the non-empty literal argument before the empty one.
+- A keyed field returned off a local bound to a parameter (`b = x; b.fr_h`): Rust's body keeps
+  `["x"]`, the port's derivation is not found — refused by name (2562's `fr2562_alias`).
+- A struct literal's empty `[]` vector field in `main` (`S { h: [], w: [] }`): `vector<E>` made
+  at another position and `main_vector<E>` left untyped (`al_2` in the session's `p/`).
+- The N-Join deviation mirrored in `el_ex_match.loft` (`null_arm && !enum_subject && sd < 0`):
+  drop the clause once Rust is fixed.
 
 ## Tools
 
