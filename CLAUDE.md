@@ -175,7 +175,11 @@ src/main.rs            CLI; loads default/ then user file
 1. **Never commit on `main`** — land on a feature branch, reach main only via a GitHub PR (never a
    local `git merge`).
 2. **Push proactively — it's a SAFETY rule.** Once a change settles (compiles / tests green), commit
-   + push to the feature branch so it isn't lost. Separate from opening a PR.
+   + push to the feature branch so it isn't lost. Separate from opening a PR.  Unpushed work —
+   a detached worktree included — goes UNASKED onto the host's EXISTING work branch
+   (`<host>-work`), joined by merge so every `@falsified-at` sha stays reachable (a cherry-pick
+   re-mints them); a new branch only when no current one fits (owner).  The push is also what
+   sets `fixed-pending-merge` on the issues a commit `Fixes`.
 3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
    "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over, and "the work looks finished" is not one either — the owner decides when an arc is
