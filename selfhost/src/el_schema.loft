@@ -31,7 +31,7 @@ pub const NO_TYPE = 65535;
 
 // `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
 // no type number yet is registered, in definition order, then the schema is finished.
-pub fn fill_all(e: el::El) {
+pub fn fill_all(e: el::El, start_def: integer = 0) {
   // `actual_types_deferred`: the forward references this file made resolve to what their stubs
   // became; a stub nothing adopted is the undefined type Rust reports.
   for d in 0..len(e.b.data.definitions) {
@@ -92,10 +92,12 @@ pub fn fill_all(e: el::El) {
   // it, at the position the lexer has reached: the end of the file.
   eof = el::pos_at(e, len(e.p.src) - 1);
   for d in e.b.data.definitions {
-    // (Rust's loop asks every definition; another source's own were asked at its file's end.  A
-    // generic instance and its variants live in the standard library's source but are this
-    // file's: `Bag<integer>`'s `items: vector<(integer, integer)>` takes its wrapper here.)
-    instance_part = d.instance_of >= 0 || (d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).instance_of >= 0);
+    // (Rust's loop asks the definitions from this pass's `start_def` on; another source's own
+    // were asked at its file's end.  A generic instance and its variants live in the standard
+    // library's source but are this file's when this pass minted them: `Bag<integer>`'s
+    // `items: vector<(integer, integer)>` takes its wrapper here — one minted before this file's
+    // pass began does not, its fields' vectors are in another source.)
+    instance_part = d#index >= start_def && (d.instance_of >= 0 || (d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).instance_of >= 0));
     if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || (d.source != e.source && !instance_part) {
       continue;
     }

@@ -47,6 +47,8 @@ pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
 }
 
 pub fn elab_file(e: el::El, file: integer) {
+  // `parse_file_body`'s `start_def`: the first definition this pass of this file makes.
+  start_def = len(e.b.data.definitions);
   // (`Parser::lambda_counters` is cleared as each pass parses the file.)
   e.lambda_roots = [];
   e.lambda_next = [];
@@ -69,7 +71,7 @@ pub fn elab_file(e: el::El, file: integer) {
   // The end of `parse_file`: the definitions this pass declared take their store types, then
   // the variant dispatch (`enum_fn`).  The standard library's image already holds what its own
   // parse made there.
-  el_schema::fill_all(e);
+  el_schema::fill_all(e, start_def);
   if !e.default {
     el_dispatch::enum_fn(e);
   }
