@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Enums
 // @TITLE: Named choices with optional data
+// @FR-M-Variant: a variant pattern binds the variant's fields by name.
+// @FR-P-Alt: `a | b` in an arm matches either.
+// @FR-P-Range: `a..b` excludes b, `a..=b` includes it.
+// @FR-P-Guard: a guard that fails passes the value on to the next arm.
+// @FR-F-Render: an enum value renders as its variant name.
 // An enum defines a fixed set of named choices. Instead of using raw numbers
 // like 0 = north, 1 = east — which nobody can read six months later — you give
 // each option a name. The compiler then checks every comparison and conversion,

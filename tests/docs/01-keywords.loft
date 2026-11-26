@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Keywords
 // @TITLE: Keywords and control flow
+// @FR-I-Range: `a..b` walks a up to b-1.
+// @FR-I-RangeIncl: `a..=b` includes b, also reversed with `rev`.
+// @FR-I-RangeFrom: `a..` has no end; only the body's `break` leaves it.
+// @FR-I-While: `while` re-tests its condition before each pass.
 // This page covers the building blocks that shape how your program makes
 // decisions and repeats work: conditions, loops, breaks, and a few loop
 // helpers that make common patterns shorter. Every example is verified: most

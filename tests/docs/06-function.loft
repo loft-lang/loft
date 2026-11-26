@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Functions
 // @TITLE: User defined functions
+// @FR-F-Default: a default fills an omitted argument, and may read an earlier parameter.
+// @FR-F-ParamRef: a `&integer` parameter writes back to the caller.
+// @FR-L-FnRef: a bare function name is a callable value.
+// @FR-L-Fn: `fn(..)` and `|x|` closures are values that can be stored and passed.
+// @FR-I-Reduce: `reduce` folds left from its seed.
 // Functions let you give a reusable piece of logic a name so you can call it
 // from multiple places without copying code.
 // This page covers: declaring functions, default argument values, reference parameters

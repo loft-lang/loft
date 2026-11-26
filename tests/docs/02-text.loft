@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Texts
 // @TITLE: Text handling and functions
+// @FR-I-Text: a text walk yields codepoints, `#index` the byte offset, `#next` past it.
+// @FR-Slice-Value: a text slice counts bytes, open at either end, negative from the end.
+// @FR-F-Spec: width and `<` `>` alignment of a text hole.
+// @FR-F-Escape: `{{` and `}}` in a template are literal braces.
 // Text is one of the most frequently used types in any real program — for
 // output, for reading input, for building messages. This page shows you how
 // Loft stores and manipulates text, how to measure it, slice it, search it,

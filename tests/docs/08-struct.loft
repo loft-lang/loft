@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Structs
 // @TITLE: Grouping related data with structs
+// @FR-B-View: a struct element read from a vector is a view of it.
+// @FR-B-Copy: a whole-value bind and a record update `..base` copy.
+// @FR-F-Default-Field: a field default is computed per construction and may read `$`.
+// @FR-F-Render-Fields: a struct renders every field in order, a null child as `null`.
+// @FR-L-Narrow: a range-limited field stores in the smallest width (`sizeof`).
 // A struct groups related values under one name. Instead of keeping a
 // product's name, price, and stock count in three separate variables that
 // can drift out of sync, you bundle them together into a Product struct.
