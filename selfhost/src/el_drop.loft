@@ -94,10 +94,30 @@ fn synth_cascades(e: el::El, h: Hook) {
       }
     }
   }
-  if !any_hook(e, h) && !captures {
+  // `Data::any_generator_member` (loft#1585): a generator handle held by a record, a variant or a
+  // vector is released by its container although the program declares no hook.
+  generators = false;
+  if !h.forward {
+    for d in e.b.data.definitions {
+      if d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE || d.def_type == el::DT_VECTOR {
+        for a in d.attributes {
+          if el_types::holds_generator(e, a.typedef[0] ?? ir::TyVoid, []) {
+            generators = true;
+          }
+        }
+        if el_types::holds_generator(e, d.returned[0] ?? ir::TyVoid, []) {
+          generators = true;
+        }
+      }
+    }
+  }
+  if !any_hook(e, h) && !captures && !generators {
     return;
   }
   targets: vector<integer> = [];
+  // (Types whose members this port cannot release: refused by name, their cascades still
+  // declared as Rust declares every one, their bodies not filled.)
+  unfilled: vector<integer> = [];
   for d in e.b.data.definitions {
     t = d#index;
     if el::source_nr(e, d.source, cascade_name(e, t, h)) >= 0 {
@@ -106,21 +126,25 @@ fn synth_cascades(e: el::El, h: Hook) {
     wanted = false;
     if d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE {
       if d.known_type != el::NO_TYPE {
-        // (A refused shape still leaves the hooks armed: Rust arms at the parse's end whatever
-        // the program holds, and a refused program's definitions are compared too.)
+        // (A refused shape — a keyed collection, an iterator, a tuple or an owner slot holding a
+        // droppable — is refused by name, but its cascade is declared all the same: Rust's
+        // `wanted` counts those members (`cascade_keyed`, …), and stopping the pass here left
+        // every cascade of the program Rust-only.)
         if !refused_shapes(e, t, h) {
-          if !h.forward {
-            arm_drop_marks(e, h);
-          }
-          return;
+          unfilled += [t];
         }
-        wanted = len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_shared_vectors(e, t, h)) > 0) || (!h.forward && len(cascade_captures(e, t)) > 0) || (!h.forward && len(cascade_fn_fields(e, t)) > 0);
+        wanted = unfilled.contains(t) || len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_shared_vectors(e, t, h)) > 0) || (!h.forward && len(cascade_captures(e, t)) > 0) || (!h.forward && len(cascade_fn_fields(e, t)) > 0);
       }
     } else if d.def_type == el::DT_ENUM {
       // An enum releases through whichever variant it holds.
       wanted = len(cascade_variants(e, t, h)) > 0;
     } else if d.def_type == el::DT_VECTOR {
       wanted = collection_element(e, t, h) >= 0;
+    } else if d.def_type == el::DT_TYPE && generators && d.name == "iterator" {
+      // The standard library's `type iterator`: its cascade frees the handle a slot holds.  Not
+      // carried: declared, its body not filled.
+      wanted = true;
+      unfilled += [t];
     }
     if wanted {
       targets += [t];
@@ -139,7 +163,9 @@ fn synth_cascades(e: el::El, h: Hook) {
     made += [c];
   }
   for t in targets {
-    fill(e, t, made[t#index] ?? -1, h);
+    if !unfilled.contains(t) {
+      fill(e, t, made[t#index] ?? -1, h);
+    }
   }
   // After the cascades exist: the bracket goes around the outermost release.
   if !h.forward {

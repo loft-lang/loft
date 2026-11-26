@@ -90,8 +90,35 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
     if len(cnames) > 0 {
       end = match e.p.nodes[body!] { SBlock { end: be } => be, _ => 0 };
       rpos = el::pos_at(e, end + 1);
-      rd = el::add_def(e, rec_nm, rpos, el::DT_STRUCT);
-      e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
+      // The record as Rust's first pass lays it out (`synthesize_closure_record`), from the plan
+      // its capture loop makes: a link peeled to what it shares, a capture pass 1 cannot type
+      // left unknown, a record written whole shared, a written scalar or text in its cell — so
+      // its fields, and the cascade a captured store asks for, are Rust's.  (A written capture
+      // no cell can name keeps its own type: nothing is minted that Rust does not have.)
+      rcaps: vector<el::Capture> = [];
+      rwritten: vector<text> = [];
+      for c in cnames {
+        cv = el_vars::var(vars, c);
+        ct = el_vars::tp(vars, cv);
+        match ct {
+          TyRefVar { inner: rvi } => {
+            if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) || (el_types::base(rvi) is TyText && !(rvi is TyOptional)) {
+              ct = rvi;
+            }
+          },
+          _ => {}
+        }
+        if el_types::is_unknown(ct) {
+          rcaps += [el::Capture { name: c, tp: if (ct is TyUnknown) { ct } else { ir::TyUnknown { n: 0 } } }];
+          continue;
+        }
+        wr = writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]);
+        if wr && !(record_type(e, ct) && !(ct is TyOptional)) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) && el_cell::cell_name(e, ct) != "" {
+          rwritten += [c];
+        }
+        rcaps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+      }
+      rd = build_closure_record(e, vars, rec_nm, rcaps, body!, rwritten);
       e.b.data.definitions[ld].closure_record = rd;
       // `synthesize_closure_record` registers each capture's tuple records as it lays the
       // capture's field out (`ensure_tuple_defs`), so they keep Rust's numbers though the
@@ -496,6 +523,53 @@ fn walk_mutations(e: el::El, n: ir::Node, cand: vector<text>, cp: integer, f: ir
   }
 }
 
+// `synthesize_closure_record` (pass 1): the record `__closure_<fn>_<N>` made where the lambda's
+// body ends — the cells of the written captures first (`synthesize_cell_structs`), then one field
+// per capture (a cell's shared pointer, else the capture's own type; a text keeps its local's
+// borrows) and, for a captured function value, its closure record's hidden pointer.  Its number.
+fn build_closure_record(e: el::El, vars: el_vars::Vars, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> integer {
+  end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
+  // The cells of the written captures, made before the record (`synthesize_cell_structs`);
+  // each record field shares its cell (`box_captured_names_for_outer_scalars`).
+  cells: vector<integer> = [];
+  for c in caps {
+    cells += [if written.contains(c.name) { el_cell::ensure_cell(e, c.tp, el::pos_at(e, end + 1)) } else { -1 }];
+  }
+  rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
+  e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
+  for c in caps {
+    ft = if cells[c#index]! >= 0 { ir::TyReference { n: cells[c#index]!, dep: [el_types::MARKER] } } else { closure_attr_type(e, c.tp) };
+    // A text capture's field keeps the borrows of the local it was captured from.
+    if cells[c#index]! < 0 && el_types::base(c.tp) is TyText && el_vars::var(vars, c.name) >= 0 {
+      ft = el_types::base(el_vars::tp(vars, el_vars::var(vars, c.name)));
+      // (A `&text` capture's field is the text, copied: `s: text`.)
+      ft = match ft { TyRefVar { inner: fri } => el_types::base(fri), _ => ft };
+    }
+    e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
+    note_shared_vector(e, rd, c.name, c.tp);
+    // (`synthesize_closure_record`, loft#1869: a captured function value keeps its closure
+    // RECORD beside its number, a hidden shared pointer.)
+    if el_types::base(c.tp) is TyFunction {
+      // (A local one capturing lambda was bound to shares that lambda's own record.)
+      fcv = el_vars::var(vars, c.name);
+      held_d = -1;
+      if fcv >= 0 && !vars.vars[fcv].argument {
+        for cb in vars.closure_bound {
+          if cb == fcv {
+            held_d = vars.closure_bound_d[cb#index] ?? -1;
+          }
+        }
+      }
+      held_rec = if held_d >= 0 { el::def(e, held_d).closure_record } else { -1 };
+      frd = if held_rec >= 0 && held_rec != el::NONE { held_rec } else { fn_record_def(e, el::pos_at(e, end + 1)) };
+      ha = el::attribute("{c.name}__clos", ir::TyReference { n: frd, dep: [el_types::MARKER] });
+      ha.hidden = true;
+      e.b.data.definitions[rd].attributes += [ha];
+    }
+  }
+  rd
+}
+
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   vars.last_closure = d;
   vars.closure_made = true;
@@ -525,45 +599,7 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     }
   }
   if e.first_pass {
-    end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
-    // The cells of the written captures, made before the record (`synthesize_cell_structs`);
-    // each record field shares its cell (`box_captured_names_for_outer_scalars`).
-    cells: vector<integer> = [];
-    for c in caps {
-      cells += [if written.contains(c.name) { el_cell::ensure_cell(e, c.tp, el::pos_at(e, end + 1)) } else { -1 }];
-    }
-    rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
-    e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
-    for c in caps {
-      ft = if cells[c#index]! >= 0 { ir::TyReference { n: cells[c#index]!, dep: [el_types::MARKER] } } else { closure_attr_type(e, c.tp) };
-      // A text capture's field keeps the borrows of the local it was captured from.
-      if cells[c#index]! < 0 && el_types::base(c.tp) is TyText && el_vars::var(vars, c.name) >= 0 {
-        ft = el_types::base(el_vars::tp(vars, el_vars::var(vars, c.name)));
-        // (A `&text` capture's field is the text, copied: `s: text`.)
-        ft = match ft { TyRefVar { inner: fri } => el_types::base(fri), _ => ft };
-      }
-      e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
-      note_shared_vector(e, rd, c.name, c.tp);
-      // (`synthesize_closure_record`, loft#1869: a captured function value keeps its closure
-      // RECORD beside its number, a hidden shared pointer.)
-      if el_types::base(c.tp) is TyFunction {
-        // (A local one capturing lambda was bound to shares that lambda's own record.)
-        fcv = el_vars::var(vars, c.name);
-        held_d = -1;
-        if fcv >= 0 && !vars.vars[fcv].argument {
-          for cb in vars.closure_bound {
-            if cb == fcv {
-              held_d = vars.closure_bound_d[cb#index] ?? -1;
-            }
-          }
-        }
-        held_rec = if held_d >= 0 { el::def(e, held_d).closure_record } else { -1 };
-        frd = if held_rec >= 0 && held_rec != el::NONE { held_rec } else { fn_record_def(e, el::pos_at(e, end + 1)) };
-        ha = el::attribute("{c.name}__clos", ir::TyReference { n: frd, dep: [el_types::MARKER] });
-        ha.hidden = true;
-        e.b.data.definitions[rd].attributes += [ha];
-      }
-    }
+    rd = build_closure_record(e, vars, rec_nm, caps, body, written);
     e.b.data.definitions[d].closure_record = rd;
     return ex(ir::NdNull, lambda_value_type(e, d));
   }
