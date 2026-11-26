@@ -488,6 +488,16 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
 // A name as a value: the variable it names (`Parser::parse_var`, the local case).
 pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, into: boolean) -> Ex {
   if member != "" {
+    // An enum-qualified value (`Color::Red`, `Ch::Alpha`) is that enum's — as the lexer resolves
+    // it for Rust: read as the plain name with the qualifier's enum preferred (`enum_hint`).
+    qen = el::def_nr(e, name);
+    if !el::use_exists(e, name) && qen >= 0 && el::def(e, qen).def_type == el::DT_ENUM && el::variant_of(e, qen, member) >= 0 {
+      kept_hint = vars.enum_hint;
+      vars.enum_hint = qen;
+      qx = global_name(e, vars, -1, member);
+      vars.enum_hint = kept_hint;
+      return qx;
+    }
     if !el::use_exists(e, name) {
       el::refuse(e, "a qualified name");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
