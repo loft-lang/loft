@@ -153,13 +153,9 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
             x = ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
           }
         },
-        _ => {
-          // (A boxed return's tail writes the member into its record: any text value.)
-          if !in_boxed_tail {
-            el::refuse(e, "a tuple with a text member that is no literal or variable");
-            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-          }
-        }
+        // (Any other text — a call's answer, a concatenation into a work text — is the member as
+        // it stands, `(text["__work_1"], integer)`; a boxed return's tail writes it into its record.)
+        _ => {}
       }
     }
     items += [x.code];
