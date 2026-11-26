@@ -7,8 +7,12 @@ tuxedo-pln204-int32 / tuxedo-pln204-next), `merger` (joins and PRs).
 
 - **Gate at the porter's 5347ca465** (int32 98288eb30): try 907a4f037 = 1613 of 2258 agree,
   0 differ, 644 refused, 228 the Rust front end refuses, 1 unaligned; lifetime 0 problems.
-- **In flight:** the porter's try 5347ca465→7c957eaf2 (a call-bound arm local beside call arms),
-  on 907a4f037 → scratchpad `p7c95-try.out`.
+- **In flight at handoff:** the porter's try 5347ca465→7c957eaf2 (a call-bound arm local beside
+  call arms; new cell selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft),
+  try commit 338eb367c on 907a4f037.  Its answer: `~/workspace/kr-tools/try-338eb367c/report.txt`
+  (and the old session's scratchpad `p7c95-try.out`).  FIRST ACT on resume: read it and send the
+  porter the verdict — they reported 8 wins, 0 losses locally.  The porter's next topic is "a
+  function returning a record from something other than a literal" (5 programs alone).
 - **Today's promotions, each clean when promoted:** 6d2205bdd (a vector match joins what each
   arm borrows), 332cba7b8 (the renamed-vector-buffer family; three rounds), c3223c9e0 (a renamed
   block-arm local beside a literal arm), 5347ca465 (a match tail answering a parameter beside a
@@ -58,8 +62,18 @@ move more programs than the next fifteen small families.
 5. **@PLN229 (the C split build), the tester's own lane:**
    - the B1 stack is in `kr-tools/tmp/land-wt2`, not pushed: 186e32ca6 … c74b30e0f, then
      10bc4274a (a one-line callback definition goes to the shared unit);
-   - the reuse fixes, uncommitted there: constant stores named by their constant
-     (`Cx::const_ident`) and each unit's head cut to the items it names (`units::unit_head`);
+   - the reuse fixes, committed there as 150a7bef1 (not pushed): constant stores named by their
+     constant (`Cx::const_ident`) and each unit's head cut to the items it names
+     (`units::unit_head`, with `head_items` / `declared_names`); its 5 unit tests pass
+     (`cargo test --release --lib c::units`), it is NOT yet compiled on a real program;
+   - next: build land-wt2's release binary, emit the elaborator split
+     (`LOFT_C_UNITS=1 --native-c --native-emit`) and compile every unit with the gate flags
+     (`-std=c11 -O1 -DLOFT_CALL_CHAIN`, the shared unit with `-DLOFT_SPLIT_OWN`, the others with
+     `-DLOFT_SPLIT_USE`) and link — an item `unit_head` misses is a compile error, never a
+     silent change; then rerun `~/workspace/kr-tools/p229/reuse.sh` / `reuse.py` (`reuse.sh LOFT OUT COMMIT…` emits from one fixed directory; `reuse.py OUT COMMIT…`
+     prints units / head KB / reused) (the constant-naming run's table: `p229/reuse2.out`) over de75217e5 4e9b90aca 689edb529 d73217b03 df21c5542
+     39aef5128 827e3ec4d 538a0060f 36f3b0f19 into `/var/tmp/p229-r3` — step 538a0060f is the one
+     to watch (0 reused with one shared head; the head is 1526 KB per unit);
    - measured with the constant naming alone, over nine porter commits
      (`reuse.sh` / `reuse.py`): 57–63 of 63 units reused at 7 of 8 steps (it was 0 at 5 of 8);
      the one step still at 0 is a real struct change (538a0060f), the per-unit heads' target;
