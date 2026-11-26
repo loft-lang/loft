@@ -209,6 +209,11 @@ pub struct Cx {
   pub sql_plans: vector<boolean>,
   // The types a `deliver` walks (`Cx::deliver_types`), per type number: one `loft_dlv{tp}`.
   pub delivers: vector<boolean>,
+  // A page's deliveries (`Cx::deliver_descs`, `deliver_flats`), per type number: the descriptor
+  // JSON ("" none), and whether the type has a flatten walker with its body.
+  pub dlv_descs: vector<text>,
+  pub dlv_flat: vector<boolean>,
+  pub dlv_flats: vector<text>,
   // The roots a fault site, a frame and a line mark name a source from (`Cx::source_roots`,
   // `Data::source_roots`): the program's directory and the standard library's.
   pub main_dir: text,
@@ -269,6 +274,9 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     lazy_fetchers: 0,
     sql_plans: [for _ in 0..len(b.types) { false }],
     delivers: [for _ in 0..len(b.types) { false }],
+    dlv_descs: [for _ in 0..len(b.types) { "" }],
+    dlv_flat: [for _ in 0..len(b.types) { false }],
+    dlv_flats: [for _ in 0..len(b.types) { "" }],
     main_dir: cgen_names::program_dir(cgen_names::main_file(b)),
     std_dir: cgen_names::std_dir(b),
     tids: cgen_names::type_idents(b),

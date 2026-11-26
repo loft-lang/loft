@@ -15,6 +15,7 @@ use cgen_deferred;
 use cgen_apart;
 use lower;
 use cgen_tables;
+use cgen_deliver;
 use cgen_show;
 use cgen_eq;
 use consts;
@@ -1173,16 +1174,24 @@ fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     tp = cgen_fn::literal(w, args[2], "type") ?? return none();
     tname = if tp >= 0 && tp < len(x.b.types) { x.b.types[tp]!.name } else { "#{tp}" };
     f = cgen_tables::deliver_type(x, tp);
+    page = cgen_deliver::deliver_page(x, tp);
     pair = [args[0], args[1]];
     a = cgen_fn::arg(x, w, pair, 0, ind);
     b = cgen_fn::arg(x, w, pair, 1, ind);
-    return E { code: "loft_deliver(cx, {as_int(w, a)}, {c_string(tname)}, {f}, {as_ref(w, b)})", kind: K_VOID };
+    return E { code: "loft_deliver(cx, {as_int(w, a)}, {c_string(tname)}, {f}, {as_ref(w, b)}, {tp}, {page[0]!}, {page[1]!})", kind: K_VOID };
   }
   if (name == "OpExpose" || name == "OpRelease") && count == 3 {
     pair = [args[0], args[1]];
     a = cgen_fn::arg(x, w, pair, 0, ind);
     b = cgen_fn::arg(x, w, pair, 1, ind);
-    return E { code: "((void) ({as_int(w, a)}), loft_set_store_lock(cx, {as_ref(w, b)}, {if name == "OpExpose" { 1 } else { 0 }}))", kind: K_VOID };
+    // `expose(tag, value)` / `release(tag, value)`: the value's store locked read-only while the
+    // host holds it, and unlocked; on a page the host is handed the value as `deliver` hands it.
+    if name == "OpRelease" {
+      return E { code: "loft_release(cx, {as_int(w, a)}, {as_ref(w, b)})", kind: K_VOID };
+    }
+    tp = cgen_fn::literal(w, args[2], "type") ?? return none();
+    page = cgen_deliver::deliver_page(x, tp);
+    return E { code: "loft_expose(cx, {as_int(w, a)}, {as_ref(w, b)}, {tp}, {page[0]!}, {page[1]!})", kind: K_VOID };
   }
   if name == "OpReverseVector" && count == 2 {
     size = cgen_fn::literal(w, args[1], "element size") ?? return none();

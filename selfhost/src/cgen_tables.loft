@@ -20,6 +20,7 @@ use cgen_unicode;
 use consts;
 use crt;
 use cgen_store;
+use cgen_deliver;
 use cgen_apart;
 
 // What the bodies registered (`Cx::copy_types`, `described`, `names_types`, `defaults`,
@@ -128,7 +129,7 @@ pub fn keys_name(x: Cx, tp: integer) -> text {
 }
 
 // `keys_of`: the C name of keyed type `tp`'s key parts and their count, registered.
-fn keys_of(x: Cx, tp: integer) -> text {
+pub fn keys_of(x: Cx, tp: integer) -> text {
   x.tables.keys[tp] = true;
   "loft_keys_{type_ident(x, tp)}, {len(x.b.types[tp]!.keys)}"
 }
@@ -338,7 +339,7 @@ fn deliver_code(x: Cx) -> text {
       out += "static const char *loft_dlv{d#index}(loft_cx *cx, loft_text *o, loft_ref r) {{\n{deliver_body(x, d#index)}}}\n";
     }
   }
-  out
+  out + cgen_deliver::page_code(x)
 }
 
 fn deliver_body(x: Cx, tp: integer) -> text {
