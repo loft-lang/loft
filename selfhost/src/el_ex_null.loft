@@ -2969,6 +2969,25 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if keyed_kind(el_types::base(result)) && hinted && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: kvbl } => kvbl[0].name == "Vector", _ => false }) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
+    // A keyed PARAMETER returned (`return x;`) is borrowed as the tail's is (`MergeAttr`): the
+    // result names that parameter, by attribute number.
+    if keyed_kind(el_types::base(result)) {
+      match el_ir::unspan(v.code) {
+        NdVar { n: krv } => {
+          if krv >= 0 && krv < len(vars.vars) && vars.vars[krv]!.argument && !el_ex_base::hidden_param(e, vars, krv) && keyed_kind(el_types::base(v.tp)) {
+            kra = attr_nr(el::def(e, e.context), el_vars::name_of(vars, krv));
+            if kra >= 0 {
+              kr0 = el::def(e, e.context).returned[0] ?? result;
+              if !el_types::deps(kr0).contains(kra) {
+                e.b.data.definitions[e.context].returned = [el_types::with_deps(kr0, el_types::deps(kr0) + [kra])];
+              }
+              return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+            }
+          }
+        },
+        _ => {}
+      }
+    }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);

@@ -2719,6 +2719,11 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     el_vars::change_var_type(e, vars, v, el_types::with_deps(declared!, el_types::deps(el_types::base(x.tp))));
   }
   el_vars::drop_use(vars, v);
+  // A declared keyed local bound from a loft function's CALL — dense or `τ?` — is replaced into, as
+  // a plain bind is (`assign_keyed_rebind`'s call arm: `dn = null; OpReplaceKeyed(mk(5), dn, …)`).
+  if !e.first_pass && keyed_kind(el_types::base(declared!)) && !(el_types::base(declared!) is TyVector) && match el_ir::unspan(c!) { NdCall { def_nr: dcd } => starts_with(el::def(e, dcd).name, "n_"), _ => false } {
+    return el_ex_assign::keyed_call_copy(e, vars, v, ex(c!, x.tp), el_vars::tp(vars, v), []);
+  }
   // A declared keyed local bound from a JOIN of keyed literals or owned locals copies it into a
   // store of its own (`assign_keyed_rebind`: `v = null; OpReplaceKeyed(join, v, type)`), borrowing
   // nothing.
