@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-H-Handle: a File holds one OS handle whichever of read or write opened it.
+// @FR-R-TypedRead: a short fixed-width read answers no value and leaves #next where it was, as the generic read does.
 //
 // loft#1861 — a `File` is ONE handle whichever operation came first, and a binary read
 // that gets fewer bytes than its type is null.

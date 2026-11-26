@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Buffer: a callee forwarding an inner call's record result hands the caller a filled buffer, never an unminted one.
+//
 // P204 minimal reproducer — `__ref_*` placeholder DbRef passed to a function
 // whose body returns a struct via an inner call is never `OpDatabase`-
 // initialised before the call.  Function dereferences a null DbRef

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-E-Uncomp: an out-of-range shift or overflowing cast computed at run time answers null and continues.
+// @FR-N-Cast: the checked cast as integer? answers null where the value does not fit.
 //
 // @PLN102 arc-E E2 (B) — a STATICALLY out-of-range constant operation is a
 // COMPILE error, not a silent null. Owner ruling 2026-07-19: "error too,

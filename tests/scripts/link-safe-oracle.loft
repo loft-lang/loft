@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-H-Elide: a copy is elided only where its source outlives it and nothing escapes, else the copy stays.
 //
 // @PLN102 transparent-link widening — the SAFETY oracle probe (build step 2).
 // One function per Matrix-S cell, each with a distinct source/local so `LOFT_DUMP_LINK_SAFE`
