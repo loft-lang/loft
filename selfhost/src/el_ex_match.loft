@@ -1240,7 +1240,27 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   // (A struct enum's element is copied into the buffer as a source the copy frees.)
   sen = el_types::struct_enum_def(elem);
   rec_enum = sen >= 0 && !(elem is TyOptional);
-  if !(plain_int || rec_enum) || at < 0 || (plain_int && md < 0) || len(ops) == 0 {
+  // `materialise_stream`'s `vector_db(elm_tp, buf)`: the buffer's vector type is named where the
+  // match's body opens — past its `{` — on the second pass, whatever the element (register,
+  // then refuse what is not carried).
+  md0 = md;
+  if !e.first_pass && nm != "" && md < 0 && at >= 0 {
+    open_at = at;
+    depth = 0;
+    while open_at < len(e.p.src) {
+      if e.p.src[open_at] is LParen {
+        depth += 1;
+      } else if e.p.src[open_at] is RParen {
+        depth -= 1;
+      } else if e.p.src[open_at] is LBrace && depth == 0 {
+        break;
+      }
+      open_at += 1;
+    }
+    el_schema::make_vector_def(e, elem, nm, el::pos_at(e, open_at), true);
+    md = el::def_nr(e, "main_vector<{nm}>");
+  }
+  if !(plain_int || rec_enum) || at < 0 || (plain_int && md0 < 0) || len(ops) == 0 {
     el::refuse(e, "a match over an iterator of this element type: {type_kind(elem)}");
     return void;
   }
@@ -1265,23 +1285,6 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   cnt = el_vars::create_unique(vars, "stream_n", int_t);
   el_vars::set_defined(vars, cnt);
   setup: vector<ir::Node> = [];
-  // (The buffer's vector type is named where the match's body opens — past its `{`.)
-  if !e.first_pass && rec_enum && nm != "" && md < 0 {
-    open_at = at;
-    depth = 0;
-    while open_at < len(e.p.src) {
-      if e.p.src[open_at] is LParen {
-        depth += 1;
-      } else if e.p.src[open_at] is RParen {
-        depth -= 1;
-      } else if e.p.src[open_at] is LBrace && depth == 0 {
-        break;
-      }
-      open_at += 1;
-    }
-    el_schema::make_vector_def(e, elem, nm, el::pos_at(e, open_at), true);
-    md = el::def_nr(e, "main_vector<{nm}>");
-  }
   if !e.first_pass {
     // (The second pass names the vector's rows: a wrapper made this pass is laid out now,
     // its row then its vector's.)
