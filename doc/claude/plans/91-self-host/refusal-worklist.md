@@ -173,14 +173,18 @@ refused → agree: `engine_host/tests/local_kernel`, `process/tests-unix/tree`,
 function instance's signature (generic-instance-registration.md).  Rust-only definitions
 1689 → 800, unscored state rows ≈15800 → 6087, hidden differs ≈1631 → 1447.  Left:
 1. Generic function instances Rust mints from a FILLED body (`instantiate_nested_generics`):
-   about 100 of the remaining Rust-only ones.  They follow the porter's body filling (T6), not
-   registration.
-2. The roads not carried: a path dependency and a module beside the file, inside a package.
-   No program of the corpus reaches either.
-3. New noise from loading `gridmesh`: the port marks `main_vector<single>` `pub` in the four
-   `audience_crystal` programs, and Rust does not (4 state items).
-4. A port bug behind a refusal (sent to the porter): the library's `main_vector<Pair>` minted
-   a second time from the main source (H-Drop/2436, probably tests/docs/17-libraries).
+   LANDED for a non-standard-library template — at a body the port refuses to fill, the nested
+   instances are minted from the template's body with the binding applied (try 65c3397d1).  A
+   standard-library template's call is skipped: Rust's fill builds `filter` / `map` in place.
+   The rest follow the porter's body filling (T6).
+2. The roads of a `use` inside a package: LANDED, every road of Rust's `lib_path` in its order
+   (`package_lib_path`: path dependencies, the shadow guard, the sibling package, the run's
+   `lib_dirs`, a module beside the file).  No corpus program reaches the new ones; five probe
+   packages (scratch, one per road, hand-computed answers 42/37/11/5/8) agree on both front ends
+   and are refused by the elaborator before it.  Still refused where a road the port does not
+   carry could answer: `LOFT_LIB`, an installed package, auto-install, the registry's newest.
+3. Fixed by the porter (b5ad08833): the `main_vector<single>` pub items, and the library's
+   `main_vector<Pair>` minted again from the main source (H-Drop/2436, 17-libraries, 188 agree).
 
 A construct the port refuses before it registers its definitions shifts the number of every
 definition after it, so those definitions differ in numbers only (`beside numbers`).  The fix at
