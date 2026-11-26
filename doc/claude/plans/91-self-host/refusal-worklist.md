@@ -154,6 +154,14 @@ only and no correct port of them can show.  The rule binds every new refusal sit
 writes them per program (`LOFT_ELAB_ONE_SIDED_FILE`); a try's result line names any Rust-only
 definition new against its base (`NEW RUST-ONLY DEFINITION(S)`, `one_sided.tsv`).
 
+**A port-only definition breaks the accept (owner, 2026-11-26).**  A definition only the PORT
+registers, new against the try's base, makes the try `TRYRESULT issues` (`NEW PORT-ONLY
+DEFINITION(S)`, listed in the report and in `port_only_new.tsv`): the port minted something Rust
+never does.  It is a ratchet against the base, so the existing port-only rows (85 at try
+8e161452b) do not block a promotion; they are fixed first, before any other noise pool.
+Falsified on two past tries: e0c9090b9 against ec2d7a451 counts its 7 `vector.filter` instances
+(it read clean before), 4d83248cc against 65c3397d1 counts 0.
+
 **Order of work:** before an R-item starts, the tester aligns the numbering in the programs it
 touches (R9), except where the R-item itself is the cause (R2's constants, R4's templates): then
 the item's port shows as definitions won, not hidden behind shifted numbers.
