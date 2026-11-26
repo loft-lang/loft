@@ -10,6 +10,33 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Building a large program (@PLN229)
+
+- loft's own work grows linearly with a program.  The C writer resolves its hot markers in one
+  pass, walks a function's definitions once per body, reads the duplicate names once per unit
+  and opens the ownership span once per unit; `@FR-R-GuardFree` and the call-cycle question are
+  answered from the call graph's strongly connected components; the parser's `&`-parameter
+  check keeps the parameter-write facts that can no longer change.  `scripts/scaling-guard.sh`
+  (nightly) fails when writing a program of 2N functions takes over 2.5x its N twin: a 4000-deep
+  call chain took 35 s and takes 2.4 s.
+- What loft writes is reproducible: the same program gives the same C (apart from the C
+  driver's lines naming where the checkout keeps its inputs) and the same executable in any
+  checkout and on any run.  A source file is named from its root (`src/source_name.rs`), a
+  duplicate function name hashes that name, a `[c] shim`'s archive and library carry one key,
+  and a cached program whose `[c]` library file changed is a cache miss.
+  `scripts/repro-output.sh` (CI) checks it, a shim program included.
+- `LOFT_C_UNITS=1`: an opt-in split C build for development — one unit per `.loft` file, each
+  holding only the declarations it names, compiled `LOFT_C_UNITS_JOBS` at a time and cached
+  by its C (`.loft/cache/units/`), so a change recompiles the units whose C it changed.  The
+  runtime's state is one (`LOFT_STATE`).  `--ship` keeps one unit.  The gate's tools build this
+  way.
+- `(R-CTable)`: a parted function's runs of releases are written as one `loft_release_run`
+  call over tables (`src/c/reltable.rs`).  The elaborator's gcc time halves (one unit 202 to
+  88 s, peak 5.9 to 3.5 GB).  `LOFT_NO_C_RELTABLE=1` turns it off.
+- A tuple struct is named from its members (`loft_tup_ld`), not by first use.
+- `(R-CSplit)`: a part reaches the closure release and the context a runtime macro names
+  (gcc rejected 59 suite cells under a forced split).
+
 ### A variable read outside its scope is reported (@PLN228)
 
 - The store-records checker reports a use of a variable outside its scope (`@FR-B-Scope`) as
