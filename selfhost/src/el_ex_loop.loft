@@ -874,7 +874,7 @@ fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, lo
   // (A hash is walked through a scratch copy of its records, `keyed_snapshot` — unsorted for a
   // `par` loop, `n_hash_unsorted` — minted ahead of the vector, on both passes.)
   scratch = if ct is TyHash { el_vars::create_unique(vars, "hash_scratch", elem) } else { -1 };
-  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if el_schema::wants_vector_def(e, nm) {
     ptok = match e.p.nodes[par] { SPar { at: pat } => pat, _ => 0 };
     el_schema::make_vector_def(e, ir::TyReference { n: el_d, dep: [] }, nm, el::pos_at(e, ptok + 1), true);
   }

@@ -829,7 +829,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     if nullable_records {
       nrin = match b { TyVector { inner: nri2 } => nri2, _ => ir::TyVoid };
       nrnm = el_types::elem_name(e, nrin);
-      if nrnm != "" && el::def_nr(e, "main_vector<{nrnm}>") < 0 {
+      if nrnm != "" && el_schema::wants_vector_def(e, nrnm) {
         el_schema::make_vector_def(e, nrin, nrnm, ir::Position { file: e.file, line: 1, pos: 3 }, true);
       }
     }
@@ -2698,7 +2698,7 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       match vt {
         TyVector { inner: rin } => {
           rnm = el_types::elem_name(e, rin);
-          if rnm != "" && el::def_nr(e, "main_vector<{rnm}>") < 0 {
+          if rnm != "" && el_schema::wants_vector_def(e, rnm) {
             match e.p.nodes[x!] {
               SVecLit { at: rat } => { el_schema::make_vector_def(e, rin, rnm, el::pos_at(e, closing_bracket(e, rat)), true); },
               _ => {}

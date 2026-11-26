@@ -155,8 +155,8 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     if ird >= 0 && e.p.nodes[it] is SStructLit && struct_literal_def(e, it) == ird {
       fs: vector<integer> = [];
       match e.p.nodes[it] {
-        SStructLit { member, fields: lf, base } => {
-          if member != "" || base != null {
+        SStructLit { name: qn, member, fields: lf, base } => {
+          if (member != "" && !el::use_exists(e, qn)) || base != null {
             el::refuse(e, "a qualified struct literal or an update");
             return null;
           }

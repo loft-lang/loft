@@ -3579,7 +3579,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     // not made yet is made there, at the `]` (`vector_def`).
     vin = match vt { TyVector { inner } => inner, _ => ir::TyVoid };
     vnm = el_types::elem_name(e, vin);
-    if vnm != "" && el::def_nr(e, "main_vector<{vnm}>") < 0 {
+    if vnm != "" && el_schema::wants_vector_def(e, vnm) {
       match e.p.nodes[r] {
         SVecLit { at } => { el_schema::make_vector_def(e, vin, vnm, el::pos_at(e, closing_bracket(e, at)), true, narrow_early: false); },
         _ => {}
