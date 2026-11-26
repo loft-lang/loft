@@ -1,5 +1,9 @@
 # @PLN229 — the C of a function's releases (design)
 
+**Status:** @PLN229 is closed.  Option D is built: D0–D2, `(R-CTable)`, switched off by
+`LOFT_NO_C_RELTABLE=1`.  Option A is not built.  It changes the scope pass and moves every
+gate-E image, so it is to be sequenced with the porter.  § Open questions stays open.
+
 A track of @PLN229 (building a large program): the C a long function is written as is mostly
 the releases at its exits.  This page measures it, lists the options with the invariant each
 rests on, and recommends one.  Measured on the self-hosted elaborator's split build (porter
