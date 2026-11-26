@@ -542,6 +542,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           result = ir::TyOptional { inner: result };
         }
         result = join_fn_arm(result, b);
+        result = join_int_arm(e, vars, result, b);
         // `merge_dependencies` (`joined_deps`): a text result borrows what any arm's text does.
         if el_types::base(result) is TyText && el_types::base(b.tp) is TyText {
           tj = el_types::deps(result);
@@ -868,6 +869,7 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
           result = b.tp;
         }
         result = join_fn_arm(result, b);
+        result = join_int_arm(e, vars, result, b);
         out += [MArm { cond: cond, code: b.code, tp: b.tp }];
         if cond == null {
           wild_seen = true;
@@ -1085,6 +1087,7 @@ pub fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: ve
           result = b.tp;
         }
         result = join_fn_arm(result, b);
+        result = join_int_arm(e, vars, result, b);
         wild = e.p.nodes[pats[0]!] is PWild;
         done = false;
         for al in alts {
@@ -1175,6 +1178,25 @@ pub fn match_borrow_source(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integ
 
 // `join_arm_into` (`joined_deps` over `arm_join_type`) for a function value: a `match` of lambdas
 // carries every arm's closure record, as the `if` twin does, not the first arm's alone.
+// `join_arm_into`'s integer half (`@FR-I-Join`): two integer arms join to the UNION of their
+// ranges — unless the arm provably fits a NAMED-width sibling (`arm_fits_named_width`: a
+// constant, a narrower width), which then answers in that width.
+pub fn join_int_arm(e: el::El, vars: el_vars::Vars, result: ir::TypeT, arm: Ex) -> ir::TypeT {
+  if unsettled(result) || result is TyOptional || arm.tp is TyOptional {
+    return el_ex_null::int_arm_union(e, result, arm.tp) ?? result;
+  }
+  at = arm.tp;
+  match result {
+    TyInteger { spec: rs } => {
+      if rs.forced_size > 0 && arm.tp is TyInteger && !(arm.tp == result) && el_convert::value_fits(e, vars, arm.code, result) {
+        at = result;
+      }
+    },
+    _ => {}
+  }
+  el_ex_null::int_arm_union(e, result, at) ?? result
+}
+
 pub fn join_fn_arm(result: ir::TypeT, arm: Ex) -> ir::TypeT {
   if !(el_types::base(result) is TyFunction) || !(el_types::base(arm.tp) is TyFunction) {
     return result;
@@ -1499,6 +1521,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
             result = ab.tp;
           }
           result = join_fn_arm(result, ab);
+          result = join_int_arm(e, vars, result, ab);
           for anm in rev(altn) {
             el_vars::restore_name(vars, anm.name, anm.nr);
           }
@@ -1576,6 +1599,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
           result = b.tp;
         }
         result = join_fn_arm(result, b);
+        result = join_int_arm(e, vars, result, b);
         for nm in rev(names) {
           el_vars::restore_name(vars, nm.name, nm.nr);
         }
