@@ -137,7 +137,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
     vars.bare_literal = ttail;
   }
-  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
+  // (…and a KEYED result reaches them too: each arm's literal is built as the collection.)
+  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && (el_types::base(result) is TyVector || keyed_kind(result) && !(e.p.nodes[ttail] is SMatch)) {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
   }
@@ -544,7 +545,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           kco = keyed_field_copy_out(e, vars, kcb.operators[-1]!, result);
           if kco != null {
             kcb.operators[len(kcb.operators) - 1] = kco!;
-            kcb.result = [el_types::without_deps(el_types::base(result))];
+            // (The body keeps the borrows of the tail that are parameters — `b = x; b.fr_h`
+            // borrows `x` — a local's ends with the frame.)
+            kpd: vector<integer> = [];
+            for kd in el_types::deps(b.tp) {
+              if kd >= 0 && kd < len(vars.vars) && vars.vars[kd]!.argument {
+                kpd += [kd];
+              }
+            }
+            kcb.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), kpd)];
             code = ir::NdBlock { block: [kcb] };
             kcopied = true;
           }
