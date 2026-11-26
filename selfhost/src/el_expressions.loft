@@ -687,6 +687,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           code = el_ex_deliver::stage_exits(e, vars, code, rb);
         }
       }
+    } else if e.first_pass && match body_tail(code) { NdCall { def_nr: kgd1 } => el::def(e, kgd1).name == "OpGetRecord", _ => false } && place_root(e, body_tail(code)) >= 0 && !vars.vars[place_root(e, body_tail(code))]!.argument {
+      // (The keyed lookup's first pass: `Bind` on the collection's local, the buffer named.)
+      kroot = place_root(e, body_tail(code));
+      if kroot >= 0 {
+        el_trace::retpromo(e, vars, kroot, "Bind");
+      }
+      kba = attr_nr(el::def(e, e.context), "__retbuf");
+      kret = el::def(e, e.context).returned[0] ?? result;
+      if kba >= 0 && !el_types::deps(kret).contains(kba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(kret, el_types::deps(kret) + [kba])];
+      }
     } else if !e.first_pass {
       // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
       // delivery is asked of it.
@@ -783,6 +794,27 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // buffer: its answer copied into the buffer (`materialized_view_return`).
       if built == null && body_tail(code) is NdCallRef {
         built = materialize_whole_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
+      // A KEYED lookup at the tail (`b.h[k]`, `OpGetRecord`) views the collection's local: Rust's
+      // `ls` is that record, of another type than the result, so the buffer keeps its name and
+      // takes the copy (`Bind`, `materialized_view_return`) — behind the lookup's null test for a
+      // `S?` result, the sentinel where nothing is found.
+      // (Over a collection a LOCAL holds; a call's answer read in place, `hb(3).h[k]`, is Rust's
+      // `return_source` road with its `inline_container` — not carried.)
+      if built == null && match body_tail(code) { NdCall { def_nr: kgd } => el::def(e, kgd).name == "OpGetRecord", _ => false } && place_root(e, body_tail(code)) >= 0 && !vars.vars[place_root(e, body_tail(code))]!.argument {
+        ktail = body_tail(code);
+        kroot2 = place_root(e, ktail);
+        if kroot2 >= 0 {
+          el_trace::retpromo(e, vars, kroot2, "Bind");
+        }
+        built = materialize_whole_tail(e, vars, code, rb, result);
+        if built != null && result is TyOptional {
+          // (The null test is a statement of its own, as Rust's: no position of the tail's.)
+          kbl = match built! { NdBlock { block: kbb } => kbb[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+          kbl.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ktail]), el_ir::cl(e, "OpNullRefSentinel", []), el_ir::unspan(kbl.operators[-1]!));
+          built = ir::NdBlock { block: [kbl] };
+        }
         if_copied = built != null;
       }
       if built == null && body_tail(code) is NdIf {
