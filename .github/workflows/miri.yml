@@ -892,6 +892,11 @@ jobs:
         run: cargo build --release --bin loft
       - name: The interpreter and the C writer name one store effect per assignment
         run: python3 scripts/bind_census.py --loft target/release/loft --suite "$LOFT_SUITE_DIR" --jobs 4 --writer c --check --examples 3
+      # @PLN229 A3 — loft's own work grows linearly with a program: a call chain and a flat
+      # program of 2000 and of 4000 functions, each written to C within 2.5x of its half.
+      - name: Compile time grows linearly with the program
+        if: always()
+        run: bash scripts/scaling-guard.sh --loft target/release/loft
 
   slot-matrix-c:
     # @windows-exempt: the matrix generates platform-free loft; the Windows C compiler is c-sweep-platforms' question

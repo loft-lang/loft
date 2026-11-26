@@ -2406,6 +2406,13 @@ fn emit_unit_with(
     // The analysis memos of the definitions this writer works from (`Data::nn_memo`).
     crate::opt::non_sentinel::begin_c_generation(data);
     let _fn_dups = FnDupsScope::enter(data);
+    // The callee facts the writer asks per function and per assignment (each callee's return
+    // class and its round's definitions walk, each callee's parameter writes), once for the
+    // unit, as the bytecode generator does (loft#2620): writing a body changes no body, and
+    // `data` is borrowed shared for the whole emission.  Opened per function, a call chain
+    // re-derived every callee below each function: a 4 000-deep chain took 35 s (@PLN229 A3).
+    let _param_writes = crate::parser::param_writes_summary(data);
+    let _own_memo = crate::use_analysis::ownership_memo_scope(data);
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -5673,24 +5680,28 @@ fn always_inline_body(storage: &str) -> String {
 }
 
 /// Whether `d`'s calls reach `d` again — directly, or through other functions with a body.
+/// Answered for every function the question reaches at once, by the call graph's strongly
+/// connected components (`opt::frame_calls::call_sccs`): a function is on a cycle when its
+/// component holds another function, or it calls itself.  Walked function by function over
+/// the closure, a call chain re-walked everything below each function (@PLN229 A3).
 fn on_call_cycle(cx: &Cx, d: u32) -> bool {
     if let Some(&known) = cx.on_cycle.borrow().get(&d) {
         return known;
     }
-    let mut seen = std::collections::HashSet::new();
-    let mut todo: Vec<u32> = direct_callees(cx, d);
-    let mut found = false;
-    while let Some(f) = todo.pop() {
-        if f == d {
-            found = true;
-            break;
-        }
-        if seen.insert(f) {
-            todo.extend(direct_callees(cx, f));
+    let sccs = {
+        let known = cx.on_cycle.borrow();
+        crate::opt::frame_calls::call_sccs(d, &|f| direct_callees(cx, f), &|f| {
+            known.contains_key(&f)
+        })
+    };
+    let mut memo = cx.on_cycle.borrow_mut();
+    for scc in sccs {
+        let cyclic = scc.len() > 1;
+        for &f in &scc {
+            memo.insert(f, cyclic || direct_callees(cx, f).contains(&f));
         }
     }
-    cx.on_cycle.borrow_mut().insert(d, found);
-    found
+    memo.get(&d).copied().unwrap_or(false)
 }
 
 /// Every function `d`'s body calls by name.  A missed call could hide a cycle and leave a
