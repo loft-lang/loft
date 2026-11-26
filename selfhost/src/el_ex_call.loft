@@ -268,7 +268,8 @@ pub fn rebuild_stale(e: el::El) {
 // `instantiate_nested_generics` for a body this port refuses to fill: Rust fills it and then mints
 // an instance for each template call in it, so the nested instances are minted here from the
 // template's body and variable table with the binding applied (register, then refuse — each
-// nested one is filled, or refused and registered, by `instance_for`).  Only on the step that
+// nested one is filled, or refused and registered, by `instance_for`).  Only a template outside
+// the standard library: try e0c9090b9 minted `vector.filter` instances Rust's fill builds in place.  Only on the step that
 // binds the last variable (`closing`): before it, a nested instance's arguments are not final.
 fn mint_nested_of_refused(e: el::El, g: integer, h: integer, bound: ir::TypeT, closing: boolean) {
   if !closing || e.first_pass {
@@ -282,7 +283,7 @@ fn mint_nested_of_refused(e: el::El, g: integer, h: integer, bound: ir::TypeT, c
     f0.variables += [c];
   }
   code0 = substitute_code(e, el::def(e, g).code[0] ?? ir::NdNull, h, bound);
-  nested_targets(e, code0, f0, h, bound);
+  nested_targets(e, code0, f0, h, bound, user_only: true);
 }
 
 // `fill_monomorph_body` for instance `d` of template `g` at `[h ↦ bound]`: the variable table,
@@ -1245,13 +1246,13 @@ pub fn view_root(e: el::El, f: ir::Function, n: ir::Node) -> integer {
 pub struct Nested { pub callee: integer, pub inst: integer }
 
 // The template calls of an instance body, in walk order, each with the instance it is aimed at.
-pub fn nested_targets(e: el::El, code: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT) -> vector<Nested> {
+pub fn nested_targets(e: el::El, code: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT, user_only: boolean = false) -> vector<Nested> {
   r: vector<Nested> = [];
-  collect_nested(e, code, f, h, bound, r);
+  collect_nested(e, code, f, h, bound, r, user_only);
   r
 }
 
-pub fn collect_nested(e: el::El, n: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT, r: vector<Nested>) {
+pub fn collect_nested(e: el::El, n: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT, r: vector<Nested>, user_only: boolean = false) {
   match n {
     NdCall { def_nr, args } => {
       cd = el::def(e, def_nr);
@@ -1261,7 +1262,9 @@ pub fn collect_nested(e: el::El, n: ir::Node, f: ir::Function, h: integer, bound
           seen = true;
         }
       }
-      if cd.def_type == el::DT_GENERIC && !seen {
+      // (`user_only`: a standard-library template's call is skipped — on an unfilled body it may
+      // be one Rust's fill builds in place, `filter` / `map`, and mints no instance for.)
+      if cd.def_type == el::DT_GENERIC && !seen && !(user_only && cd.source == el::STD_SOURCE) {
         ts: vector<ir::TypeT> = [];
         k = 0;
         for a in cd.attributes {
@@ -1283,7 +1286,7 @@ pub fn collect_nested(e: el::El, n: ir::Node, f: ir::Function, h: integer, bound
     _ => {}
   }
   for c in el_ir::children(n) {
-    collect_nested(e, c, f, h, bound, r);
+    collect_nested(e, c, f, h, bound, r, user_only);
   }
 }
 
