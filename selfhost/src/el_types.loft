@@ -681,6 +681,23 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
       }
       // (`not null`, deprecated, changes nothing of a type that is no integer: `text not null`
       // is `text`.)
+      // `parse_type_inner`'s `D-Template` arm: a template's arguments read and its instance
+      // minted, as Rust registers it (register, then refuse: nothing reads it through here yet).
+      if member == "" && len(args) > 0 && len(keys) == 0 && len(dl) == 0 && limit == null && assoc == "" {
+        tpl = el::def_nr(e, name);
+        if tpl >= 0 && el::def(e, tpl).def_type == el::DT_TYPE_TEMPLATE {
+          ats: vector<ir::TypeT> = [];
+          for a in args {
+            at_t = parse_type(e, a);
+            if at_t != null {
+              ats += [at_t!];
+            }
+          }
+          if len(ats) == len(args) {
+            instance_def(e, tpl, ats);
+          }
+        }
+      }
       if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(dl) > 0 || limit != null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
@@ -1362,5 +1379,267 @@ pub fn type_key_name(e: el::El, t: ir::TypeT) -> text {
       "({join(parts, ", ")})"
     },
     _ => ""
+  }
+}
+
+// ---- Generic type instances (@PLN165 D3–D8; plans/91-self-host/generic-instance-registration.md)
+
+// port: data.rs declared_identity
+// Definition `d` as an instance key names it: bare for the standard library's and the program's
+// own, and for a name spelled from other types (`<`, `#`); `<library>::<name>` for a library's.
+fn declared_identity(e: el::El, d: integer) -> text {
+  df = el::def(e, d);
+  if df.source == el::STD_SOURCE || df.source == el::MAIN_SOURCE || df.name.contains("<") || df.name.contains("#") {
+    df.name
+  } else {
+    "{el::source_label(e, df.source)}::{df.name}"
+  }
+}
+
+// port: data.rs identity_spelling (element keys on, the default)
+// What tells one binding of a type variable from another in an instance's key: the whole type,
+// all the way down — a type variable by its placeholder's name (`T#4`), as the erasing arm's
+// `declared_identity` spells it.  "" for a shape this port does not spell yet (a function type,
+// a sorted or index collection, a trie): no instance is minted for it.
+pub fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size > 0 { "{key_name(e, t)}s{spec.forced_size}" } else { key_name(e, t) },
+    TyOptional { inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "{s}?" }
+    },
+    TyRewritten { inner } => identity_spelling(e, inner),
+    TyRefVar { inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "&{s}" }
+    },
+    TyVector { inner } => if is_unknown(inner) { key_name(e, t) } else { 
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "vector<{s}>" }
+    },
+    TyIterator { step: _, inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "iterator<{s}>" }
+    },
+    TyTuple { elems } => tuple_identity(e, elems),
+    TyReference { n } => if starts_with(el::def(e, n).name, "__tuple<") { tuple_identity(e, [for a in el::def(e, n).attributes { a.typedef[0] ?? ir::TyVoid }]) } else { declared_identity(e, n) },
+    TyEnum { n } => declared_identity(e, n),
+    TyHash { n, names } => "hash<{declared_identity(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyRadix { n, names } => "spatial<{declared_identity(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyText { dep: _ } => "text",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    _ => ""
+  }
+}
+
+// port: data.rs tuple_identity
+fn tuple_identity(e: el::El, members: vector<ir::TypeT>) -> text {
+  parts: vector<text> = [];
+  for m in members {
+    s = identity_spelling(e, m);
+    if s == "" {
+      return "";
+    }
+    parts += [s];
+  }
+  "__tuple<{join(parts, ",")}>"
+}
+
+// A template's variable bound to a type: the header holder and its argument.
+pub struct TypeBinding { holder: integer, bound: ir::TypeT }
+
+// port: data.rs close_open
+// `t` with `bindings` applied and every OPEN instance it writes closed — replaced by the instance
+// its arguments name once the bindings decide them (`Tree<text>`'s `kids: vector<Tree<T>>` is
+// `vector<Tree<text>>`).  A bound value is not walked again, so an open instance a binding brings
+// in stays as it is, as Rust's collect-before-apply has it.
+fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => {
+      for b in bindings {
+        if b.holder == n {
+          return b.bound;
+        }
+      }
+      if is_open_instance(e, n) && el::def(e, n).instance_of >= 0 {
+        inst = instance_def(e, el::def(e, n).instance_of, [for a in el::def(e, n).instance_args { close_open(e, a, bindings) }]);
+        if inst >= 0 {
+          return match el::def(e, inst).returned[0] ?? ir::TyVoid { TyEnum { n: en, is_ref } => ir::TyEnum { n: en, is_ref: is_ref, dep: dep }, _ => ir::TyReference { n: inst, dep: dep } };
+        }
+      }
+      t
+    },
+    TyEnum { n, is_ref, dep } => {
+      if is_open_instance(e, n) && el::def(e, n).instance_of >= 0 {
+        inst = instance_def(e, el::def(e, n).instance_of, [for a in el::def(e, n).instance_args { close_open(e, a, bindings) }]);
+        if inst >= 0 {
+          return ir::TyEnum { n: inst, is_ref: is_ref, dep: dep };
+        }
+      }
+      t
+    },
+    TyOptional { inner } => ir::TyOptional { inner: close_open(e, inner, bindings) },
+    TyRefVar { inner } => ir::TyRefVar { inner: close_open(e, inner, bindings) },
+    TyRewritten { inner } => ir::TyRewritten { inner: close_open(e, inner, bindings) },
+    TyVector { inner, dep } => ir::TyVector { inner: close_open(e, inner, bindings), dep: dep },
+    TyIterator { step, inner } => ir::TyIterator { step: close_open(e, step, bindings), inner: close_open(e, inner, bindings) },
+    TyTuple { elems } => ir::TyTuple { elems: [for m in elems { close_open(e, m, bindings) }] },
+    TyFunction { args, result, dep, consts } => ir::TyFunction { args: [for a in args { close_open(e, a, bindings) }], result: close_open(e, result, bindings), dep: dep, consts: consts },
+    _ => t
+  }
+}
+
+// The tuple shapes `t` holds, innermost first (`copy_instance_field`'s walk, reversed).
+fn tuples_in(t: ir::TypeT) -> vector<vector<ir::TypeT>> {
+  out: vector<vector<ir::TypeT>> = [];
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        out += tuples_in(m);
+      }
+      out += [elems];
+    },
+    TyOptional { inner } => { out += tuples_in(inner); },
+    TyRefVar { inner } => { out += tuples_in(inner); },
+    TyRewritten { inner } => { out += tuples_in(inner); },
+    TyVector { inner } => { out += tuples_in(inner); },
+    TyIterator { step, inner } => { out += tuples_in(step); out += tuples_in(inner); },
+    TyFunction { args, result } => { for a in args { out += tuples_in(a); } out += tuples_in(result); },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs copy_instance_field
+// Give instance `d` the template field `f`: its type with the bindings applied and every open
+// instance in it closed, each tuple it holds registered first (innermost first), and the field's
+// flags.
+fn copy_instance_field(e: el::El, d: integer, field: ir::Attribute, bindings: vector<TypeBinding>) {
+  // A copy first: `field` may view the template's own attribute, and closing an open instance
+  // below mints definitions, which moves that storage.
+  f = ir::Attribute { ..field };
+  tp = close_open(e, f.typedef[0] ?? ir::TyVoid, bindings);
+  for s in tuples_in(tp) {
+    tuple_def(e, s, el::def(e, d).position);
+  }
+  a = el::attribute(f.name, tp);
+  a.mutable = f.mutable;
+  a.constant = f.constant;
+  a.const_field = f.const_field;
+  a.pub_field = f.pub_field;
+  a.value_const = f.value_const;
+  a.init = f.init;
+  a.nullable = f.nullable;
+  a.hidden = f.hidden;
+  a.value = f.value;
+  e.b.data.definitions[d].attributes += [a];
+}
+
+// port: data.rs instance_def
+// The instance of type template `template` at `args` (`Box<integer>`): an ordinary struct (or, for
+// an enum template, an enum with its variants) named `<template><args>` by the arguments'
+// identities, in the standard library's source, its fields the template's with each variable
+// replaced by its argument.  Idempotent.  -1 (Rust's `u32::MAX`) for an argument count the
+// template does not take, an argument not resolved yet or `never` (the pass after mints it),
+// an argument this port cannot spell, or past the nesting bound.  An argument naming a type
+// variable mints an OPEN instance.  Not carried: `refused_type_templates` (`D-Regular`) and
+// the catch-up of an open instance minted while its template is still read.
+pub fn instance_def(e: el::El, template: integer, args: vector<ir::TypeT>) -> integer {
+  params = el::def(e, template).type_params;
+  if len(params) != len(args) || any_unresolved(args) {
+    return -1;
+  }
+  plain: vector<ir::TypeT> = [];
+  spelled: vector<text> = [];
+  for a in args {
+    if a is TyNever {
+      return -1;
+    }
+    w = without_deps(a);
+    s = identity_spelling(e, w);
+    if s == "" {
+      return -1;
+    }
+    plain += [w];
+    spelled += [s];
+  }
+  name = "{declared_identity(e, template)}<{join(spelled, ",")}>";
+  have = el::source_nr(e, el::STD_SOURCE, name);
+  if have < 0 {
+    have = el::def_nr(e, name);
+  }
+  if have >= 0 {
+    return have;
+  }
+  // `MAX_INSTANCE_NESTING`: deeper than this an instance's arguments stop being spelled.
+  if len(name.split('<')) - 1 > 48 {
+    return -1;
+  }
+  position = ir::Position { ..el::def(e, template).position };
+  enum_mixed = match el::def(e, template).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => if is_ref { 1 } else { 0 }, _ => -1 };
+  d = el::add_def(e, name, position, if enum_mixed >= 0 { el::DT_ENUM } else { el::DT_STRUCT });
+  e.b.data.definitions[d].source = el::STD_SOURCE;
+  el::name_in(e, el::STD_SOURCE, name, d);
+  e.b.data.definitions[d].returned = [if enum_mixed >= 0 { ir::TyEnum { n: d, is_ref: enum_mixed == 1, dep: [] } } else { ir::TyReference { n: d, dep: [] } }];
+  e.b.data.definitions[d].instance_of = template;
+  e.b.data.definitions[d].instance_args = plain;
+  bindings: vector<TypeBinding> = [];
+  for p in params {
+    bindings += [TypeBinding { holder: p, bound: plain[p#index]! }];
+  }
+  if enum_mixed >= 0 {
+    fill_enum_instance(e, template, d, bindings);
+    return d;
+  }
+  fi = 0;
+  while fi < len(el::def(e, template).attributes) {
+    ft = el::def(e, template).attributes[fi]!.typedef[0] ?? ir::TyVoid;
+    if !(ft is TyRoutine) {
+      copy_instance_field(e, d, el::def(e, template).attributes[fi]!, bindings);
+    }
+    fi += 1;
+  }
+  d
+}
+
+// port: data.rs fill_enum_instance
+// An enum instance is the enum and each of its variants, minted together: the variant list (each
+// a constant attribute typed as the instance, its discriminant kept) and one variant definition
+// per template variant, bare-named and parented to the instance, its payload fields closed.
+fn fill_enum_instance(e: el::El, template: integer, d: integer, bindings: vector<TypeBinding>) {
+  for a in el::def(e, template).attributes {
+    match a.typedef[0] ?? ir::TyVoid {
+      TyEnum { n, is_ref } => {
+        if n == template {
+          va = el::attribute(a.name, ir::TyEnum { n: d, is_ref: is_ref, dep: [] });
+          va.constant = true;
+          va.value = a.value;
+          e.b.data.definitions[d].attributes += [va];
+        }
+      },
+      _ => {}
+    }
+  }
+  position = ir::Position { ..el::def(e, d).position };
+  v = 0;
+  count = len(e.b.data.definitions);
+  while v < count {
+    if el::def(e, v).parent == template && el::def(e, v).def_type == el::DT_ENUM_VALUE {
+      vname = "{el::def(e, v).name}";
+      mixed = match el::def(e, v).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      vd = el::add_def(e, vname, position, el::DT_ENUM_VALUE);
+      e.b.data.definitions[vd].source = el::STD_SOURCE;
+      e.b.data.definitions[vd].parent = d;
+      e.b.data.definitions[vd].returned = [ir::TyEnum { n: d, is_ref: mixed, dep: [] }];
+      fi = 0;
+      while fi < len(el::def(e, v).attributes) {
+        copy_instance_field(e, vd, el::def(e, v).attributes[fi]!, bindings);
+        fi += 1;
+      }
+    }
+    v += 1;
   }
 }

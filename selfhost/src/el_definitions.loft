@@ -867,6 +867,7 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
       el::set_returned(e, td, ir::TyReference { n: td, dep: [] });
       saved_tv = e.type_vars;
       bound = true;
+      params: vector<integer> = [];
       for tv in tvars {
         match e.p.nodes[tv] {
           STVar { name: tvn, bounds: tvb } => {
@@ -875,12 +876,18 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
               bound = false;
             } else {
               e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+              params += [th];
             }
           },
           _ => {}
         }
       }
       e.b.data.definitions[td].def_type = el::DT_TYPE_TEMPLATE;
+      // `bind_type_header`: the variables in HEADER order, which an instance's arguments bind
+      // by position — recorded only when every one of them bound.
+      if len(params) == len(tvars) {
+        e.b.data.definitions[td].type_params = params;
+      }
       if bound {
         parse_fields(e, td, fields);
       }
@@ -1445,17 +1452,17 @@ fn parse_typedef(e: el::El, at: integer, name: text, tp: integer?, size: integer
 
 // `enum Name { Variant ({ fields })?, … }`                           Parser::parse_enum
 fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, variants: vector<integer>) {
-  if len(tvars) > 0 {
-    el::refuse(e, "an enum template");
-  }
   nt = el::name_tok(e, at, name);
+  // A template's header is read before its definition is made, so the enum and its holders sit
+  // at the token after the header (`parse_type_var_header`).
+  dpos = el::pos_at(e, if len(tvars) > 0 { header_end(e, nt) + 1 } else { nt + 1 });
   d = el::def_nr(e, name);
   if d < 0 {
-    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_ENUM);
+    d = el::add_def(e, name, dpos, el::DT_ENUM);
   } else if e.first_pass && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
     // A forward reference's stub is adopted (`note_stub_adopted`).
     e.b.data.definitions[d].def_type = el::DT_ENUM;
-    e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    e.b.data.definitions[d].position = dpos;
     e.adopted += [d];
   } else if e.first_pass {
     el::refuse(e, "an enum over an existing name");
@@ -1464,10 +1471,57 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
   if e.first_pass {
     el::set_returned(e, d, ir::TyEnum { n: d, is_ref: false, dep: [] });
   }
+  // `D-Template` (`bind_type_header`): an enum with a header is a template, its variants read
+  // over the placeholders.  Registered as Rust registers it, then refused: its instances are
+  // minted where a type names them (`el_types::instance_def`).
+  saved_tv = e.type_vars;
+  if len(tvars) > 0 {
+    params: vector<integer> = [];
+    for tv in tvars {
+      match e.p.nodes[tv] {
+        STVar { name: tvn, bounds: tvb } => {
+          th = header_var(e, tvn, tvb, dpos);
+          if th >= 0 {
+            e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+            params += [th];
+          }
+        },
+        _ => {}
+      }
+    }
+    if e.first_pass {
+      e.b.data.definitions[d].def_type = el::DT_TYPE_TEMPLATE;
+      if len(params) == len(tvars) {
+        e.b.data.definitions[d].type_params = params;
+      }
+    }
+  }
   parse_enum_values(e, d, variants);
   if e.first_pass {
     el::complete_definition(e, d);
   }
+  e.type_vars = saved_tv;
+  if len(tvars) > 0 {
+    el::refuse(e, "an enum template");
+  }
+}
+
+// The token closing the type-variable header that opens after name token `nt` (its `>`).
+fn header_end(e: el::El, nt: integer) -> integer {
+  hd = nt + 1;
+  depth = 0;
+  while hd < len(e.p.src) {
+    if e.p.src[hd] is Lt {
+      depth += 1;
+    } else if e.p.src[hd] is Gt {
+      depth -= 1;
+      if depth == 0 {
+        return hd;
+      }
+    }
+    hd += 1;
+  }
+  hd
 }
 
 // The variants, in order: each a definition whose parent is the enum.   parse_enum_values
