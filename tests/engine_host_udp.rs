@@ -133,6 +133,24 @@ fn ws_recv(stream: &TcpStream) -> String {
     String::from_utf8(payload).unwrap()
 }
 
+/// `ws_recv` that reports a closed or failed stream as `None` instead of panicking.
+fn ws_recv_opt(stream: &TcpStream) -> Option<String> {
+    let mut s = stream;
+    let mut hdr = [0u8; 2];
+    s.read_exact(&mut hdr).ok()?;
+    let len = match hdr[1] & 0x7F {
+        126 => {
+            let mut b = [0u8; 2];
+            s.read_exact(&mut b).ok()?;
+            u16::from_be_bytes(b) as usize
+        }
+        n => n as usize,
+    };
+    let mut payload = vec![0u8; len];
+    s.read_exact(&mut payload).ok()?;
+    String::from_utf8(payload).ok()
+}
+
 fn ws_send(stream: &TcpStream, text: &str) {
     let mask = [9u8, 8, 7, 6];
     let bytes = text.as_bytes();
@@ -414,4 +432,250 @@ fn probe_server_poses_ride_the_fastest_path_per_client() {
     };
     let (seq, _) = unstamp(&dgram);
     assert!(seq >= 1, "outbound seq stamped: {dgram:?}");
+}
+
+// ── A datagram's sender: only a holder of the connection's session counts ──────────────────
+//
+// The three tests below drive the echo kernel of `udp_sync_channel_end_to_end` and send, from
+// the client's own socket (the source address a forger copies) or from a second one, datagrams
+// nobody holding the session sent.  The wire helpers are the only part that knows the format.
+
+/// The echo kernel: tick beacons (`8:<n>`) and every conflated client sample echoed as `9:…`.
+fn start_echo_kernel(port: u16, tag: &str) -> (Guard, PathBuf) {
+    let prog = std::env::temp_dir().join(format!("eh_udp_{tag}_{}.loft", std::process::id()));
+    fa::write(
+        &prog,
+        format!(
+            r#"
+use engine_host;
+struct W {{ tick: integer not null }}
+fn main() {{
+  engine_host::sync_class(8);
+  engine_host::sync_class(9);
+  w = W {{ tick: 0 }};
+  engine_host::run({port}, {TICK_US},
+    fn(ev: engine_host::Event) {{
+      if ev.kind == 0 {{
+        engine_host::send(ev.cid, "hi:{{ev.cid}}");
+      }} else if ev.kind == 1 {{
+        engine_host::send(ev.cid, "9:{{ev.payload}}");
+      }}
+    }},
+    fn() {{
+      w.tick = w.tick + 1;
+      engine_host::send(0, "8:{{w.tick}}");
+    }});
+}}
+"#
+        ),
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let child = loft::platform::process::harness_command(loft_bin())
+        .arg("--interpret")
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn kernel");
+    (Guard(Some(child)), prog)
+}
+
+/// What the 101 response hands the client for its UDP path.
+struct Seat {
+    cookie: String,
+}
+
+fn seat_of(header: &str) -> Seat {
+    Seat {
+        cookie: header.to_string(),
+    }
+}
+
+/// The client's hello.
+fn hello(seat: &Seat) -> Vec<u8> {
+    format!("H:{}", seat.cookie).into_bytes()
+}
+
+/// A sync sample the client sends.
+fn sync(_seat: &Seat, seq: i64, payload: &str) -> Vec<u8> {
+    format!("S:{seq}:{payload}").into_bytes()
+}
+
+/// A sync sample written by someone without the session: the forger's best copy.
+fn forged_sync(seq: i64, payload: &str) -> Vec<u8> {
+    format!("S:{seq}:{payload}").into_bytes()
+}
+
+/// A keepalive written by someone without the session.
+fn forged_keepalive() -> Vec<u8> {
+    b"K:".to_vec()
+}
+
+/// A datagram from the server: `(kind, seq, payload)`, `None` when it is not one.
+fn open(_seat: &Seat, d: &[u8]) -> Option<(char, i64, String)> {
+    let text = std::str::from_utf8(d).ok()?;
+    if let Some(cid) = text.strip_prefix("A:") {
+        return Some(('A', cid.parse().ok()?, String::new()));
+    }
+    let rest = text.strip_prefix("S:")?;
+    let (seq, payload) = rest.split_once(':')?;
+    Some(('S', seq.parse().ok()?, payload.to_string()))
+}
+
+fn udp_recv_raw(sock: &UdpSocket) -> Option<Vec<u8>> {
+    let mut buf = [0u8; 2048];
+    sock.recv(&mut buf).ok().map(|n| buf[..n].to_vec())
+}
+
+/// Connect, read the greeting, and bind a UDP path: the socket, the seat and the hello sent.
+fn seated(port: u16) -> (TcpStream, UdpSocket, Seat, Vec<u8>) {
+    let (ws, header) = ws_connect(port);
+    let seat = seat_of(&header);
+    assert_eq!(ws_recv(&ws), "hi:0");
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    udp.connect(("127.0.0.1", port)).unwrap();
+    udp.set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let h = hello(&seat);
+        udp.send(&h).unwrap();
+        if let Some(d) = udp_recv_raw(&udp)
+            && let Some((kind, _, _)) = open(&seat, &d)
+        {
+            if kind == 'A' || kind == 'S' {
+                return (ws, udp, seat, h);
+            }
+        }
+        assert!(Instant::now() < deadline, "hello never acked");
+    }
+}
+
+/// The echoed (`9:`) payloads that arrive on `udp` within `window`.
+fn echoes_within(udp: &UdpSocket, seat: &Seat, window: Duration) -> Vec<String> {
+    let mut out = Vec::new();
+    let until = Instant::now() + window;
+    while Instant::now() < until {
+        if let Some(d) = udp_recv_raw(udp)
+            && let Some(('S', _, p)) = open(seat, &d)
+            && let Some(e) = p.strip_prefix("9:")
+        {
+            out.push(e.to_string());
+        }
+    }
+    out
+}
+
+/// A sample claiming the highest seq there is, sent from the client's own address by someone
+/// without the session, must not be applied — and must not make the next genuine sample stale.
+// @speed 3
+#[test]
+fn a_forged_max_seq_sample_freezes_no_slot() {
+    let port = common::bind_port(18160);
+    let (_guard, prog) = start_echo_kernel(port, "freeze");
+    let (_ws, udp, seat, _) = seated(port);
+    udp.send(&sync(&seat, 10, "alive")).unwrap();
+    assert!(
+        echoes_within(&udp, &seat, Duration::from_millis(800)).contains(&"alive".to_string()),
+        "the genuine sample is echoed"
+    );
+    udp.send(&forged_sync(i64::MAX, "frozen")).unwrap();
+    udp.send(&sync(&seat, 11, "moved")).unwrap();
+    let echoes = echoes_within(&udp, &seat, Duration::from_millis(800));
+    assert!(
+        !echoes.contains(&"frozen".to_string()),
+        "a forged sample was applied: {echoes:?}"
+    );
+    assert!(
+        echoes.contains(&"moved".to_string()),
+        "the genuine sample after a forged one was dropped: {echoes:?}"
+    );
+    let _ = fa::remove_file(&prog);
+}
+
+/// A hello seen on the path and sent again from another address takes no seat: the second
+/// socket gets no ack and none of the client's state.
+// @speed 3
+#[test]
+fn a_replayed_hello_from_another_address_takes_no_seat() {
+    let port = common::bind_port(18161);
+    let (_guard, prog) = start_echo_kernel(port, "replay");
+    let (_ws, udp, seat, seen_hello) = seated(port);
+    let thief = UdpSocket::bind("127.0.0.1:0").unwrap();
+    thief.connect(("127.0.0.1", port)).unwrap();
+    thief
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    thief.send(&seen_hello).unwrap();
+    let until = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < until {
+        if let Some(d) = udp_recv_raw(&thief) {
+            panic!(
+                "the replayed hello took the seat: {:?}",
+                String::from_utf8_lossy(&d)
+            );
+        }
+    }
+    // The genuine client still holds its path: beacons keep arriving there.
+    let mut beacon = false;
+    let until = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < until && !beacon {
+        beacon = udp_recv_raw(&udp)
+            .and_then(|d| open(&seat, &d))
+            .is_some_and(|(k, _, p)| k == 'S' && p.starts_with("8:"));
+    }
+    assert!(beacon, "the genuine client lost its path");
+    let _ = fa::remove_file(&prog);
+}
+
+/// Keepalives from the client's address by someone without the session do not hold a silent
+/// path open: once the genuine client goes quiet, sends fall back to the WebSocket on time
+/// (`UDP_TIMEOUT_US`, 3 s) while the forged keepalives keep coming.
+// @speed 5
+#[test]
+fn forged_keepalives_do_not_hold_a_path_open() {
+    let port = common::bind_port(18162);
+    let (_guard, prog) = start_echo_kernel(port, "keep");
+    let (ws, udp, seat, _) = seated(port);
+    udp.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    // The WebSocket is read on its own thread: a frame read cut by a timeout would tear it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = ws.try_clone().unwrap();
+    reader.set_read_timeout(None).unwrap();
+    std::thread::spawn(move || {
+        while let Some(f) = ws_recv_opt(&reader) {
+            if tx.send(f).is_err() {
+                break;
+            }
+        }
+    });
+    let mut last_udp_tick = 0i64;
+    let until = Instant::now() + Duration::from_secs(6);
+    loop {
+        assert!(
+            Instant::now() < until,
+            "forged keepalives held the path open (last UDP beacon {last_udp_tick})"
+        );
+        udp.send(&forged_keepalive()).unwrap();
+        if let Some(d) = udp_recv_raw(&udp)
+            && let Some(('S', _, p)) = open(&seat, &d)
+            && let Some(t) = p.strip_prefix("8:")
+        {
+            last_udp_tick = t.parse().unwrap_or(0);
+        }
+        if rx.try_iter().any(|f| {
+            f.strip_prefix("8:")
+                .and_then(|t| t.parse::<i64>().ok())
+                .is_some_and(|t| last_udp_tick > 0 && t > last_udp_tick)
+        }) {
+            break; // a beacon fresher than the last datagram, on the WebSocket
+        }
+    }
+    let _ = fa::remove_file(&prog);
 }
