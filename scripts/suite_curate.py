@@ -919,7 +919,8 @@ def uncited_programs():
         out[h] = []
         for name in sorted(os.listdir(d)):
             path = os.path.normpath(os.path.join(d, name))
-            if name.endswith(".loft") and path not in cited:
+            # A program is a FILE: a run leaves a `.loft/` cache directory beside the programs.
+            if name.endswith(".loft") and os.path.isfile(path) and path not in cited:
                 out[h].append(path)
     return out
 
@@ -949,7 +950,8 @@ def uncited(args):
     base = read_uncited_baseline()
     worse = []
     for h, paths in found.items():
-        total = len([n for n in os.listdir(program_homes()[h]) if n.endswith(".loft")])
+        total = len([n for n in os.listdir(program_homes()[h])
+                     if n.endswith(".loft") and os.path.isfile(os.path.join(program_homes()[h], n))])
         b = base.get(h)
         mark = "" if b is None else f"   (baseline {b})"
         print(f"{h:<22} {len(paths):>4} of {total} cite no rule{mark}")
