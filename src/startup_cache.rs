@@ -212,6 +212,23 @@ impl ManifestState {
     }
 }
 
+/// The file each of `libs` resolves to beside its package (`platform::existing_lib_beside`, as
+/// the C writer asks), `-` where none is there: TAB-separated, in order.
+#[cfg(feature = "mmap")]
+fn c_library_files(libs: &[crate::data::CLibrary]) -> String {
+    libs.iter()
+        .map(|c| {
+            crate::platform::existing_lib_beside(
+                std::path::Path::new(&c.pkg_dir),
+                &c.name,
+                crate::platform::host_lib_os(),
+            )
+            .unwrap_or_else(|| "-".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\t")
+}
+
 /// On a valid match, returns the parse-time [`ManifestState`] persisted in the
 /// manifest.  `None` on a miss: absent manifest, stale build signature, or any
 /// source drifted since the bundle was written.
@@ -325,6 +342,20 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
             fields.map(str::to_string).collect(),
         ));
         next = lines.next();
+    }
+    // `cfnd <file>\t…`: the file each `[c]` library resolved to beside its package, in `clib`
+    // order.  The C a program is written as depends on it (`c::emit_program`: a library found
+    // there is opened at start and its functions called through the handle, one not found is
+    // linked by name), so a library built, removed or renamed since the cold run is a miss and
+    // the cold path writes the program again: the same source, the same C.
+    let found = next
+        .and_then(|l| l.strip_prefix("cfnd "))
+        .map(str::to_string);
+    if found.is_some() {
+        next = lines.next();
+    }
+    if !c_libraries.is_empty() && found.as_deref() != Some(c_library_files(&c_libraries).as_str()) {
+        return manifest_miss("a `[c]` library's file appeared or went since the cold run");
     }
     // `actx <context>`: required — a bundle that cannot say which native-library context
     // marked it cannot be matched against this run's.  Then optional `alib <path>` lines, one
@@ -817,6 +848,10 @@ pub fn save_program(
             }
             lines.push('\n');
         }
+    }
+    // The file each `[c]` library resolved to (`cfnd`, read by `manifest_state`).
+    if !p.data.c_libraries.is_empty() {
+        let _ = writeln!(lines, "cfnd {}", c_library_files(&p.data.c_libraries));
     }
     // loft#1684 — the native-library context, then each auto-native cdylib (see
     // `ManifestState::auto_native_libs`).

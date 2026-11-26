@@ -43,6 +43,17 @@ A placed library's worker parses the library alone, so the program hands it its 
 the library reads the same placed or in-process.  The logger names a record's file from the same
 directory, so a `[levels]` path-prefix key (`sub/`) addresses what a fault prints.
 
+## A cached program writes the same C
+
+The whole-program cache ([`startup_cache`](../../src/startup_cache.rs)) skips the parse on a
+warm run, so whatever the cold parse did to the disk must still hold.  One such input is a `[c]`
+library's file: the C writer opens a library it finds beside its package at start and calls it
+through the handle, and links one it does not find by name.  A cold run builds a `[c] shim`'s
+library into `native-auto/`.  So the manifest records the file each `[c]` library resolved to
+(its `cfnd` line).  A warm run whose libraries resolve differently, for example after
+`native-auto/` was removed, is a miss: the cold path rebuilds the shim and writes the same C.
+Guard: `a_warm_load_whose_shim_is_gone_writes_the_same_c` in `tests/arc_e_program_cache.rs`.
+
 ## What is not reproducible yet
 
 - A program with a `[c] shim` names the shim library by its absolute path (`loft_clibs`,
