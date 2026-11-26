@@ -109,7 +109,7 @@ pub fn fill_all(e: el::El) {
           // A tuple element (`vector_wrapper_name` of a tuple, `vector_def` with
           // `ensure_tuple_defs`): the `__tuple<…>` record first, then `vector<(…)>` owned by it
           // and `main_vector<(…)>`, as a literal of it makes them (`tuple_vector_rows`).
-          tuple_wrapper(e, inner, eof);
+          tuple_wrapper(e, inner, eof, typed: false);
         },
         _ => {}
       }
@@ -452,7 +452,9 @@ pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
 // `__tuple<…>` records of the element, inner first, then `vector<(…)>` owned by the element's
 // and `main_vector<(…)>`, at `pos`, where they are not made yet — as a literal of it makes them
 // (`tuple_vector_rows`).  Nothing for an element that is no tuple, or one naming a variable.
-pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position) {
+// `typed`: the parser's `vector_def` (a bind, an instance) types the wrapper; the schema's own
+// field pass leaves it unknown, as `make_vector_def` documents.
+pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position, typed: boolean = true) {
   match inner {
     TyTuple { elems: te } => {
       tsp = el_types::tuple_spelling_e(e, te, ", ");
@@ -461,7 +463,7 @@ pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position) {
           tuple_wrapper_records(e, m, pos);
         }
         ttd = el_types::tuple_def(e, te, pos);
-        make_vector_def(e, inner, "({tsp})", pos, false, store: false);
+        make_vector_def(e, inner, "({tsp})", pos, typed, store: false);
         tvd = el::def_nr(e, "vector<({tsp})>");
         if tvd >= 0 && ttd >= 0 {
           e.b.data.definitions[tvd].parent = ttd;
