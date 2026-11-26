@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Buffer: a callee forwarding a tail call's record result hands the caller the filled buffer.
 //
 // Native-codegen regression: a ref-returning tail call captured into
 // `__native_tail_ret` (the 87-store-leaks capture path) whose argument is an

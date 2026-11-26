@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged: a text key is served by the hash's digest and probe over the image.
+// @FR-S-Sound: the loaded collection passes store_verify.
 //
 // @PLN97 arc G Phase 3b.6 — TEXT KEYS. A `hash<T[textkey]>` (a place-name /
 // string-id index) can be partially loaded by string key: `store_load_key_text`

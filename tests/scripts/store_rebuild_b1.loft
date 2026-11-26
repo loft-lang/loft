@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: store_persist_copy writes every image rebuilt, so a fragmented collection's image is the size of a fresh one's.
 //
 // @PLN123 B1 — what does rebuild-and-swap cost?
 //

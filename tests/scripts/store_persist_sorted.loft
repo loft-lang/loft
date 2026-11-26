@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: the persisted sorted reloads with every entry in another process.
+// @FR-S-Vector: the sorted's elements are inline in key order, so the reload iterates and looks up by key.
 //
 // @PLN97 arc G Phase 0.5b — a `sorted<T[k]>` image: `store_persist_copy` writes it,
 // `store_load` reads it back.

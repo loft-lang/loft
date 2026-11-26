@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged-Same: a paged key load answers the text field a whole load answers.
+// @FR-S-Sound: the loaded collection passes store_verify.
 //
 // @PLN97 arc G Phase 3b.2 — text-field RELOCATION. A hash whose entry struct has
 // a `text` field can now be partially loaded: `store_load_key` copies the source

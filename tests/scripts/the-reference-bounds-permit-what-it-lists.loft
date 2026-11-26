@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-G-Gen: a bounded body may use exactly the operations its bounds provide, derived comparisons included.
+// @FR-G-Sat: a user type satisfies a bound by defining the operator methods it names.
+// @FR-N-Index: a constant index reads tau non-null, and an overrun still faults to null at run time.
 //
 // Each generic bound permits exactly the operations the reference lists for it.
 //
