@@ -1134,7 +1134,13 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
   // the entry then borrows (`bind_inline_container`, on both passes), as a vector's index does.
   subject = x.code;
   lifted = -1;
-  if el_ex_assign::minting_call(e, x.code) {
+  // (…and on a FIELD of such a result, `hb(3).h[k]`: the call bound where the field is read out
+  // of it, `inline_container`, as a vector's index binds it.)
+  pcw = el_ex_assign::inline_container(e, vars, x);
+  if pcw >= 0 {
+    lifted = pcw;
+    subject = el_ex_assign::bind_root(e, x.code, pcw, el_vars::tp(vars, pcw));
+  } else if el_ex_assign::minting_call(e, x.code) {
     lifted = el_vars::work_ref_p2(vars, x.tp);
     el_vars::mark_inline(vars, lifted, "bind_inline_container");
     subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
