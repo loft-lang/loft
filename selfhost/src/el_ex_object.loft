@@ -1046,7 +1046,8 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
     el::refuse(e, "a field the struct does not declare: `{name}` of `{def.name}`");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  t = def.attributes[a]!.typedef[0];
+  // (`stored_ref_read`: a stored `reference<E>` of a struct-enum reads as `E`.)
+  t = el_types::stored_ref_read(e, def.attributes[a]!.typedef[0] ?? ir::TyVoid);
   for on in el_types::deps(x.tp) {
     t = el_types::with_deps(t, [on]);
   }
