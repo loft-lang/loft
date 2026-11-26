@@ -91,6 +91,21 @@ pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, 
   for m in members {
     full = def.attributes[m#index]!.typedef[0] ?? ir::TyVoid;
     mt = el_types::base(full);
+    // (A vector member is appended into the record's own vector field, `OpAppendVector(
+    // OpGetField(w, pos, vector), member, element row)` — the copy a vector field takes.)
+    if !(full is TyOptional) && mt is TyVector {
+      vin = match mt { TyVector { inner: vi } => vi, _ => ir::TyVoid };
+      vnm = el_types::elem_name(e, vin);
+      vk = if vnm == "" { -1 } else { el_ex_base::vector_store(e, vin, vnm) };
+      vrow = el_ex_vector::append_row(e, vin);
+      if !e.first_pass && (vk < 0 || vrow < 0) {
+        el::refuse(e, "a boxed tuple's vector member of this element type: {type_kind(vin)}");
+        return null;
+      }
+      vplace = el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, td, def.attributes[m#index]!.name) }, ir::NdInt { n: vk }]);
+      ops += [el_ir::cl(e, "OpAppendVector", [vplace, m, ir::NdInt { n: vrow }])];
+      continue;
+    }
     // (A nullable plain scalar is set as its value is, its null the scalar's own sentinel.)
     if (full is TyOptional && !el_convert::plain_scalar(mt)) || !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) {
       el::refuse(e, "a boxed tuple with a member that is no plain scalar, text or record");
