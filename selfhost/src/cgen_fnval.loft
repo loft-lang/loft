@@ -13,6 +13,7 @@ use binds;
 use lower;
 use cgen::(Cx, request_twin);
 use cgen_w::*;
+use cgen_tables;
 use cgen_names;
 use cgen_types;
 use opt_names;
@@ -196,6 +197,9 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
   }
   vec_tp = if uses_vec_buf && ret == "ref" { vec_buf } else { -1 };
   if vec_tp >= 0 {
+    // The wrapper is made through the unit's type table, which a unit writes only for the
+    // types it registers: one whose only use of the table is this call wrote none.
+    cgen_tables::copy_type(x, vec_tp);
     out += " loft_ref hb = loft_ref_null(cx); loft_database_wrapper(cx, loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
   }
   if ret == "void" {

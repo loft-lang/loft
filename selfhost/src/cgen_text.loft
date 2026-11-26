@@ -183,7 +183,10 @@ fn format_long(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) ->
   pair = [args[1], args[3]];
   val = cgen_fn::arg(x, w, pair, 0, ind);
   width = cgen_fn::arg(x, w, pair, 1, ind);
-  E { code: "loft_format_long(cx, &{dest}, {as_int(w, val)}, {radix}, {as_int(w, width)}, {token}, {plus}, {note}, {dir})", kind: K_VOID }
+  // @PLN217 — a value held in 32 bits is formatted in 32 bits (`loft_format_int32`).
+  f = if val.kind == K_INT32 { "loft_format_int32" } else { "loft_format_long" };
+  v = if val.kind == K_INT32 { val.code } else { as_int(w, val) };
+  E { code: "{f}(cx, &{dest}, {v}, {radix}, {as_int(w, width)}, {token}, {plus}, {note}, {dir})", kind: K_VOID }
 }
 
 // The text operators and printing (`text_operator` and the text arms after it); `done` says
