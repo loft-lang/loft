@@ -154,8 +154,8 @@ only and no correct port of them can show.  The rule binds every new refusal sit
 writes them per program (`LOFT_ELAB_ONE_SIDED_FILE`); a try's result line names any Rust-only
 definition new against its base (`NEW RUST-ONLY DEFINITION(S)`, `one_sided.tsv`).
 
-**A port-only definition breaks the accept (owner, 2026-11-26).**  A definition only the PORT
-registers, new against the try's base, makes the try `TRYRESULT issues` (`NEW PORT-ONLY
+**A port-only definition is forbidden (owner, 2026-11-26): it is the port creating a new language
+instead of porting one.**  A definition only the PORT registers, new against the try's base, makes the try `TRYRESULT issues` (`NEW PORT-ONLY
 DEFINITION(S)`, listed in the report and in `port_only_new.tsv`): the port minted something Rust
 never does.  It is a ratchet against the base, so the existing port-only rows (85 at try
 8e161452b) do not block a promotion; they are fixed first, before any other noise pool.
