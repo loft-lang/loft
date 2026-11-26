@@ -259,3 +259,48 @@ fn a_working_set_loader_stays_inside_a_file_whose_numbers_are_wrong() {
     }
     let _ = fa::remove_dir_all(&dir);
 }
+
+/// A paged read trusts its server (REMOTE_STORES.md § Trust), so the first plain-`http://` read
+/// of another machine in a run says so on stderr — once, on both backends — and a read of this
+/// machine or over `https://` says nothing.  The hosts do not exist; every load answers `false`.
+///
+/// @falsified-at: 61391784d + this change — by hand: with the note's call removed from
+/// `check_sidecar` (Rust) and `loft_pg_begin` (C) no line is printed; with the once-guard
+/// removed the line is printed twice.
+#[test]
+fn a_plain_http_read_of_another_machine_says_so_once() {
+    let dir = std::env::temp_dir().join(format!("loft_plain_http_{}", std::process::id()));
+    fa::create_dir_all(&dir).expect("dir");
+    let program = dir.join("p.loft");
+    fa::write(
+        &program,
+        "struct Tile { tkey: integer not null, name: text not null }\n\
+         fn main() {\n\
+         \x20 t: hash<Tile[tkey]> = [];\n\
+         \x20 a = store_load_key(t, \"http://127.0.0.1:9/x.store\", 1);\n\
+         \x20 b = store_load_key(t, \"https://example.invalid/x.store\", 1);\n\
+         \x20 c = store_load_key(t, \"http://example.invalid/x.store\", 1);\n\
+         \x20 d = store_load_key(t, \"http://other.invalid:8080/y.store\", 2);\n\
+         \x20 println(\"done {a} {b} {c} {d}\");\n\
+         }\n",
+    )
+    .expect("program");
+    for backend in ["--interpret", "--native"] {
+        let (code, stdout, stderr) = loft(&dir, backend, program.to_str().unwrap(), "", "");
+        assert_eq!(code, Some(0), "{backend}: {stderr}");
+        assert_eq!(stdout, "done false false false false", "{backend}");
+        let lines: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("plain http"))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "loft: example.invalid is read over plain http: anyone on the network path can \
+              change what is read; serve it over https"
+            ],
+            "{backend}: one line, for the first remote host\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+}

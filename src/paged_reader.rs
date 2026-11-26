@@ -249,6 +249,38 @@ pub struct HttpRangeProvider {
     pub depth: usize,
 }
 
+/// The host of a plain `http://` URL that is not this machine (`localhost`, `127.*`,
+/// `[::1]`); `None` for `https://`, a loopback host or anything else.
+#[must_use]
+pub fn plain_http_remote_host(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        v6.split(']').next().unwrap_or(v6)
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+    let loopback =
+        host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "::1";
+    (!host.is_empty() && !loopback).then_some(host)
+}
+
+/// A paged store trusts its server the way a mapped file trusts its filesystem
+/// (REMOTE_STORES.md § Trust).  Over plain `http://` to another machine, anyone on the network
+/// path can change what is read, so the first such read of a run says so, once.
+fn note_plain_http(url: &str) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    if let Some(host) = plain_http_remote_host(url) {
+        ONCE.call_once(|| {
+            eprintln!(
+                "loft: {host} is read over plain http: anyone on the network path can change \
+                 what is read; serve it over https"
+            );
+        });
+    }
+}
+
 impl HttpRangeProvider {
     /// Open `url`, discovering the store's total size via a `Range: bytes=0-0`
     /// probe (`Content-Range: bytes 0-0/TOTAL`), falling back to `Content-Length`.
@@ -256,6 +288,7 @@ impl HttpRangeProvider {
     /// # Errors
     /// Returns a message when the request fails or the size can't be determined.
     pub fn open(url: &str) -> Result<Self, String> {
+        note_plain_http(url);
         let size = crate::net::fetch_size(url)?;
         // A size is not a format.  A host answering `200` with its own error page — a
         // stale CDN path, a bucket's 404 document, a half-finished upload — has a size
@@ -508,6 +541,7 @@ pub fn check_sidecar(
 ) -> (crate::schema_sidecar::SchemaVerdict, bool) {
     use crate::schema_sidecar::SchemaVerdict;
     if spec.starts_with("http://") || spec.starts_with("https://") {
+        note_plain_http(spec);
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
             Ok(text) => (
                 crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
@@ -1933,6 +1967,39 @@ mod tests {
     /// The bytes are asserted alongside the call count on purpose: a coalescer
     /// that mis-slices the returned buffer into the page table would still show
     /// the improved count, so counting alone would report the bug as a success.
+    /// The hosts the plain-http line names: another machine over `http://`, never `https://`,
+    /// never this machine, whatever spelling the URL uses.
+    #[test]
+    fn a_plain_http_remote_host_is_told_from_loopback_and_https() {
+        assert_eq!(
+            plain_http_remote_host("http://example.org/a.store"),
+            Some("example.org")
+        );
+        assert_eq!(
+            plain_http_remote_host("http://Cdn.Example:8080/a"),
+            Some("Cdn.Example")
+        );
+        assert_eq!(
+            plain_http_remote_host("http://u:p@10.0.0.2/a"),
+            Some("10.0.0.2")
+        );
+        assert_eq!(
+            plain_http_remote_host("http://[2001:db8::1]:80/a"),
+            Some("2001:db8::1")
+        );
+        for this_machine in [
+            "http://localhost/a",
+            "http://LocalHost:9/a",
+            "http://127.0.0.1:1/a",
+            "http://127.5.5.5/a",
+            "http://[::1]:8000/a",
+        ] {
+            assert_eq!(plain_http_remote_host(this_machine), None, "{this_machine}");
+        }
+        assert_eq!(plain_http_remote_host("https://example.org/a"), None);
+        assert_eq!(plain_http_remote_host("block.store"), None);
+    }
+
     #[test]
     fn a_run_of_absent_pages_is_one_request_carrying_the_same_bytes() {
         let img = ramp(1600);
