@@ -6765,8 +6765,7 @@ LOFT_STATE int64_t loft_start_us LOFT_INIT(-1);
  * any thread runs, so a `par` worker or a `parallel` arm only reads them; a unit with no start
  * (the runner's shim) reads them at the first call. */
 LOFT_STATE int loft_clock_fakes_read LOFT_INIT(0);
-LOFT_STATE int64_t loft_fake_ticks LOFT_INIT(LOFT_NULL);
-LOFT_STATE int64_t loft_fake_now LOFT_INIT(LOFT_NULL);
+LOFT_STATE int64_t loft_fake_ticks LOFT_INIT(LOFT_NULL), loft_fake_now LOFT_INIT(LOFT_NULL);
 
 static int64_t loft_env_long(loft_cx *cx, const char *name) {
     const char *f = getenv(name);

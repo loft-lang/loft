@@ -297,11 +297,21 @@ fn ledger(name: &str) -> Vec<(String, String, String, u32)> {
 
 /// The C type `c` declares the local `name` with (`int32_t v0_m = …` → `int32_t`).
 fn local_ctype<'a>(c: &'a str, name: &str) -> &'a str {
-    let suffix = format!("_{name} = ");
+    // The declaration `<type> v<N>_<name> = …` of the program's own local: a runtime line that
+    // merely ends a name in `_<name>` (`if (p) loft_fs_loft_trace_file_f = …`) is not one.
+    let suffix = format!("_{name}");
+    let is_local = |w: &str| {
+        w.strip_prefix('v')
+            .and_then(|r| r.strip_suffix(suffix.as_str()))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
     c.lines()
         .map(str::trim)
-        .find(|l| l.contains(&suffix) && l.starts_with(|ch: char| ch.is_ascii_lowercase()))
-        .and_then(|l| l.split(' ').next())
+        .find_map(|l| {
+            let mut words = l.split(' ');
+            let tp = words.next()?;
+            (words.next().is_some_and(is_local) && words.next() == Some("=")).then_some(tp)
+        })
         .unwrap_or("")
 }
 

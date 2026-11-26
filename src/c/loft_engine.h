@@ -40,7 +40,7 @@
 typedef struct { int64_t cid, kind, status; loft_text payload; } loft_eh_event;
 typedef struct { loft_eh_event *v; size_t head, n, cap; } loft_eh_queue;
 /* The authenticated seqs a receiver has taken: the highest, and which of the 63 below it. */
-typedef struct { int64_t hi; uint64_t seen; } loft_eh_replay;
+typedef struct { loft_word hi; uint64_t seen; } loft_eh_replay;
 
 static void loft_eh_push(loft_cx *cx, loft_eh_queue *q, int64_t cid, int64_t kind, int64_t status, const char *p, size_t n) {
     if (q->head > 0 && q->head == q->n) q->head = q->n = 0;
@@ -614,7 +614,7 @@ static void loft_eh_tag(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir
 
 /* A datagram of `kind` carrying `p`, sealed under `key` for direction `dir`, appended to `out`. */
 static void loft_eh_seal(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir, uint8_t kind, uint32_t cid,
-                         int64_t seq, const char *p, size_t n, loft_text *out) {
+                         loft_word seq, const char *p, size_t n, loft_text *out) {
     char head[LOFT_EH_HEAD];
     head[0] = (char) kind;
     for (int i = 0; i < 4; i++) head[1 + i] = (char) (uint8_t) (cid >> (24 - 8 * i));
@@ -637,7 +637,7 @@ static int loft_eh_cid_of(loft_cx *cx, const uint8_t *d, size_t n, uint32_t *cid
 /* 1 and the kind, seq (in 1..=INT64_MAX) and payload of a datagram whose tag holds under `key` for
  * direction `dir`; 0 for anything else.  The tags compare in constant time. */
 static int loft_eh_open(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir, const uint8_t *d, size_t n,
-                        uint8_t *kind, int64_t *seq, const char **body, size_t *bl) {
+                        uint8_t *kind, loft_word *seq, const char **body, size_t *bl) {
     if (n < LOFT_EH_SEAL) return 0;
     uint8_t want[LOFT_EH_TAG], diff = 0;
     loft_eh_tag(cx, key, dir, d, n - LOFT_EH_TAG, want);
@@ -647,7 +647,7 @@ static int loft_eh_open(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir
     for (int i = 0; i < 8; i++) q = q << 8 | d[5 + i];
     if (q == 0 || q > (uint64_t) INT64_MAX) return 0;
     *kind = d[0];
-    *seq = (int64_t) q;
+    *seq = (loft_word) q;
     *body = (const char *) d + LOFT_EH_HEAD;
     *bl = n - LOFT_EH_SEAL;
     return 1;
@@ -655,15 +655,15 @@ static int loft_eh_open(loft_cx *cx, const uint8_t key[LOFT_EH_KEY], uint8_t dir
 
 /* Take `seq` once: 2 when it is the newest yet, 1 when it is an older one not seen before
  * (reordered on the way), 0 when it was seen already or is older than the window. */
-static int loft_eh_admit(loft_cx *cx, loft_eh_replay *r, int64_t seq) {
+static int loft_eh_admit(loft_cx *cx, loft_eh_replay *r, loft_word seq) {
     if (seq > r->hi) {
-        int64_t shift = seq - r->hi;
+        loft_word shift = seq - r->hi;
         r->seen = shift >= 64 ? 0 : r->seen << shift;
         r->seen |= 1;
         r->hi = seq;
         return 2;
     }
-    int64_t back = r->hi - seq;
+    loft_word back = r->hi - seq;
     if (back >= 64 || (r->seen & ((uint64_t) 1 << back))) return 0;
     r->seen |= (uint64_t) 1 << back;
     return 1;

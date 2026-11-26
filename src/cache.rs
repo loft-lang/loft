@@ -423,6 +423,10 @@ pub const INERT_ENV: &[(&str, EnvKey)] = &[
     ("LOFT_FAKE_NOW_MS", EnvKey::Unit), // the clock the runtime reads
     ("LOFT_FAKE_TICKS_US", EnvKey::Unit), // the same
     ("LOFT_FAULT_LOG", EnvKey::Unit), // where the runtime writes its faults
+    // The probe test hook (`native_adopt::relocate_for_probe`): whether an artifact can be moved
+    // aside to be asked its layout, never what it was built from.  Counted, a run under it was
+    // keyed apart from the unit it is meant to probe, so the probe it forces never ran.
+    ("LOFT_FORCE_PROBE_RELOCATE_FAIL", EnvKey::Unit),
     ("LOFT_DEBUG_TOKEN", EnvKey::Unit), // the debug channel's token
     ("LOFT_DEBUG_CONTROL", EnvKey::Unit), // the debug control channel
 ];
