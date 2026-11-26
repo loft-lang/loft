@@ -228,12 +228,17 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
     el::refuse(e, "a `use self::` of a package's own module");
     return;
   }
-  // Inside a package, `Parser::lib_path`'s first probe (`probe_own_package`): the package's own
-  // NAME is its `[library] entry`.  Every other name there is resolved by the manifest's later
-  // steps, which this port does not carry.
+  // Inside a package, `Parser::lib_path`'s roads in its order (`@C173`): the package's own NAME
+  // is its `[library] entry` (`probe_own_package`); a name the governing lock pins is that
+  // version's registry install (`resolve_pinned`).  The steps between them — a `--lib`
+  // directory, a `{ path = … }` dependency, a module beside the file — are not carried, so
+  // where one of them could answer first the `use` stays refused.
   root = package_root(e.file);
   if root != "" && !el::use_exists(e, lib) {
     own_entry = own_package_entry(root, lib);
+    if own_entry == "" && !unported_road_answers(e, lib, root) {
+      own_entry = pinned_entry(e, lib);
+    }
     if own_entry == "" {
       el::refuse(e, "a `use` inside a package (its manifest resolves it)");
       return;
@@ -457,35 +462,248 @@ fn apply_pending_imports(e: el::El) {
   }
 }
 
-// `Parser::probe_own_package`: the entry file of the package at `root` when its manifest's
-// `[package] name` is `id` — its `[library] entry`, else `src/<name>.loft`
-// (`Manifest::entry_or_default`) — where that file exists; else "".
-fn own_package_entry(root: text, id: text) -> text {
-  section = "";
-  name = "";
-  entry = "";
-  for raw in (file("{root}/loft.toml").content() ?? "").split('\n') {
+// One `key = value` line of the TOML file at `path`: the raw value (quotes kept, trimmed) of the
+// first `key` in a section named `section` (`[package]`, or `[[package]]` with `at` the index of
+// the block among those of that name), "" where there is none.  Only the shapes a manifest and a
+// lock are written in: one key per line, `#` comments, no multi-line values.
+fn toml_raw(path: text, section: text, at: integer, key: text) -> text {
+  cur = "";
+  block = -1;
+  for raw in (file(path).content() ?? "").split('\n') {
     ln = raw.trim();
-    eq = ln.find("=");
     if starts_with(ln, "[") {
-      section = ln;
-    } else if eq != null && !starts_with(ln, "#") {
-      key = ln[..eq!].trim();
-      q = ln.find("\"");
-      if q != null && (section == "[package]" && key == "name" || section == "[library]" && key == "entry") {
-        rest = ln[q! + 1..];
-        r = rest.find("\"");
-        if r != null {
-          if key == "name" { name = rest[..r!]; } else { entry = rest[..r!]; }
-        }
+      cur = ln;
+      if cur == section {
+        block += 1;
       }
+      continue;
+    }
+    eq = ln.find("=");
+    if cur == section && block == at && eq != null && !starts_with(ln, "#") && ln[..eq!].trim() == key {
+      return ln[eq! + 1..].trim();
     }
   }
-  if name != id {
+  ""
+}
+
+// A raw TOML string value without its quotes ("" for no quoted string).
+fn toml_unquote(v: text) -> text {
+  q = v.find("\"");
+  if q == null {
     return "";
   }
-  f = "{root}/{if entry != "" { entry } else { "src/{name}.loft" }}";
+  rest = v[q! + 1..];
+  r = rest.find("\"");
+  if r == null { "" } else { rest[..r!] }
+}
+
+// `manifest::inline_field`: one `field = "…"` of an inline-table dependency value, "".
+fn inline_field(v: text, field: text) -> text {
+  body = v.trim();
+  if starts_with(body, "{{") {
+    body = body[1..];
+  }
+  if body.ends_with("}}") {
+    body = body[..len(body) - 1];
+  }
+  for part in body.split(',') {
+    eq = part.find("=");
+    if eq != null && part[..eq!].trim() == field {
+      return toml_unquote(part[eq! + 1..]);
+    }
+  }
+  ""
+}
+
+// `Parser::probe_own_package`: the entry file of the package at `root` when its manifest's
+// `[package] name` is `id`, where that file exists; else "".
+fn own_package_entry(root: text, id: text) -> text {
+  if toml_unquote(toml_raw("{root}/loft.toml", "[package]", 0, "name")) != id {
+    return "";
+  }
+  package_entry(root, id)
+}
+
+// `Parser::lib_path_manifest_resolve`'s entry: the package directory `dir`'s `[library] entry`,
+// else `src/<id>.loft` (`id` as the caller names the directory), where that file exists; else "".
+fn package_entry(dir: text, id: text) -> text {
+  entry = toml_unquote(toml_raw("{dir}/loft.toml", "[library]", 0, "entry"));
+  f = if entry != "" { "{dir}/{entry}" } else { "{dir}/src/{id}.loft" };
   if exists(f) { f } else { "" }
+}
+
+// The roads `Parser::lib_path` takes before a lock's pin that this port does not carry: a
+// `--lib` directory naming `id` (`probe_flag_lib_dirs`), a `{ path = … }` dependency of the
+// package (`probe_manifest_path_dep`), and a module beside the importing file
+// (`probe_cur_dir_flat`, `resolve_pinned`'s first step).  True where one of them could answer.
+fn unported_road_answers(e: el::El, id: text, root: text) -> boolean {
+  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if dir != "" && (exists("{dir}/{id}.loft") || exists("{dir}/{id}/loft.toml") || exists("{dir}/{id}/src/{id}.loft")) {
+      return true;
+    }
+  }
+  inline_field(toml_raw("{root}/loft.toml", "[dependencies]", 0, id), "path") != "" || exists("{beside_dir(e.file)}/{id}.loft")
+}
+
+// `Parser::beside_dir`: the importing file's directory, `.` for a file named without one.
+fn beside_dir(f: text) -> text {
+  d = script_dir(f);
+  if d == "" { "." } else { d }
+}
+
+// `resolution_scope::resolution_scope(..).governing_lock()`: the lock that decides the program's
+// registry versions — a `<program>.lock` beside it (`PinnedScript`), else its package root's
+// `loft.lock` (`Package`); "" in `Bare` scope, where nothing does.  Answered for the PROGRAM
+// (`Parser::program_entry`), never for the file that says `use`.
+fn governing_lock(e: el::El) -> text {
+  prog = if e.entry != "" { e.entry } else { e.file };
+  if exists("{prog}.lock") {
+    return "{prog}.lock";
+  }
+  root = package_root(prog);
+  if root == "" { "" } else { "{root}/loft.lock" }
+}
+
+// `ResolutionScope::pinned_version`: the version the governing lock records for `id`, "".
+fn pinned_version(e: el::El, id: text) -> text {
+  lock = governing_lock(e);
+  if lock == "" || !exists(lock) {
+    return "";
+  }
+  b = 0;
+  while true {
+    name = toml_raw(lock, "[[package]]", b, "name");
+    if name == "" {
+      return "";
+    }
+    if toml_unquote(name) == id {
+      return toml_unquote(toml_raw(lock, "[[package]]", b, "version"));
+    }
+    b += 1;
+  }
+  ""
+}
+
+// `manifest::extract_version_req` of `id`'s `[dependencies]` value in the manifest of the
+// package holding `f` ("" for none: no package, no declaration, or a declaration with no range).
+fn declared_range(f: text, id: text) -> text {
+  root = package_root(f);
+  if root == "" {
+    return "";
+  }
+  v = toml_raw("{root}/loft.toml", "[dependencies]", 0, id);
+  if starts_with(v, "{{") { inline_field(v, "version") } else { toml_unquote(v) }
+}
+
+// `Parser::lock_pin_in_force`: the pinned version while every declaration in force still
+// accepts it (`install::constraint_for` answers the pin) — the program root's range
+// (`root_dep_constraint`) and that of the package whose file says `use` (`declaring_range`).
+fn lock_pin_in_force(e: el::El, id: text) -> text {
+  pinned = pinned_version(e, id);
+  if pinned == "" {
+    return "";
+  }
+  root_range = declared_range(if e.entry != "" { e.entry } else { e.file }, id);
+  here_range = declared_range(e.file, id);
+  if (root_range == "" || satisfies(pinned, root_range)) && (here_range == "" || satisfies(pinned, here_range)) { pinned } else { "" }
+}
+
+// `Parser::probe_governing_lock` + `resolve_registry_installed`: the entry of the registry install
+// of the version the lock pins (`registry_index::extract_dir`: `<home>/.loft/registry/<id>-<v>`,
+// `<home>` = `LOFT_HOME`, else `HOME`), where it is installed; else "".  Rust's later legs
+// (`probe_auto_install`, `probe_cache_newest`) are not carried: they install or pick the newest.
+fn pinned_entry(e: el::El, id: text) -> text {
+  version = lock_pin_in_force(e, id);
+  if version == "" {
+    return "";
+  }
+  home = env_variable("LOFT_HOME") ?? "";
+  if home == "" {
+    home = env_variable("HOME") ?? ".";
+  }
+  package_entry("{home}/.loft/registry/{id}-{version}", "{id}-{version}")
+}
+
+// `registry_index::compare_semver`'s parts: major, minor and patch (a patch's `-…` suffix
+// dropped), an unparseable part read as 0.
+fn semver_parts(v: text) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  for p in v.split('.') {
+    if i < 3 {
+      t = if i == 2 && p.find("-") != null { p[..p.find("-")!] } else { p };
+      out += [(t as integer?) ?? 0];
+    }
+    i += 1;
+  }
+  while len(out) < 3 {
+    out += [0];
+  }
+  out
+}
+
+// `registry_index::compare_semver`: -1, 0 or 1.
+fn semver_cmp(a: text, b: text) -> integer {
+  pa = semver_parts(a);
+  pb = semver_parts(b);
+  for i in 0..3 {
+    if pa[i] < pb[i] {
+      return -1;
+    }
+    if pa[i] > pb[i] {
+      return 1;
+    }
+  }
+  0
+}
+
+// `registry_index::satisfies`: whether `version` meets `constraint` — empty or `*`, a comma list
+// (every part), `^x.y[.z]` and `~x.y[.z]` (both `[x.y.z, x.(y+1).0)`), `>=`, `>`, `<=`, `<`,
+// `=`, and a bare version (exact).
+fn satisfies(version: text, constraint: text) -> boolean {
+  c = constraint.trim();
+  if c == "" || c == "*" {
+    return true;
+  }
+  if c.find(",") != null {
+    for part in c.split(',') {
+      if !satisfies(version, part.trim()) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if starts_with(c, "^") || starts_with(c, "~") {
+    ps: vector<integer> = [];
+    for p in c[1..].split('.') {
+      n = p as integer?;
+      if n != null {
+        ps += [n!];
+      }
+    }
+    if len(ps) < 2 {
+      return false;
+    }
+    lo = "{ps[0]}.{ps[1]}.{if len(ps) > 2 { ps[2] } else { 0 }}";
+    hi = "{ps[0]}.{ps[1] + 1}.0";
+    return semver_cmp(version, lo) >= 0 && semver_cmp(version, hi) < 0;
+  }
+  if starts_with(c, ">=") {
+    return semver_cmp(version, c[2..].trim()) >= 0;
+  }
+  if starts_with(c, ">") {
+    return semver_cmp(version, c[1..].trim()) > 0;
+  }
+  if starts_with(c, "<=") {
+    return semver_cmp(version, c[2..].trim()) <= 0;
+  }
+  if starts_with(c, "<") {
+    return semver_cmp(version, c[1..].trim()) < 0;
+  }
+  if starts_with(c, "=") {
+    return version == c[1..].trim();
+  }
+  version == c
 }
 
 // The directory holding a `loft.toml` at or above `f`'s, or "".
