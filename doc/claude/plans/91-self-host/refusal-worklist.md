@@ -165,18 +165,22 @@ of refused programs: every difference in a refused program that is not the refus
 itself, whether a knock-on refusal, a definition one side registers, or numbers shifted by a
 dropped definition.
 
-**The noise pools, ranked (try 1edef3fdb, 2026-11-26):**
-1. HELD, built: a package's own name in a `use` loads its manifest entry (Rust's
-   `probe_own_package`), `loft-front` abde82ef1.  Rust-only definitions 1689 → 1191, unscored
-   state rows 15814 → 10103, `engine_host/tests/local_kernel` refused → agree.  It exposes two
-   hidden differs in `lib/process` tests (a field read of a call's record answer: Rust's
-   `parse_part_inner` inline ref, sent to the porter).  It lands once the porter has ported that.
-2. Generic templates, about 300 Rust-only definitions in 6 programs (G-Mono 98, G-Regular 87 +
-   39, a-library-carries-generic-types 52, 25-generics 29, G-Type 26).  These are the porter's
-   T6: the instances follow the template's port.
-3. A lock-pinned registry dependency (`gridmesh` 0.2.6 via `loft.lock`): 188 definitions
-   (47 × 4 `audience_crystal` programs).  The routine is `resolve_pinned` /
-   `probe_governing_lock` (@C173), an S–M port.
+**The noise pools (2026-11-26).**  LANDED (try 438fea34d on 77258ed46, clean, 3 programs
+refused → agree: `engine_host/tests/local_kernel`, `process/tests-unix/tree`,
+`process/tests/start`): a package's own name and a lock-pinned dependency in a `use`
+(`probe_own_package`, `resolve_pinned`), a packaged library in a `--lib` directory
+(`probe_flag_lib_dirs`), and generic registration: type instances, their layout, and a refused
+function instance's signature (generic-instance-registration.md).  Rust-only definitions
+1689 → 800, unscored state rows ≈15800 → 6087, hidden differs ≈1631 → 1447.  Left:
+1. Generic function instances Rust mints from a FILLED body (`instantiate_nested_generics`):
+   about 100 of the remaining Rust-only ones.  They follow the porter's body filling (T6), not
+   registration.
+2. The roads not carried: a path dependency and a module beside the file, inside a package.
+   No program of the corpus reaches either.
+3. New noise from loading `gridmesh`: the port marks `main_vector<single>` `pub` in the four
+   `audience_crystal` programs, and Rust does not (4 state items).
+4. A port bug behind a refusal (sent to the porter): the library's `main_vector<Pair>` minted
+   a second time from the main source (H-Drop/2436, probably tests/docs/17-libraries).
 
 A construct the port refuses before it registers its definitions shifts the number of every
 definition after it, so those definitions differ in numbers only (`beside numbers`).  The fix at
