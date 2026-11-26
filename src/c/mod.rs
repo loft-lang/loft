@@ -249,7 +249,7 @@ pub(crate) struct Cx<'a> {
     deliver_descs: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
     /// A page's flatten walkers (`loft_dlk{tp}`), by type: the body of each.
     deliver_flats: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
-    /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
+    /// Every compile-time constant the unit reads (`loft_const_<ident>`, [`Cx::const_ident`]), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
     /// The dispatcher signatures: each parameter's shape and whether it is a `&` link.
@@ -342,6 +342,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) source_roots: crate::source_name::Roots,
     /// Each type's C name ([`Cx::type_ident`]), worked out once per unit.
     type_idents: std::cell::OnceCell<Vec<String>>,
+    /// The part of a C name that stands for each built constant: [`Cx::const_ident`].
+    const_idents: std::cell::OnceCell<std::collections::HashMap<u32, String>>,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -489,6 +491,7 @@ impl<'a> Cx<'a> {
             open: false,
             source_roots: data.source_roots(None),
             type_idents: std::cell::OnceCell::new(),
+            const_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1573,7 +1576,39 @@ impl<'a> Cx<'a> {
             return Err("a constant that was not built".into());
         }
         self.consts.borrow_mut().insert(d);
-        Ok(format!("loft_const{d}"))
+        Ok(format!("loft_const_{}", self.const_ident(d)))
+    }
+
+    /// The part of a C name that stands for constant `d` (`loft_const_<ident>`,
+    /// `loft_cwords_<ident>`): the constant's own name made an identifier ([`c_ident`]), never its
+    /// definition number, which moves whenever a definition is added before it (@PLN229: a
+    /// unit's text depends on the constants it reads, not on the others).  Two constants that
+    /// share a name keep their number beside it, so no two C names collide.
+    fn const_ident(&self, d: u32) -> String {
+        let all = self.const_idents.get_or_init(|| {
+            let built: Vec<(u32, String)> = (0..self.data.definitions())
+                .filter(|&c| self.data.def(c).const_ref.is_some())
+                .map(|c| (c, c_ident(&self.data.def(c).name)))
+                .collect();
+            let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for (_, n) in &built {
+                *seen.entry(n.as_str()).or_default() += 1;
+            }
+            built
+                .iter()
+                .map(|(c, n)| {
+                    (
+                        *c,
+                        if seen[n.as_str()] > 1 {
+                            format!("{n}_{c}")
+                        } else {
+                            n.clone()
+                        },
+                    )
+                })
+                .collect()
+        });
+        all.get(&d).cloned().unwrap_or_else(|| d.to_string())
     }
 
     /// Each constant's store, as words, and `loft_init`, which loads them before `main` runs.
@@ -1585,13 +1620,14 @@ impl<'a> Cx<'a> {
                 continue;
             };
             let (n, words) = const_words(self.stores, &r);
+            let c = self.const_ident(d);
             let _ = writeln!(
                 out,
-                "static const uint32_t loft_cwords{d}[] = {{ {words} }};\nLOFT_STATE loft_ref loft_const{d};"
+                "static const uint32_t loft_cwords_{c}[] = {{ {words} }};\nLOFT_STATE loft_ref loft_const_{c};"
             );
             let _ = writeln!(
                 init,
-                "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {n});"
+                "    loft_const_{c} = loft_const_store(cx, loft_cwords_{c}, {n});"
             );
         }
         init.push_str("}\n");

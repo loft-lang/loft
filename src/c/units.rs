@@ -5,10 +5,11 @@
 //!
 //! The writer writes the unit it always writes, with each function's body marked with the file
 //! it is declared in (`SPLIT_FN`) and the start of what no file owns marked (`SPLIT_SHARED`).
-//! This cuts it: every unit starts with the same head (the runtime, the types, the prototypes the
-//! head itself needs) and then the prototypes its own functions call,
-//! one shared unit carries what no file owns (the dispatchers, the drop cascades, the generated
-//! twins, the tables, `main`) and every file gets a unit with its own functions.
+//! This cuts it: every unit starts with the runtime's hot part, then the head items its own code
+//! names — the types, tables, constants and macros, followed through what each of those names —
+//! and then the prototypes its own functions call, so a unit's text changes only with what it
+//! uses.  One shared unit carries what no file owns (the dispatchers, the drop cascades, the
+//! generated twins, the tables, `main`) and every file gets a unit with its own functions.
 //!
 //! A function defined in one unit and named from another (or from the head) needs external
 //! linkage, so it loses its `static` / `inline` / `LOFT_HOT_INLINE`, at its definition and at
@@ -177,6 +178,235 @@ fn identifiers(text: &str) -> HashSet<&str> {
         .collect()
 }
 
+/// One top-level item of the head after the runtime: a declaration, a definition, a macro.
+struct Item {
+    text: String,
+    /// The names it declares; an item that declares none a unit can name is in every unit.
+    defines: Vec<String>,
+    /// In every unit: a preprocessor group or line other than a `#define`, or an item whose names
+    /// could not be read.
+    always: bool,
+}
+
+/// The change in brace depth over `line`, outside string and character literals and comments;
+/// `comment` carries an open `/* … */` from one line to the next.
+fn brace_delta(line: &str, comment: &mut bool) -> i32 {
+    let b = line.as_bytes();
+    let (mut d, mut i) = (0, 0);
+    while i < b.len() {
+        if *comment {
+            if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                *comment = false;
+                i += 1;
+            }
+        } else {
+            match b[i] {
+                b'/' if b.get(i + 1) == Some(&b'*') => {
+                    *comment = true;
+                    i += 1;
+                }
+                b'/' if b.get(i + 1) == Some(&b'/') => return d,
+                q @ (b'"' | b'\'') => {
+                    i += 1;
+                    while i < b.len() && b[i] != q {
+                        if b[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b'{' => d += 1,
+                b'}' => d -= 1,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    d
+}
+
+/// The names declaration `text` declares: a function's name, a variable's, a type's (its
+/// `typedef` name and its tag), a macro's, and every name inside an `enum`'s braces (its
+/// constants — and possibly more, which only puts the item in more units).
+fn declared_names(text: &str) -> Vec<String> {
+    let first = text.lines().next().unwrap_or_default();
+    if let Some(rest) = first.strip_prefix("#define ") {
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        return if name.is_empty() {
+            Vec::new()
+        } else {
+            vec![name]
+        };
+    }
+    let bare = without_storage(first);
+    if let Some(n) = function_name(bare) {
+        return vec![n.to_string()];
+    }
+    let ident = |t: &str| -> Option<String> {
+        let n = t
+            .trim_end()
+            .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .next()?;
+        (!n.is_empty() && !n.starts_with(|c: char| c.is_ascii_digit())).then(|| n.to_string())
+    };
+    let mut names = Vec::new();
+    // the tag of a `struct` / `union` / `enum`, with or without `typedef`
+    let words: Vec<&str> = text.split_whitespace().take(4).collect();
+    if let Some(k) = words
+        .iter()
+        .position(|w| matches!(*w, "struct" | "union" | "enum"))
+        && let Some(tag) = words
+            .get(k + 1)
+            .and_then(|w| ident(w.trim_end_matches(['{', ';'])))
+    {
+        names.push(tag);
+    }
+    let open = text.find('{');
+    let close = text.rfind('}');
+    if let (Some(o), Some(c)) = (open, close)
+        && text[..o].split_whitespace().any(|w| w == "enum")
+    {
+        names.extend(identifiers(&text[o + 1..c]).into_iter().map(str::to_string));
+    }
+    // the declarator: after a closing brace (`} Name;`), else before the first `=`, `[` or `;`
+    let tail = match (open, close) {
+        (Some(o), Some(c)) if !text[..o].contains('=') => &text[c + 1..],
+        _ => text,
+    };
+    let decl = tail.split(['=', '[', ';']).next().unwrap_or_default();
+    let decl = match decl.find("(*") {
+        Some(p) => decl[p + 2..].split(')').next().unwrap_or_default(),
+        None => decl,
+    };
+    if let Some(n) = ident(decl)
+        && !matches!(n.as_str(), "struct" | "union" | "enum")
+    {
+        names.push(n);
+    }
+    names
+}
+
+/// `text` — the head after the runtime — cut into its top-level items, in order.  A comment or a
+/// blank line goes with the item after it.
+fn head_items(text: &str) -> Vec<Item> {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut items = Vec::new();
+    let mut pending = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("//") || (t.starts_with("/*") && t.ends_with("*/")) {
+            pending.push_str(line);
+            i += 1;
+            continue;
+        }
+        let mut item = std::mem::take(&mut pending);
+        if line.starts_with('#') {
+            let mut always = !line.starts_with("#define ");
+            if line.starts_with("#if") {
+                // a conditional group, whole: whatever it declares, every unit has it
+                let mut nest = 0;
+                while i < lines.len() {
+                    let l = lines[i];
+                    item.push_str(l);
+                    if l.starts_with("#if") {
+                        nest += 1;
+                    } else if l.starts_with("#endif") {
+                        nest -= 1;
+                    }
+                    i += 1;
+                    if nest == 0 {
+                        break;
+                    }
+                }
+                always = true;
+            } else {
+                // a line, and its continuations
+                while i < lines.len() {
+                    item.push_str(lines[i]);
+                    i += 1;
+                    if !lines[i - 1].trim_end().ends_with('\\') {
+                        break;
+                    }
+                }
+            }
+            let defines = if always {
+                Vec::new()
+            } else {
+                declared_names(&item)
+            };
+            let always = always || defines.is_empty();
+            items.push(Item {
+                text: item,
+                defines,
+                always,
+            });
+            continue;
+        }
+        // a declaration: up to the `;` or the `}` that closes it at depth 0
+        let (mut depth, mut comment) = (0, false);
+        let start = item.len();
+        while i < lines.len() {
+            let l = lines[i];
+            item.push_str(l);
+            depth += brace_delta(l, &mut comment);
+            i += 1;
+            let end = l.trim_end();
+            if depth <= 0 && !comment && (end.ends_with(';') || end.ends_with('}')) {
+                break;
+            }
+        }
+        let defines = declared_names(&item[start..]);
+        let always = defines.is_empty();
+        items.push(Item {
+            text: item,
+            defines,
+            always,
+        });
+    }
+    if !pending.is_empty() {
+        items.push(Item {
+            text: pending,
+            defines: Vec::new(),
+            always: true,
+        });
+    }
+    items
+}
+
+/// The head a unit carries: every item it names, and every item those name, in the head's
+/// order.  `names` are the identifiers of the unit's own text; `own` marks the unit that defines
+/// the program's state, which carries every `LOFT_STATE` item whatever it names.  An item missed
+/// here is a compile error in the unit, never a different program: C declares nothing implicitly.
+fn unit_head(items: &[Item], names: &HashSet<&str>, own: bool) -> String {
+    let mut want: HashSet<String> = names.iter().map(|n| (*n).to_string()).collect();
+    let mut take = vec![false; items.len()];
+    loop {
+        let mut grew = false;
+        for (k, item) in items.iter().enumerate() {
+            let state = own && item.text.lines().any(|l| l.starts_with("LOFT_STATE "));
+            if !take[k] && (item.always || state || item.defines.iter().any(|d| want.contains(d))) {
+                take[k] = true;
+                grew = true;
+                want.extend(identifiers(&item.text).into_iter().map(str::to_string));
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    items
+        .iter()
+        .zip(&take)
+        .filter(|(_, t)| **t)
+        .map(|(i, _)| i.text.as_str())
+        .collect()
+}
+
 /// The written `unit` as the units of a split build, each starting with a
 /// `SPLIT_UNIT <name>*/` line: the shared unit first, then one per file in a fixed order.
 /// `runtime_end` closes the runtime in the head: nothing before it is rewritten.  A unit with no
@@ -342,25 +572,32 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
             (n, line)
         })
         .collect();
-    let head = format!("{hot}{}{kept}", give_linkage(&stay, &exported, true));
+    // Past the runtime, each unit carries only the head items it names (`unit_head`): a type, a
+    // table or a constant changes the units that use it, not every unit.
+    let items = head_items(&format!("{}{kept}", give_linkage(&stay, &exported, true)));
     let mut out = String::new();
-    let mut put = |name: &str, body: &str| {
+    let mut put = |name: &str, body: &str, own: bool| {
         let body = give_linkage(body, &exported, false);
+        let mut protos = String::new();
         let names = identifiers(&body);
+        for (n, line) in &moved {
+            if names.contains(n.as_str()) {
+                protos.push_str(line);
+            }
+        }
+        let mut wanted = names;
+        wanted.extend(identifiers(&protos));
         out.push_str(SPLIT_UNIT);
         out.push_str(name);
         out.push_str("*/\n");
-        out.push_str(&head);
-        for (n, line) in &moved {
-            if names.contains(n.as_str()) {
-                out.push_str(line);
-            }
-        }
+        out.push_str(&hot);
+        out.push_str(&unit_head(&items, &wanted, own));
+        out.push_str(&protos);
         out.push_str(&body);
     };
-    put("shared", &format!("{called_back}{shared}"));
+    put("shared", &format!("{called_back}{shared}"), true);
     for (i, body) in files.values().enumerate() {
-        put(&format!("file{i}"), body);
+        put(&format!("file{i}"), body, false);
     }
     // The cold runtime, alone: it names nothing the program wrote.
     out.push_str(SPLIT_UNIT);
@@ -447,6 +684,78 @@ mod tests {
         assert!(
             hot.contains("static const int loft_table[1]")
                 && cold.contains("static const int loft_table[1]")
+        );
+    }
+
+    #[test]
+    fn a_head_item_declares_its_names() {
+        let names = |t: &str| declared_names(t);
+        assert_eq!(
+            names("typedef struct lt_A {\n  int x;\n} lt_A;\n"),
+            ["lt_A", "lt_A"]
+        );
+        assert_eq!(
+            names("static const uint32_t loft_cwords_C[] = { 1, 2 };\n"),
+            ["loft_cwords_C"]
+        );
+        assert_eq!(
+            names("LOFT_STATE loft_ref loft_const_C;\n"),
+            ["loft_const_C"]
+        );
+        assert_eq!(names("#define LOFT_N 3\n"), ["LOFT_N"]);
+        assert_eq!(
+            names("static void loft_show_a(loft_cx *cx) {\n}\n"),
+            ["loft_show_a"]
+        );
+        let e = names("enum lt_E { LT_A = 1, LT_B };\n");
+        assert!(
+            e.contains(&"LT_A".to_string()) && e.contains(&"LT_B".to_string()),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn a_unit_carries_the_head_items_it_names_and_what_they_name() {
+        let head = "#define LOFT_K 2\n\
+                    typedef struct lt_A { int x; } lt_A;\n\
+                    /* B holds an A */\n\
+                    typedef struct lt_B {\n  lt_A a;\n  char s[LOFT_K];\n} lt_B;\n\
+                    typedef struct lt_C { int y; } lt_C;\n\
+                    static const char loft_brace[] = \"}{\";\n\
+                    LOFT_STATE loft_ref loft_const_C;\n\
+                    #if defined(X)\nint loft_x;\n#endif\n";
+        let items = head_items(head);
+        assert_eq!(
+            items.len(),
+            7,
+            "{:?}",
+            items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        let uses_b: HashSet<&str> = ["lt_B"].into_iter().collect();
+        let got = unit_head(&items, &uses_b, false);
+        assert!(
+            got.contains("lt_A a;")
+                && got.contains("typedef struct lt_A")
+                && got.contains("#define LOFT_K"),
+            "{got}"
+        );
+        assert!(
+            got.contains("/* B holds an A */"),
+            "a comment goes with its item: {got}"
+        );
+        assert!(
+            !got.contains("lt_C") && !got.contains("loft_brace"),
+            "{got}"
+        );
+        assert!(
+            got.contains("#if defined(X)"),
+            "a conditional group is in every unit: {got}"
+        );
+        let none: HashSet<&str> = HashSet::new();
+        assert!(!unit_head(&items, &none, false).contains("loft_const_C"));
+        assert!(
+            unit_head(&items, &none, true).contains("LOFT_STATE loft_ref loft_const_C;"),
+            "the unit that owns the state declares all of it"
         );
     }
 }
