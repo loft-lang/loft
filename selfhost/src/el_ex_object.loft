@@ -1986,6 +1986,10 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       return el_ex_loop::reduce_call(e, vars, list, types);
     }
   }
+  if source < 0 && !e.first_pass && rust_builds_in_place(e, name, list, types) {
+    el::refuse(e, "a `{name}` this port does not build in place");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     if el_trace::on() {
       el_trace::route(e, "call:{name}");
@@ -3088,6 +3092,10 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
     return el_ex_loop::reduce_call(e, vars, list, types);
   }
+  if !e.first_pass && rust_builds_in_place(e, name, list, types) {
+    el::refuse(e, "a `{name}` this port does not build in place");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
@@ -3165,6 +3173,23 @@ pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
     TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || inner is TyText,
     _ => false
   }
+}
+
+// The calls Rust's `parse_call` builds in place, so no instance of the standard library's
+// generic is ever minted for them: `sort` of a vector — through a link too, `sort_is_special`
+// peels it — whose element sorts itself, and every `map` / `filter` of a vector where the
+// program declares none of its own (`"map" => parse_map`).  Where this port's in-place build
+// declines one of them it is refused, not instantiated: an instance would be a definition only
+// the port registers (`port-only-definitions.md`).
+pub fn rust_builds_in_place(e: el::El, name: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> boolean {
+  if len(types) == 0 {
+    return false;
+  }
+  recv = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0]! };
+  if name == "sort" && len(types) == 1 {
+    return match recv { TyVector { inner } => !(inner is TyOptional) && (el_types::base(inner) is TyInteger || el_types::base(inner) is TyFloat || el_types::base(inner) is TySingle || el_types::base(inner) is TyText), _ => false };
+  }
+  (name == "map" || name == "filter") && len(list) == 2 && el_types::base(recv) is TyVector && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0
 }
 
 // `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
@@ -3670,6 +3695,22 @@ pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
       match a {
         TyVector { inner: ai } => bind_type_vars(e, pi, ai, b),
         _ => { b.ok = false; }
+      }
+    },
+    // A tuple parameter binds through its members, pairwise (`vector<(T, U)>` against
+    // `vector<(integer, text)>` binds both): a boxed tuple's `__tuple<…>` record by its members.
+    TyTuple { elems: pe } => {
+      ae: vector<ir::TypeT> = match a {
+        TyTuple { elems: te } => te,
+        TyReference { n: tr } => if starts_with(el::def(e, tr).name, "__tuple<") { [for ta in el::def(e, tr).attributes { ta.typedef[0] ?? ir::TyVoid }] } else { [] },
+        _ => []
+      };
+      if len(ae) != len(pe) {
+        b.ok = false;
+        return;
+      }
+      for x in pe {
+        bind_type_vars(e, x, ae[x#index] ?? ir::TyVoid, b);
       }
     },
     // A function parameter binds through its own parameters and its result (`fn(T) -> U`

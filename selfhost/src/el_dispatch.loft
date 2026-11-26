@@ -41,12 +41,24 @@ pub fn identity(e: el::El, t: ir::TypeT) -> text {
     TyBoolean => "boolean",
     TyCharacter => "character",
     TyText { dep: _ } => "text",
-    TyReference { n } => if el_types::type_var(e, t) < 0 && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE) { declared(e, n) } else { "" },
+    // A boxed tuple's `__tuple<…>` record is spelled from its members, as the tuple is.
+    TyReference { n } => if starts_with(el::def(e, n).name, "__tuple<") { identity(e, ir::TyTuple { elems: [for a in el::def(e, n).attributes { a.typedef[0] ?? ir::TyVoid }] }) } else if el_types::type_var(e, t) < 0 && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE) { declared(e, n) } else { "" },
     TyEnum { n } => declared(e, n),
-    // A tuple is spelled as the `__tuple<…>` record it is stored as, where one is made.
+    // `tuple_identity`: a tuple is spelled `__tuple<…>` from its MEMBERS' identities, boxed or
+    // not, whether or not its record is registered (@PLN165 D11) — a narrow member with its
+    // width (`integer(0, 255)s1`), a nested tuple as `__tuple<…>`.  Read off the registered
+    // record (its `Type::name` key) it was `integer(0, 255)` / `(integer, integer)`, and the
+    // instance was one Rust never mints.
     TyTuple { elems } => {
-      td = el_types::tuple_def_of(e, [for m in elems { el_types::without_deps(m) }]);
-      if td < 0 { "" } else { el::def(e, td).name }
+      parts: vector<text> = [];
+      for m in elems {
+        sp = identity(e, el_types::without_deps(m));
+        if sp == "" {
+          return "";
+        }
+        parts += [sp];
+      }
+      "__tuple<{join(parts, ",")}>"
     },
     TyVector { inner } => {
       sp = if el_types::is_unknown(inner) { "" } else { identity(e, inner) };
